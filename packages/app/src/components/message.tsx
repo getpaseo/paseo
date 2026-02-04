@@ -54,6 +54,8 @@ import * as Clipboard from "expo-clipboard";
 import type { TodoEntry } from "@/types/stream";
 import { extractPrincipalParam } from "@/utils/tool-call-parsers";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
+import { parseInlinePathToken, type InlinePathTarget } from "@/utils/inline-path";
+export type { InlinePathTarget } from "@/utils/inline-path";
 import { resolveToolCallPreview } from "./tool-call-preview";
 import { useToolCallSheet } from "./tool-call-sheet";
 import {
@@ -212,13 +214,6 @@ export const UserMessage = memo(function UserMessage({
     </View>
   );
 });
-
-export interface InlinePathTarget {
-  raw: string;
-  path: string;
-  lineStart?: number;
-  lineEnd?: number;
-}
 
 interface AssistantMessageProps {
   message: string;
@@ -405,96 +400,6 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-function isLikelyPathToken(value: string): boolean {
-  if (!value || value.length > 300) {
-    return false;
-  }
-
-  if (/\s/.test(value)) {
-    return false;
-  }
-
-  const hasSlash = value.includes("/") || value.includes("\\");
-  const hasExtension = /\.[a-zA-Z0-9]{1,8}$/.test(value);
-
-  if (!hasSlash && !hasExtension) {
-    return false;
-  }
-
-  const looksLikeDir =
-    value.endsWith("/") || value.startsWith("./") || value.startsWith("../");
-
-  return hasExtension || looksLikeDir || value.includes("/");
-}
-
-function normalizeInlinePathValue(value: string): string | null {
-  const trimmed = value
-    .trim()
-    .replace(/^['"`]/, "")
-    .replace(/['"`]$/, "");
-  if (!trimmed) {
-    return null;
-  }
-
-  return trimmed.replace(/\\/g, "/");
-}
-
-function parseInlinePathToken(
-  value: string,
-  lastPathRef: React.MutableRefObject<string | null>
-): InlinePathTarget | null {
-  const rawValue = value ?? "";
-  const trimmed = rawValue.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const rangeOnlyMatch = trimmed.match(/^:([0-9]+)(?:-([0-9]+))?$/);
-  if (rangeOnlyMatch) {
-    const basePath = lastPathRef.current;
-    if (!basePath) {
-      return null;
-    }
-    const lineStart = parseInt(rangeOnlyMatch[1], 10);
-    const lineEnd = rangeOnlyMatch[2]
-      ? parseInt(rangeOnlyMatch[2], 10)
-      : undefined;
-    return {
-      raw: rawValue,
-      path: basePath,
-      lineStart,
-      lineEnd,
-    };
-  }
-
-  const pathMatch = trimmed.match(/^(.*?)(?::([0-9]+)(?:-([0-9]+))?)?$/);
-  if (!pathMatch) {
-    return null;
-  }
-
-  const basePath = pathMatch[1]?.trim();
-  if (!basePath || !isLikelyPathToken(basePath)) {
-    return null;
-  }
-
-  const normalizedPath = normalizeInlinePathValue(basePath);
-  if (!normalizedPath) {
-    return null;
-  }
-
-  lastPathRef.current = normalizedPath;
-
-  const lineStart = pathMatch[2] ? parseInt(pathMatch[2], 10) : undefined;
-  const lineEnd = pathMatch[3] ? parseInt(pathMatch[3], 10) : undefined;
-
-  return {
-    raw: rawValue,
-    path: normalizedPath,
-    lineStart,
-    lineEnd,
-  };
-}
-
 export const AssistantMessage = memo(function AssistantMessage({
   message,
   timestamp,
@@ -504,7 +409,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   const { theme } = useUnistyles();
   const resolvedDisableOuterSpacing =
     useDisableOuterSpacing(disableOuterSpacing);
-  const lastPathRef = useRef<string | null>(null);
 
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 
@@ -579,7 +483,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       ) => {
         const content = node.content ?? "";
         const parsed = onInlinePathPress
-          ? parseInlinePathToken(content, lastPathRef)
+          ? parseInlinePathToken(content)
           : null;
 
         if (!parsed) {

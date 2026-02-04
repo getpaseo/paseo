@@ -95,7 +95,8 @@ export function AgentStreamView({
     state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId)
   );
 
-  const { requestDirectoryListing, requestFilePreview } = useFileExplorerActions(resolvedServerId);
+  const { requestDirectoryListing, requestFilePreview, selectExplorerEntry } =
+    useFileExplorerActions(resolvedServerId);
   // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
   // tracked in react-native-reanimated#8422.
   const shouldDisableEntryExitAnimations = Platform.OS === "android";
@@ -123,8 +124,12 @@ export function AgentStreamView({
         return;
       }
 
-      requestDirectoryListing(agentId, normalized.directory);
+      requestDirectoryListing(agentId, normalized.directory, {
+        recordHistory: false,
+        setCurrentPath: false,
+      });
       if (normalized.file) {
+        selectExplorerEntry(agentId, normalized.file);
         requestFilePreview(agentId, normalized.file);
       }
 
@@ -136,6 +141,7 @@ export function AgentStreamView({
       agentId,
       requestDirectoryListing,
       requestFilePreview,
+      selectExplorerEntry,
       setExplorerTab,
       openFileExplorer,
     ]
@@ -206,37 +212,46 @@ export function AgentStreamView({
   const tightGap = theme.spacing[1]; // 4px
   const looseGap = theme.spacing[4]; // 16px
 
-  // In inverted lists, marginBottom renders as visual gap ABOVE the item.
-  // Index 0 is visually at the bottom, so use the item ABOVE (index + 1) to compute spacing.
-  const getGapAbove = useCallback(
+  // The FlatList is inverted, but each row is re-inverted by RN, so `marginBottom` still
+  // manifests as the gap *below* the row in the final visual layout. Compute spacing
+  // against the item visually below (index - 1 in our inverted list).
+  const getGapBelow = useCallback(
     (item: StreamItem, index: number) => {
-      const aboveItem = flatListData[index + 1];
-      if (!aboveItem) {
-        // This is the topmost item; nothing above it visually.
+      const belowItem = flatListData[index - 1];
+      if (!belowItem) {
+        // This is the bottommost (newest) item; nothing below it visually.
         return 0;
       }
 
       // Same type groups get tight gap (4px)
-      if (isUserMessageItem(item) && isUserMessageItem(aboveItem)) {
+      if (isUserMessageItem(item) && isUserMessageItem(belowItem)) {
         return tightGap;
       }
 
-      if (isToolSequenceItem(item) && isToolSequenceItem(aboveItem)) {
+      if (isToolSequenceItem(item) && isToolSequenceItem(belowItem)) {
         return tightGap;
       }
 
-      // Keep tool sequences visually connected to the preceding user message / tasks.
+      // Give user messages more breathing room before tool sequences.
+      if (item.kind === "user_message" && isToolSequenceItem(belowItem)) {
+        return looseGap;
+      }
+
+      // Keep tool sequences visually connected to the preceding user/assistant message.
       if (
-        isToolSequenceItem(item) &&
-        (aboveItem.kind === "user_message" ||
-          aboveItem.kind === "assistant_message" ||
-          aboveItem.kind === "todo_list")
+        (item.kind === "user_message" || item.kind === "assistant_message") &&
+        isToolSequenceItem(belowItem)
       ) {
         return tightGap;
       }
 
-      // And keep assistant messages visually connected to tool sequences (symmetry).
-      if (item.kind === "assistant_message" && isToolSequenceItem(aboveItem)) {
+      // Keep todo lists visually connected to the following tool sequence (symmetry).
+      if (item.kind === "todo_list" && isToolSequenceItem(belowItem)) {
+        return tightGap;
+      }
+
+      // Keep tool sequences visually connected to the assistant response (symmetry).
+      if (isToolSequenceItem(item) && belowItem.kind === "assistant_message") {
         return tightGap;
       }
 
@@ -374,7 +389,7 @@ export function AgentStreamView({
         return null;
       }
 
-      const gapAbove = getGapAbove(item, index);
+      const gapBelow = getGapBelow(item, index);
 
       // Check if this is the end of a turn (before a user message or end of stream when not running)
       // In inverted list: index-1 is the next item (newer in time)
@@ -387,14 +402,14 @@ export function AgentStreamView({
       const getContent = () => collectTurnContent(index);
 
       return (
-        <View style={[stylesheet.streamItemWrapper, { marginBottom: gapAbove }]}>
+        <View style={[stylesheet.streamItemWrapper, { marginBottom: gapBelow }]}>
           {content}
           {isEndOfTurn ? <TurnCopyButton getContent={getContent} /> : null}
         </View>
       );
     },
     [
-      getGapAbove,
+      getGapBelow,
       renderStreamItemContent,
       flatListData,
       agent.status,
@@ -490,7 +505,16 @@ export function AgentStreamView({
 
     return (
       <View style={stylesheet.contentWrapper}>
-        <View style={stylesheet.listHeaderContent}>
+        <View
+          style={[
+            stylesheet.listHeaderContent,
+            // In an inverted FlatList, the header is rendered at the visual bottom, so its
+            // top edge can sit directly against the newest timeline item. Add a small
+            // padding to prevent badges (e.g. Thinking/Setup) from butting up against
+            // the last user message when the streaming head is present.
+            hasHeadItems ? { paddingTop: tightGap } : null,
+          ]}
+        >
           {hasPermissions ? (
             <View style={stylesheet.permissionsContainer}>
               {pendingPermissionItems.map((permission) => (
@@ -528,6 +552,7 @@ export function AgentStreamView({
     client,
     streamHead,
     renderStreamItemContent,
+    tightGap,
   ]);
 
   const flatListExtraData = useMemo(
@@ -538,6 +563,16 @@ export function AgentStreamView({
     [pendingPermissionItems.length, showWorkingIndicator]
   );
 
+  // FlatList's ListHeaderComponent renders at the *bottom* when inverted.
+  // Without explicit spacing, the newest "head" rows (like Thinking/Setup tool badges)
+  // can butt up directly against the most recent stream item.
+  const headerGapStyle = useMemo(() => {
+    if (!listHeaderComponent) {
+      return undefined;
+    }
+    return { marginBottom: tightGap };
+  }, [listHeaderComponent, tightGap]);
+
   return (
     <ToolCallSheetProvider>
       <View style={stylesheet.container}>
@@ -547,6 +582,7 @@ export function AgentStreamView({
               data={flatListData}
               renderItem={renderStreamItem}
               keyExtractor={(item) => item.id}
+              ListHeaderComponentStyle={headerGapStyle}
               contentContainerStyle={{
                 paddingVertical: 0,
                 flexGrow: 1,

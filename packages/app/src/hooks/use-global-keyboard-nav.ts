@@ -118,6 +118,7 @@ export function useGlobalKeyboardNav({
         (event.metaKey || event.ctrlKey) &&
         (event.code === "KeyE" || lowerKey === "e")
       ) {
+        // Same double-toggle issue as Cmd+B when focus is inside a text input.
         if (isEditableTarget(event)) {
           return;
         }

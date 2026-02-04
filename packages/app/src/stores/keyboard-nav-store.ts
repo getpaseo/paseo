@@ -44,3 +44,4 @@ export const useKeyboardNavStore = create<KeyboardNavState>((set, get) => ({
   setSidebarShortcutAgentKeys: (keys) => set({ sidebarShortcutAgentKeys: keys }),
   resetModifiers: () => set({ altDown: false, cmdOrCtrlDown: false }),
 }));
+

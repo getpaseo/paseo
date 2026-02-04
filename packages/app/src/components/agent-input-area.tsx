@@ -3,6 +3,7 @@ import {
   Pressable,
   Text,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -70,6 +71,8 @@ export function AgentInputArea({
   const insets = useSafeAreaInsets();
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const isScreenFocused = useIsFocused();
+  const focusChatInputRequest = useKeyboardNavStore((s) => s.focusChatInputRequest);
+  const clearFocusChatInputRequest = useKeyboardNavStore((s) => s.clearFocusChatInputRequest);
 
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
@@ -100,8 +103,7 @@ export function AgentInputArea({
   const [selectedImages, setSelectedImages] = useState<ImageAttachment[]>([]);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
-  const focusChatInputRequest = useKeyboardNavStore((s) => s.focusChatInputRequest);
-  const clearFocusChatInputRequest = useKeyboardNavStore((s) => s.clearFocusChatInputRequest);
+  const lastHandledFocusRequestIdRef = useRef<number | null>(null);
 
   // Command autocomplete logic
   const showCommandAutocomplete = userInput.startsWith("/") && !userInput.includes(" ");
@@ -356,6 +358,41 @@ export function AgentInputArea({
     saveDraftInput(agentId, { text: userInput, images: selectedImages });
   }, [agentId, userInput, selectedImages, getDraftInput, saveDraftInput]);
 
+  // When switching agents from the command center, auto-focus the input on web.
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!isScreenFocused) return;
+    if (!focusChatInputRequest) return;
+
+    const currentKey = `${serverId}:${agentId}`;
+    if (focusChatInputRequest.agentKey !== currentKey) {
+      return;
+    }
+
+    if (lastHandledFocusRequestIdRef.current === focusChatInputRequest.id) {
+      return;
+    }
+    lastHandledFocusRequestIdRef.current = focusChatInputRequest.id;
+
+    return focusWithRetries({
+      focus: () => messageInputRef.current?.focus(),
+      isFocused: () => {
+        const el = messageInputRef.current?.getNativeElement?.() ?? null;
+        const active =
+          typeof document !== "undefined" ? document.activeElement : null;
+        return Boolean(el) && active === el;
+      },
+      onSuccess: () => clearFocusChatInputRequest(),
+      onTimeout: () => clearFocusChatInputRequest(),
+    });
+  }, [
+    agentId,
+    clearFocusChatInputRequest,
+    focusChatInputRequest,
+    isScreenFocused,
+    serverId,
+  ]);
+
   const keyboardAnimatedStyle = useAnimatedStyle(() => {
     "worklet";
     const absoluteHeight = Math.abs(keyboardHeight.value);
@@ -401,27 +438,6 @@ export function AgentInputArea({
   const handleQueue = useCallback((payload: MessagePayload) => {
     queueMessage(payload.text, payload.images);
   }, []);
-
-  useEffect(() => {
-    const req = focusChatInputRequest;
-    if (!req) return;
-    if (req.agentKey !== `${serverId}:${agentId}`) return;
-
-    return focusWithRetries({
-      focus: () => messageInputRef.current?.focus(),
-      isFocused: () => {
-        const el = messageInputRef.current?.getNativeElement?.() ?? null;
-        const active =
-          typeof document !== "undefined" ? document.activeElement : null;
-        return Boolean(el) && active === el;
-      },
-      onSuccess: () => clearFocusChatInputRequest(),
-      onTimeout: () => {
-        // Don't keep stealing focus forever; allow other interactions.
-        clearFocusChatInputRequest();
-      },
-    });
-  }, [agentId, clearFocusChatInputRequest, focusChatInputRequest, serverId]);
 
   // Handle command selection from autocomplete
   const handleCommandSelect = useCallback(

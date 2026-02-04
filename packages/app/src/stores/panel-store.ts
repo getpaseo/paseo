@@ -28,12 +28,16 @@ interface DesktopSidebarState {
 }
 
 export type ExplorerTab = "changes" | "files";
-export type ViewMode = "list" | "grid";
 export type SortOption = "name" | "modified" | "size";
 
-export const DEFAULT_EXPLORER_SIDEBAR_WIDTH = 400;
+export const DEFAULT_EXPLORER_SIDEBAR_WIDTH = Platform.OS === "web" ? 520 : 400;
 export const MIN_EXPLORER_SIDEBAR_WIDTH = 280;
-export const MAX_EXPLORER_SIDEBAR_WIDTH = 800;
+// Upper bound is intentionally generous; desktop resizing enforces a min-chat-width constraint.
+export const MAX_EXPLORER_SIDEBAR_WIDTH = 2000;
+
+export const DEFAULT_EXPLORER_FILES_SPLIT_RATIO = 0.38;
+export const MIN_EXPLORER_FILES_SPLIT_RATIO = 0.2;
+export const MAX_EXPLORER_FILES_SPLIT_RATIO = 0.8;
 
 interface PanelState {
   // Mobile: which panel is currently shown
@@ -45,8 +49,8 @@ interface PanelState {
   // File explorer settings (shared between mobile/desktop)
   explorerTab: ExplorerTab;
   explorerWidth: number;
-  explorerViewMode: ViewMode;
   explorerSortOption: SortOption;
+  explorerFilesSplitRatio: number;
 
   // Actions
   openAgentList: () => void;
@@ -58,12 +62,23 @@ interface PanelState {
   // File explorer settings actions
   setExplorerTab: (tab: ExplorerTab) => void;
   setExplorerWidth: (width: number) => void;
-  setExplorerViewMode: (mode: ViewMode) => void;
   setExplorerSortOption: (option: SortOption) => void;
+  setExplorerFilesSplitRatio: (ratio: number) => void;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.max(min, Math.min(max, value));
 }
 
 function clampWidth(width: number): number {
-  return Math.max(MIN_EXPLORER_SIDEBAR_WIDTH, Math.min(MAX_EXPLORER_SIDEBAR_WIDTH, width));
+  return clampNumber(width, MIN_EXPLORER_SIDEBAR_WIDTH, MAX_EXPLORER_SIDEBAR_WIDTH);
+}
+
+function clampExplorerFilesSplitRatio(ratio: number): number {
+  return clampNumber(ratio, MIN_EXPLORER_FILES_SPLIT_RATIO, MAX_EXPLORER_FILES_SPLIT_RATIO);
 }
 
 const DEFAULT_DESKTOP_OPEN = Platform.OS === "web";
@@ -83,8 +98,8 @@ export const usePanelStore = create<PanelState>()(
       // File explorer defaults
       explorerTab: "changes",
       explorerWidth: DEFAULT_EXPLORER_SIDEBAR_WIDTH,
-      explorerViewMode: "list",
       explorerSortOption: "name",
+      explorerFilesSplitRatio: DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
 
       openAgentList: () =>
         set((state) => ({
@@ -139,19 +154,48 @@ export const usePanelStore = create<PanelState>()(
 
       setExplorerTab: (tab) => set({ explorerTab: tab }),
       setExplorerWidth: (width) => set({ explorerWidth: clampWidth(width) }),
-      setExplorerViewMode: (mode) => set({ explorerViewMode: mode }),
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
+      setExplorerFilesSplitRatio: (ratio) =>
+        set({
+          explorerFilesSplitRatio: Number.isFinite(ratio)
+            ? clampExplorerFilesSplitRatio(ratio)
+            : DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
+        }),
     }),
     {
       name: "panel-state",
+      version: 2,
       storage: createJSONStorage(() => AsyncStorage),
+      migrate: (persistedState, version) => {
+        const state = persistedState as Partial<PanelState> & Record<string, unknown>;
+
+        if (version < 2) {
+          if (
+            Platform.OS === "web" &&
+            typeof state.explorerWidth === "number" &&
+            state.explorerWidth === 400
+          ) {
+            state.explorerWidth = DEFAULT_EXPLORER_SIDEBAR_WIDTH;
+          }
+
+          if (typeof state.explorerFilesSplitRatio !== "number") {
+            state.explorerFilesSplitRatio = DEFAULT_EXPLORER_FILES_SPLIT_RATIO;
+          } else {
+            state.explorerFilesSplitRatio = clampExplorerFilesSplitRatio(
+              state.explorerFilesSplitRatio
+            );
+          }
+        }
+
+        return state as PanelState;
+      },
       partialize: (state) => ({
         mobileView: state.mobileView,
         desktop: state.desktop,
         explorerTab: state.explorerTab,
         explorerWidth: state.explorerWidth,
-        explorerViewMode: state.explorerViewMode,
         explorerSortOption: state.explorerSortOption,
+        explorerFilesSplitRatio: state.explorerFilesSplitRatio,
       }),
     }
   )
@@ -181,12 +225,12 @@ export function usePanelState(isMobile: boolean) {
       // Explorer settings
       explorerTab: store.explorerTab,
       explorerWidth: store.explorerWidth,
-      explorerViewMode: store.explorerViewMode,
       explorerSortOption: store.explorerSortOption,
+      explorerFilesSplitRatio: store.explorerFilesSplitRatio,
       setExplorerTab: store.setExplorerTab,
       setExplorerWidth: store.setExplorerWidth,
-      setExplorerViewMode: store.setExplorerViewMode,
       setExplorerSortOption: store.setExplorerSortOption,
+      setExplorerFilesSplitRatio: store.setExplorerFilesSplitRatio,
     };
   }
 
@@ -209,11 +253,11 @@ export function usePanelState(isMobile: boolean) {
     // Explorer settings
     explorerTab: store.explorerTab,
     explorerWidth: store.explorerWidth,
-    explorerViewMode: store.explorerViewMode,
     explorerSortOption: store.explorerSortOption,
+    explorerFilesSplitRatio: store.explorerFilesSplitRatio,
     setExplorerTab: store.setExplorerTab,
     setExplorerWidth: store.setExplorerWidth,
-    setExplorerViewMode: store.setExplorerViewMode,
     setExplorerSortOption: store.setExplorerSortOption,
+    setExplorerFilesSplitRatio: store.setExplorerFilesSplitRatio,
   };
 }

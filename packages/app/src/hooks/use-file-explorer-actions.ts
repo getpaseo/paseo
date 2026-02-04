@@ -11,6 +11,7 @@ function createExplorerState(): AgentFileExplorerState {
     currentPath: ".",
     history: ["."],
     lastVisitedPath: ".",
+    selectedEntryPath: null,
   };
 }
 
@@ -40,18 +41,30 @@ export function useFileExplorerActions(serverId: string) {
   );
 
   const requestDirectoryListing = useCallback(
-    (agentId: string, path: string, options?: { recordHistory?: boolean }) => {
+    (
+      agentId: string,
+      path: string,
+      options?: { recordHistory?: boolean; setCurrentPath?: boolean }
+    ) => {
       const normalizedPath = path && path.length > 0 ? path : ".";
-      const shouldRecordHistory = options?.recordHistory ?? true;
+      const shouldSetCurrentPath = options?.setCurrentPath ?? true;
+      const shouldRecordHistory =
+        options?.recordHistory ?? (shouldSetCurrentPath ? true : false);
 
       updateExplorerState(agentId, (state) => ({
         ...state,
         isLoading: true,
         lastError: null,
         pendingRequest: { path: normalizedPath, mode: "list" },
-        currentPath: normalizedPath,
-        history: shouldRecordHistory ? pushHistory(state.history, normalizedPath) : state.history,
-        lastVisitedPath: normalizedPath,
+        ...(shouldSetCurrentPath
+          ? {
+              currentPath: normalizedPath,
+              history: shouldRecordHistory
+                ? pushHistory(state.history, normalizedPath)
+                : state.history,
+              lastVisitedPath: normalizedPath,
+            }
+          : {}),
       }));
 
       if (!client) {
@@ -104,6 +117,7 @@ export function useFileExplorerActions(serverId: string) {
       updateExplorerState(agentId, (state) => ({
         ...state,
         isLoading: true,
+        lastError: null,
         pendingRequest: { path: normalizedPath, mode: "file" },
       }));
 
@@ -165,42 +179,20 @@ export function useFileExplorerActions(serverId: string) {
     [client]
   );
 
-  const navigateExplorerBack = useCallback(
-    (agentId: string) => {
-      let targetPath: string | null = null;
-
-      updateExplorerState(agentId, (state) => {
-        if (state.history.length <= 1) {
-          return state;
-        }
-        const nextHistory = state.history.slice(0, -1);
-        targetPath = nextHistory[nextHistory.length - 1] ?? ".";
-        return {
-          ...state,
-          isLoading: true,
-          lastError: null,
-          pendingRequest: { path: targetPath, mode: "list" },
-          currentPath: targetPath,
-          history: nextHistory,
-          lastVisitedPath: targetPath,
-        };
-      });
-
-      if (!targetPath) {
-        return null;
-      }
-
-      requestDirectoryListing(agentId, targetPath, { recordHistory: false });
-      return targetPath;
+  const selectExplorerEntry = useCallback(
+    (agentId: string, path: string | null) => {
+      updateExplorerState(agentId, (state) => ({
+        ...state,
+        selectedEntryPath: path,
+      }));
     },
-    [requestDirectoryListing, updateExplorerState]
+    [updateExplorerState]
   );
 
   return {
     requestDirectoryListing,
     requestFilePreview,
     requestFileDownloadToken,
-    navigateExplorerBack,
+    selectExplorerEntry,
   };
 }
-

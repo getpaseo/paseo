@@ -5,18 +5,15 @@ import {
   Image as RNImage,
   LayoutChangeEvent,
   ListRenderItemInfo,
-  RefreshControl,
-  ViewToken,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
   Modal,
   Pressable,
   ScrollView as RNScrollView,
   Text,
   View,
+  Platform,
   useWindowDimensions,
 } from "react-native";
-import { ScrollView } from "react-native-gesture-handler";
+import { ScrollView, Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -26,28 +23,25 @@ import {
   BottomSheetBackdrop,
 } from "@gorhom/bottom-sheet";
 import {
-  ArrowLeft,
-  ChevronDown,
   File,
   FileText,
   Folder,
+  FolderOpen,
   Image as ImageIcon,
   MoreVertical,
   X,
 } from "lucide-react-native";
-import type { ExplorerEntry } from "@/stores/session-store";
+import type { ExplorerEntry, ExplorerFile } from "@/stores/session-store";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import { useDownloadStore } from "@/stores/download-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import {
   usePanelStore,
+  DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
   type SortOption,
 } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
-
-const MAX_CONCURRENT_THUMBNAILS = 2;
-const THUMBNAIL_TIMEOUT_MS = 15000;
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "name", label: "Name" },
@@ -55,27 +49,31 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "size", label: "Size" },
 ];
 
+const INDENT_PER_LEVEL = 12;
+
 interface FileExplorerPaneProps {
   serverId: string;
   agentId: string;
 }
 
-export function FileExplorerPane({
-  serverId,
-  agentId,
-}: FileExplorerPaneProps) {
+interface TreeRow {
+  entry: ExplorerEntry;
+  depth: number;
+}
+
+export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
   const { theme } = useUnistyles();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+
   const { connectionStates } = useDaemonConnections();
   const daemonProfile = connectionStates.get(serverId)?.daemon;
-
   const agentExists = useSessionStore((state) =>
     agentId && state.sessions[serverId]
       ? state.sessions[serverId]?.agents.has(agentId)
       : false
   );
-
   const explorerState = useSessionStore((state) =>
     agentId && state.sessions[serverId]
       ? state.sessions[serverId]?.fileExplorer.get(agentId)
@@ -86,256 +84,77 @@ export function FileExplorerPane({
     requestDirectoryListing,
     requestFilePreview,
     requestFileDownloadToken,
-    navigateExplorerBack,
+    selectExplorerEntry,
   } = useFileExplorerActions(serverId);
-  const viewMode = usePanelStore((state) => state.explorerViewMode);
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
-  const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
-  const listScrollRef = useRef<FlatList<ExplorerEntry> | null>(null);
-  const listScrollOffsetRef = useRef(0);
-  const scrollOffsetsByPathRef = useRef<Map<string, number>>(new Map());
-  const pendingScrollRestoreRef = useRef<number | null>(null);
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const splitRatio = usePanelStore((state) => state.explorerFilesSplitRatio);
+  const setSplitRatio = usePanelStore((state) => state.setExplorerFilesSplitRatio);
 
-  const history = explorerState?.history ?? [];
-  const lastKnownDirectory = history[history.length - 1];
-  const rememberedDirectory = explorerState?.lastVisitedPath;
-  const initialTargetDirectory = rememberedDirectory ?? lastKnownDirectory ?? ".";
-  const currentPath = explorerState?.currentPath ?? ".";
+  const directories = explorerState?.directories ?? new Map();
+  const files = explorerState?.files ?? new Map();
   const pendingRequest = explorerState?.pendingRequest ?? null;
   const isExplorerLoading = explorerState?.isLoading ?? false;
-  const isListingLoading = Boolean(
-    isExplorerLoading && pendingRequest?.mode === "list"
-  );
-  const pendingDirectoryPath =
-    isListingLoading && pendingRequest ? pendingRequest.path : null;
-  const activePath = pendingDirectoryPath ?? currentPath;
-  const directory = explorerState?.directories.get(activePath);
-  const rawEntries = directory?.entries ?? [];
-  const entries = useMemo(() => {
-    const sorted = [...rawEntries];
-    sorted.sort((a, b) => {
-      // Directories always come first
-      if (a.kind !== b.kind) {
-        return a.kind === "directory" ? -1 : 1;
-      }
-      switch (sortOption) {
-        case "name":
-          return a.name.localeCompare(b.name);
-        case "modified":
-          return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
-        case "size":
-          return b.size - a.size;
-        default:
-          return 0;
-      }
-    });
-    return sorted;
-  }, [rawEntries, sortOption]);
-  const showInitialListLoading = isListingLoading && entries.length === 0;
+  const error = explorerState?.lastError ?? null;
+  const selectedEntryPath = explorerState?.selectedEntryPath ?? null;
+
+  const preview = selectedEntryPath ? files.get(selectedEntryPath) : null;
   const isPreviewLoading = Boolean(
     isExplorerLoading &&
       pendingRequest?.mode === "file" &&
       pendingRequest?.path === selectedEntryPath
   );
-  const error = explorerState?.lastError ?? null;
-  const preview = selectedEntryPath
-    ? explorerState?.files.get(selectedEntryPath)
-    : null;
-  const shouldShowPreview = Boolean(selectedEntryPath);
-  const [thumbnailLoadingMap, setThumbnailLoadingMap] = useState<Record<string, boolean>>({});
-  const viewabilityConfigRef = useRef({
-    itemVisiblePercentThreshold: 10,
-    minimumViewTime: 0,
-  });
 
-  // Bottom sheet for file preview
-  const previewSheetRef = useRef<BottomSheetModal>(null);
-  const previewSnapPoints = useMemo(() => ["70%", "95%"], []);
+  const isDirectoryLoading = useCallback(
+    (path: string) =>
+      Boolean(
+        isExplorerLoading && pendingRequest?.mode === "list" && pendingRequest?.path === path
+      ),
+    [isExplorerLoading, pendingRequest?.mode, pendingRequest?.path]
+  );
 
-  // Thumbnail queue state
-  const thumbnailQueueRef = useRef<string[]>([]);
-  const inFlightPathsRef = useRef<Set<string>>(new Set());
-
-  // Responsive gallery columns based on container width
-  const [containerWidth, setContainerWidth] = useState(0);
-  const gridColumnCount = containerWidth > 0 && containerWidth >= 400 ? 4 : 3;
-  const listColumns = viewMode === "grid" ? gridColumnCount : 1;
-  const listKey = viewMode === "grid" ? `grid-${gridColumnCount}` : "list";
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set(["."]));
   const [menuEntry, setMenuEntry] = useState<ExplorerEntry | null>(null);
   const [menuAnchor, setMenuAnchor] = useState({ top: 0, left: 0 });
   const [menuHeight, setMenuHeight] = useState(0);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const startDownload = useDownloadStore((state) => state.startDownload);
-  const agentIdRef = useRef(agentId);
-  const viewModeRef = useRef(viewMode);
-  const requestFilePreviewRef = useRef(requestFilePreview);
-  const explorerFilesRef = useRef(explorerState?.files);
-  const refreshPathRef = useRef<string | null>(null);
-  const refreshStartedRef = useRef(false);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  // Bottom sheet for file preview (mobile)
+  const previewSheetRef = useRef<BottomSheetModal>(null);
+  const previewSnapPoints = useMemo(() => ["70%", "95%"], []);
+
   const hasInitializedRef = useRef(false);
-
   useEffect(() => {
-    agentIdRef.current = agentId;
-  }, [agentId]);
-
-  useEffect(() => {
-    viewModeRef.current = viewMode;
-  }, [viewMode]);
-
-  useEffect(() => {
-    requestFilePreviewRef.current = requestFilePreview;
-  }, [requestFilePreview]);
-
-  useEffect(() => {
-    explorerFilesRef.current = explorerState?.files;
-  }, [explorerState?.files]);
-
-  // Process items from the thumbnail queue
-  const processNextThumbnail = useCallback(() => {
-    const currentAgentId = agentIdRef.current;
-    const currentRequestFilePreview = requestFilePreviewRef.current;
-
-    if (!currentAgentId || !currentRequestFilePreview) {
+    if (!agentId || !requestDirectoryListing) {
       return;
     }
-
-    while (
-      inFlightPathsRef.current.size < MAX_CONCURRENT_THUMBNAILS &&
-      thumbnailQueueRef.current.length > 0
-    ) {
-      const path = thumbnailQueueRef.current.shift()!;
-
-      if (explorerFilesRef.current?.has(path) || inFlightPathsRef.current.has(path)) {
-        continue;
-      }
-
-      inFlightPathsRef.current.add(path);
-      setThumbnailLoadingMap((prev) => ({ ...prev, [path]: true }));
-      currentRequestFilePreview(currentAgentId, path);
-
-      setTimeout(() => {
-        if (inFlightPathsRef.current.has(path)) {
-          inFlightPathsRef.current.delete(path);
-          setThumbnailLoadingMap((prev) => {
-            const next = { ...prev };
-            delete next[path];
-            return next;
-          });
-          processNextThumbnail();
-        }
-      }, THUMBNAIL_TIMEOUT_MS);
-    }
-  }, []);
-
-  // Enqueue a file preview request
-  const enqueueFilePreview = useCallback(
-    (path: string, options?: { priority?: boolean }) => {
-      const currentAgentId = agentIdRef.current;
-      const currentRequestFilePreview = requestFilePreviewRef.current;
-
-      if (!currentAgentId || !currentRequestFilePreview) {
-        return;
-      }
-
-      if (explorerFilesRef.current?.has(path)) {
-        return;
-      }
-
-      if (options?.priority) {
-        thumbnailQueueRef.current = [];
-
-        if (inFlightPathsRef.current.has(path)) {
-          return;
-        }
-
-        if (inFlightPathsRef.current.size > 0) {
-          const abandonedPaths = Array.from(inFlightPathsRef.current);
-          setThumbnailLoadingMap((prev) => {
-            const next = { ...prev };
-            abandonedPaths.forEach((p) => delete next[p]);
-            return next;
-          });
-          inFlightPathsRef.current.clear();
-        }
-
-        inFlightPathsRef.current.add(path);
-        setThumbnailLoadingMap((prev) => ({ ...prev, [path]: true }));
-        currentRequestFilePreview(currentAgentId, path);
-
-        setTimeout(() => {
-          if (inFlightPathsRef.current.has(path)) {
-            inFlightPathsRef.current.delete(path);
-            setThumbnailLoadingMap((prev) => {
-              const next = { ...prev };
-              delete next[path];
-              return next;
-            });
-            processNextThumbnail();
-          }
-        }, THUMBNAIL_TIMEOUT_MS);
-
-        return;
-      }
-
-      if (
-        !thumbnailQueueRef.current.includes(path) &&
-        !inFlightPathsRef.current.has(path)
-      ) {
-        thumbnailQueueRef.current.push(path);
-        processNextThumbnail();
-      }
-    },
-    [processNextThumbnail]
-  );
-
-  const handleViewableItemsChangedRef = useRef(
-    ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
-      const currentViewMode = viewModeRef.current;
-
-      if (currentViewMode !== "grid") {
-        return;
-      }
-
-      viewableItems.forEach((token) => {
-        const item = token.item as ExplorerEntry | undefined;
-        if (!item || getEntryDisplayKind(item) !== "image") {
-          return;
-        }
-        enqueueFilePreviewRef.current?.(item.path);
-      });
-    }
-  );
-
-  const enqueueFilePreviewRef = useRef(enqueueFilePreview);
-  useEffect(() => {
-    enqueueFilePreviewRef.current = enqueueFilePreview;
-  }, [enqueueFilePreview]);
-
-  const restoreQueuedScrollOffset = useCallback(() => {
-    if (pendingScrollRestoreRef.current === null) {
+    if (hasInitializedRef.current) {
       return;
     }
+    hasInitializedRef.current = true;
+    requestDirectoryListing(agentId, ".", { recordHistory: false, setCurrentPath: false });
+  }, [agentId, requestDirectoryListing]);
 
-    if (!listScrollRef.current) {
+  // Expand ancestor directories when a file is selected (e.g., from an inline path click)
+  useEffect(() => {
+    if (!agentId || !selectedEntryPath || !requestDirectoryListing) {
       return;
     }
+    const parentDir = getParentDirectory(selectedEntryPath);
+    const ancestors = getAncestorDirectories(parentDir);
 
-    const targetOffset = pendingScrollRestoreRef.current;
-    listScrollRef.current.scrollToOffset({ offset: targetOffset, animated: false });
-    listScrollOffsetRef.current = targetOffset;
-    pendingScrollRestoreRef.current = null;
-  }, []);
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      ancestors.forEach((path) => next.add(path));
+      return next;
+    });
 
-  const queueScrollRestore = useCallback((offset: number) => {
-    pendingScrollRestoreRef.current = offset;
-    requestAnimationFrame(restoreQueuedScrollOffset);
-  }, [restoreQueuedScrollOffset]);
-
-  useEffect(() => {
-    setSelectedEntryPath(null);
-  }, [activePath]);
+    ancestors.forEach((path) => {
+      if (!directories.has(path)) {
+        requestDirectoryListing(agentId, path, { recordHistory: false, setCurrentPath: false });
+      }
+    });
+  }, [agentId, directories, requestDirectoryListing, selectedEntryPath]);
 
   // Open/close preview sheet based on selection
   useEffect(() => {
@@ -349,51 +168,58 @@ export function FileExplorerPane({
     }
   }, [isMobile, selectedEntryPath]);
 
-  useEffect(() => {
-    if (shouldShowPreview) {
+  const handleClosePreview = useCallback(() => {
+    if (!agentId) {
       return;
     }
+    selectExplorerEntry(agentId, null);
+  }, [agentId, selectExplorerEntry]);
 
-    const savedOffset = scrollOffsetsByPathRef.current.get(activePath) ?? listScrollOffsetRef.current;
-    queueScrollRestore(savedOffset);
-  }, [activePath, queueScrollRestore, shouldShowPreview]);
-
-  useEffect(() => {
-    const savedOffset = scrollOffsetsByPathRef.current.get(activePath) ?? 0;
-    listScrollOffsetRef.current = savedOffset;
-    queueScrollRestore(savedOffset);
-  }, [activePath, queueScrollRestore]);
-
-  // Initial directory listing request
-  useEffect(() => {
-    if (!agentId || !requestDirectoryListing) {
-      return;
-    }
-
-    if (hasInitializedRef.current) {
-      return;
-    }
-    hasInitializedRef.current = true;
-
-    requestDirectoryListing(agentId, initialTargetDirectory);
-  }, [agentId, initialTargetDirectory, requestDirectoryListing]);
-
-  const handleEntryPress = useCallback(
+  const handleToggleDirectory = useCallback(
     (entry: ExplorerEntry) => {
       if (!agentId || !requestDirectoryListing) {
         return;
       }
 
-      if (entry.kind === "directory") {
-        setSelectedEntryPath(null);
-        requestDirectoryListing(agentId, entry.path);
+      const isExpanded = expandedPaths.has(entry.path);
+      const nextExpanded = !isExpanded;
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        if (isExpanded) {
+          next.delete(entry.path);
+        } else {
+          next.add(entry.path);
+        }
+        return next;
+      });
+
+      if (nextExpanded && !directories.has(entry.path)) {
+        requestDirectoryListing(agentId, entry.path, { recordHistory: false, setCurrentPath: false });
+      }
+    },
+    [agentId, directories, expandedPaths, requestDirectoryListing]
+  );
+
+  const handleOpenFile = useCallback(
+    (entry: ExplorerEntry) => {
+      if (!agentId || !requestFilePreview) {
         return;
       }
-
-      setSelectedEntryPath(entry.path);
-      enqueueFilePreview(entry.path, { priority: true });
+      selectExplorerEntry(agentId, entry.path);
+      requestFilePreview(agentId, entry.path);
     },
-    [agentId, requestDirectoryListing, enqueueFilePreview]
+    [agentId, requestFilePreview, selectExplorerEntry]
+  );
+
+  const handleEntryPress = useCallback(
+    (entry: ExplorerEntry) => {
+      if (entry.kind === "directory") {
+        handleToggleDirectory(entry);
+        return;
+      }
+      handleOpenFile(entry);
+    },
+    [handleOpenFile, handleToggleDirectory]
   );
 
   const handleCopyPath = useCallback(async (path: string) => {
@@ -420,6 +246,7 @@ export function FileExplorerPane({
     setMenuHeight((current) => (current === height ? current : height));
   }, []);
 
+  const startDownload = useDownloadStore((state) => state.startDownload);
   const handleDownloadEntry = useCallback(
     (entry: ExplorerEntry) => {
       if (!agentId || !requestFileDownloadToken || entry.kind !== "file") {
@@ -442,7 +269,7 @@ export function FileExplorerPane({
     if (!menuEntry) {
       return null;
     }
-    const menuWidth = 180;
+    const menuWidth = 240;
     const horizontalPadding = theme.spacing[2];
     const verticalPadding = theme.spacing[2];
     const maxLeft = Math.max(horizontalPadding, windowWidth - menuWidth - horizontalPadding);
@@ -453,31 +280,176 @@ export function FileExplorerPane({
     );
     const top = Math.min(Math.max(menuAnchor.top + verticalPadding, verticalPadding), maxTop);
     return { top, left, width: menuWidth };
-  }, [menuEntry, menuAnchor.left, menuAnchor.top, menuHeight, theme.spacing, windowHeight, windowWidth]);
+  }, [menuAnchor.left, menuAnchor.top, menuEntry, menuHeight, theme.spacing, windowHeight, windowWidth]);
 
-  const handleListScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const offset = event.nativeEvent.contentOffset.y;
-      listScrollOffsetRef.current = offset;
-      scrollOffsetsByPathRef.current.set(activePath, offset);
+  const handleSortCycle = useCallback(() => {
+    const currentIndex = SORT_OPTIONS.findIndex((opt) => opt.value === sortOption);
+    const nextIndex = (currentIndex + 1) % SORT_OPTIONS.length;
+    setSortOption(SORT_OPTIONS[nextIndex].value);
+  }, [sortOption, setSortOption]);
+
+  const currentSortLabel = SORT_OPTIONS.find((opt) => opt.value === sortOption)?.label ?? "Name";
+
+  const treeRows = useMemo(() => {
+    const rootDirectory = directories.get(".");
+    if (!rootDirectory) {
+      return [];
+    }
+    return buildTreeRows({
+      directories,
+      expandedPaths,
+      sortOption,
+      path: ".",
+      depth: 0,
+    });
+  }, [directories, expandedPaths, sortOption]);
+
+  const showInitialLoading =
+    !directories.has(".") &&
+    Boolean(isExplorerLoading && pendingRequest?.mode === "list" && pendingRequest?.path === ".");
+
+  const shouldShowInlinePreview = !isMobile && Boolean(selectedEntryPath);
+  const dividerWidth = 10;
+  const minTreeWidth = 220;
+  const minPreviewWidth = 320;
+
+  const safeSplitRatio = Number.isFinite(splitRatio)
+    ? splitRatio
+    : DEFAULT_EXPLORER_FILES_SPLIT_RATIO;
+
+  const treePaneWidth = useMemo(() => {
+    if (!shouldShowInlinePreview || containerWidth <= 0) {
+      return null;
+    }
+
+    const available = Math.max(0, containerWidth - dividerWidth);
+    const maxTree = Math.max(minTreeWidth, available - minPreviewWidth);
+    const raw = Math.round(available * safeSplitRatio);
+    return Math.max(minTreeWidth, Math.min(maxTree, raw));
+  }, [containerWidth, safeSplitRatio, shouldShowInlinePreview]);
+
+  const resizeStartRef = useRef<{ startWidth: number; available: number } | null>(null);
+
+  const splitResizeGesture = useMemo(() => {
+    if (!shouldShowInlinePreview || containerWidth <= 0 || treePaneWidth === null) {
+      return Gesture.Pan().enabled(false);
+    }
+
+    const available = Math.max(0, containerWidth - dividerWidth);
+
+    return Gesture.Pan()
+      .enabled(!isMobile)
+      .runOnJS(true)
+      .activeOffsetX([-2, 2])
+      .failOffsetY([-5, 5])
+      .hitSlop({ left: 12, right: 12, top: 0, bottom: 0 })
+      .onBegin(() => {
+        resizeStartRef.current = {
+          startWidth: treePaneWidth,
+          available,
+        };
+      })
+      .onUpdate((event) => {
+        const start = resizeStartRef.current;
+        if (!start) {
+          return;
+        }
+        const nextWidth = start.startWidth + (event.translationX ?? 0);
+        const maxTree = Math.max(minTreeWidth, start.available - minPreviewWidth);
+        const clamped = Math.max(minTreeWidth, Math.min(maxTree, nextWidth));
+        const nextRatio = start.available > 0 ? clamped / start.available : safeSplitRatio;
+        setSplitRatio(nextRatio);
+      })
+      .onFinalize(() => {
+        resizeStartRef.current = null;
+      });
+  }, [
+    containerWidth,
+    dividerWidth,
+    isMobile,
+    setSplitRatio,
+    shouldShowInlinePreview,
+    safeSplitRatio,
+    treePaneWidth,
+  ]);
+
+  const renderTreeRow = useCallback(
+    ({ item }: ListRenderItemInfo<TreeRow>) => {
+      const entry = item.entry;
+      const depth = item.depth;
+      const displayKind = getEntryDisplayKind(entry);
+      const isDirectory = entry.kind === "directory";
+      const isExpanded = isDirectory && expandedPaths.has(entry.path);
+      const isSelected = selectedEntryPath === entry.path;
+      const loading = isDirectory && isDirectoryLoading(entry.path);
+
+      return (
+        <Pressable
+          onPress={() => handleEntryPress(entry)}
+          style={({ hovered, pressed }) => [
+            styles.entryRow,
+            { paddingLeft: theme.spacing[2] + depth * INDENT_PER_LEVEL },
+            (hovered || pressed || isSelected) && styles.entryRowActive,
+          ]}
+        >
+          <View style={styles.entryInfo}>
+            <View style={styles.entryIcon}>
+              {loading ? (
+                <ActivityIndicator size="small" />
+              ) : (
+                renderEntryIcon(isDirectory ? "directory" : displayKind, {
+                  foreground: theme.colors.foregroundMuted,
+                  primary: theme.colors.primary,
+                  directoryOpen: isExpanded,
+                })
+              )}
+            </View>
+            <Text style={styles.entryName} numberOfLines={1}>
+              {entry.name}
+            </Text>
+          </View>
+          <Pressable
+            onPress={(event) => handleOpenMenu(entry, event)}
+            hitSlop={8}
+            style={({ hovered, pressed }) => [
+              styles.menuButton,
+              (hovered || pressed) && styles.menuButtonActive,
+            ]}
+          >
+            <MoreVertical size={16} color={theme.colors.foregroundMuted} />
+          </Pressable>
+        </Pressable>
+      );
     },
-    [activePath]
+    [
+      expandedPaths,
+      handleEntryPress,
+      handleOpenMenu,
+      isDirectoryLoading,
+      selectedEntryPath,
+      theme.colors,
+      theme.spacing,
+    ]
   );
 
-  const handleContainerLayout = useCallback((event: LayoutChangeEvent) => {
-    const { width } = event.nativeEvent.layout;
-    setContainerWidth(width);
-  }, []);
+  const listHeaderComponent = useMemo(() => {
+    return (
+      <View style={styles.headerContainer}>
+        <Pressable style={styles.sortButton} onPress={handleSortCycle}>
+          <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
+        </Pressable>
+      </View>
+    );
+  }, [currentSortLabel, handleSortCycle]);
 
-  const handleClosePreviewSheet = useCallback(() => {
-    setSelectedEntryPath(null);
-  }, []);
-
-  const handlePreviewSheetChange = useCallback((index: number) => {
-    if (index === -1) {
-      setSelectedEntryPath(null);
-    }
-  }, []);
+  const handlePreviewSheetChange = useCallback(
+    (index: number) => {
+      if (index === -1) {
+        handleClosePreview();
+      }
+    },
+    [handleClosePreview]
+  );
 
   const renderPreviewBackdrop = useCallback(
     (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
@@ -491,209 +463,6 @@ export function FileExplorerPane({
     []
   );
 
-  const inlinePreviewTitle = useMemo(() => {
-    return selectedEntryPath?.split("/").pop() ?? "Preview";
-  }, [selectedEntryPath]);
-
-  const shouldShowInlinePreview = !isMobile && Boolean(selectedEntryPath);
-
-  const handleRetryDirectory = useCallback(() => {
-    if (!agentId || !requestDirectoryListing) {
-      return;
-    }
-    requestDirectoryListing(agentId, activePath);
-  }, [agentId, requestDirectoryListing, activePath]);
-
-  const handleRefresh = useCallback(() => {
-    if (!agentId || !requestDirectoryListing) {
-      return;
-    }
-    refreshPathRef.current = activePath;
-    refreshStartedRef.current = false;
-    setIsRefreshing(true);
-    requestDirectoryListing(agentId, activePath, { recordHistory: false });
-  }, [agentId, requestDirectoryListing, activePath]);
-
-  useEffect(() => {
-    if (!isRefreshing) {
-      return;
-    }
-
-    const refreshPath = refreshPathRef.current;
-    if (!refreshPath) {
-      return;
-    }
-
-    const isMatchingList =
-      pendingRequest?.mode === "list" && pendingRequest?.path === refreshPath;
-
-    if (isMatchingList) {
-      refreshStartedRef.current = true;
-      return;
-    }
-
-    if (refreshStartedRef.current) {
-      setIsRefreshing(false);
-      refreshPathRef.current = null;
-      refreshStartedRef.current = false;
-    }
-  }, [isRefreshing, pendingRequest?.mode, pendingRequest?.path]);
-
-  const handleNavigateBack = useCallback(() => {
-    if (!agentId || !navigateExplorerBack) {
-      return;
-    }
-
-    if ((explorerState?.history?.length ?? 0) > 1) {
-      navigateExplorerBack(agentId);
-    }
-  }, [agentId, explorerState?.history?.length, navigateExplorerBack]);
-
-  const renderEntry = useCallback(
-    ({ item }: ListRenderItemInfo<ExplorerEntry>) => {
-      if (viewMode === "grid") {
-        const preview = explorerState?.files.get(item.path);
-        const isImage = getEntryDisplayKind(item) === "image";
-        const isLoadingThumb = Boolean(thumbnailLoadingMap[item.path]);
-        return (
-          <Pressable
-            style={styles.gridCard}
-            onPress={() => handleEntryPress(item)}
-          >
-            <View
-              style={[styles.gridThumbnail, isImage && styles.gridImageBackground]}
-            >
-              {isImage && preview?.content ? (
-                <RNImage
-                  source={{
-                    uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
-                  }}
-                  style={styles.gridImage}
-                  resizeMode="cover"
-                />
-              ) : isImage && isLoadingThumb ? (
-                <ActivityIndicator size="small" />
-              ) : (
-                renderEntryIcon(getEntryDisplayKind(item), theme.colors)
-              )}
-            </View>
-            <Text style={styles.gridName} numberOfLines={1}>
-              {item.name}
-            </Text>
-            <Text style={styles.gridMeta} numberOfLines={1}>
-              {formatFileSize({ size: item.size })}
-            </Text>
-          </Pressable>
-        );
-      }
-
-      const displayKind = getEntryDisplayKind(item);
-      return (
-        <Pressable
-          style={[styles.entryRow, styles.entryRowBackground]}
-          onPress={() => handleEntryPress(item)}
-        >
-          <View style={styles.entryInfo}>
-            <View style={styles.entryIcon}>
-              {renderEntryIcon(displayKind, theme.colors)}
-            </View>
-            <Text style={styles.entryName} numberOfLines={1}>
-              {item.name}
-            </Text>
-          </View>
-          <Pressable
-            onPress={(event) => handleOpenMenu(item, event)}
-            hitSlop={8}
-            style={styles.menuButton}
-          >
-            <MoreVertical size={16} color={theme.colors.foreground} />
-          </Pressable>
-        </Pressable>
-      );
-    },
-    [
-      explorerState?.files,
-      handleEntryPress,
-      handleOpenMenu,
-      theme.colors,
-      thumbnailLoadingMap,
-      viewMode,
-    ]
-  );
-
-  const handleSortCycle = useCallback(() => {
-    const currentIndex = SORT_OPTIONS.findIndex((opt) => opt.value === sortOption);
-    const nextIndex = (currentIndex + 1) % SORT_OPTIONS.length;
-    setSortOption(SORT_OPTIONS[nextIndex].value);
-  }, [sortOption, setSortOption]);
-
-  const currentSortLabel = SORT_OPTIONS.find((opt) => opt.value === sortOption)?.label ?? "Name";
-
-  const listHeaderComponent = useMemo(() => {
-    const canGoBack = (explorerState?.history?.length ?? 0) > 1;
-    return (
-      <View style={styles.headerContainer}>
-        <View style={styles.headerRow}>
-          <View style={styles.pathContainer}>
-            {canGoBack && (
-              <Pressable onPress={handleNavigateBack} style={styles.backButton}>
-                <Text style={styles.backButtonText}>←</Text>
-              </Pressable>
-            )}
-            <Text style={styles.pathText} numberOfLines={1}>
-              {formatDirectoryLabel(activePath)}
-            </Text>
-          </View>
-          <Pressable style={styles.sortButton} onPress={handleSortCycle}>
-            <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
-            <ChevronDown size={14} color={theme.colors.foregroundMuted} />
-          </Pressable>
-        </View>
-      </View>
-    );
-  }, [activePath, currentSortLabel, explorerState?.history?.length, handleNavigateBack, handleSortCycle]);
-
-  // Watch for completed file previews and process queue
-  useEffect(() => {
-    if (!explorerState) {
-      return;
-    }
-
-    const completedPaths: string[] = [];
-    for (const path of inFlightPathsRef.current) {
-      if (explorerState.files.has(path)) {
-        completedPaths.push(path);
-      }
-    }
-
-    if (completedPaths.length === 0) {
-      return;
-    }
-
-    for (const path of completedPaths) {
-      inFlightPathsRef.current.delete(path);
-    }
-
-    setThumbnailLoadingMap((prev) => {
-      const next = { ...prev };
-      for (const path of completedPaths) {
-        delete next[path];
-      }
-      return next;
-    });
-
-    queueMicrotask(() => {
-      processNextThumbnail();
-    });
-  }, [explorerState?.files.size, processNextThumbnail]);
-
-  // Clear queue and loading state on path/view change
-  useEffect(() => {
-    thumbnailQueueRef.current = [];
-    inFlightPathsRef.current.clear();
-    setThumbnailLoadingMap({});
-  }, [activePath, viewMode]);
-
   if (!agentExists) {
     return (
       <View style={styles.centerState}>
@@ -703,130 +472,113 @@ export function FileExplorerPane({
   }
 
   return (
-    <View style={styles.container} onLayout={handleContainerLayout}>
-      <View style={styles.content}>
-        <View style={styles.listSection}>
-          {shouldShowInlinePreview ? (
-            <View style={styles.inlinePreviewContainer}>
-              <View style={styles.inlinePreviewHeader}>
-                <Pressable
-                  onPress={handleClosePreviewSheet}
-                  style={styles.inlinePreviewBackButton}
-                  accessibilityRole="button"
-                  accessibilityLabel="Back to files"
-                >
-                  <ArrowLeft size={18} color={theme.colors.foregroundMuted} />
-                </Pressable>
-
-                <View style={styles.inlinePreviewTitleContainer}>
-                  <Text style={styles.inlinePreviewTitle} numberOfLines={1}>
-                    {inlinePreviewTitle}
-                  </Text>
-                  {selectedEntryPath ? (
-                    <Text style={styles.inlinePreviewSubtitle} numberOfLines={1}>
-                      {selectedEntryPath}
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-
-              {isPreviewLoading && !preview ? (
-                <View style={styles.sheetCenterState}>
-                  <ActivityIndicator size="small" />
-                  <Text style={styles.loadingText}>Loading file...</Text>
-                </View>
-              ) : !preview ? (
-                <View style={styles.sheetCenterState}>
-                  <Text style={styles.emptyText}>No preview available yet</Text>
-                </View>
-              ) : preview.kind === "text" ? (
-                <RNScrollView
-                  style={styles.sheetContent}
-                  contentContainerStyle={styles.sheetScrollContent}
-                >
-                  <RNScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
-                    <Text style={styles.codeText}>{preview.content}</Text>
-                  </RNScrollView>
-                </RNScrollView>
-              ) : preview.kind === "image" && preview.content ? (
-                <RNScrollView contentContainerStyle={styles.sheetImageScrollContent}>
-                  <RNImage
-                    source={{
-                      uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
-                    }}
-                    style={styles.sheetImage}
-                    resizeMode="contain"
-                  />
-                </RNScrollView>
-              ) : (
-                <View style={styles.sheetCenterState}>
-                  <Text style={styles.emptyText}>Binary preview unavailable</Text>
-                  <Text style={styles.entryMenuMeta}>
-                    {formatFileSize({ size: preview.size })}
-                  </Text>
-                </View>
-              )}
-            </View>
-          ) : error ? (
-            <View style={styles.centerState}>
-              <Text style={styles.errorText}>{error}</Text>
-              <View style={styles.errorActions}>
-                <Pressable style={styles.retryButton} onPress={handleRetryDirectory}>
-                  <Text style={styles.retryButtonText}>Retry</Text>
-                </Pressable>
-                {activePath !== "." && (
-                  <Pressable
-                    style={styles.goToWorkspaceButton}
-                    onPress={() => requestDirectoryListing?.(agentId, ".")}
-                  >
-                    <Text style={styles.goToWorkspaceButtonText}>Go to workspace</Text>
-                  </Pressable>
-                )}
-              </View>
-            </View>
-          ) : showInitialListLoading ? (
-            <View style={styles.centerState}>
-              <ActivityIndicator size="small" />
-              <Text style={styles.loadingText}>Loading directory...</Text>
-            </View>
-          ) : entries.length === 0 ? (
-            <View style={styles.centerState}>
-              <Text style={styles.emptyText}>Directory is empty</Text>
-            </View>
-          ) : (
-            <FlatList
-              ref={listScrollRef}
-              data={entries}
-              renderItem={renderEntry}
-              keyExtractor={(item) => item.path}
-              contentContainerStyle={
-                viewMode === "grid" ? styles.gridContent : styles.entriesContent
+    <View
+      style={styles.container}
+      onLayout={(event) => setContainerWidth(event.nativeEvent.layout.width)}
+    >
+      {error ? (
+        <View style={styles.centerState}>
+          <Text style={styles.errorText}>{error}</Text>
+          <Pressable
+            style={styles.retryButton}
+            onPress={() => {
+              if (agentId) {
+                requestDirectoryListing(agentId, ".", {
+                  recordHistory: false,
+                  setCurrentPath: false,
+                });
               }
-              columnWrapperStyle={
-                viewMode === "grid" && listColumns > 1
-                  ? styles.gridColumnWrapper
-                  : undefined
-              }
-              numColumns={listColumns}
-              key={listKey}
-              onScroll={handleListScroll}
-              scrollEventThrottle={16}
-              onLayout={restoreQueuedScrollOffset}
-              onContentSizeChange={restoreQueuedScrollOffset}
-              ListHeaderComponent={listHeaderComponent}
-              extraData={{ viewMode, thumbnailLoadingMap }}
-              initialNumToRender={20}
-              maxToRenderPerBatch={30}
-              windowSize={15}
-              refreshControl={
-                <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
-              }
-              onViewableItemsChanged={handleViewableItemsChangedRef.current}
-              viewabilityConfig={viewabilityConfigRef.current}
-            />
-          )}
+            }}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </Pressable>
         </View>
-      </View>
+      ) : showInitialLoading ? (
+        <View style={styles.centerState}>
+          <ActivityIndicator size="small" />
+          <Text style={styles.loadingText}>Loading files…</Text>
+        </View>
+      ) : treeRows.length === 0 ? (
+        <View style={styles.centerState}>
+          <Text style={styles.emptyText}>No files</Text>
+        </View>
+      ) : (
+        <View style={styles.desktopSplit}>
+          <View
+            style={[
+              styles.treePane,
+              shouldShowInlinePreview && styles.treePaneWithPreview,
+              shouldShowInlinePreview && treePaneWidth !== null
+                ? { width: treePaneWidth, flex: 0, flexGrow: 0, flexShrink: 0 }
+                : null,
+            ]}
+          >
+            <FlatList
+              data={treeRows}
+              renderItem={renderTreeRow}
+              keyExtractor={(row) => row.entry.path}
+              contentContainerStyle={styles.entriesContent}
+              ListHeaderComponent={listHeaderComponent}
+              initialNumToRender={24}
+              maxToRenderPerBatch={40}
+              windowSize={12}
+            />
+          </View>
+
+          {shouldShowInlinePreview ? (
+            <>
+              <GestureDetector gesture={splitResizeGesture}>
+                <View
+                  pointerEvents="box-only"
+                  style={[
+                    styles.splitResizeHandle,
+                    Platform.OS === "web" && ({ cursor: "col-resize" } as any),
+                    Platform.OS === "web" && ({ touchAction: "none", userSelect: "none" } as any),
+                  ]}
+                />
+              </GestureDetector>
+              <View style={styles.previewPane}>
+              <View style={styles.previewHeaderContainer}>
+                <View style={styles.previewHeaderInner}>
+                  <Pressable
+                    onPress={() => {
+                      if (selectedEntryPath) {
+                        void Clipboard.setStringAsync(selectedEntryPath);
+                      }
+                    }}
+                    style={({ hovered, pressed }) => [
+                      styles.previewHeaderRow,
+                      (hovered || pressed) && styles.previewHeaderRowHovered,
+                    ]}
+                  >
+                    <Text style={styles.previewHeaderText} numberOfLines={1}>
+                      {selectedEntryPath?.split("/").pop() ?? "Preview"}
+                    </Text>
+                    {isPreviewLoading ? (
+                      <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+                    ) : null}
+                  </Pressable>
+                  <Pressable
+                    onPress={handleClosePreview}
+                    hitSlop={8}
+                    style={({ hovered, pressed }) => [
+                      styles.iconButton,
+                      (hovered || pressed) && styles.previewHeaderRowHovered,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close preview"
+                  >
+                    <X size={16} color={theme.colors.foregroundMuted} />
+                  </Pressable>
+                </View>
+              </View>
+
+              <FilePreviewBody preview={preview} isLoading={isPreviewLoading} variant="inline" />
+            </View>
+            </>
+          ) : null}
+        </View>
+      )}
 
       <Modal
         visible={Boolean(menuEntry)}
@@ -859,7 +611,10 @@ export function FileExplorerPane({
               </View>
               <View style={styles.entryMenuDivider} />
               <Pressable
-                style={styles.entryMenuItem}
+                style={({ hovered, pressed }) => [
+                  styles.entryMenuItem,
+                  (hovered || pressed) && styles.entryMenuItemHovered,
+                ]}
                 onPress={() => {
                   handleCopyPath(menuEntry.path);
                   handleCloseMenu();
@@ -869,10 +624,13 @@ export function FileExplorerPane({
               </Pressable>
               {menuEntry.kind === "file" ? (
                 <Pressable
-                  style={styles.entryMenuItem}
+                  style={({ hovered, pressed }) => [
+                    styles.entryMenuItem,
+                    (hovered || pressed) && styles.entryMenuItemHovered,
+                  ]}
                   onPress={async () => {
                     handleCloseMenu();
-                    await handleDownloadEntry(menuEntry);
+                    handleDownloadEntry(menuEntry);
                   }}
                 >
                   <Text style={styles.entryMenuText}>Download</Text>
@@ -899,56 +657,101 @@ export function FileExplorerPane({
             <Text style={styles.sheetTitle} numberOfLines={1}>
               {selectedEntryPath?.split("/").pop() ?? "Preview"}
             </Text>
-            <Pressable onPress={handleClosePreviewSheet} style={styles.sheetCloseButton}>
+            <Pressable onPress={handleClosePreview} style={styles.sheetCloseButton}>
               <X size={20} color={theme.colors.foregroundMuted} />
             </Pressable>
           </View>
-          {isPreviewLoading && !preview ? (
-            <View style={styles.sheetCenterState}>
-              <ActivityIndicator size="small" />
-              <Text style={styles.loadingText}>Loading file...</Text>
-            </View>
-          ) : !preview ? (
-            <View style={styles.sheetCenterState}>
-              <Text style={styles.emptyText}>No preview available yet</Text>
-            </View>
-          ) : preview.kind === "text" ? (
-            <BottomSheetScrollView
-              style={styles.sheetContent}
-              contentContainerStyle={styles.sheetScrollContent}
-            >
-              <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
-                <Text style={styles.codeText}>{preview.content}</Text>
-              </ScrollView>
-            </BottomSheetScrollView>
-          ) : preview.kind === "image" && preview.content ? (
-            <BottomSheetScrollView
-              contentContainerStyle={styles.sheetImageScrollContent}
-            >
-              <RNImage
-                source={{
-                  uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
-                }}
-                style={styles.sheetImage}
-                resizeMode="contain"
-              />
-            </BottomSheetScrollView>
-          ) : (
-            <View style={styles.sheetCenterState}>
-              <Text style={styles.emptyText}>Binary preview unavailable</Text>
-              <Text style={styles.entryMenuMeta}>
-                {formatFileSize({ size: preview.size })}
-              </Text>
-            </View>
-          )}
+          <FilePreviewBody preview={preview} isLoading={isPreviewLoading} variant="sheet" />
         </BottomSheetModal>
       ) : null}
     </View>
   );
 }
 
-function formatDirectoryLabel(path: string): string {
-  return path === "." ? "workspace root" : path;
+function FilePreviewBody({
+  preview,
+  isLoading,
+  variant,
+}: {
+  preview: ExplorerFile | null;
+  isLoading: boolean;
+  variant: "inline" | "sheet";
+}) {
+  if (isLoading && !preview) {
+    return (
+      <View style={styles.sheetCenterState}>
+        <ActivityIndicator size="small" />
+        <Text style={styles.loadingText}>Loading file…</Text>
+      </View>
+    );
+  }
+
+  if (!preview) {
+    return (
+      <View style={styles.sheetCenterState}>
+        <Text style={styles.emptyText}>No preview available</Text>
+      </View>
+    );
+  }
+
+  if (preview.kind === "text") {
+    if (variant === "sheet") {
+      return (
+        <BottomSheetScrollView
+          style={styles.previewContent}
+          contentContainerStyle={styles.previewTextContent}
+        >
+          <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+            <Text style={styles.codeText}>{preview.content}</Text>
+          </ScrollView>
+        </BottomSheetScrollView>
+      );
+    }
+    return (
+      <RNScrollView
+        style={styles.previewContent}
+        contentContainerStyle={styles.previewTextContent}
+      >
+        <RNScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+          <Text style={styles.codeText}>{preview.content}</Text>
+        </RNScrollView>
+      </RNScrollView>
+    );
+  }
+
+  if (preview.kind === "image" && preview.content) {
+    if (variant === "sheet") {
+      return (
+        <BottomSheetScrollView contentContainerStyle={styles.previewImageScrollContent}>
+          <RNImage
+            source={{
+              uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
+            }}
+            style={styles.previewImage}
+            resizeMode="contain"
+          />
+        </BottomSheetScrollView>
+      );
+    }
+    return (
+      <RNScrollView contentContainerStyle={styles.previewImageScrollContent}>
+        <RNImage
+          source={{
+            uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
+          }}
+          style={styles.previewImage}
+          resizeMode="contain"
+        />
+      </RNScrollView>
+    );
+  }
+
+  return (
+    <View style={styles.sheetCenterState}>
+      <Text style={styles.emptyText}>Binary preview unavailable</Text>
+      <Text style={styles.entryMenuMeta}>{formatFileSize({ size: preview.size })}</Text>
+    </View>
+  );
 }
 
 function formatFileSize({ size }: { size: number }): string {
@@ -1015,12 +818,16 @@ const TEXT_EXTENSIONS = new Set([
 
 function renderEntryIcon(
   kind: EntryDisplayKind,
-  colors: { foreground: string; primary: string }
+  colors: { foreground: string; primary: string; directoryOpen?: boolean }
 ) {
   const color = colors.foreground;
   switch (kind) {
     case "directory":
-      return <Folder size={18} color={colors.primary} />;
+      return colors.directoryOpen ? (
+        <FolderOpen size={18} color={colors.primary} />
+      ) : (
+        <Folder size={18} color={colors.primary} />
+      );
     case "image":
       return <ImageIcon size={18} color={color} />;
     case "text":
@@ -1059,67 +866,143 @@ function getExtension(name: string): string | null {
   return name.slice(index + 1).toLowerCase();
 }
 
+function sortEntries(entries: ExplorerEntry[], sortOption: SortOption): ExplorerEntry[] {
+  const sorted = [...entries];
+  sorted.sort((a, b) => {
+    if (a.kind !== b.kind) {
+      return a.kind === "directory" ? -1 : 1;
+    }
+    switch (sortOption) {
+      case "name":
+        return a.name.localeCompare(b.name);
+      case "modified":
+        return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
+      case "size":
+        return b.size - a.size;
+      default:
+        return 0;
+    }
+  });
+  return sorted;
+}
+
+function buildTreeRows({
+  directories,
+  expandedPaths,
+  sortOption,
+  path,
+  depth,
+}: {
+  directories: Map<string, { path: string; entries: ExplorerEntry[] }>;
+  expandedPaths: Set<string>;
+  sortOption: SortOption;
+  path: string;
+  depth: number;
+}): TreeRow[] {
+  const directory = directories.get(path);
+  if (!directory) {
+    return [];
+  }
+
+  const rows: TreeRow[] = [];
+  const entries = sortEntries(directory.entries, sortOption);
+
+  for (const entry of entries) {
+    rows.push({ entry, depth });
+    if (entry.kind === "directory" && expandedPaths.has(entry.path)) {
+      rows.push(
+        ...buildTreeRows({
+          directories,
+          expandedPaths,
+          sortOption,
+          path: entry.path,
+          depth: depth + 1,
+        })
+      );
+    }
+  }
+
+  return rows;
+}
+
+function getParentDirectory(path: string): string {
+  const normalized = path.replace(/\/+$/, "");
+  if (!normalized || normalized === ".") {
+    return ".";
+  }
+  const lastSlash = normalized.lastIndexOf("/");
+  if (lastSlash === -1) {
+    return ".";
+  }
+  const dir = normalized.slice(0, lastSlash);
+  return dir.length > 0 ? dir : ".";
+}
+
+function getAncestorDirectories(directory: string): string[] {
+  const trimmed = directory.replace(/^\.\/+/, "").replace(/\/+$/, "");
+  if (!trimmed || trimmed === ".") {
+    return ["."];
+  }
+
+  const parts = trimmed.split("/").filter(Boolean);
+  const ancestors: string[] = ["."];
+  let acc = "";
+  for (const part of parts) {
+    acc = acc ? `${acc}/${part}` : part;
+    ancestors.push(acc);
+  }
+  return ancestors;
+}
+
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
   },
-  content: {
+  desktopSplit: {
     flex: 1,
-    flexDirection: "column",
-    paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[3],
-    gap: theme.spacing[3],
+    flexDirection: "row",
+    minHeight: 0,
   },
-  listSection: {
+  treePane: {
     flex: 1,
+    minWidth: 0,
   },
-  entriesContent: {
-    paddingBottom: theme.spacing[4],
+  treePaneWithPreview: {
+  },
+  splitResizeHandle: {
+    width: 10,
+    backgroundColor: theme.colors.surface0,
+    borderLeftWidth: 1,
+    borderLeftColor: theme.colors.border,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+  },
+  previewPane: {
+    flex: 1,
+    minWidth: 0,
   },
   headerContainer: {
-    gap: theme.spacing[2],
-    paddingBottom: theme.spacing[2],
-  },
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  pathContainer: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    marginRight: theme.spacing[2],
-  },
-  pathText: {
-    flex: 1,
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-    fontFamily: Fonts.mono,
-  },
-  backButton: {
-    padding: theme.spacing[1],
-  },
-  backButtonText: {
-    fontSize: theme.fontSize.lg,
-    color: theme.colors.foreground,
+    paddingHorizontal: theme.spacing[2],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
   },
   sortButton: {
+    alignSelf: "flex-end",
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
   },
   sortButtonText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+  },
+  entriesContent: {
+    paddingBottom: theme.spacing[4],
   },
   centerState: {
     flex: 1,
@@ -1137,30 +1020,14 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     textAlign: "center",
   },
-  errorActions: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-  },
   retryButton: {
-    borderRadius: theme.borderRadius.full,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.primary,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
-  },
-  retryButtonText: {
-    color: theme.colors.primary,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  goToWorkspaceButton: {
     borderRadius: theme.borderRadius.full,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[1],
   },
-  goToWorkspaceButtonText: {
+  retryButtonText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
@@ -1175,13 +1042,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: theme.spacing[1],
-    paddingLeft: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    marginBottom: theme.spacing[1],
+    paddingRight: theme.spacing[2],
   },
-  entryRowBackground: {
+  entryRowActive: {
     backgroundColor: theme.colors.surface2,
   },
   entryInfo: {
@@ -1206,6 +1069,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  menuButtonActive: {
+    backgroundColor: theme.colors.surface2,
+  },
   menuOverlay: {
     flex: 1,
   },
@@ -1214,37 +1080,88 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: "rgba(0, 0, 0, 0.2)",
   },
   entryMenu: {
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-    padding: theme.spacing[1],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface1,
+    overflow: "hidden",
+    ...(Platform.OS === "web"
+      ? ({ boxShadow: "0 10px 30px rgba(0, 0, 0, 0.35)" } as any)
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.35,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 10 },
+          elevation: 14,
+        }),
   },
   entryMenuHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
   },
   entryMenuMeta: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   entryMenuDivider: {
     height: 1,
     backgroundColor: theme.colors.border,
-    marginHorizontal: theme.spacing[2],
-    marginVertical: theme.spacing[1],
   },
   entryMenuItem: {
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+  },
+  entryMenuItemHovered: {
+    backgroundColor: theme.colors.surface2,
   },
   entryMenuText: {
     color: theme.colors.foreground,
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  previewHeaderContainer: {
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  previewHeaderInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+  },
+  previewHeaderRow: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+  },
+  previewHeaderRowHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  previewHeaderText: {
+    flex: 1,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
+  },
+  iconButton: {
+    width: 32,
+    height: 32,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewContent: {
+    flex: 1,
+  },
+  previewTextContent: {
+    padding: theme.spacing[3],
   },
   codeText: {
     color: theme.colors.foreground,
@@ -1252,83 +1169,15 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     flexShrink: 0,
   },
-  gridContent: {
-    paddingBottom: theme.spacing[4],
-    paddingHorizontal: theme.spacing[1],
-  },
-  gridColumnWrapper: {
-    justifyContent: "space-between",
-    marginBottom: theme.spacing[2],
-  },
-  gridCard: {
+  previewImageScrollContent: {
     flex: 1,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    padding: theme.spacing[2],
-    gap: theme.spacing[2],
-    backgroundColor: theme.colors.surface2,
-    marginHorizontal: theme.spacing[1],
-    marginBottom: theme.spacing[1],
-    minWidth: 0,
-  },
-  gridThumbnail: {
-    width: "100%",
-    aspectRatio: 1,
-    borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
-    backgroundColor: theme.colors.surface2,
+    padding: theme.spacing[3],
   },
-  gridImageBackground: {
-    backgroundColor: theme.colors.surface0,
-  },
-  gridImage: {
+  previewImage: {
     width: "100%",
-    height: "100%",
-  },
-  gridName: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
-  gridMeta: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-  },
-  inlinePreviewContainer: {
-    flex: 1,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-    overflow: "hidden",
-  },
-  inlinePreviewHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-  },
-  inlinePreviewBackButton: {
-    padding: theme.spacing[1],
-  },
-  inlinePreviewTitleContainer: {
-    flex: 1,
-    minWidth: 0,
-  },
-  inlinePreviewTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  inlinePreviewSubtitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontFamily: Fonts.mono,
+    aspectRatio: 1,
   },
   sheetBackground: {
     backgroundColor: theme.colors.surface2,
@@ -1354,27 +1203,11 @@ const styles = StyleSheet.create((theme) => ({
   sheetCloseButton: {
     padding: theme.spacing[2],
   },
-  sheetContent: {
-    flex: 1,
-  },
-  sheetScrollContent: {
-    padding: theme.spacing[4],
-  },
   sheetCenterState: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: theme.spacing[2],
     padding: theme.spacing[4],
-  },
-  sheetImageScrollContent: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: theme.spacing[4],
-  },
-  sheetImage: {
-    width: "100%",
-    aspectRatio: 1,
   },
 }));
