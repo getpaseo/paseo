@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { DaemonClientV2, type DaemonTransport } from "./daemon-client-v2";
+import { DaemonClient, type DaemonTransport } from "./daemon-client";
 
 function createMockLogger() {
   return {
@@ -49,8 +49,8 @@ function createMockTransport() {
   };
 }
 
-describe("DaemonClientV2", () => {
-  const clients: DaemonClientV2[] = [];
+describe("DaemonClient", () => {
+  const clients: DaemonClient[] = [];
 
   afterEach(async () => {
     for (const client of clients) {
@@ -63,7 +63,7 @@ describe("DaemonClientV2", () => {
     const logger = createMockLogger();
     const mock = createMockTransport();
 
-    const client = new DaemonClientV2({
+    const client = new DaemonClient({
       url: "ws://test",
       logger,
       reconnect: { enabled: false },
@@ -150,7 +150,7 @@ describe("DaemonClientV2", () => {
       },
     });
 
-    const client = new DaemonClientV2({
+    const client = new DaemonClient({
       url: "ws://test",
       logger,
       reconnect: { enabled: false },

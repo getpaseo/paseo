@@ -1,4 +1,4 @@
-import { DaemonClientV2 } from '@paseo/server'
+import { DaemonClient } from '@paseo/server'
 import WebSocket from 'ws'
 
 export interface ConnectOptions {
@@ -35,12 +35,12 @@ function createNodeWebSocketFactory() {
  * Create and connect a daemon client
  * Returns the connected client or throws if connection fails
  */
-export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonClientV2> {
+export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonClient> {
   const host = getDaemonHost(options)
   const timeout = options?.timeout ?? DEFAULT_TIMEOUT
   const url = `ws://${host}/ws`
 
-  const client = new DaemonClientV2({
+  const client = new DaemonClient({
     url,
     webSocketFactory: createNodeWebSocketFactory(),
     reconnect: { enabled: false },
@@ -76,7 +76,7 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
 /**
  * Try to connect to the daemon, returns null if connection fails
  */
-export async function tryConnectToDaemon(options?: ConnectOptions): Promise<DaemonClientV2 | null> {
+export async function tryConnectToDaemon(options?: ConnectOptions): Promise<DaemonClient | null> {
   try {
     return await connectToDaemon(options)
   } catch {

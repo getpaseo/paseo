@@ -139,7 +139,7 @@ export type DaemonEvent =
 
 export type DaemonEventHandler = (event: DaemonEvent) => void;
 
-export type DaemonClientV2Config = {
+export type DaemonClientConfig = {
   url: string;
   authHeader?: string;
   suppressSendErrors?: boolean;
@@ -256,7 +256,7 @@ interface PendingSend {
   timeoutHandle: ReturnType<typeof setTimeout>;
 }
 
-export class DaemonClientV2 {
+export class DaemonClient {
   private transport: DaemonTransport | null = null;
   private transportCleanup: Array<() => void> = [];
   private rawMessageListeners: Set<(message: SessionOutboundMessage) => void> = new Set();
@@ -285,7 +285,7 @@ export class DaemonClientV2 {
   private logger: Logger;
   private pendingSendQueue: PendingSend[] = [];
 
-  constructor(private config: DaemonClientV2Config) {
+  constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
   }
 

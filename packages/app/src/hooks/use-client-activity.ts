@@ -1,12 +1,12 @@
 import { useEffect, useRef, useCallback } from "react";
 import { AppState, Platform } from "react-native";
-import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
+import type { DaemonClient } from "@server/client/daemon-client";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const ACTIVITY_HEARTBEAT_THROTTLE_MS = 5_000;
 
 interface ClientActivityOptions {
-  client: DaemonClientV2;
+  client: DaemonClient;
   focusedAgentId: string | null;
 }
 
