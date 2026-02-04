@@ -123,6 +123,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const openAgentList = usePanelStore((state) => state.openAgentList);
   const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
+  const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
   const horizontalScroll = useHorizontalScrollOptional();
 
   const isMobile =
@@ -134,7 +135,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
       : desktopAgentListOpen
     : false;
 
-  // Cmd+B to toggle sidebar (web only)
+  // Cmd+B to toggle agent list sidebar, Cmd+E to toggle explorer sidebar (web only)
   useEffect(() => {
     if (!chromeEnabled) return;
     if (Platform.OS !== "web") return;
@@ -142,11 +143,20 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
       if ((event.metaKey || event.ctrlKey) && event.key === "b") {
         event.preventDefault();
         toggleAgentList();
+        return;
+      }
+      if (
+        selectedAgentId &&
+        (event.metaKey || event.ctrlKey) &&
+        (event.code === "KeyE" || event.key.toLowerCase() === "e")
+      ) {
+        event.preventDefault();
+        toggleFileExplorer();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [chromeEnabled, toggleAgentList]);
+  }, [chromeEnabled, selectedAgentId, toggleAgentList, toggleFileExplorer]);
   const {
     translateX,
     backdropOpacity,
