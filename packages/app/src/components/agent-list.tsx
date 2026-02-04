@@ -171,6 +171,8 @@ export function AgentList({
           queryKey,
           queryFn: async () => await client.getCheckoutStatus(agent.cwd),
           staleTime: CHECKOUT_STATUS_STALE_TIME,
+        }).catch((error) => {
+          console.warn("[checkout_status] prefetch failed", error);
         });
       }
     }

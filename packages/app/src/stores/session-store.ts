@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
+import type { DaemonClient } from "@server/client/daemon-client";
 import type { useAudioPlayer } from "@/hooks/use-audio-player";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { StreamItem } from "@/types/stream";
@@ -150,7 +150,7 @@ export interface SessionState {
   serverId: string;
 
   // Daemon client (immutable reference)
-  client: DaemonClientV2 | null;
+  client: DaemonClient | null;
 
   // Connection snapshot (mutable)
   connection: DaemonConnectionSnapshot;
@@ -205,10 +205,10 @@ interface SessionStoreState {
 // Action types
 interface SessionStoreActions {
   // Session management
-  initializeSession: (serverId: string, client: DaemonClientV2, audioPlayer: ReturnType<typeof useAudioPlayer>) => void;
+  initializeSession: (serverId: string, client: DaemonClient, audioPlayer: ReturnType<typeof useAudioPlayer>) => void;
   clearSession: (serverId: string) => void;
   getSession: (serverId: string) => SessionState | undefined;
-  updateSessionClient: (serverId: string, client: DaemonClientV2) => void;
+  updateSessionClient: (serverId: string, client: DaemonClient) => void;
   updateSessionConnection: (serverId: string, connection: DaemonConnectionSnapshot) => void;
 
   // Audio state
@@ -280,7 +280,7 @@ function logSessionStoreUpdate(
 }
 
 
-function createDefaultConnectionSnapshot(client?: DaemonClientV2 | null): DaemonConnectionSnapshot {
+function createDefaultConnectionSnapshot(client?: DaemonClient | null): DaemonConnectionSnapshot {
   if (!client) {
     return { isConnected: false, isConnecting: false, lastError: null };
   }
@@ -293,7 +293,7 @@ function createDefaultConnectionSnapshot(client?: DaemonClientV2 | null): Daemon
 }
 
 // Helper to create initial session state
-function createInitialSessionState(serverId: string, client: DaemonClientV2, audioPlayer: ReturnType<typeof useAudioPlayer>): SessionState {
+function createInitialSessionState(serverId: string, client: DaemonClient, audioPlayer: ReturnType<typeof useAudioPlayer>): SessionState {
   return {
     serverId,
     client,

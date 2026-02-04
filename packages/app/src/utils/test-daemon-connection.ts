@@ -1,5 +1,5 @@
-import { DaemonClientV2 } from "@server/client/daemon-client-v2";
-import type { ConnectionState } from "@server/client/daemon-client-v2";
+import { DaemonClient } from "@server/client/daemon-client";
+import type { ConnectionState } from "@server/client/daemon-client";
 import { buildDaemonWebSocketUrl } from "./daemon-endpoints";
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -45,7 +45,7 @@ export async function testDaemonEndpointConnection(
   const timeoutMs = options?.timeoutMs ?? 6000;
   const url = buildDaemonWebSocketUrl(endpoint);
 
-  const client = new DaemonClientV2({
+  const client = new DaemonClient({
     url,
     suppressSendErrors: true,
   });

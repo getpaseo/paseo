@@ -1,4 +1,4 @@
-import type { DaemonTransport, DaemonTransportFactory } from "@server/client/daemon-client-v2";
+import type { DaemonTransport, DaemonTransportFactory } from "@server/client/daemon-client";
 
 type TauriWebSocketMessage =
   | { type: "Text"; data: string }

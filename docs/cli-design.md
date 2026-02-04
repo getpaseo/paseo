@@ -25,7 +25,7 @@ If a feature is needed in the CLI, the workflow is:
 
 The CLI package depends on `@paseo/server` because it needs to:
 1. **Start the daemon** - `paseo daemon start` spawns/runs the server process
-2. **Talk to the daemon** - Uses `DaemonClientV2` for all other commands
+2. **Talk to the daemon** - Uses `DaemonClient` for all other commands
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -37,7 +37,7 @@ The CLI package depends on `@paseo/server` because it needs to:
 │         ┌──────────────┴──────────────┐             │
 │         ▼                             ▼             │
 │  ┌─────────────────┐        ┌─────────────────┐     │
-│  │ daemon start    │        │ DaemonClientV2  │     │
+│  │ daemon start    │        │ DaemonClient    │     │
 │  │ (spawns server) │        │ (WebSocket)     │     │
 │  └────────┬────────┘        └────────┬────────┘     │
 │           │                          │              │
@@ -102,7 +102,7 @@ bootstrap.ts      → createPaseoDaemon(config, logger) - CLEAN ✓
   - loadConfig(paseoHome) → PaseoDaemonConfig
   - PaseoDaemonConfig type
   - createRootLogger(options) → Logger
-  - DaemonClientV2 (for client connections)
+  - DaemonClient (for client connections)
   - resolvePaseoHome(override?) → string
 ```
 
@@ -1575,7 +1575,7 @@ process.exit(failed > 0 ? 1 : 0)
 4. Create `bin/paseo` entry point
 
 **Daemon Client Enhancements:**
-The existing `DaemonClientV2` in `packages/server/src/client/daemon-client-v2.ts` already supports most operations. Export it for CLI use:
+The existing `DaemonClient` in `packages/server/src/client/daemon-client.ts` already supports most operations. Export it for CLI use:
 - Export client from `packages/server`
 - Add connection string parsing (host:port)
 
@@ -1701,13 +1701,13 @@ The following features need to be added to the daemon and/or client before the C
 
 ### Export Requirements
 
-The `DaemonClientV2` needs to be exported from `@paseo/server` for the CLI to use:
+The `DaemonClient` needs to be exported from `@paseo/server` for the CLI to use:
 
 ```typescript
 // packages/server/package.json exports
 {
   "exports": {
-    "./client": "./src/client/daemon-client-v2.ts",
+    "./client": "./src/client/daemon-client.ts",
     "./types": "./src/types/index.ts"
   }
 }

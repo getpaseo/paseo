@@ -3,7 +3,7 @@ import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
-import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
+import type { DaemonClient } from "@server/client/daemon-client";
 
 const STORAGE_PREFIX = "@paseo:expo-push-token:";
 
@@ -26,7 +26,7 @@ async function ensurePushPermission(): Promise<boolean> {
 }
 
 export function usePushTokenRegistration(params: {
-  client: DaemonClientV2;
+  client: DaemonClient;
   serverId: string;
 }): void {
   const { client, serverId } = params;

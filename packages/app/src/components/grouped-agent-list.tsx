@@ -311,6 +311,8 @@ export function GroupedAgentList({
         queryKey,
         queryFn: async () => await client.getCheckoutStatus(agent.cwd),
         staleTime: CHECKOUT_STATUS_STALE_TIME,
+      }).catch((error) => {
+        console.warn("[checkout_status] prefetch failed", error);
       });
     }
   }, [agents, queryClient]);
@@ -411,7 +413,9 @@ export function GroupedAgentList({
       const session = useSessionStore.getState().sessions[agent.serverId];
       const client = session?.client ?? null;
       if (client) {
-        void client.archiveAgent(agent.id);
+        void client.archiveAgent(agent.id).catch((error) => {
+          console.warn("[archive_agent] failed", error);
+        });
       }
     },
     []

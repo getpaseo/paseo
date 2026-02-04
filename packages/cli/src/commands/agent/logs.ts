@@ -2,7 +2,7 @@ import type { Command } from 'commander'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions } from '../../output/index.js'
 import type {
-  DaemonClientV2,
+  DaemonClient,
   AgentStreamMessage,
   AgentStreamSnapshotMessage,
   AgentTimelineItem,
@@ -80,7 +80,7 @@ export async function runLogsCommand(
     process.exit(1)
   }
 
-  let client: DaemonClientV2
+  let client: DaemonClient
   try {
     client = await connectToDaemon({ host: options.host as string | undefined })
   } catch (err) {
@@ -172,7 +172,7 @@ export async function runLogsCommand(
  * Follow mode: stream logs in real-time until interrupted
  */
 async function runFollowMode(
-  client: DaemonClientV2,
+  client: DaemonClient,
   agentId: string,
   options: AgentLogsOptions
 ): Promise<void> {
