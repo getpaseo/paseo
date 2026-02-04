@@ -30,7 +30,7 @@ interface DesktopSidebarState {
 export type ExplorerTab = "changes" | "files";
 export type SortOption = "name" | "modified" | "size";
 
-export const DEFAULT_EXPLORER_SIDEBAR_WIDTH = Platform.OS === "web" ? 520 : 400;
+export const DEFAULT_EXPLORER_SIDEBAR_WIDTH = Platform.OS === "web" ? 640 : 400;
 export const MIN_EXPLORER_SIDEBAR_WIDTH = 280;
 // Upper bound is intentionally generous; desktop resizing enforces a min-chat-width constraint.
 export const MAX_EXPLORER_SIDEBAR_WIDTH = 2000;
@@ -164,7 +164,7 @@ export const usePanelStore = create<PanelState>()(
     }),
     {
       name: "panel-state",
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState, version) => {
         const state = persistedState as Partial<PanelState> & Record<string, unknown>;
@@ -184,6 +184,16 @@ export const usePanelStore = create<PanelState>()(
             state.explorerFilesSplitRatio = clampExplorerFilesSplitRatio(
               state.explorerFilesSplitRatio
             );
+          }
+        }
+
+        if (version < 3) {
+          if (
+            Platform.OS === "web" &&
+            typeof state.explorerWidth === "number" &&
+            (state.explorerWidth === 400 || state.explorerWidth === 520)
+          ) {
+            state.explorerWidth = DEFAULT_EXPLORER_SIDEBAR_WIDTH;
           }
         }
 
