@@ -7,12 +7,14 @@ import {
   createRootLogger,
   loadPersistedConfig,
 } from '@paseo/server'
+import type { CliConfigOverrides } from '@paseo/server'
 
 interface StartOptions {
   port?: string
   home?: string
   foreground?: boolean
   noRelay?: boolean
+  noMcp?: boolean
   allowedHosts?: string
 }
 
@@ -23,7 +25,11 @@ export function startCommand(): Command {
     .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
     .option('--foreground', 'Run in foreground (don\'t daemonize)')
     .option('--no-relay', 'Disable relay connection')
-    .option('--allowed-hosts <hosts>', 'Comma-separated list of allowed MCP hosts (e.g., "localhost:6767,127.0.0.1:6767")')
+    .option('--no-mcp', 'Disable the Agent MCP HTTP endpoint')
+    .option(
+      '--allowed-hosts <hosts>',
+      'Comma-separated list of allowed Host header values (Vite-style; e.g., "localhost,.example.com" or "true")'
+    )
     .action(async (options: StartOptions) => {
       await runStart(options)
     })
@@ -34,22 +40,41 @@ async function runStart(options: StartOptions): Promise<void> {
   if (options.home) {
     process.env.PASEO_HOME = options.home
   }
+
+  let paseoHome: string
+  let logger: ReturnType<typeof createRootLogger>
+  let config: ReturnType<typeof loadConfig>
+  const cliOverrides: CliConfigOverrides = {}
+
   if (options.port) {
-    process.env.PASEO_LISTEN = `127.0.0.1:${options.port}`
+    cliOverrides.listen = `127.0.0.1:${options.port}`
   }
 
-  const paseoHome = resolvePaseoHome()
-  const persistedConfig = loadPersistedConfig(paseoHome)
-  const logger = createRootLogger(persistedConfig)
-  const config = loadConfig(paseoHome)
-
-  // Apply CLI overrides
   if (options.noRelay) {
-    config.relayEnabled = false
+    cliOverrides.relayEnabled = false
   }
 
   if (options.allowedHosts) {
-    config.agentMcpAllowedHosts = options.allowedHosts.split(',').map(h => h.trim())
+    const raw = options.allowedHosts.trim()
+    cliOverrides.allowedHosts =
+      raw.toLowerCase() === 'true'
+        ? true
+        : raw.split(',').map(h => h.trim()).filter(Boolean)
+  }
+
+  if (options.noMcp) {
+    cliOverrides.mcpEnabled = false
+  }
+
+  try {
+    paseoHome = resolvePaseoHome()
+    const persistedConfig = loadPersistedConfig(paseoHome)
+    logger = createRootLogger(persistedConfig)
+    config = loadConfig(paseoHome, { cli: cliOverrides })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(chalk.red(message))
+    process.exit(1)
   }
 
   // For now, only foreground mode is supported

@@ -1,0 +1,223 @@
+{
+  "$ref": "#/definitions/PaseoConfigV1",
+  "definitions": {
+    "PaseoConfigV1": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "daemon": {
+          "type": "object",
+          "properties": {
+            "listen": {
+              "type": "string"
+            },
+            "allowedHosts": {
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "const": true
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            },
+            "mcp": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "cors": {
+              "type": "object",
+              "properties": {
+                "allowedOrigins": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "relay": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "endpoint": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "app": {
+          "type": "object",
+          "properties": {
+            "baseUrl": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "providers": {
+          "type": "object",
+          "properties": {
+            "openai": {
+              "type": "object",
+              "properties": {
+                "apiKey": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            },
+            "openrouter": {
+              "$ref": "#/definitions/PaseoConfigV1/properties/providers/properties/openai"
+            }
+          },
+          "additionalProperties": false
+        },
+        "features": {
+          "type": "object",
+          "properties": {
+            "dictation": {
+              "type": "object",
+              "properties": {
+                "stt": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "openai"
+                      ]
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "confidenceThreshold": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "voiceMode": {
+              "type": "object",
+              "properties": {
+                "llm": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "openrouter"
+                      ]
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "stt": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "openai"
+                      ]
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "tts": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "openai"
+                      ]
+                    },
+                    "model": {
+                      "type": "string",
+                      "enum": [
+                        "tts-1",
+                        "tts-1-hd"
+                      ]
+                    },
+                    "voice": {
+                      "type": "string",
+                      "enum": [
+                        "alloy",
+                        "echo",
+                        "fable",
+                        "onyx",
+                        "nova",
+                        "shimmer"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "log": {
+          "type": "object",
+          "properties": {
+            "level": {
+              "type": "string",
+              "enum": [
+                "trace",
+                "debug",
+                "info",
+                "warn",
+                "error",
+                "fatal"
+              ]
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "pretty",
+                "json"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

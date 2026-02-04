@@ -97,6 +97,22 @@ function GettingStarted() {
           Local voice support is coming soon.
         </p>
       </section>
+
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Next</h2>
+        <ul className="text-white/60 space-y-2 list-disc list-inside">
+          <li>
+            <a href="/docs/configuration" className="underline hover:text-white/80">
+              Configuration
+            </a>
+          </li>
+          <li>
+            <a href="/docs/security" className="underline hover:text-white/80">
+              Security
+            </a>
+          </li>
+        </ul>
+      </section>
     </div>
   )
 }
