@@ -44,6 +44,7 @@ import { useSidebarAgentSections, type SidebarSectionData } from "@/hooks/use-si
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 import { getIsTauri } from "@/constants/layout";
+import { AgentStatusDot } from "@/components/agent-status-dot";
 
 type SectionData = SidebarSectionData;
 
@@ -339,11 +340,6 @@ export function GroupedAgentList({
       const isRunning = agent.status === "running";
       const shortcutNumber =
         showShortcutBadges ? (shortcutIndexByAgentKey.get(agentKey) ?? null) : null;
-      const statusColor = isRunning
-        ? theme.colors.palette.blue[500]
-        : agent.requiresAttention
-          ? theme.colors.success
-          : null;
 
       const checkoutQuery = useCheckoutStatusCacheOnly({
         serverId: agent.serverId,
@@ -377,11 +373,7 @@ export function GroupedAgentList({
         >
           <View style={styles.agentContent}>
             <View style={styles.row}>
-              {statusColor && (
-                <View
-                  style={[styles.statusDot, { backgroundColor: statusColor }]}
-                />
-              )}
+              <AgentStatusDot status={agent.status} requiresAttention={agent.requiresAttention} />
               <Text
                 style={[
                   styles.agentTitle,
@@ -437,8 +429,6 @@ export function GroupedAgentList({
       shortcutIndexByAgentKey,
       theme.colors.foreground,
       theme.colors.foregroundMuted,
-      theme.colors.palette.blue,
-      theme.colors.success,
     ]
   );
 
@@ -690,11 +680,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: "300",
     color: theme.colors.foregroundMuted,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: theme.borderRadius.full,
   },
   sheetOverlay: {
     flex: 1,

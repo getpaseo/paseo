@@ -125,6 +125,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const openAgentList = usePanelStore((state) => state.openAgentList);
   const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
+  const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
   const horizontalScroll = useHorizontalScrollOptional();
 
   const isMobile =
@@ -140,6 +141,8 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
     enabled: chromeEnabled,
     isMobile,
     toggleAgentList,
+    selectedAgentId,
+    toggleFileExplorer,
   });
   const {
     translateX,
