@@ -257,6 +257,7 @@ interface SessionProviderProps {
   children: ReactNode;
   serverUrl: string;
   serverId: string;
+  daemonPublicKeyB64?: string;
 }
 
 // SessionProvider: Daemon client message handler that updates Zustand store
@@ -264,8 +265,9 @@ export function SessionProvider({
   children,
   serverUrl,
   serverId,
+  daemonPublicKeyB64,
 }: SessionProviderProps) {
-  const client = useDaemonClient(serverUrl);
+  const client = useDaemonClient(serverUrl, { daemonPublicKeyB64 });
   const [connectionSnapshot, setConnectionSnapshot] =
     useState<DaemonConnectionSnapshot>(() =>
       mapConnectionState(client.getConnectionState(), client.lastError)

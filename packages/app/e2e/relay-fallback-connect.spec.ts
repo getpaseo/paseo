@@ -3,8 +3,11 @@ import { test, expect } from './fixtures';
 test('connects via relay when direct endpoints fail', async ({ page }) => {
   const relayPort = process.env.E2E_RELAY_PORT;
   const sessionId = process.env.E2E_RELAY_SESSION_ID;
-  if (!relayPort || !sessionId) {
-    throw new Error('E2E_RELAY_PORT or E2E_RELAY_SESSION_ID is not set (expected from globalSetup).');
+  const daemonPublicKeyB64 = process.env.E2E_RELAY_DAEMON_PUBLIC_KEY;
+  if (!relayPort || !sessionId || !daemonPublicKeyB64) {
+    throw new Error(
+      'E2E_RELAY_PORT, E2E_RELAY_SESSION_ID, or E2E_RELAY_DAEMON_PUBLIC_KEY is not set (expected from globalSetup).'
+    );
   }
 
   const nowIso = new Date().toISOString();
@@ -14,6 +17,7 @@ test('connects via relay when direct endpoints fail', async ({ page }) => {
     id: 'relay-only-daemon',
     label: 'relay-daemon',
     endpoints: [relayEndpoint],
+    daemonPublicKeyB64,
     relay: { endpoint: relayEndpoint, sessionId },
     metadata: null,
     createdAt: nowIso,

@@ -5,6 +5,7 @@ const path = require("path");
 
 const projectRoot = __dirname;
 const serverSrcRoot = path.resolve(projectRoot, "../server/src");
+const relaySrcRoot = path.resolve(projectRoot, "../relay/src");
 
 const config = getDefaultConfig(projectRoot);
 const defaultResolveRequest = config.resolver.resolveRequest ?? resolve;
@@ -13,7 +14,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   const origin = context.originModulePath;
   if (
     origin &&
-    origin.startsWith(serverSrcRoot) &&
+    (origin.startsWith(serverSrcRoot) || origin.startsWith(relaySrcRoot)) &&
     moduleName.endsWith(".js")
   ) {
     const tsModuleName = moduleName.replace(/\.js$/, ".ts");

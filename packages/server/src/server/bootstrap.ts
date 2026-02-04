@@ -53,6 +53,7 @@ import {
   createConnectionOfferV1,
   encodeOfferToFragmentUrl,
 } from "./connection-offer.js";
+import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { printPairingQrIfEnabled } from "./pairing-qr.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
 import type {
@@ -105,6 +106,7 @@ export async function createPaseoDaemon(
   ): Promise<PaseoDaemon> {
   const logger = rootLogger.child({ module: "bootstrap" });
   const connectionSessionId = randomUUID();
+  const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
   let relayTransport: RelayTransportController | null = null;
 
   const staticDir = config.staticDir;
@@ -460,13 +462,13 @@ export async function createPaseoDaemon(
             const endpoints = buildOfferEndpoints({
               listenHost: listenTarget.host,
               port: listenTarget.port,
-              relayEnabled,
-              relayEndpoint,
             });
 
             const offer = await createConnectionOfferV1({
               sessionId: connectionSessionId,
               endpoints,
+              daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
+              relay: relayEnabled ? { endpoint: relayEndpoint } : null,
             });
 
             const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
@@ -480,6 +482,7 @@ export async function createPaseoDaemon(
                 attachSocket: (ws) => wsServer.attachExternalSocket(ws),
                 relayEndpoint,
                 sessionId: connectionSessionId,
+                daemonKeyPair: daemonKeyPair.keyPair,
               });
             }
           } else {

@@ -2,7 +2,6 @@ import { createContext, useCallback, useContext } from "react";
 import type { ReactNode } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
 import {
   buildDaemonWebSocketUrl,
   decodeOfferFragmentPayload,
@@ -10,6 +9,10 @@ import {
   extractHostPortFromWebSocketUrl,
   normalizeHostPort,
 } from "@/utils/daemon-endpoints";
+import {
+  ConnectionOfferV1Schema,
+  type ConnectionOfferV1,
+} from "@server/shared/connection-offer";
 
 const REGISTRY_STORAGE_KEY = "@paseo:daemon-registry";
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
@@ -40,15 +43,6 @@ type CreateHostInput = {
 };
 
 type UpdateHostInput = Partial<Omit<HostProfile, "id" | "createdAt">>;
-
-const ConnectionOfferV1Schema = z.object({
-  v: z.literal(1),
-  sessionId: z.string().min(1),
-  endpoints: z.array(z.string().min(1)).min(1),
-  daemonPublicKeyB64: z.string().min(1),
-});
-
-export type ConnectionOfferV1 = z.infer<typeof ConnectionOfferV1Schema>;
 
 interface DaemonRegistryContextValue {
   daemons: HostProfile[];
@@ -134,7 +128,16 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
       const existing = readDaemons();
       const now = new Date().toISOString();
       const normalizedEndpoints = offer.endpoints.map((endpoint) => normalizeHostPort(endpoint));
-      const relayEndpoint = normalizedEndpoints[normalizedEndpoints.length - 1];
+      let relayEndpoint: string | null = null;
+      if (offer.relay?.endpoint) {
+        relayEndpoint = normalizeHostPort(offer.relay.endpoint);
+      } else if (offer.relay === undefined && normalizedEndpoints.length > 0) {
+        // Back-compat: older offers encoded relay endpoint as the last entry.
+        relayEndpoint = normalizedEndpoints[normalizedEndpoints.length - 1];
+      }
+      const relay = relayEndpoint
+        ? { endpoint: relayEndpoint, sessionId: offer.sessionId }
+        : null;
 
       const matchIndex = existing.findIndex((daemon) => daemon.daemonPublicKeyB64 === offer.daemonPublicKeyB64);
       if (matchIndex !== -1) {
@@ -142,7 +145,7 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
           ...existing[matchIndex],
           daemonPublicKeyB64: offer.daemonPublicKeyB64,
           endpoints: normalizedEndpoints,
-          relay: { endpoint: relayEndpoint, sessionId: offer.sessionId },
+          relay,
           updatedAt: now,
         };
         const next = [...existing];
@@ -156,7 +159,7 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
         label: deriveLabelFromEndpoint(normalizedEndpoints[0] ?? "Unnamed Host"),
         endpoints: normalizedEndpoints,
         daemonPublicKeyB64: offer.daemonPublicKeyB64,
-        relay: { endpoint: relayEndpoint, sessionId: offer.sessionId },
+        relay,
         createdAt: now,
         updatedAt: now,
         metadata: null,

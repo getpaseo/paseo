@@ -89,6 +89,7 @@ describe("ConnectionOfferV1 (daemon E2E)", () => {
         sessionId: string;
         endpoints: string[];
         daemonPublicKeyB64: string;
+        relay?: { endpoint: string } | null;
       };
 
       expect(offer.v).toBe(1);
@@ -97,7 +98,8 @@ describe("ConnectionOfferV1 (daemon E2E)", () => {
       expect(Array.isArray(offer.endpoints)).toBe(true);
       expect(offer.endpoints).toContain(`192.168.1.12:${daemon.port}`);
       expect(offer.endpoints).toContain(`localhost:${daemon.port}`);
-      expect(offer.endpoints).toContain("relay.paseo.sh:443");
+      expect(offer.endpoints).not.toContain("relay.paseo.sh:443");
+      expect(offer.relay?.endpoint).toBe("relay.paseo.sh:443");
       expect(typeof offer.daemonPublicKeyB64).toBe("string");
       expect(offer.daemonPublicKeyB64.length).toBeGreaterThan(0);
       expect(() => Buffer.from(offer.daemonPublicKeyB64, "base64")).not.toThrow();
@@ -167,9 +169,11 @@ describe("ConnectionOfferV1 (daemon E2E)", () => {
 
         const offer = decodeOfferFromFragmentUrl(offerUrl) as {
           endpoints: string[];
+          relay?: { endpoint: string } | null;
         };
 
         expect(offer.endpoints).not.toContain("relay.paseo.sh:443");
+        expect(offer.relay).toBe(null);
         expect(offer.endpoints).toContain(`localhost:${port}`);
         expect(offer.endpoints).toContain(`192.168.1.12:${port}`);
       } catch (err) {
