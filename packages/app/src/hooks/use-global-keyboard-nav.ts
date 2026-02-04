@@ -127,6 +127,24 @@ export function useGlobalKeyboardNav({
         return;
       }
 
+      // Ctrl+`: toggle explorer sidebar (VS Code muscle memory)
+      // Note: intentionally works even when focus is inside an input/textarea.
+      if (
+        selectedAgentId &&
+        toggleFileExplorer &&
+        event.ctrlKey &&
+        !event.metaKey &&
+        (event.code === "Backquote" || key === "`")
+      ) {
+        // Ignore while command center is open.
+        if (useKeyboardNavStore.getState().commandCenterOpen) {
+          return;
+        }
+        event.preventDefault();
+        toggleFileExplorer();
+        return;
+      }
+
       // Cmd+K: command center
       if ((event.metaKey || event.ctrlKey) && lowerKey === "k") {
         event.preventDefault();
