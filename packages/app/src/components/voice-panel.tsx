@@ -87,6 +87,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     justifyContent: "center",
     alignItems: "flex-start",
+    paddingLeft: theme.spacing[1],
   },
   actionsRow: {
     flexDirection: "row",
