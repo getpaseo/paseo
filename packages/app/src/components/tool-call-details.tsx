@@ -161,7 +161,7 @@ export function ToolCallDetailsContent({
   const isFullBleed = display.type === "edit" || display.type === "shell";
 
   if (display.type === "shell") {
-    const combinedText = `$ ${display.command}${display.output ? `\n${display.output}` : ""}`;
+    const hasOutput = Boolean(display.output);
     sections.push(
       <View key="shell" style={styles.section}>
         <View style={styles.diffContainer}>
@@ -178,7 +178,11 @@ export function ToolCallDetailsContent({
               contentContainerStyle={styles.codeHorizontalContent}
             >
               <View style={styles.codeLine}>
-                <Text selectable style={styles.scrollText}>{combinedText}</Text>
+                <Text selectable style={styles.scrollText}>
+                  <Text style={styles.shellPrompt}>$ </Text>
+                  {display.command}
+                  {hasOutput ? `\n\n${display.output}` : ""}
+                </Text>
               </View>
             </ScrollView>
           </ScrollView>
@@ -424,16 +428,19 @@ const styles = StyleSheet.create((theme) => {
   scrollContent: {
     padding: insets.padding,
   },
-  scrollText: {
-    fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foreground,
-    lineHeight: 18,
-  },
-  jsonScroll: {
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.base,
+    scrollText: {
+      fontFamily: Fonts.mono,
+      fontSize: theme.fontSize.xs,
+      color: theme.colors.foreground,
+      lineHeight: 18,
+    },
+    shellPrompt: {
+      color: theme.colors.foregroundMuted,
+    },
+    jsonScroll: {
+      borderWidth: theme.borderWidth[1],
+      borderColor: theme.colors.border,
+      borderRadius: theme.borderRadius.base,
     backgroundColor: theme.colors.surface2,
   },
   jsonScrollError: {
