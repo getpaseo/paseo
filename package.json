@@ -21,7 +21,7 @@
     "test": "npm run test --workspaces --if-present",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "start": "npm run start --workspace=@paseo/server",
+    "start": "npm run start --workspace=@getpaseo/server",
     "android": "npm run android --workspace=@paseo/app",
     "android:release": "ANDROID_VARIANT=productionRelease npm run android --workspace=@paseo/app",
     "android:dev-release": "ANDROID_VARIANT=devRelease npm run android --workspace=@paseo/app",

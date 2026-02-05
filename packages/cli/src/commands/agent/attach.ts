@@ -6,7 +6,7 @@ import type {
   AgentStreamSnapshotMessage,
   AgentStreamEventPayload,
   AgentTimelineItem,
-} from '@paseo/server'
+} from '@getpaseo/server'
 
 export interface AgentAttachOptions {
   host?: string

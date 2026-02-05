@@ -1,4 +1,4 @@
-import { DaemonClient } from '@paseo/server'
+import { DaemonClient } from '@getpaseo/server'
 import WebSocket from 'ws'
 
 export interface ConnectOptions {

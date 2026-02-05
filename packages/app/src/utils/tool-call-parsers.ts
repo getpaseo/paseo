@@ -1,6 +1,6 @@
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
-import { stripShellWrapperPrefix } from "@paseo/server/utils/tool-call-parsers";
+import { stripShellWrapperPrefix } from "@getpaseo/server/utils/tool-call-parsers";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "./perf";
 
 const TOOL_CALL_DIFF_LOG_TAG = "[ToolCallDiff]";
@@ -1340,4 +1340,4 @@ export {
   stripCwdPrefix,
   extractTodos,
   type TodoItem,
-} from "@paseo/server/utils/tool-call-parsers";
+} from "@getpaseo/server/utils/tool-call-parsers";

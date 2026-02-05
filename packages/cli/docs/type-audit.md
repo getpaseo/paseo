@@ -2,7 +2,7 @@
 
 ## Scope
 - Audited `packages/cli/src/commands/**` for inline type/interface definitions.
-- Checked `@paseo/server` exports from `packages/server/src/server/exports.ts`.
+- Checked `@getpaseo/server` exports from `packages/server/src/server/exports.ts`.
 - Note: `packages/server/src/index.ts` does **not** exist in this repo; the package export entrypoint is `./src/server/exports.ts` per `packages/server/package.json`.
 
 ## Server Exports (current)
@@ -22,7 +22,7 @@ Inline types:
 - `AgentSnapshot` (id/provider/cwd/createdAt/status/title)
 
 Recommended server type:
-- `AgentSnapshotPayload` from `packages/server/src/shared/messages.ts` (daemon client returns this shape). **Not exported** from `@paseo/server` today.
+- `AgentSnapshotPayload` from `packages/server/src/shared/messages.ts` (daemon client returns this shape). **Not exported** from `@getpaseo/server` today.
 
 Notes:
 - `AgentRunResult` is CLI output; no server type expected.
@@ -136,8 +136,8 @@ Inline types:
 Server type usage:
 - CLI-only; no server type expected.
 
-## Gaps in `@paseo/server` Exports (needed for CLI cleanup)
-To replace inline types in CLI commands, `@paseo/server` would need to export (directly or re-export):
+## Gaps in `@getpaseo/server` Exports (needed for CLI cleanup)
+To replace inline types in CLI commands, `@getpaseo/server` would need to export (directly or re-export):
 - From `packages/server/src/shared/messages.ts`:
   - `AgentSnapshotPayload`
   - `AgentStreamEventPayload`
@@ -152,4 +152,4 @@ To replace inline types in CLI commands, `@paseo/server` would need to export (d
   - `AgentTimelineItem`
 
 ## Summary
-Primary inline types that should become server imports are the agent snapshot/timeline/message/permission/mode shapes in `agent/*` commands. All are defined in server shared or agent SDK types today but are not exported through `@paseo/server`.
+Primary inline types that should become server imports are the agent snapshot/timeline/message/permission/mode shapes in `agent/*` commands. All are defined in server shared or agent SDK types today but are not exported through `@getpaseo/server`.

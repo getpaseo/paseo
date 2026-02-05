@@ -6,8 +6,8 @@ import type {
   AgentStreamMessage,
   AgentStreamSnapshotMessage,
   AgentTimelineItem,
-} from '@paseo/server'
-import { curateAgentActivity } from '@paseo/server'
+} from '@getpaseo/server'
+import { curateAgentActivity } from '@getpaseo/server'
 
 export interface AgentLogsOptions extends CommandOptions {
   follow?: boolean

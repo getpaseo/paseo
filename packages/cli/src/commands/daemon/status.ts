@@ -1,5 +1,5 @@
 import type { Command } from 'commander'
-import { resolvePaseoHome } from '@paseo/server'
+import { resolvePaseoHome } from '@getpaseo/server'
 import { tryConnectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from '../../output/index.js'
 

@@ -1,4 +1,4 @@
-// CLI exports for @paseo/server
+// CLI exports for @getpaseo/server
 export { createPaseoDaemon, type PaseoDaemon, type PaseoDaemonConfig } from "./bootstrap.js";
 export { loadConfig, type CliConfigOverrides } from "./config.js";
 export { resolvePaseoHome } from "./paseo-home.js";

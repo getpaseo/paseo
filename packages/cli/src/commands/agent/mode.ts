@@ -6,7 +6,7 @@ import type {
   CommandError,
   AnyCommandResult,
 } from '../../output/index.js'
-import type { AgentMode } from '@paseo/server'
+import type { AgentMode } from '@getpaseo/server'
 
 /** Result for setting mode */
 export interface SetModeResult {

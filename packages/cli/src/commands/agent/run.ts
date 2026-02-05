@@ -1,5 +1,5 @@
 import type { Command } from 'commander'
-import type { AgentSnapshotPayload } from '@paseo/server'
+import type { AgentSnapshotPayload } from '@getpaseo/server'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
 import { readFileSync } from 'node:fs'

@@ -6,8 +6,8 @@ import {
   resolvePaseoHome,
   createRootLogger,
   loadPersistedConfig,
-} from '@paseo/server'
-import type { CliConfigOverrides } from '@paseo/server'
+} from '@getpaseo/server'
+import type { CliConfigOverrides } from '@getpaseo/server'
 
 interface StartOptions {
   port?: string
