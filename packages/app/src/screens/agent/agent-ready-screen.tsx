@@ -31,6 +31,7 @@ import {
 } from "lucide-react-native";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { BackHeader } from "@/components/headers/back-header";
+import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { AgentDetailsSheet } from "@/components/agent-details-sheet";
@@ -569,7 +570,17 @@ function AgentScreenContent({
           title={effectiveAgent.title || "Agent"}
           rightContent={
             <View style={styles.headerRightContent}>
-              <Pressable onPress={toggleFileExplorer} style={styles.menuButton}>
+              <HeaderToggleButton
+                onPress={toggleFileExplorer}
+                tooltipLabel="Toggle explorer"
+                tooltipKeys={["mod", "E"]}
+                tooltipSide="left"
+                style={styles.menuButton}
+                accessible
+                accessibilityRole="button"
+                accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
+                accessibilityState={{ expanded: isExplorerOpen }}
+              >
                 {isMobile ? (
                   checkout?.isGit ? (
                     <GitBranch
@@ -600,7 +611,7 @@ function AgentScreenContent({
                     }
                   />
                 )}
-              </Pressable>
+              </HeaderToggleButton>
               <DropdownMenu
                 onOpenChange={(open) => {
                   if (open && agent?.cwd) {

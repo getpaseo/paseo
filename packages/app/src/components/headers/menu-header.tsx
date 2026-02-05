@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text } from "react-native";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Menu, PanelLeft } from "lucide-react-native";
 import { ScreenHeader } from "./screen-header";
+import { HeaderToggleButton } from "./header-toggle-button";
 import { usePanelStore } from "@/stores/panel-store";
 
 interface MenuHeaderProps {
@@ -28,19 +29,20 @@ export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
     <ScreenHeader
       left={
         <>
-          <Pressable
+          <HeaderToggleButton
             onPress={toggleAgentList}
-            style={styles.menuButton}
+            tooltipLabel="Toggle sidebar"
+            tooltipKeys={["mod", "B"]}
+            tooltipSide="right"
             testID="menu-button"
             nativeID="menu-button"
-            collapsable={false}
             accessible
             accessibilityRole="button"
             accessibilityLabel={isOpen ? "Close menu" : "Open menu"}
             accessibilityState={{ expanded: isOpen }}
           >
             <MenuIcon size={isMobile ? 20 : 16} color={menuIconColor} />
-          </Pressable>
+          </HeaderToggleButton>
           {title && (
             <Text style={styles.title} numberOfLines={1}>
               {title}
@@ -57,13 +59,6 @@ export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
 const styles = StyleSheet.create((theme) => ({
   left: {
     gap: theme.spacing[2],
-  },
-  menuButton: {
-    padding: {
-      xs: theme.spacing[3],
-      md: theme.spacing[2],
-    },
-    borderRadius: theme.borderRadius.lg,
   },
   title: {
     flex: 1,
