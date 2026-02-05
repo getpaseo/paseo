@@ -4,6 +4,7 @@ import {
   Pressable,
   Modal,
   Image,
+  Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -130,6 +131,7 @@ function SectionHeader({
         pressed && styles.sectionHeaderPressed,
         !isCollapsed && styles.sectionHeaderExpanded,
         isDragging && styles.sectionHeaderDragging,
+        Platform.OS === "web" && ({ cursor: "grab" } as any),
       ]}
       onPress={onToggle}
       onLongPress={onDrag}

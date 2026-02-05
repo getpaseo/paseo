@@ -5,11 +5,11 @@ import '~/styles.css'
 export const Route = createFileRoute('/')({
   head: () => ({
     meta: [
-      { title: 'Paseo - Your dev environment, in your pocket' },
+      { title: 'Paseo – Run coding agents on your machines, from desktop and phone' },
       {
         name: 'description',
         content:
-          'Monitor and control your local AI coding agents from anywhere. Works with Claude Code and your existing setup.',
+          'A self-hosted daemon for Claude Code, Codex, and OpenCode. Agents run on your machine with your full dev environment. Connect from phone, desktop, or web.',
       },
     ],
   }),
@@ -81,7 +81,6 @@ function Home() {
       {/* Content section with black background */}
       <div className="bg-black">
         <main className="p-5 md:p-16 max-w-2xl mx-auto">
-          <HowItWorks />
           <Features />
           <FAQ />
           <Footer />
@@ -106,7 +105,7 @@ function Nav() {
           Docs
         </a>
         <a
-          href="https://github.com/anthropics/claude-code"
+          href="https://github.com/moboudra/paseo"
           target="_blank"
           rel="noopener noreferrer"
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -122,13 +121,11 @@ function Hero() {
   return (
     <div className="space-y-6">
       <h1 className="text-4xl md:text-5xl font-medium tracking-tight font-serif">
-        Your dev environment,
-        <br />
-        in your pocket
+        Manage coding agents from your phone and desktop.
       </h1>
       <p className="text-white/70 text-lg leading-relaxed">
-        The best ideas come when you're away from your desk. Paseo lets you
-        talk to your coding agents from anywhere.
+        Agents run on your machine with your full dev environment. Connect from
+        phone, desktop, or web.
       </p>
     </div>
   )
@@ -149,37 +146,33 @@ function Differentiator({
   )
 }
 
-function HowItWorks() {
-  return (
-    <div className="space-y-6">
-      <p className="text-white/60 leading-relaxed">
-        Paseo connects to your actual development environment. Leverage your
-        existing setup without moving your code to the cloud.
-      </p>
-    </div>
-  )
-}
-
 function Features() {
   return (
-    <div className="pt-12 space-y-6">
-      <h2 className="text-2xl font-medium font-serif">What you get</h2>
+    <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
         <Feature
-          title="First-class voice"
-          description="Dictation for prompts. Real-time voice to talk to agents hands-free."
+          title="Self-hosted"
+          description="The daemon runs on your laptop, home server, or VPS. Allowing you to take full advantage of your dev environment."
+        />
+        <Feature
+          title="Multi-provider"
+          description="Works with existing agent harnesses like Claude Code, Codex, and OpenCode from one interface."
         />
         <Feature
           title="Multi-host"
-          description="Manage agents across multiple servers, like your laptop and a cloud VM."
+          description="Connect to multiple daemons and see all your agents in one place."
         />
         <Feature
-          title="Full dev tools"
-          description="Browse files, view syntax-highlighted git diffs, run terminals."
+          title="Voice input"
+          description="Dictate prompts when you're away from your keyboard."
         />
         <Feature
-          title="Agent-first"
-          description="Work across projects. Orchestrate multiple features at once."
+          title="Optional relay"
+          description="Use the hosted end-to-end encrypted relay for remote access, or connect directly over your network."
+        />
+        <Feature
+          title="Cross-device"
+          description="Jump seamlessly between iOS, Android, desktop, web, and CLI."
         />
       </div>
     </div>
@@ -206,12 +199,12 @@ function GetStarted() {
     <div className="pt-10 space-y-6">
       <div className="space-y-4">
         <Step number={1}>
-          <p className="text-sm">Install and run the server on your machine</p>
-          <CodeBlock>npm install -g @paseohq/server && paseo</CodeBlock>
+          <p className="text-sm">Install and run the daemon</p>
+          <CodeBlock>npm install -g @getpaseo/cli && paseo</CodeBlock>
         </Step>
         <Step number={2}>
           <p className="text-sm pt-0.5">
-            Open the app on your phone and connect to your local server
+            Open the app (or web/desktop) and connect to your daemon
           </p>
         </Step>
         <Step number={3}>
@@ -221,7 +214,7 @@ function GetStarted() {
         </Step>
       </div>
       <p className="text-sm text-white/70 pt-2">
-        Free and open source. Works on iOS, Android, and web.
+        Free and open source. Works on iOS, Android, web, and desktop.
       </p>
     </div>
   )
@@ -350,7 +343,7 @@ function Footer() {
         </a>
         <span className="mx-2">·</span>
         <a
-          href="https://github.com/anthropics/claude-code"
+          href="https://github.com/moboudra/paseo"
           target="_blank"
           rel="noopener noreferrer"
           className="hover:text-foreground transition-colors"

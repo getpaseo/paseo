@@ -1,5 +1,5 @@
 {
-  "name": "@paseo/server",
+  "name": "@getpaseo/server",
   "version": "0.1.0",
   "description": "Paseo backend server",
   "type": "module",
