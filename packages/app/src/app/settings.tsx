@@ -13,7 +13,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import Constants from "expo-constants";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { Sun, Moon, Monitor, MoreVertical } from "lucide-react-native";
+import { Sun, Moon, Monitor, MoreVertical, Globe } from "lucide-react-native";
 import { Fonts } from "@/constants/theme";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import { useDaemonRegistry, type HostProfile } from "@/contexts/daemon-registry-context";
@@ -126,16 +126,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },
-  hostUrl: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    fontFamily: Fonts.mono,
-  },
-  hostConnections: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontFamily: Fonts.mono,
-  },
   hostError: {
     color: theme.colors.palette.red[300],
     fontSize: theme.fontSize.xs,
@@ -157,6 +147,24 @@ const styles = StyleSheet.create((theme) => ({
   statusText: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
+  },
+  connectionPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface3,
+    maxWidth: 170,
+  },
+  connectionText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foregroundMuted,
+    flexShrink: 1,
   },
   menuButton: {
     width: 36,
@@ -390,6 +398,8 @@ export default function SettingsScreen() {
   const [addConnectionTargetServerId, setAddConnectionTargetServerId] = useState<string | null>(null);
   const [pendingEditReopenServerId, setPendingEditReopenServerId] = useState<string | null>(null);
   const [pendingNameHost, setPendingNameHost] = useState<{ serverId: string; hostname: string | null } | null>(null);
+  const [pendingRemoveHost, setPendingRemoveHost] = useState<HostProfile | null>(null);
+  const [isRemovingHost, setIsRemovingHost] = useState(false);
   const [editingDaemon, setEditingDaemon] = useState<HostProfile | null>(null);
   const [editLabel, setEditLabel] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
@@ -440,6 +450,19 @@ export default function SettingsScreen() {
     setEditingDaemon(null);
     setEditLabel("");
   }, [isSavingEdit]);
+
+  const closeAddConnectionFlow = useCallback(() => {
+    setIsAddHostMethodVisible(false);
+    setIsDirectHostVisible(false);
+    setIsPasteLinkVisible(false);
+    setAddConnectionTargetServerId(null);
+  }, []);
+
+  const goBackToAddConnectionMethods = useCallback(() => {
+    setIsDirectHostVisible(false);
+    setIsPasteLinkVisible(false);
+    setIsAddHostMethodVisible(true);
+  }, []);
 
   useEffect(() => {
     const editHost = typeof params.editHost === "string" ? params.editHost.trim() : "";
@@ -498,45 +521,9 @@ export default function SettingsScreen() {
     [removeConnection]
   );
 
-  const handleRemoveDaemon = useCallback(
-    (profile: HostProfile) => {
-      if (Platform.OS === "web") {
-        const hasBrowserConfirm =
-          typeof globalThis !== "undefined" &&
-          typeof (globalThis as any).confirm === "function";
-
-        const confirmed = hasBrowserConfirm ? (globalThis as any).confirm(`Remove ${profile.label}?`) : true;
-        if (!confirmed) return;
-
-        void removeHost(profile.serverId).catch((error) => {
-          console.error("[Settings] Failed to remove daemon", error);
-          Alert.alert("Error", "Unable to remove host");
-        });
-        return;
-      }
-
-      Alert.alert(
-        "Remove host",
-        `Remove ${profile.label}?`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Remove",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                await removeHost(profile.serverId);
-              } catch (error) {
-                console.error("[Settings] Failed to remove daemon", error);
-                Alert.alert("Error", "Unable to remove host");
-              }
-            },
-          },
-        ]
-      );
-    },
-    [removeHost]
-  );
+  const handleRemoveDaemon = useCallback((profile: HostProfile) => {
+    setPendingRemoveHost(profile);
+  }, []);
 
   const handleThemeChange = useCallback(
     (newTheme: AppSettings["theme"]) => {
@@ -641,13 +628,20 @@ export default function SettingsScreen() {
 
           <AddHostMethodModal
             visible={isAddHostMethodVisible}
-            onClose={() => setIsAddHostMethodVisible(false)}
-            onDirectConnection={() => setIsDirectHostVisible(true)}
-            onPasteLink={() => setIsPasteLinkVisible(true)}
+            onClose={closeAddConnectionFlow}
+            onDirectConnection={() => {
+              setIsAddHostMethodVisible(false);
+              setIsDirectHostVisible(true);
+            }}
+            onPasteLink={() => {
+              setIsAddHostMethodVisible(false);
+              setIsPasteLinkVisible(true);
+            }}
             onScanQr={() => {
               const target = addConnectionTargetServerId;
               const source = target ? "editHost" : "settings";
               const qs = target ? `?source=${source}&targetServerId=${encodeURIComponent(target)}` : `?source=${source}`;
+              closeAddConnectionFlow();
               router.push(`/pair-scan${qs}`);
             }}
           />
@@ -655,7 +649,8 @@ export default function SettingsScreen() {
           <AddHostModal
             visible={isDirectHostVisible}
             targetServerId={addConnectionTargetServerId ?? undefined}
-            onClose={() => setIsDirectHostVisible(false)}
+            onClose={closeAddConnectionFlow}
+            onCancel={goBackToAddConnectionMethods}
             onSaved={({ serverId, hostname, isNewHost }) => {
               if (isNewHost) {
                 setPendingNameHost({ serverId, hostname });
@@ -666,7 +661,8 @@ export default function SettingsScreen() {
           <PairLinkModal
             visible={isPasteLinkVisible}
             targetServerId={addConnectionTargetServerId ?? undefined}
-            onClose={() => setIsPasteLinkVisible(false)}
+            onClose={closeAddConnectionFlow}
+            onCancel={goBackToAddConnectionMethods}
             onSaved={({ serverId, hostname, isNewHost }) => {
               if (isNewHost) {
                 setPendingNameHost({ serverId, hostname });
@@ -686,6 +682,51 @@ export default function SettingsScreen() {
                 });
               }}
             />
+          ) : null}
+
+          {pendingRemoveHost ? (
+            <AdaptiveModalSheet
+              title="Remove host"
+              visible
+              onClose={() => {
+                if (isRemovingHost) return;
+                setPendingRemoveHost(null);
+              }}
+              testID="remove-host-confirm-modal"
+            >
+              <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>
+                Remove {pendingRemoveHost.label}? This will delete its saved connections.
+              </Text>
+              <View style={[styles.formActionsRow, { marginTop: theme.spacing[4] }]}>
+                <Pressable
+                  style={[styles.formButton, isRemovingHost && styles.disabled]}
+                  onPress={() => setPendingRemoveHost(null)}
+                  disabled={isRemovingHost}
+                >
+                  <Text style={styles.formButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.formButton, isRemovingHost && styles.disabled, { backgroundColor: theme.colors.destructive }]}
+                  onPress={() => {
+                    const serverId = pendingRemoveHost.serverId;
+                    setIsRemovingHost(true);
+                    void removeHost(serverId)
+                      .then(() => setPendingRemoveHost(null))
+                      .catch((error) => {
+                        console.error("[Settings] Failed to remove host", error);
+                        Alert.alert("Error", "Unable to remove host");
+                      })
+                      .finally(() => setIsRemovingHost(false));
+                  }}
+                  disabled={isRemovingHost}
+                  testID="remove-host-confirm"
+                >
+                  <Text style={[styles.formButtonText, { color: theme.colors.palette.white }]}>
+                    Remove
+                  </Text>
+                </Pressable>
+              </View>
+            </AdaptiveModalSheet>
           ) : null}
 
           <AdaptiveModalSheet
@@ -995,13 +1036,15 @@ function DaemonCard({
         : statusTone === "error"
           ? "rgba(248, 113, 113, 0.1)"
       : "rgba(161, 161, 170, 0.1)";
-
-  const connectionsSummary = (() => {
-    const parts = daemon.connections.map((conn) => {
-      if (conn.type === "relay") return `relay:${conn.relayEndpoint}`;
-      return `direct:${conn.endpoint}`;
-    });
-    return parts.join(" • ");
+  const connectionBadge = (() => {
+    if (!activeConnection) return null;
+    if (activeConnection.type === "relay") {
+      return { icon: <Globe size={12} color={theme.colors.foregroundMuted} />, text: "Relay" };
+    }
+    return {
+      icon: <Monitor size={12} color={theme.colors.foregroundMuted} />,
+      text: activeConnection.display,
+    };
   })();
 
   return (
@@ -1014,6 +1057,15 @@ function DaemonCard({
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
               <Text style={[styles.statusText, { color: statusColor }]}>{badgeText}</Text>
             </View>
+
+            {connectionBadge ? (
+              <View style={styles.connectionPill}>
+                {connectionBadge.icon}
+                <Text style={styles.connectionText} numberOfLines={1}>
+                  {connectionBadge.text}
+                </Text>
+              </View>
+            ) : null}
 
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -1050,32 +1102,6 @@ function DaemonCard({
             </DropdownMenu>
           </View>
         </View>
-        <Text style={styles.hostUrl}>
-          {(() => {
-            if (connectionStatus === "online") {
-              if (activeConnection?.type === "relay") return "Connected via relay";
-              if (activeConnection?.type === "direct") return `Connected via ${activeConnection.display}`;
-              return "Connected";
-            }
-
-            if (connectionStatus === "connecting" && activeConnection) {
-              if (activeConnection.type === "relay") return "Trying relay";
-              return `Trying ${activeConnection.display}`;
-            }
-
-            if ((connectionStatus === "offline" || connectionStatus === "error") && activeConnection) {
-              if (activeConnection.type === "relay") return "Last tried: relay";
-              return `Last tried: ${activeConnection.display}`;
-            }
-
-            const relay = daemon.connections.find((c) => c.type === "relay");
-            const direct = daemon.connections.find((c) => c.type === "direct");
-            if (direct) return direct.endpoint;
-            if (relay) return "Relay";
-            return "";
-          })()}
-        </Text>
-        {connectionsSummary ? <Text style={styles.hostConnections}>{connectionsSummary}</Text> : null}
         {connectionError ? <Text style={styles.hostError}>{connectionError}</Text> : null}
       </View>
     </View>

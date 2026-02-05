@@ -48,19 +48,16 @@ export function AddHostMethodModal({
   const { theme } = useUnistyles();
 
   const handleDirect = useCallback(() => {
-    onClose();
     onDirectConnection();
-  }, [onClose, onDirectConnection]);
+  }, [onDirectConnection]);
 
   const handleScan = useCallback(() => {
-    onClose();
     onScanQr();
-  }, [onClose, onScanQr]);
+  }, [onScanQr]);
 
   const handlePaste = useCallback(() => {
-    onClose();
     onPasteLink();
-  }, [onClose, onPasteLink]);
+  }, [onPasteLink]);
 
   return (
     <AdaptiveModalSheet title="Add connection" visible={visible} onClose={onClose} testID="add-host-method-modal">
