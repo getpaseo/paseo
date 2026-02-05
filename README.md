@@ -8,14 +8,14 @@ Paseo is a self-hosted daemon for Claude Code, Codex, and OpenCode. Agents run o
 
 ## Features
 
-- **Self-hosted** — The daemon runs on your laptop, home server, or VPS
-- **Multi-provider** — Works with Claude Code, Codex, and OpenCode from one interface
-- **Multi-host** — Connect to multiple daemons and see all your agents in one place
-- **Voice input** — Dictate prompts when you're away from your keyboard
-- **Optional relay** — Use the hosted end-to-end encrypted relay, or connect directly
-- **Cross-device** — iOS, Android, desktop, web, and CLI
-- **Git integration** — Manage agents in isolated worktrees, review diffs, ship from the app
-- **Open source** — Free and open source under MIT license
+- **Self-hosted:** The daemon runs on your laptop, home server, or VPS
+- **Multi-provider:** Works with Claude Code, Codex, and OpenCode from one interface
+- **Multi-host:** Connect to multiple daemons and see all your agents in one place
+- **Voice input:** Dictate prompts when you're away from your keyboard
+- **Optional relay:** Use the hosted end-to-end encrypted relay, or connect directly
+- **Cross-device:** iOS, Android, desktop, web, and CLI
+- **Git integration:** Manage agents in isolated worktrees, review diffs, ship from the app
+- **Open source:** Free and open source under MIT license
 
 ## Quick Start
 
