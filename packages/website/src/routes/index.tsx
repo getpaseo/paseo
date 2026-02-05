@@ -315,7 +315,7 @@ function FAQ() {
           a voice reply, and put my phone away.
         </FAQItem>
         <FAQItem question="What does Paseo mean?">
-          Stroll, in Spanish. 🚶
+          Stroll, in Spanish. 🚶‍♂️
         </FAQItem>
       </div>
     </div>
