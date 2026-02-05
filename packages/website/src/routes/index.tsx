@@ -264,11 +264,11 @@ function Story() {
       <h2 className="text-2xl font-medium">Background</h2>
       <div className="space-y-4 text-sm text-white/60">
         <p>
-          I've been using Claude Code since launch. Soon after, I started using
-          it on my phone while going on walks to spend less time at my desk. I'd
-          SSH into Tmux from my phone. It worked, but the UX was rough. Dictation
-          was bad, the keyboard was awkward, and the infamous flicker bug meant
-          starting over constantly.
+          I started using Claude Code soon after it launched, often on my phone
+          while going on walks to spend less time at my desk. I'd SSH into Tmux
+          from my phone. It worked, but the UX was rough. Dictation was bad, the
+          virtual keyboard was awkward, and the TUI would randomly start
+          flickering, which forced me to start over very often.
         </p>
         <p>
           I started building a simple app to manage agents via voice. I continued
