@@ -24,15 +24,15 @@ jobs:
           scope: '@boudra'
 
       - name: Install dependencies
-        run: npm install --workspace=@paseo/app --include-workspace-root
+        run: npm install --workspace=@getpaseo/app --include-workspace-root
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Typecheck
-        run: npm run typecheck --workspace=@paseo/app
+        run: npm run typecheck --workspace=@getpaseo/app
 
       - name: Build and deploy to Cloudflare Pages
-        run: npm run deploy:web --workspace=@paseo/app
+        run: npm run deploy:web --workspace=@getpaseo/app
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 10ed39a1dbf316e30abd0c409bed40d6

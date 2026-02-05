@@ -7,7 +7,7 @@ import {
   type EncryptedChannel,
   type Transport as RelayTransport,
   type KeyPair,
-} from "@paseo/relay/e2ee";
+} from "@getpaseo/relay/e2ee";
 import { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
 
 type RelayTransportOptions = {

@@ -34,10 +34,10 @@ jobs:
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
       - name: Install server dependencies
-        run: npm install --workspace=@paseo/server --include-workspace-root
+        run: npm install --workspace=@getpaseo/server --include-workspace-root
 
       - name: Typecheck
-        run: npm run typecheck --workspace=@paseo/server
+        run: npm run typecheck --workspace=@getpaseo/server
 
       - name: Test
-        run: npm run test --workspace=@paseo/server
+        run: npm run test --workspace=@getpaseo/server

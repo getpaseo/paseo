@@ -21,10 +21,10 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install --workspace=@paseo/relay --include-workspace-root
+        run: npm install --workspace=@getpaseo/relay --include-workspace-root
 
       - name: Typecheck
-        run: npm run typecheck --workspace=@paseo/relay
+        run: npm run typecheck --workspace=@getpaseo/relay
 
       - name: Deploy worker
         run: cd packages/relay && npx wrangler deploy

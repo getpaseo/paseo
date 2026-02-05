@@ -1,5 +1,5 @@
 {
-  "name": "@paseo/app",
+  "name": "@getpaseo/app",
   "main": "index.ts",
   "version": "0.1.0",
   "scripts": {

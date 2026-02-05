@@ -57,7 +57,7 @@ import {
   createClientChannel,
   type EncryptedChannel,
   type Transport as RelayTransport,
-} from "@paseo/relay/e2ee";
+} from "@getpaseo/relay/e2ee";
 import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
 
 export interface Logger {

@@ -38,4 +38,4 @@ concurrently \
   --names "daemon,metro" \
   --prefix-colors "cyan,magenta" \
   "npm run dev:server" \
-  "BROWSER=none EXPO_PUBLIC_LOCAL_DAEMON='${LOCAL_DAEMON}' npm run start --workspace=@paseo/app -- --port ${METRO_PORT}"
+  "BROWSER=none EXPO_PUBLIC_LOCAL_DAEMON='${LOCAL_DAEMON}' npm run start --workspace=@getpaseo/app -- --port ${METRO_PORT}"
