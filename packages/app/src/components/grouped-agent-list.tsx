@@ -12,6 +12,7 @@ import {
   useMemo,
   useState,
   useEffect,
+  useRef,
   type ReactElement,
   type MutableRefObject,
 } from "react";
@@ -24,7 +25,6 @@ import {
   DraggableList,
   type DraggableRenderItemInfo,
 } from "./draggable-list";
-import { formatTimeAgo } from "@/utils/time";
 import { parseRepoNameFromRemoteUrl, parseRepoShortNameFromRemoteUrl } from "@/utils/agent-grouping";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
@@ -185,6 +185,164 @@ function SectionHeader({
   );
 }
 
+interface GroupedAgentRowProps {
+  agent: AggregatedAgent;
+  isSelected: boolean;
+  shortcutNumber: number | null;
+  onPress: () => void;
+  onLongPress: () => void;
+  onArchive: (e: { stopPropagation: () => void }) => void;
+}
+
+function GroupedAgentRow({
+  agent,
+  isSelected,
+  shortcutNumber,
+  onPress,
+  onLongPress,
+  onArchive,
+}: GroupedAgentRowProps) {
+  const { theme } = useUnistyles();
+  const [isHovered, setIsHovered] = useState(false);
+  const [isArchiveConfirmVisible, setIsArchiveConfirmVisible] = useState(false);
+  const hoverOutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearHoverOutTimeout = useCallback(() => {
+    if (!hoverOutTimeoutRef.current) {
+      return;
+    }
+    clearTimeout(hoverOutTimeoutRef.current);
+    hoverOutTimeoutRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => clearHoverOutTimeout();
+  }, [clearHoverOutTimeout]);
+
+  const handleHoverIn = useCallback(() => {
+    clearHoverOutTimeout();
+    setIsHovered(true);
+  }, [clearHoverOutTimeout]);
+
+  const handleHoverOut = useCallback(() => {
+    clearHoverOutTimeout();
+    hoverOutTimeoutRef.current = setTimeout(() => {
+      setIsHovered(false);
+      setIsArchiveConfirmVisible(false);
+    }, 50);
+  }, [clearHoverOutTimeout]);
+
+  const checkoutQuery = useCheckoutStatusCacheOnly({
+    serverId: agent.serverId,
+    cwd: agent.cwd,
+  });
+  const checkout = checkoutQuery.data ?? null;
+  const activeBranchLabel = checkout?.isGit
+    ? ((checkout.currentBranch && checkout.currentBranch !== "HEAD"
+        ? checkout.currentBranch
+        : null) ??
+      checkout.baseRef ??
+      "git")
+    : null;
+
+  const canArchive = agent.status !== "running" && !agent.requiresAttention;
+  const showArchive = canArchive && shortcutNumber === null && (isHovered || isArchiveConfirmVisible);
+
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.agentItem,
+        !isSelected && styles.agentItemUnselected,
+        isSelected && styles.agentItemSelected,
+        isHovered && styles.agentItemHovered,
+        pressed && styles.agentItemPressed,
+      ]}
+      onPress={onPress}
+      onPressIn={() => {
+        if (Platform.OS !== "web") {
+          return;
+        }
+        handleHoverIn();
+      }}
+      onLongPress={onLongPress}
+      onHoverIn={handleHoverIn}
+      onHoverOut={handleHoverOut}
+      testID={`agent-row-${agent.serverId}-${agent.id}`}
+    >
+      <View style={styles.agentContent}>
+        <View style={styles.row}>
+          <AgentStatusDot status={agent.status} requiresAttention={agent.requiresAttention} />
+          <Text
+            style={[
+              styles.agentTitle,
+              (isSelected || isHovered) && styles.agentTitleHighlighted,
+            ]}
+            numberOfLines={1}
+          >
+            {agent.title || "New agent"}
+          </Text>
+          {shortcutNumber !== null ? (
+            <View style={styles.branchBadge}>
+              <Text style={styles.branchBadgeText} numberOfLines={1}>
+                {shortcutNumber}
+              </Text>
+            </View>
+          ) : showArchive ? (
+            <Pressable
+              style={[
+                styles.branchBadge,
+                isArchiveConfirmVisible && styles.archiveConfirmBadge,
+              ]}
+              onPress={(e) => {
+                e.stopPropagation();
+                if (!isArchiveConfirmVisible) {
+                  setIsArchiveConfirmVisible(true);
+                  return;
+                }
+                onArchive(e);
+                setIsArchiveConfirmVisible(false);
+              }}
+              testID={
+                isArchiveConfirmVisible
+                  ? `agent-archive-confirm-${agent.serverId}-${agent.id}`
+                  : `agent-archive-${agent.serverId}-${agent.id}`
+              }
+            >
+              {({ hovered: archiveHovered }) =>
+                isArchiveConfirmVisible ? (
+                  <Text
+                    style={[
+                      styles.branchBadgeText,
+                      styles.archiveConfirmText,
+                      archiveHovered && styles.archiveConfirmTextHovered,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Confirm
+                  </Text>
+                ) : (
+                  <Archive
+                    size={12}
+                    color={
+                      archiveHovered ? theme.colors.foreground : theme.colors.foregroundMuted
+                    }
+                  />
+                )
+              }
+            </Pressable>
+          ) : activeBranchLabel ? (
+            <View style={styles.branchBadge}>
+              <Text style={styles.branchBadgeText} numberOfLines={1}>
+                {activeBranchLabel}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 export function GroupedAgentList({
   agents,
   isRefreshing = false,
@@ -337,107 +495,6 @@ export function GroupedAgentList({
     []
   );
 
-  const AgentListRow = useCallback(
-    ({ agent }: { agent: AggregatedAgent }) => {
-      const [isHovered, setIsHovered] = useState(false);
-      const timeAgo = formatTimeAgo(agent.lastActivityAt);
-      const agentKey = `${agent.serverId}:${agent.id}`;
-      const isSelected = selectedAgentId === agentKey;
-      const isRunning = agent.status === "running";
-      const shortcutNumber =
-        showShortcutBadges ? (shortcutIndexByAgentKey.get(agentKey) ?? null) : null;
-
-      const checkoutQuery = useCheckoutStatusCacheOnly({
-        serverId: agent.serverId,
-        cwd: agent.cwd,
-      });
-      const checkout = checkoutQuery.data ?? null;
-      const activeBranchLabel = checkout?.isGit
-        ? ((checkout.currentBranch && checkout.currentBranch !== "HEAD"
-            ? checkout.currentBranch
-            : null) ??
-          checkout.baseRef ??
-          "git")
-        : null;
-
-      const canArchive = !isRunning && !agent.requiresAttention;
-
-      return (
-        <Pressable
-          style={({ pressed }) => [
-            styles.agentItem,
-            !isSelected && styles.agentItemUnselected,
-            isSelected && styles.agentItemSelected,
-            isHovered && styles.agentItemHovered,
-            pressed && styles.agentItemPressed,
-          ]}
-          onPress={() => handleAgentPress(agent.serverId, agent.id)}
-          onLongPress={() => handleAgentLongPress(agent)}
-          onHoverIn={() => setIsHovered(true)}
-          onHoverOut={() => setIsHovered(false)}
-          testID={`agent-row-${agent.serverId}-${agent.id}`}
-        >
-          <View style={styles.agentContent}>
-            <View style={styles.row}>
-              <AgentStatusDot status={agent.status} requiresAttention={agent.requiresAttention} />
-              <Text
-                style={[
-                  styles.agentTitle,
-                  (isSelected || isHovered) && styles.agentTitleHighlighted,
-                ]}
-                numberOfLines={1}
-              >
-                {agent.title || "New agent"}
-              </Text>
-              {shortcutNumber !== null ? (
-                <View style={styles.branchBadge}>
-                  <Text style={styles.branchBadgeText} numberOfLines={1}>
-                    {shortcutNumber}
-                  </Text>
-                </View>
-              ) : isHovered && canArchive ? (
-                <Pressable
-                  style={styles.branchBadge}
-                  onPress={(e) => handleArchiveAgent(e, agent)}
-                  onHoverIn={() => setIsHovered(true)}
-                  onHoverOut={() => setIsHovered(true)}
-                  testID={`agent-archive-${agent.serverId}-${agent.id}`}
-                >
-                  {({ hovered: archiveHovered }) => (
-                    <Archive
-                      size={12}
-                      color={
-                        archiveHovered
-                          ? theme.colors.foreground
-                          : theme.colors.foregroundMuted
-                      }
-                    />
-                  )}
-                </Pressable>
-              ) : activeBranchLabel ? (
-                <View style={styles.branchBadge}>
-                  <Text style={styles.branchBadgeText} numberOfLines={1}>
-                    {activeBranchLabel}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-          </View>
-        </Pressable>
-      );
-    },
-    [
-      handleAgentLongPress,
-      handleAgentPress,
-      handleArchiveAgent,
-      selectedAgentId,
-      showShortcutBadges,
-      shortcutIndexByAgentKey,
-      theme.colors.foreground,
-      theme.colors.foregroundMuted,
-    ]
-  );
-
   const renderSection = useCallback(
     ({ item: section, drag, isActive }: DraggableRenderItemInfo<SectionData>) => {
       const isCollapsed = collapsedProjectKeys.has(section.projectKey);
@@ -454,12 +511,34 @@ export function GroupedAgentList({
           />
           {!isCollapsed &&
             section.agents.map((agent) => (
-              <AgentListRow key={`${agent.serverId}:${agent.id}`} agent={agent} />
+              <GroupedAgentRow
+                key={`${agent.serverId}:${agent.id}`}
+                agent={agent}
+                isSelected={selectedAgentId === `${agent.serverId}:${agent.id}`}
+                shortcutNumber={
+                  showShortcutBadges
+                    ? (shortcutIndexByAgentKey.get(`${agent.serverId}:${agent.id}`) ?? null)
+                    : null
+                }
+                onPress={() => handleAgentPress(agent.serverId, agent.id)}
+                onLongPress={() => handleAgentLongPress(agent)}
+                onArchive={(e) => handleArchiveAgent(e, agent)}
+              />
             ))}
         </View>
       );
     },
-    [AgentListRow, collapsedProjectKeys, handleCreateAgentInProject, toggleProjectCollapsed]
+    [
+      collapsedProjectKeys,
+      handleAgentLongPress,
+      handleAgentPress,
+      handleArchiveAgent,
+      handleCreateAgentInProject,
+      selectedAgentId,
+      showShortcutBadges,
+      shortcutIndexByAgentKey,
+      toggleProjectCollapsed,
+    ]
   );
 
   const keyExtractor = useCallback(
@@ -674,6 +753,17 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
     lineHeight: 12,
+  },
+  archiveConfirmBadge: {
+    minWidth: 76,
+    maxWidth: 9999,
+    flexShrink: 0,
+  },
+  archiveConfirmText: {
+    color: theme.colors.foreground,
+  },
+  archiveConfirmTextHovered: {
+    opacity: 0.9,
   },
   agentTitleHighlighted: {
     color: theme.colors.foreground,
