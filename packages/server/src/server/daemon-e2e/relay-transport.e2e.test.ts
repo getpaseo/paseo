@@ -91,11 +91,13 @@ describe("Relay transport (E2EE) - daemon E2E", () => {
         const offerUrl = parseOfferUrlFromLogs(lines);
         const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
 
+        const clientId = `clt_test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
         const ws = new WebSocket(
           buildRelayWebSocketUrl({
             endpoint: `127.0.0.1:${relayPort}`,
             serverId,
             role: "client",
+            clientId,
           })
         );
 
@@ -209,6 +211,7 @@ describe("Relay transport (E2EE) - daemon E2E", () => {
             endpoint: `127.0.0.1:${relayPort}`,
             serverId,
             role: "client",
+            clientId: `clt_test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`,
           })
         );
 

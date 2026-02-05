@@ -294,9 +294,25 @@ export class DaemonClient {
   >();
   private logger: Logger;
   private pendingSendQueue: PendingSend[] = [];
+  private relayClientId: string | null = null;
 
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
+    // Relay v2 requires a clientId so the daemon can create an independent
+    // socket + E2EE channel per connected client. Generate one per DaemonClient
+    // instance (stable across reconnects in this tab/app session).
+    if (isRelayClientWebSocketUrl(this.config.url)) {
+      try {
+        const parsed = new URL(this.config.url);
+        if (!parsed.searchParams.get("clientId")) {
+          this.relayClientId = `clt_${safeRandomId()}`;
+          parsed.searchParams.set("clientId", this.relayClientId);
+          this.config.url = parsed.toString();
+        }
+      } catch {
+        // ignore - invalid URL will be handled on connect
+      }
+    }
   }
 
   // ============================================================================
@@ -2914,6 +2930,17 @@ function describeTransportError(event?: unknown): string {
     }
   }
   return "Transport error";
+}
+
+function safeRandomId(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // ignore
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 function decodeMessageData(data: unknown): string | null {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebSocket } from "ws";
-import { createRelayServer, RelayServer } from "./node-adapter.js";
+import { createRelayServer, type RelayServer } from "./node-adapter.js";
 import {
   generateKeyPair,
   exportPublicKey,
@@ -26,6 +26,7 @@ describe("E2E Relay with E2EE", () => {
 
   it("full flow: daemon and client exchange encrypted messages through relay", async () => {
     const serverId = "test-session-" + Date.now();
+    const clientId = "clt_test_" + Date.now() + "_" + Math.random().toString(36).slice(2);
 
     // === DAEMON SIDE ===
     // Generate keypair (public key goes in QR)
@@ -34,14 +35,14 @@ describe("E2E Relay with E2EE", () => {
 
     // QR would contain: { serverId, daemonPubKeyB64, relay: { endpoint } }
 
-    // Daemon connects to relay as "server" role
-    const daemonWs = new WebSocket(
+    // Daemon connects to relay as "server" control role
+    const daemonControlWs = new WebSocket(
       `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=server`
     );
 
     await new Promise<void>((resolve, reject) => {
-      daemonWs.on("open", resolve);
-      daemonWs.on("error", reject);
+      daemonControlWs.on("open", resolve);
+      daemonControlWs.on("error", reject);
     });
 
     // === CLIENT SIDE ===
@@ -57,14 +58,38 @@ describe("E2E Relay with E2EE", () => {
       daemonPubKeyOnClient
     );
 
-    // Client connects to relay as "client" role
+    // Client connects to relay as "client" role (must include clientId in v2)
     const clientWs = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=client`
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=client&clientId=${clientId}`
     );
 
     await new Promise<void>((resolve, reject) => {
       clientWs.on("open", resolve);
       clientWs.on("error", reject);
+    });
+
+    // Wait for relay to notify daemon control socket, then open the per-client server-data socket.
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("timed out waiting for client_connected")), 5000);
+      daemonControlWs.on("message", (raw) => {
+        try {
+          const msg = JSON.parse(raw.toString());
+          if (msg && msg.type === "client_connected" && msg.clientId === clientId) {
+            clearTimeout(timeout);
+            resolve();
+          }
+        } catch {
+          // ignore
+        }
+      });
+    });
+
+    const daemonWs = new WebSocket(
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=server&clientId=${clientId}`
+    );
+    await new Promise<void>((resolve, reject) => {
+      daemonWs.on("open", resolve);
+      daemonWs.on("error", reject);
     });
 
     // Client sends hello with its public key (this message is NOT encrypted - it's the handshake)
@@ -150,6 +175,7 @@ describe("E2E Relay with E2EE", () => {
 
   it("relay only sees opaque bytes after handshake", async () => {
     const serverId = "opaque-test-" + Date.now();
+    const clientId = "clt_opaque_" + Date.now() + "_" + Math.random().toString(36).slice(2);
 
     // Setup keys
     const daemonKeyPair = await generateKeyPair();
@@ -170,18 +196,59 @@ describe("E2E Relay with E2EE", () => {
       daemonPubKey
     );
 
-    // Connect both
-    const daemonWs = new WebSocket(
+    const daemonControlWs = new WebSocket(
       `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=server`
     );
-    const clientWs = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=client`
-    );
+    await new Promise<void>((r) => daemonControlWs.on("open", r));
 
-    await Promise.all([
-      new Promise<void>((r) => daemonWs.on("open", r)),
-      new Promise<void>((r) => clientWs.on("open", r)),
-    ]);
+    const waitForClientSeen = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("timed out waiting for client_connected")),
+        5000
+      );
+      const onMessage = (raw: unknown) => {
+        try {
+          const text =
+            typeof raw === "string"
+              ? raw
+              : raw && typeof (raw as any).toString === "function"
+                ? (raw as any).toString()
+                : "";
+          const msg = JSON.parse(text);
+          if (msg?.type === "client_connected" && msg.clientId === clientId) {
+            clearTimeout(timeout);
+            daemonControlWs.off("message", onMessage);
+            resolve();
+            return;
+          }
+          if (msg?.type === "sync" && Array.isArray(msg.clientIds) && msg.clientIds.includes(clientId)) {
+            clearTimeout(timeout);
+            daemonControlWs.off("message", onMessage);
+            resolve();
+          }
+        } catch {
+          // ignore
+        }
+      };
+      daemonControlWs.on("message", onMessage);
+    });
+
+    const clientWs = new WebSocket(
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=client&clientId=${clientId}`
+    );
+    await new Promise<void>((r) => clientWs.on("open", r));
+    await waitForClientSeen;
+
+    const daemonWs = new WebSocket(
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=server&clientId=${clientId}`
+    );
+    await new Promise<void>((r) => daemonWs.on("open", r));
+
+    // Handshake (not encrypted)
+    clientWs.send(JSON.stringify({ type: "hello", key: clientPubKeyB64 }));
+    await new Promise<void>((resolve) => {
+      daemonWs.once("message", () => resolve());
+    });
 
     // Send encrypted secret
     const secret = "This is a secret that relay cannot read";
@@ -207,6 +274,7 @@ describe("E2E Relay with E2EE", () => {
     );
     expect(decrypted).toBe(secret);
 
+    daemonControlWs.close();
     daemonWs.close();
     clientWs.close();
   });

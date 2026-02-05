@@ -26,6 +26,11 @@ export interface RelayConnection {
 export interface RelaySessionAttachment {
   serverId: string;
   role: ConnectionRole;
+  /**
+   * v2 relay: unique id for the client connection. Allows the daemon to create
+   * an independent socket + E2EE channel per connected client.
+   */
+  clientId?: string | null;
   createdAt: number;
 }
 

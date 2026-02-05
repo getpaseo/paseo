@@ -30,6 +30,33 @@ type RelaySocketLike = {
   once: (event: "close" | "error", listener: (...args: any[]) => void) => void;
 };
 
+type ControlMessage =
+  | { type: "sync"; clientIds: string[] }
+  | { type: "client_connected"; clientId: string }
+  | { type: "client_disconnected"; clientId: string };
+
+function tryParseControlMessage(raw: unknown): ControlMessage | null {
+  try {
+    const text =
+      typeof raw === "string" ? raw : Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
+    const parsed = JSON.parse(text) as any;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (parsed.type === "sync" && Array.isArray(parsed.clientIds)) {
+      const clientIds = parsed.clientIds.filter((id: unknown) => typeof id === "string" && id.trim().length > 0);
+      return { type: "sync", clientIds };
+    }
+    if (parsed.type === "client_connected" && typeof parsed.clientId === "string" && parsed.clientId.trim()) {
+      return { type: "client_connected", clientId: parsed.clientId.trim() };
+    }
+    if (parsed.type === "client_disconnected" && typeof parsed.clientId === "string" && parsed.clientId.trim()) {
+      return { type: "client_disconnected", clientId: parsed.clientId.trim() };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function startRelayTransport({
   logger,
   attachSocket,
@@ -40,9 +67,10 @@ export function startRelayTransport({
   const relayLogger = logger.child({ module: "relay-transport" });
 
   let stopped = false;
-  let ws: WebSocket | null = null;
+  let controlWs: WebSocket | null = null;
   let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
+  const dataSockets = new Map<string, WebSocket>(); // clientId -> ws
 
   const stop = async (): Promise<void> => {
     stopped = true;
@@ -50,17 +78,25 @@ export function startRelayTransport({
       clearTimeout(reconnectTimeout);
       reconnectTimeout = null;
     }
-    if (ws) {
+    if (controlWs) {
+      try {
+        controlWs.close();
+      } catch {
+        // ignore
+      }
+      controlWs = null;
+    }
+    for (const ws of dataSockets.values()) {
       try {
         ws.close();
       } catch {
         // ignore
       }
-      ws = null;
     }
+    dataSockets.clear();
   };
 
-  const connect = (): void => {
+  const connectControl = (): void => {
     if (stopped) return;
 
     const url = buildRelayWebSocketUrl({
@@ -69,27 +105,17 @@ export function startRelayTransport({
       role: "server",
     });
     const socket = new WebSocket(url);
-    ws = socket;
-
-    let attached = false;
+    controlWs = socket;
 
     socket.on("open", () => {
       reconnectAttempt = 0;
-      relayLogger.info({ url }, "relay_connected");
-
-      if (attached) return;
-      attached = true;
-      if (daemonKeyPair) {
-        void attachEncryptedSocket(socket, daemonKeyPair, relayLogger, attachSocket);
-      } else {
-        void attachSocket(socket);
-      }
+      relayLogger.info({ url }, "relay_control_connected");
     });
 
     socket.on("close", (code, reason) => {
       relayLogger.warn(
         { code, reason: reason?.toString?.(), url },
-        "relay_disconnected"
+        "relay_control_disconnected"
       );
       scheduleReconnect();
     });
@@ -97,6 +123,32 @@ export function startRelayTransport({
     socket.on("error", (err) => {
       relayLogger.warn({ err, url }, "relay_error");
       // close event will schedule reconnect
+    });
+
+    socket.on("message", (data) => {
+      const msg = tryParseControlMessage(data);
+      if (!msg) return;
+      if (msg.type === "sync") {
+        for (const clientId of msg.clientIds) {
+          ensureClientDataSocket(clientId);
+        }
+        return;
+      }
+      if (msg.type === "client_connected") {
+        ensureClientDataSocket(msg.clientId);
+        return;
+      }
+      if (msg.type === "client_disconnected") {
+        const existing = dataSockets.get(msg.clientId);
+        if (existing) {
+          try {
+            existing.close(1001, "Client disconnected");
+          } catch {
+            // ignore
+          }
+          dataSockets.delete(msg.clientId);
+        }
+      }
     });
   };
 
@@ -108,11 +160,53 @@ export function startRelayTransport({
     const delayMs = Math.min(30000, 1000 * reconnectAttempt);
     reconnectTimeout = setTimeout(() => {
       reconnectTimeout = null;
-      connect();
+      connectControl();
     }, delayMs);
   };
 
-  connect();
+  const ensureClientDataSocket = (clientId: string): void => {
+    if (stopped) return;
+    if (!clientId) return;
+    if (dataSockets.has(clientId)) return;
+
+    const url = buildRelayWebSocketUrl({
+      endpoint: relayEndpoint,
+      serverId,
+      role: "server",
+      clientId,
+    });
+    const socket = new WebSocket(url);
+    dataSockets.set(clientId, socket);
+
+    let attached = false;
+
+    socket.on("open", () => {
+      relayLogger.info({ url, clientId }, "relay_data_connected");
+      if (attached) return;
+      attached = true;
+      if (daemonKeyPair) {
+        void attachEncryptedSocket(socket, daemonKeyPair, relayLogger.child({ clientId }), attachSocket);
+      } else {
+        void attachSocket(socket);
+      }
+    });
+
+    socket.on("close", (code, reason) => {
+      relayLogger.warn(
+        { code, reason: reason?.toString?.(), url, clientId },
+        "relay_data_disconnected"
+      );
+      if (dataSockets.get(clientId) === socket) {
+        dataSockets.delete(clientId);
+      }
+    });
+
+    socket.on("error", (err) => {
+      relayLogger.warn({ err, url, clientId }, "relay_data_error");
+    });
+  };
+
+  connectControl();
 
   return { stop };
 }

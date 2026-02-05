@@ -71,6 +71,7 @@ export function buildRelayWebSocketUrl(params: {
   endpoint: string;
   serverId: string;
   role: RelayRole;
+  clientId?: string;
 }): string {
   const { host, port, isIpv6 } = parseHostPort(params.endpoint);
   const protocol = shouldUseSecureWebSocket(port) ? "wss" : "ws";
@@ -78,6 +79,9 @@ export function buildRelayWebSocketUrl(params: {
   const url = new URL(`${protocol}://${hostPart}:${port}/ws`);
   url.searchParams.set("serverId", params.serverId);
   url.searchParams.set("role", params.role);
+  if (params.clientId) {
+    url.searchParams.set("clientId", params.clientId);
+  }
   return url.toString();
 }
 

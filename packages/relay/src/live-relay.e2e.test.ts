@@ -36,8 +36,14 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
     await withRetry(
       async () => {
         const serverId = `live-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const serverUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(serverId)}&role=server`;
-        const clientUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(serverId)}&role=client`;
+        const clientId = `clt_live_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const serverControlUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(serverId)}&role=server`;
+        const serverDataUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(
+          serverId
+        )}&role=server&clientId=${encodeURIComponent(clientId)}`;
+        const clientUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(
+          serverId
+        )}&role=client&clientId=${encodeURIComponent(clientId)}`;
 
         // === Key setup ===
         const daemonKeyPair = await generateKeyPair();
@@ -53,8 +59,9 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
         );
 
         // === Connect ===
-        const daemonWs = new WebSocket(serverUrl);
+        const daemonControlWs = new WebSocket(serverControlUrl);
         const clientWs = new WebSocket(clientUrl);
+        let daemonWs: WebSocket | null = null;
 
         const waitOpen = (ws: WebSocket, label: string) =>
           new Promise<void>((resolve, reject) => {
@@ -73,7 +80,31 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
           });
 
         try {
-          await Promise.all([waitOpen(daemonWs, "server"), waitOpen(clientWs, "client")]);
+          await Promise.all([
+            waitOpen(daemonControlWs, "server-control"),
+            waitOpen(clientWs, "client"),
+          ]);
+
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(
+              () => reject(new Error("Timed out waiting for client_connected")),
+              10_000
+            );
+            daemonControlWs.on("message", (raw) => {
+              try {
+                const msg = JSON.parse(raw.toString());
+                if (msg && msg.type === "client_connected" && msg.clientId === clientId) {
+                  clearTimeout(timeout);
+                  resolve();
+                }
+              } catch {
+                // ignore
+              }
+            });
+          });
+
+          daemonWs = new WebSocket(serverDataUrl);
+          await waitOpen(daemonWs, "server-data");
 
           // === Handshake ===
           // Client sends hello with its public key (not encrypted).
@@ -84,7 +115,7 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
               () => reject(new Error("Timed out waiting for hello")),
               10_000
             );
-            daemonWs.once("message", (data) => {
+            daemonWs!.once("message", (data) => {
               clearTimeout(timeout);
               resolve(data.toString());
             });
@@ -117,7 +148,7 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
                 () => reject(new Error("Timed out waiting for encrypted message")),
                 10_000
               );
-              daemonWs.once("message", (data) => {
+              daemonWs!.once("message", (data) => {
                 clearTimeout(timeout);
                 resolve(data as Buffer);
               });
@@ -139,7 +170,7 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
             daemonSharedKey,
             plaintextFromDaemon
           );
-          daemonWs.send(Buffer.from(ciphertextFromDaemon));
+          daemonWs!.send(Buffer.from(ciphertextFromDaemon));
 
           const clientReceivedCiphertext = await new Promise<Buffer>(
             (resolve, reject) => {
@@ -164,7 +195,8 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
           );
           expect(decryptedOnClient).toBe(plaintextFromDaemon);
         } finally {
-          daemonWs.close();
+          daemonControlWs.close();
+          daemonWs?.close();
           clientWs.close();
         }
       },
