@@ -57,14 +57,44 @@ function Worktrees() {
         <Code>
           <pre className="text-white/80">{`~/.paseo/worktrees/
 ├── my-project/
-│   ├── feature-auth/        # worktree for feature-auth branch
-│   └── fix-login-bug/       # worktree for fix-login-bug branch
+│   ├── tidy-fox/            # random slug
+│   └── bold-owl/            # random slug
 └── another-repo/
-    └── refactor-api/        # worktree for refactor-api branch`}</pre>
+    └── swift-hare/          # random slug`}</pre>
         </Code>
         <p className="text-white/60 leading-relaxed">
           The project name is derived from your git remote URL or repository directory name.
-          Worktree names map to branch names.
+          Directory names are random slugs — the branch name is separate and chosen when
+          you first launch an agent in the worktree.
+        </p>
+      </section>
+
+      {/* Branches */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Branches</h2>
+        <p className="text-white/60 leading-relaxed">
+          When you create a worktree, Paseo generates a random directory name. The branch name
+          is set when you first launch an agent. You can specify a branch name, or Paseo will
+          generate one for you.
+        </p>
+        <p className="text-white/60 leading-relaxed">
+          This means the worktree directory and branch are independent. You can rename the
+          branch later without affecting the worktree path.
+        </p>
+      </section>
+
+      {/* Multiple agents */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Multiple agents per worktree</h2>
+        <p className="text-white/60 leading-relaxed">
+          You can launch multiple agents into the same worktree. They share the working
+          directory and branch, which is useful when you want agents to collaborate on
+          the same feature or when one agent hands off to another.
+        </p>
+        <p className="text-white/60 leading-relaxed">
+          Be mindful of conflicts — agents working on the same files simultaneously can
+          step on each other. This works best when agents have distinct responsibilities
+          or run sequentially.
         </p>
       </section>
 
@@ -174,7 +204,10 @@ function Worktrees() {
         </p>
         <ol className="text-white/60 space-y-2 list-decimal list-inside">
           <li>
-            Start an agent with a worktree — Paseo creates the branch and runs setup
+            Create a worktree — Paseo creates the directory and runs setup
+          </li>
+          <li>
+            Launch an agent — Paseo creates or assigns a branch
           </li>
           <li>
             Agent works in isolation — changes stay in its worktree
@@ -190,8 +223,8 @@ function Worktrees() {
           </li>
         </ol>
         <p className="text-white/60 leading-relaxed">
-          You can run multiple agents in different worktrees simultaneously. Each has its
-          own branch and working directory.
+          You can run multiple agents in different worktrees simultaneously. Each worktree
+          has its own branch and working directory.
         </p>
       </section>
 
