@@ -25,7 +25,7 @@ function Home() {
         className="relative bg-cover bg-center bg-no-repeat"
         style={{ backgroundImage: 'url(/hero-bg.jpg)' }}
       >
-        <div className="absolute inset-0 bg-background/80" />
+        <div className="absolute inset-0 bg-background/90" />
         <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black to-transparent" />
 
         <div className="relative p-6 md:px-20 md:pt-20 md:pb-2 max-w-3xl mx-auto">
@@ -97,7 +97,7 @@ function Nav() {
 function Hero() {
   return (
     <div className="space-y-6">
-      <h1 className="text-4xl md:text-5xl font-medium tracking-tight">
+      <h1 className="text-3xl md:text-5xl font-medium tracking-tight">
         Manage coding agents from your phone and desktop
       </h1>
       <p className="text-white/70 text-lg leading-relaxed">
@@ -215,7 +215,7 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="bg-card rounded-lg p-3 md:p-4 font-mono text-sm flex items-center justify-between gap-2">
+    <div className="bg-black/30 backdrop-blur-sm rounded-lg p-3 md:p-4 font-mono text-sm flex items-center justify-between gap-2">
       <div>
         <span className="text-muted-foreground select-none">$ </span>
         <span className="text-foreground">{children}</span>
