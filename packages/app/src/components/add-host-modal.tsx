@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, Text, TextInput, View } from "react-native";
+import { Alert, Text, TextInput, View } from "react-native";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { Link2 } from "lucide-react-native";
@@ -7,6 +7,7 @@ import { useDaemonRegistry, type HostProfile } from "@/contexts/daemon-registry-
 import { normalizeHostPort } from "@/utils/daemon-endpoints";
 import { DaemonConnectionTestError, probeDaemonEndpoint } from "@/utils/test-daemon-connection";
 import { AdaptiveModalSheet } from "./adaptive-modal-sheet";
+import { Button } from "@/components/ui/button";
 
 const styles = StyleSheet.create((theme) => ({
   field: {
@@ -31,24 +32,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
     marginTop: theme.spacing[2],
   },
-  button: {
-    flex: 1,
-    paddingVertical: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.colors.surface2,
-  },
-  primaryButton: {
-    backgroundColor: theme.colors.palette.blue[500],
-  },
-  buttonText: {
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  primaryButtonText: {
-    color: theme.colors.palette.white,
-  },
   helper: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
@@ -56,12 +39,6 @@ const styles = StyleSheet.create((theme) => ({
   error: {
     color: theme.colors.destructive,
     fontSize: theme.fontSize.sm,
-  },
-  connectRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
   },
 }));
 
@@ -264,21 +241,18 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved, targetServer
       </View>
 
       <View style={styles.actions}>
-        <Pressable style={styles.button} onPress={handleCancel} disabled={isSaving}>
-          <Text style={styles.buttonText}>{onCancel ? "Back" : "Cancel"}</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.button, styles.primaryButton, isSaving ? { opacity: 0.7 } : null]}
+        <Button style={{ flex: 1 }} variant="secondary" onPress={handleCancel} disabled={isSaving}>
+          Cancel
+        </Button>
+        <Button
+          style={{ flex: 1 }}
+          variant="default"
           onPress={() => void handleSave()}
           disabled={isSaving}
+          leftIcon={<Link2 size={16} color={theme.colors.palette.white} />}
         >
-          <View style={styles.connectRow}>
-            <Link2 size={16} color={theme.colors.palette.white} />
-            <Text style={[styles.buttonText, styles.primaryButtonText]}>
-              {isSaving ? "Connecting..." : "Connect & Save"}
-            </Text>
-          </View>
-        </Pressable>
+          {isSaving ? "Connecting..." : "Connect"}
+        </Button>
       </View>
     </AdaptiveModalSheet>
   );

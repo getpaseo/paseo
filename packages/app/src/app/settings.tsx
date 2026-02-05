@@ -14,7 +14,6 @@ import Constants from "expo-constants";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Sun, Moon, Monitor, MoreVertical, Globe } from "lucide-react-native";
-import { Fonts } from "@/constants/theme";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import { useDaemonRegistry, type HostProfile } from "@/contexts/daemon-registry-context";
 import { useDaemonConnections, type ActiveConnection, type ConnectionStatus } from "@/contexts/daemon-connections-context";
@@ -34,6 +33,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 
 const delay = (ms: number) =>
@@ -65,6 +65,9 @@ const styles = StyleSheet.create((theme) => ({
   content: {
     padding: theme.spacing[4],
     paddingTop: theme.spacing[6],
+    width: "100%",
+    maxWidth: 720,
+    alignSelf: "center",
   },
   section: {
     marginBottom: theme.spacing[6],
@@ -72,7 +75,7 @@ const styles = StyleSheet.create((theme) => ({
   sectionTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
     letterSpacing: 0.6,
     textTransform: "uppercase",
     marginBottom: theme.spacing[3],
@@ -81,7 +84,7 @@ const styles = StyleSheet.create((theme) => ({
   label: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
     letterSpacing: 0.4,
     textTransform: "uppercase",
     marginBottom: theme.spacing[2],
@@ -94,9 +97,6 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.border,
     fontSize: theme.fontSize.base,
-  },
-  inputUrl: {
-    fontFamily: Fonts.mono,
   },
   // Host card styles
   hostCard: {
@@ -124,7 +124,7 @@ const styles = StyleSheet.create((theme) => ({
   hostLabel: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
   },
   hostError: {
     color: theme.colors.palette.red[300],
@@ -146,7 +146,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusText: {
     fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
   },
   connectionPill: {
     flexDirection: "row",
@@ -162,7 +162,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   connectionText: {
     fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
@@ -197,7 +197,7 @@ const styles = StyleSheet.create((theme) => ({
   addButtonText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
   },
   // Add/Edit form
   formCard: {
@@ -212,7 +212,7 @@ const styles = StyleSheet.create((theme) => ({
   formTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
   },
   formField: {
     gap: theme.spacing[2],
@@ -236,7 +236,7 @@ const styles = StyleSheet.create((theme) => ({
   formButtonText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
   },
   formButtonPrimaryText: {
     color: theme.colors.palette.white,
@@ -339,7 +339,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   themeToggleText: {
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },
   themeToggleTextActive: {
@@ -698,15 +698,19 @@ export default function SettingsScreen() {
                 Remove {pendingRemoveHost.label}? This will delete its saved connections.
               </Text>
               <View style={[styles.formActionsRow, { marginTop: theme.spacing[4] }]}>
-                <Pressable
-                  style={[styles.formButton, isRemovingHost && styles.disabled]}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  style={{ flex: 1 }}
                   onPress={() => setPendingRemoveHost(null)}
                   disabled={isRemovingHost}
                 >
-                  <Text style={styles.formButtonText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.formButton, isRemovingHost && styles.disabled, { backgroundColor: theme.colors.destructive }]}
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  style={{ flex: 1 }}
                   onPress={() => {
                     const serverId = pendingRemoveHost.serverId;
                     setIsRemovingHost(true);
@@ -721,10 +725,8 @@ export default function SettingsScreen() {
                   disabled={isRemovingHost}
                   testID="remove-host-confirm"
                 >
-                  <Text style={[styles.formButtonText, { color: theme.colors.palette.white }]}>
-                    Remove
-                  </Text>
-                </Pressable>
+                  Remove
+                </Button>
               </View>
             </AdaptiveModalSheet>
           ) : null}
@@ -771,13 +773,13 @@ export default function SettingsScreen() {
                           backgroundColor: theme.colors.surface2,
                         }}
                       >
-                        <Text style={{ color: theme.colors.foreground, fontSize: 12, fontFamily: Fonts.mono, flex: 1 }}>
+                        <Text style={{ color: theme.colors.foreground, fontSize: 12, flex: 1 }}>
                           {title}
                         </Text>
                         <Pressable
                           onPress={() => void handleRemoveConnection(editingDaemon.serverId, conn.id)}
                         >
-                          <Text style={{ color: theme.colors.destructive, fontSize: 12, fontWeight: "600" }}>
+                          <Text style={{ color: theme.colors.destructive, fontSize: 12, fontWeight: "500" }}>
                             Remove
                           </Text>
                         </Pressable>
@@ -790,8 +792,10 @@ export default function SettingsScreen() {
 
             {editingDaemon ? (
               <View style={styles.formField}>
-                <Pressable
-                  style={[styles.formButton, styles.formButtonPrimary, { alignSelf: "flex-start" }]}
+                <Button
+                  variant="default"
+                  size="sm"
+                  style={{ alignSelf: "flex-start" }}
                   onPress={() => {
                     const serverId = editingDaemon.serverId;
                     handleCloseEditDaemon();
@@ -801,30 +805,28 @@ export default function SettingsScreen() {
                   }}
                   testID="edit-host-add-connection"
                 >
-                  <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>
-                    Add connection
-                  </Text>
-                </Pressable>
+                  Add connection
+                </Button>
               </View>
             ) : null}
 
             <View style={styles.formActionsRow}>
-              <Pressable
-                style={[styles.formButton, isSavingEdit && styles.disabled]}
+              <Button
+                variant="secondary"
+                size="sm"
                 onPress={handleCloseEditDaemon}
                 disabled={isSavingEdit}
               >
-                <Text style={styles.formButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.formButton, styles.formButtonPrimary, isSavingEdit && styles.disabled]}
+                Cancel
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
                 onPress={() => void handleSaveEditDaemon()}
                 disabled={isSavingEdit}
               >
-                <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>
-                  {isSavingEdit ? "Saving..." : "Save"}
-                </Text>
-              </Pressable>
+                {isSavingEdit ? "Saving..." : "Save"}
+              </Button>
             </View>
           </AdaptiveModalSheet>
 

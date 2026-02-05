@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { Text, TextInput, View } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet } from "./adaptive-modal-sheet";
+import { Button } from "@/components/ui/button";
 
 const styles = StyleSheet.create((theme) => ({
   helper: {
@@ -31,24 +32,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     gap: theme.spacing[3],
     marginTop: theme.spacing[4],
-  },
-  button: {
-    flex: 1,
-    paddingVertical: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.colors.surface2,
-  },
-  primaryButton: {
-    backgroundColor: theme.colors.palette.blue[500],
-  },
-  buttonText: {
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  primaryButtonText: {
-    color: theme.colors.palette.white,
   },
 }));
 
@@ -122,14 +105,13 @@ export function NameHostModal({ visible, serverId, hostname, onSkip, onSave }: N
       </View>
 
       <View style={styles.actions}>
-        <Pressable style={styles.button} onPress={onSkip} testID="name-host-skip">
-          <Text style={styles.buttonText}>Skip</Text>
-        </Pressable>
-        <Pressable style={[styles.button, styles.primaryButton]} onPress={handleSave} testID="name-host-save">
-          <Text style={[styles.buttonText, styles.primaryButtonText]}>Save</Text>
-        </Pressable>
+        <Button style={{ flex: 1 }} variant="secondary" onPress={onSkip} testID="name-host-skip">
+          Skip
+        </Button>
+        <Button style={{ flex: 1 }} variant="default" onPress={handleSave} testID="name-host-save">
+          Save
+        </Button>
       </View>
     </AdaptiveModalSheet>
   );
 }
-

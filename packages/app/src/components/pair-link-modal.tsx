@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Alert, Pressable, Text, TextInput, View } from "react-native";
+import { Alert, Text, TextInput, View } from "react-native";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { Link } from "lucide-react-native";
@@ -7,6 +7,7 @@ import { useDaemonRegistry, type HostProfile } from "@/contexts/daemon-registry-
 import { decodeOfferFragmentPayload } from "@/utils/daemon-endpoints";
 import { ConnectionOfferSchema } from "@server/shared/connection-offer";
 import { AdaptiveModalSheet } from "./adaptive-modal-sheet";
+import { Button } from "@/components/ui/button";
 
 const styles = StyleSheet.create((theme) => ({
   helper: {
@@ -38,30 +39,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     gap: theme.spacing[3],
     marginTop: theme.spacing[2],
-  },
-  button: {
-    flex: 1,
-    paddingVertical: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.colors.surface2,
-  },
-  primaryButton: {
-    backgroundColor: theme.colors.palette.blue[500],
-  },
-  buttonText: {
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  primaryButtonText: {
-    color: theme.colors.palette.white,
-  },
-  connectRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
   },
 }));
 
@@ -184,33 +161,29 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved, targetServe
       </View>
 
       <View style={styles.actions}>
-        <Pressable
-          style={styles.button}
+        <Button
+          style={{ flex: 1 }}
+          variant="secondary"
           onPress={handleCancel}
           disabled={isSaving}
           testID="pair-link-cancel"
-          accessible
           accessibilityRole="button"
           accessibilityLabel="Cancel"
         >
-          <Text style={styles.buttonText}>{onCancel ? "Back" : "Cancel"}</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.button, styles.primaryButton, isSaving ? { opacity: 0.7 } : null]}
+          Cancel
+        </Button>
+        <Button
+          style={{ flex: 1 }}
+          variant="default"
           onPress={() => void handleSave()}
           disabled={isSaving}
           testID="pair-link-submit"
-          accessible
           accessibilityRole="button"
           accessibilityLabel="Pair"
+          leftIcon={<Link size={16} color={theme.colors.palette.white} />}
         >
-          <View style={styles.connectRow}>
-            <Link size={16} color={theme.colors.palette.white} />
-            <Text style={[styles.buttonText, styles.primaryButtonText]}>
-              {isSaving ? "Pairing..." : "Pair"}
-            </Text>
-          </View>
-        </Pressable>
+          {isSaving ? "Pairing..." : "Pair"}
+        </Button>
       </View>
     </AdaptiveModalSheet>
   );

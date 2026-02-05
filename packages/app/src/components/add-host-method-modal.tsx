@@ -18,7 +18,7 @@ const styles = StyleSheet.create((theme) => ({
   optionText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
   },
   optionSubtext: {
     color: theme.colors.foregroundMuted,

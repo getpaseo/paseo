@@ -51,7 +51,7 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.medium,
   },
   closeButton: {
     padding: theme.spacing[2],
@@ -121,13 +121,16 @@ export function AdaptiveModalSheet({
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const sheetRef = useRef<BottomSheetModal>(null);
+  const dismissingForVisibilityRef = useRef(false);
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
 
   useEffect(() => {
     if (!isMobile) return;
     if (visible) {
+      dismissingForVisibilityRef.current = false;
       sheetRef.current?.present();
     } else {
+      dismissingForVisibilityRef.current = true;
       sheetRef.current?.dismiss();
     }
   }, [visible, isMobile]);
@@ -135,6 +138,10 @@ export function AdaptiveModalSheet({
   const handleSheetChange = useCallback(
     (index: number) => {
       if (index === -1) {
+        if (dismissingForVisibilityRef.current) {
+          dismissingForVisibilityRef.current = false;
+          return;
+        }
         onClose();
       }
     },

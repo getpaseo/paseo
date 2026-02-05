@@ -26,7 +26,7 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xl,
-    fontWeight: theme.fontWeight.bold,
+    fontWeight: theme.fontWeight.medium,
     marginBottom: theme.spacing[3],
     textAlign: "center",
   },
@@ -59,7 +59,7 @@ const styles = StyleSheet.create((theme) => ({
   actionText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.medium,
   },
   actionTextPrimary: {
     color: theme.colors.palette.white,
