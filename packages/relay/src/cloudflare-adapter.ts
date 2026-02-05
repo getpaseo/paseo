@@ -121,7 +121,12 @@ export class RelayDurableObject {
       try {
         ws.send(text);
       } catch {
-        // ignore
+        // If the control socket is dead, close it so the daemon can reconnect.
+        try {
+          ws.close(1011, "Control send failed");
+        } catch {
+          // ignore
+        }
       }
     }
   }
@@ -237,7 +242,21 @@ export class RelayDurableObject {
 
     const { role, clientId } = attachment;
     if (!clientId) {
-      // Control channel: ignore payloads (daemon can use it for pings later).
+      // Control channel: support simple app-level keepalive.
+      if (typeof message === "string") {
+        try {
+          const parsed = JSON.parse(message) as any;
+          if (parsed?.type === "ping") {
+            try {
+              ws.send(JSON.stringify({ type: "pong", ts: Date.now() }));
+            } catch {
+              // ignore
+            }
+          }
+        } catch {
+          // ignore non-JSON control payloads
+        }
+      }
       return;
     }
 

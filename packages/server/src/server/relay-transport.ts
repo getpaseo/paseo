@@ -33,7 +33,9 @@ type RelaySocketLike = {
 type ControlMessage =
   | { type: "sync"; clientIds: string[] }
   | { type: "client_connected"; clientId: string }
-  | { type: "client_disconnected"; clientId: string };
+  | { type: "client_disconnected"; clientId: string }
+  | { type: "ping" }
+  | { type: "pong" };
 
 function tryParseControlMessage(raw: unknown): ControlMessage | null {
   try {
@@ -41,6 +43,8 @@ function tryParseControlMessage(raw: unknown): ControlMessage | null {
       typeof raw === "string" ? raw : Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
     const parsed = JSON.parse(text) as any;
     if (!parsed || typeof parsed !== "object") return null;
+    if (parsed.type === "ping") return { type: "ping" };
+    if (parsed.type === "pong") return { type: "pong" };
     if (parsed.type === "sync" && Array.isArray(parsed.clientIds)) {
       const clientIds = parsed.clientIds.filter((id: unknown) => typeof id === "string" && id.trim().length > 0);
       return { type: "sync", clientIds };
@@ -71,12 +75,18 @@ export function startRelayTransport({
   let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
   const dataSockets = new Map<string, WebSocket>(); // clientId -> ws
+  let controlKeepaliveInterval: ReturnType<typeof setInterval> | null = null;
+  let controlLastSeenAt = 0;
 
   const stop = async (): Promise<void> => {
     stopped = true;
     if (reconnectTimeout) {
       clearTimeout(reconnectTimeout);
       reconnectTimeout = null;
+    }
+    if (controlKeepaliveInterval) {
+      clearInterval(controlKeepaliveInterval);
+      controlKeepaliveInterval = null;
     }
     if (controlWs) {
       try {
@@ -104,11 +114,46 @@ export function startRelayTransport({
       serverId,
       role: "server",
     });
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(url, { handshakeTimeout: 10_000, perMessageDeflate: false });
     controlWs = socket;
 
     socket.on("open", () => {
       reconnectAttempt = 0;
+      controlLastSeenAt = Date.now();
+      if (controlKeepaliveInterval) {
+        clearInterval(controlKeepaliveInterval);
+        controlKeepaliveInterval = null;
+      }
+      controlKeepaliveInterval = setInterval(() => {
+        if (stopped) return;
+        if (controlWs !== socket) return;
+        if (socket.readyState !== WebSocket.OPEN) return;
+
+        const now = Date.now();
+        const staleForMs = now - controlLastSeenAt;
+        // If the control socket is half-open or silently dropped, ws may never emit "close".
+        // Use app-level ping/pong to detect staleness and force a reconnect.
+        if (staleForMs > 90_000) {
+          relayLogger.warn({ url, staleForMs }, "relay_control_stale_terminating");
+          try {
+            socket.terminate();
+          } catch {
+            // ignore
+          }
+          return;
+        }
+
+        try {
+          socket.send(JSON.stringify({ type: "ping", ts: now }));
+        } catch (error) {
+          relayLogger.warn({ err: error, url }, "relay_control_ping_send_failed");
+          try {
+            socket.terminate();
+          } catch {
+            // ignore
+          }
+        }
+      }, 20_000);
       relayLogger.info({ url }, "relay_control_connected");
     });
 
@@ -117,6 +162,13 @@ export function startRelayTransport({
         { code, reason: reason?.toString?.(), url },
         "relay_control_disconnected"
       );
+      if (controlWs === socket) {
+        controlWs = null;
+      }
+      if (controlKeepaliveInterval) {
+        clearInterval(controlKeepaliveInterval);
+        controlKeepaliveInterval = null;
+      }
       scheduleReconnect();
     });
 
@@ -126,8 +178,18 @@ export function startRelayTransport({
     });
 
     socket.on("message", (data) => {
+      controlLastSeenAt = Date.now();
       const msg = tryParseControlMessage(data);
       if (!msg) return;
+      if (msg.type === "ping") {
+        try {
+          socket.send(JSON.stringify({ type: "pong", ts: Date.now() }));
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      if (msg.type === "pong") return;
       if (msg.type === "sync") {
         for (const clientId of msg.clientIds) {
           ensureClientDataSocket(clientId);
@@ -175,12 +237,23 @@ export function startRelayTransport({
       role: "server",
       clientId,
     });
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(url, { handshakeTimeout: 10_000, perMessageDeflate: false });
     dataSockets.set(clientId, socket);
 
     let attached = false;
+    const openTimeout = setTimeout(() => {
+      if (stopped) return;
+      if (socket.readyState === WebSocket.OPEN) return;
+      relayLogger.warn({ url, clientId }, "relay_data_open_timeout_terminating");
+      try {
+        socket.terminate();
+      } catch {
+        // ignore
+      }
+    }, 15_000);
 
     socket.on("open", () => {
+      clearTimeout(openTimeout);
       relayLogger.info({ url, clientId }, "relay_data_connected");
       if (attached) return;
       attached = true;
@@ -192,6 +265,7 @@ export function startRelayTransport({
     });
 
     socket.on("close", (code, reason) => {
+      clearTimeout(openTimeout);
       relayLogger.warn(
         { code, reason: reason?.toString?.(), url, clientId },
         "relay_data_disconnected"
