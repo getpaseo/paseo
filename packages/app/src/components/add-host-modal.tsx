@@ -147,10 +147,11 @@ export interface AddHostModalProps {
   visible: boolean;
   onClose: () => void;
   targetServerId?: string;
+  onCancel?: () => void;
   onSaved?: (result: { profile: HostProfile; serverId: string; hostname: string | null; isNewHost: boolean }) => void;
 }
 
-export function AddHostModal({ visible, onClose, onSaved, targetServerId }: AddHostModalProps) {
+export function AddHostModal({ visible, onClose, onCancel, onSaved, targetServerId }: AddHostModalProps) {
   const { theme } = useUnistyles();
   const { daemons, upsertDirectConnection } = useDaemonRegistry();
   const isMobile =
@@ -169,6 +170,13 @@ export function AddHostModal({ visible, onClose, onSaved, targetServerId }: AddH
     setErrorMessage("");
     onClose();
   }, [isSaving, onClose]);
+
+  const handleCancel = useCallback(() => {
+    if (isSaving) return;
+    setEndpointRaw("");
+    setErrorMessage("");
+    (onCancel ?? onClose)();
+  }, [isSaving, onCancel, onClose]);
 
   const handleSave = useCallback(async () => {
     if (isSaving) return;
@@ -256,8 +264,8 @@ export function AddHostModal({ visible, onClose, onSaved, targetServerId }: AddH
       </View>
 
       <View style={styles.actions}>
-        <Pressable style={styles.button} onPress={handleClose} disabled={isSaving}>
-          <Text style={styles.buttonText}>Cancel</Text>
+        <Pressable style={styles.button} onPress={handleCancel} disabled={isSaving}>
+          <Text style={styles.buttonText}>{onCancel ? "Back" : "Cancel"}</Text>
         </Pressable>
         <Pressable
           style={[styles.button, styles.primaryButton, isSaving ? { opacity: 0.7 } : null]}

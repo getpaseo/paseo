@@ -69,10 +69,11 @@ export interface PairLinkModalProps {
   visible: boolean;
   onClose: () => void;
   targetServerId?: string;
+  onCancel?: () => void;
   onSaved?: (result: { profile: HostProfile; serverId: string; hostname: string | null; isNewHost: boolean }) => void;
 }
 
-export function PairLinkModal({ visible, onClose, onSaved, targetServerId }: PairLinkModalProps) {
+export function PairLinkModal({ visible, onClose, onCancel, onSaved, targetServerId }: PairLinkModalProps) {
   const { theme } = useUnistyles();
   const { daemons, upsertDaemonFromOfferUrl } = useDaemonRegistry();
   const isMobile =
@@ -89,6 +90,13 @@ export function PairLinkModal({ visible, onClose, onSaved, targetServerId }: Pai
     setErrorMessage("");
     onClose();
   }, [isSaving, onClose]);
+
+  const handleCancel = useCallback(() => {
+    if (isSaving) return;
+    setOfferUrl("");
+    setErrorMessage("");
+    (onCancel ?? onClose)();
+  }, [isSaving, onCancel, onClose]);
 
   const handleSave = useCallback(async () => {
     if (isSaving) return;
@@ -178,14 +186,14 @@ export function PairLinkModal({ visible, onClose, onSaved, targetServerId }: Pai
       <View style={styles.actions}>
         <Pressable
           style={styles.button}
-          onPress={handleClose}
+          onPress={handleCancel}
           disabled={isSaving}
           testID="pair-link-cancel"
           accessible
           accessibilityRole="button"
           accessibilityLabel="Cancel"
         >
-          <Text style={styles.buttonText}>Cancel</Text>
+          <Text style={styles.buttonText}>{onCancel ? "Back" : "Cancel"}</Text>
         </Pressable>
         <Pressable
           style={[styles.button, styles.primaryButton, isSaving ? { opacity: 0.7 } : null]}

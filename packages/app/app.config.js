@@ -1,11 +1,13 @@
 // App name and package ID are controlled by Gradle product flavors (dev/production)
 // See plugins/with-android-product-flavors.js for flavor configuration
 
+const pkg = require("./package.json");
+
 export default {
   expo: {
     name: "Paseo",
     slug: "voice-mobile",
-    version: "0.1.0",
+    version: pkg.version,
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
