@@ -1,6 +1,10 @@
-# Paseo
+<p align="center">
+  <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo logo">
+</p>
 
-Manage coding agents from your phone and desktop.
+<h1 align="center">Paseo</h1>
+
+<p align="center">Manage coding agents from your phone and desktop.</p>
 
 > ⚠️ **Early development** — Features may break or change without notice. Use at your own risk.
 
