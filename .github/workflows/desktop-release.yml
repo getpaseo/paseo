@@ -1,0 +1,123 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'desktop-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build (e.g. v0.1.0)'
+        required: true
+        type: string
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # for Arm based macs (M1 and above).
+            args: '--target aarch64-apple-darwin'
+          - platform: macos-latest # for Intel based macs.
+            args: '--target x86_64-apple-darwin'
+          - platform: ubuntu-22.04
+            args: ''
+          - platform: windows-latest
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@boudra'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install system dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install JS dependencies
+        run: npm install --workspace=@getpaseo/app --workspace=@getpaseo/desktop --include-workspace-root
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build web app for Tauri
+        run: npm run build:web --workspace=@getpaseo/app
+
+      - name: Set desktop version from tag
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const rawTag = process.env.RELEASE_TAG;
+          if (!rawTag) throw new Error('RELEASE_TAG env var is missing');
+
+          const version = rawTag.replace(/^desktop-/, '').replace(/^v/, '');
+          console.log(`Using desktop version ${version} from tag ${rawTag}`);
+
+          const tauriConfPath = path.join('packages', 'desktop', 'src-tauri', 'tauri.conf.json');
+          const tauriConfText = fs.readFileSync(tauriConfPath, 'utf8');
+          const tauriRe = /(\"version\"\\s*:\\s*\")([^\"]+)(\")/;
+          if (!tauriRe.test(tauriConfText)) {
+            throw new Error(`Failed to find version field in ${tauriConfPath}`);
+          }
+          fs.writeFileSync(tauriConfPath, tauriConfText.replace(tauriRe, `$1${version}$3`));
+
+          const cargoTomlPath = path.join('packages', 'desktop', 'src-tauri', 'Cargo.toml');
+          const cargoLines = fs.readFileSync(cargoTomlPath, 'utf8').split(/\\r?\\n/);
+          let inPackage = false;
+          let updated = false;
+          const nextLines = cargoLines.map((line) => {
+            if (/^\\[package\\]\\s*$/.test(line)) inPackage = true;
+            else if (inPackage && /^\\[/.test(line)) inPackage = false;
+
+            if (inPackage && /^version\\s*=\\s*\".*\"\\s*$/.test(line)) {
+              updated = true;
+              return `version = \"${version}\"`;
+            }
+            return line;
+          });
+          if (!updated) throw new Error(`Failed to update Cargo package version in ${cargoTomlPath}`);
+          fs.writeFileSync(cargoTomlPath, `${nextLines.join('\\n')}\\n`);
+          NODE
+
+      - name: Build and publish Tauri release
+        uses: tauri-apps/tauri-action@v0.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: packages/desktop
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: Paseo Desktop ${{ env.RELEASE_TAG }}
+          releaseBody: See the assets to download and install this version.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

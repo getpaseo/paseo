@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DocsIndexRouteImport } from './routes/docs/index'
+import { Route as DocsWorktreesRouteImport } from './routes/docs/worktrees'
 import { Route as DocsSecurityRouteImport } from './routes/docs/security'
 import { Route as DocsConfigurationRouteImport } from './routes/docs/configuration'
 import { Route as DocsCliRouteImport } from './routes/docs/cli'
@@ -30,6 +31,11 @@ const IndexRoute = IndexRouteImport.update({
 const DocsIndexRoute = DocsIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsWorktreesRoute = DocsWorktreesRouteImport.update({
+  id: '/worktrees',
+  path: '/worktrees',
   getParentRoute: () => DocsRoute,
 } as any)
 const DocsSecurityRoute = DocsSecurityRouteImport.update({
@@ -60,6 +66,7 @@ export interface FileRoutesByFullPath {
   '/docs/cli': typeof DocsCliRoute
   '/docs/configuration': typeof DocsConfigurationRoute
   '/docs/security': typeof DocsSecurityRoute
+  '/docs/worktrees': typeof DocsWorktreesRoute
   '/docs/': typeof DocsIndexRoute
 }
 export interface FileRoutesByTo {
@@ -68,6 +75,7 @@ export interface FileRoutesByTo {
   '/docs/cli': typeof DocsCliRoute
   '/docs/configuration': typeof DocsConfigurationRoute
   '/docs/security': typeof DocsSecurityRoute
+  '/docs/worktrees': typeof DocsWorktreesRoute
   '/docs': typeof DocsIndexRoute
 }
 export interface FileRoutesById {
@@ -78,6 +86,7 @@ export interface FileRoutesById {
   '/docs/cli': typeof DocsCliRoute
   '/docs/configuration': typeof DocsConfigurationRoute
   '/docs/security': typeof DocsSecurityRoute
+  '/docs/worktrees': typeof DocsWorktreesRoute
   '/docs/': typeof DocsIndexRoute
 }
 export interface FileRouteTypes {
@@ -89,6 +98,7 @@ export interface FileRouteTypes {
     | '/docs/cli'
     | '/docs/configuration'
     | '/docs/security'
+    | '/docs/worktrees'
     | '/docs/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -97,6 +107,7 @@ export interface FileRouteTypes {
     | '/docs/cli'
     | '/docs/configuration'
     | '/docs/security'
+    | '/docs/worktrees'
     | '/docs'
   id:
     | '__root__'
@@ -106,6 +117,7 @@ export interface FileRouteTypes {
     | '/docs/cli'
     | '/docs/configuration'
     | '/docs/security'
+    | '/docs/worktrees'
     | '/docs/'
   fileRoutesById: FileRoutesById
 }
@@ -135,6 +147,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/docs/'
       preLoaderRoute: typeof DocsIndexRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/worktrees': {
+      id: '/docs/worktrees'
+      path: '/worktrees'
+      fullPath: '/docs/worktrees'
+      preLoaderRoute: typeof DocsWorktreesRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/security': {
@@ -173,6 +192,7 @@ interface DocsRouteChildren {
   DocsCliRoute: typeof DocsCliRoute
   DocsConfigurationRoute: typeof DocsConfigurationRoute
   DocsSecurityRoute: typeof DocsSecurityRoute
+  DocsWorktreesRoute: typeof DocsWorktreesRoute
   DocsIndexRoute: typeof DocsIndexRoute
 }
 
@@ -181,6 +201,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsCliRoute: DocsCliRoute,
   DocsConfigurationRoute: DocsConfigurationRoute,
   DocsSecurityRoute: DocsSecurityRoute,
+  DocsWorktreesRoute: DocsWorktreesRoute,
   DocsIndexRoute: DocsIndexRoute,
 }
 

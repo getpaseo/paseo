@@ -36,6 +36,19 @@ Then open the app and connect to your daemon.
 
 See [paseo.sh/docs](https://paseo.sh/docs) for full documentation.
 
+## Desktop releases
+
+Desktop app binaries are built and attached to a GitHub Release when you push a version tag (for example `v0.1.0` or `desktop-v0.1.0`).
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+If you prefer, `npm version` can be used to create and push a version tag.
+
+This triggers the `Desktop Release` workflow (`.github/workflows/desktop-release.yml`).
+
 ## License
 
 MIT
