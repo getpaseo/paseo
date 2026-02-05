@@ -337,7 +337,11 @@ export class DaemonClient {
     }
 
     try {
-      this.cleanupTransport();
+      // If we reconnect while the previous socket is still open (common in browsers
+      // where `onerror` may fire before `onclose`), we can end up with multiple
+      // concurrent relay sockets. Cloudflare then closes the old one with
+      // "Replaced by new connection", causing a disconnect loop.
+      this.disposeTransport();
       const baseTransportFactory =
         this.config.transportFactory ??
         createWebSocketTransportFactory(
@@ -465,15 +469,7 @@ export class DaemonClient {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
-    this.cleanupTransport();
-    if (this.transport) {
-      try {
-        this.transport.close();
-      } catch {
-        // no-op
-      }
-      this.transport = null;
-    }
+    this.disposeTransport(1000, "Client closed");
     this.clearWaiters(new Error("Daemon client closed"));
     this.updateConnectionState({
       status: "disconnected",
@@ -2295,6 +2291,18 @@ export class DaemonClient {
 
   private createRequestId(requestId?: string): string {
     return requestId ?? crypto.randomUUID();
+  }
+
+  private disposeTransport(code = 1001, reason = "Reconnecting"): void {
+    this.cleanupTransport();
+    if (this.transport) {
+      try {
+        this.transport.close(code, reason);
+      } catch {
+        // no-op
+      }
+      this.transport = null;
+    }
   }
 
   private cleanupTransport(): void {
