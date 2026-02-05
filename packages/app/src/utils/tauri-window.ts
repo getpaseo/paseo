@@ -14,21 +14,38 @@ async function getTauriWindow() {
   if (tauriWindow) return tauriWindow;
 
   // Double-check: both environment check AND platform check
-  if (!isTauriEnvironment() || !getIsTauriMac()) {
+  if (!isTauriEnvironment()) {
     return null;
   }
 
   try {
-    // Avoid emitting `import()` syntax into the Hermes bundle (it fails to parse),
-    // while still loading the Tauri module at runtime in the WebView.
-    const dynamicImport = new Function(
-      "moduleName",
-      "return import(moduleName)"
-    ) as (moduleName: string) => Promise<any>;
+    // When `app.withGlobalTauri` is enabled, Tauri exposes its JS APIs on `window.__TAURI__`.
+    // We must use that here because importing `@tauri-apps/api/*` would be bundled into
+    // the native (Hermes) builds and break parsing/runtime on mobile.
+    const tauri = (window as any).__TAURI__ as any;
 
-    const { getCurrentWindow } = await dynamicImport("@tauri-apps/api/window");
-    tauriWindow = getCurrentWindow();
-    return tauriWindow;
+    // Prefer the public global window module.
+    const windowModule = tauri?.window;
+    if (windowModule && typeof windowModule.getCurrentWindow === "function") {
+      tauriWindow = windowModule.getCurrentWindow();
+      return tauriWindow;
+    }
+
+    // Fallback: core invoke (should exist when withGlobalTauri is enabled).
+    // We assume the main window label is "main" (default in Tauri when not specified).
+    const invoke = tauri?.core?.invoke;
+    if (typeof invoke === "function") {
+      tauriWindow = {
+        label: "main",
+        startDragging: () => invoke("plugin:window|start_dragging", { label: "main" }),
+        toggleMaximize: () => invoke("plugin:window|toggle_maximize", { label: "main" }),
+        isFullscreen: () => invoke("plugin:window|is_fullscreen", { label: "main" }),
+        onResized: (handler: (e: unknown) => void) => tauri?.event?.listen?.("tauri://resize", handler),
+      };
+      return tauriWindow;
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -37,43 +54,49 @@ async function getTauriWindow() {
 export async function startDragging() {
   const win = await getTauriWindow();
   if (win) {
-    await win.startDragging();
+    try {
+      await win.startDragging();
+    } catch (error) {
+      console.warn("[TauriWindow] startDragging failed", error);
+    }
   }
 }
 
 export async function toggleMaximize() {
   const win = await getTauriWindow();
   if (win) {
-    await win.toggleMaximize();
+    try {
+      await win.toggleMaximize();
+    } catch (error) {
+      console.warn("[TauriWindow] toggleMaximize failed", error);
+    }
   }
 }
 
 // Returns event handlers for drag region behavior
 export function useTauriDragHandlers() {
-  if (Platform.OS !== "web" || !getIsTauriMac()) {
+  // Dragging should work on any desktop OS when running under Tauri.
+  if (Platform.OS !== "web" || !isTauriEnvironment()) {
     return {};
   }
 
   return {
     onMouseDown: (e: React.MouseEvent) => {
-      // Only handle left click, ignore if clicking on interactive elements
-      if (e.button !== 0) return;
+      // Only handle primary button, ignore if clicking on interactive elements.
+      // Tauri docs recommend using `e.detail` on mousedown for double-click maximize.
+      if (typeof e.buttons === "number" ? e.buttons !== 1 : e.button !== 0) return;
       const target = e.target as HTMLElement;
       if (target.closest("button, a, input, [role='button']")) return;
 
       // Prevent text selection when dragging
       e.preventDefault();
 
-      // Start dragging on mouse down
-      startDragging();
-    },
-    onDoubleClick: (e: React.MouseEvent) => {
-      // Ignore if clicking on interactive elements
-      const target = e.target as HTMLElement;
-      if (target.closest("button, a, input, [role='button']")) return;
-
-      e.preventDefault();
-      toggleMaximize();
+      // Double click to maximize, otherwise drag.
+      if (e.detail === 2) {
+        toggleMaximize();
+      } else {
+        startDragging();
+      }
     },
   };
 }

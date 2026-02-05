@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>CFBundleIdentifier</key>
+    <string>dev.paseo.desktop</string>
+    <key>CFBundleName</key>
+    <string>Paseo</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Paseo needs access to your microphone for voice dictation and voice mode.</string>
+  </dict>
+</plist>
