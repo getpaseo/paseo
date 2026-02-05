@@ -114,17 +114,20 @@ const styles = StyleSheet.create((theme) => ({
   hostHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: theme.spacing[3],
   },
   hostHeaderRight: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    flexShrink: 0,
   },
   hostLabel: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
+    flex: 1,
+    flexShrink: 1,
   },
   hostError: {
     color: theme.colors.palette.red[300],
@@ -1055,7 +1058,7 @@ function DaemonCard({
     <View style={styles.hostCard} testID={`daemon-card-${daemon.serverId}`}>
       <View style={styles.hostCardContent}>
         <View style={styles.hostHeaderRow}>
-          <Text style={styles.hostLabel}>{daemon.label}</Text>
+          <Text style={styles.hostLabel} numberOfLines={1}>{daemon.label}</Text>
           <View style={styles.hostHeaderRight}>
             <View style={[styles.statusPill, { backgroundColor: statusPillBg }]}>
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
