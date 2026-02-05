@@ -1,4 +1,4 @@
-appId: com.moboudra.paseo
+appId: sh.paseo
 ---
 - runFlow:
     when:

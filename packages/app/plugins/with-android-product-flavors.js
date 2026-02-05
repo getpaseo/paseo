@@ -38,12 +38,12 @@ function withAndroidProductFlavors(config) {
     productFlavors {
         dev {
             dimension "environment"
-            applicationId "com.moboudra.paseo.dev"
+            applicationId "sh.paseo.dev"
             resValue "string", "app_name", "Paseo (Dev)"
         }
         production {
             dimension "environment"
-            applicationId "com.moboudra.paseo"
+            applicationId "sh.paseo"
             resValue "string", "app_name", "Paseo"
         }
     }

@@ -26,7 +26,7 @@ export default {
           "This app needs access to the microphone for voice commands.",
         ITSAppUsesNonExemptEncryption: false,
       },
-      bundleIdentifier: "com.moboudra.paseo",
+      bundleIdentifier: "sh.paseo",
     },
     android: {
       adaptiveIcon: {
@@ -46,7 +46,7 @@ export default {
         "android.permission.CAMERA",
       ],
       // Base package - Gradle product flavors override this per variant
-      package: "com.moboudra.paseo",
+      package: "sh.paseo",
     },
     web: {
       output: "single",

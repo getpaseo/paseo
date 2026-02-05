@@ -1,6 +1,6 @@
 # NOTE: Maestro requires a config section for every flow file, even when used
 # via `runFlow`. Keep this aligned with the dev build application id.
-appId: com.moboudra.paseo
+appId: sh.paseo
 ---
 # Reusable flow to handle Expo dev client screens after launch.
 # Unlike `flows/launch.yaml`, this does not assert any particular app route.
