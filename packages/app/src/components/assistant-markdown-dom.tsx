@@ -236,16 +236,25 @@ html, body {
 
 .paseo-markdown li {
   list-style: none;
-  display: flex;
-  align-items: flex-start;
+  position: relative;
   margin-bottom: ${spacing[1]}px;
+}
+
+.paseo-markdown li > p {
+  margin: 0;
 }
 
 .paseo-markdown ul > li::before {
   content: "•";
   color: ${colors.foregroundMuted};
-  margin-right: 4px;
+  position: absolute;
+  left: 0;
+  top: 0;
   line-height: 22px;
+}
+
+.paseo-markdown ul > li {
+  padding-left: 18px;
 }
 
 .paseo-markdown ol {
@@ -254,15 +263,26 @@ html, body {
 
 .paseo-markdown ol > li {
   counter-increment: paseoItem;
+  padding-left: 24px;
 }
 
 .paseo-markdown ol > li::before {
   content: counter(paseoItem) ".";
   color: ${colors.foregroundMuted};
-  margin-right: 4px;
   font-weight: ${fontWeight.semibold};
+  position: absolute;
+  left: 0;
+  top: 0;
   line-height: 22px;
-  min-width: 12px;
+}
+
+.paseo-markdown li > ul,
+.paseo-markdown li > ol {
+  margin-top: ${spacing[1]}px;
+}
+
+.paseo-markdown li > pre {
+  margin-top: ${spacing[2]}px;
 }
 
 .paseo-markdown blockquote {
