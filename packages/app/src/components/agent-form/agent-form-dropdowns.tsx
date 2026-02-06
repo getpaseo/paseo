@@ -222,6 +222,11 @@ export function DropdownSheet({
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ["60%", "90%"], []);
 
+  const handleClose = useCallback(() => {
+    bottomSheetRef.current?.dismiss();
+    onClose();
+  }, [onClose]);
+
   useEffect(() => {
     if (visible) {
       bottomSheetRef.current?.present();
@@ -267,6 +272,15 @@ export function DropdownSheet({
     >
       <View style={styles.bottomSheetHeader}>
         <Text style={styles.dropdownSheetTitle}>{title}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close sheet"
+          onPress={handleClose}
+          hitSlop={10}
+          testID="dropdown-sheet-close"
+        >
+          <X size={18} color={defaultTheme.colors.foregroundMuted} />
+        </Pressable>
       </View>
       <BottomSheetScrollView
         contentContainerStyle={styles.dropdownSheetScrollContent}
@@ -990,11 +1004,12 @@ export function GitOptionsSection({
             visible={isWorktreeSheetOpen}
             onClose={() => setIsWorktreeSheetOpen(false)}
           >
-            {worktreeOptions.map((option) => (
+            {worktreeOptions.map((option, index) => (
               <SelectOption
                 key={option.path}
                 label={option.label}
                 selected={option.path === selectedWorktreePath}
+                testID={`worktree-attach-option-${index}`}
                 onPress={() => {
                   onSelectWorktreePath(option.path);
                   setIsWorktreeSheetOpen(false);
@@ -1094,6 +1109,9 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.palette.zinc[600],
   },
   bottomSheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: theme.spacing[6],
     paddingBottom: theme.spacing[2],
   },

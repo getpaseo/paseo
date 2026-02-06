@@ -1,12 +1,10 @@
 import { execSync } from 'node:child_process';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 type TempRepo = {
   path: string;
-  owner?: string;
-  name?: string;
   cleanup: () => Promise<void>;
 };
 
@@ -15,10 +13,6 @@ export const createTempGitRepo = async (
   options?: { withRemote?: boolean }
 ): Promise<TempRepo> => {
   const repoPath = await mkdtemp(path.join(tmpdir(), prefix));
-  const repoName = `paseo-e2e-${Date.now().toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
-  let owner: string | undefined;
   const withRemote = options?.withRemote ?? false;
 
   execSync('git init -b main', { cwd: repoPath, stdio: 'ignore' });
@@ -29,33 +23,17 @@ export const createTempGitRepo = async (
   execSync('git commit -m "Initial commit"', { cwd: repoPath, stdio: 'ignore' });
 
   if (withRemote) {
-    try {
-      owner = execSync('gh api user -q .login', { encoding: 'utf8' }).trim();
-      execSync(
-        `gh repo create ${repoName} --private --confirm --source=. --remote=origin --push`,
-        {
-          cwd: repoPath,
-          stdio: 'ignore',
-        }
-      );
-    } catch (error) {
-      await rm(repoPath, { recursive: true, force: true });
-      throw error;
-    }
+    // Deterministic local remote to avoid relying on external auth/network in e2e.
+    const remoteDir = path.join(repoPath, 'remote.git');
+    await mkdir(remoteDir, { recursive: true });
+    execSync(`git init --bare -b main ${remoteDir}`, { cwd: repoPath, stdio: 'ignore' });
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoPath, stdio: 'ignore' });
+    execSync('git push -u origin main', { cwd: repoPath, stdio: 'ignore' });
   }
 
   return {
     path: repoPath,
-    owner,
-    name: repoName,
     cleanup: async () => {
-      if (owner && withRemote) {
-        try {
-          execSync(`gh repo delete ${owner}/${repoName} --yes`, { stdio: 'ignore' });
-        } catch {
-          // Best-effort cleanup
-        }
-      }
       await rm(repoPath, { recursive: true, force: true });
     },
   };

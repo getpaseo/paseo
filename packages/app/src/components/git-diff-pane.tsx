@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useId, useMemo, useRef, memo, type ReactElement } from "react";
-import type { UseMutationResult } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import {
   View,
@@ -17,8 +16,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Linking from "expo-linking";
 import { Archive, ChevronDown, ChevronRight, GitBranch, MoreVertical, ArrowLeftRight, ListChevronsDownUp, ListChevronsUpDown } from "lucide-react-native";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useSessionStore } from "@/stores/session-store";
+import { useCheckoutGitActionsStore } from "@/stores/checkout-git-actions-store";
 import {
   useCheckoutDiffQuery,
   type ParsedDiffFile,
@@ -39,20 +37,6 @@ import {
   DropdownMenuTrigger,
   type ActionStatus,
 } from "@/components/ui/dropdown-menu";
-
-// =============================================================================
-// Action Status Hook
-// =============================================================================
-// Tracks mutation state with a brief success phase before returning to idle.
-// State flow: idle → pending → success (1s) → idle
-// =============================================================================
-
-const SUCCESS_DISPLAY_MS = 1000;
-
-type ActionState = {
-  status: ActionStatus;
-  trigger: () => void;
-};
 
 // =============================================================================
 // Git Actions Data Structure
@@ -83,47 +67,6 @@ interface GitActions {
   primary: GitAction | null;
   secondary: GitAction[];
   menu: GitAction[];
-}
-
-function useActionStatus<TData, TError, TVariables, TContext>(
-  mutation: UseMutationResult<TData, TError, TVariables, TContext>,
-  onTrigger?: () => void
-): ActionState {
-  const [showSuccess, setShowSuccess] = useState(false);
-  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Clear timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (successTimeoutRef.current) {
-        clearTimeout(successTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // Watch for mutation success to trigger success display
-  useEffect(() => {
-    if (mutation.isSuccess && !mutation.isPending) {
-      setShowSuccess(true);
-      successTimeoutRef.current = setTimeout(() => {
-        setShowSuccess(false);
-        mutation.reset();
-      }, SUCCESS_DISPLAY_MS);
-    }
-  }, [mutation.isSuccess, mutation.isPending, mutation]);
-
-  const status: ActionStatus = mutation.isPending
-    ? "pending"
-    : showSuccess
-      ? "success"
-      : "idle";
-
-  const trigger = useCallback(() => {
-    onTrigger?.();
-    mutation.mutate(undefined as TVariables);
-  }, [mutation, onTrigger]);
-
-  return { status, trigger };
 }
 
 function openURLInNewTab(url: string): void {
@@ -480,10 +423,6 @@ type GitDiffSection = {
 export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
   const router = useRouter();
-  const queryClient = useQueryClient();
-  const client = useSessionStore(
-    (state) => state.sessions[serverId]?.client ?? null
-  );
   const [diffModeOverride, setDiffModeOverride] = useState<"uncommitted" | "base" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
@@ -669,157 +608,98 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     });
   }, [agentId, diffMetrics, isDiffFetching, isDiffLoading, serverId]);
 
-  const commitMutation = useMutation({
-    mutationFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client unavailable");
-      }
-      const payload = await client.checkoutCommit(cwd, { addAll: true });
-      if (payload.error) {
-        throw new Error(payload.error.message);
-      }
-      return payload;
-    },
-    onSuccess: () => {
-      setActionError(null);
-      void refreshDiff();
-      void refreshStatus();
-    },
-    onError: (err) => {
+  const commitStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "commit" })
+  );
+  const pushStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "push" })
+  );
+  const prCreateStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "create-pr" })
+  );
+  const mergeStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "merge-branch" })
+  );
+  const mergeFromBaseStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "merge-from-base" })
+  );
+  const archiveStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "archive-worktree" })
+  );
+
+  const runCommit = useCheckoutGitActionsStore((state) => state.commit);
+  const runPush = useCheckoutGitActionsStore((state) => state.push);
+  const runCreatePr = useCheckoutGitActionsStore((state) => state.createPr);
+  const runMergeBranch = useCheckoutGitActionsStore((state) => state.mergeBranch);
+  const runMergeFromBase = useCheckoutGitActionsStore((state) => state.mergeFromBase);
+  const runArchiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
+
+  const handleCommit = useCallback(() => {
+    setActionError(null);
+    void runCommit({ serverId, cwd }).catch((err) => {
       const message = err instanceof Error ? err.message : "Failed to commit";
       setActionError(message);
-    },
-  });
+    });
+  }, [runCommit, serverId, cwd]);
 
-  const prMutation = useMutation({
-    mutationFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client unavailable");
-      }
-      const payload = await client.checkoutPrCreate(cwd, {});
-      if (payload.error) {
-        throw new Error(payload.error.message);
-      }
-      return payload;
-    },
-    onSuccess: () => {
-      setActionError(null);
-      void refreshPrStatus();
-    },
-    onError: (err) => {
-      const message = err instanceof Error ? err.message : "Failed to create PR";
-      setActionError(message);
-    },
-  });
-
-  const mergeMutation = useMutation({
-    mutationFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client unavailable");
-      }
-      const payload = await client.checkoutMerge(cwd, {
-        baseRef,
-        strategy: "merge",
-        requireCleanTarget: true,
-      });
-      if (payload.error) {
-        throw new Error(payload.error.message);
-      }
-      return payload;
-    },
-    onSuccess: () => {
-      setActionError(null);
-      void refreshDiff();
-      void refreshStatus();
-    },
-    onError: (err) => {
-      const message = err instanceof Error ? err.message : "Failed to merge";
-      setActionError(message);
-    },
-  });
-
-  const mergeFromBaseMutation = useMutation({
-    mutationFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client unavailable");
-      }
-      const payload = await client.checkoutMergeFromBase(cwd, {
-        baseRef,
-        requireCleanTarget: true,
-      });
-      if (payload.error) {
-        throw new Error(payload.error.message);
-      }
-      return payload;
-    },
-    onSuccess: () => {
-      setActionError(null);
-      void refreshDiff();
-      void refreshStatus();
-    },
-    onError: (err) => {
-      const message = err instanceof Error ? err.message : "Failed to merge from base";
-      setActionError(message);
-    },
-  });
-
-  const pushMutation = useMutation({
-    mutationFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client unavailable");
-      }
-      const payload = await client.checkoutPush(cwd);
-      if (payload.error) {
-        throw new Error(payload.error.message);
-      }
-      return payload;
-    },
-    onSuccess: () => {
-      setActionError(null);
-      void refreshStatus();
-    },
-    onError: (err) => {
+  const handlePush = useCallback(() => {
+    setActionError(null);
+    void runPush({ serverId, cwd }).catch((err) => {
       const message = err instanceof Error ? err.message : "Failed to push";
       setActionError(message);
-    },
-  });
+    });
+  }, [runPush, serverId, cwd]);
 
-  const archiveMutation = useMutation({
-    mutationFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client unavailable");
-      }
-      const worktreePath = status?.cwd;
-      if (!worktreePath) {
-        throw new Error("Worktree path unavailable");
-      }
-      const payload = await client.archivePaseoWorktree({ worktreePath });
-      if (payload.error) {
-        throw new Error(payload.error.message);
-      }
-      return payload;
-    },
-    onSuccess: () => {
-      setActionError(null);
-      queryClient.invalidateQueries({
-        predicate: (query) =>
-          Array.isArray(query.queryKey) && query.queryKey[0] === "paseoWorktreeList",
-      });
-      router.replace("/agent" as any);
-    },
-    onError: (err) => {
-      const message = err instanceof Error ? err.message : "Failed to archive worktree";
+  const handleCreatePr = useCallback(() => {
+    void persistShipDefault("pr");
+    setActionError(null);
+    void runCreatePr({ serverId, cwd }).catch((err) => {
+      const message = err instanceof Error ? err.message : "Failed to create PR";
       setActionError(message);
-    },
-  });
+    });
+  }, [persistShipDefault, runCreatePr, serverId, cwd]);
 
-  // Wrap mutations with action status for UI feedback
-  const commitAction = useActionStatus(commitMutation);
-  const prCreateAction = useActionStatus(prMutation, () => void persistShipDefault("pr"));
-  const mergeAction = useActionStatus(mergeMutation, () => void persistShipDefault("merge"));
-  const mergeFromBaseAction = useActionStatus(mergeFromBaseMutation);
-  const pushAction = useActionStatus(pushMutation);
-  const archiveAction = useActionStatus(archiveMutation);
+  const handleMergeBranch = useCallback(() => {
+    if (!baseRef) {
+      setActionError("Base ref unavailable");
+      return;
+    }
+    void persistShipDefault("merge");
+    setActionError(null);
+    void runMergeBranch({ serverId, cwd, baseRef }).catch((err) => {
+      const message = err instanceof Error ? err.message : "Failed to merge";
+      setActionError(message);
+    });
+  }, [baseRef, persistShipDefault, runMergeBranch, serverId, cwd]);
+
+  const handleMergeFromBase = useCallback(() => {
+    if (!baseRef) {
+      setActionError("Base ref unavailable");
+      return;
+    }
+    setActionError(null);
+    void runMergeFromBase({ serverId, cwd, baseRef }).catch((err) => {
+      const message = err instanceof Error ? err.message : "Failed to merge from base";
+      setActionError(message);
+    });
+  }, [baseRef, runMergeFromBase, serverId, cwd]);
+
+  const handleArchiveWorktree = useCallback(() => {
+    const worktreePath = status?.cwd;
+    if (!worktreePath) {
+      setActionError("Worktree path unavailable");
+      return;
+    }
+    setActionError(null);
+    void runArchiveWorktree({ serverId, cwd, worktreePath })
+      .then(() => {
+        router.replace("/agent" as any);
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "Failed to archive worktree";
+        setActionError(message);
+      });
+  }, [runArchiveWorktree, router, serverId, cwd, status?.cwd]);
 
   const renderFileBody: SectionListRenderItem<ParsedDiffFile, GitDiffSection> = useCallback(
     ({ item, section }) => (
@@ -861,16 +741,17 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
     return trimmed.startsWith("origin/") ? trimmed.slice("origin/".length) : trimmed;
   }, [baseRef]);
-  const commitDisabled = actionsDisabled || commitMutation.isPending;
-  const prDisabled = actionsDisabled || prMutation.isPending;
-  const mergeDisabled = actionsDisabled || mergeMutation.isPending || hasUncommittedChanges;
+  const commitDisabled = actionsDisabled || commitStatus === "pending";
+  const prDisabled = actionsDisabled || prCreateStatus === "pending";
+  const mergeDisabled =
+    actionsDisabled || mergeStatus === "pending" || hasUncommittedChanges || !baseRef;
   const mergeFromBaseDisabled =
-    actionsDisabled || mergeFromBaseMutation.isPending || hasUncommittedChanges;
+    actionsDisabled || mergeFromBaseStatus === "pending" || hasUncommittedChanges || !baseRef;
   const pushDisabled =
-    actionsDisabled || pushMutation.isPending || !(gitStatus?.hasRemote ?? false);
+    actionsDisabled || pushStatus === "pending" || !(gitStatus?.hasRemote ?? false);
   const archiveDisabled =
     actionsDisabled ||
-    archiveMutation.isPending ||
+    archiveStatus === "pending" ||
     !gitStatus?.isPaseoOwnedWorktree;
 
   let bodyContent: ReactElement;
@@ -966,8 +847,8 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       pendingLabel: "Committing...",
       successLabel: "Committed",
       disabled: commitDisabled,
-      status: commitAction.status,
-      handler: commitAction.trigger,
+      status: commitStatus,
+      handler: handleCommit,
     });
 
     // Push - when has remote
@@ -978,9 +859,9 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         pendingLabel: "Pushing...",
         successLabel: "Pushed",
         disabled: pushDisabled,
-        status: pushAction.status,
+        status: pushStatus,
         description: !hasRemote ? "No remote configured" : undefined,
-        handler: pushAction.trigger,
+        handler: handlePush,
       });
     }
 
@@ -1006,8 +887,8 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         pendingLabel: "Creating PR...",
         successLabel: "PR Created",
         disabled: prDisabled,
-        status: prCreateAction.status,
-        handler: prCreateAction.trigger,
+        status: prCreateStatus,
+        handler: handleCreatePr,
       });
     }
 
@@ -1019,9 +900,9 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         pendingLabel: "Merging...",
         successLabel: "Merged",
         disabled: mergeDisabled,
-        status: mergeAction.status,
+        status: mergeStatus,
         description: hasUncommittedChanges ? "Requires clean working tree" : undefined,
-        handler: mergeAction.trigger,
+        handler: handleMergeBranch,
       });
     }
 
@@ -1033,9 +914,9 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         pendingLabel: "Updating...",
         successLabel: "Updated",
         disabled: mergeFromBaseDisabled,
-        status: mergeFromBaseAction.status,
+        status: mergeFromBaseStatus,
         description: hasUncommittedChanges ? "Requires clean working tree" : undefined,
-        handler: mergeFromBaseAction.trigger,
+        handler: handleMergeFromBase,
       });
     }
 
@@ -1047,9 +928,9 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         pendingLabel: "Archiving...",
         successLabel: "Archived",
         disabled: archiveDisabled,
-        status: archiveAction.status,
+        status: archiveStatus,
         icon: <Archive size={16} color={theme.colors.foregroundMuted} />,
-        handler: archiveAction.trigger,
+        handler: handleArchiveWorktree,
       });
     }
 
@@ -1061,7 +942,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       primaryActionId = "commit";
     }
     // Rule 2: Ahead of origin → Push
-    else if (aheadOfOrigin > 0 && allActions.has("push") && !pushDisabled) {
+    else if (aheadOfOrigin > 0 && allActions.has("push")) {
       primaryActionId = "push";
     }
     // Rule 3: Has PR → View PR
@@ -1103,7 +984,8 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     isGit, hasRemote, hasPullRequest, prStatus?.url, aheadCount, isPaseoOwnedWorktree, isOnBaseBranch,
     hasUncommittedChanges, aheadOfOrigin, shipDefault, baseRefLabel,
     commitDisabled, pushDisabled, prDisabled, mergeDisabled, mergeFromBaseDisabled, archiveDisabled,
-    commitAction, pushAction, prCreateAction, mergeAction, mergeFromBaseAction, archiveAction,
+    commitStatus, pushStatus, prCreateStatus, mergeStatus, mergeFromBaseStatus, archiveStatus,
+    handleCommit, handlePush, handleCreatePr, handleMergeBranch, handleMergeFromBase, handleArchiveWorktree,
   ]);
 
   // Helper to get display label based on status
@@ -1216,7 +1098,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         ) : null}
       </View>
 
-      {isGit && (hasUncommittedChanges || aheadCount > 0) ? (
+      {isGit ? (
         <View style={styles.diffStatusContainer}>
           <View style={styles.diffStatusInner}>
             <Pressable

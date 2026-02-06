@@ -78,11 +78,10 @@ test('host removal removes the host from UI and persists after reload', async ({
   await expect(page.getByText('extra', { exact: true }).first()).toBeVisible();
   await expect(page.getByText(extraEndpoint, { exact: true }).first()).toBeVisible();
 
-  const removeButtons = page.getByText('Remove', { exact: true });
-  await expect(removeButtons).toHaveCount(2);
-
-  page.once('dialog', (dialog) => dialog.accept());
-  await removeButtons.nth(1).click();
+  await page.getByTestId(`daemon-menu-trigger-${extraDaemon.serverId}`).click();
+  await page.getByTestId(`daemon-menu-remove-${extraDaemon.serverId}`).click();
+  await expect(page.getByTestId('remove-host-confirm-modal')).toBeVisible();
+  await page.getByTestId('remove-host-confirm').click();
 
   await expect(page.getByText(extraEndpoint, { exact: true })).toHaveCount(0);
   await page.waitForFunction(

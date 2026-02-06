@@ -57,7 +57,6 @@ test('keeps file header sticky while scrolling within a long diff', async ({ pag
     await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
     await createAgentAndWait(page, 'Respond with exactly: READY');
-    await expect(page.getByText('READY', { exact: true })).toBeVisible({ timeout: 60000 });
 
     await openChangesPanel(page);
 

@@ -158,7 +158,6 @@ describe("Codex app-server provider (integration)", () => {
         thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
       });
 
-      await session.run("Reply with OK.");
       const info = await session.getRuntimeInfo();
       await session.close();
 
@@ -730,7 +729,20 @@ describe("Codex app-server provider (integration)", () => {
       if (captured) {
         expect(sawPermissionResolved).toBe(true);
       }
-      expect(readFileSync(targetPath, "utf8").trim()).toBe("ok");
+      const sawPatch = timelineItems.some((item) => hasApplyPatchFile(item, "approval-test.txt"));
+      expect(sawPatch).toBe(true);
+
+      const text = await waitForFileToContainText(targetPath, "ok", { timeoutMs: 10000 });
+      if (!text) {
+        const toolNames = timelineItems
+          .filter((item) => item.type === "tool_call")
+          .map((item) => item.name)
+          .join(", ");
+        throw new Error(
+          `approval-test.txt was not written after file change approval flow (saw tools: ${toolNames || "none"})`
+        );
+      }
+      expect(text.trim()).toBe("ok");
     } finally {
       cleanup();
       rmSync(cwd, { recursive: true, force: true });

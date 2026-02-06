@@ -17,14 +17,18 @@ test('manual host add accepts host:port only and persists a direct connection', 
   });
   await page.goto('/settings');
 
-  await page.getByText('+ Add host', { exact: true }).click();
+  await page.getByText('+ Add connection', { exact: true }).click();
   await page.getByText('Direct connection', { exact: true }).click();
 
   const input = page.getByPlaceholder('host:6767');
   await expect(input).toBeVisible();
   await input.fill(`127.0.0.1:${daemonPort}`);
 
-  await page.getByText('Connect & Save', { exact: true }).click();
+  await page.getByText('Connect', { exact: true }).click();
+
+  const nameModal = page.getByTestId('name-host-modal');
+  await expect(nameModal).toBeVisible({ timeout: 15000 });
+  await nameModal.getByTestId('name-host-skip').click();
 
   await expect(page.getByTestId('sidebar-new-agent')).toBeVisible();
   await expect(page.getByText('Online', { exact: true })).toBeVisible({ timeout: 15000 });

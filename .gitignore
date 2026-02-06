@@ -9,7 +9,9 @@ out/
 
 # Environment variables
 .env
+.env.test
 .env.local
+.env.test.local
 .env*.local
 
 # Logs

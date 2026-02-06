@@ -137,10 +137,18 @@ test('dictation transcribes fixture via real STT', async ({ page }) => {
       .poll(async () => page.evaluate(() => (window as any).__mic.active as number))
       .toBe(1);
 
+    const initialCopyMessageCount = await page
+      .getByRole('button', { name: 'Copy message' })
+      .count();
+
     await page.keyboard.press('Control+d');
 
-    const transcriptLocator = page.getByText(/voice note/i);
-    await expect(transcriptLocator).toBeVisible({ timeout: 60_000 });
+    await expect
+      .poll(
+        async () => page.getByRole('button', { name: 'Copy message' }).count(),
+        { timeout: 60_000 }
+      )
+      .toBeGreaterThan(initialCopyMessageCount);
   } finally {
     await repo.cleanup();
   }

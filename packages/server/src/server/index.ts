@@ -33,6 +33,7 @@ async function main() {
   if (process.argv.includes("--no-mcp")) {
     config.mcpEnabled = false;
   }
+
   const daemon = await createPaseoDaemon(config, logger);
 
   try {

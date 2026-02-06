@@ -15,7 +15,7 @@ import { darkTheme } from "@/styles/theme";
 import { DaemonRegistryProvider, useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { DaemonConnectionsProvider } from "@/contexts/daemon-connections-context";
 import { MultiDaemonSessionHost } from "@/components/multi-daemon-session-host";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect, type ReactNode, useMemo, useRef } from "react";
 import { Platform } from "react-native";
 import * as Linking from "expo-linking";
@@ -37,6 +37,7 @@ import { getIsTauri, getIsTauriMac } from "@/constants/layout";
 import { useTrafficLightPadding } from "@/utils/tauri-window";
 import { CommandCenter } from "@/components/command-center";
 import { useGlobalKeyboardNav } from "@/hooks/use-global-keyboard-nav";
+import { queryClient } from "@/query/query-client";
 
 polyfillCrypto();
 
@@ -98,21 +99,6 @@ function PushNotificationRouter() {
 }
 
 function QueryProvider({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            staleTime: Infinity,
-            gcTime: Infinity,
-            refetchOnMount: false,
-            refetchOnReconnect: false,
-            refetchOnWindowFocus: false,
-          },
-        },
-      })
-  );
-
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
