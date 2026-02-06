@@ -1178,6 +1178,20 @@ export class Session {
     voiceConversationId: string,
     requestId: string
   ): Promise<void> {
+    if (this.voiceLlmProvider === "openrouter") {
+      this.voiceConversationId = null;
+      this.messages = [];
+      this.emit({
+        type: "voice_conversation_loaded",
+        payload: {
+          voiceConversationId,
+          messageCount: 0,
+          requestId,
+        },
+      });
+      return;
+    }
+
     const loaded = await this.voiceConversationStore.load(
       this.sessionLogger,
       voiceConversationId
@@ -1200,6 +1214,17 @@ export class Session {
    * List all voice conversations
    */
   public async handleListVoiceConversations(requestId: string): Promise<void> {
+    if (this.voiceLlmProvider === "openrouter") {
+      this.emit({
+        type: "list_voice_conversations_response",
+        payload: {
+          conversations: [],
+          requestId,
+        },
+      });
+      return;
+    }
+
     try {
       const conversations = await this.voiceConversationStore.list(this.sessionLogger);
       this.emit({
@@ -1237,6 +1262,18 @@ export class Session {
     voiceConversationId: string,
     requestId: string
   ): Promise<void> {
+    if (this.voiceLlmProvider === "openrouter") {
+      this.emit({
+        type: "delete_voice_conversation_response",
+        payload: {
+          voiceConversationId,
+          success: true,
+          requestId,
+        },
+      });
+      return;
+    }
+
     try {
       await this.voiceConversationStore.delete(this.sessionLogger, voiceConversationId);
       this.emit({
@@ -1412,16 +1449,12 @@ export class Session {
         return;
       }
 
-      this.voiceConversationId = voiceConversationId;
-
-      const loaded = await this.voiceConversationStore.load(
-        this.sessionLogger,
-        voiceConversationId
-      );
-      this.messages = loaded ?? [];
+      // OpenRouter voice mode is always ephemeral: no out-of-band persistence.
+      this.voiceConversationId = null;
+      this.messages = [];
 
       this.sessionLogger.info(
-        { voiceConversationId, messageCount: this.messages.length },
+        { messageCount: this.messages.length },
         "Voice conversation enabled"
       );
       return;
@@ -1435,21 +1468,8 @@ export class Session {
       );
       return;
     }
-
-    const idToPersist = this.voiceConversationId;
-    if (idToPersist) {
-      try {
-        await this.voiceConversationStore.save(
-          this.sessionLogger,
-          idToPersist,
-          this.messages
-        );
-      } catch (error) {
-        this.sessionLogger.warn({ err: error }, "Failed to persist voice conversation");
-      }
-    }
-
-    this.sessionLogger.info({ voiceConversationId: idToPersist }, "Voice conversation disabled");
+    this.voiceConversationId = null;
+    this.sessionLogger.info("Voice conversation disabled");
   }
 
   /**
@@ -4940,22 +4960,6 @@ export class Session {
               { messageCount: newMessages.length },
               `onFinish - saved message with ${newMessages.length} steps`
             );
-          }
-
-          // Persist voice conversation to disk (best-effort; voice-only)
-          if (enableTTS && this.voiceConversationId) {
-            try {
-              await this.voiceConversationStore.save(
-                this.sessionLogger,
-                this.voiceConversationId,
-                this.messages
-              );
-            } catch (error) {
-              this.sessionLogger.warn(
-                { err: error, voiceConversationId: this.voiceConversationId },
-                "Failed to persist voice conversation"
-              );
-            }
           }
         },
         onChunk: async ({ chunk }) => {
