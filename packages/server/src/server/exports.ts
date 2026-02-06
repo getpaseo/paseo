@@ -5,6 +5,7 @@ export { resolvePaseoHome } from "./paseo-home.js";
 export { createRootLogger, type LogLevel, type LogFormat } from "./logger.js";
 export { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
 export { DaemonClient, type DaemonClientConfig, type ConnectionState, type DaemonEvent } from "../client/daemon-client.js";
+export { runVoiceMcpBridgeCli } from "./voice-mcp-bridge.js";
 
 // Agent SDK types for CLI commands
 export type {

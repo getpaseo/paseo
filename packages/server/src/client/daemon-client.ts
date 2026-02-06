@@ -12,9 +12,7 @@ import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
   AgentPermissionResolvedMessage,
-  VoiceConversationLoadedMessage,
   CreateAgentRequestMessage,
-  DeleteVoiceConversationResponseMessage,
   FileDownloadTokenResponse,
   FileExplorerResponse,
   GitDiffResponse,
@@ -34,7 +32,6 @@ import type {
   ProjectIconResponse,
   ListCommandsResponse,
   ExecuteCommandResponse,
-  ListVoiceConversationsResponseMessage,
   ListProviderModelsResponseMessage,
   SpeechModelsListResponse,
   SpeechModelsDownloadResponse,
@@ -184,9 +181,6 @@ export type CreateAgentRequestOptions = {
   labels?: Record<string, string>;
 } & AgentConfigOverrides;
 
-type VoiceConversationLoadedPayload = VoiceConversationLoadedMessage["payload"];
-type ListVoiceConversationsPayload = ListVoiceConversationsResponseMessage["payload"];
-type DeleteVoiceConversationPayload = DeleteVoiceConversationResponseMessage["payload"];
 type GitDiffPayload = GitDiffResponse["payload"];
 type HighlightedDiffPayload = HighlightedDiffResponse["payload"];
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
@@ -765,10 +759,6 @@ export class DaemonClient {
     }
   }
 
-  sendUserMessage(text: string): void {
-    this.sendSessionMessage({ type: "user_text", text });
-  }
-
   clearAgentAttention(agentId: string | string[]): void {
     this.sendSessionMessage({ type: "clear_agent_attention", agentId });
   }
@@ -924,87 +914,6 @@ export class DaemonClient {
       });
       this.sendSessionMessage(message);
     }
-  }
-
-  // ============================================================================
-  // Voice Conversation RPC
-  // ============================================================================
-
-  async loadVoiceConversation(
-    voiceConversationId: string,
-    requestId?: string
-  ): Promise<VoiceConversationLoadedPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "load_voice_conversation_request",
-      voiceConversationId,
-      requestId: resolvedRequestId,
-    });
-    return this.sendRequest({
-      requestId: resolvedRequestId,
-      message,
-      timeout: 10000,
-      options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "voice_conversation_loaded") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
-    });
-  }
-
-  async listVoiceConversations(requestId?: string): Promise<ListVoiceConversationsPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "list_voice_conversations_request",
-      requestId: resolvedRequestId,
-    });
-    return this.sendRequest({
-      requestId: resolvedRequestId,
-      message,
-      timeout: 10000,
-      options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "list_voice_conversations_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
-    });
-  }
-
-  async deleteVoiceConversation(
-    voiceConversationId: string,
-    requestId?: string
-  ): Promise<DeleteVoiceConversationPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "delete_voice_conversation_request",
-      voiceConversationId,
-      requestId: resolvedRequestId,
-    });
-    return this.sendRequest({
-      requestId: resolvedRequestId,
-      message,
-      timeout: 10000,
-      options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "delete_voice_conversation_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
-    });
   }
 
   // ============================================================================
@@ -1376,8 +1285,8 @@ export class DaemonClient {
   // Audio / Voice
   // ============================================================================
 
-  async setVoiceConversation(enabled: boolean, voiceConversationId?: string): Promise<void> {
-    this.sendSessionMessage({ type: "set_voice_conversation", enabled, voiceConversationId });
+  async setVoiceMode(enabled: boolean, voiceAgentId?: string): Promise<void> {
+    this.sendSessionMessage({ type: "set_voice_mode", enabled, voiceAgentId });
   }
 
   async sendVoiceAudioChunk(

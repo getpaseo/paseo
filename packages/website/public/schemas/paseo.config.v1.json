@@ -86,8 +86,18 @@
               },
               "additionalProperties": false
             },
-            "openrouter": {
-              "$ref": "#/definitions/PaseoConfigV1/properties/providers/properties/openai"
+            "local": {
+              "type": "object",
+              "properties": {
+                "modelsDir": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "autoDownload": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -104,7 +114,8 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "openai"
+                        "openai",
+                        "local"
                       ]
                     },
                     "model": {
@@ -129,7 +140,9 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "openrouter"
+                        "claude",
+                        "codex",
+                        "opencode"
                       ]
                     },
                     "model": {
@@ -145,7 +158,8 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "openai"
+                        "openai",
+                        "local"
                       ]
                     },
                     "model": {
@@ -161,15 +175,13 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "openai"
+                        "openai",
+                        "local"
                       ]
                     },
                     "model": {
                       "type": "string",
-                      "enum": [
-                        "tts-1",
-                        "tts-1-hd"
-                      ]
+                      "minLength": 1
                     },
                     "voice": {
                       "type": "string",

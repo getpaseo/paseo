@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
@@ -48,6 +51,7 @@ function createTestDeps(): TestDeps {
 
 describe("create_agent MCP tool", () => {
   const logger = createTestLogger();
+  const existingCwd = process.cwd();
 
   it("requires a concise title no longer than 60 characters", async () => {
     const { agentManager, agentStorage } = createTestDeps();
@@ -56,26 +60,59 @@ describe("create_agent MCP tool", () => {
     expect(tool).toBeDefined();
 
     const missingTitle = await tool.inputSchema.safeParseAsync({
-      cwd: "/tmp/repo",
+      cwd: existingCwd,
       initialMode: "default",
+      initialPrompt: "test",
     });
     expect(missingTitle.success).toBe(false);
     expect(missingTitle.error.issues[0].path).toEqual(["title"]);
 
     const tooLong = await tool.inputSchema.safeParseAsync({
-      cwd: "/tmp/repo",
+      cwd: existingCwd,
       initialMode: "default",
       title: "x".repeat(61),
+      initialPrompt: "test",
     });
     expect(tooLong.success).toBe(false);
     expect(tooLong.error.issues[0].path).toEqual(["title"]);
 
     const ok = await tool.inputSchema.safeParseAsync({
-      cwd: "/tmp/repo",
+      cwd: existingCwd,
+      initialMode: "default",
+      title: "Short title",
+      initialPrompt: "test",
+    });
+    expect(ok.success).toBe(true);
+  });
+
+  it("requires initialPrompt", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const tool = (server as any)._registeredTools["create_agent"];
+    const parsed = await tool.inputSchema.safeParseAsync({
+      cwd: existingCwd,
       initialMode: "default",
       title: "Short title",
     });
-    expect(ok.success).toBe(true);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error.issues.some((issue: { path: string[] }) => issue.path[0] === "initialPrompt")).toBe(true);
+  });
+
+  it("surfaces createAgent validation failures", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.createAgent.mockRejectedValue(
+      new Error("Working directory does not exist: /path/that/does/not/exist")
+    );
+    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const tool = (server as any)._registeredTools["create_agent"];
+
+    await expect(
+      tool.callback({
+        cwd: "/path/that/does/not/exist",
+        title: "Short title",
+        initialPrompt: "Do work",
+      })
+    ).rejects.toThrow("Working directory does not exist");
   });
 
   it("passes caller-provided titles directly into createAgent", async () => {
@@ -86,20 +123,24 @@ describe("create_agent MCP tool", () => {
       lifecycle: "idle",
       currentModeId: null,
       availableModes: [],
+      config: { title: "Fix auth bug" },
     } as ManagedAgent);
 
     const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
     const tool = (server as any)._registeredTools["create_agent"];
     await tool.callback({
-      cwd: "/tmp/repo",
+      cwd: existingCwd,
       title: "  Fix auth bug  ",
+      initialPrompt: "Do work",
     });
 
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({
-        cwd: "/tmp/repo",
+        cwd: existingCwd,
         title: "Fix auth bug",
-      })
+      }),
+      undefined,
+      undefined
     );
   });
 
@@ -111,19 +152,127 @@ describe("create_agent MCP tool", () => {
       lifecycle: "idle",
       currentModeId: null,
       availableModes: [],
+      config: { title: "Fix auth" },
     } as ManagedAgent);
 
     const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
     const tool = (server as any)._registeredTools["create_agent"];
     await tool.callback({
-      cwd: "/tmp/repo",
+      cwd: existingCwd,
       title: "  Fix auth  ",
+      initialPrompt: "Do work",
     });
 
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         title: "Fix auth",
+      }),
+      undefined,
+      undefined
+    );
+  });
+
+  it("allows caller agents to override cwd and applies caller context labels", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const baseDir = await mkdtemp(join(tmpdir(), "paseo-mcp-test-"));
+    const subdir = join(baseDir, "subdir");
+    await mkdir(subdir, { recursive: true });
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "voice-agent",
+      cwd: baseDir,
+      provider: "codex",
+      currentModeId: "full-access",
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: subdir,
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "voice-agent",
+      resolveCallerContext: () => ({
+        childAgentDefaultLabels: { ui: "true" },
+        allowCustomCwd: true,
+      }),
+      logger,
+    });
+
+    const tool = (server as any)._registeredTools["create_agent"];
+    await tool.callback({
+      cwd: "subdir",
+      title: "Child",
+      agentType: "codex",
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: subdir,
+      }),
+      undefined,
+      { labels: { ui: "true" } }
+    );
+    await rm(baseDir, { recursive: true, force: true });
+  });
+});
+
+describe("speak MCP tool", () => {
+  const logger = createTestLogger();
+
+  it("invokes registered speak handler for caller agent", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const speak = vi.fn().mockResolvedValue(undefined);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "voice-agent-1",
+      enableVoiceTools: true,
+      resolveSpeakHandler: () => speak,
+      logger,
+    });
+    const tool = (server as any)._registeredTools["speak"];
+    expect(tool).toBeDefined();
+
+    await tool.callback({ text: "Hello from voice agent." });
+    expect(speak).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Hello from voice agent.",
+        callerAgentId: "voice-agent-1",
       })
     );
+  });
+
+  it("fails when no speak handler exists", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "voice-agent-2",
+      enableVoiceTools: true,
+      resolveSpeakHandler: () => null,
+      logger,
+    });
+    const tool = (server as any)._registeredTools["speak"];
+    await expect(tool.callback({ text: "Hello." })).rejects.toThrow(
+      "No speak handler registered for caller agent"
+    );
+  });
+
+  it("does not register speak tool unless voice tools are enabled", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "agent-no-voice",
+      logger,
+    });
+    const tool = (server as any)._registeredTools["speak"];
+    expect(tool).toBeUndefined();
   });
 });

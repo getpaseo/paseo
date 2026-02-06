@@ -13,6 +13,7 @@ import { Route as DocsRouteImport } from './routes/docs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DocsIndexRouteImport } from './routes/docs/index'
 import { Route as DocsWorktreesRouteImport } from './routes/docs/worktrees'
+import { Route as DocsVoiceRouteImport } from './routes/docs/voice'
 import { Route as DocsSecurityRouteImport } from './routes/docs/security'
 import { Route as DocsConfigurationRouteImport } from './routes/docs/configuration'
 import { Route as DocsCliRouteImport } from './routes/docs/cli'
@@ -36,6 +37,11 @@ const DocsIndexRoute = DocsIndexRouteImport.update({
 const DocsWorktreesRoute = DocsWorktreesRouteImport.update({
   id: '/worktrees',
   path: '/worktrees',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsVoiceRoute = DocsVoiceRouteImport.update({
+  id: '/voice',
+  path: '/voice',
   getParentRoute: () => DocsRoute,
 } as any)
 const DocsSecurityRoute = DocsSecurityRouteImport.update({
@@ -66,6 +72,7 @@ export interface FileRoutesByFullPath {
   '/docs/cli': typeof DocsCliRoute
   '/docs/configuration': typeof DocsConfigurationRoute
   '/docs/security': typeof DocsSecurityRoute
+  '/docs/voice': typeof DocsVoiceRoute
   '/docs/worktrees': typeof DocsWorktreesRoute
   '/docs/': typeof DocsIndexRoute
 }
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/docs/cli': typeof DocsCliRoute
   '/docs/configuration': typeof DocsConfigurationRoute
   '/docs/security': typeof DocsSecurityRoute
+  '/docs/voice': typeof DocsVoiceRoute
   '/docs/worktrees': typeof DocsWorktreesRoute
   '/docs': typeof DocsIndexRoute
 }
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/docs/cli': typeof DocsCliRoute
   '/docs/configuration': typeof DocsConfigurationRoute
   '/docs/security': typeof DocsSecurityRoute
+  '/docs/voice': typeof DocsVoiceRoute
   '/docs/worktrees': typeof DocsWorktreesRoute
   '/docs/': typeof DocsIndexRoute
 }
@@ -98,6 +107,7 @@ export interface FileRouteTypes {
     | '/docs/cli'
     | '/docs/configuration'
     | '/docs/security'
+    | '/docs/voice'
     | '/docs/worktrees'
     | '/docs/'
   fileRoutesByTo: FileRoutesByTo
@@ -107,6 +117,7 @@ export interface FileRouteTypes {
     | '/docs/cli'
     | '/docs/configuration'
     | '/docs/security'
+    | '/docs/voice'
     | '/docs/worktrees'
     | '/docs'
   id:
@@ -117,6 +128,7 @@ export interface FileRouteTypes {
     | '/docs/cli'
     | '/docs/configuration'
     | '/docs/security'
+    | '/docs/voice'
     | '/docs/worktrees'
     | '/docs/'
   fileRoutesById: FileRoutesById
@@ -156,6 +168,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsWorktreesRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/voice': {
+      id: '/docs/voice'
+      path: '/voice'
+      fullPath: '/docs/voice'
+      preLoaderRoute: typeof DocsVoiceRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/security': {
       id: '/docs/security'
       path: '/security'
@@ -192,6 +211,7 @@ interface DocsRouteChildren {
   DocsCliRoute: typeof DocsCliRoute
   DocsConfigurationRoute: typeof DocsConfigurationRoute
   DocsSecurityRoute: typeof DocsSecurityRoute
+  DocsVoiceRoute: typeof DocsVoiceRoute
   DocsWorktreesRoute: typeof DocsWorktreesRoute
   DocsIndexRoute: typeof DocsIndexRoute
 }
@@ -201,6 +221,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsCliRoute: DocsCliRoute,
   DocsConfigurationRoute: DocsConfigurationRoute,
   DocsSecurityRoute: DocsSecurityRoute,
+  DocsVoiceRoute: DocsVoiceRoute,
   DocsWorktreesRoute: DocsWorktreesRoute,
   DocsIndexRoute: DocsIndexRoute,
 }

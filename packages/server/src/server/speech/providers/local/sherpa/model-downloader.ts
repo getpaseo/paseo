@@ -96,7 +96,7 @@ async function isNonEmptyFile(filePath: string): Promise<boolean> {
 export async function ensureSherpaOnnxModel(options: EnsureSherpaOnnxModelOptions): Promise<string> {
   const logger = options.logger.child({
     module: "speech",
-    provider: "sherpa-onnx",
+    provider: "local",
     component: "model-downloader",
     modelId: options.modelId,
   });
@@ -109,8 +109,8 @@ export async function ensureSherpaOnnxModel(options: EnsureSherpaOnnxModelOption
 
   if (!options.autoDownload) {
     throw new Error(
-      `Missing sherpa-onnx model files for ${options.modelId} in ${modelDir}. ` +
-        `Set PASEO_SHERPA_ONNX_AUTO_DOWNLOAD=1 to auto-download.`
+      `Missing local speech model files for ${options.modelId} in ${modelDir}. ` +
+        `Set PASEO_LOCAL_AUTO_DOWNLOAD=1 to auto-download.`
     );
   }
 

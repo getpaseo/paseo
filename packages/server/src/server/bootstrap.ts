@@ -3,6 +3,7 @@ import { createServer as createHTTPServer } from "http";
 import { createReadStream, unlinkSync, existsSync } from "fs";
 import { stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -40,20 +41,10 @@ function parseListenString(listen: string): ListenTarget {
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
-import { OpenAISTT, type STTConfig } from "./speech/providers/openai/stt.js";
-import { OpenAITTS, type TTSConfig } from "./speech/providers/openai/tts.js";
-import { OpenAIRealtimeTranscriptionSession } from "./speech/providers/openai/realtime-transcription-session.js";
-import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
-import { SherpaOnlineRecognizerEngine } from "./speech/providers/local/sherpa/sherpa-online-recognizer.js";
-import { SherpaOfflineRecognizerEngine } from "./speech/providers/local/sherpa/sherpa-offline-recognizer.js";
-import { SherpaOnnxSTT } from "./speech/providers/local/sherpa/sherpa-stt.js";
-import { SherpaOnnxParakeetSTT } from "./speech/providers/local/sherpa/sherpa-parakeet-stt.js";
-import { SherpaOnnxTTS } from "./speech/providers/local/sherpa/sherpa-tts.js";
-import { SherpaRealtimeTranscriptionSession } from "./speech/providers/local/sherpa/sherpa-realtime-session.js";
-import { SherpaParakeetRealtimeTranscriptionSession } from "./speech/providers/local/sherpa/sherpa-parakeet-realtime-session.js";
-import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./speech/providers/local/sherpa/model-downloader.js";
-import type { SherpaOnnxModelId } from "./speech/providers/local/sherpa/model-catalog.js";
-import { PocketTtsOnnxTTS } from "./speech/providers/local/pocket/pocket-tts-onnx.js";
+import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
+import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
+import type { RequestedSpeechProviders } from "./speech/speech-types.js";
+import { initializeSpeechRuntime } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -73,35 +64,50 @@ import type {
   AgentClient,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
+import { AGENT_PROVIDER_DEFINITIONS } from "./agent/provider-manifest.js";
 import { acquirePidLock, releasePidLock } from "./pid-lock.js";
 import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
+import { createVoiceMcpBridgeSocketServer, type VoiceMcpBridgeSocketServer } from "./voice-mcp-bridge.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
-export type PaseoOpenAIConfig = {
-  apiKey?: string;
-  stt?: Partial<STTConfig> & { apiKey?: string };
-  tts?: Partial<TTSConfig> & { apiKey?: string };
-};
+function resolveVoiceMcpBridgeCommand(logger: Logger): { command: string; baseArgs: string[] } {
+  const explicit = process.env.PASEO_BIN_PATH?.trim();
+  if (explicit) {
+    const resolved = { command: explicit, baseArgs: ["__paseo_voice_mcp_bridge"] };
+    logger.info({ source: "PASEO_BIN_PATH", command: resolved.command, baseArgs: resolved.baseArgs }, "Resolved voice MCP bridge command");
+    return resolved;
+  }
 
-export type PaseoSherpaOnnxConfig = {
-  modelsDir: string;
-  autoDownload?: boolean;
-  stt?: {
-    preset?: string;
-  };
-  tts?: {
-    preset?: string;
-    speakerId?: number;
-    speed?: number;
-  };
-};
+  const argv1 = process.argv[1]?.trim();
+  if (!argv1) {
+    logger.warn("Could not resolve argv[1] for voice MCP bridge; falling back to 'paseo'");
+    const resolved = { command: "paseo", baseArgs: ["__paseo_voice_mcp_bridge"] };
+    logger.info({ source: "fallback", command: resolved.command, baseArgs: resolved.baseArgs }, "Resolved voice MCP bridge command");
+    return resolved;
+  }
+
+  const base = path.basename(argv1).toLowerCase();
+  if (base.includes("tsx") && process.argv[2]) {
+    const resolved = {
+      command: process.execPath,
+      baseArgs: [argv1, process.argv[2], "__paseo_voice_mcp_bridge"],
+    };
+    logger.info({ source: "tsx", command: resolved.command, baseArgs: resolved.baseArgs }, "Resolved voice MCP bridge command");
+    return resolved;
+  }
+
+  const resolved = { command: argv1, baseArgs: ["__paseo_voice_mcp_bridge"] };
+  logger.info({ source: "argv", command: resolved.command, baseArgs: resolved.baseArgs }, "Resolved voice MCP bridge command");
+  return resolved;
+}
+
+export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
+export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
 
 export type PaseoSpeechConfig = {
-  dictationSttProvider?: "openai" | "local";
-  voiceSttProvider?: "openai" | "local";
-  voiceTtsProvider?: "openai" | "local";
-  sherpaOnnx?: PaseoSherpaOnnxConfig;
+  providers: RequestedSpeechProviders;
+  local?: PaseoLocalSpeechConfig;
 };
 
 export type PaseoDaemonConfig = {
@@ -120,7 +126,8 @@ export type PaseoDaemonConfig = {
   appBaseUrl?: string;
   openai?: PaseoOpenAIConfig;
   speech?: PaseoSpeechConfig;
-  openrouterApiKey?: string | null;
+  voiceLlmProvider?: AgentProvider | null;
+  voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
@@ -282,12 +289,110 @@ export async function createPaseoDaemon(
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`
   );
 
+  const requestedVoiceLlmProvider = config.voiceLlmProvider ?? null;
+  const voiceLlmProviderExplicit = config.voiceLlmProviderExplicit ?? false;
+  const voiceEnabledProviders = AGENT_PROVIDER_DEFINITIONS
+    .filter((definition) => definition.voice?.enabled)
+    .map((definition) => definition.id as AgentProvider);
+  logger.info(
+    {
+      requestedVoiceLlmProvider,
+      voiceLlmProviderExplicit,
+      voiceEnabledProviders,
+    },
+    "Voice LLM provider reconciliation started"
+  );
+
+  const providerClients = createAllClients(logger);
+  Object.assign(providerClients, config.agentClients);
+  const voiceLlmAvailability = Object.fromEntries(
+    voiceEnabledProviders.map((provider) => [provider, false])
+  ) as Record<AgentProvider, boolean>;
+  for (const provider of voiceEnabledProviders) {
+    try {
+      voiceLlmAvailability[provider] = await providerClients[provider].isAvailable();
+    } catch (error) {
+      logger.warn({ err: error, provider }, "Voice LLM provider availability check failed");
+      voiceLlmAvailability[provider] = false;
+    }
+  }
+
+  let resolvedVoiceLlmProvider: AgentProvider | null = null;
+  if (requestedVoiceLlmProvider) {
+    if (!voiceEnabledProviders.includes(requestedVoiceLlmProvider)) {
+      logger.error(
+        { provider: requestedVoiceLlmProvider, voiceEnabledProviders },
+        "Configured voice LLM provider does not support voice mode"
+      );
+      throw new Error(
+        `Configured voice LLM provider '${requestedVoiceLlmProvider}' does not support voice mode`
+      );
+    }
+    if (!voiceLlmAvailability[requestedVoiceLlmProvider]) {
+      logger.error(
+        { provider: requestedVoiceLlmProvider, voiceLlmAvailability },
+        "Configured voice LLM provider is unavailable"
+      );
+      throw new Error(`Configured voice LLM provider '${requestedVoiceLlmProvider}' is unavailable`);
+    }
+    resolvedVoiceLlmProvider = requestedVoiceLlmProvider;
+  } else {
+    resolvedVoiceLlmProvider =
+      voiceEnabledProviders.find((provider) => voiceLlmAvailability[provider]) ?? null;
+  }
+
+  let resolvedVoiceLlmModeId: string | null = null;
+  let resolvedVoiceLlmModel: string | null = null;
+
+  if (!resolvedVoiceLlmProvider) {
+    if (voiceLlmProviderExplicit) {
+      logger.error(
+        { requestedVoiceLlmProvider, voiceLlmAvailability },
+        "No voice LLM provider available"
+      );
+      throw new Error("No voice LLM provider available");
+    }
+    logger.warn(
+      { requestedVoiceLlmProvider, voiceLlmAvailability },
+      "No default voice LLM provider available; voice mode will be disabled until a provider is configured"
+    );
+  } else {
+    const resolvedVoiceProviderDefinition = AGENT_PROVIDER_DEFINITIONS.find(
+      (definition) => definition.id === resolvedVoiceLlmProvider
+    );
+    if (!resolvedVoiceProviderDefinition?.voice?.enabled) {
+      throw new Error(
+        `Provider '${resolvedVoiceLlmProvider}' is missing voice metadata in agent registry`
+      );
+    }
+    resolvedVoiceLlmModeId = resolvedVoiceProviderDefinition.voice.defaultModeId;
+    resolvedVoiceLlmModel =
+      config.voiceLlmModel ?? resolvedVoiceProviderDefinition.voice.defaultModel ?? null;
+  }
+
+  logger.info(
+    {
+      requestedVoiceLlmProvider,
+      voiceLlmProviderExplicit,
+      resolvedVoiceLlmProvider,
+      resolvedVoiceLlmModeId,
+      resolvedVoiceLlmModel,
+      voiceLlmAvailability,
+    },
+    "Voice LLM provider reconciliation completed"
+  );
+  let wsServer: VoiceAssistantWebSocketServer | null = null;
+  let voiceMcpBridgeServer: VoiceMcpBridgeSocketServer | null = null;
+
   // Create in-memory transport for Session's Agent MCP client (voice assistant tools)
   const createInMemoryAgentMcpTransport = async (): Promise<InMemoryTransport> => {
     const agentMcpServer = await createAgentMcpServer({
       agentManager,
       agentStorage,
       paseoHome: config.paseoHome,
+      enableVoiceTools: false,
+      resolveSpeakHandler: (callerAgentId) => wsServer?.resolveVoiceSpeakHandler(callerAgentId) ?? null,
+      resolveCallerContext: (callerAgentId) => wsServer?.resolveVoiceCallerContext(callerAgentId) ?? null,
       logger,
     });
 
@@ -309,6 +414,9 @@ export async function createPaseoDaemon(
         agentStorage,
         paseoHome: config.paseoHome,
         callerAgentId,
+        enableVoiceTools: false,
+        resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
+        resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
         logger,
       });
 
@@ -414,385 +522,37 @@ export async function createPaseoDaemon(
     logger.info("Agent MCP HTTP endpoint disabled");
   }
 
-
-  let sttService: SpeechToTextProvider | null = null;
-  let ttsService: TextToSpeechProvider | null = null;
-  let dictationSttService: SpeechToTextProvider | null = null;
-
-  let sherpaOnline: SherpaOnlineRecognizerEngine | null = null;
-  let sherpaOffline: SherpaOfflineRecognizerEngine | null = null;
-  let sherpaTts: TextToSpeechProvider | null = null;
-
-  const openaiApiKey = config.openai?.apiKey;
-  const speechConfig = config.speech ?? null;
-  const sherpaConfig = speechConfig?.sherpaOnnx ?? null;
-
-  const voiceSttProvider = speechConfig?.voiceSttProvider ?? "local";
-  const voiceTtsProvider = speechConfig?.voiceTtsProvider ?? "local";
-  const dictationSttProvider = speechConfig?.dictationSttProvider ?? "local";
-
-  const wantsLocalDictation = dictationSttProvider === "local";
-  const wantsLocalVoiceStt = voiceSttProvider === "local";
-  const wantsLocalVoiceTts = voiceTtsProvider === "local";
-
-  const openaiSttApiKey = config.openai?.stt?.apiKey ?? openaiApiKey;
-  const openaiTtsApiKey = config.openai?.tts?.apiKey ?? openaiApiKey;
-  const openaiDictationApiKey = openaiApiKey;
-
-  const missingOpenAiCredentialsFor: string[] = [];
-  if (voiceSttProvider === "openai" && !openaiSttApiKey) {
-    missingOpenAiCredentialsFor.push("voice.stt");
-  }
-  if (voiceTtsProvider === "openai" && !openaiTtsApiKey) {
-    missingOpenAiCredentialsFor.push("voice.tts");
-  }
-  if (dictationSttProvider === "openai" && !openaiDictationApiKey) {
-    missingOpenAiCredentialsFor.push("dictation.stt");
-  }
-
-  if (missingOpenAiCredentialsFor.length > 0) {
-    logger.error(
-      {
-        requestedProviders: {
-          dictationStt: dictationSttProvider,
-          voiceStt: voiceSttProvider,
-          voiceTts: voiceTtsProvider,
-        },
-        missingOpenAiCredentialsFor,
-      },
-      "Invalid speech configuration: OpenAI provider selected but credentials are missing"
-    );
-    throw new Error(
-      `Missing OpenAI credentials for configured speech features: ${missingOpenAiCredentialsFor.join(", ")}`
-    );
-  }
-
-  logger.info(
-    {
-      requestedProviders: {
-        dictationStt: dictationSttProvider,
-        voiceStt: voiceSttProvider,
-        voiceTts: voiceTtsProvider,
-      },
-      availability: {
-        openai: {
-          stt: Boolean(openaiSttApiKey),
-          tts: Boolean(openaiTtsApiKey),
-          dictationStt: Boolean(openaiDictationApiKey),
-        },
-        local: {
-          configured: Boolean(sherpaConfig),
-          modelsDir: sherpaConfig?.modelsDir ?? null,
-          autoDownload: sherpaConfig?.autoDownload ?? null,
-        },
-      },
-    },
-    "Speech provider reconciliation started"
-  );
-
-  if ((wantsLocalDictation || wantsLocalVoiceStt || wantsLocalVoiceTts) && sherpaConfig) {
-    const autoDownload = sherpaConfig.autoDownload ?? (process.env.VITEST ? false : true);
-    let sttPreset = (sherpaConfig.stt?.preset ?? "parakeet-tdt-0.6b-v3-int8").trim();
-    if (
-      sttPreset !== "zipformer-bilingual-zh-en-2023-02-20" &&
-      sttPreset !== "paraformer-bilingual-zh-en" &&
-      sttPreset !== "parakeet-tdt-0.6b-v3-int8"
-    ) {
-      throw new Error(`Unknown local STT preset: ${sttPreset}`);
-    }
-
-    let ttsPreset = (sherpaConfig.tts?.preset ?? "pocket-tts-onnx-int8").trim();
-    if (
-      ttsPreset !== "kitten-nano-en-v0_1-fp16" &&
-      ttsPreset !== "kokoro-en-v0_19" &&
-      ttsPreset !== "pocket-tts-onnx-int8"
-    ) {
-      throw new Error(`Unknown local TTS preset: ${ttsPreset}`);
-    }
-
-    const modelIds: SherpaOnnxModelId[] = [];
-    if (wantsLocalDictation || wantsLocalVoiceStt) {
-      modelIds.push(sttPreset as SherpaOnnxModelId);
-    }
-    if (wantsLocalVoiceTts) {
-      modelIds.push(ttsPreset as SherpaOnnxModelId);
-    }
-
-    try {
-      logger.info(
-        {
-          modelsDir: sherpaConfig.modelsDir,
-          modelIds,
-          autoDownload,
-        },
-        "Ensuring local speech models"
-      );
-      await ensureSherpaOnnxModels({
-        modelsDir: sherpaConfig.modelsDir,
-        modelIds,
-        autoDownload,
+  const voiceMcpSocketPath = path.join(config.paseoHome, "runtime", "voice-mcp.sock");
+  const voiceMcpBridgeCommand = resolveVoiceMcpBridgeCommand(logger);
+  voiceMcpBridgeServer = createVoiceMcpBridgeSocketServer({
+    socketPath: voiceMcpSocketPath,
+    logger,
+    createAgentMcpServerForCaller: async (callerAgentId) => {
+      return createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        paseoHome: config.paseoHome,
+        callerAgentId,
+        enableVoiceTools: false,
+        resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
+        resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
         logger,
       });
-    } catch (err) {
-      logger.error(
-        {
-          err,
-          modelsDir: sherpaConfig.modelsDir,
-          autoDownload,
-          hint:
-            "Run: npm run dev --workspace=@getpaseo/server, then run: " +
-            "`tsx packages/server/scripts/download-speech-models.ts --models-dir <DIR> --model <MODEL_ID>`",
-        },
-        "Failed to ensure local speech models"
-      );
-    }
-  }
+    },
+  });
+  const {
+    sttService,
+    ttsService,
+    dictationSttService,
+    cleanup: cleanupSpeechRuntime,
+    localModelConfig,
+  } = await initializeSpeechRuntime({
+    logger,
+    openaiConfig: config.openai,
+    speechConfig: config.speech,
+  });
 
-  if ((wantsLocalDictation || wantsLocalVoiceStt) && sherpaConfig) {
-    let preset = (sherpaConfig.stt?.preset ?? "parakeet-tdt-0.6b-v3-int8").trim();
-    if (
-      preset !== "zipformer-bilingual-zh-en-2023-02-20" &&
-      preset !== "paraformer-bilingual-zh-en" &&
-      preset !== "parakeet-tdt-0.6b-v3-int8"
-    ) {
-      throw new Error(`Unknown local STT preset: ${preset}`);
-    }
-    const base = sherpaConfig.modelsDir;
-
-    try {
-      if (preset === "parakeet-tdt-0.6b-v3-int8") {
-        const modelDir = getSherpaOnnxModelDir(base, "parakeet-tdt-0.6b-v3-int8");
-        sherpaOffline = new SherpaOfflineRecognizerEngine(
-          {
-            model: {
-              kind: "nemo_transducer",
-              encoder: `${modelDir}/encoder.int8.onnx`,
-              decoder: `${modelDir}/decoder.int8.onnx`,
-              joiner: `${modelDir}/joiner.int8.onnx`,
-              tokens: `${modelDir}/tokens.txt`,
-            },
-            numThreads: 2,
-            debug: 0,
-          },
-          logger
-        );
-      } else {
-        const model =
-          preset === "paraformer-bilingual-zh-en"
-            ? {
-                kind: "paraformer" as const,
-                encoder: `${base}/sherpa-onnx-streaming-paraformer-bilingual-zh-en/encoder.int8.onnx`,
-                decoder: `${base}/sherpa-onnx-streaming-paraformer-bilingual-zh-en/decoder.int8.onnx`,
-                tokens: `${base}/sherpa-onnx-streaming-paraformer-bilingual-zh-en/tokens.txt`,
-              }
-            : {
-                kind: "transducer" as const,
-                encoder: `${base}/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/encoder-epoch-99-avg-1.onnx`,
-                decoder: `${base}/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/decoder-epoch-99-avg-1.onnx`,
-                joiner: `${base}/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/joiner-epoch-99-avg-1.onnx`,
-                tokens: `${base}/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/tokens.txt`,
-                modelType: "zipformer",
-              };
-
-        sherpaOnline = new SherpaOnlineRecognizerEngine(
-          {
-            model,
-            numThreads: 1,
-            debug: 0,
-          },
-          logger
-        );
-      }
-    } catch (err) {
-      logger.error(
-        {
-          err,
-          modelsDir: sherpaConfig.modelsDir,
-          preset,
-          hint: `Run: tsx packages/server/scripts/download-speech-models.ts --models-dir '${sherpaConfig.modelsDir}' --model '${preset}'`,
-        },
-        "Failed to initialize Sherpa STT (models missing or invalid)"
-      );
-      sherpaOnline = null;
-      sherpaOffline = null;
-    }
-  } else if (wantsLocalDictation || wantsLocalVoiceStt) {
-    logger.warn(
-      { configured: Boolean(sherpaConfig) },
-      "Local STT selected but local provider config is missing; STT will be unavailable"
-    );
-  }
-
-  if (wantsLocalVoiceTts && sherpaConfig) {
-    let preset = (sherpaConfig.tts?.preset ?? "pocket-tts-onnx-int8").trim();
-    if (
-      preset !== "kitten-nano-en-v0_1-fp16" &&
-      preset !== "kokoro-en-v0_19" &&
-      preset !== "pocket-tts-onnx-int8"
-    ) {
-      throw new Error(`Unknown local TTS preset: ${preset}`);
-    }
-    try {
-      if (preset === "pocket-tts-onnx-int8") {
-        const modelDir = getSherpaOnnxModelDir(sherpaConfig.modelsDir, "pocket-tts-onnx-int8");
-        sherpaTts = await PocketTtsOnnxTTS.create(
-          {
-            modelDir,
-            precision: "int8",
-            targetChunkMs: 50,
-          },
-          logger
-        );
-      } else {
-        const modelDir = `${sherpaConfig.modelsDir}/${preset}`;
-        sherpaTts = new SherpaOnnxTTS(
-          {
-            preset: preset as any,
-            modelDir,
-            speakerId: sherpaConfig.tts?.speakerId,
-            speed: sherpaConfig.tts?.speed,
-          },
-          logger
-        );
-      }
-    } catch (err) {
-      logger.error(
-        {
-          err,
-          preset,
-          hint: `Run: tsx packages/server/scripts/download-speech-models.ts --models-dir '${sherpaConfig.modelsDir}' --model '${preset}'`,
-        },
-        "Failed to initialize Sherpa TTS (models missing or invalid)"
-      );
-      sherpaTts = null;
-    }
-  } else if (wantsLocalVoiceTts) {
-    logger.warn(
-      { configured: Boolean(sherpaConfig) },
-      "Local TTS selected but local provider config is missing; TTS will be unavailable"
-    );
-  }
-
-  if (wantsLocalVoiceStt && sherpaOffline) {
-    sttService = new SherpaOnnxParakeetSTT({ engine: sherpaOffline }, logger);
-  } else if (wantsLocalVoiceStt && sherpaOnline) {
-    sttService = new SherpaOnnxSTT({ engine: sherpaOnline }, logger);
-  }
-
-  if (wantsLocalVoiceTts && sherpaTts) {
-    ttsService = sherpaTts;
-  }
-
-  if (wantsLocalDictation && sherpaOnline) {
-    dictationSttService = {
-      id: "local",
-      createSession: () => new SherpaRealtimeTranscriptionSession({ engine: sherpaOnline! }),
-    };
-  } else if (wantsLocalDictation && sherpaOffline) {
-    dictationSttService = {
-      id: "local",
-      createSession: () =>
-        new SherpaParakeetRealtimeTranscriptionSession({ engine: sherpaOffline! }),
-    };
-  }
-
-  const needsOpenAiStt = !sttService && voiceSttProvider === "openai";
-  const needsOpenAiTts = !ttsService && voiceTtsProvider === "openai";
-  const needsOpenAiDictation = dictationSttProvider === "openai";
-
-  if (
-    (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation) &&
-    (openaiSttApiKey || openaiTtsApiKey || openaiDictationApiKey)
-  ) {
-    logger.info("OpenAI speech provider initialized");
-
-    if (needsOpenAiStt) {
-      if (openaiSttApiKey) {
-        const { apiKey: _sttApiKey, ...sttConfig } = config.openai?.stt ?? {};
-        sttService = new OpenAISTT(
-          {
-            apiKey: openaiSttApiKey,
-            ...sttConfig,
-          },
-          logger
-        );
-      }
-    }
-
-    if (needsOpenAiTts) {
-      if (openaiTtsApiKey) {
-        const { apiKey: _ttsApiKey, ...ttsConfig } = config.openai?.tts ?? {};
-        ttsService = new OpenAITTS(
-          {
-            apiKey: openaiTtsApiKey,
-            voice: "alloy",
-            model: "tts-1",
-            responseFormat: "pcm",
-            ...ttsConfig,
-          },
-          logger
-        );
-      }
-    }
-
-    if (needsOpenAiDictation) {
-      const transcriptionModel =
-        process.env.OPENAI_REALTIME_TRANSCRIPTION_MODEL ?? "gpt-4o-transcribe";
-
-      dictationSttService = {
-        id: "openai",
-        createSession: ({ logger: sessionLogger, language, prompt }) =>
-          new OpenAIRealtimeTranscriptionSession({
-            apiKey: openaiDictationApiKey!,
-            logger: sessionLogger,
-            transcriptionModel,
-            ...(language ? { language } : {}),
-            ...(prompt ? { prompt } : {}),
-            turnDetection: null,
-          }),
-      };
-    }
-  } else if (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation) {
-    logger.warn("OPENAI_API_KEY not set - OpenAI STT/TTS/dictation is unavailable");
-  }
-
-  const effectiveProviders = {
-    dictationStt: dictationSttService?.id ?? "unavailable",
-    voiceStt: sttService?.id ?? "unavailable",
-    voiceTts: !ttsService ? "unavailable" : ttsService === sherpaTts ? "local" : "openai",
-  };
-  const unavailableFeatures = [
-    !dictationSttService ? "dictation.stt" : null,
-    !sttService ? "voice.stt" : null,
-    !ttsService ? "voice.tts" : null,
-  ].filter((feature): feature is string => feature !== null);
-
-  if (unavailableFeatures.length > 0) {
-    logger.error(
-      {
-        requestedProviders: {
-          dictationStt: dictationSttProvider,
-          voiceStt: voiceSttProvider,
-          voiceTts: voiceTtsProvider,
-        },
-        effectiveProviders,
-        unavailableFeatures,
-      },
-      "Speech provider reconciliation failed: configured features are unavailable"
-    );
-    throw new Error(
-      `Configured speech features unavailable: ${unavailableFeatures.join(", ")}`
-    );
-  } else {
-    logger.info(
-      {
-        effectiveProviders,
-      },
-      "Speech provider reconciliation completed"
-    );
-  }
-
-  const wsServer = new VoiceAssistantWebSocketServer(
+  wsServer = new VoiceAssistantWebSocketServer(
     httpServer,
     logger,
     serverId,
@@ -805,12 +565,26 @@ export async function createPaseoDaemon(
     { stt: sttService, tts: ttsService },
     terminalManager,
     {
-      openrouterApiKey: config.openrouterApiKey ?? null,
-      voiceLlmModel: config.voiceLlmModel ?? null,
+      voiceLlmProvider: resolvedVoiceLlmProvider,
+      voiceLlmModeId: resolvedVoiceLlmModeId,
+      voiceLlmProviderExplicit,
+      voiceLlmModel: resolvedVoiceLlmModel,
+      voiceAgentMcpStdio: {
+        command: voiceMcpBridgeCommand.command,
+        baseArgs: [
+          ...voiceMcpBridgeCommand.baseArgs,
+          "--socket",
+          voiceMcpSocketPath,
+        ],
+        env: {
+          PASEO_HOME: config.paseoHome,
+        },
+      },
     },
     {
       finalTimeoutMs: config.dictationFinalTimeoutMs,
       stt: dictationSttService,
+      localModels: localModelConfig ?? undefined,
     }
   );
 
@@ -870,7 +644,12 @@ export async function createPaseoDaemon(
               relayTransport?.stop().catch(() => undefined);
               relayTransport = startRelayTransport({
                 logger,
-                attachSocket: (ws) => wsServer.attachExternalSocket(ws),
+                attachSocket: (ws) => {
+                  if (!wsServer) {
+                    throw new Error("WebSocket server not initialized");
+                  }
+                  return wsServer.attachExternalSocket(ws);
+                },
                 relayEndpoint,
                 serverId,
                 daemonKeyPair: daemonKeyPair.keyPair,
@@ -896,6 +675,9 @@ export async function createPaseoDaemon(
         httpServer.listen(listenTarget.path);
       }
     });
+    if (voiceMcpBridgeServer) {
+      await voiceMcpBridgeServer.start();
+    }
   };
 
   const stop = async () => {
@@ -905,13 +687,14 @@ export async function createPaseoDaemon(
     await agentStorage.flush().catch(() => undefined);
     await shutdownProviders(logger);
     terminalManager.killAll();
-    if (sherpaTts && typeof (sherpaTts as any).free === "function") {
-      (sherpaTts as any).free();
-    }
-    sherpaOnline?.free();
-    sherpaOffline?.free();
+    cleanupSpeechRuntime();
     await relayTransport?.stop().catch(() => undefined);
-    await wsServer.close();
+    if (wsServer) {
+      await wsServer.close();
+    }
+    if (voiceMcpBridgeServer) {
+      await voiceMcpBridgeServer.stop().catch(() => undefined);
+    }
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
     });

@@ -66,6 +66,22 @@ describe("curateAgentActivity", () => {
       expect(result).toBe("[ListFiles]");
     });
 
+    test("does not treat generic double-underscore tool names as MCP calls", () => {
+      const timeline: AgentTimelineItem[] = [
+        {
+          type: "tool_call",
+          callId: "call-1",
+          name: "custom__tool",
+          input: {},
+          status: "completed",
+        },
+      ];
+
+      const result = curateAgentActivity(timeline);
+
+      expect(result).toBe("[custom__tool]");
+    });
+
     test("serializes todo items as [Tasks]", () => {
       const timeline: AgentTimelineItem[] = [
         {
@@ -327,6 +343,38 @@ describe("curateAgentActivity", () => {
       const result = curateAgentActivity(timeline);
 
       expect(result).toBe("[Grep] TODO");
+    });
+
+    test("shows speak tool text input", () => {
+      const timeline: AgentTimelineItem[] = [
+        {
+          type: "tool_call",
+          callId: "s1",
+          name: "speak",
+          input: { text: "hello from voice" },
+          status: "completed",
+        },
+      ];
+
+      const result = curateAgentActivity(timeline);
+      expect(result).toBe('[speak] {"text":"hello from voice"}');
+    });
+
+    test("shows MCP tool input JSON", () => {
+      const timeline: AgentTimelineItem[] = [
+        {
+          type: "tool_call",
+          callId: "m1",
+          name: "paseo__create_agent",
+          input: { cwd: "/tmp/repo", initialPrompt: "do the thing" },
+          status: "completed",
+        },
+      ];
+
+      const result = curateAgentActivity(timeline);
+      expect(result).toBe(
+        '[paseo__create_agent] {"cwd":"/tmp/repo","initialPrompt":"do the thing"}'
+      );
     });
   });
 });

@@ -7,6 +7,7 @@ export const Route = createFileRoute('/docs')({
 
 const navigation = [
   { name: 'Getting started', href: '/docs' },
+  { name: 'Voice', href: '/docs/voice' },
   { name: 'Git worktrees', href: '/docs/worktrees' },
   { name: 'CLI', href: '/docs/cli' },
   { name: 'Configuration', href: '/docs/configuration' },

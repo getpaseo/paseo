@@ -1,6 +1,6 @@
-import { listSherpaOnnxModels } from "../src/server/speech/providers/local/sherpa/model-catalog.js";
+import { listLocalSpeechModels } from "../src/server/speech/providers/local/models.js";
 
-const models = listSherpaOnnxModels()
+const models = listLocalSpeechModels()
   .slice()
   .sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id));
 

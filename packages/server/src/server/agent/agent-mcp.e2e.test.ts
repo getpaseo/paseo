@@ -90,7 +90,6 @@ describe("agent MCP end-to-end (offline)", () => {
         mcpDebug: false,
         agentClients: createTestAgentClients(),
         agentStoragePath: path.join(paseoHome, "agents"),
-        openrouterApiKey: null,
       };
 
       const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));

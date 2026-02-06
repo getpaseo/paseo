@@ -1,7 +1,8 @@
 import path from "node:path";
 import dotenv from "dotenv";
 
-// Load repo-root .env for integration/E2E tests (OpenAI, etc.)
+// Load package-local .env.test first for integration/E2E credentials, then repo-root .env fallback.
+dotenv.config({ path: path.resolve(process.cwd(), ".env.test"), override: true });
 dotenv.config({ path: path.resolve(process.cwd(), "../.env") });
 
 process.env.GIT_TERMINAL_PROMPT = "0";

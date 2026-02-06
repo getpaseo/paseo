@@ -12,6 +12,7 @@ export function loadSherpaOnnx(): SherpaOnnxModule {
   if (cached) {
     return cached;
   }
+
   const require = createRequire(import.meta.url);
   cached = require("sherpa-onnx") as SherpaOnnxModule;
   return cached;

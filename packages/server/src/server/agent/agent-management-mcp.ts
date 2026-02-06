@@ -23,8 +23,6 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
 import { ensureValidJson } from "../json-utils.js";
 import type { Logger } from "pino";
 
@@ -51,6 +49,7 @@ import { AgentStorage } from "./agent-storage.js";
 import { createWorktree } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
+import { expandUserPath } from "../path-utils.js";
 
 export interface AgentManagementMcpOptions {
   agentManager: AgentManager;
@@ -76,13 +75,6 @@ const AgentStatusEnum = z.enum([
 
 // 50 seconds - surface friendly message before SDK tool timeout (~60s)
 const AGENT_WAIT_TIMEOUT_MS = 50000;
-
-function expandPath(path: string): string {
-  if (path.startsWith("~/") || path === "~") {
-    return resolve(homedir(), path.slice(2));
-  }
-  return resolve(path);
-}
 
 async function waitForAgentWithTimeout(
   agentManager: AgentManager,
@@ -320,7 +312,7 @@ export async function createAgentManagementMcpServer(
         title: string;
       };
 
-      let resolvedCwd = expandPath(cwd);
+      let resolvedCwd = expandUserPath(cwd);
 
       if (worktreeName) {
         if (!baseBranch) {

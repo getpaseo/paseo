@@ -19,8 +19,13 @@ import { Session } from "./session.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
-import { VoiceConversationStore } from "./voice-conversation-store.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
+import type { LocalSpeechModelId } from "./speech/providers/local/models.js";
+import type {
+  VoiceCallerContext,
+  VoiceMcpStdioConfig,
+  VoiceSpeakHandler,
+} from "./voice-types.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 
@@ -69,15 +74,26 @@ export class VoiceAssistantWebSocketServer {
   private readonly stt: SpeechToTextProvider | null;
   private readonly tts: TextToSpeechProvider | null;
   private readonly terminalManager: TerminalManager | null;
-  private readonly voiceConversationStore: VoiceConversationStore;
   private readonly dictation: {
     finalTimeoutMs?: number;
     stt?: SpeechToTextProvider | null;
+    localModels?: {
+      modelsDir: string;
+      defaultModelIds: LocalSpeechModelId[];
+    };
   } | null;
   private readonly voice: {
-    openrouterApiKey?: string | null;
+    voiceLlmProvider?: AgentProvider | null;
+    voiceLlmModeId?: string | null;
+    voiceLlmProviderExplicit?: boolean;
     voiceLlmModel?: string | null;
+    voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
   } | null;
+  private readonly voiceSpeakHandlers = new Map<
+    string,
+    VoiceSpeakHandler
+  >();
+  private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
 
   constructor(
     server: HTTPServer,
@@ -92,12 +108,19 @@ export class VoiceAssistantWebSocketServer {
     speech?: { stt: SpeechToTextProvider | null; tts: TextToSpeechProvider | null },
     terminalManager?: TerminalManager | null,
     voice?: {
-      openrouterApiKey?: string | null;
+      voiceLlmProvider?: AgentProvider | null;
+      voiceLlmModeId?: string | null;
+      voiceLlmProviderExplicit?: boolean;
       voiceLlmModel?: string | null;
+      voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
     },
     dictation?: {
       finalTimeoutMs?: number;
       stt?: SpeechToTextProvider | null;
+      localModels?: {
+        modelsDir: string;
+        defaultModelIds: LocalSpeechModelId[];
+      };
     }
   ) {
     this.logger = logger.child({ module: "websocket-server" });
@@ -110,9 +133,6 @@ export class VoiceAssistantWebSocketServer {
     this.stt = speech?.stt ?? null;
     this.tts = speech?.tts ?? null;
     this.terminalManager = terminalManager ?? null;
-    this.voiceConversationStore = new VoiceConversationStore(
-      join(paseoHome, "voice-conversations")
-    );
     this.voice = voice ?? null;
     this.dictation = dictation ?? null;
 
@@ -208,25 +228,38 @@ export class VoiceAssistantWebSocketServer {
     const clientId = `client-${++this.clientIdCounter}`;
     const connectionLogger = this.logger.child({ clientId });
 
-    const session = new Session(
+    const session = new Session({
       clientId,
-      (msg) => {
+      onMessage: (msg) => {
         this.sendToClient(ws, wrapSessionMessage(msg));
       },
-      connectionLogger.child({ module: "session" }),
-      this.downloadTokenStore,
-      this.pushTokenStore,
-      this.paseoHome,
-      this.agentManager,
-      this.agentStorage,
-      this.createAgentMcpTransport,
-      this.stt,
-      this.tts,
-      this.terminalManager,
-      this.voiceConversationStore,
-      this.voice ?? undefined,
-      this.dictation ?? undefined
-    );
+      logger: connectionLogger.child({ module: "session" }),
+      downloadTokenStore: this.downloadTokenStore,
+      pushTokenStore: this.pushTokenStore,
+      paseoHome: this.paseoHome,
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      createAgentMcpTransport: this.createAgentMcpTransport,
+      stt: this.stt,
+      tts: this.tts,
+      terminalManager: this.terminalManager,
+      voice: this.voice ?? undefined,
+      voiceBridge: {
+        registerVoiceSpeakHandler: (agentId, handler) => {
+          this.voiceSpeakHandlers.set(agentId, handler);
+        },
+        unregisterVoiceSpeakHandler: (agentId) => {
+          this.voiceSpeakHandlers.delete(agentId);
+        },
+        registerVoiceCallerContext: (agentId, context) => {
+          this.voiceCallerContexts.set(agentId, context);
+        },
+        unregisterVoiceCallerContext: (agentId) => {
+          this.voiceCallerContexts.delete(agentId);
+        },
+      },
+      dictation: this.dictation ?? undefined,
+    });
 
     this.sessions.set(ws, session);
 
@@ -261,6 +294,18 @@ export class VoiceAssistantWebSocketServer {
       connectionLogger.error({ err }, "Client error");
       await this.detachSocket(ws, connectionLogger, clientId);
     });
+  }
+
+  public resolveVoiceSpeakHandler(
+    callerAgentId: string
+  ): VoiceSpeakHandler | null {
+    return this.voiceSpeakHandlers.get(callerAgentId) ?? null;
+  }
+
+  public resolveVoiceCallerContext(
+    callerAgentId: string
+  ): VoiceCallerContext | null {
+    return this.voiceCallerContexts.get(callerAgentId) ?? null;
   }
 
   private async detachSocket(

@@ -88,4 +88,37 @@ describe("SpeechSegmenter", () => {
     expect(lastCall.isLast).toBe(true);
     expect(lastCall.audioData.length).toBeGreaterThan(0);
   });
+
+  it("keeps detection alive across a brief pause and confirms short utterances", () => {
+    const onSpeechStart = vi.fn();
+    const detectingChanges: boolean[] = [];
+
+    const segmenter = new SpeechSegmenter(
+      {
+        enableContinuousStreaming: false,
+        volumeThreshold: 0.18,
+        silenceDurationMs: 1400,
+        speechConfirmationMs: 120,
+        detectionGracePeriodMs: 700,
+        minChunkDurationMs: 100,
+        pcmSampleRate: 1000,
+      },
+      {
+        onSpeechStart,
+        onDetectingChange: (v) => detectingChanges.push(v),
+      }
+    );
+
+    const t0 = 20_000;
+
+    segmenter.pushVolumeLevel(0.4, t0);
+    segmenter.pushPcmChunk(mkPcmBytes(20));
+    segmenter.pushVolumeLevel(0.0, t0 + 80);
+    segmenter.pushPcmChunk(mkPcmBytes(20));
+    segmenter.pushVolumeLevel(0.4, t0 + 140);
+    segmenter.pushPcmChunk(mkPcmBytes(20));
+
+    expect(detectingChanges).toContain(true);
+    expect(onSpeechStart).toHaveBeenCalledTimes(1);
+  });
 });

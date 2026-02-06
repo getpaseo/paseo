@@ -28,7 +28,7 @@ export class SherpaOnnxSTT implements SpeechToTextProvider {
     this.engine = config.engine;
     this.silencePeakThreshold = config.silencePeakThreshold ?? 300;
     this.tailPaddingMs = config.tailPaddingMs ?? 500;
-    this.logger = logger.child({ module: "speech", provider: "sherpa-onnx", component: "stt" });
+    this.logger = logger.child({ module: "speech", provider: "local", component: "stt" });
   }
 
   public createSession(params: {

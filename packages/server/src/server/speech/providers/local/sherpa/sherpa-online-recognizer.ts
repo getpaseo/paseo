@@ -46,7 +46,7 @@ export class SherpaOnlineRecognizerEngine {
   private readonly logger: pino.Logger;
 
   constructor(config: SherpaOnlineRecognizerConfig, logger: pino.Logger) {
-    this.logger = logger.child({ module: "speech", provider: "sherpa-onnx", component: "online-recognizer" });
+    this.logger = logger.child({ module: "speech", provider: "local", component: "online-recognizer" });
 
     const { model } = config;
     if (model.kind === "transducer") {

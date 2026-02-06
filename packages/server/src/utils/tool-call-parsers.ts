@@ -28,6 +28,7 @@ const PrincipalParamSchema = z.union([
   z.object({ pattern: z.string() }).transform((d) => ({ type: "text" as const, value: d.pattern })),
   z.object({ query: z.string() }).transform((d) => ({ type: "text" as const, value: d.query })),
   z.object({ url: z.string() }).transform((d) => ({ type: "text" as const, value: d.url })),
+  z.object({ text: z.string() }).transform((d) => ({ type: "text" as const, value: d.text })),
   // Files array (Codex apply_patch)
   z.object({ files: z.array(FileEntrySchema).nonempty() }).transform((d) => ({ type: "path" as const, value: d.files[0].path })),
   // TodoWrite - show in_progress item or count

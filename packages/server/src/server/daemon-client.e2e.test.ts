@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 import {
   createDaemonTestContext,
@@ -18,9 +19,9 @@ import {
 
 const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
 
-const sherpaModelsDir =
-  process.env.PASEO_SHERPA_ONNX_MODELS_DIR ??
-  path.join(homedir(), ".paseo", "models", "sherpa-onnx");
+const localModelsDir =
+  process.env.PASEO_LOCAL_MODELS_DIR ??
+  path.join(homedir(), ".paseo", "models", "local-speech");
 
 function hasSherpaZipformerModels(modelsDir: string): boolean {
   return (
@@ -49,7 +50,7 @@ function hasSherpaKittenModels(modelsDir: string): boolean {
   );
 }
 
-const hasLocalSpeech = hasSherpaZipformerModels(sherpaModelsDir) && hasSherpaKittenModels(sherpaModelsDir);
+const hasLocalSpeech = hasSherpaZipformerModels(localModelsDir) && hasSherpaKittenModels(localModelsDir);
 const hasAnySpeech = hasLocalSpeech || Boolean(openaiApiKey);
 const speechTest = hasAnySpeech ? test : test.skip;
 
@@ -92,23 +93,42 @@ describe("daemon client E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeAll(async () => {
+    const speechConfig =
+      openaiApiKey
+        ? {
+            providers: {
+              dictationStt: { provider: "openai" as const, explicit: true },
+              voiceStt: { provider: "openai" as const, explicit: true },
+              voiceTts: { provider: "openai" as const, explicit: true },
+            },
+          }
+        : hasLocalSpeech
+          ? {
+              providers: {
+                dictationStt: { provider: "local" as const, explicit: true },
+                voiceStt: { provider: "local" as const, explicit: true },
+                voiceTts: { provider: "local" as const, explicit: true },
+              },
+              local: {
+                modelsDir: localModelsDir,
+                models: {
+                  dictationStt:
+                    process.env.PASEO_DICTATION_LOCAL_STT_MODEL ??
+                    "zipformer-bilingual-zh-en-2023-02-20",
+                  voiceStt:
+                    process.env.PASEO_VOICE_LOCAL_STT_MODEL ??
+                    "zipformer-bilingual-zh-en-2023-02-20",
+                  voiceTts:
+                    process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
+                },
+              },
+            }
+          : undefined;
+
     ctx = await createDaemonTestContext({
       dictationFinalTimeoutMs: 5000,
       ...(openaiApiKey ? { openai: { apiKey: openaiApiKey } } : {}),
-      speech: {
-        dictationSttProvider: "local",
-        voiceSttProvider: "local",
-        voiceTtsProvider: "local",
-        sherpaOnnx: {
-          modelsDir: sherpaModelsDir,
-          stt: {
-            preset: process.env.PASEO_SHERPA_STT_PRESET ?? "zipformer-bilingual-zh-en-2023-02-20",
-          },
-          tts: {
-            preset: process.env.PASEO_SHERPA_TTS_PRESET ?? "kitten-nano-en-v0_1-fp16",
-          },
-        },
-      },
+      ...(speechConfig ? { speech: speechConfig } : {}),
     });
   }, 60000);
 
@@ -119,22 +139,18 @@ describe("daemon client E2E", () => {
   test("handles session actions", async () => {
     expect(ctx.client.isConnected).toBe(true);
 
-    const voiceConversationId = `voice-${Date.now()}`;
-    const loadResult = await ctx.client.loadVoiceConversation(voiceConversationId);
-    expect(loadResult.voiceConversationId).toBe(voiceConversationId);
-    expect(typeof loadResult.messageCount).toBe("number");
-
     const agents = await ctx.client.fetchAgents();
     expect(Array.isArray(agents)).toBe(true);
 
-    const listResult = await ctx.client.listVoiceConversations();
-    expect(Array.isArray(listResult.conversations)).toBe(true);
+    const voiceAgents = await ctx.client.fetchAgents({
+      filter: { labels: { surface: "voice" } },
+    });
+    expect(Array.isArray(voiceAgents)).toBe(true);
 
-    const missingId = `missing-${Date.now()}`;
-    const deleteResult = await ctx.client.deleteVoiceConversation(missingId);
-    expect(deleteResult.voiceConversationId).toBe(missingId);
-    expect(deleteResult.success).toBe(false);
-    expect(deleteResult.error).toBeTruthy();
+    await expect(ctx.client.setVoiceMode(true)).resolves.toBeUndefined();
+    await expect(ctx.client.setVoiceMode(false)).resolves.toBeUndefined();
+
+    await ctx.client.deleteAgent(randomUUID());
   }, 30000);
 
   test("emits server_info on websocket connect", async () => {
@@ -160,19 +176,23 @@ describe("daemon client E2E", () => {
     await client.close();
   }, 15000);
 
-  test("matches request IDs for concurrent session requests", async () => {
-    const firstRequestId = `list-${Date.now()}-a`;
-    const secondRequestId = `list-${Date.now()}-b`;
+  test("handles concurrent filtered agent fetch requests", async () => {
+    const firstRequestId = `fetch-${Date.now()}-a`;
+    const secondRequestId = `fetch-${Date.now()}-b`;
 
     const [first, second] = await Promise.all([
-      ctx.client.listVoiceConversations(firstRequestId),
-      ctx.client.listVoiceConversations(secondRequestId),
+      ctx.client.fetchAgents({
+        requestId: firstRequestId,
+        filter: { labels: { surface: "voice" } },
+      }),
+      ctx.client.fetchAgents({
+        requestId: secondRequestId,
+        filter: { labels: { surface: "voice" } },
+      }),
     ]);
 
-    expect(Array.isArray(first.conversations)).toBe(true);
-    expect(Array.isArray(second.conversations)).toBe(true);
-    expect(first.requestId).toBe(firstRequestId);
-    expect(second.requestId).toBe(secondRequestId);
+    expect(Array.isArray(first)).toBe(true);
+    expect(Array.isArray(second)).toBe(true);
   }, 15000);
 
   test(
@@ -355,7 +375,7 @@ describe("daemon client E2E", () => {
       expect(sawAssistantMessage).toBe(true);
       expect(sawRawAssistantMessage).toBe(true);
 
-      await ctx.client.setVoiceConversation(false);
+      await ctx.client.setVoiceMode(false);
 
       await ctx.client.abortRequest();
       await ctx.client.audioPlayed("audio-1");
@@ -566,25 +586,22 @@ describe("daemon client E2E", () => {
     120000
   );
 
-  test.runIf(Boolean(process.env.OPENROUTER_API_KEY))(
-    "streams session activity logs and chunks",
+  speechTest(
+    "does not process non-voice audio through the voice agent path",
     async () => {
-      await ctx.client.setVoiceConversation(false);
+      await ctx.client.setVoiceMode(false);
 
-      let sawAssistantChunk = false;
       let sawTranscriptLog = false;
+      let sawAssistantChunk = false;
       let sawAssistantLog = false;
 
-      const completion = waitForSignal(60000, (resolve) => {
+      const transcriptSeen = waitForSignal(60000, (resolve) => {
         const unsubscribeChunk = ctx.client.on("assistant_chunk", (message) => {
           if (message.type !== "assistant_chunk") {
             return;
           }
           if (message.payload.chunk.length > 0) {
             sawAssistantChunk = true;
-          }
-          if (sawAssistantChunk && sawTranscriptLog && sawAssistantLog) {
-            resolve();
           }
         });
 
@@ -594,12 +611,10 @@ describe("daemon client E2E", () => {
           }
           if (message.payload.type === "transcript") {
             sawTranscriptLog = true;
+            resolve();
           }
           if (message.payload.type === "assistant") {
             sawAssistantLog = true;
-          }
-          if (sawAssistantChunk && sawTranscriptLog && sawAssistantLog) {
-            resolve();
           }
         });
 
@@ -609,16 +624,30 @@ describe("daemon client E2E", () => {
         };
       });
 
-      await ctx.client.sendUserMessage("Say 'hello' and nothing else");
-      await completion;
+      const fixturePath = path.resolve(
+        process.cwd(),
+        "..",
+        "app",
+        "e2e",
+        "fixtures",
+        "recording.wav"
+      );
+      const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+      await ctx.client.sendVoiceAudioChunk(wav.toString("base64"), "audio/wav", true);
+      await transcriptSeen;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      expect(sawTranscriptLog).toBe(true);
+      expect(sawAssistantChunk).toBe(false);
+      expect(sawAssistantLog).toBe(false);
     },
-    120000
+    90000
   );
 
   speechTest(
     "voice mode buffers audio until isLast and emits transcription_result",
     async () => {
-      await ctx.client.setVoiceConversation(true, `voice-${Date.now()}`);
+      await ctx.client.setVoiceMode(true, randomUUID());
 
       const transcription = waitForSignal(30_000, (resolve) => {
         const unsubscribe = ctx.client.on("transcription_result", (message) => {
@@ -713,7 +742,7 @@ describe("daemon client E2E", () => {
         }
       } finally {
         await Promise.allSettled([transcription, errorSignal]);
-        await ctx.client.setVoiceConversation(false);
+        await ctx.client.setVoiceMode(false);
       }
     },
     90_000

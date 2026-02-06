@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import pino from "pino";
 
 import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./model-downloader.js";
@@ -96,7 +97,7 @@ describe("speech models (download E2E)", () => {
       const set = getModelSet();
 
       const paseoHomeRoot = mkdtempSync(path.join(tmpdir(), "paseo-speech-download-"));
-      const modelsDir = path.join(paseoHomeRoot, ".paseo", "models", "sherpa-onnx");
+      const modelsDir = path.join(paseoHomeRoot, ".paseo", "models", "local-speech");
 
       const modelIds: SherpaOnnxModelId[] =
         set === "parakeet-pocket"
@@ -114,14 +115,26 @@ describe("speech models (download E2E)", () => {
         paseoHomeRoot,
         dictationFinalTimeoutMs: 8000,
         speech: {
-          dictationSttProvider: "local",
-          voiceSttProvider: "local",
-          voiceTtsProvider: "local",
-          sherpaOnnx: {
+          providers: {
+            dictationStt: { provider: "local", explicit: true },
+            voiceStt: { provider: "local", explicit: true },
+            voiceTts: { provider: "local", explicit: true },
+          },
+          local: {
             modelsDir,
             autoDownload: false,
-            stt: { preset: set === "parakeet-pocket" ? "parakeet-tdt-0.6b-v3-int8" : "zipformer-bilingual-zh-en-2023-02-20" },
-            tts: { preset: set === "parakeet-pocket" ? "pocket-tts-onnx-int8" : "kitten-nano-en-v0_1-fp16" },
+            models: {
+              dictationStt:
+                set === "parakeet-pocket"
+                  ? "parakeet-tdt-0.6b-v3-int8"
+                  : "zipformer-bilingual-zh-en-2023-02-20",
+              voiceStt:
+                set === "parakeet-pocket"
+                  ? "parakeet-tdt-0.6b-v3-int8"
+                  : "zipformer-bilingual-zh-en-2023-02-20",
+              voiceTts:
+                set === "parakeet-pocket" ? "pocket-tts-onnx-int8" : "kitten-nano-en-v0_1-fp16",
+            },
           },
         },
       });
@@ -178,7 +191,7 @@ describe("speech models (download E2E)", () => {
           };
         });
 
-        await ctx.client.setVoiceConversation(true, `voice-download-${Date.now()}`);
+        await ctx.client.setVoiceMode(true, randomUUID());
         for (let offset = 0; offset < pcm16.length; offset += chunkBytes) {
           const chunk = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
           const isLast = offset + chunkBytes >= pcm16.length;
@@ -188,7 +201,7 @@ describe("speech models (download E2E)", () => {
         if (voiceText.length > 0) {
           expect(voiceText).toContain("voice note");
         }
-        await ctx.client.setVoiceConversation(false);
+        await ctx.client.setVoiceMode(false);
 
         // Streaming TTS: generate locally from downloaded model and validate chunking.
         const ttsText = "This is a voice note.";
