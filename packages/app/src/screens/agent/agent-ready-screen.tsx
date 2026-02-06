@@ -204,6 +204,18 @@ function AgentScreenContent({
 
   // Derive isExplorerOpen from the unified panel state
   const isExplorerOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
+  const openExplorerWithDefaultTab = useCallback(() => {
+    // Generic explorer toggles should land on Changes by default.
+    setExplorerTab("changes");
+    openFileExplorer();
+  }, [openFileExplorer, setExplorerTab]);
+  const handleToggleExplorer = useCallback(() => {
+    if (isExplorerOpen) {
+      toggleFileExplorer();
+      return;
+    }
+    openExplorerWithDefaultTab();
+  }, [isExplorerOpen, openExplorerWithDefaultTab, toggleFileExplorer]);
 
   const {
     translateX: explorerTranslateX,
@@ -253,7 +265,7 @@ function AgentScreenContent({
           const shouldOpen = event.translationX < -explorerWindowWidth / 3 || event.velocityX < -500;
           if (shouldOpen) {
             animateExplorerToOpen();
-            runOnJS(openFileExplorer)();
+            runOnJS(openExplorerWithDefaultTab)();
           } else {
             animateExplorerToClose();
           }
@@ -269,7 +281,7 @@ function AgentScreenContent({
       explorerBackdropOpacity,
       animateExplorerToOpen,
       animateExplorerToClose,
-      openFileExplorer,
+      openExplorerWithDefaultTab,
       isExplorerGesturing,
     ]
   );
@@ -612,7 +624,7 @@ function AgentScreenContent({
           rightContent={
             <View style={styles.headerRightContent}>
               <HeaderToggleButton
-                onPress={toggleFileExplorer}
+                onPress={handleToggleExplorer}
                 tooltipLabel="Toggle explorer"
                 tooltipKeys={["mod", "E"]}
                 tooltipSide="left"
