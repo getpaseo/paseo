@@ -101,8 +101,7 @@ function Hero() {
         Run Codex and Claude Code locally from your phone and desktop
       </h1>
       <p className="text-white/70 text-lg leading-relaxed">
-        Use your full dev environment on your own machine. Use voice to check
-        in, reply, and keep work moving from your phone.
+        Bring your dev environment anywhere, with voice support built in.
       </p>
     </div>
   )
