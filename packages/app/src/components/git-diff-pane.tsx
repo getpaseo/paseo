@@ -1050,24 +1050,18 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                   accessibilityRole="button"
                   accessibilityLabel={gitActions.primary.label}
                 >
-                  <View style={styles.splitButtonPrimaryInner}>
-                    <View
-                      style={[
-                        styles.splitButtonContent,
-                        gitActions.primary.status === "pending" && styles.splitButtonContentHidden,
-                      ]}
-                    >
+                  {gitActions.primary.status === "pending" ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={theme.colors.foreground}
+                      style={styles.splitButtonSpinnerOnly}
+                    />
+                  ) : (
+                    <View style={styles.splitButtonContent}>
                       {gitActions.primary.icon}
                       <Text style={styles.splitButtonText}>{getActionDisplayLabel(gitActions.primary)}</Text>
                     </View>
-                    {gitActions.primary.status === "pending" ? (
-                      <ActivityIndicator
-                        size="small"
-                        color={theme.colors.foreground}
-                        style={styles.splitButtonSpinnerOverlay}
-                      />
-                    ) : null}
-                  </View>
+                  )}
                 </Pressable>
                 {gitActions.secondary.length > 0 ? (
                   <DropdownMenu>
@@ -1306,11 +1300,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     position: "relative",
   },
-  splitButtonPrimaryInner: {
-    position: "relative",
-    alignItems: "center",
-    justifyContent: "center",
-  },
   splitButtonPrimaryDisabled: {
     opacity: 0.6,
   },
@@ -1326,11 +1315,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     gap: theme.spacing[2],
   },
-  splitButtonContentHidden: {
-    opacity: 0,
-  },
-  splitButtonSpinnerOverlay: {
-    position: "absolute",
+  splitButtonSpinnerOnly: {
     transform: [{ scale: 0.8 }],
   },
   splitButtonCaret: {

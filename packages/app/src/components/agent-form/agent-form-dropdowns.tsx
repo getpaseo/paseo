@@ -163,6 +163,15 @@ export function SelectField({
     [getWebKey, onPress, preventWebDefault]
   );
 
+  const normalizedValue = (value ?? "").trim();
+  const normalizedPlaceholder = (placeholder ?? "").trim();
+  const hasConcreteValue =
+    normalizedValue.length > 0 &&
+    (normalizedPlaceholder.length === 0 || normalizedValue !== normalizedPlaceholder);
+  const displayText = hasConcreteValue
+    ? normalizedValue
+    : (normalizedPlaceholder || "Select...");
+
   return (
     <View style={styles.selectFieldContainer}>
       <Pressable
@@ -423,6 +432,14 @@ export function FormSelectTrigger({
     },
     [getWebKey, onPress, preventWebDefault]
   );
+  const normalizedValue = (value ?? "").trim();
+  const normalizedPlaceholder = (placeholder ?? "").trim();
+  const hasConcreteValue =
+    normalizedValue.length > 0 &&
+    (normalizedPlaceholder.length === 0 || normalizedValue !== normalizedPlaceholder);
+  const displayText = hasConcreteValue
+    ? normalizedValue
+    : (normalizedPlaceholder || "Select...");
 
   return (
     <Pressable
@@ -451,11 +468,11 @@ export function FormSelectTrigger({
           <ActivityIndicator size="small" color={defaultTheme.colors.foregroundMuted} />
         ) : (
           <Text
-            style={value ? styles.compactSelectValue : styles.compactSelectPlaceholder}
+            style={hasConcreteValue ? styles.compactSelectValue : styles.compactSelectPlaceholder}
             numberOfLines={1}
             ellipsizeMode={valueEllipsizeMode}
           >
-            {value || placeholder || "Select..."}
+            {displayText}
           </Text>
         )}
       </View>
@@ -1426,7 +1443,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
   },
   agentConfigRow: {
-    flexDirection: "row",
+    flexDirection: {
+      xs: "column",
+      md: "row",
+    },
     gap: theme.spacing[2],
   },
   agentConfigColumn: {

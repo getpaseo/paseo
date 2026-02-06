@@ -1206,7 +1206,10 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   list: {
     flex: 1,
-    paddingHorizontal: theme.spacing[2],
+    paddingHorizontal: {
+      xs: theme.spacing[2],
+      md: theme.spacing[4],
+    },
   },
   streamItemWrapper: {
     width: "100%",

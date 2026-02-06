@@ -416,7 +416,6 @@ export default function SettingsScreen() {
   const [pendingRemoveHost, setPendingRemoveHost] = useState<HostProfile | null>(null);
   const [isRemovingHost, setIsRemovingHost] = useState(false);
   const [editingDaemon, setEditingDaemon] = useState<HostProfile | null>(null);
-  const [editLabel, setEditLabel] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const isLoading = settingsLoading || daemonLoading;
   const isMountedRef = useRef(true);
@@ -460,13 +459,11 @@ export default function SettingsScreen() {
 
   const handleEditDaemon = useCallback((profile: HostProfile) => {
     setEditingDaemon(profile);
-    setEditLabel(profile.label ?? "");
   }, []);
 
   const handleCloseEditDaemon = useCallback(() => {
     if (isSavingEdit) return;
     setEditingDaemon(null);
-    setEditLabel("");
   }, [isSavingEdit]);
 
   const closeAddConnectionFlow = useCallback(() => {
@@ -510,17 +507,11 @@ export default function SettingsScreen() {
     pendingEditReopenServerId,
   ]);
 
-  useEffect(() => {
-    if (!editingDaemon) return;
-    if (editingDaemonLive) return;
-    handleCloseEditDaemon();
-  }, [editingDaemon, editingDaemonLive, handleCloseEditDaemon]);
-
-  const handleSaveEditDaemon = useCallback(async () => {
+  const handleSaveEditDaemon = useCallback(async (nextLabelRaw: string) => {
     if (!editingDaemon) return;
     if (isSavingEdit) return;
 
-    const nextLabel = editLabel.trim();
+    const nextLabel = nextLabelRaw.trim();
     if (!nextLabel) {
       Alert.alert("Label required", "Enter a label for this host.");
       return;
@@ -536,7 +527,7 @@ export default function SettingsScreen() {
     } finally {
       setIsSavingEdit(false);
     }
-  }, [editLabel, editingDaemon, handleCloseEditDaemon, isSavingEdit, updateHost]);
+  }, [editingDaemon, handleCloseEditDaemon, isSavingEdit, updateHost]);
 
   const handleRemoveConnection = useCallback(
     async (serverId: string, connectionId: string) => {
@@ -757,84 +748,14 @@ export default function SettingsScreen() {
             </AdaptiveModalSheet>
           ) : null}
 
-          <AdaptiveModalSheet
-            title="Edit host"
+          <EditHostModal
             visible={Boolean(editingDaemon)}
+            host={editingDaemonLive ?? editingDaemon}
+            isSaving={isSavingEdit}
             onClose={handleCloseEditDaemon}
-            testID="edit-host-modal"
-          >
-            <View style={styles.formField}>
-              <Text style={styles.label}>Label</Text>
-              <AdaptiveTextInput
-                style={styles.input}
-                value={editLabel}
-                onChangeText={setEditLabel}
-                placeholder="My Host"
-                placeholderTextColor={defaultTheme.colors.mutedForeground}
-              />
-            </View>
-
-            {editingDaemonLive ? (
-              <View style={styles.formField}>
-                <Text style={styles.label}>Connections</Text>
-                <View style={{ gap: 8 }}>
-                  {editingDaemonLive.connections.map((conn) => {
-                    const title =
-                      conn.type === "relay"
-                        ? `Relay (${conn.relayEndpoint})`
-                        : `Direct (${conn.endpoint})`;
-                    return (
-                      <View
-                        key={conn.id}
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 12,
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 12,
-                          borderWidth: 1,
-                          borderColor: theme.colors.border,
-                          backgroundColor: theme.colors.surface2,
-                        }}
-                      >
-                        <Text style={{ color: theme.colors.foreground, fontSize: 12, flex: 1 }}>
-                          {title}
-                        </Text>
-                        <Pressable
-                          onPress={() => void handleRemoveConnection(editingDaemonLive.serverId, conn.id)}
-                        >
-                          <Text style={{ color: theme.colors.destructive, fontSize: 12, fontWeight: "500" }}>
-                            Remove
-                          </Text>
-                        </Pressable>
-                      </View>
-                    );
-                  })}
-                </View>
-              </View>
-            ) : null}
-
-            <View style={styles.formActionsRow}>
-              <Button
-                variant="secondary"
-                size="sm"
-                onPress={handleCloseEditDaemon}
-                disabled={isSavingEdit}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                onPress={() => void handleSaveEditDaemon()}
-                disabled={isSavingEdit}
-              >
-                {isSavingEdit ? "Saving..." : "Save"}
-              </Button>
-            </View>
-          </AdaptiveModalSheet>
+            onSave={(label) => void handleSaveEditDaemon(label)}
+            onRemoveConnection={handleRemoveConnection}
+          />
 
           {/* Appearance */}
           <View style={styles.section}>
@@ -892,6 +813,126 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
     </View>
+  );
+}
+
+interface EditHostModalProps {
+  visible: boolean;
+  host: HostProfile | null;
+  isSaving: boolean;
+  onClose: () => void;
+  onSave: (label: string) => void;
+  onRemoveConnection: (serverId: string, connectionId: string) => Promise<void>;
+}
+
+function EditHostModal({
+  visible,
+  host,
+  isSaving,
+  onClose,
+  onSave,
+  onRemoveConnection,
+}: EditHostModalProps) {
+  const [draftLabel, setDraftLabel] = useState("");
+  const activeServerIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!visible || !host) return;
+    if (activeServerIdRef.current !== host.serverId) {
+      setDraftLabel(host.label ?? "");
+      activeServerIdRef.current = host.serverId;
+      return;
+    }
+    if (!draftLabel.trim()) {
+      setDraftLabel(host.label ?? "");
+    }
+  }, [visible, host, draftLabel]);
+
+  useEffect(() => {
+    if (!visible) {
+      activeServerIdRef.current = null;
+    }
+  }, [visible]);
+
+  return (
+    <AdaptiveModalSheet
+      title="Edit host"
+      visible={visible}
+      onClose={onClose}
+      testID="edit-host-modal"
+    >
+      <View style={styles.formField}>
+        <Text style={styles.label}>Label</Text>
+        <AdaptiveTextInput
+          style={styles.input}
+          value={draftLabel}
+          onChangeText={setDraftLabel}
+          placeholder="My Host"
+          placeholderTextColor={defaultTheme.colors.mutedForeground}
+        />
+      </View>
+
+      {host ? (
+        <View style={styles.formField}>
+          <Text style={styles.label}>Connections</Text>
+          <View style={{ gap: 8 }}>
+            {host.connections.map((conn) => {
+              const title =
+                conn.type === "relay"
+                  ? `Relay (${conn.relayEndpoint})`
+                  : `Direct (${conn.endpoint})`;
+              return (
+                <View
+                  key={conn.id}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: defaultTheme.colors.border,
+                    backgroundColor: defaultTheme.colors.surface2,
+                  }}
+                >
+                  <Text style={{ color: defaultTheme.colors.foreground, fontSize: 12, flex: 1 }}>
+                    {title}
+                  </Text>
+                  <Pressable
+                    onPress={() => void onRemoveConnection(host.serverId, conn.id)}
+                  >
+                    <Text style={{ color: defaultTheme.colors.destructive, fontSize: 12, fontWeight: "500" }}>
+                      Remove
+                    </Text>
+                  </Pressable>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
+
+      <View style={styles.formActionsRow}>
+        <Button
+          variant="secondary"
+          size="sm"
+          onPress={onClose}
+          disabled={isSaving}
+        >
+          Cancel
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          onPress={() => onSave(draftLabel)}
+          disabled={isSaving}
+        >
+          {isSaving ? "Saving..." : "Save"}
+        </Button>
+      </View>
+    </AdaptiveModalSheet>
   );
 }
 

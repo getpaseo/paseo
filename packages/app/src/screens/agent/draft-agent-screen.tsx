@@ -30,6 +30,7 @@ import {
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { formatConnectionStatus } from "@/utils/daemons";
+import { shortenPath } from "@/utils/shorten-path";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -199,11 +200,25 @@ export function DraftAgentScreen({
     isCreateFlow: true,
     onlineServerIds,
   });
+  const daemonLabelByServerId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const daemon of daemons) {
+      const label = daemon.label?.trim();
+      map.set(daemon.serverId, label && label.length > 0 ? label : daemon.serverId);
+    }
+    return map;
+  }, [daemons]);
   const hostEntry = selectedServerId
     ? connectionStates.get(selectedServerId)
     : undefined;
+  const selectedDaemonLabel = selectedServerId
+    ? daemonLabelByServerId.get(selectedServerId)
+    : null;
   const hostLabel =
-    hostEntry?.daemon.label ?? selectedServerId ?? "Select host";
+    selectedDaemonLabel ??
+    hostEntry?.daemon.label ??
+    selectedServerId ??
+    "Select host";
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const isSidebarOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
@@ -561,9 +576,8 @@ export function DraftAgentScreen({
   const handleSelectWorktreePath = useCallback(
     (path: string) => {
       setSelectedWorktreePath(path);
-      setWorkingDirFromUser(path);
     },
-    [setWorkingDirFromUser]
+    []
   );
 
   useEffect(() => {
@@ -591,35 +605,36 @@ export function DraftAgentScreen({
 
   const selectedWorktreeLabel =
     worktreeOptions.find((option) => option.path === selectedWorktreePath)?.label ?? "";
+  const displayWorkingDir = shortenPath(workingDir);
   const worktreeTriggerValue =
     worktreeMode === "create"
       ? "Create new worktree"
       : selectedWorktreeLabel || "Select worktree";
   const hostOptions = useMemo(
     () =>
-      Array.from(connectionStates.values()).map(({ daemon, status }) => ({
+      daemons.map((daemon) => ({
         id: daemon.serverId,
-        label: daemon.label?.trim() ? daemon.label : daemon.serverId,
-        description: formatConnectionStatus(status),
+        label: daemonLabelByServerId.get(daemon.serverId) ?? daemon.serverId,
+        description: formatConnectionStatus(
+          connectionStates.get(daemon.serverId)?.status ?? "idle"
+        ),
       })),
-    [connectionStates]
+    [connectionStates, daemonLabelByServerId, daemons]
   );
   const worktreeComboOptions = useMemo(
     () => [
       {
-        id: "__create_new__",
-        label: "Create new worktree",
-        description: "Create a new isolated worktree",
-      },
-      {
         id: "__none__",
         label: "None",
-        description: "Do not use a worktree",
+      },
+      {
+        id: "__create_new__",
+        label: "Create new worktree",
       },
       ...worktreeOptions.map((option) => ({
         id: option.path,
         label: option.label,
-        description: option.path,
+        description: shortenPath(option.path),
       })),
     ],
     [worktreeOptions]
@@ -922,12 +937,12 @@ export function DraftAgentScreen({
         ) : (
         <ScrollView style={styles.scrollView} contentContainerStyle={styles.configScrollContent}>
           <View style={styles.configSection}>
-            <View style={styles.topSelectorRow}>
+            <View style={isMobile ? styles.stackedSelectorGroup : styles.topSelectorRow}>
               <FormSelectTrigger
                 controlRef={workingDirAnchorRef}
-                containerStyle={styles.topSelectorPrimary}
+                containerStyle={isMobile ? styles.fullSelector : styles.topSelectorPrimary}
                 label="Working directory"
-                value={workingDir}
+                value={displayWorkingDir}
                 placeholder="/path/to/project"
                 onPress={() => setIsWorkingDirOpen(true)}
                 icon={<Folder size={16} color={theme.colors.foregroundMuted} />}
@@ -936,7 +951,7 @@ export function DraftAgentScreen({
               />
               <FormSelectTrigger
                 controlRef={hostAnchorRef}
-                containerStyle={styles.topSelectorSecondary}
+                containerStyle={isMobile ? styles.fullSelector : styles.topSelectorSecondary}
                 label="Host"
                 value={hostLabel}
                 placeholder="Select host"
@@ -952,36 +967,7 @@ export function DraftAgentScreen({
                 </Text>
               </View>
             )}
-            {trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
-              <View style={styles.topSelectorRow}>
-                <FormSelectTrigger
-                  controlRef={worktreeAnchorRef}
-                  containerStyle={
-                    worktreeMode === "create" ? styles.halfSelector : styles.topSelectorPrimary
-                  }
-                  label="Worktree"
-                  value={worktreeTriggerValue}
-                  placeholder="Select worktree"
-                  onPress={() => setIsWorktreePickerOpen(true)}
-                  icon={<GitBranch size={16} color={theme.colors.foregroundMuted} />}
-                  showLabel={false}
-                  valueEllipsizeMode="middle"
-                />
-                {worktreeMode === "create" ? (
-                  <FormSelectTrigger
-                    controlRef={branchAnchorRef}
-                    containerStyle={styles.halfSelector}
-                    label="Base branch"
-                    value={baseBranch}
-                    placeholder="From branch"
-                    onPress={() => setIsBranchOpen(true)}
-                    disabled={repoInfoStatus === "loading"}
-                    icon={<GitBranch size={16} color={theme.colors.foregroundMuted} />}
-                    showLabel={false}
-                  />
-                ) : null}
-              </View>
-            ) : null}
+            {isMobile ? <View style={styles.formSeparator} /> : null}
             <AgentConfigRow
               providerDefinitions={providerDefinitions}
               selectedProvider={selectedProvider}
@@ -994,6 +980,43 @@ export function DraftAgentScreen({
               isModelLoading={isModelLoading}
               onSelectModel={setModelFromUser}
             />
+            {isMobile && trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
+              <View style={styles.formSeparator} />
+            ) : null}
+            {trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
+              <View style={isMobile ? styles.stackedSelectorGroup : styles.topSelectorRow}>
+                <FormSelectTrigger
+                  controlRef={worktreeAnchorRef}
+                  containerStyle={
+                    isMobile
+                      ? styles.fullSelector
+                      : worktreeMode === "create"
+                      ? styles.halfSelector
+                      : styles.topSelectorPrimary
+                  }
+                  label="Worktree"
+                  value={worktreeTriggerValue}
+                  placeholder="Select worktree"
+                  onPress={() => setIsWorktreePickerOpen(true)}
+                  icon={<GitBranch size={16} color={theme.colors.foregroundMuted} />}
+                  showLabel={false}
+                  valueEllipsizeMode="middle"
+                />
+                {worktreeMode === "create" ? (
+                  <FormSelectTrigger
+                    controlRef={branchAnchorRef}
+                    containerStyle={isMobile ? styles.fullSelector : styles.halfSelector}
+                    label="Base branch"
+                    value={baseBranch}
+                    placeholder="From branch"
+                    onPress={() => setIsBranchOpen(true)}
+                    disabled={repoInfoStatus === "loading"}
+                    icon={<GitBranch size={16} color={theme.colors.foregroundMuted} />}
+                    showLabel={false}
+                  />
+                ) : null}
+              </View>
+            ) : null}
             {baseBranchError ? <Text style={styles.errorInlineText}>{baseBranchError}</Text> : null}
             {repoInfoError ? <Text style={styles.errorInlineText}>{repoInfoError}</Text> : null}
             {gitBlockingError ? <Text style={styles.errorInlineText}>{gitBlockingError}</Text> : null}
@@ -1046,7 +1069,10 @@ export function DraftAgentScreen({
           />
 
           <Combobox
-            options={agentWorkingDirSuggestions.map((path) => ({ id: path, label: path }))}
+            options={agentWorkingDirSuggestions.map((path) => ({
+              id: path,
+              label: shortenPath(path),
+            }))}
             value={workingDir}
             onSelect={setWorkingDirFromUser}
             searchPlaceholder="/path/to/project"
@@ -1136,7 +1162,10 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
   },
   configSection: {
-    paddingHorizontal: theme.spacing[0],
+    paddingHorizontal: {
+      xs: theme.spacing[4],
+      md: theme.spacing[0],
+    },
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[4],
     gap: theme.spacing[2],
@@ -1148,6 +1177,22 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  stackedSelectorGroup: {
+    gap: theme.spacing[2],
+  },
+  fullSelector: {
+    width: "100%",
+  },
+  formSeparator: {
+    height: theme.borderWidth[1],
+    backgroundColor: {
+      xs: theme.colors.surface1,
+      sm: theme.colors.surface1,
+      md: theme.colors.border,
+    },
+    marginHorizontal: theme.spacing[1],
+    marginVertical: theme.spacing[2],
   },
   topSelectorPrimary: {
     flex: 7,
