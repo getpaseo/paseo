@@ -422,6 +422,9 @@ export default function SettingsScreen() {
   const isMountedRef = useRef(true);
   const lastHandledEditHostRef = useRef<string | null>(null);
   const appVersion = Constants.expoConfig?.version ?? (Constants as any).manifest?.version ?? "0.1.0";
+  const editingDaemonLive = editingDaemon
+    ? daemons.find((daemon) => daemon.serverId === editingDaemon.serverId) ?? null
+    : null;
   const pendingNameHostname = useSessionStore(
     useCallback(
       (state) => {
@@ -506,6 +509,12 @@ export default function SettingsScreen() {
     isPasteLinkVisible,
     pendingEditReopenServerId,
   ]);
+
+  useEffect(() => {
+    if (!editingDaemon) return;
+    if (editingDaemonLive) return;
+    handleCloseEditDaemon();
+  }, [editingDaemon, editingDaemonLive, handleCloseEditDaemon]);
 
   const handleSaveEditDaemon = useCallback(async () => {
     if (!editingDaemon) return;
@@ -765,11 +774,11 @@ export default function SettingsScreen() {
               />
             </View>
 
-            {editingDaemon ? (
+            {editingDaemonLive ? (
               <View style={styles.formField}>
                 <Text style={styles.label}>Connections</Text>
                 <View style={{ gap: 8 }}>
-                  {editingDaemon.connections.map((conn) => {
+                  {editingDaemonLive.connections.map((conn) => {
                     const title =
                       conn.type === "relay"
                         ? `Relay (${conn.relayEndpoint})`
@@ -794,7 +803,7 @@ export default function SettingsScreen() {
                           {title}
                         </Text>
                         <Pressable
-                          onPress={() => void handleRemoveConnection(editingDaemon.serverId, conn.id)}
+                          onPress={() => void handleRemoveConnection(editingDaemonLive.serverId, conn.id)}
                         >
                           <Text style={{ color: theme.colors.destructive, fontSize: 12, fontWeight: "500" }}>
                             Remove
