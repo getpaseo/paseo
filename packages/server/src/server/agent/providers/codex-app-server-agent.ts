@@ -913,6 +913,23 @@ const ItemLifecycleNotificationSchema = z.object({
     .passthrough(),
 }).passthrough();
 
+const CodexEventTurnAbortedNotificationSchema = z.object({
+  msg: z
+    .object({
+      type: z.literal("turn_aborted"),
+      reason: z.string().optional(),
+    })
+    .passthrough(),
+}).passthrough();
+
+const CodexEventTaskCompleteNotificationSchema = z.object({
+  msg: z
+    .object({
+      type: z.literal("task_complete"),
+    })
+    .passthrough(),
+}).passthrough();
+
 type ParsedCodexNotification =
   | { kind: "thread_started"; threadId: string }
   | { kind: "turn_started"; turnId: string }
@@ -1010,6 +1027,32 @@ const CodexNotificationSchema = z.union([
     ({ params }): ParsedCodexNotification => ({ kind: "item_started", item: params.item })
   ),
   z.object({ method: z.literal("item/started"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("codex/event/turn_aborted"),
+    params: CodexEventTurnAbortedNotificationSchema,
+  }).transform(
+    (): ParsedCodexNotification => ({
+      kind: "turn_completed",
+      status: "interrupted",
+      errorMessage: null,
+    })
+  ),
+  z.object({ method: z.literal("codex/event/turn_aborted"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("codex/event/task_complete"),
+    params: CodexEventTaskCompleteNotificationSchema,
+  }).transform(
+    (): ParsedCodexNotification => ({
+      kind: "turn_completed",
+      status: "completed",
+      errorMessage: null,
+    })
+  ),
+  z.object({ method: z.literal("codex/event/task_complete"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
   ),
   z.object({ method: z.string(), params: z.unknown() }).transform(
