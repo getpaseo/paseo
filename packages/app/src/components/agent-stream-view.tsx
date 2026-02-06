@@ -54,6 +54,8 @@ import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 import { VoiceCompactIndicator } from "./voice-compact-indicator";
 import { useVoice } from "@/contexts/voice-context";
+import { Fonts } from "@/constants/theme";
+import AssistantMarkdownDom from "./assistant-markdown-dom";
 
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
@@ -98,6 +100,7 @@ export function AgentStreamView({
   const insets = useSafeAreaInsets();
   const { isVoiceMode } = useVoice();
   const [isNearBottom, setIsNearBottom] = useState(true);
+  const [shouldWarmDom, setShouldWarmDom] = useState(false);
   const hasScrolledInitially = useRef(false);
   const hasAutoScrolledOnce = useRef(false);
   const isNearBottomRef = useRef(true);
@@ -131,6 +134,22 @@ export function AgentStreamView({
     hasScrolledInitially.current = false;
     hasAutoScrolledOnce.current = false;
     isNearBottomRef.current = true;
+  }, [agentId]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      return;
+    }
+    let isMounted = true;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      if (isMounted) {
+        setShouldWarmDom(true);
+      }
+    });
+    return () => {
+      isMounted = false;
+      handle.cancel();
+    };
   }, [agentId]);
 
   const handleInlinePathPress = useCallback(
@@ -236,6 +255,88 @@ export function AgentStreamView({
 
   const tightGap = theme.spacing[1]; // 4px
   const looseGap = theme.spacing[4]; // 16px
+
+  const domTheme = useMemo(
+    () => ({
+      colors: {
+        foreground: theme.colors.foreground,
+        foregroundMuted: theme.colors.foregroundMuted,
+        primary: theme.colors.primary,
+        border: theme.colors.border,
+        surface1: theme.colors.surface1,
+        surface2: theme.colors.surface2,
+      },
+      spacing: {
+        1: theme.spacing[1],
+        2: theme.spacing[2],
+        3: theme.spacing[3],
+        4: theme.spacing[4],
+        6: theme.spacing[6],
+      },
+      fontSize: {
+        xs: theme.fontSize.xs,
+        sm: theme.fontSize.sm,
+        base: theme.fontSize.base,
+        lg: theme.fontSize.lg,
+        xl: theme.fontSize.xl,
+        "2xl": theme.fontSize["2xl"],
+        "3xl": theme.fontSize["3xl"],
+      },
+      fontWeight: {
+        normal: theme.fontWeight.normal,
+        medium: theme.fontWeight.medium,
+        semibold: theme.fontWeight.semibold,
+        bold: theme.fontWeight.bold,
+      },
+      borderRadius: {
+        sm: theme.borderRadius.sm,
+        base: theme.borderRadius.base,
+        md: theme.borderRadius.md,
+        full: theme.borderRadius.full,
+      },
+      borderWidth: {
+        1: theme.borderWidth[1],
+      },
+      fonts: {
+        sans: Fonts.sans,
+        mono: Fonts.mono,
+      },
+    }),
+    [theme]
+  );
+
+  const domWarmup = useMemo(() => {
+    if (!shouldWarmDom) {
+      return null;
+    }
+
+    return (
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          opacity: 0,
+          left: -10000,
+          top: -10000,
+        }}
+      >
+        <AssistantMarkdownDom
+          markdown={" "}
+          theme={domTheme}
+          dom={{
+            scrollEnabled: false,
+            showsVerticalScrollIndicator: false,
+            showsHorizontalScrollIndicator: false,
+            // Keep non-zero size to avoid zero-height warnings in dev.
+            containerStyle: { width: 1, height: 1 },
+            style: { flex: 1 },
+          }}
+        />
+      </View>
+    );
+  }, [domTheme, shouldWarmDom]);
 
   // The FlatList is inverted, but each row is re-inverted by RN, so `marginBottom` still
   // manifests as the gap *below* the row in the final visual layout. Compute spacing
@@ -598,6 +699,7 @@ export function AgentStreamView({
   return (
     <ToolCallSheetProvider>
       <View style={stylesheet.container}>
+          {domWarmup}
           <MessageOuterSpacingProvider disableOuterSpacing>
             <FlatList
               ref={flatListRef}
