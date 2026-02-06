@@ -70,6 +70,27 @@ export default function AssistantMarkdownDom({
 }: AssistantMarkdownDomProps) {
   const lastReportedHeightRef = useRef<number>(0);
 
+  useEffect(() => {
+    const head = document.head;
+    if (!head) {
+      return;
+    }
+
+    const existing = document.querySelector('meta[name="viewport"]');
+    if (existing) {
+      return;
+    }
+
+    const meta = document.createElement("meta");
+    meta.setAttribute("name", "viewport");
+    meta.setAttribute("content", "width=device-width, initial-scale=1.0");
+    head.appendChild(meta);
+
+    return () => {
+      meta.remove();
+    };
+  }, []);
+
   const cssText = useMemo(() => {
     const { colors, spacing, fontSize, fontWeight, borderRadius, borderWidth, fonts } =
       theme;
@@ -79,6 +100,9 @@ html, body {
   margin: 0;
   padding: 0;
   background: transparent;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .paseo-markdown {
@@ -89,6 +113,7 @@ html, body {
   user-select: text;
   -webkit-user-select: text;
   overflow-wrap: anywhere;
+  max-width: 100%;
 }
 
 .paseo-markdown p {
@@ -178,18 +203,22 @@ html, body {
   border-radius: ${borderRadius.md}px;
   border: ${borderWidth[1]}px solid ${colors.border};
   margin: ${spacing[3]}px 0;
-  overflow-x: auto;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 .paseo-code-block code {
   font-family: ${fonts.mono};
   font-size: ${fontSize.sm}px;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .paseo-table-wrapper {
   overflow-x: auto;
   margin: ${spacing[3]}px 0;
+  max-width: 100%;
 }
 
 .paseo-table {

@@ -438,6 +438,9 @@ export const AssistantMessage = memo(function AssistantMessage({
           showsHorizontalScrollIndicator: false,
           bounces: false,
           textInteractionEnabled: true,
+          // `matchContents` sets a numeric width based on the DOM viewport.
+          // Force the container to respect the chat width instead of expanding the row.
+          containerStyle: { width: "100%" },
           style: { flex: 1 },
         }}
       />
