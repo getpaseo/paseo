@@ -32,6 +32,37 @@ npm install -g @getpaseo/cli && paseo
 
 Then open the app and connect to your daemon.
 
+## Local speech (STT/TTS)
+
+Paseo can run dictation + voice mode STT/TTS fully locally via `sherpa-onnx`.
+
+When the daemon starts with a local speech provider selected, it will download any missing model files automatically (unless `PASEO_SHERPA_ONNX_AUTO_DOWNLOAD=0`).
+
+```bash
+npm run speech:download --workspace=@getpaseo/server
+```
+
+Optional configuration:
+
+- `PASEO_SHERPA_ONNX_MODELS_DIR` (defaults to `~/.paseo/models/sherpa-onnx`)
+- `PASEO_SHERPA_ONNX_AUTO_DOWNLOAD` (`1` by default; set `0` to disable automatic downloads on daemon start)
+- `PASEO_SHERPA_STT_PRESET` (`zipformer`, `paraformer`, or `parakeet` for NVIDIA Parakeet TDT v3)
+- `PASEO_SHERPA_TTS_PRESET` (`pocket-tts` (Kyutai Pocket TTS), `kitten`, or `kokoro`)
+- `PASEO_DICTATION_STT_PROVIDER`, `PASEO_VOICE_STT_PROVIDER`, `PASEO_VOICE_TTS_PROVIDER` (`sherpa` or `openai`)
+
+To see all supported local model IDs:
+
+```bash
+npm run speech:models --workspace=@getpaseo/server
+```
+
+Optional: run an end-to-end test that downloads real models and exercises streaming STT + streaming TTS:
+
+```bash
+PASEO_SPEECH_E2E_DOWNLOAD=1 PASEO_SPEECH_E2E_MODEL_SET=parakeet-pocket \
+  npx vitest run --workspace=@getpaseo/server src/server/speech/sherpa/speech-download.e2e.test.ts
+```
+
 ## Documentation
 
 See [paseo.sh/docs](https://paseo.sh/docs) for full documentation.

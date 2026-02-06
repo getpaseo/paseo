@@ -6,8 +6,6 @@ import { hostname as getHostname } from "node:os";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
-import type { OpenAISTT } from "./agent/stt-openai.js";
-import type { OpenAITTS } from "./agent/tts-openai.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import {
@@ -22,6 +20,8 @@ import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import { VoiceConversationStore } from "./voice-conversation-store.js";
+import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
+import type { RealtimeTranscriptionSessionFactory } from "./dictation/dictation-stream-manager.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 
@@ -67,13 +67,14 @@ export class VoiceAssistantWebSocketServer {
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushService: PushService;
   private readonly createAgentMcpTransport: AgentMcpTransportFactory;
-  private readonly stt: OpenAISTT | null;
-  private readonly tts: OpenAITTS | null;
+  private readonly stt: SpeechToTextProvider | null;
+  private readonly tts: TextToSpeechProvider | null;
   private readonly terminalManager: TerminalManager | null;
   private readonly voiceConversationStore: VoiceConversationStore;
   private readonly dictation: {
     openaiApiKey?: string | null;
     finalTimeoutMs?: number;
+    sessionFactory?: RealtimeTranscriptionSessionFactory;
   } | null;
   private readonly voice: {
     openrouterApiKey?: string | null;
@@ -90,7 +91,7 @@ export class VoiceAssistantWebSocketServer {
     paseoHome: string,
     createAgentMcpTransport: AgentMcpTransportFactory,
     wsConfig: WebSocketServerConfig,
-    speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
+    speech?: { stt: SpeechToTextProvider | null; tts: TextToSpeechProvider | null },
     terminalManager?: TerminalManager | null,
     voice?: {
       openrouterApiKey?: string | null;
@@ -99,6 +100,7 @@ export class VoiceAssistantWebSocketServer {
     dictation?: {
       openaiApiKey?: string | null;
       finalTimeoutMs?: number;
+      sessionFactory?: RealtimeTranscriptionSessionFactory;
     }
   ) {
     this.logger = logger.child({ module: "websocket-server" });

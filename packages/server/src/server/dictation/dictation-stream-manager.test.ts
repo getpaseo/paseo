@@ -151,3 +151,34 @@ describe("DictationStreamManager (semantic VAD grace fallback)", () => {
     expect(final?.payload.text).toBe("hi there");
   });
 });
+
+describe("DictationStreamManager (provider-agnostic session factory)", () => {
+  it("can start with a custom session factory even without OPENAI_API_KEY", async () => {
+    const original = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+
+    try {
+      const session = new FakeRealtimeSession();
+      const factory: RealtimeTranscriptionSessionFactory = () => session;
+      const emitted: Array<{ type: string; payload: any }> = [];
+      const manager = new DictationStreamManager({
+        logger: pino({ level: "silent" }),
+        emit: (msg) => emitted.push(msg),
+        sessionId: "s1",
+        openaiApiKey: null,
+        sessionFactory: factory,
+      });
+
+      await manager.handleStart("d-local", "audio/pcm;rate=16000;bits=16");
+
+      expect(session.connected).toBe(true);
+      expect(emitted.find((msg) => msg.type === "dictation_stream_error")).toBeUndefined();
+    } finally {
+      if (original !== undefined) {
+        process.env.OPENAI_API_KEY = original;
+      } else {
+        delete process.env.OPENAI_API_KEY;
+      }
+    }
+  });
+});

@@ -33,12 +33,12 @@ import { getSystemPrompt } from "./agent/system-prompt.js";
 import { getAllTools } from "./agent/llm-openai.js";
 import { TTSManager } from "./agent/tts-manager.js";
 import { STTManager } from "./agent/stt-manager.js";
-import type { OpenAISTT } from "./agent/stt-openai.js";
-import type { OpenAITTS } from "./agent/tts-openai.js";
+import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
 import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
 import {
   DictationStreamManager,
+  type RealtimeTranscriptionSessionFactory,
 } from "./dictation/dictation-stream-manager.js";
 import type { VoiceConversationStore } from "./voice-conversation-store.js";
 import {
@@ -325,8 +325,8 @@ export class Session {
     agentManager: AgentManager,
     agentStorage: AgentStorage,
     createAgentMcpTransport: AgentMcpTransportFactory,
-    stt: OpenAISTT | null,
-    tts: OpenAITTS | null,
+    stt: SpeechToTextProvider | null,
+    tts: TextToSpeechProvider | null,
     terminalManager: TerminalManager | null,
     voiceConversationStore: VoiceConversationStore,
     voice?: {
@@ -336,6 +336,7 @@ export class Session {
     dictation?: {
       openaiApiKey?: string | null;
       finalTimeoutMs?: number;
+      sessionFactory?: RealtimeTranscriptionSessionFactory;
     }
   ) {
     this.clientId = clientId;
@@ -368,6 +369,7 @@ export class Session {
       emit: (msg) => this.emit(msg as unknown as SessionOutboundMessage),
       openaiApiKey: dictation?.openaiApiKey ?? null,
       finalTimeoutMs: dictation?.finalTimeoutMs,
+      ...(dictation?.sessionFactory ? { sessionFactory: dictation.sessionFactory } : {}),
     });
 
     // Initialize agent MCP client asynchronously

@@ -14,32 +14,60 @@ interface QueuedAudio {
 }
 
 /**
- * Resample PCM16 audio from 24kHz to 16kHz
- * OpenAI returns 24kHz, Speechmatics expects 16kHz
+ * Resample PCM16 audio between sample rates.
+ * Speechmatics expects 16kHz.
  */
-function resamplePcm24kTo16k(pcm24k: Uint8Array): Uint8Array {
-  // PCM16 = 2 bytes per sample
-  const samples24k = pcm24k.length / 2;
-  const samples16k = Math.floor((samples24k * 16000) / 24000);
-
-  const pcm16k = new Uint8Array(samples16k * 2);
-  const ratio = 24000 / 16000; // 1.5
-
-  for (let i = 0; i < samples16k; i++) {
-    const srcIndex = Math.floor(i * ratio) * 2;
-    if (srcIndex + 1 < pcm24k.length) {
-      pcm16k[i * 2] = pcm24k[srcIndex];
-      pcm16k[i * 2 + 1] = pcm24k[srcIndex + 1];
-    }
+function resamplePcm16(pcm: Uint8Array, fromRate: number, toRate: number): Uint8Array {
+  if (fromRate === toRate) {
+    return pcm;
   }
 
-  console.log("[AudioPlayer] Resampled PCM:", {
-    input24k: pcm24k.length,
-    output16k: pcm16k.length,
-    durationMs: samples16k / 16,
-  });
+  const inputSamples = Math.floor(pcm.length / 2);
+  const outputSamples = Math.floor((inputSamples * toRate) / fromRate);
+  const out = new Uint8Array(outputSamples * 2);
 
-  return pcm16k;
+  const ratio = fromRate / toRate;
+
+  const readInt16 = (sampleIndex: number): number => {
+    const i = sampleIndex * 2;
+    if (i + 1 >= pcm.length) {
+      return 0;
+    }
+    const lo = pcm[i]!;
+    const hi = pcm[i + 1]!;
+    let value = (hi << 8) | lo;
+    if (value & 0x8000) {
+      value = value - 0x10000;
+    }
+    return value;
+  };
+
+  const writeInt16 = (sampleIndex: number, value: number): void => {
+    const clamped = Math.max(-32768, Math.min(32767, Math.round(value)));
+    const i = sampleIndex * 2;
+    out[i] = clamped & 0xff;
+    out[i + 1] = (clamped >> 8) & 0xff;
+  };
+
+  for (let i = 0; i < outputSamples; i++) {
+    const srcPos = i * ratio;
+    const i0 = Math.floor(srcPos);
+    const frac = srcPos - i0;
+    const s0 = readInt16(i0);
+    const s1 = readInt16(Math.min(inputSamples - 1, i0 + 1));
+    writeInt16(i, s0 + (s1 - s0) * frac);
+  }
+
+  return out;
+}
+
+function parsePcmSampleRate(mimeType: string): number | null {
+  const match = /rate=(\d+)/i.exec(mimeType);
+  if (!match) {
+    return null;
+  }
+  const rate = Number(match[1]);
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
 }
 
 export interface AudioPlayerOptions {
@@ -204,12 +232,12 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
         console.log("[AudioPlayer] Resuming playback engine...");
         resumePlayback();
 
-        // Get PCM data from blob (server now sends PCM format)
+        // Get PCM data from blob (server sends PCM16)
         const arrayBuffer = await audioData.arrayBuffer();
-        let pcm24k = new Uint8Array(arrayBuffer);
+        const pcm = new Uint8Array(arrayBuffer);
 
-        // Resample from 24kHz (OpenAI) to 16kHz (Speechmatics)
-        const pcm16k = resamplePcm24kTo16k(pcm24k);
+        const inputRate = parsePcmSampleRate(audioData.type || "") ?? 24000;
+        const pcm16k = resamplePcm16(pcm, inputRate, 16000);
 
         // Calculate total duration
         const samples = pcm16k.length / 2; // 16-bit = 2 bytes per sample

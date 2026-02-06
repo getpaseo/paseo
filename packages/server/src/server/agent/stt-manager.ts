@@ -1,5 +1,5 @@
 import type pino from "pino";
-import type { OpenAISTT, TranscriptionResult } from "./stt-openai.js";
+import type { SpeechToTextProvider, TranscriptionResult } from "../speech/speech-provider.js";
 import { maybePersistDebugAudio } from "./stt-debug.js";
 
 interface TranscriptionMetadata {
@@ -21,9 +21,9 @@ export interface SessionTranscriptionResult extends TranscriptionResult {
 export class STTManager {
   private readonly sessionId: string;
   private readonly logger: pino.Logger;
-  private readonly stt: OpenAISTT | null;
+  private readonly stt: SpeechToTextProvider | null;
 
-  constructor(sessionId: string, logger: pino.Logger, stt: OpenAISTT | null) {
+  constructor(sessionId: string, logger: pino.Logger, stt: SpeechToTextProvider | null) {
     this.sessionId = sessionId;
     this.logger = logger.child({ module: "agent", component: "stt-manager", sessionId });
     this.stt = stt;

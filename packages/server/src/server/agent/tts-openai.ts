@@ -1,17 +1,15 @@
 import type pino from "pino";
 import OpenAI from "openai";
-import { Readable } from "stream";
+import { Readable } from "node:stream";
+import type { SpeechStreamResult } from "../speech/speech-provider.js";
+
+export type { SpeechStreamResult };
 
 export interface TTSConfig {
   apiKey: string;
   model?: "tts-1" | "tts-1-hd";
   voice?: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer";
   responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
-}
-
-export interface SpeechStreamResult {
-  stream: Readable;
-  format: string;
 }
 
 export class OpenAITTS {

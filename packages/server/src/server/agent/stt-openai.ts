@@ -5,26 +5,14 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { v4 } from "uuid";
 import { inferAudioExtension } from "./audio-utils.js";
+import type { LogprobToken, TranscriptionResult } from "../speech/speech-provider.js";
+
+export type { LogprobToken, TranscriptionResult };
 
 export interface STTConfig {
   apiKey: string;
   model?: "whisper-1" | "gpt-4o-transcribe" | "gpt-4o-mini-transcribe" | (string & {});
   confidenceThreshold?: number; // Default: -3.0
-}
-
-export interface LogprobToken {
-  token: string;
-  logprob: number;
-  bytes?: number[];
-}
-
-export interface TranscriptionResult {
-  text: string;
-  language?: string;
-  duration?: number;
-  logprobs?: LogprobToken[];
-  avgLogprob?: number;
-  isLowConfidence?: boolean;
 }
 
 function isObject(value: unknown): value is { [key: string]: unknown } {

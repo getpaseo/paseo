@@ -42,6 +42,18 @@ import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { OpenAISTT, type STTConfig } from "./agent/stt-openai.js";
 import { OpenAITTS, type TTSConfig } from "./agent/tts-openai.js";
+import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
+import type { RealtimeTranscriptionSessionFactory } from "./dictation/dictation-stream-manager.js";
+import { SherpaOnlineRecognizerEngine } from "./speech/sherpa/sherpa-online-recognizer.js";
+import { SherpaOfflineRecognizerEngine } from "./speech/sherpa/sherpa-offline-recognizer.js";
+import { SherpaOnnxSTT } from "./speech/sherpa/sherpa-stt.js";
+import { SherpaOnnxParakeetSTT } from "./speech/sherpa/sherpa-parakeet-stt.js";
+import { SherpaOnnxTTS } from "./speech/sherpa/sherpa-tts.js";
+import { SherpaRealtimeTranscriptionSession } from "./speech/sherpa/sherpa-realtime-session.js";
+import { SherpaParakeetRealtimeTranscriptionSession } from "./speech/sherpa/sherpa-parakeet-realtime-session.js";
+import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./speech/sherpa/model-downloader.js";
+import type { SherpaOnnxModelId } from "./speech/sherpa/model-catalog.js";
+import { PocketTtsOnnxTTS } from "./speech/pocket/pocket-tts-onnx.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -72,6 +84,26 @@ export type PaseoOpenAIConfig = {
   tts?: Partial<TTSConfig> & { apiKey?: string };
 };
 
+export type PaseoSherpaOnnxConfig = {
+  modelsDir: string;
+  autoDownload?: boolean;
+  stt?: {
+    preset?: string;
+  };
+  tts?: {
+    preset?: string;
+    speakerId?: number;
+    speed?: number;
+  };
+};
+
+export type PaseoSpeechConfig = {
+  dictationSttProvider?: "openai" | "sherpa";
+  voiceSttProvider?: "openai" | "sherpa";
+  voiceTtsProvider?: "openai" | "sherpa";
+  sherpaOnnx?: PaseoSherpaOnnxConfig;
+};
+
 export type PaseoDaemonConfig = {
   listen: string;
   paseoHome: string;
@@ -87,6 +119,7 @@ export type PaseoDaemonConfig = {
   relayPublicEndpoint?: string;
   appBaseUrl?: string;
   openai?: PaseoOpenAIConfig;
+  speech?: PaseoSpeechConfig;
   openrouterApiKey?: string | null;
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
@@ -382,42 +415,282 @@ export async function createPaseoDaemon(
   }
 
 
-  let sttService: OpenAISTT | null = null;
-  let ttsService: OpenAITTS | null = null;
+  let sttService: SpeechToTextProvider | null = null;
+  let ttsService: TextToSpeechProvider | null = null;
+  let dictationSessionFactory: RealtimeTranscriptionSessionFactory | undefined;
+
+  let sherpaOnline: SherpaOnlineRecognizerEngine | null = null;
+  let sherpaOffline: SherpaOfflineRecognizerEngine | null = null;
+  let sherpaTts: TextToSpeechProvider | null = null;
 
   const openaiApiKey = config.openai?.apiKey;
-  if (openaiApiKey) {
+  const speechConfig = config.speech ?? null;
+  const sherpaConfig = speechConfig?.sherpaOnnx ?? null;
+
+  const wantsSherpaDictation = (speechConfig?.dictationSttProvider ?? "openai") === "sherpa";
+  const wantsSherpaVoiceStt = (speechConfig?.voiceSttProvider ?? "openai") === "sherpa";
+  const wantsSherpaVoiceTts = (speechConfig?.voiceTtsProvider ?? "openai") === "sherpa";
+
+  if ((wantsSherpaDictation || wantsSherpaVoiceStt || wantsSherpaVoiceTts) && sherpaConfig) {
+    const autoDownload = sherpaConfig.autoDownload ?? (process.env.VITEST ? false : true);
+    let sttPreset = (sherpaConfig.stt?.preset ?? "zipformer-bilingual-zh-en-2023-02-20").trim();
+    if (
+      sttPreset !== "zipformer-bilingual-zh-en-2023-02-20" &&
+      sttPreset !== "paraformer-bilingual-zh-en" &&
+      sttPreset !== "parakeet-tdt-0.6b-v3-int8"
+    ) {
+      logger.warn(
+        { sttPreset },
+        "Unknown Sherpa STT preset; falling back to zipformer-bilingual-zh-en-2023-02-20"
+      );
+      sttPreset = "zipformer-bilingual-zh-en-2023-02-20";
+    }
+
+    let ttsPreset = (sherpaConfig.tts?.preset ?? "pocket-tts-onnx-int8").trim();
+    if (
+      ttsPreset !== "kitten-nano-en-v0_1-fp16" &&
+      ttsPreset !== "kokoro-en-v0_19" &&
+      ttsPreset !== "pocket-tts-onnx-int8"
+    ) {
+      logger.warn(
+        { ttsPreset },
+        "Unknown Sherpa TTS preset; falling back to kitten-nano-en-v0_1-fp16"
+      );
+      ttsPreset = "kitten-nano-en-v0_1-fp16";
+    }
+
+    const modelIds: SherpaOnnxModelId[] = [];
+    if (wantsSherpaDictation || wantsSherpaVoiceStt) {
+      modelIds.push(sttPreset as SherpaOnnxModelId);
+    }
+    if (wantsSherpaVoiceTts) {
+      modelIds.push(ttsPreset as SherpaOnnxModelId);
+    }
+
+    try {
+      await ensureSherpaOnnxModels({
+        modelsDir: sherpaConfig.modelsDir,
+        modelIds,
+        autoDownload,
+        logger,
+      });
+    } catch (err) {
+      logger.error(
+        {
+          err,
+          modelsDir: sherpaConfig.modelsDir,
+          autoDownload,
+          hint:
+            "Run: npm run dev --workspace=@getpaseo/server, then run: " +
+            "`tsx packages/server/scripts/download-speech-models.ts --models-dir <DIR> --model <MODEL_ID>`",
+        },
+        "Failed to ensure local speech models"
+      );
+    }
+  }
+
+  if ((wantsSherpaDictation || wantsSherpaVoiceStt) && sherpaConfig) {
+    let preset = (sherpaConfig.stt?.preset ?? "zipformer-bilingual-zh-en-2023-02-20").trim();
+    if (
+      preset !== "zipformer-bilingual-zh-en-2023-02-20" &&
+      preset !== "paraformer-bilingual-zh-en" &&
+      preset !== "parakeet-tdt-0.6b-v3-int8"
+    ) {
+      logger.warn(
+        { preset },
+        "Unknown Sherpa STT preset; falling back to zipformer-bilingual-zh-en-2023-02-20"
+      );
+      preset = "zipformer-bilingual-zh-en-2023-02-20";
+    }
+    const base = sherpaConfig.modelsDir;
+
+    try {
+      if (preset === "parakeet-tdt-0.6b-v3-int8") {
+        const modelDir = getSherpaOnnxModelDir(base, "parakeet-tdt-0.6b-v3-int8");
+        sherpaOffline = new SherpaOfflineRecognizerEngine(
+          {
+            model: {
+              kind: "nemo_transducer",
+              encoder: `${modelDir}/encoder.int8.onnx`,
+              decoder: `${modelDir}/decoder.int8.onnx`,
+              joiner: `${modelDir}/joiner.int8.onnx`,
+              tokens: `${modelDir}/tokens.txt`,
+            },
+            numThreads: 2,
+            debug: 0,
+          },
+          logger
+        );
+      } else {
+        const model =
+          preset === "paraformer-bilingual-zh-en"
+            ? {
+                kind: "paraformer" as const,
+                encoder: `${base}/sherpa-onnx-streaming-paraformer-bilingual-zh-en/encoder.int8.onnx`,
+                decoder: `${base}/sherpa-onnx-streaming-paraformer-bilingual-zh-en/decoder.int8.onnx`,
+                tokens: `${base}/sherpa-onnx-streaming-paraformer-bilingual-zh-en/tokens.txt`,
+              }
+            : {
+                kind: "transducer" as const,
+                encoder: `${base}/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/encoder-epoch-99-avg-1.onnx`,
+                decoder: `${base}/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/decoder-epoch-99-avg-1.onnx`,
+                joiner: `${base}/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/joiner-epoch-99-avg-1.onnx`,
+                tokens: `${base}/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/tokens.txt`,
+                modelType: "zipformer",
+              };
+
+        sherpaOnline = new SherpaOnlineRecognizerEngine(
+          {
+            model,
+            numThreads: 1,
+            debug: 0,
+          },
+          logger
+        );
+      }
+    } catch (err) {
+      logger.error(
+        {
+          err,
+          modelsDir: sherpaConfig.modelsDir,
+          preset,
+          hint: `Run: tsx packages/server/scripts/download-speech-models.ts --models-dir '${sherpaConfig.modelsDir}' --model '${preset}'`,
+        },
+        "Failed to initialize Sherpa STT (models missing or invalid)"
+      );
+      sherpaOnline = null;
+      sherpaOffline = null;
+    }
+  } else if (wantsSherpaDictation || wantsSherpaVoiceStt) {
+    logger.warn(
+      { configured: Boolean(sherpaConfig) },
+      "Sherpa STT selected but no sherpaOnnx config found; STT will be unavailable"
+    );
+  }
+
+  if (wantsSherpaVoiceTts && sherpaConfig) {
+    let preset = (sherpaConfig.tts?.preset ?? "pocket-tts-onnx-int8").trim();
+    if (
+      preset !== "kitten-nano-en-v0_1-fp16" &&
+      preset !== "kokoro-en-v0_19" &&
+      preset !== "pocket-tts-onnx-int8"
+    ) {
+      logger.warn(
+        { preset },
+        "Unknown Sherpa TTS preset; falling back to kitten-nano-en-v0_1-fp16"
+      );
+      preset = "kitten-nano-en-v0_1-fp16";
+    }
+    try {
+      if (preset === "pocket-tts-onnx-int8") {
+        const modelDir = getSherpaOnnxModelDir(sherpaConfig.modelsDir, "pocket-tts-onnx-int8");
+        sherpaTts = await PocketTtsOnnxTTS.create(
+          {
+            modelDir,
+            precision: "int8",
+            targetChunkMs: 50,
+          },
+          logger
+        );
+      } else {
+        const modelDir = `${sherpaConfig.modelsDir}/${preset}`;
+        sherpaTts = new SherpaOnnxTTS(
+          {
+            preset: preset as any,
+            modelDir,
+            speakerId: sherpaConfig.tts?.speakerId,
+            speed: sherpaConfig.tts?.speed,
+          },
+          logger
+        );
+      }
+    } catch (err) {
+      logger.error(
+        {
+          err,
+          preset,
+          hint: `Run: tsx packages/server/scripts/download-speech-models.ts --models-dir '${sherpaConfig.modelsDir}' --model '${preset}'`,
+        },
+        "Failed to initialize Sherpa TTS (models missing or invalid)"
+      );
+      sherpaTts = null;
+    }
+  } else if (wantsSherpaVoiceTts) {
+    logger.warn(
+      { configured: Boolean(sherpaConfig) },
+      "Sherpa TTS selected but no sherpaOnnx config found; TTS will be unavailable"
+    );
+  }
+
+  if (wantsSherpaVoiceStt && sherpaOffline) {
+    sttService = new SherpaOnnxParakeetSTT({ engine: sherpaOffline }, logger);
+  } else if (wantsSherpaVoiceStt && sherpaOnline) {
+    sttService = new SherpaOnnxSTT({ engine: sherpaOnline }, logger);
+  }
+
+  if (wantsSherpaVoiceTts && sherpaTts) {
+    ttsService = sherpaTts;
+  }
+
+  if (wantsSherpaDictation && sherpaOnline) {
+    dictationSessionFactory = () => new SherpaRealtimeTranscriptionSession({ engine: sherpaOnline! });
+  } else if (wantsSherpaDictation && sherpaOffline) {
+    dictationSessionFactory = () => new SherpaParakeetRealtimeTranscriptionSession({ engine: sherpaOffline! });
+  }
+
+  const voiceSttProvider = speechConfig?.voiceSttProvider ?? "openai";
+  const voiceTtsProvider = speechConfig?.voiceTtsProvider ?? "openai";
+  const dictationSttProvider = speechConfig?.dictationSttProvider ?? "openai";
+
+  const needsOpenAiStt = !sttService && voiceSttProvider === "openai";
+  const needsOpenAiTts = !ttsService && voiceTtsProvider === "openai";
+  const needsOpenAiDictation =
+    dictationSttProvider === "openai" || (dictationSttProvider === "sherpa" && !dictationSessionFactory);
+
+  const fallbackOpenAiStt = !sttService && voiceSttProvider === "sherpa" && Boolean(openaiApiKey);
+  const fallbackOpenAiTts = !ttsService && voiceTtsProvider === "sherpa" && Boolean(openaiApiKey);
+
+  if ((needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation || fallbackOpenAiStt || fallbackOpenAiTts) && openaiApiKey) {
     logger.info("OpenAI client initialized");
 
-    const sttApiKey = config.openai?.stt?.apiKey ?? openaiApiKey;
-    if (sttApiKey) {
-      const { apiKey: _sttApiKey, ...sttConfig } = config.openai?.stt ?? {};
-      sttService = new OpenAISTT(
-        {
-          apiKey: sttApiKey,
-          ...sttConfig,
-        },
-        logger
-      );
+    if (fallbackOpenAiStt) {
+      logger.warn("Falling back to OpenAI STT because Sherpa STT is unavailable");
+    }
+    if (needsOpenAiStt || fallbackOpenAiStt) {
+      const sttApiKey = config.openai?.stt?.apiKey ?? openaiApiKey;
+      if (sttApiKey) {
+        const { apiKey: _sttApiKey, ...sttConfig } = config.openai?.stt ?? {};
+        sttService = new OpenAISTT(
+          {
+            apiKey: sttApiKey,
+            ...sttConfig,
+          },
+          logger
+        );
+      }
     }
 
-    const ttsApiKey = config.openai?.tts?.apiKey ?? openaiApiKey;
-    if (ttsApiKey) {
-      const { apiKey: _ttsApiKey, ...ttsConfig } = config.openai?.tts ?? {};
-      ttsService = new OpenAITTS(
-        {
-          apiKey: ttsApiKey,
-          voice: "alloy",
-          model: "tts-1",
-          responseFormat: "pcm",
-          ...ttsConfig,
-        },
-        logger
-      );
+    if (fallbackOpenAiTts) {
+      logger.warn("Falling back to OpenAI TTS because Sherpa TTS is unavailable");
     }
-
-  } else {
-    logger.warn("OPENAI_API_KEY not set - LLM, STT, and TTS features will not work");
+    if (needsOpenAiTts || fallbackOpenAiTts) {
+      const ttsApiKey = config.openai?.tts?.apiKey ?? openaiApiKey;
+      if (ttsApiKey) {
+        const { apiKey: _ttsApiKey, ...ttsConfig } = config.openai?.tts ?? {};
+        ttsService = new OpenAITTS(
+          {
+            apiKey: ttsApiKey,
+            voice: "alloy",
+            model: "tts-1",
+            responseFormat: "pcm",
+            ...ttsConfig,
+          },
+          logger
+        );
+      }
+    }
+  } else if (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation || fallbackOpenAiStt || fallbackOpenAiTts) {
+    logger.warn("OPENAI_API_KEY not set - OpenAI STT/TTS/dictation fallback is unavailable");
   }
 
   const wsServer = new VoiceAssistantWebSocketServer(
@@ -439,6 +712,7 @@ export async function createPaseoDaemon(
     {
       openaiApiKey: config.openai?.apiKey ?? null,
       finalTimeoutMs: config.dictationFinalTimeoutMs,
+      ...(dictationSessionFactory ? { sessionFactory: dictationSessionFactory } : {}),
     }
   );
 
@@ -533,6 +807,11 @@ export async function createPaseoDaemon(
     await agentStorage.flush().catch(() => undefined);
     await shutdownProviders(logger);
     terminalManager.killAll();
+    if (sherpaTts && typeof (sherpaTts as any).free === "function") {
+      (sherpaTts as any).free();
+    }
+    sherpaOnline?.free();
+    sherpaOffline?.free();
     await relayTransport?.stop().catch(() => undefined);
     await wsServer.close();
     await new Promise<void>((resolve) => {

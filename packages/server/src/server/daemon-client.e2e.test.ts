@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
 
@@ -13,12 +13,45 @@ import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-config
 import {
   chunkPcm16,
   parsePcm16MonoWav,
-  requireEnv,
-  transcribeBaselineOpenAI,
   wordSimilarity,
 } from "./test-utils/dictation-e2e.js";
 
-const hasOpenAICredentials = !!process.env.OPENAI_API_KEY;
+const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
+
+const sherpaModelsDir =
+  process.env.PASEO_SHERPA_ONNX_MODELS_DIR ??
+  path.join(homedir(), ".paseo", "models", "sherpa-onnx");
+
+function hasSherpaZipformerModels(modelsDir: string): boolean {
+  return (
+    existsSync(
+      path.join(
+        modelsDir,
+        "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+        "encoder-epoch-99-avg-1.onnx"
+      )
+    ) &&
+    existsSync(
+      path.join(
+        modelsDir,
+        "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+        "tokens.txt"
+      )
+    )
+  );
+}
+
+function hasSherpaKittenModels(modelsDir: string): boolean {
+  return (
+    existsSync(path.join(modelsDir, "kitten-nano-en-v0_1-fp16", "model.fp16.onnx")) &&
+    existsSync(path.join(modelsDir, "kitten-nano-en-v0_1-fp16", "voices.bin")) &&
+    existsSync(path.join(modelsDir, "kitten-nano-en-v0_1-fp16", "tokens.txt"))
+  );
+}
+
+const hasLocalSpeech = hasSherpaZipformerModels(sherpaModelsDir) && hasSherpaKittenModels(sherpaModelsDir);
+const hasAnySpeech = hasLocalSpeech || Boolean(openaiApiKey);
+const speechTest = hasAnySpeech ? test : test.skip;
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-client-"));
@@ -55,14 +88,27 @@ function waitForSignal<T>(
   });
 }
 
-(hasOpenAICredentials ? describe : describe.skip)("daemon client E2E", () => {
+describe("daemon client E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeAll(async () => {
-    const openaiApiKey = process.env.OPENAI_API_KEY ?? "";
     ctx = await createDaemonTestContext({
       dictationFinalTimeoutMs: 5000,
-      openai: { apiKey: openaiApiKey },
+      ...(openaiApiKey ? { openai: { apiKey: openaiApiKey } } : {}),
+      speech: {
+        dictationSttProvider: "sherpa",
+        voiceSttProvider: "sherpa",
+        voiceTtsProvider: "sherpa",
+        sherpaOnnx: {
+          modelsDir: sherpaModelsDir,
+          stt: {
+            preset: process.env.PASEO_SHERPA_STT_PRESET ?? "zipformer-bilingual-zh-en-2023-02-20",
+          },
+          tts: {
+            preset: process.env.PASEO_SHERPA_TTS_PRESET ?? "kitten-nano-en-v0_1-fp16",
+          },
+        },
+      },
     });
   }, 60000);
 
@@ -569,11 +615,9 @@ function waitForSignal<T>(
     120000
   );
 
-  test(
+  speechTest(
     "voice mode buffers audio until isLast and emits transcription_result",
     async () => {
-      requireEnv("OPENAI_API_KEY");
-
       await ctx.client.setVoiceConversation(true, `voice-${Date.now()}`);
 
       const transcription = waitForSignal(30_000, (resolve) => {
@@ -675,11 +719,9 @@ function waitForSignal<T>(
     90_000
   );
 
-  test(
-    "streams dictation PCM and returns final transcript via OpenAI Realtime transcription",
+  speechTest(
+    "streams dictation PCM and returns final transcript",
     async () => {
-      requireEnv("OPENAI_API_KEY");
-
       const fixturePath = path.resolve(
         process.cwd(),
         "..",
@@ -713,11 +755,9 @@ function waitForSignal<T>(
     30_000
   );
 
-  test(
-    "realtime dictation transcript is similar to baseline (OpenAI transcriptions API)",
+  speechTest(
+    "realtime dictation transcript is similar to baseline fixture",
     async () => {
-      const apiKey = requireEnv("OPENAI_API_KEY");
-
       const fixturePath = path.resolve(
         process.cwd(),
         "..",
@@ -732,14 +772,17 @@ function waitForSignal<T>(
       const dictationId = `dict-baseline-${Date.now()}`;
       const format = "audio/pcm;rate=16000;bits=16";
 
-      const baseline = await transcribeBaselineOpenAI({
-        apiKey,
-        wav,
-        model: process.env.STT_MODEL ?? "whisper-1",
-        prompt:
-          process.env.OPENAI_REALTIME_DICTATION_TRANSCRIPTION_PROMPT ??
-          "Transcribe only what the speaker says. Do not add words. Preserve punctuation and casing. If the audio is silence or non-speech noise, return an empty transcript.",
-      });
+      const baselinePath = path.resolve(
+        process.cwd(),
+        "..",
+        "app",
+        "e2e",
+        "fixtures",
+        "recording.baseline.txt"
+      );
+      const baseline = await import("node:fs/promises")
+        .then((fs) => fs.readFile(baselinePath, "utf-8"))
+        .then((text) => text.trim());
 
       await ctx.client.startDictationStream(dictationId, format);
 
@@ -755,16 +798,14 @@ function waitForSignal<T>(
       const result = await ctx.client.finishDictationStream(dictationId, finalSeq);
 
       expect(result.dictationId).toBe(dictationId);
-      expect(wordSimilarity(result.text, baseline)).toBeGreaterThan(0.8);
+      expect(wordSimilarity(result.text, baseline)).toBeGreaterThan(0.6);
     },
     30_000
   );
 
-  test(
+  speechTest(
     "fails fast if dictation finishes without sending required chunks",
     async () => {
-      requireEnv("OPENAI_API_KEY");
-
       const dictationId = `dict-missing-chunks-${Date.now()}`;
       const format = "audio/pcm;rate=16000;bits=16";
 

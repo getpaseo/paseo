@@ -1,6 +1,6 @@
 import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
-import type { OpenAITTS } from "./tts-openai.js";
+import type { TextToSpeechProvider } from "../speech/speech-provider.js";
 import type { SessionOutboundMessage } from "../messages.js";
 
 interface PendingPlayback {
@@ -17,9 +17,9 @@ interface PendingPlayback {
 export class TTSManager {
   private pendingPlaybacks: Map<string, PendingPlayback> = new Map();
   private readonly logger: pino.Logger;
-  private readonly tts: OpenAITTS | null;
+  private readonly tts: TextToSpeechProvider | null;
 
-  constructor(sessionId: string, logger: pino.Logger, tts: OpenAITTS | null) {
+  constructor(sessionId: string, logger: pino.Logger, tts: TextToSpeechProvider | null) {
     this.logger = logger.child({ module: "agent", component: "tts-manager", sessionId });
     this.tts = tts;
   }

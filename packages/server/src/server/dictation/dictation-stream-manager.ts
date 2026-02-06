@@ -11,7 +11,7 @@ import { OpenAIRealtimeTranscriptionSession } from "../agent/openai-realtime-tra
 
 const PCM_CHANNELS = 1;
 const PCM_BITS_PER_SAMPLE = 16;
-const DICTATION_PCM_OUTPUT_RATE = 24000;
+const OPENAI_DICTATION_PCM_OUTPUT_RATE = 24000;
 const DEFAULT_DICTATION_FINAL_TIMEOUT_MS = 10000;
 const DICTATION_VAD_GRACE_TIMEOUT_MS = Number.parseInt(
   process.env.OPENAI_REALTIME_DICTATION_VAD_GRACE_TIMEOUT_MS ?? "2000",
@@ -106,7 +106,7 @@ export type RealtimeTranscriptionSession = {
 };
 
 export type RealtimeTranscriptionSessionFactory = (params: {
-  apiKey: string;
+  apiKey?: string | null;
   logger: pino.Logger;
   transcriptionModel: string;
   language?: string;
@@ -149,6 +149,7 @@ type DictationStreamState = {
   inputFormat: string;
   openai: RealtimeTranscriptionSession;
   inputRate: number;
+  outputRate: number;
   resampler: Pcm16MonoResampler | null;
   debugAudioChunks: Buffer[];
   debugRecordingPath: string | null;
@@ -194,6 +195,7 @@ export class DictationStreamManager {
   private readonly openaiApiKey: string | null;
   private readonly finalTimeoutMs: number;
   private readonly createSession: RealtimeTranscriptionSessionFactory;
+  private readonly requiresApiKey: boolean;
   private readonly streams = new Map<string, DictationStreamState>();
 
   constructor(params: {
@@ -209,10 +211,18 @@ export class DictationStreamManager {
     this.sessionId = params.sessionId;
     this.openaiApiKey = params.openaiApiKey ?? null;
     this.finalTimeoutMs = params.finalTimeoutMs ?? DEFAULT_DICTATION_FINAL_TIMEOUT_MS;
+    this.requiresApiKey = !params.sessionFactory;
     this.createSession =
       params.sessionFactory ??
-      ((factoryParams) =>
-        new OpenAIRealtimeTranscriptionSession(factoryParams));
+      ((factoryParams) => {
+        if (!factoryParams.apiKey) {
+          throw new Error("OPENAI_API_KEY not set");
+        }
+        return new OpenAIRealtimeTranscriptionSession({
+          ...factoryParams,
+          apiKey: factoryParams.apiKey,
+        });
+      });
   }
 
   public cleanupAll(): void {
@@ -225,7 +235,7 @@ export class DictationStreamManager {
     this.cleanupDictationStream(dictationId);
 
     const apiKey = this.openaiApiKey ?? process.env.OPENAI_API_KEY;
-    if (!apiKey) {
+    if (this.requiresApiKey && !apiKey) {
       this.failDictationStream(dictationId, "OPENAI_API_KEY not set", false);
       return;
     }
@@ -238,7 +248,7 @@ export class DictationStreamManager {
 
     const turnDetection = parseDictationTurnDetection();
     const openai = this.createSession({
-      apiKey,
+      apiKey: apiKey ?? null,
       logger: this.logger.child({ dictationId }),
       transcriptionModel,
       language: "en",
@@ -338,18 +348,21 @@ export class DictationStreamManager {
       this.logger
     );
 
+    const outputRate = this.requiresApiKey ? OPENAI_DICTATION_PCM_OUTPUT_RATE : inputRate;
+
     this.streams.set(dictationId, {
       dictationId,
       sessionId: this.sessionId,
       inputFormat: format,
       openai,
       inputRate,
+      outputRate,
       resampler:
-        inputRate === DICTATION_PCM_OUTPUT_RATE
+        inputRate === outputRate
           ? null
           : new Pcm16MonoResampler({
               inputRate,
-              outputRate: DICTATION_PCM_OUTPUT_RATE,
+              outputRate,
             }),
       debugAudioChunks: [],
       debugRecordingPath: null,
@@ -510,7 +523,7 @@ export class DictationStreamManager {
     const pcmBuffer = Buffer.concat(state.debugAudioChunks);
     const wavBuffer = convertPCMToWavBuffer(
       pcmBuffer,
-      DICTATION_PCM_OUTPUT_RATE,
+      state.outputRate,
       PCM_CHANNELS,
       PCM_BITS_PER_SAMPLE
     );
@@ -610,7 +623,7 @@ export class DictationStreamManager {
       } else {
         const silenceBytes = Math.max(
           0,
-          Math.round((DICTATION_PCM_OUTPUT_RATE * 2 * DICTATION_FLUSH_SILENCE_MS) / 1000)
+          Math.round((state.outputRate * 2 * DICTATION_FLUSH_SILENCE_MS) / 1000)
         );
         if (silenceBytes > 0) {
           this.logger.debug(

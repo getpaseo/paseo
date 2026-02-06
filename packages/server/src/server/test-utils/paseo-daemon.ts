@@ -4,7 +4,7 @@ import path from "node:path";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 
 import pino from "pino";
-import { createPaseoDaemon, type PaseoDaemonConfig, type PaseoOpenAIConfig } from "../bootstrap.js";
+import { createPaseoDaemon, type PaseoDaemonConfig, type PaseoOpenAIConfig, type PaseoSpeechConfig } from "../bootstrap.js";
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
 
@@ -20,6 +20,7 @@ type TestPaseoDaemonOptions = {
   staticDir?: string;
   cleanup?: boolean;
   openai?: PaseoOpenAIConfig;
+  speech?: PaseoSpeechConfig;
   dictationFinalTimeoutMs?: number;
 };
 
@@ -76,6 +77,7 @@ export async function createTestPaseoDaemon(
       relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
       appBaseUrl: "https://app.paseo.sh",
       openai: options.openai,
+      speech: options.speech,
       openrouterApiKey: null,
       dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
       downloadTokenTtlMs: options.downloadTokenTtlMs,

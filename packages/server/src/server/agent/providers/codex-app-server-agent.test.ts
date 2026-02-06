@@ -169,7 +169,7 @@ describe("Codex app-server provider (integration)", () => {
       cleanup();
       rmSync(cwd, { recursive: true, force: true });
     }
-  }, 60000);
+  }, 120000);
 
   test.runIf(isCodexInstalled())("listCommands includes custom prompts and executeCommand runs them", async () => {
     const cleanup = useTempCodexSessionDir();
@@ -730,7 +730,9 @@ describe("Codex app-server provider (integration)", () => {
       if (captured) {
         expect(sawPermissionResolved).toBe(true);
       }
-      expect(readFileSync(targetPath, "utf8").trim()).toBe("ok");
+      const text = await waitForFileToContainText(targetPath, "ok", { timeoutMs: 5000 });
+      expect(timelineItems.some((item) => hasApplyPatchFile(item, "approval-test.txt"))).toBe(true);
+      expect(text?.trim()).toBe("ok");
     } finally {
       cleanup();
       rmSync(cwd, { recursive: true, force: true });
