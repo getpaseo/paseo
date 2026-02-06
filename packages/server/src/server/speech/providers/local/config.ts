@@ -12,20 +12,24 @@ import {
   type LocalSpeechModelId,
   type LocalSttModelId,
   type LocalTtsModelId,
-} from "./sherpa/model-catalog.js";
+} from "./models.js";
+
+export type LocalSpeechModelConfig = {
+  dictationStt: LocalSttModelId;
+  voiceStt: LocalSttModelId;
+  voiceTts: LocalTtsModelId;
+  voiceTtsSpeakerId?: number;
+  voiceTtsSpeed?: number;
+};
 
 export type LocalSpeechProviderConfig = {
   modelsDir: string;
   autoDownload?: boolean;
+  models: LocalSpeechModelConfig;
 };
 
 export type ResolvedLocalSpeechConfig = {
   local: LocalSpeechProviderConfig | undefined;
-  dictationLocalSttModel: LocalSttModelId;
-  voiceLocalSttModel: LocalSttModelId;
-  voiceLocalTtsModel: LocalTtsModelId;
-  voiceLocalTtsSpeakerId?: number;
-  voiceLocalTtsSpeed?: number;
 };
 
 export type { LocalSpeechModelId, LocalSttModelId, LocalTtsModelId };
@@ -146,16 +150,18 @@ export function resolveLocalSpeechConfig(params: {
         ? {
             modelsDir: parsed.modelsDir,
             autoDownload: parsed.autoDownload,
+            models: {
+              dictationStt: parsed.dictationLocalSttModel,
+              voiceStt: parsed.voiceLocalSttModel,
+              voiceTts: parsed.voiceLocalTtsModel,
+              ...(parsed.voiceLocalTtsSpeakerId !== undefined
+                ? { voiceTtsSpeakerId: parsed.voiceLocalTtsSpeakerId }
+                : {}),
+              ...(parsed.voiceLocalTtsSpeed !== undefined
+                ? { voiceTtsSpeed: parsed.voiceLocalTtsSpeed }
+                : {}),
+            },
           }
         : undefined,
-    dictationLocalSttModel: parsed.dictationLocalSttModel,
-    voiceLocalSttModel: parsed.voiceLocalSttModel,
-    voiceLocalTtsModel: parsed.voiceLocalTtsModel,
-    ...(parsed.voiceLocalTtsSpeakerId !== undefined
-      ? { voiceLocalTtsSpeakerId: parsed.voiceLocalTtsSpeakerId }
-      : {}),
-    ...(parsed.voiceLocalTtsSpeed !== undefined
-      ? { voiceLocalTtsSpeed: parsed.voiceLocalTtsSpeed }
-      : {}),
   };
 }

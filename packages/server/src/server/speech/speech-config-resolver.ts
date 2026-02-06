@@ -100,17 +100,6 @@ export function resolveSpeechConfig(params: {
       ...(local.local
         ? { local: local.local }
         : {}),
-      localModels: {
-        dictationStt: local.dictationLocalSttModel,
-        voiceStt: local.voiceLocalSttModel,
-        voiceTts: local.voiceLocalTtsModel,
-        ...(local.voiceLocalTtsSpeakerId !== undefined
-          ? { voiceTtsSpeakerId: local.voiceLocalTtsSpeakerId }
-          : {}),
-        ...(local.voiceLocalTtsSpeed !== undefined
-          ? { voiceTtsSpeed: local.voiceLocalTtsSpeed }
-          : {}),
-      },
     },
   };
 }

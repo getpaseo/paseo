@@ -108,13 +108,6 @@ export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
 export type PaseoSpeechConfig = {
   providers: RequestedSpeechProviders;
   local?: PaseoLocalSpeechConfig;
-  localModels: {
-    dictationStt: string;
-    voiceStt: string;
-    voiceTts: string;
-    voiceTtsSpeakerId?: number;
-    voiceTtsSpeed?: number;
-  };
 };
 
 export type PaseoDaemonConfig = {

@@ -34,7 +34,7 @@ export class SherpaOfflineRecognizerEngine {
   private readonly logger: pino.Logger;
 
   constructor(config: SherpaOfflineRecognizerConfig, logger: pino.Logger) {
-    this.logger = logger.child({ module: "speech", provider: "sherpa-onnx", component: "offline-recognizer" });
+    this.logger = logger.child({ module: "speech", provider: "local", component: "offline-recognizer" });
 
     assertFileExists(config.model.encoder, "offline encoder");
     assertFileExists(config.model.decoder, "offline decoder");

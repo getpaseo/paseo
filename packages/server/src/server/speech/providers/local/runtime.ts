@@ -5,10 +5,8 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech-pr
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import { PocketTtsOnnxTTS } from "./pocket/pocket-tts-onnx.js";
 import {
-  ensureSherpaOnnxModels,
-  getSherpaOnnxModelDir,
-} from "./sherpa/model-downloader.js";
-import {
+  ensureLocalSpeechModels,
+  getLocalSpeechModelDir,
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
   LocalSttModelIdSchema,
@@ -16,7 +14,7 @@ import {
   type LocalSpeechModelId,
   type LocalSttModelId,
   type LocalTtsModelId,
-} from "./sherpa/model-catalog.js";
+} from "./models.js";
 import { SherpaOfflineRecognizerEngine } from "./sherpa/sherpa-offline-recognizer.js";
 import { SherpaOnlineRecognizerEngine } from "./sherpa/sherpa-online-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa/sherpa-parakeet-stt.js";
@@ -63,13 +61,13 @@ function resolveConfiguredLocalModels(
 ): ResolvedLocalModels {
   return {
     dictationLocalSttModel: LocalSttModelIdSchema.parse(
-      speechConfig?.localModels.dictationStt ?? DEFAULT_LOCAL_STT_MODEL
+      speechConfig?.local?.models.dictationStt ?? DEFAULT_LOCAL_STT_MODEL
     ),
     voiceLocalSttModel: LocalSttModelIdSchema.parse(
-      speechConfig?.localModels.voiceStt ?? DEFAULT_LOCAL_STT_MODEL
+      speechConfig?.local?.models.voiceStt ?? DEFAULT_LOCAL_STT_MODEL
     ),
     voiceLocalTtsModel: LocalTtsModelIdSchema.parse(
-      speechConfig?.localModels.voiceTts ?? DEFAULT_LOCAL_TTS_MODEL
+      speechConfig?.local?.models.voiceTts ?? DEFAULT_LOCAL_TTS_MODEL
     ),
   };
 }
@@ -110,7 +108,7 @@ async function createLocalSttEngine(params: {
   const { modelId, modelsDir, logger } = params;
 
   if (modelId === "parakeet-tdt-0.6b-v3-int8") {
-    const modelDir = getSherpaOnnxModelDir(modelsDir, modelId);
+    const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
     return {
       kind: "offline",
       engine: new SherpaOfflineRecognizerEngine(
@@ -131,7 +129,7 @@ async function createLocalSttEngine(params: {
   }
 
   if (modelId === "paraformer-bilingual-zh-en") {
-    const modelDir = getSherpaOnnxModelDir(modelsDir, modelId);
+    const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
     return {
       kind: "online",
       engine: new SherpaOnlineRecognizerEngine(
@@ -151,7 +149,7 @@ async function createLocalSttEngine(params: {
   }
 
   if (modelId === "zipformer-bilingual-zh-en-2023-02-20") {
-    const modelDir = getSherpaOnnxModelDir(modelsDir, modelId);
+    const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
     return {
       kind: "online",
       engine: new SherpaOnlineRecognizerEngine(
@@ -204,7 +202,7 @@ export async function initializeLocalSpeechServices(params: {
         },
         "Ensuring local speech models"
       );
-      await ensureSherpaOnnxModels({
+      await ensureLocalSpeechModels({
         modelsDir: localConfig.modelsDir,
         modelIds: requiredLocalModelIds,
         autoDownload: localConfig.autoDownload ?? true,
@@ -308,7 +306,7 @@ export async function initializeLocalSpeechServices(params: {
     } else {
       try {
         if (localModels.voiceLocalTtsModel === "pocket-tts-onnx-int8") {
-          const modelDir = getSherpaOnnxModelDir(localConfig.modelsDir, localModels.voiceLocalTtsModel);
+          const modelDir = getLocalSpeechModelDir(localConfig.modelsDir, localModels.voiceLocalTtsModel);
           localVoiceTtsProvider = await PocketTtsOnnxTTS.create(
             {
               modelDir,
@@ -318,13 +316,13 @@ export async function initializeLocalSpeechServices(params: {
             logger
           );
         } else {
-          const modelDir = getSherpaOnnxModelDir(localConfig.modelsDir, localModels.voiceLocalTtsModel);
+          const modelDir = getLocalSpeechModelDir(localConfig.modelsDir, localModels.voiceLocalTtsModel);
           localVoiceTtsProvider = new SherpaOnnxTTS(
             {
               preset: localModels.voiceLocalTtsModel,
               modelDir,
-              speakerId: speechConfig?.localModels.voiceTtsSpeakerId,
-              speed: speechConfig?.localModels.voiceTtsSpeed,
+              speakerId: speechConfig?.local?.models.voiceTtsSpeakerId,
+              speed: speechConfig?.local?.models.voiceTtsSpeed,
             },
             logger
           );

@@ -103,13 +103,11 @@ import {
 import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
 import {
-  ensureSherpaOnnxModels,
-  getSherpaOnnxModelDir,
-} from "./speech/providers/local/sherpa/model-downloader.js";
-import {
-  listSherpaOnnxModels,
-  type SherpaOnnxModelId,
-} from "./speech/providers/local/sherpa/model-catalog.js";
+  ensureLocalSpeechModels,
+  getLocalSpeechModelDir,
+  listLocalSpeechModels,
+  type LocalSpeechModelId,
+} from "./speech/providers/local/models.js";
 import type pino from "pino";
 
 const execAsync = promisify(exec);
@@ -222,7 +220,7 @@ export type SessionOptions = {
     stt?: SpeechToTextProvider | null;
     localModels?: {
       modelsDir: string;
-      defaultModelIds: SherpaOnnxModelId[];
+      defaultModelIds: LocalSpeechModelId[];
     };
   };
 };
@@ -371,7 +369,7 @@ export class Session {
   private readonly voiceLlmModel: string | null;
   private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null;
   private readonly localSpeechModelsDir: string;
-  private readonly defaultLocalSpeechModelIds: SherpaOnnxModelId[];
+  private readonly defaultLocalSpeechModelIds: LocalSpeechModelId[];
   private readonly registerVoiceSpeakHandler?: (
     agentId: string,
     handler: VoiceSpeakHandler
@@ -1894,8 +1892,8 @@ export class Session {
     const modelsDir = this.localSpeechModelsDir;
 
     const models = await Promise.all(
-      listSherpaOnnxModels().map(async (model) => {
-        const modelDir = getSherpaOnnxModelDir(modelsDir, model.id);
+      listLocalSpeechModels().map(async (model) => {
+        const modelDir = getLocalSpeechModelDir(modelsDir, model.id);
         const missingFiles: string[] = [];
         for (const rel of model.requiredFiles) {
           const filePath = join(modelDir, rel);
@@ -1943,8 +1941,8 @@ export class Session {
         ? msg.modelIds
         : this.defaultLocalSpeechModelIds;
 
-    const allModelIds = new Set(listSherpaOnnxModels().map((m) => m.id));
-    const invalid = modelIdsRaw.filter((id) => !allModelIds.has(id as SherpaOnnxModelId));
+    const allModelIds = new Set(listLocalSpeechModels().map((m) => m.id));
+    const invalid = modelIdsRaw.filter((id) => !allModelIds.has(id as LocalSpeechModelId));
     if (invalid.length > 0) {
       this.emit({
         type: "speech_models_download_response",
@@ -1958,9 +1956,9 @@ export class Session {
       return;
     }
 
-    const modelIds = modelIdsRaw as SherpaOnnxModelId[];
+    const modelIds = modelIdsRaw as LocalSpeechModelId[];
     try {
-      await ensureSherpaOnnxModels({
+      await ensureLocalSpeechModels({
         modelsDir,
         modelIds,
         autoDownload: true,

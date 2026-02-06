@@ -209,7 +209,7 @@ export function listSherpaOnnxModels(): SherpaOnnxModelSpec[] {
 export function getSherpaOnnxModelSpec(id: SherpaOnnxModelId): SherpaOnnxModelSpec {
   const spec = SHERPA_ONNX_MODEL_CATALOG[id];
   if (!spec) {
-    throw new Error(`Unknown sherpa-onnx model id: ${id}`);
+    throw new Error(`Unknown local speech model id: ${id}`);
   }
   return {
     id,

@@ -101,11 +101,6 @@ describe("daemon client E2E", () => {
               voiceStt: { provider: "openai" as const, explicit: true },
               voiceTts: { provider: "openai" as const, explicit: true },
             },
-            localModels: {
-              dictationStt: "parakeet-tdt-0.6b-v3-int8",
-              voiceStt: "parakeet-tdt-0.6b-v3-int8",
-              voiceTts: "pocket-tts-onnx-int8",
-            },
           }
         : hasLocalSpeech
           ? {
@@ -116,16 +111,16 @@ describe("daemon client E2E", () => {
               },
               local: {
                 modelsDir: localModelsDir,
-              },
-              localModels: {
-                dictationStt:
-                  process.env.PASEO_DICTATION_LOCAL_STT_MODEL ??
-                  "zipformer-bilingual-zh-en-2023-02-20",
-                voiceStt:
-                  process.env.PASEO_VOICE_LOCAL_STT_MODEL ??
-                  "zipformer-bilingual-zh-en-2023-02-20",
-                voiceTts:
-                  process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
+                models: {
+                  dictationStt:
+                    process.env.PASEO_DICTATION_LOCAL_STT_MODEL ??
+                    "zipformer-bilingual-zh-en-2023-02-20",
+                  voiceStt:
+                    process.env.PASEO_VOICE_LOCAL_STT_MODEL ??
+                    "zipformer-bilingual-zh-en-2023-02-20",
+                  voiceTts:
+                    process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
+                },
               },
             }
           : undefined;

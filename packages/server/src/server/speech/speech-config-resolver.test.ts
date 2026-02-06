@@ -33,10 +33,15 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.local).toEqual({
       modelsDir: path.join(paseoHome, "models", "local-speech"),
       autoDownload: true,
+      models: {
+        dictationStt: "parakeet-tdt-0.6b-v3-int8",
+        voiceStt: "parakeet-tdt-0.6b-v3-int8",
+        voiceTts: "pocket-tts-onnx-int8",
+      },
     });
-    expect(result.speech.localModels.dictationStt).toBe("parakeet-tdt-0.6b-v3-int8");
-    expect(result.speech.localModels.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
-    expect(result.speech.localModels.voiceTts).toBe("pocket-tts-onnx-int8");
+    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.voiceTts).toBe("pocket-tts-onnx-int8");
   });
 
   test("resolves feature-scoped local model env vars", () => {
@@ -73,6 +78,13 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.local).toEqual({
       modelsDir: "/tmp/models",
       autoDownload: false,
+      models: {
+        dictationStt: "zipformer-bilingual-zh-en-2023-02-20",
+        voiceStt: "parakeet-tdt-0.6b-v3-int8",
+        voiceTts: "kitten-nano-en-v0_1-fp16",
+        voiceTtsSpeakerId: 5,
+        voiceTtsSpeed: 1.35,
+      },
     });
     expect(result.speech.providers.dictationStt).toEqual({
       provider: "local",
@@ -86,11 +98,11 @@ describe("resolveSpeechConfig", () => {
       provider: "local",
       explicit: true,
     });
-    expect(result.speech.localModels.dictationStt).toBe("zipformer-bilingual-zh-en-2023-02-20");
-    expect(result.speech.localModels.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
-    expect(result.speech.localModels.voiceTts).toBe("kitten-nano-en-v0_1-fp16");
-    expect(result.speech.localModels.voiceTtsSpeakerId).toBe(5);
-    expect(result.speech.localModels.voiceTtsSpeed).toBe(1.35);
+    expect(result.speech.local?.models.dictationStt).toBe("zipformer-bilingual-zh-en-2023-02-20");
+    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.voiceTts).toBe("kitten-nano-en-v0_1-fp16");
+    expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(5);
+    expect(result.speech.local?.models.voiceTtsSpeed).toBe(1.35);
     expect(result.openai?.apiKey).toBe("env-key");
     expect(result.openai?.stt?.model).toBe("gpt-4o-transcribe");
   });
@@ -108,8 +120,8 @@ describe("resolveSpeechConfig", () => {
       persisted,
     });
 
-    expect(result.speech.localModels.dictationStt).toBe("parakeet-tdt-0.6b-v3-int8");
-    expect(result.speech.localModels.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
-    expect(result.speech.localModels.voiceTts).toBe("pocket-tts-onnx-int8");
+    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.voiceTts).toBe("pocket-tts-onnx-int8");
   });
 });

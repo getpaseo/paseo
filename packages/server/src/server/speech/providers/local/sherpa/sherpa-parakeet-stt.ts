@@ -25,7 +25,7 @@ export class SherpaOnnxParakeetSTT implements SpeechToTextProvider {
   constructor(config: SherpaParakeetSttConfig, logger: pino.Logger) {
     this.engine = config.engine;
     this.silencePeakThreshold = config.silencePeakThreshold ?? 300;
-    this.logger = logger.child({ module: "speech", provider: "sherpa-onnx", component: "parakeet-stt" });
+    this.logger = logger.child({ module: "speech", provider: "local", component: "parakeet-stt" });
   }
 
   public createSession(params: {

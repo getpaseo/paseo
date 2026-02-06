@@ -20,7 +20,7 @@ import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
-import type { SherpaOnnxModelId } from "./speech/providers/local/sherpa/model-catalog.js";
+import type { LocalSpeechModelId } from "./speech/providers/local/models.js";
 import type {
   VoiceCallerContext,
   VoiceMcpStdioConfig,
@@ -79,7 +79,7 @@ export class VoiceAssistantWebSocketServer {
     stt?: SpeechToTextProvider | null;
     localModels?: {
       modelsDir: string;
-      defaultModelIds: SherpaOnnxModelId[];
+      defaultModelIds: LocalSpeechModelId[];
     };
   } | null;
   private readonly voice: {
@@ -119,7 +119,7 @@ export class VoiceAssistantWebSocketServer {
       stt?: SpeechToTextProvider | null;
       localModels?: {
         modelsDir: string;
-        defaultModelIds: SherpaOnnxModelId[];
+        defaultModelIds: LocalSpeechModelId[];
       };
     }
   ) {

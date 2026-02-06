@@ -287,8 +287,8 @@ function FAQ() {
         <FAQItem question="Is this free?">
           Paseo is free and open source. It wraps CLI tools like Claude Code and
           Codex, which you'll need to have installed and configured with your
-          own credentials. Voice features currently require an OpenAI API key,
-          but local voice is coming soon.
+          own credentials. Voice is local-first by default and can optionally use
+          OpenAI speech providers if you configure them.
         </FAQItem>
         <FAQItem question="Does my code leave my machine?">
           Paseo itself doesn't send your code anywhere. Agents run locally and

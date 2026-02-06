@@ -18,11 +18,6 @@ describe("paseo daemon bootstrap", () => {
           voiceStt: { provider: "openai", explicit: true },
           voiceTts: { provider: "openai", explicit: true },
         },
-        localModels: {
-          dictationStt: "parakeet-tdt-0.6b-v3-int8",
-          voiceStt: "parakeet-tdt-0.6b-v3-int8",
-          voiceTts: "pocket-tts-onnx-int8",
-        },
       },
     });
     try {
@@ -67,11 +62,6 @@ describe("paseo daemon bootstrap", () => {
           dictationStt: { provider: "openai", explicit: true },
           voiceStt: { provider: "openai", explicit: true },
           voiceTts: { provider: "openai", explicit: true },
-        },
-        localModels: {
-          dictationStt: "parakeet-tdt-0.6b-v3-int8",
-          voiceStt: "parakeet-tdt-0.6b-v3-int8",
-          voiceTts: "pocket-tts-onnx-int8",
         },
       },
     };

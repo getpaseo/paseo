@@ -1,9 +1,10 @@
 import path from "node:path";
+import { z } from "zod";
 
 import type { PaseoDaemonConfig } from "./bootstrap.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
-import { AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
+import { AgentProviderSchema } from "./agent/provider-manifest.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import {
   mergeAllowedHosts,
@@ -26,17 +27,14 @@ export type CliConfigOverrides = Partial<{
   allowedHosts: AllowedHostsConfig;
 }>;
 
-function parseVoiceLlmProviderId(value: unknown): AgentProvider | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  return (AGENT_PROVIDER_IDS as readonly string[]).includes(normalized)
-    ? (normalized as AgentProvider)
-    : null;
+const OptionalVoiceLlmProviderSchema = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((value): string | null => (typeof value === "string" ? value.trim().toLowerCase() : null))
+  .pipe(z.union([AgentProviderSchema, z.null()]));
+
+function parseOptionalVoiceLlmProvider(value: unknown): AgentProvider | null {
+  const parsed = OptionalVoiceLlmProviderSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 export function loadConfig(
@@ -97,8 +95,8 @@ export function loadConfig(
     persisted,
   });
 
-  const envVoiceLlmProvider = parseVoiceLlmProviderId(env.PASEO_VOICE_LLM_PROVIDER);
-  const persistedVoiceLlmProvider = parseVoiceLlmProviderId(
+  const envVoiceLlmProvider = parseOptionalVoiceLlmProvider(env.PASEO_VOICE_LLM_PROVIDER);
+  const persistedVoiceLlmProvider = parseOptionalVoiceLlmProvider(
     persisted.features?.voiceMode?.llm?.provider
   );
   const voiceLlmProvider = envVoiceLlmProvider ?? persistedVoiceLlmProvider ?? null;

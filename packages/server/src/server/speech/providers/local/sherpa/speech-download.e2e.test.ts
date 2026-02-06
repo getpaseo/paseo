@@ -123,18 +123,18 @@ describe("speech models (download E2E)", () => {
           local: {
             modelsDir,
             autoDownload: false,
-          },
-          localModels: {
-            dictationStt:
-              set === "parakeet-pocket"
-                ? "parakeet-tdt-0.6b-v3-int8"
-                : "zipformer-bilingual-zh-en-2023-02-20",
-            voiceStt:
-              set === "parakeet-pocket"
-                ? "parakeet-tdt-0.6b-v3-int8"
-                : "zipformer-bilingual-zh-en-2023-02-20",
-            voiceTts:
-              set === "parakeet-pocket" ? "pocket-tts-onnx-int8" : "kitten-nano-en-v0_1-fp16",
+            models: {
+              dictationStt:
+                set === "parakeet-pocket"
+                  ? "parakeet-tdt-0.6b-v3-int8"
+                  : "zipformer-bilingual-zh-en-2023-02-20",
+              voiceStt:
+                set === "parakeet-pocket"
+                  ? "parakeet-tdt-0.6b-v3-int8"
+                  : "zipformer-bilingual-zh-en-2023-02-20",
+              voiceTts:
+                set === "parakeet-pocket" ? "pocket-tts-onnx-int8" : "kitten-nano-en-v0_1-fp16",
+            },
           },
         },
       });

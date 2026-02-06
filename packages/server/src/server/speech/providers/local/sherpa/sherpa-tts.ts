@@ -33,7 +33,7 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
     if (config.preset !== "kokoro-en-v0_19" && config.preset !== "kitten-nano-en-v0_1-fp16") {
       throw new Error(`Unsupported Sherpa TTS preset: ${config.preset}`);
     }
-    this.logger = logger.child({ module: "speech", provider: "sherpa-onnx", component: "tts" });
+    this.logger = logger.child({ module: "speech", provider: "local", component: "tts" });
     this.speakerId = config.speakerId ?? 0;
     this.speed = config.speed ?? 1.0;
 
