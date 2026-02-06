@@ -33,10 +33,12 @@ import { Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { z } from "zod";
 import { loadCodexPersistedTimeline } from "./codex-mcp-agent.js";
 
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
+const TURN_START_TIMEOUT_MS = 90 * 1000;
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 
@@ -856,6 +858,165 @@ function truncateUtf8Bytes(text: string, maxBytes: number): { text: string; trun
 
 const MAX_FILE_PATCH_BYTES = 128 * 1024;
 
+const ThreadStartedNotificationSchema = z.object({
+  thread: z.object({ id: z.string() }).passthrough(),
+}).passthrough();
+
+const TurnStartedNotificationSchema = z.object({
+  turn: z.object({ id: z.string() }).passthrough(),
+}).passthrough();
+
+const TurnCompletedNotificationSchema = z.object({
+  turn: z
+    .object({
+      status: z.string(),
+      error: z
+        .object({
+          message: z.string().optional(),
+        })
+        .passthrough()
+        .optional(),
+    })
+    .passthrough(),
+}).passthrough();
+
+const TurnPlanUpdatedNotificationSchema = z.object({
+  plan: z.array(
+    z
+      .object({
+        step: z.string().optional(),
+        status: z.string().optional(),
+      })
+      .passthrough()
+  ),
+}).passthrough();
+
+const TurnDiffUpdatedNotificationSchema = z.object({
+  diff: z.string(),
+}).passthrough();
+
+const ThreadTokenUsageUpdatedNotificationSchema = z.object({
+  tokenUsage: z.unknown(),
+}).passthrough();
+
+const ItemTextDeltaNotificationSchema = z.object({
+  itemId: z.string(),
+  delta: z.string(),
+}).passthrough();
+
+const ItemLifecycleNotificationSchema = z.object({
+  item: z
+    .object({
+      id: z.string().optional(),
+      type: z.string().optional(),
+    })
+    .passthrough(),
+}).passthrough();
+
+type ParsedCodexNotification =
+  | { kind: "thread_started"; threadId: string }
+  | { kind: "turn_started"; turnId: string }
+  | { kind: "turn_completed"; status: string; errorMessage: string | null }
+  | { kind: "plan_updated"; plan: Array<{ step: string | null; status: string | null }> }
+  | { kind: "diff_updated"; diff: string }
+  | { kind: "token_usage_updated"; tokenUsage: unknown }
+  | { kind: "agent_message_delta"; itemId: string; delta: string }
+  | { kind: "reasoning_delta"; itemId: string; delta: string }
+  | { kind: "item_completed"; item: { id?: string; type?: string; [key: string]: unknown } }
+  | { kind: "item_started"; item: { id?: string; type?: string; [key: string]: unknown } }
+  | { kind: "invalid_payload"; method: string; params: unknown }
+  | { kind: "unknown_method"; method: string; params: unknown };
+
+const CodexNotificationSchema = z.union([
+  z.object({ method: z.literal("thread/started"), params: ThreadStartedNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({ kind: "thread_started", threadId: params.thread.id })
+  ),
+  z.object({ method: z.literal("thread/started"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({ method: z.literal("turn/started"), params: TurnStartedNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({ kind: "turn_started", turnId: params.turn.id })
+  ),
+  z.object({ method: z.literal("turn/started"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({ method: z.literal("turn/completed"), params: TurnCompletedNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "turn_completed",
+      status: params.turn.status,
+      errorMessage: params.turn.error?.message ?? null,
+    })
+  ),
+  z.object({ method: z.literal("turn/completed"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({ method: z.literal("turn/plan/updated"), params: TurnPlanUpdatedNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "plan_updated",
+      plan: params.plan.map((entry) => ({
+        step: entry.step ?? null,
+        status: entry.status ?? null,
+      })),
+    })
+  ),
+  z.object({ method: z.literal("turn/plan/updated"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({ method: z.literal("turn/diff/updated"), params: TurnDiffUpdatedNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({ kind: "diff_updated", diff: params.diff })
+  ),
+  z.object({ method: z.literal("turn/diff/updated"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("thread/tokenUsage/updated"),
+    params: ThreadTokenUsageUpdatedNotificationSchema,
+  }).transform(
+    ({ params }): ParsedCodexNotification => ({ kind: "token_usage_updated", tokenUsage: params.tokenUsage })
+  ),
+  z.object({ method: z.literal("thread/tokenUsage/updated"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({ method: z.literal("item/agentMessage/delta"), params: ItemTextDeltaNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "agent_message_delta",
+      itemId: params.itemId,
+      delta: params.delta,
+    })
+  ),
+  z.object({ method: z.literal("item/agentMessage/delta"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("item/reasoning/summaryTextDelta"),
+    params: ItemTextDeltaNotificationSchema,
+  }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "reasoning_delta",
+      itemId: params.itemId,
+      delta: params.delta,
+    })
+  ),
+  z.object({ method: z.literal("item/reasoning/summaryTextDelta"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({ method: z.literal("item/completed"), params: ItemLifecycleNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({ kind: "item_completed", item: params.item })
+  ),
+  z.object({ method: z.literal("item/completed"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({ method: z.literal("item/started"), params: ItemLifecycleNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({ kind: "item_started", item: params.item })
+  ),
+  z.object({ method: z.literal("item/started"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({ method: z.string(), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "unknown_method", method, params })
+  ),
+]);
+
 async function writeImageAttachment(mimeType: string, data: string): Promise<string> {
   const attachmentsDir = path.join(os.tmpdir(), CODEX_IMAGE_ATTACHMENT_DIR);
   await fs.mkdir(attachmentsDir, { recursive: true });
@@ -932,6 +1093,8 @@ class CodexAppServerAgentSession implements AgentSession {
   private resolvedPermissionRequests = new Set<string>();
   private pendingAgentMessages = new Map<string, string>();
   private pendingReasoning = new Map<string, string[]>();
+  private warnedUnknownNotificationMethods = new Set<string>();
+  private warnedInvalidNotificationPayloads = new Set<string>();
   private latestUsage: AgentUsage | undefined;
   private connected = false;
   private collaborationModes: Array<{
@@ -1227,7 +1390,7 @@ class CodexAppServerAgentSession implements AgentSession {
         params.outputSchema = options.outputSchema;
       }
 
-      await this.client.request("turn/start", params);
+      await this.client.request("turn/start", params, TURN_START_TIMEOUT_MS);
 
       for await (const event of queue) {
         yield event;
@@ -1530,127 +1693,141 @@ class CodexAppServerAgentSession implements AgentSession {
 
   private handleNotification(method: string, params: unknown): void {
     this.emitEvent({ type: "provider_event", provider: CODEX_PROVIDER, raw: { method, params } });
+    const parsed = CodexNotificationSchema.parse({ method, params });
 
-    switch (method) {
-      case "thread/started": {
-        const threadId = (params as any)?.thread?.id;
-        if (threadId) {
-          this.currentThreadId = threadId;
-          this.emitEvent({ type: "thread_started", provider: CODEX_PROVIDER, sessionId: threadId });
-        }
-        break;
-      }
-      case "turn/started": {
-        const turnId = (params as any)?.turn?.id;
-        if (turnId) {
-          this.currentTurnId = turnId;
-        }
-        this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
-        break;
-      }
-      case "turn/completed": {
-        const turn = (params as any)?.turn;
-        const status = turn?.status;
-        if (status === "failed") {
-          const message = turn?.error?.message ?? "Codex turn failed";
-          this.emitEvent({ type: "turn_failed", provider: CODEX_PROVIDER, error: message });
-        } else if (status === "interrupted") {
-          this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
-        } else {
-          this.emitEvent({ type: "turn_completed", provider: CODEX_PROVIDER, usage: this.latestUsage });
-        }
-        this.eventQueue?.end();
-        break;
-      }
-      case "turn/plan/updated": {
-        const steps = (params as any)?.plan;
-        if (Array.isArray(steps)) {
-          const items = planStepsToTodoItems(
-            steps.map((entry: any) => ({
-              step: entry.step ?? "",
-              status: entry.status ?? "pending",
-            }))
-          );
-          this.emitEvent({
-            type: "timeline",
-            provider: CODEX_PROVIDER,
-            item: { type: "todo", items },
-          });
-        }
-        break;
-      }
-      case "turn/diff/updated": {
-        const diff = (params as any)?.diff;
-        if (typeof diff === "string" && diff.trim().length > 0) {
-          // NOTE: Codex app-server emits frequent `turn/diff/updated` notifications
-          // containing a full accumulated unified diff for the *entire turn*.
-          // This is not a concrete file-change tool call; it is progress telemetry.
-          // We intentionally do NOT store it in the agent timeline to avoid
-          // snapshot bloat and relay/WebSocket size limits.
-        }
-        break;
-      }
-      case "thread/tokenUsage/updated": {
-        const tokenUsage = (params as any)?.tokenUsage;
-        this.latestUsage = toAgentUsage(tokenUsage);
-        break;
-      }
-      case "item/agentMessage/delta": {
-        const itemId = (params as any)?.itemId;
-        const delta = (params as any)?.delta;
-        if (itemId && typeof delta === "string") {
-          const prev = this.pendingAgentMessages.get(itemId) ?? "";
-          this.pendingAgentMessages.set(itemId, prev + delta);
-        }
-        break;
-      }
-      case "item/reasoning/summaryTextDelta": {
-        const itemId = (params as any)?.itemId;
-        const delta = (params as any)?.delta;
-        if (itemId && typeof delta === "string") {
-          const prev = this.pendingReasoning.get(itemId) ?? [];
-          prev.push(delta);
-          this.pendingReasoning.set(itemId, prev);
-        }
-        break;
-      }
-      case "item/completed": {
-        const item = (params as any)?.item;
-        const timelineItem = threadItemToTimeline(item, {
-          includeUserMessage: false,
-          cwd: this.config.cwd ?? null,
-        });
-        if (timelineItem) {
-          if (timelineItem.type === "assistant_message" && item?.id) {
-            const buffered = this.pendingAgentMessages.get(item.id);
-            if (buffered && buffered.length > 0) {
-              timelineItem.text = buffered;
-            }
-          }
-          if (timelineItem.type === "reasoning" && item?.id) {
-            const buffered = this.pendingReasoning.get(item.id);
-            if (buffered && buffered.length > 0) {
-              timelineItem.text = buffered.join("");
-            }
-          }
-          this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-        }
-        break;
-      }
-      case "item/started": {
-        const item = (params as any)?.item;
-        const timelineItem = threadItemToTimeline(item, {
-          includeUserMessage: false,
-          cwd: this.config.cwd ?? null,
-        });
-        if (timelineItem && timelineItem.type === "tool_call") {
-          this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-        }
-        break;
-      }
-      default:
-        break;
+    if (parsed.kind === "thread_started") {
+      this.currentThreadId = parsed.threadId;
+      this.emitEvent({ type: "thread_started", provider: CODEX_PROVIDER, sessionId: parsed.threadId });
+      return;
     }
+
+    if (parsed.kind === "turn_started") {
+      this.currentTurnId = parsed.turnId;
+      this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
+      return;
+    }
+
+    if (parsed.kind === "turn_completed") {
+      if (parsed.status === "failed") {
+        this.emitEvent({
+          type: "turn_failed",
+          provider: CODEX_PROVIDER,
+          error: parsed.errorMessage ?? "Codex turn failed",
+        });
+      } else if (parsed.status === "interrupted") {
+        this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+      } else {
+        this.emitEvent({ type: "turn_completed", provider: CODEX_PROVIDER, usage: this.latestUsage });
+      }
+      this.eventQueue?.end();
+      return;
+    }
+
+    if (parsed.kind === "plan_updated") {
+      const items = planStepsToTodoItems(
+        parsed.plan.map((entry) => ({
+          step: entry.step ?? "",
+          status: entry.status ?? "pending",
+        }))
+      );
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: { type: "todo", items },
+      });
+      return;
+    }
+
+    if (parsed.kind === "diff_updated") {
+      if (parsed.diff.trim().length > 0) {
+        // NOTE: Codex app-server emits frequent `turn/diff/updated` notifications
+        // containing a full accumulated unified diff for the *entire turn*.
+        // This is not a concrete file-change tool call; it is progress telemetry.
+        // We intentionally do NOT store it in the agent timeline to avoid
+        // snapshot bloat and relay/WebSocket size limits.
+      }
+      return;
+    }
+
+    if (parsed.kind === "token_usage_updated") {
+      this.latestUsage = toAgentUsage(parsed.tokenUsage);
+      return;
+    }
+
+    if (parsed.kind === "agent_message_delta") {
+      const prev = this.pendingAgentMessages.get(parsed.itemId) ?? "";
+      this.pendingAgentMessages.set(parsed.itemId, prev + parsed.delta);
+      return;
+    }
+
+    if (parsed.kind === "reasoning_delta") {
+      const prev = this.pendingReasoning.get(parsed.itemId) ?? [];
+      prev.push(parsed.delta);
+      this.pendingReasoning.set(parsed.itemId, prev);
+      return;
+    }
+
+    if (parsed.kind === "item_completed") {
+      const timelineItem = threadItemToTimeline(parsed.item, {
+        includeUserMessage: false,
+        cwd: this.config.cwd ?? null,
+      });
+      if (timelineItem) {
+        const itemId = parsed.item.id;
+        if (timelineItem.type === "assistant_message" && itemId) {
+          const buffered = this.pendingAgentMessages.get(itemId);
+          if (buffered && buffered.length > 0) {
+            timelineItem.text = buffered;
+          }
+        }
+        if (timelineItem.type === "reasoning" && itemId) {
+          const buffered = this.pendingReasoning.get(itemId);
+          if (buffered && buffered.length > 0) {
+            timelineItem.text = buffered.join("");
+          }
+        }
+        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      }
+      return;
+    }
+
+    if (parsed.kind === "item_started") {
+      const timelineItem = threadItemToTimeline(parsed.item, {
+        includeUserMessage: false,
+        cwd: this.config.cwd ?? null,
+      });
+      if (timelineItem && timelineItem.type === "tool_call") {
+        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      }
+      return;
+    }
+
+    if (parsed.kind === "invalid_payload") {
+      this.warnInvalidNotificationPayload(parsed.method, parsed.params);
+      return;
+    }
+
+    this.warnUnknownNotificationMethod(parsed.method, parsed.params);
+  }
+
+  private warnUnknownNotificationMethod(method: string, params: unknown): void {
+    if (this.warnedUnknownNotificationMethods.has(method)) {
+      return;
+    }
+    this.warnedUnknownNotificationMethods.add(method);
+    this.logger.warn({ method, params }, "Unhandled Codex app-server notification method");
+  }
+
+  private warnInvalidNotificationPayload(method: string, params: unknown): void {
+    const key = method;
+    if (this.warnedInvalidNotificationPayloads.has(key)) {
+      return;
+    }
+    this.warnedInvalidNotificationPayloads.add(key);
+    this.logger.warn(
+      { method, params },
+      "Invalid Codex app-server notification payload"
+    );
   }
 
   private handleCommandApprovalRequest(params: unknown): Promise<unknown> {
