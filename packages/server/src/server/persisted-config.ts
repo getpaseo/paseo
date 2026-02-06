@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
 
 const LogConfigSchema = z
   .object({
@@ -41,7 +42,6 @@ const SherpaOnnxProviderSchema = z
 const ProvidersSchema = z
   .object({
     openai: ProviderCredentialsSchema.optional(),
-    openrouter: ProviderCredentialsSchema.optional(),
     sherpaOnnx: SherpaOnnxProviderSchema.optional(),
   })
   .strict();
@@ -74,9 +74,7 @@ const FeatureVoiceModeSchema = z
   .object({
     llm: z
       .object({
-        provider: z
-          .enum(["openrouter", "local-agent", "claude", "codex", "opencode"])
-          .optional(),
+        provider: z.enum(AGENT_PROVIDER_IDS as [string, ...string[]]).optional(),
         model: z.string().min(1).optional(),
       })
       .strict()

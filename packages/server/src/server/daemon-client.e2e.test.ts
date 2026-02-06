@@ -574,25 +574,22 @@ describe("daemon client E2E", () => {
     120000
   );
 
-  test.runIf(Boolean(process.env.OPENROUTER_API_KEY))(
-    "streams session activity logs and chunks",
+  test(
+    "does not process non-voice LLM turns via OpenRouter",
     async () => {
       await ctx.client.setVoiceConversation(false);
 
-      let sawAssistantChunk = false;
       let sawTranscriptLog = false;
+      let sawAssistantChunk = false;
       let sawAssistantLog = false;
 
-      const completion = waitForSignal(60000, (resolve) => {
+      const transcriptSeen = waitForSignal(60000, (resolve) => {
         const unsubscribeChunk = ctx.client.on("assistant_chunk", (message) => {
           if (message.type !== "assistant_chunk") {
             return;
           }
           if (message.payload.chunk.length > 0) {
             sawAssistantChunk = true;
-          }
-          if (sawAssistantChunk && sawTranscriptLog && sawAssistantLog) {
-            resolve();
           }
         });
 
@@ -602,12 +599,10 @@ describe("daemon client E2E", () => {
           }
           if (message.payload.type === "transcript") {
             sawTranscriptLog = true;
+            resolve();
           }
           if (message.payload.type === "assistant") {
             sawAssistantLog = true;
-          }
-          if (sawAssistantChunk && sawTranscriptLog && sawAssistantLog) {
-            resolve();
           }
         });
 
@@ -618,9 +613,14 @@ describe("daemon client E2E", () => {
       });
 
       await ctx.client.sendUserMessage("Say 'hello' and nothing else");
-      await completion;
+      await transcriptSeen;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      expect(sawTranscriptLog).toBe(true);
+      expect(sawAssistantChunk).toBe(false);
+      expect(sawAssistantLog).toBe(false);
     },
-    120000
+    90000
   );
 
   speechTest(

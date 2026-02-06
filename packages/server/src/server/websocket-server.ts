@@ -22,7 +22,6 @@ import { PushService } from "./push/push-service.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
-type VoiceAgentProvider = "claude" | "codex" | "opencode";
 type VoiceMcpStdioConfig = {
   command: string;
   baseArgs: string[];
@@ -79,12 +78,10 @@ export class VoiceAssistantWebSocketServer {
     stt?: SpeechToTextProvider | null;
   } | null;
   private readonly voice: {
-    openrouterApiKey?: string | null;
-    voiceLlmProvider?: "openrouter" | "local-agent" | "claude" | "codex" | "opencode" | null;
+    voiceLlmProvider?: AgentProvider | null;
+    voiceLlmModeId?: string | null;
     voiceLlmProviderExplicit?: boolean;
-    voiceLlmDefaultProvider?: VoiceAgentProvider | null;
     voiceLlmModel?: string | null;
-    voiceLlmAvailability?: Record<VoiceAgentProvider, boolean> | null;
     voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
   } | null;
   private readonly voiceSpeakHandlers = new Map<
@@ -114,12 +111,10 @@ export class VoiceAssistantWebSocketServer {
     speech?: { stt: SpeechToTextProvider | null; tts: TextToSpeechProvider | null },
     terminalManager?: TerminalManager | null,
     voice?: {
-      openrouterApiKey?: string | null;
-      voiceLlmProvider?: "openrouter" | "local-agent" | "claude" | "codex" | "opencode" | null;
+      voiceLlmProvider?: AgentProvider | null;
+      voiceLlmModeId?: string | null;
       voiceLlmProviderExplicit?: boolean;
-      voiceLlmDefaultProvider?: VoiceAgentProvider | null;
       voiceLlmModel?: string | null;
-      voiceLlmAvailability?: Record<VoiceAgentProvider, boolean> | null;
       voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
     },
     dictation?: {

@@ -86,8 +86,44 @@
               },
               "additionalProperties": false
             },
-            "openrouter": {
-              "$ref": "#/definitions/PaseoConfigV1/properties/providers/properties/openai"
+            "sherpaOnnx": {
+              "type": "object",
+              "properties": {
+                "modelsDir": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "autoDownload": {
+                  "type": "boolean"
+                },
+                "stt": {
+                  "type": "object",
+                  "properties": {
+                    "preset": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "tts": {
+                  "type": "object",
+                  "properties": {
+                    "preset": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "speakerId": {
+                      "type": "number"
+                    },
+                    "speed": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -104,7 +140,8 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "openai"
+                        "openai",
+                        "local"
                       ]
                     },
                     "model": {
@@ -129,7 +166,9 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "openrouter"
+                        "claude",
+                        "codex",
+                        "opencode"
                       ]
                     },
                     "model": {
@@ -145,7 +184,8 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "openai"
+                        "openai",
+                        "local"
                       ]
                     },
                     "model": {
@@ -161,7 +201,8 @@
                     "provider": {
                       "type": "string",
                       "enum": [
-                        "openai"
+                        "openai",
+                        "local"
                       ]
                     },
                     "model": {

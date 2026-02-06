@@ -60,7 +60,6 @@ describe("paseo daemon bootstrap", () => {
         voiceSttProvider: "openai",
         voiceTtsProvider: "openai",
       },
-      openrouterApiKey: null,
     };
 
     try {

@@ -4,6 +4,8 @@ import type { PaseoDaemonConfig } from "./bootstrap.js";
 import type { STTConfig } from "./speech/providers/openai/stt.js";
 import type { TTSConfig } from "./speech/providers/openai/tts.js";
 import { loadPersistedConfig } from "./persisted-config.js";
+import type { AgentProvider } from "./agent/agent-sdk-types.js";
+import { AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
 import {
   mergeAllowedHosts,
   parseAllowedHostsEnv,
@@ -13,15 +15,6 @@ import {
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
-const VOICE_LLM_PROVIDER_IDS = [
-  "openrouter",
-  "local-agent",
-  "claude",
-  "codex",
-  "opencode",
-] as const;
-type VoiceLlmProviderId = (typeof VOICE_LLM_PROVIDER_IDS)[number];
-
 function getDefaultListen(): string {
   // Main HTTP server defaults to TCP
   return `127.0.0.1:${DEFAULT_PORT}`;
@@ -97,7 +90,7 @@ function parseSpeechProviderId(value: unknown): "openai" | "local" | null {
   return null;
 }
 
-function parseVoiceLlmProviderId(value: unknown): VoiceLlmProviderId | null {
+function parseVoiceLlmProviderId(value: unknown): AgentProvider | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -105,8 +98,8 @@ function parseVoiceLlmProviderId(value: unknown): VoiceLlmProviderId | null {
   if (!normalized) {
     return null;
   }
-  return (VOICE_LLM_PROVIDER_IDS as readonly string[]).includes(normalized)
-    ? (normalized as VoiceLlmProviderId)
+  return (AGENT_PROVIDER_IDS as readonly string[]).includes(normalized)
+    ? (normalized as AgentProvider)
     : null;
 }
 
@@ -265,8 +258,6 @@ export function loadConfig(
       }
     : undefined;
 
-  const openrouterApiKey =
-    env.OPENROUTER_API_KEY ?? persisted.providers?.openrouter?.apiKey ?? null;
   const envVoiceLlmProvider = parseVoiceLlmProviderId(env.PASEO_VOICE_LLM_PROVIDER);
   const persistedVoiceLlmProvider = parseVoiceLlmProviderId(
     persisted.features?.voiceMode?.llm?.provider
@@ -299,7 +290,6 @@ export function loadConfig(
       voiceTtsProvider,
       ...(sherpaOnnx ? { sherpaOnnx } : {}),
     },
-    openrouterApiKey,
     voiceLlmProvider,
     voiceLlmProviderExplicit,
     voiceLlmModel,

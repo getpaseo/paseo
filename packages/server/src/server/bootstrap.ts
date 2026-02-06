@@ -74,13 +74,12 @@ import type {
   AgentClient,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
+import { AGENT_PROVIDER_DEFINITIONS } from "./agent/provider-manifest.js";
 import { acquirePidLock, releasePidLock } from "./pid-lock.js";
 import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
 import { createVoiceMcpBridgeSocketServer, type VoiceMcpBridgeSocketServer } from "./voice-mcp-bridge.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
-type VoiceAgentProvider = "claude" | "codex" | "opencode";
-const VOICE_AGENT_FALLBACK_ORDER: VoiceAgentProvider[] = ["claude", "codex", "opencode"];
 
 function resolveVoiceMcpBridgeCommand(logger: Logger): { command: string; baseArgs: string[] } {
   const explicit = process.env.PASEO_BIN_PATH?.trim();
@@ -147,8 +146,7 @@ export type PaseoDaemonConfig = {
   appBaseUrl?: string;
   openai?: PaseoOpenAIConfig;
   speech?: PaseoSpeechConfig;
-  openrouterApiKey?: string | null;
-  voiceLlmProvider?: "openrouter" | "local-agent" | "claude" | "codex" | "opencode" | null;
+  voiceLlmProvider?: AgentProvider | null;
   voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
@@ -313,21 +311,24 @@ export async function createPaseoDaemon(
 
   const requestedVoiceLlmProvider = config.voiceLlmProvider ?? null;
   const voiceLlmProviderExplicit = config.voiceLlmProviderExplicit ?? false;
+  const voiceEnabledProviders = AGENT_PROVIDER_DEFINITIONS
+    .filter((definition) => definition.voice?.enabled)
+    .map((definition) => definition.id as AgentProvider);
   logger.info(
     {
       requestedVoiceLlmProvider,
       voiceLlmProviderExplicit,
+      voiceEnabledProviders,
     },
     "Voice LLM provider reconciliation started"
   );
 
   const providerClients = createAllClients(logger);
-  const voiceLlmAvailability: Record<VoiceAgentProvider, boolean> = {
-    claude: false,
-    codex: false,
-    opencode: false,
-  };
-  for (const provider of VOICE_AGENT_FALLBACK_ORDER) {
+  Object.assign(providerClients, config.agentClients);
+  const voiceLlmAvailability = Object.fromEntries(
+    voiceEnabledProviders.map((provider) => [provider, false])
+  ) as Record<AgentProvider, boolean>;
+  for (const provider of voiceEnabledProviders) {
     try {
       voiceLlmAvailability[provider] = await providerClients[provider].isAvailable();
     } catch (error) {
@@ -336,21 +337,17 @@ export async function createPaseoDaemon(
     }
   }
 
-  const voiceLlmDefaultProvider =
-    VOICE_AGENT_FALLBACK_ORDER.find((provider) => voiceLlmAvailability[provider]) ?? null;
-
-  if (requestedVoiceLlmProvider === "openrouter") {
-    const openrouterApiKey =
-      config.openrouterApiKey ?? process.env.OPENROUTER_API_KEY ?? null;
-    if (!openrouterApiKey) {
-      logger.error("voiceMode.llm.provider is openrouter but no OpenRouter API key is configured");
-      throw new Error("Missing OpenRouter API key for voiceMode.llm.provider=openrouter");
+  let resolvedVoiceLlmProvider: AgentProvider | null = null;
+  if (requestedVoiceLlmProvider) {
+    if (!voiceEnabledProviders.includes(requestedVoiceLlmProvider)) {
+      logger.error(
+        { provider: requestedVoiceLlmProvider, voiceEnabledProviders },
+        "Configured voice LLM provider does not support voice mode"
+      );
+      throw new Error(
+        `Configured voice LLM provider '${requestedVoiceLlmProvider}' does not support voice mode`
+      );
     }
-  } else if (
-    requestedVoiceLlmProvider === "claude" ||
-    requestedVoiceLlmProvider === "codex" ||
-    requestedVoiceLlmProvider === "opencode"
-  ) {
     if (!voiceLlmAvailability[requestedVoiceLlmProvider]) {
       logger.error(
         { provider: requestedVoiceLlmProvider, voiceLlmAvailability },
@@ -358,20 +355,40 @@ export async function createPaseoDaemon(
       );
       throw new Error(`Configured voice LLM provider '${requestedVoiceLlmProvider}' is unavailable`);
     }
-  } else if (!voiceLlmDefaultProvider) {
+    resolvedVoiceLlmProvider = requestedVoiceLlmProvider;
+  } else {
+    resolvedVoiceLlmProvider =
+      voiceEnabledProviders.find((provider) => voiceLlmAvailability[provider]) ?? null;
+  }
+
+  if (!resolvedVoiceLlmProvider) {
     logger.error(
       { requestedVoiceLlmProvider, voiceLlmAvailability },
-      "No local voice LLM provider available for fallback"
+      "No voice LLM provider available"
     );
-    throw new Error("No local voice LLM provider available (claude/codex/opencode)");
+    throw new Error("No voice LLM provider available");
   }
+
+  const resolvedVoiceProviderDefinition = AGENT_PROVIDER_DEFINITIONS.find(
+    (definition) => definition.id === resolvedVoiceLlmProvider
+  );
+  if (!resolvedVoiceProviderDefinition?.voice?.enabled) {
+    throw new Error(
+      `Provider '${resolvedVoiceLlmProvider}' is missing voice metadata in agent registry`
+    );
+  }
+  const resolvedVoiceLlmModeId = resolvedVoiceProviderDefinition.voice.defaultModeId;
+  const resolvedVoiceLlmModel =
+    config.voiceLlmModel ?? resolvedVoiceProviderDefinition.voice.defaultModel ?? null;
 
   logger.info(
     {
       requestedVoiceLlmProvider,
       voiceLlmProviderExplicit,
+      resolvedVoiceLlmProvider,
+      resolvedVoiceLlmModeId,
+      resolvedVoiceLlmModel,
       voiceLlmAvailability,
-      voiceLlmDefaultProvider,
     },
     "Voice LLM provider reconciliation completed"
   );
@@ -926,12 +943,10 @@ export async function createPaseoDaemon(
     { stt: sttService, tts: ttsService },
     terminalManager,
     {
-      openrouterApiKey: config.openrouterApiKey ?? null,
-      voiceLlmProvider: config.voiceLlmProvider ?? null,
+      voiceLlmProvider: resolvedVoiceLlmProvider,
+      voiceLlmModeId: resolvedVoiceLlmModeId,
       voiceLlmProviderExplicit,
-      voiceLlmDefaultProvider,
-      voiceLlmModel: config.voiceLlmModel ?? null,
-      voiceLlmAvailability,
+      voiceLlmModel: resolvedVoiceLlmModel,
       voiceAgentMcpStdio: {
         command: voiceMcpBridgeCommand.command,
         baseArgs: [

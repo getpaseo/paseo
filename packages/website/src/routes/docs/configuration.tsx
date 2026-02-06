@@ -67,8 +67,7 @@ function Configuration() {
   "$schema": "https://paseo.sh/schemas/paseo.config.v1.json",
   "version": 1,
   "providers": {
-    "openai": { "apiKey": "..." },
-    "openrouter": { "apiKey": "..." }
+    "openai": { "apiKey": "..." }
   },
   "daemon": {
     "listen": "127.0.0.1:6767",
@@ -92,6 +91,7 @@ function Configuration() {
   "features": {
     "dictation": { "stt": { "provider": "local" } },
     "voiceMode": {
+      "llm": { "provider": "claude", "model": "haiku" },
       "stt": { "provider": "local" },
       "tts": { "provider": "local" }
     }
@@ -106,6 +106,13 @@ function Configuration() {
   }
 }`}
         </pre>
+        <p className="text-white/60 leading-relaxed">
+          Voice LLM orchestration is agents-only. Set{' '}
+          <code className="font-mono">features.voiceMode.llm.provider</code> to one of{' '}
+          <code className="font-mono">claude</code>, <code className="font-mono">codex</code>, or{' '}
+          <code className="font-mono">opencode</code>. If set, startup is strict and fails if unavailable.
+          If omitted, Paseo picks the first available voice-enabled agent provider.
+        </p>
         <p className="text-white/60 leading-relaxed">
           Local voice uses ONNX models (sherpa-onnx + PocketTTS). Default presets are
           <code className="font-mono">parakeet-tdt-0.6b-v3-int8</code> for STT and
@@ -152,7 +159,8 @@ function Configuration() {
           <li><code className="font-mono">PASEO_HOME</code> — set Paseo home directory</li>
           <li><code className="font-mono">PASEO_LISTEN</code> — override <code className="font-mono">daemon.listen</code></li>
           <li><code className="font-mono">PASEO_ALLOWED_HOSTS</code> — override/extend <code className="font-mono">daemon.allowedHosts</code></li>
-          <li><code className="font-mono">OPENAI_API_KEY</code> and <code className="font-mono">OPENROUTER_API_KEY</code> — override provider keys</li>
+          <li><code className="font-mono">OPENAI_API_KEY</code> — override OpenAI provider key</li>
+          <li><code className="font-mono">PASEO_VOICE_LLM_PROVIDER</code> — override voice LLM provider (<code className="font-mono">claude</code>, <code className="font-mono">codex</code>, <code className="font-mono">opencode</code>)</li>
           <li><code className="font-mono">PASEO_DICTATION_STT_PROVIDER</code>, <code className="font-mono">PASEO_VOICE_STT_PROVIDER</code>, <code className="font-mono">PASEO_VOICE_TTS_PROVIDER</code> — override voice provider selection (<code className="font-mono">local</code> or <code className="font-mono">openai</code>)</li>
           <li><code className="font-mono">PASEO_SHERPA_ONNX_MODELS_DIR</code> and <code className="font-mono">PASEO_SHERPA_ONNX_AUTO_DOWNLOAD</code> — control local model directory and download behavior</li>
           <li><code className="font-mono">PASEO_SHERPA_STT_PRESET</code> and <code className="font-mono">PASEO_SHERPA_TTS_PRESET</code> — override local STT/TTS model presets</li>

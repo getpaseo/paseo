@@ -1,17 +1,10 @@
 import { v4 as uuidv4 } from "uuid";
-import { readFile, mkdir, writeFile, stat } from "fs/promises";
+import { mkdir, stat } from "fs/promises";
 import { exec } from "child_process";
-import { promisify, inspect } from "util";
+import { promisify } from "util";
 import { join, resolve, sep } from "path";
-import invariant from "tiny-invariant";
 import { z } from "zod";
-import { streamText, stepCountIs } from "ai";
 import type { ToolSet } from "ai";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
-import {
-  createOpenRouter,
-  OpenRouterProviderOptions,
-} from "@openrouter/ai-sdk-provider";
 import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
@@ -29,8 +22,6 @@ import {
 } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { parseAndHighlightDiff, type ParsedDiffFile } from "./utils/diff-highlighter.js";
-import { getSystemPrompt } from "./agent/system-prompt.js";
-import { getAllTools } from "./agent/llm-openai.js";
 import { TTSManager } from "./agent/tts-manager.js";
 import { STTManager } from "./agent/stt-manager.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
@@ -48,8 +39,6 @@ import { experimental_createMCPClient } from "ai";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
-type VoiceLlmProvider = "openrouter" | "local-agent" | "claude" | "codex" | "opencode";
-type VoiceAgentProvider = Exclude<VoiceLlmProvider, "openrouter" | "local-agent">;
 type VoiceSpeakHandler = (params: { text: string; callerAgentId: string; signal?: AbortSignal }) => Promise<void>;
 type VoiceCallerContext = {
   childAgentDefaultLabels?: Record<string, string>;
@@ -144,16 +133,6 @@ const RESTART_EXIT_DELAY_MS = 250;
  * Uses Claude Haiku for speed and cost efficiency.
  */
 const AUTO_GEN_MODEL = "haiku";
-const VOICE_AGENT_FALLBACK_ORDER: VoiceAgentProvider[] = ["claude", "codex", "opencode"];
-const VOICE_AGENT_DEFAULT_MODE: Record<VoiceAgentProvider, string> = {
-  claude: "default",
-  codex: "read-only",
-  opencode: "default",
-};
-const VOICE_AGENT_DEFAULT_MODEL: Partial<Record<VoiceAgentProvider, string>> = {
-  claude: "haiku",
-  codex: "gpt-5.2-mini",
-};
 const VOICE_AGENT_SYSTEM_INSTRUCTION = [
   "You are the Paseo voice assistant.",
   "The user cannot see your chat messages or tool calls.",
@@ -209,18 +188,6 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS
 );
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
-
-/**
- * Type for present_artifact tool arguments
- */
-interface PresentArtifactArgs {
-  type: "markdown" | "diff" | "image" | "code";
-  source:
-    | { type: "file"; path: string }
-    | { type: "command_output"; command: string }
-    | { type: "text"; text: string };
-  title: string;
-}
 
 interface AudioBufferState {
   chunks: Buffer[];
@@ -335,7 +302,6 @@ export class Session {
   >();
 
   // Conversation history
-  private messages: ModelMessage[] = [];
   private turnIndex = 0;
 
   // Per-session managers
@@ -368,12 +334,10 @@ export class Session {
   } | null = null;
   private readonly terminalManager: TerminalManager | null;
   private terminalSubscriptions: Map<string, () => void> = new Map();
-  private readonly openrouterApiKey: string | null;
-  private readonly voiceLlmProvider: VoiceLlmProvider | null;
+  private readonly voiceLlmProvider: AgentProvider | null;
+  private readonly voiceLlmModeId: string | null;
   private readonly voiceLlmProviderExplicit: boolean;
-  private readonly voiceLlmDefaultProvider: VoiceAgentProvider | null;
   private readonly voiceLlmModel: string | null;
-  private readonly voiceLlmAvailability: Record<VoiceAgentProvider, boolean> | null;
   private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null;
   private readonly registerVoiceSpeakHandler?: (
     agentId: string,
@@ -401,12 +365,10 @@ export class Session {
     tts: TextToSpeechProvider | null,
     terminalManager: TerminalManager | null,
     voice?: {
-      openrouterApiKey?: string | null;
-      voiceLlmProvider?: VoiceLlmProvider | null;
+      voiceLlmProvider?: AgentProvider | null;
+      voiceLlmModeId?: string | null;
       voiceLlmProviderExplicit?: boolean;
-      voiceLlmDefaultProvider?: VoiceAgentProvider | null;
       voiceLlmModel?: string | null;
-      voiceLlmAvailability?: Record<VoiceAgentProvider, boolean> | null;
       voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
     },
     voiceBridge?: {
@@ -430,12 +392,10 @@ export class Session {
     this.agentStorage = agentStorage;
     this.createAgentMcpTransport = createAgentMcpTransport;
     this.terminalManager = terminalManager;
-    this.openrouterApiKey = voice?.openrouterApiKey ?? null;
     this.voiceLlmProvider = voice?.voiceLlmProvider ?? null;
+    this.voiceLlmModeId = voice?.voiceLlmModeId ?? null;
     this.voiceLlmProviderExplicit = voice?.voiceLlmProviderExplicit ?? false;
-    this.voiceLlmDefaultProvider = voice?.voiceLlmDefaultProvider ?? null;
     this.voiceLlmModel = voice?.voiceLlmModel ?? null;
-    this.voiceLlmAvailability = voice?.voiceLlmAvailability ?? null;
     this.voiceAgentMcpStdio = voice?.voiceAgentMcpStdio ?? null;
     this.registerVoiceSpeakHandler = voiceBridge?.registerVoiceSpeakHandler;
     this.unregisterVoiceSpeakHandler = voiceBridge?.unregisterVoiceSpeakHandler;
@@ -465,28 +425,6 @@ export class Session {
     this.subscribeToAgentEvents();
 
     this.sessionLogger.info("Session created");
-  }
-
-  private escapeXmlText(value: string): string {
-    return value
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-  }
-
-  private escapeXmlAttribute(value: string): string {
-    return this.escapeXmlText(value)
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&apos;");
-  }
-
-  private formatVoiceTranscriptionForLLM(text: string): string {
-    const trimmed = text.trim();
-    const focusedAgentId = this.clientActivity?.focusedAgentId ?? null;
-    const focusedAttr = focusedAgentId
-      ? ` focused-agent-id="${this.escapeXmlAttribute(focusedAgentId)}"`
-      : "";
-    return `<voice-transcription${focusedAttr}>${this.escapeXmlText(trimmed)}</voice-transcription>`;
   }
 
   /**
@@ -1195,19 +1133,6 @@ export class Session {
     voiceConversationId: string,
     requestId: string
   ): Promise<void> {
-    if (this.voiceLlmProvider === "openrouter") {
-      this.voiceAssistantAgentId = null;
-      this.messages = [];
-      this.emit({
-        type: "voice_conversation_loaded",
-        payload: {
-          voiceConversationId,
-          messageCount: 0,
-          requestId,
-        },
-      });
-      return;
-    }
     this.voiceAssistantAgentId = voiceConversationId;
 
     this.emit({
@@ -1459,36 +1384,19 @@ export class Session {
       }
 
       this.isVoiceMode = true;
-      if (this.voiceLlmProvider !== "openrouter") {
-        this.voiceAssistantAgentId = voiceConversationId;
-        this.sessionLogger.info(
-          { voiceAssistantAgentId: this.voiceAssistantAgentId },
-          "Voice conversation enabled (agent-backed)"
-        );
-        return;
-      }
-
-      // OpenRouter voice mode is always ephemeral.
-      this.voiceAssistantAgentId = null;
-      this.messages = [];
-
+      this.voiceAssistantAgentId = voiceConversationId;
       this.sessionLogger.info(
-        { messageCount: this.messages.length },
-        "Voice conversation enabled"
+        { voiceAssistantAgentId: this.voiceAssistantAgentId },
+        "Voice conversation enabled (agent-backed)"
       );
       return;
     }
 
     this.isVoiceMode = false;
-    if (this.voiceLlmProvider !== "openrouter") {
-      this.sessionLogger.info(
-        { voiceAssistantAgentId: this.voiceAssistantAgentId },
-        "Voice conversation disabled (agent-backed)"
-      );
-      return;
-    }
-    this.voiceAssistantAgentId = null;
-    this.sessionLogger.info("Voice conversation disabled");
+    this.sessionLogger.info(
+      { voiceAssistantAgentId: this.voiceAssistantAgentId },
+      "Voice conversation disabled (agent-backed)"
+    );
   }
 
   /**
@@ -4342,10 +4250,7 @@ export class Session {
       },
     });
 
-    // Add to conversation
-    this.messages.push({ role: "user", content: text });
-
-    // Process through LLM (TTS enabled in voice mode for voice conversations)
+    // Process through LLM (voice path is agent-backed only)
     this.currentStreamPromise = this.processWithLLM(this.isVoiceMode, text);
     await this.currentStreamPromise;
   }
@@ -4612,14 +4517,6 @@ export class Session {
         },
       });
 
-      // Add to conversation
-      this.messages.push({
-        role: "user",
-        content: this.isVoiceMode
-          ? this.formatVoiceTranscriptionForLLM(result.text)
-          : result.text,
-      });
-
       // Set phase to LLM and process (TTS enabled in voice mode for voice conversations)
       this.clearSpeechInProgress("transcription complete");
       this.setPhase("llm");
@@ -4642,52 +4539,6 @@ export class Session {
     }
   }
 
-  /**
-   * Resolve the effective voice LLM provider.
-   * - explicit provider => strict
-   * - local-agent / unset => fallback order
-   */
-  private resolveVoiceAgentProvider(): VoiceAgentProvider {
-    const configured = this.voiceLlmProvider;
-    const availability = this.voiceLlmAvailability ?? {
-      claude: true,
-      codex: true,
-      opencode: true,
-    };
-
-    if (configured === "openrouter") {
-      throw new Error("voiceLlmProvider=openrouter cannot be used in local-agent flow");
-    }
-
-    if (configured === "claude" || configured === "codex" || configured === "opencode") {
-      if (!availability[configured]) {
-        throw new Error(`Configured voice LLM provider '${configured}' is unavailable`);
-      }
-      return configured;
-    }
-
-    const fallbackOrder =
-      this.voiceLlmDefaultProvider && availability[this.voiceLlmDefaultProvider]
-        ? [this.voiceLlmDefaultProvider, ...VOICE_AGENT_FALLBACK_ORDER.filter((id) => id !== this.voiceLlmDefaultProvider)]
-        : VOICE_AGENT_FALLBACK_ORDER;
-
-    for (const provider of fallbackOrder) {
-      if (availability[provider]) {
-        return provider;
-      }
-    }
-
-    throw new Error("No local voice LLM provider is available (claude/codex/opencode)");
-  }
-
-  private getVoiceAgentModel(provider: VoiceAgentProvider): string | undefined {
-    const configured = this.voiceLlmModel?.trim();
-    if (configured) {
-      return configured;
-    }
-    return VOICE_AGENT_DEFAULT_MODEL[provider];
-  }
-
   private async ensureVoiceAssistantAgent(): Promise<string> {
     if (this.voiceAssistantAgentId) {
       const existing = this.agentManager.getAgent(this.voiceAssistantAgentId);
@@ -4706,7 +4557,10 @@ export class Session {
       }
     }
 
-    const provider = this.resolveVoiceAgentProvider();
+    const provider = this.voiceLlmProvider;
+    if (!provider) {
+      throw new Error("Voice LLM provider is not configured");
+    }
     const voiceAgentId = this.voiceAssistantAgentId ?? uuidv4();
     const cwd = join(this.paseoHome, "voice-agent-workspace");
     await mkdir(cwd, { recursive: true });
@@ -4716,11 +4570,11 @@ export class Session {
       throw new Error("Voice MCP stdio bridge is not configured");
     }
 
-    const model = this.getVoiceAgentModel(provider);
+    const model = this.voiceLlmModel?.trim() || undefined;
     const config: AgentSessionConfig = {
       provider,
       cwd,
-      modeId: VOICE_AGENT_DEFAULT_MODE[provider],
+      modeId: this.voiceLlmModeId ?? "default",
       ...(model ? { model } : {}),
       mcpServers: {
         paseo: buildVoiceAgentMcpServerConfig({
@@ -4872,370 +4726,20 @@ export class Session {
    * Process user message through LLM with streaming and tool execution
    */
   private async processWithLLM(enableTTS: boolean, latestUserText?: string): Promise<void> {
-    if (enableTTS && this.voiceLlmProvider !== "openrouter") {
-      const text =
-        typeof latestUserText === "string" && latestUserText.trim().length > 0
-          ? latestUserText
-          : (() => {
-              const lastUser = [...this.messages]
-                .reverse()
-                .find((message) => message.role === "user");
-              if (!lastUser) {
-                return "";
-              }
-              return typeof lastUser.content === "string"
-                ? lastUser.content
-                : JSON.stringify(lastUser.content);
-            })();
-      const normalized = text.trim();
+    try {
+      if (!enableTTS) {
+        this.sessionLogger.warn("Ignoring non-voice processWithLLM call; voice is agent-only");
+        return;
+      }
+      const normalized = (latestUserText ?? "").trim();
       if (!normalized) {
         return;
       }
       await this.processWithVoiceAgent(normalized);
-      return;
-    }
-
-    let assistantResponse = "";
-    let pendingTTS: Promise<void> | null = null;
-    let textBuffer = "";
-    let sawTextDelta = false;
-
-    const flushTextBuffer = () => {
-      if (textBuffer.length > 0) {
-        // TTS handling (capture mode at generation time for drift protection)
-        if (enableTTS && !this.speechInProgress) {
-          const modeAtGeneration = this.isVoiceMode;
-          pendingTTS = this.ttsManager.generateAndWaitForPlayback(
-            textBuffer,
-            (msg) => this.emit(msg),
-            this.abortController.signal,
-            modeAtGeneration
-          );
-        } else if (enableTTS && this.speechInProgress) {
-          this.sessionLogger.debug("Skipping TTS chunk while speech in progress");
-        }
-
-        // Emit activity log
-        this.emit({
-          type: "activity_log",
-          payload: {
-            id: uuidv4(),
-            timestamp: new Date(),
-            type: "assistant",
-            content: textBuffer,
-          },
-        });
-      }
-      textBuffer = "";
-    };
-
-    try {
-      // Debug: dump conversation before LLM call
-      await this.dumpConversation();
-
-      const openrouterApiKey =
-        this.openrouterApiKey ?? process.env.OPENROUTER_API_KEY ?? null;
-      invariant(
-        openrouterApiKey,
-        "OpenRouter API key is required (set providers.openrouter.apiKey in config.json or OPENROUTER_API_KEY)"
-      );
-
-      const openrouter = createOpenRouter({
-        apiKey: openrouterApiKey,
-      });
-
-      // Wait for agent MCP to initialize if needed
-      if (!this.agentTools) {
-        this.sessionLogger.debug("Waiting for agent MCP initialization...");
-        const startTime = Date.now();
-        while (!this.agentTools && Date.now() - startTime < 5000) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        if (!this.agentTools) {
-          this.sessionLogger.info("Agent MCP tools unavailable; continuing with default tool set");
-        }
-      }
-
-      const allTools = getAllTools(this.agentTools ?? undefined);
-
-      const result = await streamText({
-        model: openrouter(this.voiceLlmModel ?? "anthropic/claude-haiku-4.5"),
-        system: getSystemPrompt(),
-        providerOptions: {
-          openrouter: {
-            transforms: ["middle-out"], // Compress prompts that are > context size.
-          } as OpenRouterProviderOptions,
-        },
-        messages: this.messages,
-        tools: allTools,
-        abortSignal: this.abortController.signal,
-        onFinish: async (event) => {
-          const newMessages = event.response.messages;
-          if (newMessages.length > 0) {
-            this.messages.push(...newMessages);
-            this.sessionLogger.debug(
-              { messageCount: newMessages.length },
-              `onFinish - saved message with ${newMessages.length} steps`
-            );
-          }
-        },
-        onChunk: async ({ chunk }) => {
-          if (chunk.type === "text-delta") {
-            sawTextDelta = true;
-            // Accumulate text in buffer
-            textBuffer += chunk.text;
-            assistantResponse += chunk.text;
-
-            // Emit chunk for UI streaming
-            this.emit({
-              type: "assistant_chunk",
-              payload: { chunk: chunk.text },
-            });
-          } else if (chunk.type === "tool-call") {
-            // Flush accumulated text as a segment before tool call
-            flushTextBuffer();
-
-            // Wait for pending TTS before executing tool
-            if (pendingTTS) {
-              this.sessionLogger.debug(
-                { toolName: chunk.toolName },
-                `Waiting for TTS before executing ${chunk.toolName}`
-              );
-              await pendingTTS;
-            }
-
-            // Handle present_artifact tool specially
-            if (chunk.toolName === "present_artifact") {
-              await this.handlePresentArtifact(
-                chunk.toolCallId,
-                chunk.input as PresentArtifactArgs
-              );
-            }
-
-            // Emit tool call activity log
-            this.emit({
-              type: "activity_log",
-              payload: {
-                id: chunk.toolCallId,
-                timestamp: new Date(),
-                type: "tool_call",
-                content: `Calling ${chunk.toolName}`,
-                metadata: {
-                  toolCallId: chunk.toolCallId,
-                  toolName: chunk.toolName,
-                  arguments: chunk.input,
-                },
-              },
-            });
-          } else if (chunk.type === "tool-result") {
-            // Check if this is a create_agent result
-            if (chunk.toolName === "create_agent" && chunk.output) {
-              const result = chunk.output as any;
-              if (result.structuredContent?.agentId) {
-                const agentId = result.structuredContent.agentId;
-                this.emit({
-                  type: "status",
-                  payload: {
-                    status: "agent_created",
-                    agentId,
-                  },
-                });
-              }
-            }
-
-            // Emit tool result event
-            this.emit({
-              type: "activity_log",
-              payload: {
-                id: chunk.toolCallId,
-                timestamp: new Date(),
-                type: "tool_result",
-                content: `Tool ${chunk.toolName} completed`,
-                metadata: {
-                  toolCallId: chunk.toolCallId,
-                  toolName: chunk.toolName,
-                  result: chunk.output,
-                },
-              },
-            });
-          }
-        },
-        onError: async (error) => {
-          this.sessionLogger.error({ err: error }, "Stream error");
-
-          this.emit({
-            type: "activity_log",
-            payload: {
-              id: uuidv4(),
-              timestamp: new Date(),
-              type: "error",
-              content: `Stream error: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            },
-          });
-        },
-        stopWhen: stepCountIs(10),
-      });
-
-      // Consume the fullStream to handle tool-error chunks
-      for await (const part of result.fullStream) {
-        if (part.type === "tool-error") {
-          this.emit({
-            type: "activity_log",
-            payload: {
-              id: part.toolCallId,
-              timestamp: new Date(),
-              type: "error",
-              content: `Tool ${part.toolName} failed: ${
-                part.error instanceof Error
-                  ? part.error.message
-                  : String(part.error)
-              }`,
-              metadata: {
-                toolCallId: part.toolCallId,
-                toolName: part.toolName,
-                error: part.error,
-              },
-            },
-          });
-        }
-      }
-
-      if (!sawTextDelta) {
-        let fallbackText = "";
-        try {
-          fallbackText = (await result.text).trim();
-        } catch {
-          fallbackText = "";
-        }
-        if (fallbackText.length > 0) {
-          textBuffer += fallbackText;
-          assistantResponse += fallbackText;
-          this.emit({
-            type: "assistant_chunk",
-            payload: { chunk: fallbackText },
-          });
-        }
-      }
-
-      // Flush any remaining text at the end
-      flushTextBuffer();
-
-      // Note: Message is saved by onFinish callback with proper tool calls
-
-      // Now wait for any pending TTS, but don't fail if it times out
-      if (pendingTTS) {
-        try {
-          await pendingTTS;
-        } catch (ttsError) {
-          this.sessionLogger.error(
-            { err: ttsError },
-            "TTS playback failed (message already saved)"
-          );
-        }
-      }
-    } catch (error) {
-      // Note: Partial messages are saved by onAbort callback with proper tool calls
-
-      // Check if this is an abort error
-      const isAbortError =
-        error instanceof Error && error.name === "AbortError";
-
-      // Only emit error log for non-abort errors
-      if (!isAbortError) {
-        this.emit({
-          type: "activity_log",
-          payload: {
-            id: uuidv4(),
-            timestamp: new Date(),
-            type: "error",
-            content: `Error: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          },
-        });
-      }
-
-      // Don't re-throw abort errors (they're expected during interruptions)
-      if (isAbortError) {
-        this.sessionLogger.debug("Stream aborted (partial response saved)");
-        return;
-      }
-
-      // Re-throw unexpected errors
-      throw error;
     } finally {
-      // Increment turn index for next LLM call
       this.turnIndex++;
-
-      // Clear the stream promise tracker
       this.currentStreamPromise = null;
     }
-  }
-
-  /**
-   * Handle present_artifact tool execution
-   */
-  private async handlePresentArtifact(
-    toolCallId: string,
-    args: PresentArtifactArgs
-  ): Promise<void> {
-    let content: string;
-    let isBase64 = false;
-
-    try {
-      if (args.source.type === "file") {
-        const fileBuffer = await readFile(args.source.path);
-        content = fileBuffer.toString("base64");
-        isBase64 = true;
-      } else if (args.source.type === "command_output") {
-        const { stdout } = await execAsync(args.source.command, {
-          encoding: "buffer",
-        });
-        content = stdout.toString("base64");
-        isBase64 = true;
-      } else if (args.source.type === "text") {
-        content = args.source.text;
-        isBase64 = false;
-      } else {
-        content = "[Unknown source type]";
-        isBase64 = false;
-      }
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error },
-        "Failed to resolve artifact source"
-      );
-      content = `[Error: ${
-        error instanceof Error ? error.message : String(error)
-      }]`;
-      isBase64 = false;
-    }
-
-    // Emit artifact message
-    this.emit({
-      type: "artifact",
-      payload: {
-        type: args.type,
-        id: toolCallId,
-        title: args.title,
-        content,
-        isBase64,
-      },
-    });
-
-    // Emit activity log for artifact
-    this.emit({
-      type: "activity_log",
-      payload: {
-        id: toolCallId,
-        timestamp: new Date(),
-        type: "system",
-        content: `${args.type} artifact: ${args.title}`,
-        metadata: { artifactId: toolCallId, artifactType: args.type },
-      },
-    });
   }
 
   /**
@@ -5443,38 +4947,6 @@ export class Session {
       }
     }
     this.onMessage(msg);
-  }
-
-  /**
-   * Debug helper: dump conversation to disk
-   */
-  private async dumpConversation(): Promise<void> {
-    try {
-      const dumpDir = join(process.cwd(), ".debug.conversations");
-      await mkdir(dumpDir, { recursive: true });
-
-      const filename = `${this.sessionId}-${this.turnIndex}.json`;
-      const filepath = join(dumpDir, filename);
-
-      const dump = {
-        voiceAssistantAgentId: this.voiceAssistantAgentId,
-        sessionId: this.sessionId,
-        turnIndex: this.turnIndex,
-        timestamp: new Date().toISOString(),
-        messages: this.messages,
-      };
-
-      await writeFile(filepath, inspect(dump, { depth: null }), "utf-8");
-      this.sessionLogger.debug(
-        { filepath },
-        `Dumped conversation to ${filepath}`
-      );
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error },
-        "Failed to dump conversation"
-      );
-    }
   }
 
   /**
