@@ -1004,11 +1004,12 @@ export function GitOptionsSection({
             visible={isWorktreeSheetOpen}
             onClose={() => setIsWorktreeSheetOpen(false)}
           >
-            {worktreeOptions.map((option) => (
+            {worktreeOptions.map((option, index) => (
               <SelectOption
                 key={option.path}
                 label={option.label}
                 selected={option.path === selectedWorktreePath}
+                testID={`worktree-attach-option-${index}`}
                 onPress={() => {
                   onSelectWorktreePath(option.path);
                   setIsWorktreeSheetOpen(false);

@@ -158,7 +158,6 @@ describe("Codex app-server provider (integration)", () => {
         thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
       });
 
-      await session.run("Reply with OK.");
       const info = await session.getRuntimeInfo();
       await session.close();
 

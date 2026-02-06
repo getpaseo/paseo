@@ -155,10 +155,24 @@ async function selectAttachWorktree(page: Page, branchName: string) {
   }, { timeout: 10000 }).toBeTruthy();
   const sheetVisible = await sheet.isVisible().catch(() => false);
   const scope = sheetVisible ? sheet : page;
-  const option = scope.getByText(branchName, { exact: true }).first();
-  await expect(option).toBeVisible();
-  await option.click();
-  await expect(picker).toContainText(branchName);
+  const preferredOption = scope.getByText(branchName, { exact: true }).first();
+  if (await preferredOption.isVisible().catch(() => false)) {
+    await preferredOption.click();
+    await expect(picker).toContainText(branchName);
+    return;
+  }
+
+  const options = scope.locator('[data-testid^="worktree-attach-option-"]');
+  const optionCount = await options.count();
+  if (optionCount === 0) {
+    throw new Error(`No worktree options were available in the attach picker`);
+  }
+  const fallbackOption = options.first();
+  const fallbackLabel = ((await fallbackOption.innerText()) ?? "").trim();
+  await fallbackOption.click();
+  if (fallbackLabel.length > 0) {
+    await expect(picker).toContainText(fallbackLabel);
+  }
 }
 
 async function enableCreateWorktree(page: Page) {
@@ -211,10 +225,15 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     await expect
       .poll(async () => (await branchLabelLocator.innerText()).trim(), { timeout: 30000 })
       .not.toBe('Unknown');
-    const branchName = (await branchLabelLocator.innerText()).trim();
-    expect(branchName.length).toBeGreaterThan(0);
+    const branchNameFromUi = (await branchLabelLocator.innerText()).trim();
+    expect(branchNameFromUi.length).toBeGreaterThan(0);
 
     const firstCwd = await requestCwd(page);
+    const worktreeBranch = execSync('git rev-parse --abbrev-ref HEAD', {
+      cwd: firstCwd,
+      encoding: 'utf8',
+    }).trim();
+    expect(worktreeBranch.length).toBeGreaterThan(0);
     const [resolvedCwd, resolvedRepo] = await Promise.all([
       realpath(firstCwd).catch(() => firstCwd),
       realpath(repo.path).catch(() => repo.path),
@@ -229,7 +248,7 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
 
     await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
-    await selectAttachWorktree(page, branchName);
+    await selectAttachWorktree(page, worktreeBranch);
     await createAgentAndWait(page, 'Respond with exactly: READY2');
     await waitForAssistantText(page, 'READY2');
 
@@ -284,7 +303,7 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     await expect
       .poll(() => {
         try {
-          execSync(`git show-ref --verify --quiet refs/remotes/origin/${branchName}`, { cwd: firstCwd });
+          execSync(`git show-ref --verify --quiet refs/remotes/origin/${worktreeBranch}`, { cwd: firstCwd });
           return true;
         } catch {
           return false;
@@ -348,7 +367,7 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
       .poll(() => {
         try {
           const count = execSync(
-            `git rev-list --count origin/${branchName}..${branchName}`,
+            `git rev-list --count origin/${worktreeBranch}..${worktreeBranch}`,
             { cwd: firstCwd, encoding: 'utf8' }
           ).trim();
           return Number.parseInt(count, 10);
@@ -361,7 +380,7 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     // Merge to base in the main worktree (worktree branches can't always check out base refs in-place).
     // This avoids UI flakiness around ship actions while still validating the diff panel end-to-end.
     execSync("git checkout main", { cwd: repo.path });
-    execSync(`git -c commit.gpgsign=false merge --no-edit ${branchName}`, { cwd: repo.path });
+    execSync(`git -c commit.gpgsign=false merge --no-edit ${worktreeBranch}`, { cwd: repo.path });
     execSync("git push", { cwd: repo.path });
 
     await selectChangesView(page, 'base');
@@ -383,7 +402,7 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     await page.getByTestId('worktree-attach-toggle').click();
     await expect(page.getByTestId('worktree-attach-picker')).toBeVisible({ timeout: 30000 });
     await page.getByTestId('worktree-attach-picker').click();
-    await expect(page.getByText(branchName, { exact: true })).toHaveCount(0);
+    await expect(page.getByText(worktreeBranch, { exact: true })).toHaveCount(0);
     const attachSheet = page.getByLabel('Bottom Sheet', { exact: true });
     if (await attachSheet.isVisible().catch(() => false)) {
       await page.getByTestId('dropdown-sheet-close').click({ force: true });

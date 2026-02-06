@@ -1071,6 +1071,7 @@ function PermissionRequestCard({
       ) : null}
 
       <Text
+        testID="permission-request-question"
         style={[
           permissionStyles.question,
           { color: theme.colors.mutedForeground },
@@ -1086,6 +1087,7 @@ function PermissionRequestCard({
         ]}
       >
         <Pressable
+          testID="permission-request-deny"
           style={(state) => {
             const hovered = Boolean((state as any).hovered);
             const pressed = Boolean(state.pressed);
@@ -1126,6 +1128,7 @@ function PermissionRequestCard({
         </Pressable>
 
         <Pressable
+          testID="permission-request-accept"
           style={(state) => {
             const hovered = Boolean((state as any).hovered);
             const pressed = Boolean(state.pressed);

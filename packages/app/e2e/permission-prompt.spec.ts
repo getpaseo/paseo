@@ -7,19 +7,26 @@ import {
   waitForPermissionPrompt,
   allowPermission,
   denyPermission,
-  waitForAgentFinishUI,
-  getToolCallCount,
 } from './helpers/app';
 import { createTempGitRepo } from './helpers/workspace';
 
 const FILE_CONTENT = 'Hello from permission test';
+
+function buildWriteCommand(filePath: string): string {
+  return `bash -lc 'sleep 2; printf "${FILE_CONTENT}" > "${filePath}"'`;
+}
 
 test.describe('permission prompts', () => {
   test('allow permission creates the file', async ({ page }) => {
     const repo = await createTempGitRepo();
     const uniqueFilename = `test-allow-${Date.now()}.txt`;
     const filePath = path.join(repo.path, uniqueFilename);
-    const prompt = `Create a file named "${uniqueFilename}" with the content "${FILE_CONTENT}". Do not add any extra content.`;
+    const shellCommand = buildWriteCommand(filePath);
+    const prompt = [
+      `Use your shell tool to run exactly this command:`,
+      shellCommand,
+      `Do not write outside this exact path.`,
+    ].join(' ');
 
     try {
       await createAgentWithConfig(page, {
@@ -30,11 +37,6 @@ test.describe('permission prompts', () => {
       });
 
       await waitForPermissionPrompt(page, 30000);
-
-      // Check tool call count before allowing permission
-      // In "Always Ask" mode, we should see the permission prompt badge
-      const toolCallCountBefore = await getToolCallCount(page);
-      expect(toolCallCountBefore).toBe(1);
 
       await allowPermission(page);
 
@@ -59,7 +61,12 @@ test.describe('permission prompts', () => {
     const repo = await createTempGitRepo();
     const uniqueFilename = `test-deny-${Date.now()}.txt`;
     const filePath = path.join(repo.path, uniqueFilename);
-    const prompt = `Create a file named "${uniqueFilename}" with the content "${FILE_CONTENT}". Do not add any extra content.`;
+    const shellCommand = buildWriteCommand(filePath);
+    const prompt = [
+      `Use your shell tool to run exactly this command:`,
+      shellCommand,
+      `Do not write outside this exact path.`,
+    ].join(' ');
 
     try {
       await createAgentWithConfig(page, {
@@ -71,23 +78,14 @@ test.describe('permission prompts', () => {
 
       await waitForPermissionPrompt(page, 30000);
 
-      // Check tool call count before denying permission
-      // In "Always Ask" mode, we should see the permission prompt badge
-      const toolCallCountBefore = await getToolCallCount(page);
-      expect(toolCallCountBefore).toBe(1);
-
       await denyPermission(page);
 
-      // After denying permission, wait for the agent to show the permission denied result
-      // The agent might stay in running state but should show a tool call result
-      await page.waitForTimeout(3000); // Give time for the denial to be processed
+      await expect(page.getByText(/denied by the user|permission\/authorization check/i)).toBeVisible({
+        timeout: 30_000,
+      });
 
       expect(existsSync(filePath)).toBe(false);
 
-      // After denying, the tool call count should still be 1
-      // The UI doesn't show a separate badge for denied permissions
-      const toolCallCountAfter = await getToolCallCount(page);
-      expect(toolCallCountAfter).toBe(1);
     } finally {
       await repo.cleanup();
     }

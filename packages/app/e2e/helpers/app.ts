@@ -425,18 +425,18 @@ export const createAgentWithConfig = async (page: Page, config: AgentConfig) => 
 };
 
 export const waitForPermissionPrompt = async (page: Page, timeout = 30000) => {
-  const promptText = page.getByText('How would you like to proceed?').first();
+  const promptText = page.getByTestId('permission-request-question').first();
   await expect(promptText).toBeVisible({ timeout });
 };
 
 export const allowPermission = async (page: Page) => {
-  const acceptButton = page.getByText('Accept', { exact: true }).first();
+  const acceptButton = page.getByTestId('permission-request-accept').first();
   await expect(acceptButton).toBeVisible({ timeout: 5000 });
   await acceptButton.click();
 };
 
 export const denyPermission = async (page: Page) => {
-  const denyButton = page.getByText('Deny', { exact: true }).first();
+  const denyButton = page.getByTestId('permission-request-deny').first();
   await expect(denyButton).toBeVisible({ timeout: 5000 });
   await denyButton.click();
 };

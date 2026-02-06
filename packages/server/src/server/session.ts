@@ -2863,21 +2863,7 @@ export class Session {
     try {
       let message = msg.message?.trim() ?? "";
       if (!message) {
-        if (process.env.PASEO_USE_FAKE_AGENTS === "1") {
-          message = "Update";
-        } else {
-          try {
-            message = await this.generateCommitMessage(cwd);
-          } catch (error) {
-            // Don't block commits if AI commit message generation is unavailable (e.g. missing auth).
-            // The user can always amend later.
-            this.sessionLogger.warn(
-              { err: error, cwd },
-              "Commit message generation failed; falling back to a default message"
-            );
-            message = "Update";
-          }
-        }
+        message = await this.generateCommitMessage(cwd);
       }
       if (!message) {
         throw new Error("Commit message is required");

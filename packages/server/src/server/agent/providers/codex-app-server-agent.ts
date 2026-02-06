@@ -1209,6 +1209,12 @@ class CodexAppServerAgentSession implements AgentSession {
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
     if (this.cachedRuntimeInfo) return { ...this.cachedRuntimeInfo };
+    if (!this.connected) {
+      await this.connect();
+    }
+    if (!this.currentThreadId) {
+      await this.ensureThread();
+    }
     const info: AgentRuntimeInfo = {
       provider: CODEX_PROVIDER,
       sessionId: this.currentThreadId,

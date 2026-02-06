@@ -5,7 +5,7 @@ import { createTempGitRepo } from './helpers/workspace';
 test('deleting an agent persists after reload', async ({ page }) => {
   const repo = await createTempGitRepo();
   const nonce = Math.random().toString(36).slice(2, 10);
-  const prompt = `delete-agent-persists-${nonce}`;
+  const prompt = `respond-ready-${nonce}`;
 
   try {
     await gotoHome(page);
@@ -19,7 +19,9 @@ test('deleting an agent persists after reload', async ({ page }) => {
     await input.press('Enter');
     await page.waitForURL(/\/agent\//, { waitUntil: 'commit' });
     // Wait for the initial turn to complete so the agent can be archived (web uses a hover action).
-    await expect(page.getByText('Hello world')).toBeVisible({ timeout: 30000 });
+    const stopOrCancel = page.getByRole('button', { name: /Stop agent|Canceling agent/ });
+    await stopOrCancel.first().waitFor({ state: 'visible', timeout: 30000 }).catch(() => undefined);
+    await expect(stopOrCancel).toHaveCount(0, { timeout: 120000 });
 
     const match = page.url().match(/\/agent\/([^/]+)\/([^/?#]+)/);
     if (!match) {

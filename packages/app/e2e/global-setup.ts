@@ -1,9 +1,11 @@
 import { spawn, type ChildProcess, execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { Buffer } from 'node:buffer';
+import dotenv from 'dotenv';
 
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -72,6 +74,12 @@ function decodeOfferFromFragmentUrl(url: string): OfferPayload {
 }
 
 export default async function globalSetup() {
+  const repoRoot = path.resolve(__dirname, '../../..');
+  const envTestPath = path.join(repoRoot, '.env.test');
+  if (existsSync(envTestPath)) {
+    dotenv.config({ path: envTestPath });
+  }
+
   const port = await getAvailablePort();
   const relayPort = await getAvailablePort();
   const metroPort = await getAvailablePort();
@@ -145,7 +153,6 @@ export default async function globalSetup() {
       PASEO_LISTEN: `0.0.0.0:${port}`,
       PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
       PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
-      PASEO_USE_FAKE_AGENTS: '1',
       NODE_ENV: 'development',
     },
     stdio: ['ignore', 'pipe', 'pipe'],

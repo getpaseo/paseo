@@ -10,7 +10,6 @@ import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { PidLockError } from "./pid-lock.js";
-import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 
 async function main() {
   let paseoHome: string;
@@ -35,11 +34,6 @@ async function main() {
     config.mcpEnabled = false;
   }
 
-  // E2E / test mode: run the daemon with deterministic fake agent clients.
-  // This keeps Playwright tests stable and avoids depending on external provider auth.
-  if (process.env.PASEO_USE_FAKE_AGENTS === "1") {
-    config.agentClients = createTestAgentClients();
-  }
   const daemon = await createPaseoDaemon(config, logger);
 
   try {

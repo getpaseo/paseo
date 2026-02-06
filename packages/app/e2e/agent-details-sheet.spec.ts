@@ -3,6 +3,7 @@ import { createAgent, ensureHostSelected, gotoHome, setWorkingDirectory } from "
 import { createTempGitRepo } from "./helpers/workspace";
 
 test("agent details sheet shows IDs and copy toast", async ({ page }) => {
+  test.setTimeout(120_000);
   const repo = await createTempGitRepo();
   const prompt = "Respond with exactly: Hello";
 
@@ -11,9 +12,6 @@ test("agent details sheet shows IDs and copy toast", async ({ page }) => {
     await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
     await createAgent(page, prompt);
-
-    // Wait for the agent to finish responding
-    await page.waitForTimeout(2000);
 
     await page.getByTestId("agent-overflow-menu").click();
     await page.getByTestId("agent-menu-details").click();
@@ -28,7 +26,7 @@ test("agent details sheet shows IDs and copy toast", async ({ page }) => {
     await expect(page.getByTestId("agent-details-persistence-session-id")).toBeVisible();
     await expect(
       page.getByTestId("agent-details-persistence-session-id-value")
-    ).not.toHaveText("Not available");
+    ).not.toHaveText("Not available", { timeout: 90_000 });
 
     await page.getByTestId("agent-details-agent-id").click();
     await expect(page.getByTestId("app-toast")).toBeVisible();
@@ -37,4 +35,3 @@ test("agent details sheet shows IDs and copy toast", async ({ page }) => {
     await repo.cleanup();
   }
 });
-
