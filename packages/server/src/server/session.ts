@@ -57,6 +57,11 @@ type VoiceCallerContext = {
   allowCustomCwd?: boolean;
   enableVoiceTools?: boolean;
 };
+type VoiceMcpStdioConfig = {
+  command: string;
+  baseArgs: string[];
+  env?: Record<string, string>;
+};
 import { buildProviderRegistry } from "./agent/provider-registry.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
@@ -157,6 +162,25 @@ const VOICE_AGENT_SYSTEM_INSTRUCTION = [
   "Never use bash, file-edit, or web tools directly.",
   "Only use the paseo MCP tools.",
 ].join(" ");
+
+export function buildVoiceAgentMcpServerConfig(params: {
+  callerAgentId: string;
+  command: string;
+  baseArgs: string[];
+  env?: Record<string, string>;
+}): {
+  type: "stdio";
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+} {
+  return {
+    type: "stdio",
+    command: params.command,
+    args: [...params.baseArgs, "--caller-agent-id", params.callerAgentId],
+    ...(params.env ? { env: params.env } : {}),
+  };
+}
 
 type ProcessingPhase = "idle" | "transcribing" | "llm";
 
@@ -350,7 +374,7 @@ export class Session {
   private readonly voiceLlmDefaultProvider: VoiceAgentProvider | null;
   private readonly voiceLlmModel: string | null;
   private readonly voiceLlmAvailability: Record<VoiceAgentProvider, boolean> | null;
-  private readonly voiceAgentMcpUrl: string | null;
+  private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null;
   private readonly registerVoiceSpeakHandler?: (
     agentId: string,
     handler: VoiceSpeakHandler
@@ -383,7 +407,7 @@ export class Session {
       voiceLlmDefaultProvider?: VoiceAgentProvider | null;
       voiceLlmModel?: string | null;
       voiceLlmAvailability?: Record<VoiceAgentProvider, boolean> | null;
-      voiceAgentMcpUrl?: string | null;
+      voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
     },
     voiceBridge?: {
       registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
@@ -412,7 +436,7 @@ export class Session {
     this.voiceLlmDefaultProvider = voice?.voiceLlmDefaultProvider ?? null;
     this.voiceLlmModel = voice?.voiceLlmModel ?? null;
     this.voiceLlmAvailability = voice?.voiceLlmAvailability ?? null;
-    this.voiceAgentMcpUrl = voice?.voiceAgentMcpUrl ?? null;
+    this.voiceAgentMcpStdio = voice?.voiceAgentMcpStdio ?? null;
     this.registerVoiceSpeakHandler = voiceBridge?.registerVoiceSpeakHandler;
     this.unregisterVoiceSpeakHandler = voiceBridge?.unregisterVoiceSpeakHandler;
     this.registerVoiceCallerContext = voiceBridge?.registerVoiceCallerContext;
@@ -4687,9 +4711,9 @@ export class Session {
     const cwd = join(this.paseoHome, "voice-agent-workspace");
     await mkdir(cwd, { recursive: true });
 
-    const mcpUrl = this.voiceAgentMcpUrl;
-    if (!mcpUrl) {
-      throw new Error("Voice MCP URL is not configured");
+    const mcpStdio = this.voiceAgentMcpStdio;
+    if (!mcpStdio) {
+      throw new Error("Voice MCP stdio bridge is not configured");
     }
 
     const model = this.getVoiceAgentModel(provider);
@@ -4699,10 +4723,12 @@ export class Session {
       modeId: VOICE_AGENT_DEFAULT_MODE[provider],
       ...(model ? { model } : {}),
       mcpServers: {
-        paseo: {
-          type: "http",
-          url: `${mcpUrl}?callerAgentId=${encodeURIComponent(voiceAgentId)}`,
-        },
+        paseo: buildVoiceAgentMcpServerConfig({
+          callerAgentId: voiceAgentId,
+          command: mcpStdio.command,
+          baseArgs: mcpStdio.baseArgs,
+          env: mcpStdio.env,
+        }),
       },
     };
 

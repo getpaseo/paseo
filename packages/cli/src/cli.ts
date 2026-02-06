@@ -14,6 +14,7 @@ import { runInspectCommand } from './commands/agent/inspect.js'
 import { runWaitCommand } from './commands/agent/wait.js'
 import { runAttachCommand } from './commands/agent/attach.js'
 import { withOutput } from './output/index.js'
+import { runVoiceMcpBridgeCommand } from './commands/voice-mcp-bridge.js'
 
 const VERSION = '0.1.0'
 
@@ -140,6 +141,14 @@ export function createCli(): Command {
 
   // Worktree commands
   program.addCommand(createWorktreeCommand())
+
+  // Internal voice MCP stdio bridge command (hidden).
+  program
+    .command('__paseo_voice_mcp_bridge')
+    .description('Internal voice MCP bridge command')
+    .argument('<callerAgentId>')
+    .requiredOption('--socket <path>')
+    .action(runVoiceMcpBridgeCommand)
 
   return program
 }

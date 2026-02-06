@@ -23,6 +23,11 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 type VoiceAgentProvider = "claude" | "codex" | "opencode";
+type VoiceMcpStdioConfig = {
+  command: string;
+  baseArgs: string[];
+  env?: Record<string, string>;
+};
 
 type WebSocketServerConfig = {
   allowedOrigins: Set<string>;
@@ -80,7 +85,7 @@ export class VoiceAssistantWebSocketServer {
     voiceLlmDefaultProvider?: VoiceAgentProvider | null;
     voiceLlmModel?: string | null;
     voiceLlmAvailability?: Record<VoiceAgentProvider, boolean> | null;
-    voiceAgentMcpUrl?: string | null;
+    voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
   } | null;
   private readonly voiceSpeakHandlers = new Map<
     string,
@@ -115,7 +120,7 @@ export class VoiceAssistantWebSocketServer {
       voiceLlmDefaultProvider?: VoiceAgentProvider | null;
       voiceLlmModel?: string | null;
       voiceLlmAvailability?: Record<VoiceAgentProvider, boolean> | null;
-      voiceAgentMcpUrl?: string | null;
+      voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
     },
     dictation?: {
       finalTimeoutMs?: number;

@@ -10,8 +10,15 @@ import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { PidLockError } from "./pid-lock.js";
+import { runVoiceMcpBridgeCli } from "./voice-mcp-bridge.js";
 
 async function main() {
+  const bridgeArgIndex = process.argv.findIndex((arg) => arg === "__paseo_voice_mcp_bridge");
+  if (bridgeArgIndex >= 0) {
+    await runVoiceMcpBridgeCli(process.argv.slice(bridgeArgIndex + 1));
+    return;
+  }
+
   let paseoHome: string;
   let logger: ReturnType<typeof createRootLogger>;
   let config: ReturnType<typeof loadConfig>;
