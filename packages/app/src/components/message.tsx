@@ -347,9 +347,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   const resolvedDisableOuterSpacing =
     useDisableOuterSpacing(disableOuterSpacing);
 
-  const [domHeight, setDomHeight] = useState<number>(24);
-  const lastDomHeightRef = useRef<number>(domHeight);
-
   const domTheme = useMemo(
     () => ({
       colors: {
@@ -418,20 +415,6 @@ export const AssistantMessage = memo(function AssistantMessage({
     [onInlinePathPress]
   );
 
-  const handleHeightChange = useCallback(async (height: number) => {
-    if (!Number.isFinite(height) || height <= 0) {
-      return;
-    }
-
-    const clamped = Math.max(1, Math.min(20000, Math.round(height)));
-    if (Math.abs(clamped - lastDomHeightRef.current) <= 1) {
-      return;
-    }
-
-    lastDomHeightRef.current = clamped;
-    setDomHeight(clamped);
-  }, []);
-
   return (
     <View
       testID="assistant-message"
@@ -444,27 +427,19 @@ export const AssistantMessage = memo(function AssistantMessage({
       <AssistantMarkdownDom
         markdown={message}
         theme={domTheme}
-        onHeightChangeAsync={Platform.OS === "web" ? undefined : handleHeightChange}
         onInlinePathPressAsync={
           onInlinePathPress ? handleInlinePathPress : undefined
         }
         onLinkPressAsync={handleLinkPress}
         dom={{
+          matchContents: true,
           scrollEnabled: false,
           showsVerticalScrollIndicator: false,
           showsHorizontalScrollIndicator: false,
           bounces: false,
           textInteractionEnabled: true,
+          style: { flex: 1 },
         }}
-        style={
-          Platform.OS === "web"
-            ? undefined
-            : ({
-                width: "100%",
-                height: domHeight,
-                backgroundColor: "transparent",
-              } as any)
-        }
       />
     </View>
   );
