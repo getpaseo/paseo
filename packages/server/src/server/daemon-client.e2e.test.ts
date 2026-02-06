@@ -93,33 +93,47 @@ describe("daemon client E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeAll(async () => {
-    const speechConfig = openaiApiKey
-      ? {
-          dictationSttProvider: "openai" as const,
-          voiceSttProvider: "openai" as const,
-          voiceTtsProvider: "openai" as const,
-        }
-      : {
-          dictationSttProvider: "local" as const,
-          voiceSttProvider: "local" as const,
-          voiceTtsProvider: "local" as const,
-          local: {
-            modelsDir: localModelsDir,
-          },
-          dictationLocalSttModel:
-            process.env.PASEO_DICTATION_LOCAL_STT_MODEL ??
-            "zipformer-bilingual-zh-en-2023-02-20",
-          voiceLocalSttModel:
-            process.env.PASEO_VOICE_LOCAL_STT_MODEL ??
-            "zipformer-bilingual-zh-en-2023-02-20",
-          voiceLocalTtsModel:
-            process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
-        };
+    const speechConfig =
+      openaiApiKey
+        ? {
+            providers: {
+              dictationStt: { provider: "openai" as const, explicit: true },
+              voiceStt: { provider: "openai" as const, explicit: true },
+              voiceTts: { provider: "openai" as const, explicit: true },
+            },
+            localModels: {
+              dictationStt: "parakeet-tdt-0.6b-v3-int8",
+              voiceStt: "parakeet-tdt-0.6b-v3-int8",
+              voiceTts: "pocket-tts-onnx-int8",
+            },
+          }
+        : hasLocalSpeech
+          ? {
+              providers: {
+                dictationStt: { provider: "local" as const, explicit: true },
+                voiceStt: { provider: "local" as const, explicit: true },
+                voiceTts: { provider: "local" as const, explicit: true },
+              },
+              local: {
+                modelsDir: localModelsDir,
+              },
+              localModels: {
+                dictationStt:
+                  process.env.PASEO_DICTATION_LOCAL_STT_MODEL ??
+                  "zipformer-bilingual-zh-en-2023-02-20",
+                voiceStt:
+                  process.env.PASEO_VOICE_LOCAL_STT_MODEL ??
+                  "zipformer-bilingual-zh-en-2023-02-20",
+                voiceTts:
+                  process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
+              },
+            }
+          : undefined;
 
     ctx = await createDaemonTestContext({
       dictationFinalTimeoutMs: 5000,
       ...(openaiApiKey ? { openai: { apiKey: openaiApiKey } } : {}),
-      speech: speechConfig,
+      ...(speechConfig ? { speech: speechConfig } : {}),
     });
   }, 60000);
 

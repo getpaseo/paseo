@@ -63,13 +63,13 @@ function resolveConfiguredLocalModels(
 ): ResolvedLocalModels {
   return {
     dictationLocalSttModel: LocalSttModelIdSchema.parse(
-      speechConfig?.dictationLocalSttModel ?? DEFAULT_LOCAL_STT_MODEL
+      speechConfig?.localModels.dictationStt ?? DEFAULT_LOCAL_STT_MODEL
     ),
     voiceLocalSttModel: LocalSttModelIdSchema.parse(
-      speechConfig?.voiceLocalSttModel ?? DEFAULT_LOCAL_STT_MODEL
+      speechConfig?.localModels.voiceStt ?? DEFAULT_LOCAL_STT_MODEL
     ),
     voiceLocalTtsModel: LocalTtsModelIdSchema.parse(
-      speechConfig?.voiceLocalTtsModel ?? DEFAULT_LOCAL_TTS_MODEL
+      speechConfig?.localModels.voiceTts ?? DEFAULT_LOCAL_TTS_MODEL
     ),
   };
 }
@@ -90,13 +90,13 @@ function computeRequiredLocalModelIds(params: {
   models: ResolvedLocalModels;
 }): LocalSpeechModelId[] {
   const ids = new Set<LocalSpeechModelId>();
-  if (params.providers.dictationSttProvider === "local") {
+  if (params.providers.dictationStt.provider === "local") {
     ids.add(params.models.dictationLocalSttModel);
   }
-  if (params.providers.voiceSttProvider === "local") {
+  if (params.providers.voiceStt.provider === "local") {
     ids.add(params.models.voiceLocalSttModel);
   }
-  if (params.providers.voiceTtsProvider === "local") {
+  if (params.providers.voiceTts.provider === "local") {
     ids.add(params.models.voiceLocalTtsModel);
   }
   return Array.from(ids);
@@ -260,7 +260,7 @@ export async function initializeLocalSpeechServices(params: {
     }
   };
 
-  if (providers.voiceSttProvider === "local") {
+  if (providers.voiceStt.provider === "local") {
     if (!localConfig) {
       logger.warn(
         { configured: false },
@@ -276,7 +276,7 @@ export async function initializeLocalSpeechServices(params: {
     }
   }
 
-  if (providers.dictationSttProvider === "local") {
+  if (providers.dictationStt.provider === "local") {
     if (!localConfig) {
       logger.warn(
         { configured: false },
@@ -299,7 +299,7 @@ export async function initializeLocalSpeechServices(params: {
     }
   }
 
-  if (providers.voiceTtsProvider === "local") {
+  if (providers.voiceTts.provider === "local") {
     if (!localConfig) {
       logger.warn(
         { configured: false },
@@ -323,8 +323,8 @@ export async function initializeLocalSpeechServices(params: {
             {
               preset: localModels.voiceLocalTtsModel,
               modelDir,
-              speakerId: speechConfig?.voiceLocalTtsSpeakerId,
-              speed: speechConfig?.voiceLocalTtsSpeed,
+              speakerId: speechConfig?.localModels.voiceTtsSpeakerId,
+              speed: speechConfig?.localModels.voiceTtsSpeed,
             },
             logger
           );

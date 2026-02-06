@@ -68,7 +68,7 @@ const LocalSpeechResolutionSchema = z.object({
 });
 
 function persistedLocalFeatureModel(
-  provider: RequestedSpeechProviders[keyof RequestedSpeechProviders],
+  provider: RequestedSpeechProviders[keyof RequestedSpeechProviders]["provider"],
   model: string | undefined
 ): string | undefined {
   if (provider !== "local") {
@@ -83,9 +83,9 @@ function shouldIncludeLocalProviderConfig(params: {
   persisted: PersistedConfig;
 }): boolean {
   const localRequestedByFeature =
-    params.providers.dictationSttProvider === "local" ||
-    params.providers.voiceSttProvider === "local" ||
-    params.providers.voiceTtsProvider === "local";
+    params.providers.dictationStt.provider === "local" ||
+    params.providers.voiceStt.provider === "local" ||
+    params.providers.voiceTts.provider === "local";
 
   return (
     localRequestedByFeature ||
@@ -114,21 +114,21 @@ export function resolveLocalSpeechConfig(params: {
     dictationLocalSttModel:
       params.env.PASEO_DICTATION_LOCAL_STT_MODEL ??
       persistedLocalFeatureModel(
-        params.providers.dictationSttProvider,
+        params.providers.dictationStt.provider,
         params.persisted.features?.dictation?.stt?.model
       ) ??
       DEFAULT_LOCAL_STT_MODEL,
     voiceLocalSttModel:
       params.env.PASEO_VOICE_LOCAL_STT_MODEL ??
       persistedLocalFeatureModel(
-        params.providers.voiceSttProvider,
+        params.providers.voiceStt.provider,
         params.persisted.features?.voiceMode?.stt?.model
       ) ??
       DEFAULT_LOCAL_STT_MODEL,
     voiceLocalTtsModel:
       params.env.PASEO_VOICE_LOCAL_TTS_MODEL ??
       persistedLocalFeatureModel(
-        params.providers.voiceTtsProvider,
+        params.providers.voiceTts.provider,
         params.persisted.features?.voiceMode?.tts?.model
       ) ??
       DEFAULT_LOCAL_TTS_MODEL,

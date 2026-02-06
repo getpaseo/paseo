@@ -35,7 +35,11 @@ const OptionalFiniteNumberSchema = NumberLikeSchema
   .pipe(z.coerce.number().finite())
   .optional();
 
-const OptionalTrimmedStringSchema = z.string().trim().min(1).optional();
+const OptionalTrimmedStringSchema = z
+  .string()
+  .trim()
+  .optional()
+  .transform((value) => (value && value.length > 0 ? value : undefined));
 
 const OpenAiSpeechResolutionSchema = z.object({
   apiKey: OptionalTrimmedStringSchema,
@@ -70,27 +74,27 @@ export function resolveOpenAiSpeechConfig(params: {
       params.persisted.features?.dictation?.stt?.confidenceThreshold,
     sttModel:
       params.env.STT_MODEL ??
-      (params.providers.voiceSttProvider === "openai"
+      (params.providers.voiceStt.provider === "openai"
         ? params.persisted.features?.voiceMode?.stt?.model
         : undefined) ??
-      (params.providers.dictationSttProvider === "openai"
+      (params.providers.dictationStt.provider === "openai"
         ? params.persisted.features?.dictation?.stt?.model
         : undefined),
     ttsVoice:
       params.env.TTS_VOICE ??
-      (params.providers.voiceTtsProvider === "openai"
+      (params.providers.voiceTts.provider === "openai"
         ? params.persisted.features?.voiceMode?.tts?.voice
         : undefined) ??
       "alloy",
     ttsModel:
       params.env.TTS_MODEL ??
-      (params.providers.voiceTtsProvider === "openai"
+      (params.providers.voiceTts.provider === "openai"
         ? params.persisted.features?.voiceMode?.tts?.model
         : undefined) ??
       DEFAULT_OPENAI_TTS_MODEL,
     realtimeTranscriptionModel:
       params.env.OPENAI_REALTIME_TRANSCRIPTION_MODEL ??
-      (params.providers.dictationSttProvider === "openai"
+      (params.providers.dictationStt.provider === "openai"
         ? params.persisted.features?.dictation?.stt?.model
         : undefined) ??
       DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,

@@ -60,13 +60,16 @@ export function validateOpenAiCredentialRequirements(params: {
   const openAiCredentials = resolveOpenAiCredentials(openaiConfig);
 
   const missingOpenAiCredentialsFor: string[] = [];
-  if (providers.voiceSttProvider === "openai" && !openAiCredentials.openaiSttApiKey) {
+  if (providers.voiceStt.provider === "openai" && !openAiCredentials.openaiSttApiKey) {
     missingOpenAiCredentialsFor.push("voice.stt");
   }
-  if (providers.voiceTtsProvider === "openai" && !openAiCredentials.openaiTtsApiKey) {
+  if (providers.voiceTts.provider === "openai" && !openAiCredentials.openaiTtsApiKey) {
     missingOpenAiCredentialsFor.push("voice.tts");
   }
-  if (providers.dictationSttProvider === "openai" && !openAiCredentials.openaiDictationApiKey) {
+  if (
+    providers.dictationStt.provider === "openai" &&
+    !openAiCredentials.openaiDictationApiKey
+  ) {
     missingOpenAiCredentialsFor.push("dictation.stt");
   }
 
@@ -74,9 +77,9 @@ export function validateOpenAiCredentialRequirements(params: {
     logger.error(
       {
         requestedProviders: {
-          dictationStt: providers.dictationSttProvider,
-          voiceStt: providers.voiceSttProvider,
-          voiceTts: providers.voiceTtsProvider,
+          dictationStt: providers.dictationStt.provider,
+          voiceStt: providers.voiceStt.provider,
+          voiceTts: providers.voiceTts.provider,
         },
         missingOpenAiCredentialsFor,
       },
@@ -101,9 +104,10 @@ export function initializeOpenAiSpeechServices(params: {
   let ttsService = existing.ttsService;
   let dictationSttService = existing.dictationSttService;
 
-  const needsOpenAiStt = !sttService && providers.voiceSttProvider === "openai";
-  const needsOpenAiTts = !ttsService && providers.voiceTtsProvider === "openai";
-  const needsOpenAiDictation = !dictationSttService && providers.dictationSttProvider === "openai";
+  const needsOpenAiStt = !sttService && providers.voiceStt.provider === "openai";
+  const needsOpenAiTts = !ttsService && providers.voiceTts.provider === "openai";
+  const needsOpenAiDictation =
+    !dictationSttService && providers.dictationStt.provider === "openai";
 
   if (
     (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation) &&

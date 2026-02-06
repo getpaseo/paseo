@@ -32,15 +32,11 @@ const ProvidersSchema = z
   })
   .strict();
 
-const SpeechProviderIdSchema = z.preprocess(
-  (value) => {
-    if (typeof value !== "string") {
-      return value;
-    }
-    return value.trim().toLowerCase();
-  },
-  z.enum(["openai", "local"])
-);
+const SpeechProviderIdSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .pipe(z.enum(["openai", "local"]));
 
 const FeatureDictationSchema = z
   .object({

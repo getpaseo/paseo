@@ -115,23 +115,27 @@ describe("speech models (download E2E)", () => {
         paseoHomeRoot,
         dictationFinalTimeoutMs: 8000,
         speech: {
-          dictationSttProvider: "local",
-          voiceSttProvider: "local",
-          voiceTtsProvider: "local",
+          providers: {
+            dictationStt: { provider: "local", explicit: true },
+            voiceStt: { provider: "local", explicit: true },
+            voiceTts: { provider: "local", explicit: true },
+          },
           local: {
             modelsDir,
             autoDownload: false,
           },
-          dictationLocalSttModel:
-            set === "parakeet-pocket"
-              ? "parakeet-tdt-0.6b-v3-int8"
-              : "zipformer-bilingual-zh-en-2023-02-20",
-          voiceLocalSttModel:
-            set === "parakeet-pocket"
-              ? "parakeet-tdt-0.6b-v3-int8"
-              : "zipformer-bilingual-zh-en-2023-02-20",
-          voiceLocalTtsModel:
-            set === "parakeet-pocket" ? "pocket-tts-onnx-int8" : "kitten-nano-en-v0_1-fp16",
+          localModels: {
+            dictationStt:
+              set === "parakeet-pocket"
+                ? "parakeet-tdt-0.6b-v3-int8"
+                : "zipformer-bilingual-zh-en-2023-02-20",
+            voiceStt:
+              set === "parakeet-pocket"
+                ? "parakeet-tdt-0.6b-v3-int8"
+                : "zipformer-bilingual-zh-en-2023-02-20",
+            voiceTts:
+              set === "parakeet-pocket" ? "pocket-tts-onnx-int8" : "kitten-nano-en-v0_1-fp16",
+          },
         },
       });
 

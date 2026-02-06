@@ -48,9 +48,16 @@ function waitForSignal<T>(
         agentClients: {},
         openai: { apiKey: openaiApiKey! },
         speech: {
-          dictationSttProvider: "openai",
-          voiceSttProvider: "openai",
-          voiceTtsProvider: "openai",
+          providers: {
+            dictationStt: { provider: "openai", explicit: true },
+            voiceStt: { provider: "openai", explicit: true },
+            voiceTts: { provider: "openai", explicit: true },
+          },
+          localModels: {
+            dictationStt: "parakeet-tdt-0.6b-v3-int8",
+            voiceStt: "parakeet-tdt-0.6b-v3-int8",
+            voiceTts: "pocket-tts-onnx-int8",
+          },
         },
         voiceLlmProvider: "codex",
         voiceLlmProviderExplicit: true,

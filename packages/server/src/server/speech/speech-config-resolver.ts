@@ -6,6 +6,7 @@ import { resolveLocalSpeechConfig } from "./providers/local/config.js";
 import { resolveOpenAiSpeechConfig } from "./providers/openai/config.js";
 import {
   SpeechProviderIdSchema,
+  type RequestedSpeechProvider,
   type RequestedSpeechProviders,
 } from "./speech-types.js";
 
@@ -17,29 +18,53 @@ const OptionalSpeechProviderSchema = z
   .optional();
 
 const RequestedSpeechProvidersSchema = z.object({
-  dictationSttProvider: OptionalSpeechProviderSchema.default("local"),
-  voiceSttProvider: OptionalSpeechProviderSchema.default("local"),
-  voiceTtsProvider: OptionalSpeechProviderSchema.default("local"),
+  dictationStt: OptionalSpeechProviderSchema.default("local"),
+  voiceStt: OptionalSpeechProviderSchema.default("local"),
+  voiceTts: OptionalSpeechProviderSchema.default("local"),
 });
 
 function resolveRequestedSpeechProviders(params: {
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
 }): RequestedSpeechProviders {
-  return RequestedSpeechProvidersSchema.parse({
-    dictationSttProvider:
-      params.env.PASEO_DICTATION_STT_PROVIDER ??
-      params.persisted.features?.dictation?.stt?.provider ??
-      "local",
-    voiceSttProvider:
-      params.env.PASEO_VOICE_STT_PROVIDER ??
-      params.persisted.features?.voiceMode?.stt?.provider ??
-      "local",
-    voiceTtsProvider:
-      params.env.PASEO_VOICE_TTS_PROVIDER ??
-      params.persisted.features?.voiceMode?.tts?.provider ??
-      "local",
+  const resolveFeatureProvider = (
+    configuredValue: string | undefined,
+    parsedValue: z.infer<typeof SpeechProviderIdSchema>
+  ): RequestedSpeechProvider => ({
+    provider: parsedValue,
+    explicit: configuredValue !== undefined,
   });
+
+  const dictationSttProviderFromConfig =
+    params.env.PASEO_DICTATION_STT_PROVIDER ??
+    params.persisted.features?.dictation?.stt?.provider;
+  const voiceSttProviderFromConfig =
+    params.env.PASEO_VOICE_STT_PROVIDER ??
+    params.persisted.features?.voiceMode?.stt?.provider;
+  const voiceTtsProviderFromConfig =
+    params.env.PASEO_VOICE_TTS_PROVIDER ??
+    params.persisted.features?.voiceMode?.tts?.provider;
+
+  const parsed = RequestedSpeechProvidersSchema.parse({
+    dictationStt: dictationSttProviderFromConfig ?? "local",
+    voiceStt: voiceSttProviderFromConfig ?? "local",
+    voiceTts: voiceTtsProviderFromConfig ?? "local",
+  });
+
+  return {
+    dictationStt: resolveFeatureProvider(
+      dictationSttProviderFromConfig,
+      parsed.dictationStt
+    ),
+    voiceStt: resolveFeatureProvider(
+      voiceSttProviderFromConfig,
+      parsed.voiceStt
+    ),
+    voiceTts: resolveFeatureProvider(
+      voiceTtsProviderFromConfig,
+      parsed.voiceTts
+    ),
+  };
 }
 
 export function resolveSpeechConfig(params: {
@@ -71,21 +96,21 @@ export function resolveSpeechConfig(params: {
   return {
     openai,
     speech: {
-      dictationSttProvider: providers.dictationSttProvider,
-      voiceSttProvider: providers.voiceSttProvider,
-      voiceTtsProvider: providers.voiceTtsProvider,
+      providers,
       ...(local.local
         ? { local: local.local }
         : {}),
-      dictationLocalSttModel: local.dictationLocalSttModel,
-      voiceLocalSttModel: local.voiceLocalSttModel,
-      voiceLocalTtsModel: local.voiceLocalTtsModel,
-      ...(local.voiceLocalTtsSpeakerId !== undefined
-        ? { voiceLocalTtsSpeakerId: local.voiceLocalTtsSpeakerId }
-        : {}),
-      ...(local.voiceLocalTtsSpeed !== undefined
-        ? { voiceLocalTtsSpeed: local.voiceLocalTtsSpeed }
-        : {}),
+      localModels: {
+        dictationStt: local.dictationLocalSttModel,
+        voiceStt: local.voiceLocalSttModel,
+        voiceTts: local.voiceLocalTtsModel,
+        ...(local.voiceLocalTtsSpeakerId !== undefined
+          ? { voiceTtsSpeakerId: local.voiceLocalTtsSpeakerId }
+          : {}),
+        ...(local.voiceLocalTtsSpeed !== undefined
+          ? { voiceTtsSpeed: local.voiceLocalTtsSpeed }
+          : {}),
+      },
     },
   };
 }

@@ -43,6 +43,7 @@ import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
+import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { initializeSpeechRuntime } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
@@ -105,15 +106,15 @@ export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
 export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
 
 export type PaseoSpeechConfig = {
-  dictationSttProvider?: "openai" | "local";
-  voiceSttProvider?: "openai" | "local";
-  voiceTtsProvider?: "openai" | "local";
+  providers: RequestedSpeechProviders;
   local?: PaseoLocalSpeechConfig;
-  dictationLocalSttModel?: string;
-  voiceLocalSttModel?: string;
-  voiceLocalTtsModel?: string;
-  voiceLocalTtsSpeakerId?: number;
-  voiceLocalTtsSpeed?: number;
+  localModels: {
+    dictationStt: string;
+    voiceStt: string;
+    voiceTts: string;
+    voiceTtsSpeakerId?: number;
+    voiceTtsSpeed?: number;
+  };
 };
 
 export type PaseoDaemonConfig = {
@@ -347,25 +348,34 @@ export async function createPaseoDaemon(
       voiceEnabledProviders.find((provider) => voiceLlmAvailability[provider]) ?? null;
   }
 
-  if (!resolvedVoiceLlmProvider) {
-    logger.error(
-      { requestedVoiceLlmProvider, voiceLlmAvailability },
-      "No voice LLM provider available"
-    );
-    throw new Error("No voice LLM provider available");
-  }
+  let resolvedVoiceLlmModeId: string | null = null;
+  let resolvedVoiceLlmModel: string | null = null;
 
-  const resolvedVoiceProviderDefinition = AGENT_PROVIDER_DEFINITIONS.find(
-    (definition) => definition.id === resolvedVoiceLlmProvider
-  );
-  if (!resolvedVoiceProviderDefinition?.voice?.enabled) {
-    throw new Error(
-      `Provider '${resolvedVoiceLlmProvider}' is missing voice metadata in agent registry`
+  if (!resolvedVoiceLlmProvider) {
+    if (voiceLlmProviderExplicit) {
+      logger.error(
+        { requestedVoiceLlmProvider, voiceLlmAvailability },
+        "No voice LLM provider available"
+      );
+      throw new Error("No voice LLM provider available");
+    }
+    logger.warn(
+      { requestedVoiceLlmProvider, voiceLlmAvailability },
+      "No default voice LLM provider available; voice mode will be disabled until a provider is configured"
     );
+  } else {
+    const resolvedVoiceProviderDefinition = AGENT_PROVIDER_DEFINITIONS.find(
+      (definition) => definition.id === resolvedVoiceLlmProvider
+    );
+    if (!resolvedVoiceProviderDefinition?.voice?.enabled) {
+      throw new Error(
+        `Provider '${resolvedVoiceLlmProvider}' is missing voice metadata in agent registry`
+      );
+    }
+    resolvedVoiceLlmModeId = resolvedVoiceProviderDefinition.voice.defaultModeId;
+    resolvedVoiceLlmModel =
+      config.voiceLlmModel ?? resolvedVoiceProviderDefinition.voice.defaultModel ?? null;
   }
-  const resolvedVoiceLlmModeId = resolvedVoiceProviderDefinition.voice.defaultModeId;
-  const resolvedVoiceLlmModel =
-    config.voiceLlmModel ?? resolvedVoiceProviderDefinition.voice.defaultModel ?? null;
 
   logger.info(
     {

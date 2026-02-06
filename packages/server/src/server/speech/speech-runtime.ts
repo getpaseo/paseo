@@ -17,10 +17,15 @@ import type { RequestedSpeechProviders } from "./speech-types.js";
 function resolveRequestedSpeechProviders(
   speechConfig: PaseoSpeechConfig | null
 ): RequestedSpeechProviders {
+  const fromConfig = speechConfig?.providers;
+  if (fromConfig) {
+    return fromConfig;
+  }
+
   return {
-    dictationSttProvider: speechConfig?.dictationSttProvider ?? "local",
-    voiceSttProvider: speechConfig?.voiceSttProvider ?? "local",
-    voiceTtsProvider: speechConfig?.voiceTtsProvider ?? "local",
+    dictationStt: { provider: "local", explicit: false },
+    voiceStt: { provider: "local", explicit: false },
+    voiceTts: { provider: "local", explicit: false },
   };
 }
 
@@ -54,9 +59,9 @@ export async function initializeSpeechRuntime(params: {
   logger.info(
     {
       requestedProviders: {
-        dictationStt: providers.dictationSttProvider,
-        voiceStt: providers.voiceSttProvider,
-        voiceTts: providers.voiceTtsProvider,
+        dictationStt: providers.dictationStt.provider,
+        voiceStt: providers.voiceStt.provider,
+        voiceTts: providers.voiceTts.provider,
       },
       availability: {
         openai: getOpenAiSpeechAvailability(openaiConfig),
@@ -98,29 +103,65 @@ export async function initializeSpeechRuntime(params: {
     !openAiSpeech.sttService ? "voice.stt" : null,
     !openAiSpeech.ttsService ? "voice.tts" : null,
   ].filter((feature): feature is string => feature !== null);
+  const explicitlyConfiguredUnavailableFeatures = unavailableFeatures.filter((feature) => {
+    if (feature === "dictation.stt") {
+      return providers.dictationStt.explicit;
+    }
+    if (feature === "voice.stt") {
+      return providers.voiceStt.explicit;
+    }
+    return providers.voiceTts.explicit;
+  });
 
-  if (unavailableFeatures.length > 0) {
+  if (explicitlyConfiguredUnavailableFeatures.length > 0) {
     logger.error(
       {
         requestedProviders: {
-          dictationStt: providers.dictationSttProvider,
-          voiceStt: providers.voiceSttProvider,
-          voiceTts: providers.voiceTtsProvider,
+          dictationStt: providers.dictationStt.provider,
+          voiceStt: providers.voiceStt.provider,
+          voiceTts: providers.voiceTts.provider,
+        },
+        explicitProviders: {
+          dictationStt: providers.dictationStt.explicit,
+          voiceStt: providers.voiceStt.explicit,
+          voiceTts: providers.voiceTts.explicit,
+        },
+        effectiveProviders,
+        unavailableFeatures: explicitlyConfiguredUnavailableFeatures,
+      },
+      "Speech provider reconciliation failed: configured features are unavailable"
+    );
+    throw new Error(
+      `Configured speech features unavailable: ${explicitlyConfiguredUnavailableFeatures.join(", ")}`
+    );
+  }
+
+  if (unavailableFeatures.length > 0) {
+    logger.warn(
+      {
+        requestedProviders: {
+          dictationStt: providers.dictationStt.provider,
+          voiceStt: providers.voiceStt.provider,
+          voiceTts: providers.voiceTts.provider,
+        },
+        explicitProviders: {
+          dictationStt: providers.dictationStt.explicit,
+          voiceStt: providers.voiceStt.explicit,
+          voiceTts: providers.voiceTts.explicit,
         },
         effectiveProviders,
         unavailableFeatures,
       },
-      "Speech provider reconciliation failed: configured features are unavailable"
+      "Speech provider reconciliation completed with unavailable default features"
     );
-    throw new Error(`Configured speech features unavailable: ${unavailableFeatures.join(", ")}`);
+  } else {
+    logger.info(
+      {
+        effectiveProviders,
+      },
+      "Speech provider reconciliation completed"
+    );
   }
-
-  logger.info(
-    {
-      effectiveProviders,
-    },
-    "Speech provider reconciliation completed"
-  );
 
   return {
     sttService: openAiSpeech.sttService,
