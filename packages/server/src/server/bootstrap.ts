@@ -73,24 +73,32 @@ type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 function resolveVoiceMcpBridgeCommand(logger: Logger): { command: string; baseArgs: string[] } {
   const explicit = process.env.PASEO_BIN_PATH?.trim();
   if (explicit) {
-    return { command: explicit, baseArgs: ["__paseo_voice_mcp_bridge"] };
+    const resolved = { command: explicit, baseArgs: ["__paseo_voice_mcp_bridge"] };
+    logger.info({ source: "PASEO_BIN_PATH", command: resolved.command, baseArgs: resolved.baseArgs }, "Resolved voice MCP bridge command");
+    return resolved;
   }
 
   const argv1 = process.argv[1]?.trim();
   if (!argv1) {
     logger.warn("Could not resolve argv[1] for voice MCP bridge; falling back to 'paseo'");
-    return { command: "paseo", baseArgs: ["__paseo_voice_mcp_bridge"] };
+    const resolved = { command: "paseo", baseArgs: ["__paseo_voice_mcp_bridge"] };
+    logger.info({ source: "fallback", command: resolved.command, baseArgs: resolved.baseArgs }, "Resolved voice MCP bridge command");
+    return resolved;
   }
 
   const base = path.basename(argv1).toLowerCase();
   if (base.includes("tsx") && process.argv[2]) {
-    return {
+    const resolved = {
       command: process.execPath,
       baseArgs: [argv1, process.argv[2], "__paseo_voice_mcp_bridge"],
     };
+    logger.info({ source: "tsx", command: resolved.command, baseArgs: resolved.baseArgs }, "Resolved voice MCP bridge command");
+    return resolved;
   }
 
-  return { command: argv1, baseArgs: ["__paseo_voice_mcp_bridge"] };
+  const resolved = { command: argv1, baseArgs: ["__paseo_voice_mcp_bridge"] };
+  logger.info({ source: "argv", command: resolved.command, baseArgs: resolved.baseArgs }, "Resolved voice MCP bridge command");
+  return resolved;
 }
 
 export type PaseoOpenAIConfig = {

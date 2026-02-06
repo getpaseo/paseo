@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/index.js";
 
@@ -64,7 +65,7 @@ function waitForSignal<T>(
     test(
       "routes voice turns through local agent speak tool",
       async () => {
-        await ctx.client.setVoiceConversation(true, `voice-local-agent-${Date.now()}`);
+        await ctx.client.setVoiceConversation(true, randomUUID());
 
         const audioPromise = waitForSignal<{ chunkId: string }>(120000, (resolve, reject) => {
           const offAudio = ctx.client.on("audio_output", (msg) => {

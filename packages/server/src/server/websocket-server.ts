@@ -21,13 +21,13 @@ import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { SherpaOnnxModelId } from "./speech/providers/local/sherpa/model-catalog.js";
+import type {
+  VoiceCallerContext,
+  VoiceMcpStdioConfig,
+  VoiceSpeakHandler,
+} from "./voice-types.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
-type VoiceMcpStdioConfig = {
-  command: string;
-  baseArgs: string[];
-  env?: Record<string, string>;
-};
 
 type WebSocketServerConfig = {
   allowedOrigins: Set<string>;
@@ -91,17 +91,9 @@ export class VoiceAssistantWebSocketServer {
   } | null;
   private readonly voiceSpeakHandlers = new Map<
     string,
-    (params: { text: string; callerAgentId: string; signal?: AbortSignal }) => Promise<void>
+    VoiceSpeakHandler
   >();
-  private readonly voiceCallerContexts = new Map<
-    string,
-    {
-      childAgentDefaultLabels?: Record<string, string>;
-      lockedCwd?: string;
-      allowCustomCwd?: boolean;
-      enableVoiceTools?: boolean;
-    }
-  >();
+  private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
 
   constructor(
     server: HTTPServer,
@@ -236,23 +228,23 @@ export class VoiceAssistantWebSocketServer {
     const clientId = `client-${++this.clientIdCounter}`;
     const connectionLogger = this.logger.child({ clientId });
 
-    const session = new Session(
+    const session = new Session({
       clientId,
-      (msg) => {
+      onMessage: (msg) => {
         this.sendToClient(ws, wrapSessionMessage(msg));
       },
-      connectionLogger.child({ module: "session" }),
-      this.downloadTokenStore,
-      this.pushTokenStore,
-      this.paseoHome,
-      this.agentManager,
-      this.agentStorage,
-      this.createAgentMcpTransport,
-      this.stt,
-      this.tts,
-      this.terminalManager,
-      this.voice ?? undefined,
-      {
+      logger: connectionLogger.child({ module: "session" }),
+      downloadTokenStore: this.downloadTokenStore,
+      pushTokenStore: this.pushTokenStore,
+      paseoHome: this.paseoHome,
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      createAgentMcpTransport: this.createAgentMcpTransport,
+      stt: this.stt,
+      tts: this.tts,
+      terminalManager: this.terminalManager,
+      voice: this.voice ?? undefined,
+      voiceBridge: {
         registerVoiceSpeakHandler: (agentId, handler) => {
           this.voiceSpeakHandlers.set(agentId, handler);
         },
@@ -266,8 +258,8 @@ export class VoiceAssistantWebSocketServer {
           this.voiceCallerContexts.delete(agentId);
         },
       },
-      this.dictation ?? undefined
-    );
+      dictation: this.dictation ?? undefined,
+    });
 
     this.sessions.set(ws, session);
 
@@ -306,18 +298,13 @@ export class VoiceAssistantWebSocketServer {
 
   public resolveVoiceSpeakHandler(
     callerAgentId: string
-  ): ((params: { text: string; callerAgentId: string; signal?: AbortSignal }) => Promise<void>) | null {
+  ): VoiceSpeakHandler | null {
     return this.voiceSpeakHandlers.get(callerAgentId) ?? null;
   }
 
   public resolveVoiceCallerContext(
     callerAgentId: string
-  ): {
-    childAgentDefaultLabels?: Record<string, string>;
-    lockedCwd?: string;
-    allowCustomCwd?: boolean;
-    enableVoiceTools?: boolean;
-  } | null {
+  ): VoiceCallerContext | null {
     return this.voiceCallerContexts.get(callerAgentId) ?? null;
   }
 

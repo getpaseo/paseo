@@ -5,14 +5,14 @@ import type { TTSConfig } from "./providers/openai/tts.js";
 import type { PersistedConfig } from "../persisted-config.js";
 import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
 import { LocalSttModelIdSchema, LocalTtsModelIdSchema } from "./providers/local/sherpa/model-catalog.js";
-
-const DEFAULT_LOCAL_STT_MODEL = "parakeet-tdt-0.6b-v3-int8";
-const DEFAULT_LOCAL_TTS_MODEL = "pocket-tts-onnx-int8";
+import {
+  DEFAULT_LOCAL_STT_MODEL,
+  DEFAULT_LOCAL_TTS_MODEL,
+  DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
+  type SpeechProviderId,
+} from "./speech-types.js";
 const DEFAULT_LOCAL_MODELS_SUBDIR = path.join("models", "local-speech");
 const DEFAULT_OPENAI_TTS_MODEL: TTSConfig["model"] = "tts-1";
-const DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
-
-type SpeechProviderId = "openai" | "local";
 
 function parseSpeechProviderId(value: unknown): SpeechProviderId | null {
   if (typeof value !== "string") return null;

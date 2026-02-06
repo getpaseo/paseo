@@ -144,10 +144,10 @@ export function createCli(): Command {
 
   // Internal voice MCP stdio bridge command (hidden).
   program
-    .command('__paseo_voice_mcp_bridge')
+    .command('__paseo_voice_mcp_bridge', { hidden: true })
     .description('Internal voice MCP bridge command')
-    .argument('<callerAgentId>')
     .requiredOption('--socket <path>')
+    .requiredOption('--caller-agent-id <id>')
     .action(runVoiceMcpBridgeCommand)
 
   return program

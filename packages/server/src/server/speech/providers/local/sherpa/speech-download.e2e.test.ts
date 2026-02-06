@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import pino from "pino";
 
 import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./model-downloader.js";
@@ -186,7 +187,7 @@ describe("speech models (download E2E)", () => {
           };
         });
 
-        await ctx.client.setVoiceConversation(true, `voice-download-${Date.now()}`);
+        await ctx.client.setVoiceConversation(true, randomUUID());
         for (let offset = 0; offset < pcm16.length; offset += chunkBytes) {
           const chunk = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
           const isLast = offset + chunkBytes >= pcm16.length;

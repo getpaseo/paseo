@@ -29,10 +29,11 @@ function flushBuffers(lines: string[], buffers: { message: string; thought: stri
 function isLikelyMcpToolCall(name: string): boolean {
   const normalized = name.toLowerCase();
   return (
-    normalized.includes("mcp") ||
-    normalized.includes("paseo") ||
-    normalized.includes("__") ||
-    normalized === "speak"
+    normalized === "speak" ||
+    normalized.startsWith("mcp") ||
+    normalized.includes("mcp__") ||
+    normalized.startsWith("paseo") ||
+    normalized.includes("paseo__")
   );
 }
 

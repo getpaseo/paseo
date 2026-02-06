@@ -37,20 +37,13 @@ import {
 } from "./persistence-hooks.js";
 import { experimental_createMCPClient } from "ai";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type {
+  VoiceCallerContext,
+  VoiceMcpStdioConfig,
+  VoiceSpeakHandler,
+} from "./voice-types.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
-type VoiceSpeakHandler = (params: { text: string; callerAgentId: string; signal?: AbortSignal }) => Promise<void>;
-type VoiceCallerContext = {
-  childAgentDefaultLabels?: Record<string, string>;
-  lockedCwd?: string;
-  allowCustomCwd?: boolean;
-  enableVoiceTools?: boolean;
-};
-type VoiceMcpStdioConfig = {
-  command: string;
-  baseArgs: string[];
-  env?: Record<string, string>;
-};
 import { buildProviderRegistry } from "./agent/provider-registry.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
@@ -73,6 +66,7 @@ import type {
 } from "./agent/agent-sdk-types.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import { isValidAgentProvider, AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
+import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
   listDirectoryEntries,
   readExplorerFile,
@@ -188,6 +182,7 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS
 );
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
+const VoiceConversationIdSchema = z.string().uuid();
 
 interface AudioBufferState {
   chunks: Buffer[];
@@ -195,6 +190,42 @@ interface AudioBufferState {
   isPCM: boolean;
   totalPCMBytes: number;
 }
+
+export type SessionOptions = {
+  clientId: string;
+  onMessage: (msg: SessionOutboundMessage) => void;
+  logger: pino.Logger;
+  downloadTokenStore: DownloadTokenStore;
+  pushTokenStore: PushTokenStore;
+  paseoHome: string;
+  agentManager: AgentManager;
+  agentStorage: AgentStorage;
+  createAgentMcpTransport: AgentMcpTransportFactory;
+  stt: SpeechToTextProvider | null;
+  tts: TextToSpeechProvider | null;
+  terminalManager: TerminalManager | null;
+  voice?: {
+    voiceLlmProvider?: AgentProvider | null;
+    voiceLlmModeId?: string | null;
+    voiceLlmProviderExplicit?: boolean;
+    voiceLlmModel?: string | null;
+    voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
+  };
+  voiceBridge?: {
+    registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
+    unregisterVoiceSpeakHandler?: (agentId: string) => void;
+    registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
+    unregisterVoiceCallerContext?: (agentId: string) => void;
+  };
+  dictation?: {
+    finalTimeoutMs?: number;
+    stt?: SpeechToTextProvider | null;
+    localModels?: {
+      modelsDir: string;
+      defaultModelIds: SherpaOnnxModelId[];
+    };
+  };
+};
 
 function convertPCMToWavBuffer(
   pcmBuffer: Buffer,
@@ -353,41 +384,24 @@ export class Session {
   private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
   private voiceAssistantAgentId: string | null = null;
 
-  constructor(
-    clientId: string,
-    onMessage: (msg: SessionOutboundMessage) => void,
-    logger: pino.Logger,
-    downloadTokenStore: DownloadTokenStore,
-    pushTokenStore: PushTokenStore,
-    paseoHome: string,
-    agentManager: AgentManager,
-    agentStorage: AgentStorage,
-    createAgentMcpTransport: AgentMcpTransportFactory,
-    stt: SpeechToTextProvider | null,
-    tts: TextToSpeechProvider | null,
-    terminalManager: TerminalManager | null,
-    voice?: {
-      voiceLlmProvider?: AgentProvider | null;
-      voiceLlmModeId?: string | null;
-      voiceLlmProviderExplicit?: boolean;
-      voiceLlmModel?: string | null;
-      voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
-    },
-    voiceBridge?: {
-      registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
-      unregisterVoiceSpeakHandler?: (agentId: string) => void;
-      registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
-      unregisterVoiceCallerContext?: (agentId: string) => void;
-    },
-    dictation?: {
-      finalTimeoutMs?: number;
-      stt?: SpeechToTextProvider | null;
-      localModels?: {
-        modelsDir: string;
-        defaultModelIds: SherpaOnnxModelId[];
-      };
-    }
-  ) {
+  constructor(options: SessionOptions) {
+    const {
+      clientId,
+      onMessage,
+      logger,
+      downloadTokenStore,
+      pushTokenStore,
+      paseoHome,
+      agentManager,
+      agentStorage,
+      createAgentMcpTransport,
+      stt,
+      tts,
+      terminalManager,
+      voice,
+      voiceBridge,
+      dictation,
+    } = options;
     this.clientId = clientId;
     this.sessionId = uuidv4();
     this.onMessage = onMessage;
@@ -1148,12 +1162,16 @@ export class Session {
     voiceConversationId: string,
     requestId: string
   ): Promise<void> {
-    this.voiceAssistantAgentId = voiceConversationId;
+    const normalizedVoiceConversationId = this.parseVoiceConversationId(
+      voiceConversationId,
+      "load_voice_conversation_request"
+    );
+    this.voiceAssistantAgentId = normalizedVoiceConversationId;
 
     this.emit({
       type: "voice_conversation_loaded",
       payload: {
-        voiceConversationId,
+        voiceConversationId: normalizedVoiceConversationId,
         messageCount: 0,
         requestId,
       },
@@ -1216,13 +1234,17 @@ export class Session {
     voiceConversationId: string,
     requestId: string
   ): Promise<void> {
+    const normalizedVoiceConversationId = this.parseVoiceConversationId(
+      voiceConversationId,
+      "delete_voice_conversation_request"
+    );
     try {
-      const record = await this.agentStorage.get(voiceConversationId);
+      const record = await this.agentStorage.get(normalizedVoiceConversationId);
       if (!record || record.labels?.surface !== "voice") {
         this.emit({
           type: "delete_voice_conversation_response",
           payload: {
-            voiceConversationId,
+            voiceConversationId: normalizedVoiceConversationId,
             success: false,
             error: "Voice conversation not found",
             requestId,
@@ -1231,32 +1253,32 @@ export class Session {
         return;
       }
 
-      const live = this.agentManager.getAgent(voiceConversationId);
+      const live = this.agentManager.getAgent(normalizedVoiceConversationId);
       if (live) {
-        await this.agentManager.closeAgent(voiceConversationId);
+        await this.agentManager.closeAgent(normalizedVoiceConversationId);
       }
-      await this.agentStorage.remove(voiceConversationId);
+      await this.agentStorage.remove(normalizedVoiceConversationId);
       this.emit({
         type: "delete_voice_conversation_response",
         payload: {
-          voiceConversationId,
+          voiceConversationId: normalizedVoiceConversationId,
           success: true,
           requestId,
         },
       });
       this.sessionLogger.info(
-        { voiceConversationId },
-        `Deleted voice conversation ${voiceConversationId}`
+        { voiceConversationId: normalizedVoiceConversationId },
+        `Deleted voice conversation ${normalizedVoiceConversationId}`
       );
     } catch (error: any) {
       this.sessionLogger.error(
-        { err: error, voiceConversationId },
-        `Failed to delete voice conversation ${voiceConversationId}`
+        { err: error, voiceConversationId: normalizedVoiceConversationId },
+        `Failed to delete voice conversation ${normalizedVoiceConversationId}`
       );
       this.emit({
         type: "delete_voice_conversation_response",
         payload: {
-          voiceConversationId,
+          voiceConversationId: normalizedVoiceConversationId,
           success: false,
           error: error.message,
           requestId,
@@ -1393,15 +1415,22 @@ export class Session {
     voiceConversationId?: string
   ): Promise<void> {
     if (enabled) {
-      if (!voiceConversationId || voiceConversationId.trim().length === 0) {
-        this.sessionLogger.warn("set_voice_conversation missing voiceConversationId; ignoring");
-        return;
-      }
+      const candidateVoiceConversationId =
+        voiceConversationId && voiceConversationId.trim().length > 0
+          ? voiceConversationId
+          : uuidv4();
+      const normalizedVoiceConversationId = this.parseVoiceConversationId(
+        candidateVoiceConversationId,
+        "set_voice_conversation"
+      );
 
       this.isVoiceMode = true;
-      this.voiceAssistantAgentId = voiceConversationId;
+      this.voiceAssistantAgentId = normalizedVoiceConversationId;
       this.sessionLogger.info(
-        { voiceAssistantAgentId: this.voiceAssistantAgentId },
+        {
+          voiceAssistantAgentId: this.voiceAssistantAgentId,
+          generatedConversationId: !voiceConversationId,
+        },
         "Voice conversation enabled (agent-backed)"
       );
       return;
@@ -1412,6 +1441,14 @@ export class Session {
       { voiceAssistantAgentId: this.voiceAssistantAgentId },
       "Voice conversation disabled (agent-backed)"
     );
+  }
+
+  private parseVoiceConversationId(rawId: string, source: string): string {
+    const parsed = VoiceConversationIdSchema.safeParse(rawId.trim());
+    if (!parsed.success) {
+      throw new Error(`${source}: voiceConversationId must be a UUID`);
+    }
+    return parsed.data;
   }
 
   /**
@@ -4259,7 +4296,7 @@ export class Session {
     });
 
     // Process through LLM (voice path is agent-backed only)
-    this.currentStreamPromise = this.processWithLLM(this.isVoiceMode, text);
+    this.currentStreamPromise = this.processVoiceTurn(this.isVoiceMode, text);
     await this.currentStreamPromise;
   }
 
@@ -4528,7 +4565,7 @@ export class Session {
       // Set phase to LLM and process (TTS enabled in voice mode for voice conversations)
       this.clearSpeechInProgress("transcription complete");
       this.setPhase("llm");
-      this.currentStreamPromise = this.processWithLLM(this.isVoiceMode, result.text);
+      this.currentStreamPromise = this.processVoiceTurn(this.isVoiceMode, result.text);
       await this.currentStreamPromise;
       this.setPhase("idle");
     } catch (error: any) {
@@ -4601,30 +4638,47 @@ export class Session {
       },
     });
     this.voiceAssistantAgentId = created.id;
+    let speakHandlerRegistered = false;
+    let callerContextRegistered = false;
 
-    this.registerVoiceSpeakHandler?.(created.id, async ({ text, signal }) => {
-      const abortSignal = signal ?? this.abortController.signal;
-      await this.ttsManager.generateAndWaitForPlayback(
-        text,
-        (msg) => this.emit(msg),
-        abortSignal,
-        true
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "assistant",
-          content: text,
-        },
+    try {
+      this.registerVoiceSpeakHandler?.(created.id, async ({ text, signal }) => {
+        const abortSignal = signal ?? this.abortController.signal;
+        await this.ttsManager.generateAndWaitForPlayback(
+          text,
+          (msg) => this.emit(msg),
+          abortSignal,
+          true
+        );
+        this.emit({
+          type: "activity_log",
+          payload: {
+            id: uuidv4(),
+            timestamp: new Date(),
+            type: "assistant",
+            content: text,
+          },
+        });
       });
-    });
-    this.registerVoiceCallerContext?.(created.id, {
-      childAgentDefaultLabels: { ui: "true" },
-      allowCustomCwd: true,
-      enableVoiceTools: true,
-    });
+      speakHandlerRegistered = true;
+
+      this.registerVoiceCallerContext?.(created.id, {
+        childAgentDefaultLabels: { ui: "true" },
+        allowCustomCwd: true,
+        enableVoiceTools: true,
+      });
+      callerContextRegistered = true;
+    } catch (error) {
+      if (speakHandlerRegistered) {
+        this.unregisterVoiceSpeakHandler?.(created.id);
+      }
+      if (callerContextRegistered) {
+        this.unregisterVoiceCallerContext?.(created.id);
+      }
+      await this.agentManager.closeAgent(created.id).catch(() => undefined);
+      this.voiceAssistantAgentId = null;
+      throw error;
+    }
 
     this.sessionLogger.info(
       {
@@ -4647,20 +4701,7 @@ export class Session {
   }
 
   private shouldAllowVoicePermission(request: AgentPermissionRequest): boolean {
-    const name = request.name.toLowerCase();
-    if (name.includes("mcp") || name.includes("paseo") || name.includes("speak")) {
-      return true;
-    }
-    if (name === "codextool") {
-      const metadata = request.metadata ?? {};
-      const rawQuestions = metadata.questions;
-      if (Array.isArray(rawQuestions)) {
-        const text = JSON.stringify(rawQuestions).toLowerCase();
-        return text.includes("mcp") || text.includes("paseo") || text.includes("speak");
-      }
-      return false;
-    }
-    return false;
+    return isVoicePermissionAllowed(request);
   }
 
   private async processWithVoiceAgent(userText: string): Promise<void> {
@@ -4733,10 +4774,10 @@ export class Session {
   /**
    * Process user message through LLM with streaming and tool execution
    */
-  private async processWithLLM(enableTTS: boolean, latestUserText?: string): Promise<void> {
+  private async processVoiceTurn(enableTTS: boolean, latestUserText?: string): Promise<void> {
     try {
       if (!enableTTS) {
-        this.sessionLogger.warn("Ignoring non-voice processWithLLM call; voice is agent-only");
+        this.sessionLogger.warn("Ignoring non-voice processVoiceTurn call; voice is agent-only");
         return;
       }
       const normalized = (latestUserText ?? "").trim();

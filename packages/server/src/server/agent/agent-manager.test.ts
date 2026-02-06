@@ -118,7 +118,7 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => "agent-without-model",
+      idFactory: () => "00000000-0000-4000-8000-000000000101",
     });
 
     const snapshot = await manager.createAgent({
@@ -149,7 +149,7 @@ describe("AgentManager", () => {
     ).rejects.toThrow("Working directory does not exist");
   });
 
-  test("createAgent persists provided title before returning", async () => {
+  test("createAgent fails when generated agent ID is not a UUID", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
@@ -159,7 +159,52 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => "agent-with-title",
+      idFactory: () => "not-a-uuid",
+    });
+
+    await expect(
+      manager.createAgent({
+        provider: "codex",
+        cwd: workdir,
+      })
+    ).rejects.toThrow("createAgent: agentId must be a UUID");
+  });
+
+  test("createAgent fails when explicit agent ID is not a UUID", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+    });
+
+    await expect(
+      manager.createAgent(
+        {
+          provider: "codex",
+          cwd: workdir,
+        },
+        "not-a-uuid"
+      )
+    ).rejects.toThrow("createAgent: agentId must be a UUID");
+  });
+
+  test("createAgent persists provided title before returning", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000102";
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => agentId,
     });
 
     const snapshot = await manager.createAgent({
@@ -168,12 +213,12 @@ describe("AgentManager", () => {
       title: "Fix Login Bug",
     });
 
-    expect(snapshot.id).toBe("agent-with-title");
+    expect(snapshot.id).toBe(agentId);
     expect(snapshot.lifecycle).toBe("idle");
 
-    const persisted = await storage.get("agent-with-title");
+    const persisted = await storage.get(agentId);
     expect(persisted?.title).toBe("Fix Login Bug");
-    expect(persisted?.id).toBe("agent-with-title");
+    expect(persisted?.id).toBe(agentId);
   });
 
   test("createAgent populates runtimeInfo after session creation", async () => {
@@ -186,7 +231,7 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => "agent-with-runtime-info",
+      idFactory: () => "00000000-0000-4000-8000-000000000103",
     });
 
     const snapshot = await manager.createAgent({
@@ -211,7 +256,7 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => "agent-with-run-runtime",
+      idFactory: () => "00000000-0000-4000-8000-000000000104",
     });
 
     const snapshot = await manager.createAgent({
@@ -231,6 +276,10 @@ describe("AgentManager", () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
+    const generatedAgentIds = [
+      "00000000-0000-4000-8000-000000000105",
+      "00000000-0000-4000-8000-000000000106",
+    ];
     let agentCounter = 0;
     const manager = new AgentManager({
       clients: {
@@ -238,7 +287,7 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => `agent-${agentCounter++}`,
+      idFactory: () => generatedAgentIds[agentCounter++] ?? randomUUID(),
     });
 
     // Create a normal agent
@@ -262,6 +311,7 @@ describe("AgentManager", () => {
   });
 
   test("getAgent returns internal agents by ID", async () => {
+    const internalAgentId = "00000000-0000-4000-8000-000000000107";
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
@@ -271,7 +321,7 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => "internal-agent",
+      idFactory: () => internalAgentId,
     });
 
     await manager.createAgent({
@@ -281,7 +331,7 @@ describe("AgentManager", () => {
       internal: true,
     });
 
-    const agent = manager.getAgent("internal-agent");
+    const agent = manager.getAgent(internalAgentId);
     expect(agent).not.toBeNull();
     expect(agent?.internal).toBe(true);
   });
@@ -290,6 +340,10 @@ describe("AgentManager", () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
+    const generatedAgentIds = [
+      "00000000-0000-4000-8000-000000000108",
+      "00000000-0000-4000-8000-000000000109",
+    ];
     let agentCounter = 0;
     const manager = new AgentManager({
       clients: {
@@ -297,7 +351,7 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => `agent-${agentCounter++}`,
+      idFactory: () => generatedAgentIds[agentCounter++] ?? randomUUID(),
     });
 
     const receivedEvents: string[] = [];
@@ -323,11 +377,12 @@ describe("AgentManager", () => {
     });
 
     // Should only have events from the normal agent
-    expect(receivedEvents.filter((id) => id === "agent-0").length).toBeGreaterThan(0);
-    expect(receivedEvents.filter((id) => id === "agent-1").length).toBe(0);
+    expect(receivedEvents.filter((id) => id === generatedAgentIds[0]).length).toBeGreaterThan(0);
+    expect(receivedEvents.filter((id) => id === generatedAgentIds[1]).length).toBe(0);
   });
 
   test("subscribe emits state events for internal agents when subscribed by agentId", async () => {
+    const internalAgentId = "00000000-0000-4000-8000-000000000110";
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
@@ -337,7 +392,7 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => "internal-agent",
+      idFactory: () => internalAgentId,
     });
 
     const receivedEvents: string[] = [];
@@ -348,7 +403,7 @@ describe("AgentManager", () => {
           receivedEvents.push(event.agent.id);
         }
       },
-      { agentId: "internal-agent", replayState: false }
+      { agentId: internalAgentId, replayState: false }
     );
 
     await manager.createAgent({
@@ -359,10 +414,26 @@ describe("AgentManager", () => {
     });
 
     // Should receive events when subscribed by specific agentId
-    expect(receivedEvents.filter((id) => id === "internal-agent").length).toBeGreaterThan(0);
+    expect(receivedEvents.filter((id) => id === internalAgentId).length).toBeGreaterThan(0);
+  });
+
+  test("subscribe fails when filter agentId is not a UUID", () => {
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      logger,
+    });
+
+    expect(() =>
+      manager.subscribe(() => {}, {
+        agentId: "invalid-agent-id",
+      })
+    ).toThrow("subscribe: agentId must be a UUID");
   });
 
   test("onAgentAttention is not called for internal agents", async () => {
+    const internalAgentId = "00000000-0000-4000-8000-000000000111";
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
@@ -373,7 +444,7 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => "internal-agent",
+      idFactory: () => internalAgentId,
       onAgentAttention: ({ agentId }) => {
         attentionCalls.push(agentId);
       },
@@ -481,7 +552,7 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => "plan-mode-agent",
+      idFactory: () => "00000000-0000-4000-8000-000000000112",
     });
 
     // Create agent in plan mode
@@ -608,7 +679,7 @@ describe("AgentManager", () => {
       },
       registry: storage,
       logger,
-      idFactory: () => "close-race-agent",
+      idFactory: () => "00000000-0000-4000-8000-000000000113",
     });
 
     const snapshot = await manager.createAgent({

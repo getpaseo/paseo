@@ -221,15 +221,33 @@ export async function runVoiceMcpBridgeCli(argv: string[], logger?: Logger): Pro
 
   const socket = net.createConnection(parsed.socketPath);
   const stdioTransport = new StdioServerTransport(process.stdin, process.stdout);
-  let ready = false;
   let socketBuffer = "";
+  let stdioStarted = false;
+  const pendingMcpMessages: JSONRPCMessage[] = [];
+
+  let resolveReady: (() => void) | null = null;
+  let rejectReady: ((error: Error) => void) | null = null;
+  const readyPromise = new Promise<void>((resolve, reject) => {
+    resolveReady = () => {
+      resolveReady = null;
+      rejectReady = null;
+      resolve();
+    };
+    rejectReady = (error: Error) => {
+      resolveReady = null;
+      rejectReady = null;
+      reject(error);
+    };
+  });
+
+  const failReady = (message: string) => {
+    if (rejectReady) {
+      rejectReady(new Error(message));
+    }
+  };
 
   const sendEnvelope = (payload: BridgeEnvelope) => {
     socket.write(encodeEnvelope(payload));
-  };
-
-  const closeWithError = (message: string): never => {
-    throw new Error(message);
   };
 
   socket.on("data", (chunk) => {
@@ -241,23 +259,41 @@ export async function runVoiceMcpBridgeCli(argv: string[], logger?: Logger): Pro
       socketBuffer = socketBuffer.slice(newlineIndex + 1);
       if (!line) continue;
 
-      const envelope = parseEnvelope(line);
+      let envelope: BridgeEnvelope;
+      try {
+        envelope = parseEnvelope(line);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        bridgeLogger.error({ err: error }, "Failed to parse voice MCP bridge envelope");
+        failReady(`Failed to parse voice MCP bridge envelope: ${message}`);
+        socket.destroy();
+        return;
+      }
       if (envelope.type === "ready") {
-        ready = true;
+        resolveReady?.();
         continue;
       }
       if (envelope.type === "error") {
+        failReady(`Voice MCP bridge error: ${envelope.message}`);
         socket.destroy();
-        closeWithError(`Voice MCP bridge error: ${envelope.message}`);
+        return;
       }
       if (envelope.type === "mcp") {
-        void stdioTransport.send(envelope.message);
+        if (!stdioStarted) {
+          pendingMcpMessages.push(envelope.message);
+          continue;
+        }
+        void stdioTransport.send(envelope.message).catch((error) => {
+          bridgeLogger.error({ err: error }, "Failed to forward MCP message to stdio transport");
+          socket.destroy();
+        });
       }
     }
   });
 
   socket.on("error", (error) => {
     bridgeLogger.error({ err: error }, "Voice MCP bridge socket client error");
+    failReady(`Voice MCP bridge socket client error: ${error.message}`);
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -267,21 +303,13 @@ export async function runVoiceMcpBridgeCli(argv: string[], logger?: Logger): Pro
 
   sendEnvelope({ type: "init", callerAgentId: parsed.callerAgentId });
 
-  // Wait for bridge readiness before forwarding stdio messages.
-  await new Promise<void>((resolve, reject) => {
-    const deadline = setTimeout(() => {
+  const readyTimeoutPromise = new Promise<void>((_, reject) => {
+    const timeout = setTimeout(() => {
       reject(new Error("Timed out waiting for voice MCP bridge initialization"));
     }, 10000);
-    const checkReady = () => {
-      if (ready) {
-        clearTimeout(deadline);
-        resolve();
-      } else {
-        setTimeout(checkReady, 25);
-      }
-    };
-    checkReady();
+    readyPromise.finally(() => clearTimeout(timeout)).catch(() => undefined);
   });
+  await Promise.race([readyPromise, readyTimeoutPromise]);
 
   stdioTransport.onmessage = (message) => {
     sendEnvelope({ type: "mcp", message });
@@ -295,6 +323,10 @@ export async function runVoiceMcpBridgeCli(argv: string[], logger?: Logger): Pro
   };
 
   await stdioTransport.start();
+  stdioStarted = true;
+  for (const message of pendingMcpMessages) {
+    await stdioTransport.send(message);
+  }
 
   await new Promise<void>((resolve) => {
     socket.once("close", () => resolve());

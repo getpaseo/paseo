@@ -66,6 +66,22 @@ describe("curateAgentActivity", () => {
       expect(result).toBe("[ListFiles]");
     });
 
+    test("does not treat generic double-underscore tool names as MCP calls", () => {
+      const timeline: AgentTimelineItem[] = [
+        {
+          type: "tool_call",
+          callId: "call-1",
+          name: "custom__tool",
+          input: {},
+          status: "completed",
+        },
+      ];
+
+      const result = curateAgentActivity(timeline);
+
+      expect(result).toBe("[custom__tool]");
+    });
+
     test("serializes todo items as [Tasks]", () => {
       const timeline: AgentTimelineItem[] = [
         {

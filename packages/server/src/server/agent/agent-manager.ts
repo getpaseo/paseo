@@ -6,6 +6,7 @@ import {
   type AgentLifecycleStatus,
 } from "../../shared/agent-lifecycle.js";
 import type { Logger } from "pino";
+import { z } from "zod";
 
 import type {
   AgentCapabilityFlags,
@@ -183,6 +184,7 @@ const BUSY_STATUSES: AgentLifecycleStatus[] = [
   "initializing",
   "running",
 ];
+const AgentIdSchema = z.string().uuid();
 
 function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.includes(status);
@@ -200,6 +202,14 @@ function createAbortError(
         ? reason.message
         : fallbackMessage;
   return Object.assign(new Error(message), { name: "AbortError" });
+}
+
+function validateAgentId(agentId: string, source: string): string {
+  const result = AgentIdSchema.safeParse(agentId);
+  if (!result.success) {
+    throw new Error(`${source}: agentId must be a UUID`);
+  }
+  return result.data;
 }
 
 export class AgentManager {
@@ -239,9 +249,13 @@ export class AgentManager {
   }
 
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
+    const targetAgentId =
+      options?.agentId == null
+        ? null
+        : validateAgentId(options.agentId, "subscribe");
     const record: SubscriptionRecord = {
       callback,
-      agentId: options?.agentId ?? null,
+      agentId: targetAgentId,
     };
     this.subscribers.add(record);
 
@@ -335,7 +349,10 @@ export class AgentManager {
     options?: { labels?: Record<string, string> }
   ): Promise<ManagedAgent> {
     // Generate agent ID early so we can use it in MCP config
-    const resolvedAgentId = agentId ?? this.idFactory();
+    const resolvedAgentId = validateAgentId(
+      agentId ?? this.idFactory(),
+      "createAgent"
+    );
     const normalizedConfig = await this.normalizeConfig(config, {
       labels: options?.labels,
       agentId: resolvedAgentId,
@@ -365,6 +382,10 @@ export class AgentManager {
       labels?: Record<string, string>;
     }
   ): Promise<ManagedAgent> {
+    const resolvedAgentId = validateAgentId(
+      agentId ?? this.idFactory(),
+      "resumeAgent"
+    );
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const mergedConfig = {
       ...metadata,
@@ -381,7 +402,7 @@ export class AgentManager {
     return this.registerSession(
       session,
       normalizedConfig,
-      agentId ?? this.idFactory(),
+      resolvedAgentId,
       options
     );
   }
@@ -982,13 +1003,14 @@ export class AgentManager {
       labels?: Record<string, string>;
     }
   ): Promise<ManagedAgent> {
-    if (this.agents.has(agentId)) {
-      throw new Error(`Agent with id ${agentId} already exists`);
+    const resolvedAgentId = validateAgentId(agentId, "registerSession");
+    if (this.agents.has(resolvedAgentId)) {
+      throw new Error(`Agent with id ${resolvedAgentId} already exists`);
     }
 
     const now = new Date();
     const managed = {
-      id: agentId,
+      id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
       session,
@@ -1011,9 +1033,9 @@ export class AgentManager {
       labels: options?.labels ?? {},
     } as ActiveManagedAgent;
 
-    this.agents.set(agentId, managed);
+    this.agents.set(resolvedAgentId, managed);
     // Initialize previousStatus to track transitions
-    this.previousStatuses.set(agentId, managed.lifecycle);
+    this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
     await this.refreshRuntimeInfo(managed);
     await this.persistSnapshot(managed, {
       title: config.title ?? null,
@@ -1353,9 +1375,10 @@ export class AgentManager {
   }
 
   private requireAgent(id: string): ActiveManagedAgent {
-    const agent = this.agents.get(id);
+    const normalizedId = validateAgentId(id, "requireAgent");
+    const agent = this.agents.get(normalizedId);
     if (!agent) {
-      throw new Error(`Unknown agent '${id}'`);
+      throw new Error(`Unknown agent '${normalizedId}'`);
     }
     return agent;
   }

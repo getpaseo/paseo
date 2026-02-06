@@ -28,6 +28,10 @@ import { AgentStorage } from "./agent-storage.js";
 import { createWorktree } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
+import type {
+  VoiceCallerContext,
+  VoiceSpeakHandler,
+} from "../voice-types.js";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
@@ -44,15 +48,10 @@ export interface AgentMcpServerOptions {
    */
   resolveSpeakHandler?: (
     callerAgentId: string
-  ) => ((params: { text: string; callerAgentId: string; signal?: AbortSignal }) => Promise<void>) | null;
+  ) => VoiceSpeakHandler | null;
   resolveCallerContext?: (
     callerAgentId: string
-  ) => {
-    childAgentDefaultLabels?: Record<string, string>;
-    lockedCwd?: string;
-    allowCustomCwd?: boolean;
-    enableVoiceTools?: boolean;
-  } | null;
+  ) => VoiceCallerContext | null;
   enableVoiceTools?: boolean;
   logger: Logger;
 }

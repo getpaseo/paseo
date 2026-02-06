@@ -25,12 +25,12 @@ import {
   type SherpaOnnxModelId,
 } from "./providers/local/sherpa/model-catalog.js";
 import { PocketTtsOnnxTTS } from "./providers/local/pocket/pocket-tts-onnx.js";
-
-type SpeechProviderId = "openai" | "local";
-
-const DEFAULT_LOCAL_STT_MODEL = "parakeet-tdt-0.6b-v3-int8";
-const DEFAULT_LOCAL_TTS_MODEL = "pocket-tts-onnx-int8";
-const DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
+import {
+  DEFAULT_LOCAL_STT_MODEL,
+  DEFAULT_LOCAL_TTS_MODEL,
+  DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
+  type SpeechProviderId,
+} from "./speech-types.js";
 
 type LocalSttEngine =
   | { kind: "offline"; engine: SherpaOfflineRecognizerEngine }

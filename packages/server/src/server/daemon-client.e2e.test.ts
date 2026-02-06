@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 import {
   createDaemonTestContext,
@@ -129,7 +130,7 @@ describe("daemon client E2E", () => {
   test("handles session actions", async () => {
     expect(ctx.client.isConnected).toBe(true);
 
-    const voiceConversationId = `voice-${Date.now()}`;
+    const voiceConversationId = randomUUID();
     const loadResult = await ctx.client.loadVoiceConversation(voiceConversationId);
     expect(loadResult.voiceConversationId).toBe(voiceConversationId);
     expect(typeof loadResult.messageCount).toBe("number");
@@ -140,7 +141,7 @@ describe("daemon client E2E", () => {
     const listResult = await ctx.client.listVoiceConversations();
     expect(Array.isArray(listResult.conversations)).toBe(true);
 
-    const missingId = `missing-${Date.now()}`;
+    const missingId = randomUUID();
     const deleteResult = await ctx.client.deleteVoiceConversation(missingId);
     expect(deleteResult.voiceConversationId).toBe(missingId);
     expect(deleteResult.success).toBe(false);
@@ -577,7 +578,7 @@ describe("daemon client E2E", () => {
   );
 
   test(
-    "does not process non-voice LLM turns via OpenRouter",
+    "does not process non-voice turns through the voice agent path",
     async () => {
       await ctx.client.setVoiceConversation(false);
 
@@ -628,7 +629,7 @@ describe("daemon client E2E", () => {
   speechTest(
     "voice mode buffers audio until isLast and emits transcription_result",
     async () => {
-      await ctx.client.setVoiceConversation(true, `voice-${Date.now()}`);
+      await ctx.client.setVoiceConversation(true, randomUUID());
 
       const transcription = waitForSignal(30_000, (resolve) => {
         const unsubscribe = ctx.client.on("transcription_result", (message) => {
