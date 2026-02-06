@@ -90,6 +90,25 @@ function buildPersistence(
 
 function buildToolCallForPrompt(provider: string, prompt: string) {
   const text = prompt.toLowerCase();
+  const createFileMatch =
+    /create a file named\s+"([^"]+)"\s+with the content\s+"([^"]*)"/i.exec(prompt) ??
+    /create a file named\s+"([^"]+)"\s+with the content\s+'([^']*)'/i.exec(prompt);
+  if (createFileMatch) {
+    const fileName = createFileMatch[1] ?? "test.txt";
+    const content = createFileMatch[2] ?? "";
+    if (provider === "codex") {
+      return {
+        name: "shell",
+        input: { command: `printf "%s" "${content}" > ${fileName}` },
+        output: { ok: true },
+      };
+    }
+    return {
+      name: "Bash",
+      input: { command: `printf "%s" "${content}" > ${fileName}` },
+      output: { ok: true },
+    };
+  }
   if (provider === "claude") {
     if (text.includes("read") && text.includes("/etc/hosts")) {
       return { name: "Read", input: { path: "/etc/hosts" }, output: undefined };
@@ -374,6 +393,7 @@ class FakeAgentSession implements AgentSession {
       { id: "default", label: "Default", description: "Ask for permissions" },
       { id: "full-access", label: "Full access", description: "No prompts" },
       { id: "auto", label: "Auto", description: "Ask/allow based on policy" },
+      { id: "always-ask", label: "Always Ask", description: "Always prompt" },
     ];
   }
 
@@ -475,6 +495,20 @@ class FakeAgentSession implements AgentSession {
 
   private buildAssistantText(prompt: string): string {
     const lower = prompt.toLowerCase();
+
+    // Special-case for tests that ask the agent to run pwd but use a placeholder in the
+    // "respond with exactly" instruction.
+    if (lower.includes("run `pwd`") && lower.includes("respond with exactly: cwd:")) {
+      const cwd = this.config.cwd ?? process.cwd();
+      return `CWD: ${cwd}`;
+    }
+
+    const respondExactlyMatch =
+      /respond with exactly:\s*([^\n\r]+)\s*$/i.exec(prompt) ??
+      /respond with exactly:\s*([^\n\r]+)/i.exec(prompt);
+    if (respondExactlyMatch) {
+      return (respondExactlyMatch[1] ?? "").trim();
+    }
     if (lower.includes("state saved")) return "state saved";
     if (lower.includes("timeline test")) return "timeline test";
     if (lower.includes("quick brown fox") && lower.includes("lazy dog")) {
@@ -499,6 +533,9 @@ class FakeAgentSession implements AgentSession {
     prompt: string
   ): Promise<void> {
     const lower = prompt.toLowerCase();
+    const createFileMatch =
+      /create a file named\s+"([^"]+)"\s+with the content\s+"([^"]*)"/i.exec(prompt) ??
+      /create a file named\s+"([^"]+)"\s+with the content\s+'([^']*)'/i.exec(prompt);
 
     if (toolName === "Read" || toolName === "read_file") {
       const p = typeof toolInput.path === "string" ? toolInput.path : "/etc/hosts";
@@ -512,6 +549,17 @@ class FakeAgentSession implements AgentSession {
 
     if (toolName === "Bash" || toolName === "shell") {
       const command = typeof toolInput.command === "string" ? toolInput.command : "";
+
+      // Deterministic file-create behavior for permission prompt tests:
+      // Prompt: Create a file named "X" with the content "Y"
+      if (createFileMatch) {
+        const fileName = createFileMatch[1] ?? "test.txt";
+        const content = createFileMatch[2] ?? "";
+        const dest = path.join(this.config.cwd ?? process.cwd(), fileName);
+        writeFileSync(dest, content);
+        return;
+      }
+
       if (lower.includes("rm -f permission.txt") || command.includes("rm -f permission.txt")) {
         const dest = path.join(this.config.cwd ?? process.cwd(), "permission.txt");
         try {
@@ -660,9 +708,18 @@ class FakeAgentClient implements AgentClient {
   }
 
   async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    return [
-      { provider: this.provider, id: "test-model", label: "Test Model", isDefault: true },
-    ];
+    if (this.provider === "claude") {
+      return [
+        { provider: this.provider, id: "haiku", label: "Haiku", isDefault: true },
+        { provider: this.provider, id: "sonnet", label: "Sonnet", isDefault: false },
+      ];
+    }
+    if (this.provider === "codex") {
+      return [
+        { provider: this.provider, id: "gpt-5.1-codex-mini", label: "gpt-5.1-codex-mini", isDefault: true },
+      ];
+    }
+    return [{ provider: this.provider, id: "test-model", label: "Test Model", isDefault: true }];
   }
 
   async isAvailable(): Promise<boolean> {

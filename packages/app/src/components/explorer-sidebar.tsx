@@ -263,37 +263,33 @@ function SidebarContent({
   const { status } = useCheckoutStatusQuery({ serverId, cwd });
   const isGit = status?.isGit ?? false;
 
-  // If not a git repo, only show files tab
-  const effectiveTab = isGit ? activeTab : "files";
-
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
       {/* Header with tabs and close button */}
       <View style={styles.header} testID="explorer-header">
         <View style={styles.tabsContainer}>
-          {isGit ? (
-            <Pressable
-              style={[styles.tab, effectiveTab === "changes" && styles.tabActive]}
-              onPress={() => onTabPress("changes")}
-            >
-              <Text
-                style={[
-                  styles.tabText,
-                  effectiveTab === "changes" && styles.tabTextActive,
-                ]}
-              >
-                Changes
-              </Text>
-            </Pressable>
-          ) : null}
           <Pressable
-            style={[styles.tab, effectiveTab === "files" && styles.tabActive]}
+            style={[styles.tab, activeTab === "changes" && styles.tabActive]}
+            onPress={() => onTabPress("changes")}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === "changes" && styles.tabTextActive,
+                !isGit && styles.tabTextMuted,
+              ]}
+            >
+              Changes
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.tab, activeTab === "files" && styles.tabActive]}
             onPress={() => onTabPress("files")}
           >
             <Text
               style={[
                 styles.tabText,
-                effectiveTab === "files" && styles.tabTextActive,
+                activeTab === "files" && styles.tabTextActive,
               ]}
             >
               Files
@@ -311,10 +307,10 @@ function SidebarContent({
 
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
-        {effectiveTab === "changes" && (
+        {activeTab === "changes" && (
           <GitDiffPane serverId={serverId} agentId={agentId} cwd={cwd} />
         )}
-        {effectiveTab === "files" && (
+        {activeTab === "files" && (
           <FileExplorerPane serverId={serverId} agentId={agentId} />
         )}
       </View>
@@ -388,6 +384,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabTextActive: {
     color: theme.colors.foreground,
+  },
+  tabTextMuted: {
+    opacity: 0.8,
   },
   headerRightSection: {
     flexDirection: "row",

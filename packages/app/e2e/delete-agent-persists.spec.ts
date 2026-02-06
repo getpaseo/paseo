@@ -1,23 +1,8 @@
-import path from 'node:path';
-
-import type { Locator, Page } from '@playwright/test';
-
 import { test, expect } from './fixtures';
 import { ensureHostSelected, gotoHome, setWorkingDirectory } from './helpers/app';
 import { createTempGitRepo } from './helpers/workspace';
 
-async function longPress(page: Page, locator: Locator, durationMs = 1100) {
-  const box = await locator.boundingBox();
-  if (!box) {
-    throw new Error('Expected long-press target to have a bounding box.');
-  }
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down();
-  await page.waitForTimeout(durationMs);
-  await page.mouse.up();
-}
-
-test('deleting an agent via long-press persists after reload', async ({ page }) => {
+test('deleting an agent persists after reload', async ({ page }) => {
   const repo = await createTempGitRepo();
   const nonce = Math.random().toString(36).slice(2, 10);
   const prompt = `delete-agent-persists-${nonce}`;
@@ -33,6 +18,8 @@ test('deleting an agent via long-press persists after reload', async ({ page }) 
     await input.fill(prompt);
     await input.press('Enter');
     await page.waitForURL(/\/agent\//, { waitUntil: 'commit' });
+    // Wait for the initial turn to complete so the agent can be archived (web uses a hover action).
+    await expect(page.getByText('Hello world')).toBeVisible({ timeout: 30000 });
 
     const match = page.url().match(/\/agent\/([^/]+)\/([^/?#]+)/);
     if (!match) {
@@ -47,12 +34,11 @@ test('deleting an agent via long-press persists after reload', async ({ page }) 
     const agentRow = page.getByTestId(rowTestId).first();
     await expect(agentRow).toBeVisible({ timeout: 30000 });
 
-    await longPress(page, agentRow, 1200);
-
-    const archiveButton = page.getByTestId('agent-action-archive').first();
-    await expect(archiveButton).toBeVisible({ timeout: 10000 });
-    await archiveButton.click({ force: true });
-    await expect(page.getByTestId('agent-action-cancel')).toHaveCount(0, { timeout: 10000 });
+    // Web UX: hover shows a quick-archive icon. (Long-press is touch-oriented and unreliable on desktop web.)
+    await agentRow.hover();
+    const quickArchive = page.getByTestId(`agent-archive-${serverId}-${agentId}`).first();
+    await expect(quickArchive).toBeVisible({ timeout: 10000 });
+    await quickArchive.click({ force: true });
 
     // Ensure deletion finished before reload (avoids races).
     await expect(page.getByTestId(rowTestId)).toHaveCount(0, { timeout: 30000 });

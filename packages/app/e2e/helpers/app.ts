@@ -430,9 +430,9 @@ export const waitForPermissionPrompt = async (page: Page, timeout = 30000) => {
 };
 
 export const allowPermission = async (page: Page) => {
-  const allowButton = page.getByText('Allow', { exact: true }).first();
-  await expect(allowButton).toBeVisible({ timeout: 5000 });
-  await allowButton.click();
+  const acceptButton = page.getByText('Accept', { exact: true }).first();
+  await expect(acceptButton).toBeVisible({ timeout: 5000 });
+  await acceptButton.click();
 };
 
 export const denyPermission = async (page: Page) => {

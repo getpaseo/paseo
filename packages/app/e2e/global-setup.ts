@@ -145,6 +145,7 @@ export default async function globalSetup() {
       PASEO_LISTEN: `0.0.0.0:${port}`,
       PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
       PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
+      PASEO_USE_FAKE_AGENTS: '1',
       NODE_ENV: 'development',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
