@@ -676,12 +676,26 @@ function planStepsToTodoItems(steps: Array<{ step: string; status: string }>): {
   }));
 }
 
+function normalizeCodexFilePath(filePath: unknown, cwd: string | null | undefined): string | null {
+  if (typeof filePath !== "string") return null;
+  const trimmed = filePath.trim();
+  if (!trimmed) return null;
+  if (typeof cwd === "string" && cwd.trim().length > 0) {
+    const normalizedCwd = cwd.endsWith(path.sep) ? cwd : `${cwd}${path.sep}`;
+    if (trimmed.startsWith(normalizedCwd)) {
+      return trimmed.slice(normalizedCwd.length);
+    }
+  }
+  return trimmed;
+}
+
 function threadItemToTimeline(
   item: any,
-  options?: { includeUserMessage?: boolean }
+  options?: { includeUserMessage?: boolean; cwd?: string | null }
 ): AgentTimelineItem | null {
   if (!item || typeof item !== "object") return null;
   const includeUserMessage = options?.includeUserMessage ?? true;
+  const cwd = options?.cwd ?? null;
   switch (item.type) {
     case "userMessage": {
       if (!includeUserMessage) {
@@ -722,14 +736,17 @@ function threadItemToTimeline(
     case "fileChange": {
       const files = Array.isArray(item.changes)
         ? item.changes.map((change: any) => ({
-            path: change.path,
+            path: normalizeCodexFilePath(change.path, cwd) ?? change.path,
             kind: change.kind,
           }))
         : [];
       const outputFiles = Array.isArray(item.changes)
         ? item.changes.map((change: any) => ({
-            path: change.path,
-            patch: change.diff,
+            path: normalizeCodexFilePath(change.path, cwd) ?? change.path,
+            patch:
+              typeof change.diff === "string"
+                ? truncateUtf8Bytes(change.diff, MAX_FILE_PATCH_BYTES).text
+                : change.diff,
             kind: change.kind,
           }))
         : [];
@@ -822,6 +839,21 @@ function normalizeImageData(mimeType: string, data: string): ImageDataPayload {
   }
   return { mimeType, data };
 }
+
+function truncateUtf8Bytes(text: string, maxBytes: number): { text: string; truncated: boolean } {
+  if (maxBytes <= 0) {
+    return { text: "", truncated: text.length > 0 };
+  }
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= maxBytes) {
+    return { text, truncated: false };
+  }
+  const buffer = Buffer.from(text, "utf8");
+  const sliced = buffer.subarray(0, maxBytes);
+  return { text: sliced.toString("utf8"), truncated: true };
+}
+
+const MAX_FILE_PATCH_BYTES = 128 * 1024;
 
 async function writeImageAttachment(mimeType: string, data: string): Promise<string> {
   const attachmentsDir = path.join(os.tmpdir(), CODEX_IMAGE_ATTACHMENT_DIR);
@@ -1064,7 +1096,7 @@ class CodexAppServerAgentSession implements AgentSession {
       for (const turn of thread.turns) {
         const items = Array.isArray(turn.items) ? turn.items : [];
         for (const item of items) {
-          const timelineItem = threadItemToTimeline(item);
+          const timelineItem = threadItemToTimeline(item, { cwd: this.config.cwd ?? null });
           if (timelineItem) {
             timeline.push(timelineItem);
           }
@@ -1531,15 +1563,11 @@ class CodexAppServerAgentSession implements AgentSession {
       case "turn/diff/updated": {
         const diff = (params as any)?.diff;
         if (typeof diff === "string" && diff.trim().length > 0) {
-          this.emitEvent({
-            type: "timeline",
-            provider: CODEX_PROVIDER,
-            item: createToolCallTimelineItem({
-              name: "apply_patch",
-              status: "running",
-              output: { diff },
-            }),
-          });
+          // NOTE: Codex app-server emits frequent `turn/diff/updated` notifications
+          // containing a full accumulated unified diff for the *entire turn*.
+          // This is not a concrete file-change tool call; it is progress telemetry.
+          // We intentionally do NOT store it in the agent timeline to avoid
+          // snapshot bloat and relay/WebSocket size limits.
         }
         break;
       }
@@ -1569,7 +1597,10 @@ class CodexAppServerAgentSession implements AgentSession {
       }
       case "item/completed": {
         const item = (params as any)?.item;
-        const timelineItem = threadItemToTimeline(item, { includeUserMessage: false });
+        const timelineItem = threadItemToTimeline(item, {
+          includeUserMessage: false,
+          cwd: this.config.cwd ?? null,
+        });
         if (timelineItem) {
           if (timelineItem.type === "assistant_message" && item?.id) {
             const buffered = this.pendingAgentMessages.get(item.id);
@@ -1589,7 +1620,10 @@ class CodexAppServerAgentSession implements AgentSession {
       }
       case "item/started": {
         const item = (params as any)?.item;
-        const timelineItem = threadItemToTimeline(item, { includeUserMessage: false });
+        const timelineItem = threadItemToTimeline(item, {
+          includeUserMessage: false,
+          cwd: this.config.cwd ?? null,
+        });
         if (timelineItem && timelineItem.type === "tool_call") {
           this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
         }
@@ -1749,7 +1783,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           const items: AgentTimelineItem[] = [];
           for (const turn of turns) {
             for (const item of turn.items ?? []) {
-              const timelineItem = threadItemToTimeline(item);
+              const timelineItem = threadItemToTimeline(item, { cwd });
               if (timelineItem) items.push(timelineItem);
             }
           }

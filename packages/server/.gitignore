@@ -7,3 +7,4 @@ dist
 conversations
 .cache
 .debug/
+.env.test
