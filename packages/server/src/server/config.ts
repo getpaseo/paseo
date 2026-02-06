@@ -220,7 +220,7 @@ export function loadConfig(
             (env.PASEO_SHERPA_STT_PRESET ?? persisted.providers?.sherpaOnnx?.stt?.preset)?.trim() ||
               (persisted.features?.voiceMode?.stt?.preset ??
                 persisted.features?.dictation?.stt?.preset)?.trim() ||
-              "zipformer-bilingual-zh-en-2023-02-20"
+              "parakeet-tdt-0.6b-v3-int8"
           ),
         },
         tts: {

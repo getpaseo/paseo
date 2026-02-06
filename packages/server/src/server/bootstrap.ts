@@ -492,17 +492,13 @@ export async function createPaseoDaemon(
 
   if ((wantsLocalDictation || wantsLocalVoiceStt || wantsLocalVoiceTts) && sherpaConfig) {
     const autoDownload = sherpaConfig.autoDownload ?? (process.env.VITEST ? false : true);
-    let sttPreset = (sherpaConfig.stt?.preset ?? "zipformer-bilingual-zh-en-2023-02-20").trim();
+    let sttPreset = (sherpaConfig.stt?.preset ?? "parakeet-tdt-0.6b-v3-int8").trim();
     if (
       sttPreset !== "zipformer-bilingual-zh-en-2023-02-20" &&
       sttPreset !== "paraformer-bilingual-zh-en" &&
       sttPreset !== "parakeet-tdt-0.6b-v3-int8"
     ) {
-      logger.warn(
-        { sttPreset },
-        "Unknown Sherpa STT preset; falling back to zipformer-bilingual-zh-en-2023-02-20"
-      );
-      sttPreset = "zipformer-bilingual-zh-en-2023-02-20";
+      throw new Error(`Unknown local STT preset: ${sttPreset}`);
     }
 
     let ttsPreset = (sherpaConfig.tts?.preset ?? "pocket-tts-onnx-int8").trim();
@@ -511,11 +507,7 @@ export async function createPaseoDaemon(
       ttsPreset !== "kokoro-en-v0_19" &&
       ttsPreset !== "pocket-tts-onnx-int8"
     ) {
-      logger.warn(
-        { ttsPreset },
-        "Unknown Sherpa TTS preset; falling back to kitten-nano-en-v0_1-fp16"
-      );
-      ttsPreset = "kitten-nano-en-v0_1-fp16";
+      throw new Error(`Unknown local TTS preset: ${ttsPreset}`);
     }
 
     const modelIds: SherpaOnnxModelId[] = [];
@@ -557,17 +549,13 @@ export async function createPaseoDaemon(
   }
 
   if ((wantsLocalDictation || wantsLocalVoiceStt) && sherpaConfig) {
-    let preset = (sherpaConfig.stt?.preset ?? "zipformer-bilingual-zh-en-2023-02-20").trim();
+    let preset = (sherpaConfig.stt?.preset ?? "parakeet-tdt-0.6b-v3-int8").trim();
     if (
       preset !== "zipformer-bilingual-zh-en-2023-02-20" &&
       preset !== "paraformer-bilingual-zh-en" &&
       preset !== "parakeet-tdt-0.6b-v3-int8"
     ) {
-      logger.warn(
-        { preset },
-        "Unknown Sherpa STT preset; falling back to zipformer-bilingual-zh-en-2023-02-20"
-      );
-      preset = "zipformer-bilingual-zh-en-2023-02-20";
+      throw new Error(`Unknown local STT preset: ${preset}`);
     }
     const base = sherpaConfig.modelsDir;
 
@@ -642,11 +630,7 @@ export async function createPaseoDaemon(
       preset !== "kokoro-en-v0_19" &&
       preset !== "pocket-tts-onnx-int8"
     ) {
-      logger.warn(
-        { preset },
-        "Unknown Sherpa TTS preset; falling back to kitten-nano-en-v0_1-fp16"
-      );
-      preset = "kitten-nano-en-v0_1-fp16";
+      throw new Error(`Unknown local TTS preset: ${preset}`);
     }
     try {
       if (preset === "pocket-tts-onnx-int8") {
@@ -714,22 +698,15 @@ export async function createPaseoDaemon(
 
   const needsOpenAiStt = !sttService && voiceSttProvider === "openai";
   const needsOpenAiTts = !ttsService && voiceTtsProvider === "openai";
-  const needsOpenAiDictation =
-    dictationSttProvider === "openai" || (dictationSttProvider === "local" && !dictationSttService);
-
-  const fallbackOpenAiStt = !sttService && voiceSttProvider === "local" && Boolean(openaiSttApiKey);
-  const fallbackOpenAiTts = !ttsService && voiceTtsProvider === "local" && Boolean(openaiTtsApiKey);
+  const needsOpenAiDictation = dictationSttProvider === "openai";
 
   if (
-    (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation || fallbackOpenAiStt || fallbackOpenAiTts) &&
+    (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation) &&
     (openaiSttApiKey || openaiTtsApiKey || openaiDictationApiKey)
   ) {
     logger.info("OpenAI speech provider initialized");
 
-    if (fallbackOpenAiStt) {
-      logger.warn("Falling back to OpenAI STT because local STT is unavailable");
-    }
-    if (needsOpenAiStt || fallbackOpenAiStt) {
+    if (needsOpenAiStt) {
       if (openaiSttApiKey) {
         const { apiKey: _sttApiKey, ...sttConfig } = config.openai?.stt ?? {};
         sttService = new OpenAISTT(
@@ -742,10 +719,7 @@ export async function createPaseoDaemon(
       }
     }
 
-    if (fallbackOpenAiTts) {
-      logger.warn("Falling back to OpenAI TTS because local TTS is unavailable");
-    }
-    if (needsOpenAiTts || fallbackOpenAiTts) {
+    if (needsOpenAiTts) {
       if (openaiTtsApiKey) {
         const { apiKey: _ttsApiKey, ...ttsConfig } = config.openai?.tts ?? {};
         ttsService = new OpenAITTS(
@@ -778,8 +752,8 @@ export async function createPaseoDaemon(
           }),
       };
     }
-  } else if (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation || fallbackOpenAiStt || fallbackOpenAiTts) {
-    logger.warn("OPENAI_API_KEY not set - OpenAI STT/TTS/dictation fallback is unavailable");
+  } else if (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation) {
+    logger.warn("OPENAI_API_KEY not set - OpenAI STT/TTS/dictation is unavailable");
   }
 
   const effectiveProviders = {
@@ -794,7 +768,7 @@ export async function createPaseoDaemon(
   ].filter((feature): feature is string => feature !== null);
 
   if (unavailableFeatures.length > 0) {
-    logger.warn(
+    logger.error(
       {
         requestedProviders: {
           dictationStt: dictationSttProvider,
@@ -804,7 +778,10 @@ export async function createPaseoDaemon(
         effectiveProviders,
         unavailableFeatures,
       },
-      "Speech provider reconciliation completed with unavailable features"
+      "Speech provider reconciliation failed: configured features are unavailable"
+    );
+    throw new Error(
+      `Configured speech features unavailable: ${unavailableFeatures.join(", ")}`
     );
   } else {
     logger.info(
