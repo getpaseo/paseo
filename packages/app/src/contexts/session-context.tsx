@@ -915,16 +915,6 @@ export function SessionProvider({
         });
       }
 
-      setInitializingAgents(serverId, (prev) => {
-        const currentState = prev.get(agentId);
-        if (currentState === false) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(agentId, false);
-        return next;
-      });
-
       // NOTE: We don't update lastActivityAt on every stream event to prevent
       // cascading rerenders. The agent_update handler updates agent.lastActivityAt
       // on status changes, which is sufficient for sorting and display purposes.
@@ -956,7 +946,7 @@ export function SessionProvider({
         clearAgentStreamHead(serverId, agentId);
 
         setInitializingAgents(serverId, (prev) => {
-          if (!prev.has(agentId)) {
+          if (prev.get(agentId) !== true) {
             return prev;
           }
           const next = new Map(prev);
@@ -989,16 +979,6 @@ export function SessionProvider({
           agentId: (message.payload as any).agentId,
           requestId: (message.payload as any).requestId,
         });
-      }
-      if (status === "agent_initialized" && "agentId" in message.payload) {
-        const agentId = (message.payload as any).agentId as string | undefined;
-        if (agentId) {
-          setInitializingAgents(serverId, (prev) => {
-            const next = new Map(prev);
-            next.set(agentId, false);
-            return next;
-          });
-        }
       }
     });
 
@@ -1443,12 +1423,6 @@ export function SessionProvider({
         return next;
       });
 
-      setAgentStreamTail(serverId, (prev) => {
-        const next = new Map(prev);
-        next.set(agentId, []);
-        return next;
-      });
-      clearAgentStreamHead(serverId, agentId);
       if (!client) {
         console.warn("[Session] initializeAgent skipped: daemon unavailable");
         setInitializingAgents(serverId, (prev) => {
@@ -1470,23 +1444,16 @@ export function SessionProvider({
           });
         });
     },
-    [serverId, client, setAgentStreamTail, setInitializingAgents, clearAgentStreamHead]
+    [serverId, client, setInitializingAgents]
   );
 
   const refreshAgent = useCallback(
-    ({ agentId, requestId }: { agentId: string; requestId?: string }) => {
+    ({ agentId }: { agentId: string }) => {
       setInitializingAgents(serverId, (prev) => {
         const next = new Map(prev);
         next.set(agentId, true);
         return next;
       });
-
-      setAgentStreamTail(serverId, (prev) => {
-        const next = new Map(prev);
-        next.set(agentId, []);
-        return next;
-      });
-      clearAgentStreamHead(serverId, agentId);
 
       refreshAgentMutation
         .mutateAsync({ agentId })
@@ -1499,13 +1466,7 @@ export function SessionProvider({
           });
         });
     },
-    [
-      serverId,
-      refreshAgentMutation,
-      setAgentStreamTail,
-      setInitializingAgents,
-      clearAgentStreamHead,
-    ]
+    [serverId, refreshAgentMutation, setInitializingAgents]
   );
 
   const sendAgentMessage = useCallback(

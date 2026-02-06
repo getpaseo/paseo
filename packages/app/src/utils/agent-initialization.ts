@@ -2,6 +2,7 @@ export interface DeferredInit {
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
+  timeoutId: ReturnType<typeof setTimeout> | null;
 }
 
 const initPromises = new Map<string, DeferredInit>();
@@ -23,14 +24,30 @@ export function createInitDeferred(key: string): DeferredInit {
     reject = rej;
   });
 
-  const deferred: DeferredInit = { promise, resolve, reject };
+  const deferred: DeferredInit = { promise, resolve, reject, timeoutId: null };
   initPromises.set(key, deferred);
   return deferred;
 }
 
+export function attachInitTimeout(key: string, timeoutId: ReturnType<typeof setTimeout>): void {
+  const deferred = initPromises.get(key);
+  if (!deferred) {
+    clearTimeout(timeoutId);
+    return;
+  }
+  deferred.timeoutId = timeoutId;
+}
+
 export function resolveInitDeferred(key: string): void {
   const deferred = initPromises.get(key);
-  deferred?.resolve();
+  if (!deferred) {
+    return;
+  }
+  if (deferred.timeoutId) {
+    clearTimeout(deferred.timeoutId);
+  }
+  initPromises.delete(key);
+  deferred.resolve();
 }
 
 export function rejectInitDeferred(key: string, error: Error): void {
@@ -38,7 +55,9 @@ export function rejectInitDeferred(key: string, error: Error): void {
   if (!deferred) {
     return;
   }
+  if (deferred.timeoutId) {
+    clearTimeout(deferred.timeoutId);
+  }
   initPromises.delete(key);
   deferred.reject(error);
 }
-

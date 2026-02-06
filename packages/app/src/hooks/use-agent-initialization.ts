@@ -1,19 +1,18 @@
 import { useCallback } from "react";
 import { useSessionStore } from "@/stores/session-store";
 import {
+  attachInitTimeout,
   createInitDeferred,
   getInitDeferred,
   getInitKey,
   rejectInitDeferred,
 } from "@/utils/agent-initialization";
 
-const INIT_TIMEOUT_MS = 10000;
+const INIT_TIMEOUT_MS = 5 * 60_000;
 
 export function useAgentInitialization(serverId: string) {
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
-  const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
-  const clearAgentStreamHead = useSessionStore((state) => state.clearAgentStreamHead);
 
   const ensureAgentIsInitialized = useCallback(
     (agentId: string): Promise<void> => {
@@ -24,10 +23,23 @@ export function useAgentInitialization(serverId: string) {
       }
 
       const deferred = createInitDeferred(key);
-
       const timeoutId = setTimeout(() => {
-        rejectInitDeferred(key, new Error(`Agent initialization timed out after ${INIT_TIMEOUT_MS}ms`));
+        setInitializingAgents(serverId, (prev) => {
+          if (prev.get(agentId) !== true) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.set(agentId, false);
+          return next;
+        });
+        rejectInitDeferred(
+          key,
+          new Error(
+            `History sync timed out after ${Math.round(INIT_TIMEOUT_MS / 1000)}s`
+          )
+        );
       }, INIT_TIMEOUT_MS);
+      attachInitTimeout(key, timeoutId);
 
       setInitializingAgents(serverId, (prev) => {
         const next = new Map(prev);
@@ -35,15 +47,7 @@ export function useAgentInitialization(serverId: string) {
         return next;
       });
 
-      setAgentStreamTail(serverId, (prev) => {
-        const next = new Map(prev);
-        next.set(agentId, []);
-        return next;
-      });
-      clearAgentStreamHead(serverId, agentId);
-
       if (!client) {
-        clearTimeout(timeoutId);
         setInitializingAgents(serverId, (prev) => {
           const next = new Map(prev);
           next.set(agentId, false);
@@ -56,10 +60,10 @@ export function useAgentInitialization(serverId: string) {
       client
         .initializeAgent(agentId)
         .then(() => {
-          clearTimeout(timeoutId);
+          // No-op: the actual "timeline hydrated" signal is the `agent_stream_snapshot`
+          // message, handled in SessionContext.
         })
         .catch((error) => {
-          clearTimeout(timeoutId);
           setInitializingAgents(serverId, (prev) => {
             const next = new Map(prev);
             next.set(agentId, false);
@@ -73,7 +77,7 @@ export function useAgentInitialization(serverId: string) {
 
       return deferred.promise;
     },
-    [clearAgentStreamHead, client, serverId, setAgentStreamTail, setInitializingAgents]
+    [client, serverId, setInitializingAgents]
   );
 
   const refreshAgent = useCallback(
@@ -87,13 +91,6 @@ export function useAgentInitialization(serverId: string) {
         return next;
       });
 
-      setAgentStreamTail(serverId, (prev) => {
-        const next = new Map(prev);
-        next.set(agentId, []);
-        return next;
-      });
-      clearAgentStreamHead(serverId, agentId);
-
       try {
         await client.refreshAgent(agentId);
       } catch (error) {
@@ -105,9 +102,8 @@ export function useAgentInitialization(serverId: string) {
         throw error;
       }
     },
-    [clearAgentStreamHead, client, serverId, setAgentStreamTail, setInitializingAgents]
+    [client, serverId, setInitializingAgents]
   );
 
   return { ensureAgentIsInitialized, refreshAgent };
 }
-

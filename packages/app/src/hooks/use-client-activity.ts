@@ -55,12 +55,13 @@ export function useClientActivity({ client, focusedAgentId }: ClientActivityOpti
       appVisibleRef.current = nextState === "active";
       if (nextState === "active") {
         recordUserActivity();
-        maybeSendImmediateHeartbeat();
       }
+      // Send immediately on visibility changes so the server can adapt streaming behavior.
+      sendHeartbeat();
     });
 
     return () => subscription.remove();
-  }, [maybeSendImmediateHeartbeat, recordUserActivity]);
+  }, [recordUserActivity, sendHeartbeat]);
 
   // Track user activity on web for accurate staleness.
   useEffect(() => {

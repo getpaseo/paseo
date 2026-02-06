@@ -578,6 +578,24 @@ export class Session {
           return;
         }
 
+        // Reduce bandwidth/CPU on mobile: only forward high-frequency agent stream events
+        // while the app is visible and the user is focused on that agent.
+        //
+        // History catch-up is handled via explicit `initialize_agent_request` which emits a
+        // batched `agent_stream_snapshot`.
+        const activity = this.clientActivity;
+        if (activity?.deviceType === "mobile") {
+          if (!activity.appVisible) {
+            return;
+          }
+          if (!activity.focusedAgentId) {
+            return;
+          }
+          if (activity.focusedAgentId !== event.agentId) {
+            return;
+          }
+        }
+
         const payload = {
           agentId: event.agentId,
           event: serializeAgentStreamEvent(event.event),

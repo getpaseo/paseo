@@ -84,6 +84,11 @@ export interface AgentStreamViewProps {
   agent: Agent;
   streamItems: StreamItem[];
   pendingPermissions: Map<string, PendingPermission>;
+  /**
+   * True when we expect a history snapshot to arrive shortly (e.g. after opening an agent
+   * or resuming after connectivity changes) and should avoid showing the "empty" state.
+   */
+  isSyncingHistory?: boolean;
 }
 
 export function AgentStreamView({
@@ -92,6 +97,7 @@ export function AgentStreamView({
   agent,
   streamItems,
   pendingPermissions,
+  isSyncingHistory = false,
 }: AgentStreamViewProps) {
   const flatListRef = useRef<FlatList<StreamItem>>(null);
   const { theme } = useUnistyles();
@@ -590,6 +596,43 @@ export function AgentStreamView({
     return { marginBottom: tightGap };
   }, [listHeaderComponent, tightGap]);
 
+  const listEmptyComponent = useMemo(() => {
+    const hasPermissions = pendingPermissionItems.length > 0;
+    const hasHeadItems = (streamHead?.length ?? 0) > 0;
+    if (hasPermissions || hasHeadItems) {
+      return null;
+    }
+
+    const shouldShowSyncing =
+      isSyncingHistory || agent.status === "running";
+
+    if (shouldShowSyncing) {
+      return (
+        <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
+          <ActivityIndicator
+            size="small"
+            color={theme.colors.foregroundMuted}
+          />
+          <Text style={stylesheet.emptyStateText}>Catching up…</Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
+        <Text style={stylesheet.emptyStateText}>
+          Start chatting with this agent...
+        </Text>
+      </View>
+    );
+  }, [
+    agent.status,
+    isSyncingHistory,
+    pendingPermissionItems.length,
+    streamHead,
+    theme.colors.foregroundMuted,
+  ]);
+
   return (
     <ToolCallSheetProvider>
       <View style={stylesheet.container}>
@@ -607,13 +650,7 @@ export function AgentStreamView({
               style={stylesheet.list}
               onScroll={handleScroll}
               scrollEventThrottle={16}
-              ListEmptyComponent={
-                <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
-                  <Text style={stylesheet.emptyStateText}>
-                    Start chatting with this agent...
-                  </Text>
-                </View>
-              }
+              ListEmptyComponent={listEmptyComponent}
               ListHeaderComponent={listHeaderComponent}
               extraData={flatListExtraData}
               maintainVisibleContentPosition={

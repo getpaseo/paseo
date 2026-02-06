@@ -46,25 +46,11 @@ function createUniqueTimelineId(
   timestamp: Date
 ): string {
   const base = createTimelineId(prefix, text, timestamp);
-  let suffixSeed = state.length;
-  let candidate = `${base}_${suffixSeed.toString(36)}`;
-
-  // Fast path when the generated id hasn't been used yet
-  const hasCollision = state.some((entry) => entry.id === candidate);
-  if (!hasCollision) {
-    return candidate;
-  }
-
-  // If the id already exists (e.g. prior items were pruned/replaced),
-  // spin until we find an unused suffix. Building the lookup Set lazily keeps
-  // the common case cheap while still guaranteeing uniqueness.
-  const usedIds = new Set(state.map((entry) => entry.id));
-  while (usedIds.has(candidate)) {
-    suffixSeed += 1;
-    candidate = `${base}_${suffixSeed.toString(36)}`;
-  }
-
-  return candidate;
+  // We only ever append new timeline items, and we incorporate the current
+  // length as a monotonic suffix, so uniqueness is guaranteed without an O(n)
+  // collision scan (important for large hydration snapshots).
+  const suffixSeed = state.length;
+  return `${base}_${suffixSeed.toString(36)}`;
 }
 
 export type StreamItem =
