@@ -56,17 +56,17 @@ export type AssistantMarkdownDomProps = {
   theme: MarkdownDomTheme;
   style?: any;
   dom?: DOMProps;
-  onHeightChange?: (height: number) => Promise<void>;
-  onInlinePathPress?: (target: InlinePathTarget) => Promise<void>;
-  onLinkPress?: (url: string) => Promise<void>;
+  onHeightChangeAsync?: (height: number) => Promise<void>;
+  onInlinePathPressAsync?: (target: InlinePathTarget) => Promise<void>;
+  onLinkPressAsync?: (url: string) => Promise<void>;
 };
 
 export default function AssistantMarkdownDom({
   markdown,
   theme,
-  onHeightChange,
-  onInlinePathPress,
-  onLinkPress,
+  onHeightChangeAsync,
+  onInlinePathPressAsync,
+  onLinkPressAsync,
 }: AssistantMarkdownDomProps) {
   const lastReportedHeightRef = useRef<number>(0);
 
@@ -297,7 +297,7 @@ html, body {
         const parsed = parseInlinePathToken(raw);
         if (parsed) {
           event.preventDefault?.();
-          void onInlinePathPress?.(parsed);
+          void onInlinePathPressAsync?.(parsed);
         }
         return;
       }
@@ -305,14 +305,14 @@ html, body {
       const linkEl = target.closest?.("a") as HTMLAnchorElement | null;
       if (linkEl?.href) {
         event.preventDefault?.();
-        void onLinkPress?.(linkEl.href);
+        void onLinkPressAsync?.(linkEl.href);
       }
     },
-    [onInlinePathPress, onLinkPress]
+    [onInlinePathPressAsync, onLinkPressAsync]
   );
 
   useEffect(() => {
-    if (!onHeightChange) {
+    if (!onHeightChangeAsync) {
       return;
     }
 
@@ -336,7 +336,7 @@ html, body {
         }
 
         lastReportedHeightRef.current = height;
-        void onHeightChange(height);
+        void onHeightChangeAsync(height);
       });
     };
 
@@ -372,7 +372,7 @@ html, body {
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [onHeightChange, markdown, cssText]);
+  }, [onHeightChangeAsync, markdown, cssText]);
 
   return (
     <div className="paseo-markdown" onClick={handleClick}>

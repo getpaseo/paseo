@@ -444,9 +444,11 @@ export const AssistantMessage = memo(function AssistantMessage({
       <AssistantMarkdownDom
         markdown={message}
         theme={domTheme}
-        onHeightChange={Platform.OS === "web" ? undefined : handleHeightChange}
-        onInlinePathPress={onInlinePathPress ? handleInlinePathPress : undefined}
-        onLinkPress={handleLinkPress}
+        onHeightChangeAsync={Platform.OS === "web" ? undefined : handleHeightChange}
+        onInlinePathPressAsync={
+          onInlinePathPress ? handleInlinePathPress : undefined
+        }
+        onLinkPressAsync={handleLinkPress}
         dom={{
           scrollEnabled: false,
           showsVerticalScrollIndicator: false,
