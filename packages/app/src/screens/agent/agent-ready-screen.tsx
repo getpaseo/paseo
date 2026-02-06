@@ -7,6 +7,7 @@ import {
   ScrollView,
   Platform,
   BackHandler,
+  AppState,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -503,6 +504,46 @@ function AgentScreenContent({
     });
   }, [resolvedAgentId, ensureAgentIsInitialized, isConnected]);
 
+  // When the app comes back to the foreground, re-sync history for the focused agent.
+  // This covers cases where the OS/backgrounding caused us to miss stream events.
+  const lastAppStateRef = useRef(AppState.currentState);
+  const lastResumeSyncAtRef = useRef(0);
+  useEffect(() => {
+    if (!resolvedAgentId) {
+      return;
+    }
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const prev = lastAppStateRef.current;
+      lastAppStateRef.current = nextState;
+
+      if (nextState !== "active" || prev === "active") {
+        return;
+      }
+      if (!isConnected) {
+        return;
+      }
+
+      const now = Date.now();
+      // Avoid accidental double-syncs on rapid transitions.
+      if (now - lastResumeSyncAtRef.current < 2000) {
+        return;
+      }
+      lastResumeSyncAtRef.current = now;
+
+      ensureAgentIsInitialized(resolvedAgentId).catch((error) => {
+        console.warn("[AgentScreen] Agent initialization failed on resume", {
+          agentId: resolvedAgentId,
+          error,
+        });
+      });
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [ensureAgentIsInitialized, isConnected, resolvedAgentId]);
+
   useEffect(() => {
     if (Platform.OS !== "web") {
       return;
@@ -723,28 +764,21 @@ function AgentScreenContent({
             <ReanimatedAnimated.View
               style={[styles.content, animatedKeyboardStyle]}
             >
-              {isInitializing && !shouldUseOptimisticStream ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator
-                    size="large"
-                    color={theme.colors.primary}
-                  />
-                  <Text style={styles.loadingText}>Loading agent...</Text>
-                </View>
-              ) : (
-                <AgentStreamView
-                  agentId={effectiveAgent.id}
-                  serverId={serverId}
-                  agent={effectiveAgent}
-                  streamItems={shouldUseOptimisticStream ? mergedStreamItems : streamItems}
-                  pendingPermissions={pendingPermissions}
-                />
-              )}
+              <AgentStreamView
+                agentId={effectiveAgent.id}
+                serverId={serverId}
+                agent={effectiveAgent}
+                streamItems={
+                  shouldUseOptimisticStream ? mergedStreamItems : streamItems
+                }
+                pendingPermissions={pendingPermissions}
+                isSyncingHistory={isInitializing && !shouldUseOptimisticStream}
+              />
             </ReanimatedAnimated.View>
           </View>
 
           {/* Agent Input Area */}
-          {!isInitializing && agent && resolvedAgentId && (
+          {agent && resolvedAgentId && (
             <AgentInputArea agentId={resolvedAgentId} serverId={serverId} autoFocus onAddImages={handleAddImagesCallback} />
           )}
 
