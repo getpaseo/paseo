@@ -18,7 +18,6 @@ import {
   useContext,
 } from "react";
 import type { ReactNode, ComponentType } from "react";
-import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import * as Linking from "expo-linking";
 import {
   Circle,
@@ -47,15 +46,12 @@ import {
   UnistylesRuntime,
 } from "react-native-unistyles";
 import { baseColors, theme } from "@/styles/theme";
-import {
-  createMarkdownStyles,
-} from "@/styles/markdown-styles";
 import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry } from "@/types/stream";
 import { extractPrincipalParam } from "@/utils/tool-call-parsers";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
-import { parseInlinePathToken, type InlinePathTarget } from "@/utils/inline-path";
+import { type InlinePathTarget } from "@/utils/inline-path";
 export type { InlinePathTarget } from "@/utils/inline-path";
 import { resolveToolCallPreview } from "./tool-call-preview";
 import { useToolCallSheet } from "./tool-call-sheet";
@@ -63,6 +59,7 @@ import {
   ToolCallDetailsContent,
   useToolCallDetails,
 } from "./tool-call-details";
+import AssistantMarkdownDom from "./assistant-markdown-dom";
 
 interface UserMessageProps {
   message: string;
@@ -99,6 +96,11 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
     paddingHorizontal: theme.spacing[2],
   },
+  stack: {
+    minWidth: 0,
+    flexShrink: 1,
+    alignItems: "flex-end",
+  },
   containerSpacing: {
     marginBottom: theme.spacing[1],
   },
@@ -123,21 +125,11 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     lineHeight: 22,
     overflowWrap: "anywhere",
   },
-  bubblePressed: {
-    opacity: 0.85,
-  },
-  copiedTagContainer: {
-    marginTop: theme.spacing[1],
-    marginRight: theme.spacing[4],
-    alignSelf: "flex-end",
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.base,
+  copyButton: {
+    paddingTop: theme.spacing[1],
+    paddingBottom: 0,
     paddingHorizontal: theme.spacing[2],
-    paddingVertical: 4,
-  },
-  copiedTagText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
+    alignSelf: "flex-end",
   },
 }));
 
@@ -150,34 +142,6 @@ export const UserMessage = memo(function UserMessage({
 }: UserMessageProps) {
   const resolvedDisableOuterSpacing =
     useDisableOuterSpacing(disableOuterSpacing);
-  const [copied, setCopied] = useState(false);
-  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleLongPress = useCallback(async () => {
-    if (!message) {
-      return;
-    }
-
-    await Clipboard.setStringAsync(message);
-    setCopied(true);
-
-    if (copyTimeoutRef.current) {
-      clearTimeout(copyTimeoutRef.current);
-    }
-
-    copyTimeoutRef.current = setTimeout(() => {
-      setCopied(false);
-      copyTimeoutRef.current = null;
-    }, 1500);
-  }, [message]);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimeoutRef.current) {
-        clearTimeout(copyTimeoutRef.current);
-      }
-    };
-  }, []);
 
   return (
     <View
@@ -192,26 +156,16 @@ export const UserMessage = memo(function UserMessage({
         ],
       ]}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Copy message"
-        accessibilityHint="Long press to copy this message"
-        delayLongPress={250}
-        onLongPress={handleLongPress}
-        style={({ pressed }) => [
-          userMessageStylesheet.bubble,
-          pressed ? userMessageStylesheet.bubblePressed : null,
-        ]}
-      >
-        <Text style={userMessageStylesheet.text}>{message}</Text>
-      </Pressable>
-      {copied && (
-        <View style={userMessageStylesheet.copiedTagContainer}>
-          <Text style={userMessageStylesheet.copiedTagText}>
-            Copied to clipboard
-          </Text>
+      <View style={userMessageStylesheet.stack}>
+        <View style={userMessageStylesheet.bubble}>
+          <Text style={userMessageStylesheet.text}>{message}</Text>
         </View>
-      )}
+        <TurnCopyButton
+          getContent={() => message}
+          accessibilityLabelBase="Copy message"
+          style={userMessageStylesheet.copyButton}
+        />
+      </View>
     </View>
   );
 });
@@ -231,30 +185,6 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   containerSpacing: {
     marginBottom: theme.spacing[4],
   },
-  // Used in custom markdownRules for inline code styling
-  markdownCodeInline: {
-    backgroundColor: theme.colors.surface2,
-    color: theme.colors.foreground,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 2,
-    borderRadius: theme.borderRadius.sm,
-    fontFamily: Fonts.mono,
-    fontSize: 13,
-  },
-  // Used in custom markdownRules for path chip styling
-  pathChip: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 2,
-    marginRight: theme.spacing[1],
-    marginVertical: 2,
-  },
-  pathChipText: {
-    color: theme.colors.foreground,
-    fontFamily: Fonts.mono,
-    fontSize: 13,
-  },
 }));
 
 const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
@@ -272,10 +202,14 @@ const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
 
 interface TurnCopyButtonProps {
   getContent: () => string;
+  accessibilityLabelBase?: string;
+  style?: StyleProp<ViewStyle>;
 }
 
 export const TurnCopyButton = memo(function TurnCopyButton({
   getContent,
+  accessibilityLabelBase,
+  style,
 }: TurnCopyButtonProps) {
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -310,9 +244,11 @@ export const TurnCopyButton = memo(function TurnCopyButton({
   return (
     <Pressable
       onPress={handleCopy}
-      style={turnCopyButtonStylesheet.container}
+      style={[turnCopyButtonStylesheet.container, style]}
       accessibilityRole="button"
-      accessibilityLabel={copied ? "Copied" : "Copy turn"}
+      accessibilityLabel={
+        copied ? "Copied" : accessibilityLabelBase ?? "Copy turn"
+      }
     >
       {({ hovered }) => {
         const iconColor = hovered
@@ -411,163 +347,90 @@ export const AssistantMessage = memo(function AssistantMessage({
   const resolvedDisableOuterSpacing =
     useDisableOuterSpacing(disableOuterSpacing);
 
-  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
+  const [domHeight, setDomHeight] = useState<number>(24);
+  const lastDomHeightRef = useRef<number>(domHeight);
 
-  const markdownParser = useMemo(
-    () => MarkdownIt({ typographer: true, linkify: true }),
-    []
+  const domTheme = useMemo(
+    () => ({
+      colors: {
+        foreground: theme.colors.foreground,
+        foregroundMuted: theme.colors.foregroundMuted,
+        primary: theme.colors.primary,
+        border: theme.colors.border,
+        surface1: theme.colors.surface1,
+        surface2: theme.colors.surface2,
+      },
+      spacing: {
+        1: theme.spacing[1],
+        2: theme.spacing[2],
+        3: theme.spacing[3],
+        4: theme.spacing[4],
+        6: theme.spacing[6],
+      },
+      fontSize: {
+        xs: theme.fontSize.xs,
+        sm: theme.fontSize.sm,
+        base: theme.fontSize.base,
+        lg: theme.fontSize.lg,
+        xl: theme.fontSize.xl,
+        "2xl": theme.fontSize["2xl"],
+        "3xl": theme.fontSize["3xl"],
+      },
+      fontWeight: {
+        normal: theme.fontWeight.normal,
+        medium: theme.fontWeight.medium,
+        semibold: theme.fontWeight.semibold,
+        bold: theme.fontWeight.bold,
+      },
+      borderRadius: {
+        sm: theme.borderRadius.sm,
+        base: theme.borderRadius.base,
+        md: theme.borderRadius.md,
+        full: theme.borderRadius.full,
+      },
+      borderWidth: {
+        1: theme.borderWidth[1],
+      },
+      fonts: {
+        sans: Fonts.sans,
+        mono: Fonts.mono,
+      },
+    }),
+    [theme]
   );
 
-  const handleLinkPress = useCallback((url: string) => {
+  const handleLinkPress = useCallback(async (url: string) => {
+    if (!url) {
+      return;
+    }
+
     if (Platform.OS === "web") {
       window.open(url, "_blank", "noopener,noreferrer");
     } else {
-      void Linking.openURL(url);
+      await Linking.openURL(url);
     }
-    return true;
   }, []);
 
-  const markdownRules = useMemo(() => {
-    return {
-      text: (
-        node: any,
-        _children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {}
-      ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.text]}>
-          {node.content}
-        </Text>
-      ),
-      textgroup: (
-        node: any,
-        children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {}
-      ) => (
-        <Text
-          key={node.key}
-          style={[inheritedStyles, styles.textgroup]}
-        >
-          {children}
-        </Text>
-      ),
-      code_block: (
-        node: any,
-        _children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {}
-      ) => (
-        <Text
-          key={node.key}
-          style={[inheritedStyles, styles.code_block]}
-        >
-          {node.content}
-        </Text>
-      ),
-      fence: (
-        node: any,
-        _children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {}
-      ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.fence]}>
-          {node.content}
-        </Text>
-      ),
-      code_inline: (
-        node: any,
-        _children: ReactNode[],
-        _parent: any,
-        _styles: any,
-        inheritedStyles: any = {}
-      ) => {
-        const content = node.content ?? "";
-        const parsed = onInlinePathPress
-          ? parseInlinePathToken(content)
-          : null;
+  const handleInlinePathPress = useCallback(
+    async (target: InlinePathTarget) => {
+      onInlinePathPress?.(target);
+    },
+    [onInlinePathPress]
+  );
 
-        if (!parsed) {
-          return (
-            <Text
-              key={node.key}
-              style={[
-                inheritedStyles,
-                assistantMessageStylesheet.markdownCodeInline,
-              ]}
-            >
-              {content}
-            </Text>
-          );
-        }
+  const handleHeightChange = useCallback(async (height: number) => {
+    if (!Number.isFinite(height) || height <= 0) {
+      return;
+    }
 
-        return (
-          <Text
-            key={node.key}
-            onPress={() => parsed && onInlinePathPress?.(parsed)}
-            selectable={false}
-            style={[
-              assistantMessageStylesheet.pathChip,
-              assistantMessageStylesheet.pathChipText,
-            ]}
-          >
-            {content}
-          </Text>
-        );
-      },
-      bullet_list: (
-        node: any,
-        children: ReactNode[],
-        _parent: any,
-        styles: any
-      ) => (
-        <View key={node.key} style={styles.bullet_list}>
-          {children}
-        </View>
-      ),
-      ordered_list: (
-        node: any,
-        children: ReactNode[],
-        _parent: any,
-        styles: any
-      ) => (
-        <View key={node.key} style={styles.ordered_list}>
-          {children}
-        </View>
-      ),
-      list_item: (
-        node: any,
-        children: ReactNode[],
-        parent: any,
-        styles: any
-      ) => {
-        const isOrdered = parent?.type === "ordered_list";
-        const index = parent?.children?.indexOf(node) ?? 0;
-        const bullet = isOrdered ? `${index + 1}.` : "•";
-        const iconStyle = isOrdered
-          ? styles.ordered_list_icon
-          : styles.bullet_list_icon;
-        const contentStyle = isOrdered
-          ? styles.ordered_list_content
-          : styles.bullet_list_content;
+    const clamped = Math.max(1, Math.min(20000, Math.round(height)));
+    if (Math.abs(clamped - lastDomHeightRef.current) <= 1) {
+      return;
+    }
 
-        return (
-          <View key={node.key} style={styles.list_item}>
-            <Text style={iconStyle}>{bullet}</Text>
-            <View
-              style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}
-            >
-              {children}
-            </View>
-          </View>
-        );
-      },
-    };
-  }, [onInlinePathPress]);
+    lastDomHeightRef.current = clamped;
+    setDomHeight(clamped);
+  }, []);
 
   return (
     <View
@@ -578,14 +441,29 @@ export const AssistantMessage = memo(function AssistantMessage({
           assistantMessageStylesheet.containerSpacing,
       ]}
     >
-      <Markdown
-        style={markdownStyles}
-        rules={markdownRules}
-        markdownit={markdownParser}
+      <AssistantMarkdownDom
+        markdown={message}
+        theme={domTheme}
+        onHeightChange={Platform.OS === "web" ? undefined : handleHeightChange}
+        onInlinePathPress={onInlinePathPress ? handleInlinePathPress : undefined}
         onLinkPress={handleLinkPress}
-      >
-        {message}
-      </Markdown>
+        dom={{
+          scrollEnabled: false,
+          showsVerticalScrollIndicator: false,
+          showsHorizontalScrollIndicator: false,
+          bounces: false,
+          textInteractionEnabled: true,
+        }}
+        style={
+          Platform.OS === "web"
+            ? undefined
+            : ({
+                width: "100%",
+                height: domHeight,
+                backgroundColor: "transparent",
+              } as any)
+        }
+      />
     </View>
   );
 });
