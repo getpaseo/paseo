@@ -424,12 +424,20 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
             <DropdownMenuContent align="end" width={220}>
               <View style={styles.contextMetaBlock}>
                 <View style={styles.contextMetaRow}>
-                  <Text style={styles.contextMetaLabel}>Size</Text>
-                  <Text style={styles.contextMetaValue}>{formatFileSize({ size: entry.size })}</Text>
+                  <Text style={styles.contextMetaLabel} numberOfLines={1}>
+                    Size
+                  </Text>
+                  <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
+                    {formatFileSize({ size: entry.size })}
+                  </Text>
                 </View>
                 <View style={styles.contextMetaRow}>
-                  <Text style={styles.contextMetaLabel}>Modified</Text>
-                  <Text style={styles.contextMetaValue}>{formatTimeAgo(new Date(entry.modifiedAt))}</Text>
+                  <Text style={styles.contextMetaLabel} numberOfLines={1}>
+                    Modified
+                  </Text>
+                  <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
+                    {formatTimeAgo(new Date(entry.modifiedAt))}
+                  </Text>
                 </View>
               </View>
               <DropdownMenuSeparator />
@@ -1132,11 +1140,15 @@ const styles = StyleSheet.create((theme) => ({
   contextMetaLabel: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
+    flexShrink: 0,
   },
   contextMetaValue: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
+    flex: 1,
+    minWidth: 0,
+    textAlign: "right",
   },
   previewHeaderText: {
     flex: 1,

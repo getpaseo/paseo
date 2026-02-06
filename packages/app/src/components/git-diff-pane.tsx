@@ -15,7 +15,19 @@ import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gest
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Linking from "expo-linking";
-import { Archive, ChevronDown, ChevronRight, GitBranch, MoreVertical, ListChevronsDownUp, ListChevronsUpDown } from "lucide-react-native";
+import {
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+  GitCommitHorizontal,
+  GitMerge,
+  ListChevronsDownUp,
+  ListChevronsUpDown,
+  MoreVertical,
+  RefreshCcw,
+  Upload,
+} from "lucide-react-native";
 import { useCheckoutGitActionsStore } from "@/stores/checkout-git-actions-store";
 import {
   useCheckoutDiffQuery,
@@ -37,6 +49,7 @@ import {
   DropdownMenuTrigger,
   type ActionStatus,
 } from "@/components/ui/dropdown-menu";
+import { GitHubIcon } from "@/components/icons/github-icon";
 
 // =============================================================================
 // Git Actions Data Structure
@@ -856,6 +869,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       successLabel: "Committed",
       disabled: commitDisabled,
       status: commitStatus,
+      icon: <GitCommitHorizontal size={16} color={theme.colors.foregroundMuted} />,
       handler: handleCommit,
     });
 
@@ -869,6 +883,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         disabled: pushDisabled,
         status: pushStatus,
         description: !hasRemote ? "No remote configured" : undefined,
+        icon: <Upload size={16} color={theme.colors.foregroundMuted} />,
         handler: handlePush,
       });
     }
@@ -883,6 +898,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         successLabel: "View PR",
         disabled: false,
         status: "idle",
+        icon: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
         handler: () => openURLInNewTab(prUrl),
       });
     }
@@ -896,6 +912,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         successLabel: "PR Created",
         disabled: prDisabled,
         status: prCreateStatus,
+        icon: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
         handler: handleCreatePr,
       });
     }
@@ -910,6 +927,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         disabled: mergeDisabled,
         status: mergeStatus,
         description: hasUncommittedChanges ? "Requires clean working tree" : undefined,
+        icon: <GitMerge size={16} color={theme.colors.foregroundMuted} />,
         handler: handleMergeBranch,
       });
     }
@@ -924,6 +942,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         disabled: mergeFromBaseDisabled,
         status: mergeFromBaseStatus,
         description: hasUncommittedChanges ? "Requires clean working tree" : undefined,
+        icon: <RefreshCcw size={16} color={theme.colors.foregroundMuted} />,
         handler: handleMergeFromBase,
       });
     }
@@ -994,6 +1013,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     commitDisabled, pushDisabled, prDisabled, mergeDisabled, mergeFromBaseDisabled, archiveDisabled,
     commitStatus, pushStatus, prCreateStatus, mergeStatus, mergeFromBaseStatus, archiveStatus,
     handleCommit, handlePush, handleCreatePr, handleMergeBranch, handleMergeFromBase, handleArchiveWorktree,
+    theme.colors.foregroundMuted,
   ]);
 
   // Helper to get display label based on status
@@ -1033,7 +1053,10 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                   {gitActions.primary.status === "pending" ? (
                     <ActivityIndicator size="small" color={theme.colors.foreground} style={styles.splitButtonSpinner} />
                   ) : (
-                    <Text style={styles.splitButtonText}>{getActionDisplayLabel(gitActions.primary)}</Text>
+                    <View style={styles.splitButtonContent}>
+                      {gitActions.primary.icon}
+                      <Text style={styles.splitButtonText}>{getActionDisplayLabel(gitActions.primary)}</Text>
+                    </View>
                   )}
                 </Pressable>
                 {gitActions.secondary.length > 0 ? (
@@ -1054,6 +1077,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                             {needsSeparator && index > 0 ? <DropdownMenuSeparator /> : null}
                             <DropdownMenuItem
                               testID={`changes-menu-${action.id}`}
+                              leading={action.icon}
                               disabled={action.disabled}
                               status={action.status}
                               pendingLabel={action.pendingLabel}
@@ -1077,7 +1101,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                 <DropdownMenuTrigger
                   testID="changes-overflow-menu"
                   hitSlop={8}
-                  style={styles.iconButton}
+                  style={[styles.iconButton, styles.overflowMenuButton]}
                   accessibilityRole="button"
                   accessibilityLabel="More actions"
                 >
@@ -1280,6 +1304,12 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
   },
+  splitButtonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+  },
   splitButtonSpinner: {
     height: theme.fontSize.xs * 1.5,
     width: theme.fontSize.xs * 1.5,
@@ -1297,6 +1327,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.md,
+  },
+  overflowMenuButton: {
+    marginRight: -theme.spacing[2],
   },
   menuOverlay: {
     flex: 1,

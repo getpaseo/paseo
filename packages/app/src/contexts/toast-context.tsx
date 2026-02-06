@@ -25,11 +25,11 @@ import { CheckCircle2, AlertTriangle } from "lucide-react-native";
 type ToastVariant = "default" | "success" | "error";
 
 export type ToastShowOptions = {
+  icon?: ReactNode;
   variant?: ToastVariant;
   durationMs?: number;
   /**
-   * On Android we prefer the OS toast by default.
-   * Set to false to force the in-app toast.
+   * Set to true to use OS toast on Android.
    */
   nativeAndroid?: boolean;
   testID?: string;
@@ -37,14 +37,16 @@ export type ToastShowOptions = {
 
 type ToastState = {
   id: number;
-  message: string;
+  content: ReactNode;
+  nativeMessage: string | null;
+  icon?: ReactNode;
   variant: ToastVariant;
   durationMs: number;
   testID?: string;
 };
 
 export type ToastApi = {
-  show: (message: string, options?: ToastShowOptions) => void;
+  show: (content: ReactNode, options?: ToastShowOptions) => void;
   copied: (label?: string) => void;
   error: (message: string) => void;
 };
@@ -66,23 +68,26 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const idRef = useRef(0);
 
   const show = useCallback(
-    (message: string, options?: ToastShowOptions) => {
-      const resolvedMessage = message.trim();
-      if (!resolvedMessage) return;
+    (content: ReactNode, options?: ToastShowOptions) => {
+      const nativeMessage =
+        typeof content === "string"
+          ? content.trim()
+          : null;
+      if (!content || nativeMessage === "") return;
 
       const variant = options?.variant ?? "default";
       const durationMs = options?.durationMs ?? DEFAULT_DURATION_MS;
-      const nativeAndroid = options?.nativeAndroid ?? true;
+      const nativeAndroid = options?.nativeAndroid ?? false;
 
-      if (Platform.OS === "android" && nativeAndroid) {
+      if (Platform.OS === "android" && nativeAndroid && nativeMessage) {
         const duration =
           durationMs <= 2500
             ? ToastAndroid.SHORT
             : ToastAndroid.LONG;
         ToastAndroid.showWithGravity(
-          resolvedMessage,
+          nativeMessage,
           duration,
-          ToastAndroid.BOTTOM
+          ToastAndroid.TOP
         );
         return;
       }
@@ -90,7 +95,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       idRef.current += 1;
       setToast({
         id: idRef.current,
-        message: resolvedMessage,
+        content,
+        nativeMessage,
+        icon: options?.icon,
         variant,
         durationMs,
         testID: options?.testID,
@@ -103,7 +110,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     () => ({
       show,
       copied: (label?: string) =>
-        show(label ? `Copied ${label}` : "Copied", { variant: "success" }),
+        show(label ? `Copied ${label}` : "Copied", {
+          variant: "success",
+          icon: <CheckCircle2 size={18} />,
+        }),
       error: (message: string) => show(message, { variant: "error", durationMs: 3200 }),
     }),
     [show]
@@ -127,7 +137,7 @@ function ToastViewport({
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(8)).current;
+  const translateY = useRef(new Animated.Value(-8)).current;
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearTimer = useCallback(() => {
@@ -147,7 +157,7 @@ function ToastViewport({
         useNativeDriver: true,
       }),
       Animated.timing(translateY, {
-        toValue: 8,
+        toValue: -8,
         duration: 140,
         easing: Easing.out(Easing.quad),
         useNativeDriver: true,
@@ -163,13 +173,13 @@ function ToastViewport({
     if (!toast) {
       clearTimer();
       opacity.setValue(0);
-      translateY.setValue(8);
+      translateY.setValue(-8);
       return;
     }
 
     clearTimer();
     opacity.setValue(0);
-    translateY.setValue(8);
+    translateY.setValue(-8);
 
     Animated.parallel([
       Animated.timing(opacity, {
@@ -200,11 +210,13 @@ function ToastViewport({
   }
 
   const icon =
-    toast.variant === "success" ? (
+    toast.icon ?? (
+      toast.variant === "success" ? (
       <CheckCircle2 size={18} color={theme.colors.primary} />
     ) : toast.variant === "error" ? (
       <AlertTriangle size={18} color={theme.colors.destructive} />
-    ) : null;
+    ) : null
+    );
 
   const content = (
     <View style={styles.container} pointerEvents="box-none">
@@ -212,8 +224,10 @@ function ToastViewport({
         testID={toast.testID ?? "app-toast"}
         style={[
           styles.toast,
+          toast.variant === "success" ? styles.toastSuccess : null,
+          toast.variant === "error" ? styles.toastError : null,
           {
-            marginBottom: theme.spacing[4] + insets.bottom,
+            marginTop: theme.spacing[2] + insets.top,
             opacity,
             transform: [{ translateY }],
           },
@@ -221,16 +235,22 @@ function ToastViewport({
         accessibilityRole="alert"
       >
         {icon ? <View style={styles.iconSlot}>{icon}</View> : null}
-        <Text
-          testID="app-toast-message"
-          style={[
-            styles.message,
-            toast.variant === "error" ? styles.messageError : null,
-          ]}
-          numberOfLines={2}
-        >
-          {toast.message}
-        </Text>
+        {typeof toast.content === "string" ? (
+          <Text
+            testID="app-toast-message"
+            style={[
+              styles.message,
+              toast.variant === "error" ? styles.messageError : null,
+            ]}
+            numberOfLines={2}
+          >
+            {toast.content}
+          </Text>
+        ) : (
+          <View testID="app-toast-message" style={styles.contentSlot}>
+            {toast.content}
+          </View>
+        )}
       </Animated.View>
     </View>
   );
@@ -248,18 +268,18 @@ const styles = StyleSheet.create((theme) => ({
     position: "absolute",
     left: theme.spacing[4],
     right: theme.spacing[4],
-    bottom: 0,
+    top: 0,
     zIndex: OVERLAY_Z.toast,
     alignItems: "center",
   },
   toast: {
-    width: "100%",
-    maxWidth: 520,
+    alignSelf: "center",
+    maxWidth: "92%",
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[3],
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface0,
+    borderRadius: theme.borderRadius.full,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     paddingVertical: theme.spacing[3],
@@ -270,15 +290,25 @@ const styles = StyleSheet.create((theme) => ({
     shadowRadius: 8,
     elevation: 8,
   },
+  toastSuccess: {
+    borderColor: theme.colors.border,
+  },
+  toastError: {
+    borderColor: theme.colors.destructive,
+  },
   iconSlot: {
     alignItems: "center",
     justifyContent: "center",
   },
+  contentSlot: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
   message: {
-    flex: 1,
+    flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
   },
   messageError: {
     color: theme.colors.foreground,

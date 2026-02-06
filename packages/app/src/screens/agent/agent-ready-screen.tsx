@@ -10,6 +10,7 @@ import {
   AppState,
 } from "react-native";
 import { useRouter } from "expo-router";
+import * as Clipboard from "expo-clipboard";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
@@ -28,14 +29,13 @@ import {
   Folder,
   RotateCcw,
   PanelRight,
-  Info,
+  CheckCircle2,
 } from "lucide-react-native";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { BackHeader } from "@/components/headers/back-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
-import { AgentDetailsSheet } from "@/components/agent-details-sheet";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
 import { FileDropZone } from "@/components/file-drop-zone";
 import type { ImageAttachment } from "@/components/message-input";
@@ -63,6 +63,7 @@ import { shortenPath } from "@/utils/shorten-path";
 import { deriveBranchLabel, deriveProjectPath } from "@/utils/agent-display-info";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
+import { useToast } from "@/contexts/toast-context";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -178,9 +179,9 @@ function AgentScreenContent({
   agentId,
 }: AgentScreenContentProps) {
   const { theme } = useUnistyles();
+  const toast = useToast();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
 
@@ -471,6 +472,11 @@ function AgentScreenContent({
   }, [resolvedAgentId, serverId, shouldUseOptimisticStream]);
 
   const effectiveAgent = agent ?? placeholderAgent;
+  const providerLabel = (effectiveAgent?.provider ?? "Provider").replace(/^\w/, (m) =>
+    m.toUpperCase()
+  );
+  const providerSessionId =
+    effectiveAgent?.runtimeInfo?.sessionId ?? effectiveAgent?.persistence?.sessionId ?? null;
 
   // Header subtitle: project path + branch (matching agent list row format)
   const headerProjectPath = effectiveAgent
@@ -584,16 +590,6 @@ function AgentScreenContent({
     }
   }, [resolvedAgentId, agent?.status, client]);
 
-  const handleViewChanges = useCallback(() => {
-    setExplorerTab("changes");
-    openFileExplorer();
-  }, [setExplorerTab, openFileExplorer]);
-
-  const handleBrowseFiles = useCallback(() => {
-    setExplorerTab("files");
-    openFileExplorer();
-  }, [setExplorerTab, openFileExplorer]);
-
   const handleRefreshAgent = useCallback(() => {
     if (!resolvedAgentId) {
       return;
@@ -602,6 +598,24 @@ function AgentScreenContent({
       console.warn("[AgentScreen] refreshAgent failed", { agentId: resolvedAgentId, error });
     });
   }, [resolvedAgentId, refreshAgent]);
+
+  const handleCopyMeta = useCallback(
+    async (label: string, value: string | null | undefined) => {
+      if (!value) {
+        return;
+      }
+      try {
+        await Clipboard.setStringAsync(value);
+        toast.show(`Copied ${label}`, {
+          variant: "success",
+          icon: <CheckCircle2 size={16} color={theme.colors.primary} />,
+        });
+      } catch {
+        toast.error("Copy failed");
+      }
+    },
+    [theme.colors.primary, toast]
+  );
 
   if (!effectiveAgent) {
     return (
@@ -677,19 +691,39 @@ function AgentScreenContent({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" width={DROPDOWN_WIDTH} testID="agent-overflow-content">
                   <View style={styles.menuMetaContainer}>
-                    <View style={styles.menuMetaRow}>
-                      <Text style={styles.menuMetaLabel}>Directory</Text>
+                    <Pressable
+                      style={({ hovered, pressed }) => [
+                        styles.menuMetaRow,
+                        (hovered || pressed) && styles.menuMetaRowActive,
+                      ]}
+                      onPress={() => {
+                        void handleCopyMeta("Directory", effectiveAgent.cwd);
+                      }}
+                    >
+                      <Text style={styles.menuMetaLabel} numberOfLines={1}>
+                        Directory
+                      </Text>
                       <Text
                         style={styles.menuMetaValue}
-                        numberOfLines={2}
+                        numberOfLines={1}
                         ellipsizeMode="middle"
                       >
                         {shortenPath(effectiveAgent.cwd)}
                       </Text>
-                    </View>
+                    </Pressable>
 
-                    <View style={styles.menuMetaRow}>
-                      <Text style={styles.menuMetaLabel}>Model</Text>
+                    <Pressable
+                      style={({ hovered, pressed }) => [
+                        styles.menuMetaRow,
+                        (hovered || pressed) && styles.menuMetaRowActive,
+                      ]}
+                      onPress={() => {
+                        void handleCopyMeta("Model", modelDisplayValue);
+                      }}
+                    >
+                      <Text style={styles.menuMetaLabel} numberOfLines={1}>
+                        Model
+                      </Text>
                       <Text
                         style={styles.menuMetaValue}
                         numberOfLines={1}
@@ -697,48 +731,80 @@ function AgentScreenContent({
                       >
                         {modelDisplayValue}
                       </Text>
-                    </View>
+                    </Pressable>
 
                     {checkout?.isGit && checkout.currentBranch && checkout.currentBranch !== "HEAD" ? (
-                      <View style={styles.menuMetaRow}>
-                        <Text style={styles.menuMetaLabel}>Branch</Text>
-                        <View style={styles.menuMetaValueRow}>
-                          {checkoutStatusQuery.isFetching ? (
-                            <>
-                              <ActivityIndicator
-                                size="small"
-                                color={theme.colors.foregroundMuted}
-                              />
-                              <Text style={styles.menuMetaPendingText}>Fetching…</Text>
-                            </>
-                          ) : (
-                            <Text
-                              style={styles.menuMetaValue}
-                              numberOfLines={1}
-                              ellipsizeMode="middle"
-                            >
-                              {checkout.currentBranch}
-                            </Text>
-                          )}
-                        </View>
-                      </View>
+                      <Pressable
+                        style={({ hovered, pressed }) => [
+                          styles.menuMetaRow,
+                          (hovered || pressed) && styles.menuMetaRowActive,
+                        ]}
+                        onPress={() => {
+                          if (checkoutStatusQuery.isFetching) {
+                            return;
+                          }
+                          void handleCopyMeta("Branch", checkout.currentBranch);
+                        }}
+                      >
+                        <Text style={styles.menuMetaLabel} numberOfLines={1}>
+                          Branch
+                        </Text>
+                        <Text
+                          style={styles.menuMetaValue}
+                          numberOfLines={1}
+                          ellipsizeMode="middle"
+                        >
+                          {checkoutStatusQuery.isFetching ? "Fetching…" : checkout.currentBranch}
+                        </Text>
+                      </Pressable>
                     ) : null}
+
+                    <Pressable
+                      style={({ hovered, pressed }) => [
+                        styles.menuMetaRow,
+                        (hovered || pressed) && styles.menuMetaRowActive,
+                      ]}
+                      onPress={() => {
+                        void handleCopyMeta("Paseo ID", effectiveAgent.id);
+                      }}
+                    >
+                      <Text style={styles.menuMetaLabel} numberOfLines={1}>
+                        Paseo ID
+                      </Text>
+                      <Text
+                        style={styles.menuMetaValue}
+                        numberOfLines={1}
+                        ellipsizeMode="middle"
+                      >
+                        {effectiveAgent.id}
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={({ hovered, pressed }) => [
+                        styles.menuMetaRow,
+                        providerSessionId && (hovered || pressed) && styles.menuMetaRowActive,
+                      ]}
+                      disabled={!providerSessionId}
+                      onPress={() => {
+                        void handleCopyMeta(`${providerLabel} ID`, providerSessionId);
+                      }}
+                    >
+                      <Text style={styles.menuMetaLabel} numberOfLines={1}>
+                        {providerLabel} ID
+                      </Text>
+                      <Text
+                        style={[styles.menuMetaValue, !providerSessionId && styles.menuMetaValueError]}
+                        numberOfLines={1}
+                        ellipsizeMode="middle"
+                      >
+                        {providerSessionId ?? "Not available"}
+                      </Text>
+                    </Pressable>
                   </View>
 
                   <DropdownMenuSeparator />
 
-                  <DropdownMenuItem
-                    leading={<GitBranch size={16} color={theme.colors.foreground} />}
-                    onSelect={handleViewChanges}
-                  >
-                    View changes
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    leading={<Folder size={16} color={theme.colors.foreground} />}
-                    onSelect={handleBrowseFiles}
-                  >
-                    Browse files
-                  </DropdownMenuItem>
                   <DropdownMenuItem
                     leading={<RotateCcw size={16} color={theme.colors.foreground} />}
                     disabled={isInitializing}
@@ -754,16 +820,6 @@ function AgentScreenContent({
                     onSelect={handleRefreshAgent}
                   >
                     {isInitializing ? "Refreshing..." : "Refresh"}
-                  </DropdownMenuItem>
-
-                  <DropdownMenuSeparator />
-
-                  <DropdownMenuItem
-                    testID="agent-menu-details"
-                    leading={<Info size={16} color={theme.colors.foreground} />}
-                    onSelect={() => setDetailsOpen(true)}
-                  >
-                    Details
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -796,13 +852,6 @@ function AgentScreenContent({
 
         </View>
       </FileDropZone>
-
-      <AgentDetailsSheet
-        visible={detailsOpen}
-        onClose={() => setDetailsOpen(false)}
-        agentId={effectiveAgent.id}
-        persistenceSessionId={effectiveAgent.persistence?.sessionId ?? null}
-      />
 
         {/* Explorer Sidebar - Desktop: inline, Mobile: overlay */}
         {!isMobile && isExplorerOpen && resolvedAgentId && (
@@ -978,31 +1027,30 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
   },
   menuMetaContainer: {
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
   },
   menuMetaRow: {
-    gap: theme.spacing[1],
+    minHeight: 32,
+    paddingHorizontal: theme.spacing[3],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+  },
+  menuMetaRowActive: {
+    backgroundColor: theme.colors.surface2,
   },
   menuMetaLabel: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
+    flexShrink: 0,
   },
   menuMetaValue: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
-  },
-  menuMetaValueRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  menuMetaPendingText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
+    flex: 1,
+    minWidth: 0,
+    textAlign: "right",
   },
   menuMetaValueError: {
     color: theme.colors.destructive,
