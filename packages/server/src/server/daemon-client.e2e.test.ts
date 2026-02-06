@@ -92,23 +92,31 @@ describe("daemon client E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeAll(async () => {
+    const speechConfig = openaiApiKey
+      ? {
+          dictationSttProvider: "openai" as const,
+          voiceSttProvider: "openai" as const,
+          voiceTtsProvider: "openai" as const,
+        }
+      : {
+          dictationSttProvider: "local" as const,
+          voiceSttProvider: "local" as const,
+          voiceTtsProvider: "local" as const,
+          sherpaOnnx: {
+            modelsDir: sherpaModelsDir,
+            stt: {
+              preset: process.env.PASEO_SHERPA_STT_PRESET ?? "zipformer-bilingual-zh-en-2023-02-20",
+            },
+            tts: {
+              preset: process.env.PASEO_SHERPA_TTS_PRESET ?? "kitten-nano-en-v0_1-fp16",
+            },
+          },
+        };
+
     ctx = await createDaemonTestContext({
       dictationFinalTimeoutMs: 5000,
       ...(openaiApiKey ? { openai: { apiKey: openaiApiKey } } : {}),
-      speech: {
-        dictationSttProvider: "local",
-        voiceSttProvider: "local",
-        voiceTtsProvider: "local",
-        sherpaOnnx: {
-          modelsDir: sherpaModelsDir,
-          stt: {
-            preset: process.env.PASEO_SHERPA_STT_PRESET ?? "zipformer-bilingual-zh-en-2023-02-20",
-          },
-          tts: {
-            preset: process.env.PASEO_SHERPA_TTS_PRESET ?? "kitten-nano-en-v0_1-fp16",
-          },
-        },
-      },
+      speech: speechConfig,
     });
   }, 60000);
 
