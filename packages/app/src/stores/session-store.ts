@@ -138,6 +138,8 @@ export interface AgentFileExplorerState {
   history: string[];
   lastVisitedPath: string;
   selectedEntryPath: string | null;
+  selectedEntryLineStart: number | null;
+  selectedEntryLineEnd: number | null;
 }
 
 export interface DaemonConnectionSnapshot {

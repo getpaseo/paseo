@@ -12,6 +12,8 @@ function createExplorerState(): AgentFileExplorerState {
     history: ["."],
     lastVisitedPath: ".",
     selectedEntryPath: null,
+    selectedEntryLineStart: null,
+    selectedEntryLineEnd: null,
   };
 }
 
@@ -180,10 +182,17 @@ export function useFileExplorerActions(serverId: string) {
   );
 
   const selectExplorerEntry = useCallback(
-    (agentId: string, path: string | null) => {
+    (
+      agentId: string,
+      path: string | null,
+      lineStart?: number | null,
+      lineEnd?: number | null
+    ) => {
       updateExplorerState(agentId, (state) => ({
         ...state,
         selectedEntryPath: path,
+        selectedEntryLineStart: lineStart ?? null,
+        selectedEntryLineEnd: lineEnd ?? null,
       }));
     },
     [updateExplorerState]

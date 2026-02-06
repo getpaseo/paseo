@@ -149,7 +149,12 @@ export function AgentStreamView({
         setCurrentPath: false,
       });
       if (normalized.file) {
-        selectExplorerEntry(agentId, normalized.file);
+        selectExplorerEntry(
+          agentId,
+          normalized.file,
+          target.lineStart ?? null,
+          target.lineEnd ?? null
+        );
         requestFilePreview(agentId, normalized.file);
       }
 

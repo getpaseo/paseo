@@ -102,6 +102,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
   const isExplorerLoading = explorerState?.isLoading ?? false;
   const error = explorerState?.lastError ?? null;
   const selectedEntryPath = explorerState?.selectedEntryPath ?? null;
+  const selectedEntryLineStart = explorerState?.selectedEntryLineStart ?? null;
 
   const preview = selectedEntryPath ? files.get(selectedEntryPath) : null;
   const isPreviewLoading = Boolean(
@@ -576,7 +577,12 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
                 </View>
               </View>
 
-              <FilePreviewBody preview={preview} isLoading={isPreviewLoading} variant="inline" />
+              <FilePreviewBody
+                preview={preview}
+                isLoading={isPreviewLoading}
+                lineStart={selectedEntryLineStart}
+                variant="inline"
+              />
             </View>
           ) : null}
         </View>
@@ -663,7 +669,12 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
               <X size={20} color={theme.colors.foregroundMuted} />
             </Pressable>
           </View>
-          <FilePreviewBody preview={preview} isLoading={isPreviewLoading} variant="sheet" />
+          <FilePreviewBody
+            preview={preview}
+            isLoading={isPreviewLoading}
+            lineStart={selectedEntryLineStart}
+            variant="sheet"
+          />
         </BottomSheetModal>
       ) : null}
     </View>
@@ -673,12 +684,30 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
 function FilePreviewBody({
   preview,
   isLoading,
+  lineStart,
   variant,
 }: {
   preview: ExplorerFile | null;
   isLoading: boolean;
+  lineStart: number | null;
   variant: "inline" | "sheet";
 }) {
+  const CODE_LINE_HEIGHT = 20;
+  const scrollRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!preview || preview.kind !== "text") {
+      return;
+    }
+    if (!lineStart || lineStart <= 1) {
+      return;
+    }
+    const y = Math.max(0, (lineStart - 1) * CODE_LINE_HEIGHT);
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo?.({ y, animated: true });
+    });
+  }, [lineStart, preview?.kind, preview?.path]);
+
   if (isLoading && !preview) {
     return (
       <View style={styles.sheetCenterState}>
@@ -699,7 +728,7 @@ function FilePreviewBody({
   if (preview.kind === "text") {
     if (variant === "sheet") {
       return (
-        <BottomSheetScrollView style={styles.previewContent}>
+        <BottomSheetScrollView ref={scrollRef} style={styles.previewContent}>
           <ScrollView
             horizontal
             nestedScrollEnabled
@@ -712,7 +741,7 @@ function FilePreviewBody({
       );
     }
     return (
-      <RNScrollView style={styles.previewContent}>
+      <RNScrollView ref={scrollRef} style={styles.previewContent}>
         <RNScrollView
           horizontal
           nestedScrollEnabled
@@ -1180,6 +1209,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontFamily: Fonts.mono,
     fontSize: theme.fontSize.sm,
+    lineHeight: 20,
     flexShrink: 0,
   },
   previewImageScrollContent: {
