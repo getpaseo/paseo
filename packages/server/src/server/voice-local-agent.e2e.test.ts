@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
+import { readFile } from "node:fs/promises";
 
 import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/index.js";
 
@@ -104,9 +106,16 @@ function waitForSignal<T>(
           };
         });
 
-        ctx.client.sendUserMessage(
-          "Use the speak tool and say exactly: local voice agent path is working."
+        const fixturePath = path.resolve(
+          process.cwd(),
+          "..",
+          "app",
+          "e2e",
+          "fixtures",
+          "recording.wav"
         );
+        const wav = await readFile(fixturePath);
+        await ctx.client.sendVoiceAudioChunk(wav.toString("base64"), "audio/wav", true);
 
         const [{ chunkId }, assistantText] = await Promise.all([
           audioPromise,
@@ -114,7 +123,7 @@ function waitForSignal<T>(
         ]);
 
         expect(chunkId.length).toBeGreaterThan(0);
-        expect(assistantText.toLowerCase()).toContain("local voice agent path is working");
+        expect(assistantText.trim().length).toBeGreaterThan(0);
 
         const agents = await ctx.client.fetchAgents();
         expect(

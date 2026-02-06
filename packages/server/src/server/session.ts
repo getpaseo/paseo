@@ -297,7 +297,7 @@ function toAgentPersistenceHandle(
 }
 
 /**
- * Session represents a single client conversation session.
+ * Session represents a single connected client session.
  * It owns all state management, orchestration logic, and message processing.
  * Session has no knowledge of WebSockets - it only emits and receives messages.
  */
@@ -835,10 +835,6 @@ export class Session {
   public async handleMessage(msg: SessionInboundMessage): Promise<void> {
     try {
       switch (msg.type) {
-        case "user_text":
-          await this.handleUserText(msg.text);
-          break;
-
         case "voice_audio_chunk":
           await this.handleAudioChunk(msg);
           break;
@@ -4151,36 +4147,6 @@ export class Session {
   }
 
   /**
-   * Handle text message from user
-   */
-  private async handleUserText(text: string): Promise<void> {
-    // Abort any in-progress stream immediately
-    this.createAbortController();
-
-    // Wait for aborted stream to finish cleanup (save partial response)
-    if (this.currentStreamPromise) {
-      this.sessionLogger.debug("Waiting for aborted stream to finish cleanup");
-      await this.currentStreamPromise;
-      this.sessionLogger.debug("Aborted stream finished cleanup");
-    }
-
-    // Emit user message activity log
-    this.emit({
-      type: "activity_log",
-      payload: {
-        id: uuidv4(),
-        timestamp: new Date(),
-        type: "transcript",
-        content: text,
-      },
-    });
-
-    // Process through LLM (voice path is agent-backed only)
-    this.currentStreamPromise = this.processVoiceTurn(this.isVoiceMode, text);
-    await this.currentStreamPromise;
-  }
-
-  /**
    * Handle audio chunk for buffering and transcription
    */
   private async handleAudioChunk(
@@ -4445,7 +4411,7 @@ export class Session {
       // Set phase to LLM and process (TTS enabled in voice mode for voice agents)
       this.clearSpeechInProgress("transcription complete");
       this.setPhase("llm");
-      this.currentStreamPromise = this.processVoiceTurn(this.isVoiceMode, result.text);
+      this.currentStreamPromise = this.processVoiceTurn(result.text);
       await this.currentStreamPromise;
       this.setPhase("idle");
     } catch (error: any) {
@@ -4655,10 +4621,10 @@ export class Session {
   /**
    * Process user message through LLM with streaming and tool execution
    */
-  private async processVoiceTurn(enableTTS: boolean, latestUserText?: string): Promise<void> {
+  private async processVoiceTurn(latestUserText?: string): Promise<void> {
     try {
-      if (!enableTTS) {
-        this.sessionLogger.warn("Ignoring non-voice processVoiceTurn call; voice is agent-only");
+      if (!this.isVoiceMode) {
+        this.sessionLogger.warn("Ignoring processVoiceTurn call while voice mode is disabled");
         return;
       }
       const normalized = (latestUserText ?? "").trim();

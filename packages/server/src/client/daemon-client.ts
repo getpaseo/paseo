@@ -759,10 +759,6 @@ export class DaemonClient {
     }
   }
 
-  sendUserMessage(text: string): void {
-    this.sendSessionMessage({ type: "user_text", text });
-  }
-
   clearAgentAttention(agentId: string | string[]): void {
     this.sendSessionMessage({ type: "clear_agent_attention", agentId });
   }

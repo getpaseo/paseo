@@ -294,11 +294,6 @@ export type AgentStreamEventPayload = z.infer<
 // Session Inbound Messages (Session receives these)
 // ============================================================================
 
-export const UserTextMessageSchema = z.object({
-  type: z.literal("user_text"),
-  text: z.string(),
-});
-
 export const VoiceAudioChunkMessageSchema = z.object({
   type: z.literal("voice_audio_chunk"),
   audio: z.string(), // base64 encoded
@@ -859,7 +854,6 @@ export const KillTerminalRequestSchema = z.object({
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
-  UserTextMessageSchema,
   VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
@@ -1713,7 +1707,6 @@ export type InitializeAgentResponseMessage = z.infer<typeof InitializeAgentRespo
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 
 // Type exports for inbound message types
-export type UserTextMessage = z.infer<typeof UserTextMessageSchema>;
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;

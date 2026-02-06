@@ -586,8 +586,8 @@ describe("daemon client E2E", () => {
     120000
   );
 
-  test(
-    "does not process non-voice turns through the voice agent path",
+  speechTest(
+    "does not process non-voice audio through the voice agent path",
     async () => {
       await ctx.client.setVoiceMode(false);
 
@@ -624,7 +624,16 @@ describe("daemon client E2E", () => {
         };
       });
 
-      await ctx.client.sendUserMessage("Say 'hello' and nothing else");
+      const fixturePath = path.resolve(
+        process.cwd(),
+        "..",
+        "app",
+        "e2e",
+        "fixtures",
+        "recording.wav"
+      );
+      const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+      await ctx.client.sendVoiceAudioChunk(wav.toString("base64"), "audio/wav", true);
       await transcriptSeen;
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
