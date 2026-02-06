@@ -427,9 +427,68 @@ export async function createPaseoDaemon(
   const speechConfig = config.speech ?? null;
   const sherpaConfig = speechConfig?.sherpaOnnx ?? null;
 
-  const wantsLocalDictation = (speechConfig?.dictationSttProvider ?? "openai") === "local";
-  const wantsLocalVoiceStt = (speechConfig?.voiceSttProvider ?? "openai") === "local";
-  const wantsLocalVoiceTts = (speechConfig?.voiceTtsProvider ?? "openai") === "local";
+  const voiceSttProvider = speechConfig?.voiceSttProvider ?? "local";
+  const voiceTtsProvider = speechConfig?.voiceTtsProvider ?? "local";
+  const dictationSttProvider = speechConfig?.dictationSttProvider ?? "local";
+
+  const wantsLocalDictation = dictationSttProvider === "local";
+  const wantsLocalVoiceStt = voiceSttProvider === "local";
+  const wantsLocalVoiceTts = voiceTtsProvider === "local";
+
+  const openaiSttApiKey = config.openai?.stt?.apiKey ?? openaiApiKey;
+  const openaiTtsApiKey = config.openai?.tts?.apiKey ?? openaiApiKey;
+  const openaiDictationApiKey = openaiApiKey;
+
+  const missingOpenAiCredentialsFor: string[] = [];
+  if (voiceSttProvider === "openai" && !openaiSttApiKey) {
+    missingOpenAiCredentialsFor.push("voice.stt");
+  }
+  if (voiceTtsProvider === "openai" && !openaiTtsApiKey) {
+    missingOpenAiCredentialsFor.push("voice.tts");
+  }
+  if (dictationSttProvider === "openai" && !openaiDictationApiKey) {
+    missingOpenAiCredentialsFor.push("dictation.stt");
+  }
+
+  if (missingOpenAiCredentialsFor.length > 0) {
+    logger.error(
+      {
+        requestedProviders: {
+          dictationStt: dictationSttProvider,
+          voiceStt: voiceSttProvider,
+          voiceTts: voiceTtsProvider,
+        },
+        missingOpenAiCredentialsFor,
+      },
+      "Invalid speech configuration: OpenAI provider selected but credentials are missing"
+    );
+    throw new Error(
+      `Missing OpenAI credentials for configured speech features: ${missingOpenAiCredentialsFor.join(", ")}`
+    );
+  }
+
+  logger.info(
+    {
+      requestedProviders: {
+        dictationStt: dictationSttProvider,
+        voiceStt: voiceSttProvider,
+        voiceTts: voiceTtsProvider,
+      },
+      availability: {
+        openai: {
+          stt: Boolean(openaiSttApiKey),
+          tts: Boolean(openaiTtsApiKey),
+          dictationStt: Boolean(openaiDictationApiKey),
+        },
+        local: {
+          configured: Boolean(sherpaConfig),
+          modelsDir: sherpaConfig?.modelsDir ?? null,
+          autoDownload: sherpaConfig?.autoDownload ?? null,
+        },
+      },
+    },
+    "Speech provider reconciliation started"
+  );
 
   if ((wantsLocalDictation || wantsLocalVoiceStt || wantsLocalVoiceTts) && sherpaConfig) {
     const autoDownload = sherpaConfig.autoDownload ?? (process.env.VITEST ? false : true);
@@ -468,6 +527,14 @@ export async function createPaseoDaemon(
     }
 
     try {
+      logger.info(
+        {
+          modelsDir: sherpaConfig.modelsDir,
+          modelIds,
+          autoDownload,
+        },
+        "Ensuring local speech models"
+      );
       await ensureSherpaOnnxModels({
         modelsDir: sherpaConfig.modelsDir,
         modelIds,
@@ -564,7 +631,7 @@ export async function createPaseoDaemon(
   } else if (wantsLocalDictation || wantsLocalVoiceStt) {
     logger.warn(
       { configured: Boolean(sherpaConfig) },
-      "Sherpa STT selected but no sherpaOnnx config found; STT will be unavailable"
+      "Local STT selected but local provider config is missing; STT will be unavailable"
     );
   }
 
@@ -618,7 +685,7 @@ export async function createPaseoDaemon(
   } else if (wantsLocalVoiceTts) {
     logger.warn(
       { configured: Boolean(sherpaConfig) },
-      "Sherpa TTS selected but no sherpaOnnx config found; TTS will be unavailable"
+      "Local TTS selected but local provider config is missing; TTS will be unavailable"
     );
   }
 
@@ -645,31 +712,29 @@ export async function createPaseoDaemon(
     };
   }
 
-  const voiceSttProvider = speechConfig?.voiceSttProvider ?? "openai";
-  const voiceTtsProvider = speechConfig?.voiceTtsProvider ?? "openai";
-  const dictationSttProvider = speechConfig?.dictationSttProvider ?? "openai";
-
   const needsOpenAiStt = !sttService && voiceSttProvider === "openai";
   const needsOpenAiTts = !ttsService && voiceTtsProvider === "openai";
   const needsOpenAiDictation =
     dictationSttProvider === "openai" || (dictationSttProvider === "local" && !dictationSttService);
 
-  const fallbackOpenAiStt = !sttService && voiceSttProvider === "local" && Boolean(openaiApiKey);
-  const fallbackOpenAiTts = !ttsService && voiceTtsProvider === "local" && Boolean(openaiApiKey);
+  const fallbackOpenAiStt = !sttService && voiceSttProvider === "local" && Boolean(openaiSttApiKey);
+  const fallbackOpenAiTts = !ttsService && voiceTtsProvider === "local" && Boolean(openaiTtsApiKey);
 
-  if ((needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation || fallbackOpenAiStt || fallbackOpenAiTts) && openaiApiKey) {
-    logger.info("OpenAI client initialized");
+  if (
+    (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation || fallbackOpenAiStt || fallbackOpenAiTts) &&
+    (openaiSttApiKey || openaiTtsApiKey || openaiDictationApiKey)
+  ) {
+    logger.info("OpenAI speech provider initialized");
 
     if (fallbackOpenAiStt) {
-      logger.warn("Falling back to OpenAI STT because Sherpa STT is unavailable");
+      logger.warn("Falling back to OpenAI STT because local STT is unavailable");
     }
     if (needsOpenAiStt || fallbackOpenAiStt) {
-      const sttApiKey = config.openai?.stt?.apiKey ?? openaiApiKey;
-      if (sttApiKey) {
+      if (openaiSttApiKey) {
         const { apiKey: _sttApiKey, ...sttConfig } = config.openai?.stt ?? {};
         sttService = new OpenAISTT(
           {
-            apiKey: sttApiKey,
+            apiKey: openaiSttApiKey,
             ...sttConfig,
           },
           logger
@@ -678,15 +743,14 @@ export async function createPaseoDaemon(
     }
 
     if (fallbackOpenAiTts) {
-      logger.warn("Falling back to OpenAI TTS because Sherpa TTS is unavailable");
+      logger.warn("Falling back to OpenAI TTS because local TTS is unavailable");
     }
     if (needsOpenAiTts || fallbackOpenAiTts) {
-      const ttsApiKey = config.openai?.tts?.apiKey ?? openaiApiKey;
-      if (ttsApiKey) {
+      if (openaiTtsApiKey) {
         const { apiKey: _ttsApiKey, ...ttsConfig } = config.openai?.tts ?? {};
         ttsService = new OpenAITTS(
           {
-            apiKey: ttsApiKey,
+            apiKey: openaiTtsApiKey,
             voice: "alloy",
             model: "tts-1",
             responseFormat: "pcm",
@@ -698,7 +762,6 @@ export async function createPaseoDaemon(
     }
 
     if (needsOpenAiDictation) {
-      const dictationApiKey = config.openai?.apiKey ?? openaiApiKey;
       const transcriptionModel =
         process.env.OPENAI_REALTIME_TRANSCRIPTION_MODEL ?? "gpt-4o-transcribe";
 
@@ -706,7 +769,7 @@ export async function createPaseoDaemon(
         id: "openai",
         createSession: ({ logger: sessionLogger, language, prompt }) =>
           new OpenAIRealtimeTranscriptionSession({
-            apiKey: dictationApiKey,
+            apiKey: openaiDictationApiKey!,
             logger: sessionLogger,
             transcriptionModel,
             ...(language ? { language } : {}),
@@ -717,6 +780,39 @@ export async function createPaseoDaemon(
     }
   } else if (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation || fallbackOpenAiStt || fallbackOpenAiTts) {
     logger.warn("OPENAI_API_KEY not set - OpenAI STT/TTS/dictation fallback is unavailable");
+  }
+
+  const effectiveProviders = {
+    dictationStt: dictationSttService?.id ?? "unavailable",
+    voiceStt: sttService?.id ?? "unavailable",
+    voiceTts: !ttsService ? "unavailable" : ttsService === sherpaTts ? "local" : "openai",
+  };
+  const unavailableFeatures = [
+    !dictationSttService ? "dictation.stt" : null,
+    !sttService ? "voice.stt" : null,
+    !ttsService ? "voice.tts" : null,
+  ].filter((feature): feature is string => feature !== null);
+
+  if (unavailableFeatures.length > 0) {
+    logger.warn(
+      {
+        requestedProviders: {
+          dictationStt: dictationSttProvider,
+          voiceStt: voiceSttProvider,
+          voiceTts: voiceTtsProvider,
+        },
+        effectiveProviders,
+        unavailableFeatures,
+      },
+      "Speech provider reconciliation completed with unavailable features"
+    );
+  } else {
+    logger.info(
+      {
+        effectiveProviders,
+      },
+      "Speech provider reconciliation completed"
+    );
   }
 
   const wsServer = new VoiceAssistantWebSocketServer(
