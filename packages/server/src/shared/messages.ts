@@ -348,7 +348,7 @@ export const ArchiveAgentRequestMessageSchema = z.object({
 export const SetVoiceModeMessageSchema = z.object({
   type: z.literal("set_voice_mode"),
   enabled: z.boolean(),
-  voiceAgentId: z.string().optional(),
+  agentId: z.string().optional(),
   requestId: z.string().optional(),
 });
 
@@ -578,7 +578,7 @@ export const SetVoiceModeResponseMessageSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     enabled: z.boolean(),
-    voiceAgentId: z.string().nullable(),
+    agentId: z.string().nullable(),
     accepted: z.boolean(),
     error: z.string().nullable(),
   }),

@@ -407,22 +407,24 @@ export class AgentManager {
     );
   }
 
-  async refreshAgentFromPersistence(agentId: string): Promise<ManagedAgent> {
+  async refreshAgentFromPersistence(
+    agentId: string,
+    overrides?: Partial<AgentSessionConfig>
+  ): Promise<ManagedAgent> {
     const existing = this.requireAgent(agentId);
     const handle = existing.persistence;
-    if (!handle) {
-      throw new Error(
-        `Agent ${agentId} cannot be refreshed because it has no persistence handle`
-      );
-    }
-
-    const client = this.requireClient(handle.provider);
-    const overrides = {
+    const provider = handle?.provider ?? existing.provider;
+    const client = this.requireClient(provider);
+    const refreshConfig = {
       ...existing.config,
-      provider: handle.provider,
-    };
+      ...overrides,
+      provider,
+    } as AgentSessionConfig;
+    const normalizedConfig = await this.normalizeConfig(refreshConfig);
 
-    const session = await client.resumeSession(handle, overrides);
+    const session = handle
+      ? await client.resumeSession(handle, normalizedConfig)
+      : await client.createSession(normalizedConfig);
 
     // Remove the existing agent entry before swapping sessions
     this.agents.delete(agentId);
@@ -436,7 +438,12 @@ export class AgentManager {
     }
 
     // Preserve existing labels during refresh
-    return this.registerSession(session, overrides, agentId, { labels: existing.labels });
+    return this.registerSession(session, normalizedConfig, agentId, {
+      labels: existing.labels,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
+      lastUserMessageAt: existing.lastUserMessageAt,
+    });
   }
 
   async closeAgent(agentId: string): Promise<void> {

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useEffect } from "react";
-import { View, Pressable, Text, Platform, Alert, ActivityIndicator } from "react-native";
+import { View, Pressable, Text, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useAnimatedStyle,
@@ -9,21 +9,17 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { Plus, Settings, Users, AudioLines } from "lucide-react-native";
+import { Plus, Settings, Users } from "lucide-react-native";
 import { router } from "expo-router";
 import { usePanelStore } from "@/stores/panel-store";
 import { GroupedAgentList } from "./grouped-agent-list";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { useTauriDragHandlers, useTrafficLightPadding } from "@/utils/tauri-window";
-import { useVoice } from "@/contexts/voice-context";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import { VoicePanel } from "./voice-panel";
 import { useSidebarAgentSections } from "@/hooks/use-sidebar-agent-sections";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 import { deriveSidebarShortcutAgentKeys } from "@/utils/sidebar-shortcuts";
-import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 
 const DESKTOP_SIDEBAR_WIDTH = 320;
 const SIDEBAR_AGENT_LIMIT = 50; // temporary for screenshots
@@ -56,9 +52,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   } = useSidebarAnimation();
   const trafficLightPadding = useTrafficLightPadding();
   const dragHandlers = useTauriDragHandlers();
-  const { connectionStates } = useDaemonConnections();
-  const { isVoiceMode, isVoiceSwitching, startVoice, stopVoice } = useVoice();
-  const [showVoiceHostPicker, setShowVoiceHostPicker] = useState(false);
 
   // Track user-initiated refresh to avoid showing spinner on background revalidation
   const [isManualRefresh, setIsManualRefresh] = useState(false);
@@ -141,65 +134,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     closeToAgent();
     router.push("/agents");
   }, [backdropOpacity, closeToAgent, isMobile, translateX, windowWidth]);
-
-  const voiceEligibleHosts = useMemo(() => {
-    return Array.from(connectionStates.values()).filter((entry) => entry.status === "online");
-  }, [connectionStates]);
-  const hasAnyConfiguredHosts = connectionStates.size > 0;
-
-  const handleToggleVoice = useCallback(() => {
-    if (isVoiceSwitching) {
-      return;
-    }
-    if (isVoiceMode) {
-      void stopVoice().catch((error) => {
-        console.error("[SlidingSidebar] Failed to stop voice", error);
-        Alert.alert("Voice failed", "Unable to stop voice mode.");
-      });
-      return;
-    }
-
-    if (voiceEligibleHosts.length === 0) {
-      if (!hasAnyConfiguredHosts) {
-        Alert.alert(
-          "No hosts available",
-          "Add a host in Settings before starting Voice mode.",
-          [{ text: "Open Settings", onPress: () => router.push("/settings") }, { text: "OK" }]
-        );
-        return;
-      }
-      Alert.alert(
-        "Hosts reconnecting",
-        "Every host is offline right now. Paseo reconnects automatically—try Voice mode again once one comes online."
-      );
-      return;
-    }
-
-    if (voiceEligibleHosts.length === 1) {
-      void startVoice(voiceEligibleHosts[0].daemon.serverId).catch((error) => {
-        console.error("[SlidingSidebar] Failed to start voice", error);
-        Alert.alert("Voice failed", "Unable to start Voice mode for this host.");
-      });
-      return;
-    }
-
-    setShowVoiceHostPicker(true);
-  }, [hasAnyConfiguredHosts, isVoiceMode, isVoiceSwitching, startVoice, stopVoice, voiceEligibleHosts]);
-
-  const handleSelectVoiceHost = useCallback(
-    (serverId: string) => {
-      setShowVoiceHostPicker(false);
-      void startVoice(serverId).catch((error) => {
-        console.error("[SlidingSidebar] Failed to start voice", error);
-        Alert.alert("Voice failed", "Unable to start Voice mode for this host.");
-      });
-    },
-    [startVoice]
-  );
-
-  const handleDismissVoiceHostPicker = useCallback(() => {
-    setShowVoiceHostPicker(false);
-  }, []);
 
   // Close gesture (swipe left to close when sidebar is open)
   // Only activates on leftward swipe, fails on rightward or vertical movement
@@ -301,8 +235,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                 parentGestureRef={closeGestureRef}
               />
 
-              {isVoiceMode ? <VoicePanel /> : null}
-
               {/* Footer */}
               <View style={styles.sidebarFooter}>
                 <Pressable
@@ -319,43 +251,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                   )}
                 </Pressable>
                 <View style={styles.footerIconRow}>
-                <Pressable
-                  style={styles.footerIconButton}
-                  testID="sidebar-voice"
-                  nativeID="sidebar-voice"
-                  collapsable={false}
-                  accessible
-                  accessibilityLabel="Voice"
-                  accessibilityRole="button"
-                  disabled={isVoiceSwitching}
-                  onPress={handleToggleVoice}
-                >
-                  {({ hovered }) => (
-                    isVoiceSwitching ? (
-                      <ActivityIndicator
-                        size="small"
-                        color={
-                          isVoiceMode
-                            ? theme.colors.foreground
-                            : hovered
-                              ? theme.colors.foreground
-                              : theme.colors.foregroundMuted
-                        }
-                      />
-                    ) : (
-                      <AudioLines
-                        size={20}
-                        color={
-                          isVoiceMode
-                            ? theme.colors.foreground
-                            : hovered
-                              ? theme.colors.foreground
-                              : theme.colors.foregroundMuted
-                        }
-                      />
-                    )
-                  )}
-                  </Pressable>
                 <Pressable
                   style={styles.footerIconButton}
                   testID="sidebar-settings"
@@ -375,32 +270,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
             </View>
           </Animated.View>
         </GestureDetector>
-
-        <AdaptiveModalSheet
-          title="Choose a host"
-          visible={showVoiceHostPicker}
-          onClose={handleDismissVoiceHostPicker}
-          snapPoints={["45%", "70%"]}
-          testID="voice-host-picker"
-        >
-          <View style={styles.hostPickerList}>
-            {voiceEligibleHosts.map((entry) => (
-              <Pressable
-                key={entry.daemon.serverId}
-                style={styles.hostPickerOption}
-                onPress={() => handleSelectVoiceHost(entry.daemon.serverId)}
-              >
-                <Text style={styles.hostPickerOptionText}>{entry.daemon.label}</Text>
-              </Pressable>
-            ))}
-            <Pressable
-              style={styles.hostPickerCancel}
-              onPress={handleDismissVoiceHostPicker}
-            >
-              <Text style={styles.hostPickerCancelText}>Cancel</Text>
-            </Pressable>
-          </View>
-        </AdaptiveModalSheet>
       </View>
     );
   }
@@ -439,8 +308,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
         selectedAgentId={selectedAgentId}
       />
 
-      {isVoiceMode ? <VoicePanel /> : null}
-
       {/* Footer */}
       <View style={styles.sidebarFooter}>
         <Pressable
@@ -459,43 +326,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
         <View style={styles.footerIconRow}>
           <Pressable
             style={styles.footerIconButton}
-            testID="sidebar-voice"
-            nativeID="sidebar-voice"
-            collapsable={false}
-            accessible
-            accessibilityLabel="Voice"
-            accessibilityRole="button"
-            disabled={isVoiceSwitching}
-            onPress={handleToggleVoice}
-          >
-            {({ hovered }) => (
-              isVoiceSwitching ? (
-                <ActivityIndicator
-                  size="small"
-                  color={
-                    isVoiceMode
-                      ? theme.colors.foreground
-                      : hovered
-                        ? theme.colors.foreground
-                        : theme.colors.foregroundMuted
-                  }
-                />
-              ) : (
-                <AudioLines
-                  size={20}
-                  color={
-                    isVoiceMode
-                      ? theme.colors.foreground
-                      : hovered
-                        ? theme.colors.foreground
-                        : theme.colors.foregroundMuted
-                  }
-                />
-              )
-            )}
-          </Pressable>
-          <Pressable
-            style={styles.footerIconButton}
             testID="sidebar-settings"
             nativeID="sidebar-settings"
             collapsable={false}
@@ -510,32 +340,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
           </Pressable>
         </View>
       </View>
-
-      <AdaptiveModalSheet
-        title="Choose a host"
-        visible={showVoiceHostPicker}
-        onClose={handleDismissVoiceHostPicker}
-        snapPoints={["45%", "70%"]}
-        testID="voice-host-picker"
-      >
-        <View style={styles.hostPickerList}>
-          {voiceEligibleHosts.map((entry) => (
-            <Pressable
-              key={entry.daemon.serverId}
-              style={styles.hostPickerOption}
-              onPress={() => handleSelectVoiceHost(entry.daemon.serverId)}
-            >
-              <Text style={styles.hostPickerOptionText}>{entry.daemon.label}</Text>
-            </Pressable>
-          ))}
-          <Pressable
-            style={styles.hostPickerCancel}
-            onPress={handleDismissVoiceHostPicker}
-          >
-            <Text style={styles.hostPickerCancelText}>Cancel</Text>
-          </Pressable>
-        </View>
-      </AdaptiveModalSheet>
     </View>
   );
 }

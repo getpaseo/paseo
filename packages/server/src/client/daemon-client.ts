@@ -1291,13 +1291,13 @@ export class DaemonClient {
 
   async setVoiceMode(
     enabled: boolean,
-    voiceAgentId?: string
+    agentId?: string
   ): Promise<SetVoiceModePayload> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_voice_mode",
       enabled,
-      ...(voiceAgentId ? { voiceAgentId } : {}),
+      ...(agentId ? { agentId } : {}),
       requestId,
     });
     return this.sendRequest({

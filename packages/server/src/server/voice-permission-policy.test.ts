@@ -21,13 +21,13 @@ describe("isVoicePermissionAllowed", () => {
     expect(result).toBe(true);
   });
 
-  test("allows explicit MCP/paseo tool names", () => {
+  test("denies explicit MCP/paseo tool names", () => {
     expect(
       isVoicePermissionAllowed(buildRequest({ name: "mcp__paseo__create_agent" }))
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isVoicePermissionAllowed(buildRequest({ name: "paseo_create_agent" }))
-    ).toBe(true);
+    ).toBe(false);
   });
 
   test("denies non-tool permission kinds", () => {
@@ -37,12 +37,12 @@ describe("isVoicePermissionAllowed", () => {
     expect(result).toBe(false);
   });
 
-  test("allows codextool only when metadata references MCP/paseo", () => {
+  test("allows codextool only when metadata references speak", () => {
     const allowed = isVoicePermissionAllowed(
       buildRequest({
         name: "codextool",
         metadata: {
-          questions: [{ question: "Allow codextool to call mcp paseo create_agent?" }],
+          questions: [{ question: "Allow codextool to call speak for user feedback?" }],
         },
       })
     );

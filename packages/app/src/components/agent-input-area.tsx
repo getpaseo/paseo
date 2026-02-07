@@ -4,10 +4,11 @@ import {
   Text,
   ActivityIndicator,
   Platform,
+  Alert,
 } from "react-native";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ArrowUp, Square, Pencil } from "lucide-react-native";
+import { ArrowUp, Square, Pencil, AudioLines } from "lucide-react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -30,6 +31,7 @@ import { useAgentCommandsQuery } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 import { focusWithRetries } from "@/utils/web-focus";
+import { useVoiceOptional } from "@/contexts/voice-context";
 
 type QueuedMessage = {
   id: string;
@@ -76,6 +78,7 @@ export function AgentInputArea({
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
   );
+  const voice = useVoiceOptional();
   const isConnected = client?.isConnected ?? false;
 
   const agent = useSessionStore((state) =>
@@ -411,6 +414,29 @@ export function AgentInputArea({
     messageInputRef.current?.focus();
   }
 
+  const isVoiceModeForAgent =
+    voice?.isVoiceModeForAgent(serverId, agentId) ?? false;
+
+  const handleToggleRealtimeVoice = useCallback(() => {
+    if (!voice || !isConnected) {
+      return;
+    }
+    if (voice.isVoiceSwitching) {
+      return;
+    }
+    if (voice.isVoiceModeForAgent(serverId, agentId)) {
+      void voice.stopVoice().catch((error) => {
+        console.error("[AgentInputArea] Failed to stop voice mode", error);
+        Alert.alert("Voice failed", "Unable to stop realtime voice mode.");
+      });
+      return;
+    }
+    void voice.startVoice(serverId, agentId).catch((error) => {
+      console.error("[AgentInputArea] Failed to start voice mode", error);
+      Alert.alert("Voice failed", "Unable to start realtime voice mode.");
+    });
+  }, [agentId, isConnected, serverId, voice]);
+
   function handleEditQueuedMessage(id: string) {
     const item = queuedMessages.find((q) => q.id === id);
     if (!item) return;
@@ -494,7 +520,7 @@ export function AgentInputArea({
     ]
   );
 
-  const rightContent = isAgentRunning ? (
+  const cancelButton = isAgentRunning ? (
     <Pressable
       onPress={handleCancelAgent}
       disabled={!isConnected || isCancellingAgent}
@@ -514,6 +540,35 @@ export function AgentInputArea({
       )}
     </Pressable>
   ) : null;
+
+  const rightContent = (
+    <View style={styles.rightControls}>
+      <Pressable
+        onPress={handleToggleRealtimeVoice}
+        disabled={!isConnected || voice?.isVoiceSwitching}
+        accessibilityLabel={
+          isVoiceModeForAgent ? "Disable realtime voice mode" : "Enable realtime voice mode"
+        }
+        accessibilityRole="button"
+        style={[
+          styles.realtimeVoiceButton as any,
+          isVoiceModeForAgent ? (styles.realtimeVoiceButtonActive as any) : undefined,
+          (!isConnected || voice?.isVoiceSwitching
+            ? styles.buttonDisabled
+            : undefined) as any,
+        ]}
+      >
+        {voice?.isVoiceSwitching ? (
+          <ActivityIndicator size="small" color="white" />
+        ) : isVoiceModeForAgent ? (
+          <Square size={16} color="white" fill="white" />
+        ) : (
+          <AudioLines size={18} color={theme.colors.foreground} />
+        )}
+      </Pressable>
+      {cancelButton}
+    </View>
+  );
 
   const leftContent = <AgentStatusBar agentId={agentId} serverId={serverId} />;
 
@@ -588,6 +643,8 @@ export function AgentInputArea({
             isScreenFocused={isScreenFocused}
             leftContent={leftContent}
             rightContent={rightContent}
+            voiceServerId={serverId}
+            voiceAgentId={agentId}
             isAgentRunning={isAgentRunning}
             onQueue={handleQueue}
             onKeyPress={handleCommandKeyPress}
@@ -630,6 +687,25 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     backgroundColor: theme.colors.palette.red[600],
     alignItems: "center",
     justifyContent: "center",
+  },
+  rightControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  realtimeVoiceButton: {
+    width: 34,
+    height: 34,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface0,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  realtimeVoiceButtonActive: {
+    backgroundColor: theme.colors.palette.green[600],
+    borderColor: theme.colors.palette.green[800],
   },
   buttonDisabled: {
     opacity: 0.5,

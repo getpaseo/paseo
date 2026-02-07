@@ -18,10 +18,12 @@ interface VoiceContextValue {
   isDetecting: boolean;
   isSpeaking: boolean;
   segmentDuration: number;
-  startVoice: (serverId: string) => Promise<void>;
+  startVoice: (serverId: string, agentId: string) => Promise<void>;
   stopVoice: () => Promise<void>;
+  isVoiceModeForAgent: (serverId: string, agentId: string) => boolean;
   toggleMute: () => void;
   activeServerId: string | null;
+  activeAgentId: string | null;
 }
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
@@ -45,6 +47,7 @@ interface VoiceProviderProps {
 export function VoiceProvider({ children }: VoiceProviderProps) {
   const getSession = useSessionStore((state) => state.getSession);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const activeSession = useSessionStore(
     useCallback(
       (state: ReturnType<typeof useSessionStore.getState>) => {
@@ -151,7 +154,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
       voiceTransportReadyRef.current = false;
     }
 
-    if (!isVoiceMode || !activeServerId || !client) {
+    if (!isVoiceMode || !activeServerId || !activeAgentId || !client) {
       wasVoiceSocketConnectedRef.current = connected;
       if (!isVoiceMode) {
         lastVoiceModeSyncedClientRef.current = null;
@@ -167,7 +170,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
         voiceResyncInFlightRef.current = true;
         voiceTransportReadyRef.current = false;
         setIsVoiceSwitching(true);
-        void client.setVoiceMode(true).then(
+        void client.setVoiceMode(true, activeAgentId).then(
           () => {
             console.log("[Voice] Re-synced voice mode after reconnect");
             lastVoiceModeSyncedClientRef.current = client;
@@ -184,7 +187,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     }
 
     wasVoiceSocketConnectedRef.current = connected;
-  }, [activeServerId, activeSession?.client, activeSession?.connection.isConnected, isVoiceMode]);
+  }, [activeAgentId, activeServerId, activeSession?.client, activeSession?.connection.isConnected, isVoiceMode]);
 
   const isPlayingAudio = activeSession?.isPlayingAudio ?? false;
 
@@ -201,7 +204,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   }, [isPlayingAudio]);
 
   const startVoice = useCallback(
-    async (serverId: string) => {
+    async (serverId: string, agentId: string) => {
       const session = getSession(serverId) ?? null;
       if (!session) {
         throw new Error(`Host ${serverId} is not connected`);
@@ -210,13 +213,23 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
       setIsVoiceSwitching(true);
       voiceTransportReadyRef.current = false;
       try {
+        const previousSession = realtimeSessionRef.current;
+        if (
+          isVoiceMode &&
+          previousSession?.client &&
+          (activeServerId !== serverId || activeAgentId !== agentId)
+        ) {
+          await previousSession.client.setVoiceMode(false);
+        }
+
         realtimeSessionRef.current = session;
         setActiveServerId(serverId);
+        setActiveAgentId(agentId);
         await activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch((error) => {
           console.warn("[Voice] Failed to activate keep-awake:", error);
         });
         if (session?.client) {
-          await session.client.setVoiceMode(true);
+          await session.client.setVoiceMode(true, agentId);
         } else {
           console.warn("[Voice] setVoiceMode skipped: daemon unavailable");
         }
@@ -230,13 +243,14 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
         console.error("[Voice] Failed to start:", error);
         await realtimeAudio.stop().catch(() => undefined);
         setActiveServerId((current) => (current === serverId ? null : current));
+        setActiveAgentId((current) => (current === agentId ? null : current));
         await deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
         throw error;
       } finally {
         setIsVoiceSwitching(false);
       }
     },
-    [getSession, realtimeAudio]
+    [activeAgentId, activeServerId, getSession, isVoiceMode, realtimeAudio]
   );
 
   const stopVoice = useCallback(async () => {
@@ -254,6 +268,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
       await realtimeAudio.stop();
       setIsVoiceMode(false);
       setActiveServerId(null);
+      setActiveAgentId(null);
       await deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
       console.log("[Voice] Mode disabled");
     } catch (error: any) {
@@ -265,6 +280,12 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     }
   }, [realtimeAudio]);
 
+  const isVoiceModeForAgent = useCallback(
+    (serverId: string, agentId: string) =>
+      isVoiceMode && activeServerId === serverId && activeAgentId === agentId,
+    [activeAgentId, activeServerId, isVoiceMode]
+  );
+
   const value: VoiceContextValue = {
     isVoiceMode,
     isVoiceSwitching,
@@ -275,8 +296,10 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     segmentDuration: realtimeAudio.segmentDuration,
     startVoice,
     stopVoice,
+    isVoiceModeForAgent,
     toggleMute: realtimeAudio.toggleMute,
     activeServerId,
+    activeAgentId,
   };
 
   return (

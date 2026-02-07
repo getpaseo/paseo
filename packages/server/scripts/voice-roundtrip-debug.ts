@@ -1,4 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import pino from "pino";
 
 import { createTestPaseoDaemon } from "../src/server/test-utils/paseo-daemon.js";
@@ -48,9 +50,20 @@ async function main(): Promise<void> {
     await client.connect();
     client.subscribeAgentUpdates({ subscriptionId: "voice-debug" });
 
-    const voiceAgentId = randomUUID();
+    const voiceCwd = mkdtempSync(path.join(tmpdir(), "voice-roundtrip-debug-"));
+    const voiceAgent = await client.createAgent({
+      config: {
+        provider: "claude",
+        cwd: voiceCwd,
+        modeId: "bypassPermissions",
+      },
+    });
+    const voiceAgentId = voiceAgent.id;
     const mode = await client.setVoiceMode(true, voiceAgentId);
     console.log("set_voice_mode_response", mode);
+    if (!mode.accepted) {
+      throw new Error(`setVoiceMode rejected: ${mode.error ?? "unknown error"}`);
+    }
 
     const offTranscript = client.on("transcription_result", (msg) => {
       if (msg.type !== "transcription_result") return;
@@ -149,6 +162,7 @@ async function main(): Promise<void> {
 
     console.log("success", { audioChunkCount });
     await client.setVoiceMode(false);
+    rmSync(voiceCwd, { recursive: true, force: true });
 
     offTranscript();
     offActivity();

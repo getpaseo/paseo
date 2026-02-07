@@ -61,6 +61,8 @@ export interface MessageInputProps {
   leftContent?: React.ReactNode;
   /** Content to render on the right side after voice button (e.g., realtime button, cancel button) */
   rightContent?: React.ReactNode;
+  voiceServerId?: string;
+  voiceAgentId?: string;
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
   isAgentRunning?: boolean;
   /** Callback for queue button when agent is running */
@@ -117,6 +119,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       isScreenFocused = true,
       leftContent,
       rightContent,
+      voiceServerId,
+      voiceAgentId,
       isAgentRunning = false,
       onQueue,
       onKeyPress: onKeyPressCallback,
@@ -310,15 +314,20 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   }));
 
   const handleVoicePress = useCallback(async () => {
+    const isRealtimeVoiceForCurrentAgent =
+      voice &&
+      !!voiceServerId &&
+      !!voiceAgentId &&
+      voice.isVoiceModeForAgent(voiceServerId, voiceAgentId);
     if (isDictating) {
       await cancelDictation();
     } else {
-      if (voice?.isVoiceMode) {
+      if (isRealtimeVoiceForCurrentAgent) {
         await voice.stopVoice();
       }
       await startDictation();
     }
-  }, [isDictating, cancelDictation, startDictation, voice]);
+  }, [isDictating, cancelDictation, startDictation, voice, voiceAgentId, voiceServerId]);
 
   const handleCancelRecording = useCallback(async () => {
     await cancelDictation();
@@ -626,6 +635,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 <Mic size={20} color={theme.colors.foreground} />
               )}
             </Pressable>
+            {rightContent}
             {shouldShowSendButton && (
               <Pressable
                 onPress={handleSendMessage}
@@ -647,7 +657,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 <ArrowUp size={20} color="white" />
               </Pressable>
             )}
-            {!shouldShowSendButton && rightContent}
           </View>
         </View>
       </Animated.View>

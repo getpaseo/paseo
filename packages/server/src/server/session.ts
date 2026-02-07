@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import { mkdir, stat } from "fs/promises";
+import { stat } from "fs/promises";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { join, resolve, sep } from "path";
@@ -58,6 +58,7 @@ import type {
   AgentPermissionResponse,
   AgentPromptContentBlock,
   AgentPromptInput,
+  McpServerConfig,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentProvider,
@@ -191,7 +192,18 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS
 );
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
-const VoiceAgentIdSchema = z.string().uuid();
+const AgentIdSchema = z.string().uuid();
+const VOICE_MCP_SERVER_NAME = "paseo_voice";
+const VOICE_MODE_ENFORCED_MODE_ID: Partial<Record<AgentProvider, string>> = {
+  claude: "default",
+  codex: "read-only",
+};
+
+type VoiceModeBaseConfig = {
+  systemPrompt?: string;
+  mcpServers?: Record<string, McpServerConfig>;
+  modeId?: string;
+};
 
 interface AudioBufferState {
   chunks: Buffer[];
@@ -214,10 +226,6 @@ export type SessionOptions = {
   tts: TextToSpeechProvider | null;
   terminalManager: TerminalManager | null;
   voice?: {
-    voiceLlmProvider?: AgentProvider | null;
-    voiceLlmModeId?: string | null;
-    voiceLlmProviderExplicit?: boolean;
-    voiceLlmModel?: string | null;
     voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
   };
   voiceBridge?: {
@@ -376,10 +384,6 @@ export class Session {
   } | null = null;
   private readonly terminalManager: TerminalManager | null;
   private terminalSubscriptions: Map<string, () => void> = new Map();
-  private readonly voiceLlmProvider: AgentProvider | null;
-  private readonly voiceLlmModeId: string | null;
-  private readonly voiceLlmProviderExplicit: boolean;
-  private readonly voiceLlmModel: string | null;
   private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null;
   private readonly localSpeechModelsDir: string;
   private readonly defaultLocalSpeechModelIds: LocalSpeechModelId[];
@@ -395,7 +399,8 @@ export class Session {
   private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
   private readonly ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
   private readonly removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
-  private voiceAssistantAgentId: string | null = null;
+  private voiceModeAgentId: string | null = null;
+  private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
   constructor(options: SessionOptions) {
     const {
@@ -425,10 +430,6 @@ export class Session {
     this.agentStorage = agentStorage;
     this.createAgentMcpTransport = createAgentMcpTransport;
     this.terminalManager = terminalManager;
-    this.voiceLlmProvider = voice?.voiceLlmProvider ?? null;
-    this.voiceLlmModeId = voice?.voiceLlmModeId ?? null;
-    this.voiceLlmProviderExplicit = voice?.voiceLlmProviderExplicit ?? false;
-    this.voiceLlmModel = voice?.voiceLlmModel ?? null;
     this.voiceAgentMcpStdio = voice?.voiceAgentMcpStdio ?? null;
     const configuredModelsDir = dictation?.localModels?.modelsDir?.trim();
     this.localSpeechModelsDir =
@@ -896,7 +897,7 @@ export class Session {
           break;
 
         case "set_voice_mode":
-          await this.handleSetVoiceMode(msg.enabled, msg.voiceAgentId, msg.requestId);
+          await this.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
           break;
 
         case "send_agent_message_request":
@@ -1276,108 +1277,216 @@ export class Session {
    */
   private async handleSetVoiceMode(
     enabled: boolean,
-    voiceAgentId?: string,
+    agentId?: string,
     requestId?: string
   ): Promise<void> {
-    if (enabled) {
-      let normalizedVoiceAgentId: string | null = null;
-      if (voiceAgentId && voiceAgentId.trim().length > 0) {
-        normalizedVoiceAgentId = this.parseVoiceAgentId(
-          voiceAgentId,
+    try {
+      if (enabled) {
+        const normalizedAgentId = this.parseVoiceTargetAgentId(
+          agentId ?? "",
           "set_voice_mode"
         );
-      } else {
-        normalizedVoiceAgentId = await this.findExistingVoiceAssistantAgentId();
+
+        if (
+          this.isVoiceMode &&
+          this.voiceModeAgentId &&
+          this.voiceModeAgentId !== normalizedAgentId
+        ) {
+          await this.disableVoiceModeForActiveAgent(true);
+        }
+
+        if (!this.isVoiceMode || this.voiceModeAgentId !== normalizedAgentId) {
+          const refreshedAgentId = await this.enableVoiceModeForAgent(normalizedAgentId);
+          this.voiceModeAgentId = refreshedAgentId;
+        }
+
+        this.isVoiceMode = true;
+        this.sessionLogger.info(
+          {
+            agentId: this.voiceModeAgentId,
+          },
+          "Voice mode enabled for existing agent"
+        );
+        if (requestId) {
+          this.emit({
+            type: "set_voice_mode_response",
+            payload: {
+              requestId,
+              enabled: true,
+              agentId: this.voiceModeAgentId,
+              accepted: true,
+              error: null,
+            },
+          });
+        }
+        return;
       }
 
-      this.isVoiceMode = true;
-      this.voiceAssistantAgentId = normalizedVoiceAgentId;
-      this.sessionLogger.info(
+      await this.disableVoiceModeForActiveAgent(true);
+      this.isVoiceMode = false;
+      this.sessionLogger.info("Voice mode disabled");
+      if (requestId) {
+        this.emit({
+          type: "set_voice_mode_response",
+          payload: {
+            requestId,
+            enabled: false,
+            agentId: null,
+            accepted: true,
+            error: null,
+          },
+        });
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to set voice mode";
+      this.sessionLogger.error(
         {
-          voiceAssistantAgentId: this.voiceAssistantAgentId,
-          resumedVoiceAgent: Boolean(normalizedVoiceAgentId),
-          providedVoiceAgentId: Boolean(voiceAgentId?.trim()),
+          err: error,
+          enabled,
+          requestedAgentId: agentId ?? null,
         },
-        "Voice mode enabled (agent-backed)"
+        "set_voice_mode failed"
       );
       if (requestId) {
         this.emit({
           type: "set_voice_mode_response",
           payload: {
             requestId,
-            enabled: true,
-            voiceAgentId: this.voiceAssistantAgentId,
-            accepted: true,
-            error: null,
+            enabled: this.isVoiceMode,
+            agentId: this.voiceModeAgentId,
+            accepted: false,
+            error: errorMessage,
           },
         });
+        return;
       }
-      return;
-    }
-
-    this.isVoiceMode = false;
-    const disabledVoiceAgentId = this.voiceAssistantAgentId;
-    if (disabledVoiceAgentId && this.removeVoiceMcpSocketForAgent) {
-      try {
-        await this.removeVoiceMcpSocketForAgent(disabledVoiceAgentId);
-      } catch (error) {
-        this.sessionLogger.warn(
-          { err: error, voiceAssistantAgentId: disabledVoiceAgentId },
-          "Failed to remove voice MCP socket bridge on disable"
-        );
-      }
-    }
-    this.sessionLogger.info(
-      { voiceAssistantAgentId: this.voiceAssistantAgentId },
-      "Voice mode disabled (agent-backed)"
-    );
-    if (requestId) {
-      this.emit({
-        type: "set_voice_mode_response",
-        payload: {
-          requestId,
-          enabled: false,
-          voiceAgentId: this.voiceAssistantAgentId,
-          accepted: true,
-          error: null,
-        },
-      });
+      throw error;
     }
   }
 
-  private parseVoiceAgentId(rawId: string, source: string): string {
-    const parsed = VoiceAgentIdSchema.safeParse(rawId.trim());
+  private parseVoiceTargetAgentId(rawId: string, source: string): string {
+    const parsed = AgentIdSchema.safeParse(rawId.trim());
     if (!parsed.success) {
-      throw new Error(`${source}: voiceAgentId must be a UUID`);
+      throw new Error(`${source}: agentId must be a UUID`);
     }
     return parsed.data;
   }
 
-  private async findExistingVoiceAssistantAgentId(): Promise<string | null> {
-    const scopedCandidates = await this.listAgentPayloads({
-      labels: {
-        surface: "voice",
-        voiceClientId: this.clientId,
-      },
-    });
-    const fallbackCandidates = await this.listAgentPayloads({
-      labels: { surface: "voice" },
-    });
-    const available = [
-      ...scopedCandidates,
-      ...fallbackCandidates.filter(
-        (candidate) => !scopedCandidates.some((scoped) => scoped.id === candidate.id)
-      ),
-    ].filter((agent) => !agent.archivedAt && agent.labels?.ui !== "false");
-    if (available.length === 0) {
-      return null;
+  private cloneMcpServers(
+    servers: Record<string, McpServerConfig> | undefined
+  ): Record<string, McpServerConfig> | undefined {
+    if (!servers) {
+      return undefined;
     }
-    available.sort((left, right) => {
-      const leftTime = Date.parse(left.updatedAt);
-      const rightTime = Date.parse(right.updatedAt);
-      return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+    return JSON.parse(JSON.stringify(servers)) as Record<string, McpServerConfig>;
+  }
+
+  private buildVoiceModeSystemPrompt(existing?: string): string {
+    const chunks = [existing?.trim(), VOICE_AGENT_SYSTEM_INSTRUCTION].filter(
+      (value): value is string => Boolean(value && value.length > 0)
+    );
+    return chunks.join("\n\n");
+  }
+
+  private buildVoiceModeMcpServers(
+    existing: Record<string, McpServerConfig> | undefined,
+    socketPath: string
+  ): Record<string, McpServerConfig> {
+    const mcpStdio = this.voiceAgentMcpStdio;
+    if (!mcpStdio) {
+      throw new Error("Voice MCP stdio bridge is not configured");
+    }
+    return {
+      ...(existing ?? {}),
+      [VOICE_MCP_SERVER_NAME]: buildVoiceAgentMcpServerConfig({
+        command: mcpStdio.command,
+        baseArgs: mcpStdio.baseArgs,
+        socketPath,
+        env: mcpStdio.env,
+      }),
+    };
+  }
+
+  private getVoiceModeEnforcedModeId(provider: AgentProvider): string | undefined {
+    return VOICE_MODE_ENFORCED_MODE_ID[provider];
+  }
+
+  private async enableVoiceModeForAgent(agentId: string): Promise<string> {
+    const ensureVoiceSocket = this.ensureVoiceMcpSocketForAgent;
+    if (!ensureVoiceSocket) {
+      throw new Error("Voice MCP socket bridge is not configured");
+    }
+
+    const existing = await this.ensureAgentLoaded(agentId);
+
+    const socketPath = await ensureVoiceSocket(agentId);
+    this.registerVoiceBridgeForAgent(agentId);
+
+    const baseConfig: VoiceModeBaseConfig = {
+      systemPrompt: existing.config.systemPrompt,
+      mcpServers: this.cloneMcpServers(existing.config.mcpServers),
+      modeId: existing.config.modeId,
+    };
+    this.voiceModeBaseConfig = baseConfig;
+    const voiceModeId = this.getVoiceModeEnforcedModeId(existing.config.provider);
+    const refreshOverrides: Partial<AgentSessionConfig> = {
+      systemPrompt: this.buildVoiceModeSystemPrompt(baseConfig.systemPrompt),
+      mcpServers: this.buildVoiceModeMcpServers(baseConfig.mcpServers, socketPath),
+      ...(voiceModeId ? { modeId: voiceModeId } : {}),
+    };
+
+    try {
+      const refreshed = await this.agentManager.refreshAgentFromPersistence(
+        agentId,
+        refreshOverrides
+      );
+      return refreshed.id;
+    } catch (error) {
+      this.unregisterVoiceSpeakHandler?.(agentId);
+      this.unregisterVoiceCallerContext?.(agentId);
+      await this.removeVoiceMcpSocketForAgent?.(agentId).catch(() => undefined);
+      this.voiceModeBaseConfig = null;
+      throw error;
+    }
+  }
+
+  private async disableVoiceModeForActiveAgent(
+    restoreAgentConfig: boolean
+  ): Promise<void> {
+    const agentId = this.voiceModeAgentId;
+    if (!agentId) {
+      this.voiceModeBaseConfig = null;
+      return;
+    }
+
+    this.unregisterVoiceSpeakHandler?.(agentId);
+    this.unregisterVoiceCallerContext?.(agentId);
+    await this.removeVoiceMcpSocketForAgent?.(agentId).catch((error) => {
+      this.sessionLogger.warn(
+        { err: error, agentId },
+        "Failed to remove voice MCP socket bridge on disable"
+      );
     });
-    return available[0]?.id ?? null;
+
+    if (restoreAgentConfig && this.voiceModeBaseConfig) {
+      const baseConfig = this.voiceModeBaseConfig;
+      try {
+        await this.agentManager.refreshAgentFromPersistence(agentId, {
+          systemPrompt: baseConfig.systemPrompt,
+          mcpServers: this.cloneMcpServers(baseConfig.mcpServers),
+          modeId: baseConfig.modeId,
+        });
+      } catch (error) {
+        this.sessionLogger.warn(
+          { err: error, agentId },
+          "Failed to restore agent config while disabling voice mode"
+        );
+      }
+    }
+
+    this.voiceModeBaseConfig = null;
+    this.voiceModeAgentId = null;
   }
 
   /**
@@ -4501,101 +4610,11 @@ export class Session {
     }
   }
 
-  private async ensureVoiceAssistantAgent(): Promise<string> {
-    const ensureVoiceSocket = this.ensureVoiceMcpSocketForAgent;
-    if (!ensureVoiceSocket) {
-      throw new Error("Voice MCP socket bridge is not configured");
-    }
-
-    if (this.voiceAssistantAgentId) {
-      const existing = this.agentManager.getAgent(this.voiceAssistantAgentId);
-      if (existing) {
-        await ensureVoiceSocket(existing.id);
-        this.registerVoiceBridgeForAgent(existing.id);
-        return existing.id;
-      }
-      try {
-        const hydrated = await this.ensureAgentLoaded(this.voiceAssistantAgentId);
-        await ensureVoiceSocket(hydrated.id);
-        this.voiceAssistantAgentId = hydrated.id;
-        this.registerVoiceBridgeForAgent(hydrated.id);
-        return hydrated.id;
-      } catch (error) {
-        this.sessionLogger.debug(
-          { err: error, voiceAssistantAgentId: this.voiceAssistantAgentId },
-          "Voice assistant agent not found in active/persisted state; creating new session"
-        );
-      }
-    }
-
-    const provider = this.voiceLlmProvider;
-    if (!provider) {
-      throw new Error("Voice LLM provider is not configured");
-    }
-    const voiceAgentId = this.voiceAssistantAgentId ?? uuidv4();
-    const cwd = join(this.paseoHome, "voice-agent-workspace");
-    await mkdir(cwd, { recursive: true });
-
-    const mcpStdio = this.voiceAgentMcpStdio;
-    if (!mcpStdio) {
-      throw new Error("Voice MCP stdio bridge is not configured");
-    }
-    const socketPath = await ensureVoiceSocket(voiceAgentId);
-
-    const model = this.voiceLlmModel?.trim() || undefined;
-    const config: AgentSessionConfig = {
-      provider,
-      cwd,
-      systemPrompt: VOICE_AGENT_SYSTEM_INSTRUCTION,
-      modeId: this.voiceLlmModeId ?? "default",
-      ...(model ? { model } : {}),
-      mcpServers: {
-        paseo: buildVoiceAgentMcpServerConfig({
-          command: mcpStdio.command,
-          baseArgs: mcpStdio.baseArgs,
-          socketPath,
-          env: mcpStdio.env,
-        }),
-      },
-    };
-
-    const created = await this.agentManager.createAgent(config, voiceAgentId, {
-      labels: {
-        surface: "voice",
-        ui: "true",
-        voiceClientId: this.clientId,
-      },
-    });
-    this.voiceAssistantAgentId = created.id;
-
-    try {
-      this.registerVoiceBridgeForAgent(created.id);
-    } catch (error) {
-      this.unregisterVoiceSpeakHandler?.(created.id);
-      this.unregisterVoiceCallerContext?.(created.id);
-      await this.removeVoiceMcpSocketForAgent?.(created.id).catch(() => undefined);
-      await this.agentManager.closeAgent(created.id).catch(() => undefined);
-      this.voiceAssistantAgentId = null;
-      throw error;
-    }
-
-    this.sessionLogger.info(
-      {
-        voiceAssistantAgentId: created.id,
-        provider,
-        model: model ?? null,
-        providerExplicit: this.voiceLlmProviderExplicit,
-      },
-      "Voice assistant agent initialized"
-    );
-    return created.id;
-  }
-
   private registerVoiceBridgeForAgent(agentId: string): void {
     this.registerVoiceSpeakHandler?.(agentId, async ({ text, signal }) => {
       this.sessionLogger.info(
         {
-          voiceAssistantAgentId: agentId,
+          agentId,
           textLength: text.length,
           preview: text.slice(0, 160),
         },
@@ -4609,7 +4628,7 @@ export class Session {
         true
       );
       this.sessionLogger.info(
-        { voiceAssistantAgentId: agentId, textLength: text.length },
+        { agentId, textLength: text.length },
         "Voice speak tool call finished playback"
       );
       this.emit({
@@ -4625,7 +4644,7 @@ export class Session {
 
     this.registerVoiceCallerContext?.(agentId, {
       childAgentDefaultLabels: { ui: "true" },
-      allowCustomCwd: true,
+      allowCustomCwd: false,
       enableVoiceTools: true,
     });
   }
@@ -4643,14 +4662,16 @@ export class Session {
     return isVoicePermissionAllowed(request);
   }
 
-  private async processWithVoiceAgent(userText: string): Promise<void> {
-    const agentId = await this.ensureVoiceAssistantAgent();
-
+  private async processWithVoiceAgent(
+    agentId: string,
+    userText: string
+  ): Promise<void> {
+    await this.ensureAgentLoaded(agentId);
     await this.interruptAgentIfRunning(agentId);
 
     this.sessionLogger.info(
       {
-        voiceAssistantAgentId: agentId,
+        agentId,
         userTextLength: userText.length,
         userTextPreview: userText.slice(0, 160),
       },
@@ -4670,7 +4691,7 @@ export class Session {
         if (event.item.type === "tool_call" && typeof event.item.name === "string") {
           this.sessionLogger.info(
             {
-              voiceAssistantAgentId: agentId,
+              agentId,
               toolName: event.item.name,
               callId: event.item.callId,
             },
@@ -4689,11 +4710,12 @@ export class Session {
         } else {
           await this.agentManager.respondToPermission(agentId, event.request.id, {
             behavior: "deny",
-            message: "Voice assistant policy only allows MCP paseo tools.",
+            message: "Voice assistant policy only allows the speak tool.",
             interrupt: true,
           });
-          throw new Error(
-            `Voice assistant denied non-MCP tool request: ${event.request.name}`
+          this.sessionLogger.warn(
+            { agentId, requestName: event.request.name, requestId: event.request.id },
+            "Voice assistant denied non-speak permission request"
           );
         }
       }
@@ -4701,12 +4723,12 @@ export class Session {
 
     if (!sawSpeakToolCall) {
       this.sessionLogger.warn(
-        { voiceAssistantAgentId: agentId },
+        { agentId },
         "Voice agent turn completed without speak tool call; no audio playback emitted"
       );
     } else {
       this.sessionLogger.info(
-        { voiceAssistantAgentId: agentId },
+        { agentId },
         "Voice agent turn included speak tool call"
       );
     }
@@ -4721,11 +4743,18 @@ export class Session {
         this.sessionLogger.warn("Ignoring processVoiceTurn call while voice mode is disabled");
         return;
       }
+      const agentId = this.voiceModeAgentId;
+      if (!agentId) {
+        this.sessionLogger.warn(
+          "Ignoring processVoiceTurn call because no agent is currently voice-enabled"
+        );
+        return;
+      }
       const normalized = (latestUserText ?? "").trim();
       if (!normalized) {
         return;
       }
-      await this.processWithVoiceAgent(normalized);
+      await this.processWithVoiceAgent(agentId, normalized);
     } finally {
       this.turnIndex++;
       this.currentStreamPromise = null;
@@ -4980,21 +5009,8 @@ export class Session {
       this.agentTools = null;
     }
 
-    if (this.voiceAssistantAgentId) {
-      try {
-        await this.agentManager.closeAgent(this.voiceAssistantAgentId);
-      } catch (error) {
-        this.sessionLogger.warn(
-          { err: error, voiceAssistantAgentId: this.voiceAssistantAgentId },
-          "Failed to close voice assistant agent"
-        );
-      } finally {
-        this.unregisterVoiceSpeakHandler?.(this.voiceAssistantAgentId);
-        this.unregisterVoiceCallerContext?.(this.voiceAssistantAgentId);
-        await this.removeVoiceMcpSocketForAgent?.(this.voiceAssistantAgentId).catch(() => undefined);
-        this.voiceAssistantAgentId = null;
-      }
-    }
+    await this.disableVoiceModeForActiveAgent(true);
+    this.isVoiceMode = false;
 
     // Unsubscribe from all terminals
     for (const unsubscribe of this.terminalSubscriptions.values()) {

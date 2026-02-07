@@ -1,12 +1,15 @@
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
-import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import pino from "pino";
 
 import {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "./test-utils/index.js";
+import { getFullAccessConfig, type AgentProvider } from "./daemon-e2e/agent-configs.js";
 import { OpenAITTS } from "./speech/providers/openai/tts.js";
 import { OpenAISTT } from "./speech/providers/openai/stt.js";
 import { STTManager } from "./agent/stt-manager.js";
@@ -88,8 +91,6 @@ describe("voice roundtrip e2e", () => {
           voiceTts: { provider: "openai", explicit: true },
         },
       },
-      voiceLlmProvider: "claude",
-      voiceLlmProviderExplicit: true,
     });
   }, 60000);
 
@@ -97,9 +98,10 @@ describe("voice roundtrip e2e", () => {
     await ctx.cleanup();
   }, 60000);
 
-  speechTest(
-    "full roundtrip: voice input audio -> voice agent -> output audio -> transcribed output",
-    async () => {
+  for (const targetProvider of ["claude", "codex"] as const satisfies AgentProvider[]) {
+    speechTest(
+      `full roundtrip (${targetProvider}): voice input audio -> voice agent -> output audio -> transcribed output`,
+      async () => {
       const logger = pino({ level: "silent" });
       const ttsProvider = new OpenAITTS(
         {
@@ -118,7 +120,20 @@ describe("voice roundtrip e2e", () => {
       );
       const sttOutput = new STTManager("voice-roundtrip-e2e", logger, sttProvider);
 
-      const voiceAgentId = randomUUID();
+      const voiceCwd = mkdtempSync(
+        path.join(tmpdir(), `voice-roundtrip-agent-${targetProvider}-`)
+      );
+      const voiceAgent = await withTimeout(
+        "createVoiceTargetAgent",
+        30000,
+        ctx.client.createAgent({
+          config: {
+            ...getFullAccessConfig(targetProvider),
+            cwd: voiceCwd,
+          },
+        })
+      );
+      const voiceAgentId = voiceAgent.id;
       const voiceMode = await withTimeout(
         "setVoiceMode",
         15000,
@@ -260,6 +275,8 @@ describe("voice roundtrip e2e", () => {
         } finally {
           offStream();
           offErrors();
+          await ctx.client.setVoiceMode(false).catch(() => undefined);
+          rmSync(voiceCwd, { recursive: true, force: true });
         }
       })();
 
@@ -281,7 +298,8 @@ describe("voice roundtrip e2e", () => {
 
       expect(normalized.length).toBeGreaterThan(0);
       expect(normalized).toMatch(/round|trip|successful/);
-    },
-    180000
-  );
+      },
+      180000
+    );
+  }
 });

@@ -142,23 +142,29 @@ describe("daemon client E2E", () => {
     const agents = await ctx.client.fetchAgents();
     expect(Array.isArray(agents)).toBe(true);
 
-    const voiceAgents = await ctx.client.fetchAgents({
-      filter: { labels: { surface: "voice" } },
+    const cwd = tmpCwd();
+    const created = await ctx.client.createAgent({
+      config: {
+        ...getFullAccessConfig("codex"),
+        cwd,
+      },
     });
-    expect(Array.isArray(voiceAgents)).toBe(true);
 
-    await expect(ctx.client.setVoiceMode(true)).resolves.toMatchObject({
+    await expect(ctx.client.setVoiceMode(true, created.id)).resolves.toMatchObject({
       enabled: true,
+      agentId: created.id,
       accepted: true,
       error: null,
     });
     await expect(ctx.client.setVoiceMode(false)).resolves.toMatchObject({
       enabled: false,
+      agentId: null,
       accepted: true,
       error: null,
     });
 
     await ctx.client.deleteAgent(randomUUID());
+    rmSync(cwd, { recursive: true, force: true });
   }, 30000);
 
   test("emits server_info on websocket connect", async () => {
@@ -655,7 +661,14 @@ describe("daemon client E2E", () => {
   speechTest(
     "voice mode buffers audio until isLast and emits transcription_result",
     async () => {
-      await ctx.client.setVoiceMode(true, randomUUID());
+      const voiceCwd = tmpCwd();
+      const voiceAgent = await ctx.client.createAgent({
+        config: {
+          ...getFullAccessConfig("codex"),
+          cwd: voiceCwd,
+        },
+      });
+      await ctx.client.setVoiceMode(true, voiceAgent.id);
 
       const transcription = waitForSignal(30_000, (resolve) => {
         const unsubscribe = ctx.client.on("transcription_result", (message) => {
@@ -751,6 +764,7 @@ describe("daemon client E2E", () => {
       } finally {
         await Promise.allSettled([transcription, errorSignal]);
         await ctx.client.setVoiceMode(false);
+        rmSync(voiceCwd, { recursive: true, force: true });
       }
     },
     90_000

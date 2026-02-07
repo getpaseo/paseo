@@ -83,10 +83,6 @@ export class VoiceAssistantWebSocketServer {
     };
   } | null;
   private readonly voice: {
-    voiceLlmProvider?: AgentProvider | null;
-    voiceLlmModeId?: string | null;
-    voiceLlmProviderExplicit?: boolean;
-    voiceLlmModel?: string | null;
     voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
     ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
     removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
@@ -110,10 +106,6 @@ export class VoiceAssistantWebSocketServer {
     speech?: { stt: SpeechToTextProvider | null; tts: TextToSpeechProvider | null },
     terminalManager?: TerminalManager | null,
     voice?: {
-      voiceLlmProvider?: AgentProvider | null;
-      voiceLlmModeId?: string | null;
-      voiceLlmProviderExplicit?: boolean;
-      voiceLlmModel?: string | null;
       voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
       ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
       removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;

@@ -57,6 +57,7 @@ export interface AgentMcpServerOptions {
     callerAgentId: string
   ) => VoiceCallerContext | null;
   enableVoiceTools?: boolean;
+  voiceOnly?: boolean;
   logger: Logger;
 }
 
@@ -393,7 +394,7 @@ export async function createAgentMcpServer(
     initialMode: topLevelInputSchema.initialMode.optional(),
   });
 
-  if (options.enableVoiceTools || callerContext?.enableVoiceTools) {
+  if (options.voiceOnly || options.enableVoiceTools || callerContext?.enableVoiceTools) {
     server.registerTool(
       "speak",
       {
@@ -430,6 +431,10 @@ export async function createAgentMcpServer(
         };
       }
     );
+  }
+
+  if (options.voiceOnly) {
+    return server;
   }
 
   server.registerTool(

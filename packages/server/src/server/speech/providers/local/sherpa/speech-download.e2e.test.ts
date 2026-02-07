@@ -1,8 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import pino from "pino";
 
 import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./model-downloader.js";
@@ -191,7 +190,17 @@ describe("speech models (download E2E)", () => {
           };
         });
 
-        await ctx.client.setVoiceMode(true, randomUUID());
+        const voiceCwd = mkdtempSync(path.join(tmpdir(), "speech-download-voice-agent-"));
+        const voiceAgent = await ctx.client.createAgent({
+          config: {
+            provider: "codex",
+            cwd: voiceCwd,
+            modeId: "full-access",
+            model: "gpt-5.1-codex-mini",
+            thinkingOptionId: "low",
+          },
+        });
+        await ctx.client.setVoiceMode(true, voiceAgent.id);
         for (let offset = 0; offset < pcm16.length; offset += chunkBytes) {
           const chunk = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
           const isLast = offset + chunkBytes >= pcm16.length;
@@ -202,6 +211,7 @@ describe("speech models (download E2E)", () => {
           expect(voiceText).toContain("voice note");
         }
         await ctx.client.setVoiceMode(false);
+        rmSync(voiceCwd, { recursive: true, force: true });
 
         // Streaming TTS: generate locally from downloaded model and validate chunking.
         const ttsText = "This is a voice note.";

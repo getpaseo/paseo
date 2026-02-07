@@ -102,7 +102,7 @@ export function AgentStreamView({
   const flatListRef = useRef<FlatList<StreamItem>>(null);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { isVoiceMode } = useVoice();
+  const { isVoiceModeForAgent } = useVoice();
   const [isNearBottom, setIsNearBottom] = useState(true);
   const hasScrolledInitially = useRef(false);
   const hasAutoScrolledOnce = useRef(false);
@@ -114,6 +114,7 @@ export function AgentStreamView({
 
   // Get serverId (fallback to agent's serverId if not provided)
   const resolvedServerId = serverId ?? agent.serverId ?? "";
+  const isVoiceMode = isVoiceModeForAgent(resolvedServerId, agentId);
 
   const client = useSessionStore(
     (state) => state.sessions[resolvedServerId]?.client ?? null

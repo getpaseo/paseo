@@ -64,7 +64,6 @@ import type {
   AgentClient,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
-import { AGENT_PROVIDER_DEFINITIONS } from "./agent/provider-manifest.js";
 import { acquirePidLock, releasePidLock } from "./pid-lock.js";
 import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
 import {
@@ -278,98 +277,8 @@ export async function createPaseoDaemon(
   logger.info(
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`
   );
-
-  const requestedVoiceLlmProvider = config.voiceLlmProvider ?? null;
-  const voiceLlmProviderExplicit = config.voiceLlmProviderExplicit ?? false;
-  const voiceEnabledProviders = AGENT_PROVIDER_DEFINITIONS
-    .filter((definition) => definition.voice?.enabled)
-    .map((definition) => definition.id as AgentProvider);
   logger.info(
-    {
-      requestedVoiceLlmProvider,
-      voiceLlmProviderExplicit,
-      voiceEnabledProviders,
-    },
-    "Voice LLM provider reconciliation started"
-  );
-
-  const providerClients = createAllClients(logger);
-  Object.assign(providerClients, config.agentClients);
-  const voiceLlmAvailability = Object.fromEntries(
-    voiceEnabledProviders.map((provider) => [provider, false])
-  ) as Record<AgentProvider, boolean>;
-  for (const provider of voiceEnabledProviders) {
-    try {
-      voiceLlmAvailability[provider] = await providerClients[provider].isAvailable();
-    } catch (error) {
-      logger.warn({ err: error, provider }, "Voice LLM provider availability check failed");
-      voiceLlmAvailability[provider] = false;
-    }
-  }
-
-  let resolvedVoiceLlmProvider: AgentProvider | null = null;
-  if (requestedVoiceLlmProvider) {
-    if (!voiceEnabledProviders.includes(requestedVoiceLlmProvider)) {
-      logger.error(
-        { provider: requestedVoiceLlmProvider, voiceEnabledProviders },
-        "Configured voice LLM provider does not support voice mode"
-      );
-      throw new Error(
-        `Configured voice LLM provider '${requestedVoiceLlmProvider}' does not support voice mode`
-      );
-    }
-    if (!voiceLlmAvailability[requestedVoiceLlmProvider]) {
-      logger.error(
-        { provider: requestedVoiceLlmProvider, voiceLlmAvailability },
-        "Configured voice LLM provider is unavailable"
-      );
-      throw new Error(`Configured voice LLM provider '${requestedVoiceLlmProvider}' is unavailable`);
-    }
-    resolvedVoiceLlmProvider = requestedVoiceLlmProvider;
-  } else {
-    resolvedVoiceLlmProvider =
-      voiceEnabledProviders.find((provider) => voiceLlmAvailability[provider]) ?? null;
-  }
-
-  let resolvedVoiceLlmModeId: string | null = null;
-  let resolvedVoiceLlmModel: string | null = null;
-
-  if (!resolvedVoiceLlmProvider) {
-    if (voiceLlmProviderExplicit) {
-      logger.error(
-        { requestedVoiceLlmProvider, voiceLlmAvailability },
-        "No voice LLM provider available"
-      );
-      throw new Error("No voice LLM provider available");
-    }
-    logger.warn(
-      { requestedVoiceLlmProvider, voiceLlmAvailability },
-      "No default voice LLM provider available; voice mode will be disabled until a provider is configured"
-    );
-  } else {
-    const resolvedVoiceProviderDefinition = AGENT_PROVIDER_DEFINITIONS.find(
-      (definition) => definition.id === resolvedVoiceLlmProvider
-    );
-    if (!resolvedVoiceProviderDefinition?.voice?.enabled) {
-      throw new Error(
-        `Provider '${resolvedVoiceLlmProvider}' is missing voice metadata in agent registry`
-      );
-    }
-    resolvedVoiceLlmModeId = resolvedVoiceProviderDefinition.voice.defaultModeId;
-    resolvedVoiceLlmModel =
-      config.voiceLlmModel ?? resolvedVoiceProviderDefinition.voice.defaultModel ?? null;
-  }
-
-  logger.info(
-    {
-      requestedVoiceLlmProvider,
-      voiceLlmProviderExplicit,
-      resolvedVoiceLlmProvider,
-      resolvedVoiceLlmModeId,
-      resolvedVoiceLlmModel,
-      voiceLlmAvailability,
-    },
-    "Voice LLM provider reconciliation completed"
+    "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)"
   );
   let wsServer: VoiceAssistantWebSocketServer | null = null;
   let voiceMcpBridgeManager: VoiceMcpSocketBridgeManager | null = null;
@@ -523,7 +432,7 @@ export async function createPaseoDaemon(
         agentStorage,
         paseoHome: config.paseoHome,
         callerAgentId,
-        enableVoiceTools: false,
+        voiceOnly: true,
         resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
         resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
         logger,
@@ -555,10 +464,6 @@ export async function createPaseoDaemon(
     { stt: sttService, tts: ttsService },
     terminalManager,
     {
-      voiceLlmProvider: resolvedVoiceLlmProvider,
-      voiceLlmModeId: resolvedVoiceLlmModeId,
-      voiceLlmProviderExplicit,
-      voiceLlmModel: resolvedVoiceLlmModel,
       voiceAgentMcpStdio: {
         command: voiceMcpBridgeCommand.command,
         baseArgs: [...voiceMcpBridgeCommand.baseArgs],

@@ -1,7 +1,9 @@
 import type { AgentPermissionRequest } from "./agent/agent-sdk-types.js";
 
-const ALLOWED_TOKEN_SET = ["mcp", "paseo", "speak"];
+const ALLOWED_TOKEN_SET = ["speak"];
 const DENIED_TOKEN_SET = [
+  "mcp",
+  "paseo",
   "bash",
   "shell",
   "terminal",
@@ -27,10 +29,7 @@ function stringifyMetadata(metadata: unknown): string {
   }
 }
 
-/**
- * Voice assistant policy: allow only MCP/paseo/speak tool requests.
- * All non-tool permission requests are denied.
- */
+/** Voice assistant policy: only allow the speak tool. */
 export function isVoicePermissionAllowed(request: AgentPermissionRequest): boolean {
   if (request.kind !== "tool") {
     return false;
@@ -42,9 +41,6 @@ export function isVoicePermissionAllowed(request: AgentPermissionRequest): boole
   }
 
   if (normalizedName === "speak") {
-    return true;
-  }
-  if (normalizedName.includes("mcp") || normalizedName.includes("paseo")) {
     return true;
   }
 
