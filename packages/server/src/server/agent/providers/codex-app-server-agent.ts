@@ -1269,7 +1269,13 @@ class CodexAppServerAgentSession implements AgentSession {
     const settings: Record<string, unknown> = {};
     if (match.model) settings.model = match.model;
     if (match.reasoning_effort) settings.reasoning_effort = match.reasoning_effort;
-    if (match.developer_instructions) settings.developer_instructions = match.developer_instructions;
+    const developerInstructions = [
+      match.developer_instructions?.trim(),
+      this.config.systemPrompt?.trim(),
+    ]
+      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+      .join("\n\n");
+    if (developerInstructions) settings.developer_instructions = developerInstructions;
     if (this.config.model) settings.model = this.config.model;
     const thinkingOptionId = this.config.thinkingOptionId;
     if (thinkingOptionId) settings.reasoning_effort = thinkingOptionId;
@@ -1714,6 +1720,9 @@ class CodexAppServerAgentSession implements AgentSession {
       cwd: this.config.cwd ?? null,
       approvalPolicy,
       sandbox,
+      ...(this.config.systemPrompt?.trim()
+        ? { developerInstructions: this.config.systemPrompt.trim() }
+        : {}),
       ...(Object.keys(innerConfig).length > 0 ? { config: innerConfig } : {}),
     })) as CodexThreadStartResponse;
     const threadId = response?.thread?.id;

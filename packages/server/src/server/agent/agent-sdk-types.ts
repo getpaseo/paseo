@@ -236,6 +236,11 @@ export type PersistedAgentDescriptor = {
 export type AgentSessionConfig = {
   provider: AgentProvider;
   cwd: string;
+  /**
+   * Provider-agnostic system/developer instruction string.
+   * Mapped by each provider to its native instruction field.
+   */
+  systemPrompt?: string;
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;

@@ -4546,6 +4546,7 @@ export class Session {
     const config: AgentSessionConfig = {
       provider,
       cwd,
+      systemPrompt: VOICE_AGENT_SYSTEM_INSTRUCTION,
       modeId: this.voiceLlmModeId ?? "default",
       ...(model ? { model } : {}),
       mcpServers: {
@@ -4632,8 +4633,6 @@ export class Session {
   private buildVoiceAgentPrompt(userText: string): string {
     const transcription = escapeXmlText(userText.trim());
     return [
-      VOICE_AGENT_SYSTEM_INSTRUCTION,
-      "",
       "<voice_transcription>",
       transcription,
       "</voice_transcription>",

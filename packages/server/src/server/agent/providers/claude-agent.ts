@@ -896,6 +896,13 @@ class ClaudeAgentSession implements AgentSession {
       // For "on" we omit maxThinkingTokens (SDK default max).
     }
 
+    const appendedSystemPrompt = [
+      getOrchestratorModeInstructions(),
+      this.config.systemPrompt?.trim(),
+    ]
+      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+      .join("\n\n");
+
     const base: ClaudeOptions = {
       cwd: this.config.cwd,
       includePartialMessages: true,
@@ -904,11 +911,11 @@ class ClaudeAgentSession implements AgentSession {
       canUseTool: this.handlePermissionRequest,
       ...(this.claudePath ? { pathToClaudeCodeExecutable: this.claudePath } : {}),
       // Use Claude Code preset system prompt and load CLAUDE.md files
-      // Append orchestrator mode instructions for agents
+      // Append provider-agnostic system prompt and orchestrator instructions for agents.
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
-        append: [getOrchestratorModeInstructions()].filter(Boolean).join("\n"),
+        append: appendedSystemPrompt,
       },
       settingSources: ["user", "project"],
       stderr: (data: string) => {

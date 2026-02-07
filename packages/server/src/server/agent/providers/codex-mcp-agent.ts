@@ -2907,7 +2907,10 @@ function buildCodexMcpConfig(
   }
 
 
-  const combinedDeveloperInstructions = [developerInstructions]
+  const combinedDeveloperInstructions = [
+    developerInstructions,
+    config.systemPrompt?.trim(),
+  ]
     .filter(Boolean)
     .join("\n\n");
 
