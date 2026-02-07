@@ -1052,8 +1052,11 @@ function PermissionRequestCard({
     isPending: isResponding,
   } = permissionMutation;
 
+  const [respondingAction, setRespondingAction] = useState<"accept" | "deny" | null>(null);
+
   useEffect(() => {
     resetPermissionMutation();
+    setRespondingAction(null);
   }, [permission.request.id, resetPermissionMutation]);
   const handleResponse = useCallback(
     (response: AgentPermissionResponse) => {
@@ -1086,7 +1089,7 @@ function PermissionRequestCard({
       style={[
         permissionStyles.container,
         {
-          backgroundColor: theme.colors.surface2,
+          backgroundColor: theme.colors.surface1,
           borderColor: theme.colors.border,
         },
       ]}
@@ -1120,19 +1123,9 @@ function PermissionRequestCard({
               Proposed plan
             </Text>
           ) : null}
-          <View
-            style={[
-              permissionStyles.contentCard,
-              {
-                backgroundColor: theme.colors.surface0,
-                borderColor: theme.colors.border,
-              },
-            ]}
-          >
-            <Markdown style={markdownStyles} rules={markdownRules}>
-              {planMarkdown}
-            </Markdown>
-          </View>
+          <Markdown style={markdownStyles} rules={markdownRules}>
+            {planMarkdown}
+          </Markdown>
         </View>
       ) : null}
 
@@ -1144,7 +1137,7 @@ function PermissionRequestCard({
         testID="permission-request-question"
         style={[
           permissionStyles.question,
-          { color: theme.colors.mutedForeground },
+          { color: theme.colors.foregroundMuted },
         ]}
       >
         How would you like to proceed?
@@ -1158,29 +1151,26 @@ function PermissionRequestCard({
       >
         <Pressable
           testID="permission-request-deny"
-          style={(state) => {
-            const hovered = Boolean((state as any).hovered);
-            const pressed = Boolean(state.pressed);
-            return [
-              permissionStyles.optionButton,
-              {
-                backgroundColor: hovered
-                  ? theme.colors.surface1
-                  : theme.colors.surface2,
-                borderColor: theme.colors.borderAccent,
-              },
-              pressed ? permissionStyles.optionButtonPressed : null,
-            ];
-          }}
-          onPress={() =>
+          style={({ pressed, hovered = false }) => [
+            permissionStyles.optionButton,
+            {
+              backgroundColor: hovered
+                ? theme.colors.surface2
+                : theme.colors.surface1,
+              borderColor: theme.colors.borderAccent,
+            },
+            pressed ? permissionStyles.optionButtonPressed : null,
+          ]}
+          onPress={() => {
+            setRespondingAction("deny");
             handleResponse({
               behavior: "deny",
               message: "Denied by user",
-            })
-          }
+            });
+          }}
           disabled={isResponding}
         >
-          {isResponding ? (
+          {respondingAction === "deny" ? (
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
           ) : (
             <View style={permissionStyles.optionContent}>
@@ -1199,32 +1189,31 @@ function PermissionRequestCard({
 
         <Pressable
           testID="permission-request-accept"
-          style={(state) => {
-            const hovered = Boolean((state as any).hovered);
-            const pressed = Boolean(state.pressed);
-            return [
-              permissionStyles.optionButton,
-              {
-                backgroundColor: hovered
-                  ? theme.colors.surface1
-                  : theme.colors.surface2,
-                borderColor: theme.colors.primary,
-              },
-              pressed ? permissionStyles.optionButtonPressed : null,
-            ];
+          style={({ pressed, hovered = false }) => [
+            permissionStyles.optionButton,
+            {
+              backgroundColor: hovered
+                ? theme.colors.surface2
+                : theme.colors.surface1,
+              borderColor: theme.colors.borderAccent,
+            },
+            pressed ? permissionStyles.optionButtonPressed : null,
+          ]}
+          onPress={() => {
+            setRespondingAction("accept");
+            handleResponse({ behavior: "allow" });
           }}
-          onPress={() => handleResponse({ behavior: "allow" })}
           disabled={isResponding}
         >
-          {isResponding ? (
-            <ActivityIndicator size="small" color={theme.colors.primary} />
+          {respondingAction === "accept" ? (
+            <ActivityIndicator size="small" color={theme.colors.foreground} />
           ) : (
             <View style={permissionStyles.optionContent}>
-              <Check size={14} color={theme.colors.primary} />
+              <Check size={14} color={theme.colors.foreground} />
               <Text
                 style={[
                   permissionStyles.optionText,
-                  { color: theme.colors.primary },
+                  { color: theme.colors.foreground },
                 ]}
               >
                 Accept
@@ -1365,8 +1354,8 @@ const permissionStyles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   title: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.base,
+    lineHeight: 22,
   },
   description: {
     fontSize: theme.fontSize.sm,
@@ -1377,13 +1366,6 @@ const permissionStyles = StyleSheet.create((theme) => ({
   },
   sectionTitle: {
     fontSize: theme.fontSize.xs,
-  },
-  contentCard: {
-    padding: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    flexShrink: 1,
-    minWidth: 0,
   },
   question: {
     fontSize: theme.fontSize.sm,

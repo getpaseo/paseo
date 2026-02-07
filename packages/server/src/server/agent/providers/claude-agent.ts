@@ -625,6 +625,7 @@ class ClaudeAgentSession implements AgentSession {
       this.pendingInterruptPromise = this.interruptActiveTurn().catch((error) => {
         this.logger.warn({ err: error }, "Failed to interrupt during cancel");
       });
+      this.flushPendingToolCalls();
       // Push turn_canceled before ending the queue so consumers get proper lifecycle signals
       queue.push({
         type: "turn_canceled",
@@ -1084,6 +1085,7 @@ class ClaudeAgentSession implements AgentSession {
       // Only emit if not already emitted by requestCancel() (indicated by turnCancelRequested).
       const wasSuperseded = this.currentTurnId !== turnId;
       if (wasSuperseded && !completedNormally && !this.turnCancelRequested) {
+        this.flushPendingToolCalls();
         queue.push({
           type: "turn_canceled",
           provider: "claude",
@@ -1421,6 +1423,21 @@ class ClaudeAgentSession implements AgentSession {
 
   private enqueueTimeline(item: AgentTimelineItem) {
     this.pushEvent({ type: "timeline", item, provider: "claude" });
+  }
+
+  private flushPendingToolCalls() {
+    for (const [id, entry] of this.toolUseCache) {
+      if (entry.started) {
+        this.pushToolCall({
+          name: entry.name,
+          status: "failed",
+          callId: id,
+          input: entry.input,
+          error: { message: "Interrupted" },
+        });
+      }
+    }
+    this.toolUseCache.clear();
   }
 
   private pushToolCall(

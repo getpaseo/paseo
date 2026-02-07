@@ -1171,10 +1171,33 @@ export class AgentManager {
         break;
       case "turn_failed":
         agent.lastError = event.error;
+        for (const [requestId] of agent.pendingPermissions) {
+          agent.pendingPermissions.delete(requestId);
+          if (!options?.fromHistory) {
+            this.dispatchStream(agent.id, {
+              type: "permission_resolved",
+              provider: event.provider,
+              requestId,
+              resolution: { behavior: "deny", message: "Turn failed" },
+            });
+          }
+        }
+        this.emitState(agent);
         break;
       case "turn_canceled":
-        // Cancellation is not an error, just clear any previous error
         agent.lastError = undefined;
+        for (const [requestId] of agent.pendingPermissions) {
+          agent.pendingPermissions.delete(requestId);
+          if (!options?.fromHistory) {
+            this.dispatchStream(agent.id, {
+              type: "permission_resolved",
+              provider: event.provider,
+              requestId,
+              resolution: { behavior: "deny", message: "Interrupted" },
+            });
+          }
+        }
+        this.emitState(agent);
         break;
       case "permission_requested":
         agent.pendingPermissions.set(event.request.id, event.request);

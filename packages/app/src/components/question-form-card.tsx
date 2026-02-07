@@ -1,7 +1,14 @@
 import { useState, useCallback } from "react";
-import { View, Text, TextInput, Pressable, ActivityIndicator } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Check, X, Send } from "lucide-react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  ActivityIndicator,
+  Platform,
+} from "react-native";
+import { StyleSheet, useUnistyles, UnistylesRuntime } from "react-native-unistyles";
+import { Check, CircleHelp, X } from "lucide-react-native";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 
@@ -59,18 +66,23 @@ interface QuestionFormCardProps {
   isResponding: boolean;
 }
 
+const IS_WEB = Platform.OS === "web";
+
 export function QuestionFormCard({
   permission,
   onRespond,
   isResponding,
 }: QuestionFormCardProps) {
   const { theme } = useUnistyles();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const questions = parseQuestions(permission.request.input);
 
-  // selections[questionIndex] = Set of selected option indices
   const [selections, setSelections] = useState<Record<number, Set<number>>>({});
-  // otherTexts[questionIndex] = custom "Other" text
   const [otherTexts, setOtherTexts] = useState<Record<number, string>>({});
+  const [respondingAction, setRespondingAction] = useState<
+    "submit" | "dismiss" | null
+  >(null);
 
   const toggleOption = useCallback(
     (qIndex: number, optIndex: number, multiSelect: boolean) => {
@@ -93,7 +105,6 @@ export function QuestionFormCard({
         }
         return { ...prev, [qIndex]: next };
       });
-      // Clear "Other" text when an option is selected
       setOtherTexts((prev) => {
         if (!prev[qIndex]) return prev;
         const next = { ...prev };
@@ -106,7 +117,6 @@ export function QuestionFormCard({
 
   const setOtherText = useCallback((qIndex: number, text: string) => {
     setOtherTexts((prev) => ({ ...prev, [qIndex]: text }));
-    // Clear option selections when typing "Other"
     if (text.length > 0) {
       setSelections((prev) => {
         if (!prev[qIndex] || prev[qIndex].size === 0) return prev;
@@ -126,6 +136,7 @@ export function QuestionFormCard({
   });
 
   function handleSubmit() {
+    setRespondingAction("submit");
     const answers: Record<string, string> = {};
     for (let i = 0; i < questions!.length; i++) {
       const q = questions![i];
@@ -147,6 +158,7 @@ export function QuestionFormCard({
   }
 
   function handleDeny() {
+    setRespondingAction("dismiss");
     onRespond({
       behavior: "deny",
       message: "Dismissed by user",
@@ -158,7 +170,7 @@ export function QuestionFormCard({
       style={[
         styles.container,
         {
-          backgroundColor: theme.colors.surface2,
+          backgroundColor: theme.colors.surface1,
           borderColor: theme.colors.border,
         },
       ]}
@@ -169,68 +181,62 @@ export function QuestionFormCard({
 
         return (
           <View key={qIndex} style={styles.questionBlock}>
-            <Text
-              style={[styles.header, { color: theme.colors.foregroundMuted }]}
-            >
-              {q.header}
-            </Text>
-            <Text
-              style={[styles.questionText, { color: theme.colors.foreground }]}
-            >
-              {q.question}
-            </Text>
+            <View style={styles.questionHeader}>
+              <Text
+                style={[styles.questionText, { color: theme.colors.foreground }]}
+              >
+                {q.question}
+              </Text>
+              <CircleHelp size={14} color={theme.colors.foregroundMuted} />
+            </View>
             <View style={styles.optionsWrap}>
               {q.options.map((opt, optIndex) => {
                 const isSelected = selected.has(optIndex);
                 return (
                   <Pressable
                     key={optIndex}
-                    style={(state) => {
-                      const hovered = Boolean((state as any).hovered);
-                      return [
-                        styles.chip,
-                        {
-                          borderColor: isSelected
-                            ? theme.colors.accent
-                            : theme.colors.border,
-                          backgroundColor: isSelected
-                            ? `${theme.colors.accent}18`
-                            : hovered
-                              ? theme.colors.surface1
-                              : theme.colors.surface2,
-                        },
-                      ];
-                    }}
-                    onPress={() => toggleOption(qIndex, optIndex, q.multiSelect)}
+                    style={({ pressed, hovered = false }) => [
+                      styles.optionItem,
+                      (hovered || isSelected) && {
+                        backgroundColor: theme.colors.surface2,
+                      },
+                      pressed && styles.optionItemPressed,
+                    ]}
+                    onPress={() =>
+                      toggleOption(qIndex, optIndex, q.multiSelect)
+                    }
                     disabled={isResponding}
                   >
-                    <View style={styles.chipContent}>
-                      {q.multiSelect && isSelected ? (
-                        <Check size={14} color={theme.colors.accent} />
+                    <View style={styles.optionItemContent}>
+                      <View style={styles.optionTextBlock}>
+                        <Text
+                          style={[
+                            styles.optionLabel,
+                            { color: theme.colors.foreground },
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                        {opt.description ? (
+                          <Text
+                            style={[
+                              styles.optionDescription,
+                              { color: theme.colors.foregroundMuted },
+                            ]}
+                          >
+                            {opt.description}
+                          </Text>
+                        ) : null}
+                      </View>
+                      {isSelected ? (
+                        <View style={styles.optionCheckSlot}>
+                          <Check
+                            size={16}
+                            color={theme.colors.foregroundMuted}
+                          />
+                        </View>
                       ) : null}
-                      <Text
-                        style={[
-                          styles.chipLabel,
-                          {
-                            color: isSelected
-                              ? theme.colors.accent
-                              : theme.colors.foreground,
-                          },
-                        ]}
-                      >
-                        {opt.label}
-                      </Text>
                     </View>
-                    {opt.description ? (
-                      <Text
-                        style={[
-                          styles.chipDescription,
-                          { color: theme.colors.foregroundMuted },
-                        ]}
-                      >
-                        {opt.description}
-                      </Text>
-                    ) : null}
                   </Pressable>
                 );
               })}
@@ -240,11 +246,13 @@ export function QuestionFormCard({
                 styles.otherInput,
                 {
                   borderColor: otherText.length > 0
-                    ? theme.colors.accent
+                    ? theme.colors.borderAccent
                     : theme.colors.border,
                   color: theme.colors.foreground,
-                  backgroundColor: theme.colors.surface0,
+                  backgroundColor: theme.colors.surface2,
                 },
+                // @ts-expect-error - outlineStyle is web-only
+                IS_WEB && { outlineStyle: "none", outlineWidth: 0, outlineColor: "transparent" },
               ]}
               placeholder="Other..."
               placeholderTextColor={theme.colors.foregroundMuted}
@@ -256,25 +264,31 @@ export function QuestionFormCard({
         );
       })}
 
-      <View style={styles.actions}>
+      <View
+        style={[
+          styles.actionsContainer,
+          !isMobile && styles.actionsContainerDesktop,
+        ]}
+      >
         <Pressable
-          style={(state) => {
-            const hovered = Boolean((state as any).hovered);
-            return [
-              styles.actionButton,
-              {
-                backgroundColor: hovered
-                  ? theme.colors.surface1
-                  : theme.colors.surface2,
-                borderColor: theme.colors.border,
-              },
-            ];
-          }}
+          style={({ pressed, hovered = false }) => [
+            styles.actionButton,
+            {
+              backgroundColor: hovered
+                ? theme.colors.surface2
+                : theme.colors.surface1,
+              borderColor: theme.colors.borderAccent,
+            },
+            pressed && styles.optionItemPressed,
+          ]}
           onPress={handleDeny}
           disabled={isResponding}
         >
-          {isResponding ? (
-            <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          {respondingAction === "dismiss" ? (
+            <ActivityIndicator
+              size="small"
+              color={theme.colors.foregroundMuted}
+            />
           ) : (
             <View style={styles.actionContent}>
               <X size={14} color={theme.colors.foregroundMuted} />
@@ -291,34 +305,49 @@ export function QuestionFormCard({
         </Pressable>
 
         <Pressable
-          style={(state) => {
-            const hovered = Boolean((state as any).hovered);
+          style={({ pressed, hovered = false }) => {
             const disabled = !allAnswered || isResponding;
             return [
               styles.actionButton,
               {
-                backgroundColor: hovered && !disabled
-                  ? theme.colors.surface1
-                  : theme.colors.surface2,
+                backgroundColor:
+                  hovered && !disabled
+                    ? theme.colors.surface2
+                    : theme.colors.surface1,
                 borderColor: disabled
                   ? theme.colors.border
-                  : theme.colors.accent,
+                  : theme.colors.borderAccent,
                 opacity: disabled ? 0.5 : 1,
               },
+              pressed && !disabled ? styles.optionItemPressed : null,
             ];
           }}
           onPress={handleSubmit}
           disabled={!allAnswered || isResponding}
         >
-          {isResponding ? (
-            <ActivityIndicator size="small" color={theme.colors.accent} />
+          {respondingAction === "submit" ? (
+            <ActivityIndicator
+              size="small"
+              color={theme.colors.foreground}
+            />
           ) : (
             <View style={styles.actionContent}>
-              <Send size={14} color={allAnswered ? theme.colors.accent : theme.colors.foregroundMuted} />
+              <Check
+                size={14}
+                color={
+                  allAnswered
+                    ? theme.colors.foreground
+                    : theme.colors.foregroundMuted
+                }
+              />
               <Text
                 style={[
                   styles.actionText,
-                  { color: allAnswered ? theme.colors.accent : theme.colors.foregroundMuted },
+                  {
+                    color: allAnswered
+                      ? theme.colors.foreground
+                      : theme.colors.foregroundMuted,
+                  },
                 ]}
               >
                 Submit
@@ -333,7 +362,6 @@ export function QuestionFormCard({
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    marginVertical: theme.spacing[3],
     padding: theme.spacing[3],
     borderRadius: theme.spacing[2],
     borderWidth: 1,
@@ -342,55 +370,70 @@ const styles = StyleSheet.create((theme) => ({
   questionBlock: {
     gap: theme.spacing[2],
   },
-  header: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  questionText: {
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
-  },
-  optionsWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: theme.spacing[2],
-  },
-  chip: {
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    gap: theme.spacing[1],
-  },
-  chipContent: {
+  questionHeader: {
     flexDirection: "row",
     alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[1],
+  },
+  questionText: {
+    flex: 1,
+    fontSize: theme.fontSize.base,
+    lineHeight: 22,
+  },
+  optionsWrap: {
     gap: theme.spacing[1],
   },
-  chipLabel: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
+  optionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
   },
-  chipDescription: {
+  optionItemPressed: {
+    opacity: 0.9,
+  },
+  optionItemContent: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  optionTextBlock: {
+    flex: 1,
+    gap: 2,
+  },
+  optionLabel: {
+    fontSize: theme.fontSize.sm,
+  },
+  optionDescription: {
     fontSize: theme.fontSize.xs,
     lineHeight: 16,
   },
+  optionCheckSlot: {
+    width: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: "auto",
+  },
   otherInput: {
-    borderWidth: theme.borderWidth[1],
-    borderRadius: theme.borderRadius.md,
-    paddingVertical: theme.spacing[2],
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.lg,
     paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
     fontSize: theme.fontSize.sm,
   },
-  actions: {
-    flexDirection: "row",
+  actionsContainer: {
     gap: theme.spacing[2],
-    marginTop: theme.spacing[1],
+  },
+  actionsContainerDesktop: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    alignItems: "center",
   },
   actionButton: {
-    flex: 1,
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
@@ -404,6 +447,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   actionText: {
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
   },
 }));
