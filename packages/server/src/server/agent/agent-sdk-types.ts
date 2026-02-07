@@ -165,7 +165,7 @@ export type AgentStreamEvent =
       timestamp: string;
     };
 
-export type AgentPermissionRequestKind = "tool" | "plan" | "mode" | "other";
+export type AgentPermissionRequestKind = "tool" | "plan" | "question" | "mode" | "other";
 
 export type AgentPermissionUpdate = AgentMetadata;
 

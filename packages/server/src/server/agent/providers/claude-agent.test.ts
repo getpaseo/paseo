@@ -1247,6 +1247,36 @@ describe("convertClaudeHistoryEntry", () => {
 
     expect(result).toEqual([]);
   });
+
+  test("passes thinking blocks to mapBlocks for assistant entries", () => {
+    const entry = {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "Let me reason about this..." },
+          { type: "text", text: "Here is my answer." },
+        ],
+      },
+    };
+
+    const mapBlocks = vi.fn().mockReturnValue([
+      { type: "reasoning", text: "Let me reason about this..." },
+      { type: "assistant_message", text: "Here is my answer." },
+    ]);
+    const result = convertClaudeHistoryEntry(entry, mapBlocks);
+
+    expect(mapBlocks).toHaveBeenCalledTimes(1);
+    const arg = mapBlocks.mock.calls[0][0];
+    expect(arg).toEqual([
+      { type: "thinking", thinking: "Let me reason about this..." },
+      { type: "text", text: "Here is my answer." },
+    ]);
+    expect(result).toEqual([
+      { type: "reasoning", text: "Let me reason about this..." },
+      { type: "assistant_message", text: "Here is my answer." },
+    ]);
+  });
 });
 
 type StreamHydrationUpdate = {

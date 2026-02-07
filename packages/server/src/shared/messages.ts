@@ -130,7 +130,7 @@ export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionReque
     id: z.string(),
     provider: AgentProviderSchema,
     name: z.string(),
-    kind: z.enum(["tool", "plan", "mode", "other"]),
+    kind: z.enum(["tool", "plan", "question", "mode", "other"]),
     title: z.string().optional(),
     description: z.string().optional(),
     input: z.record(z.unknown()).optional(),

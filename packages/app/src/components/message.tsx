@@ -147,8 +147,12 @@ export const UserMessage = memo(function UserMessage({
   isLastInGroup = true,
   disableOuterSpacing,
 }: UserMessageProps) {
+  const [messageHovered, setMessageHovered] = useState(false);
+  const [copyButtonHovered, setCopyButtonHovered] = useState(false);
   const resolvedDisableOuterSpacing =
     useDisableOuterSpacing(disableOuterSpacing);
+  const showCopyButton =
+    Platform.OS !== "web" || messageHovered || copyButtonHovered;
 
   return (
     <View
@@ -163,29 +167,31 @@ export const UserMessage = memo(function UserMessage({
         ],
       ]}
     >
-      <Pressable style={userMessageStylesheet.content}>
-        {({ hovered }) => {
-          const showCopyButton = Platform.OS !== "web" || hovered;
-          return (
-            <>
-              <View style={userMessageStylesheet.bubble}>
-                <Text selectable style={userMessageStylesheet.text}>
-                  {message}
-                </Text>
-              </View>
-              <TurnCopyButton
-                getContent={() => message}
-                containerStyle={[
-                  userMessageStylesheet.copyButton,
-                  showCopyButton
-                    ? userMessageStylesheet.copyButtonVisible
-                    : userMessageStylesheet.copyButtonHidden,
-                ]}
-                accessibilityLabel="Copy message"
-              />
-            </>
-          );
-        }}
+      <Pressable
+        style={userMessageStylesheet.content}
+        onHoverIn={
+          Platform.OS === "web" ? () => setMessageHovered(true) : undefined
+        }
+        onHoverOut={
+          Platform.OS === "web" ? () => setMessageHovered(false) : undefined
+        }
+      >
+        <View style={userMessageStylesheet.bubble}>
+          <Text selectable style={userMessageStylesheet.text}>
+            {message}
+          </Text>
+        </View>
+        <TurnCopyButton
+          getContent={() => message}
+          containerStyle={[
+            userMessageStylesheet.copyButton,
+            showCopyButton
+              ? userMessageStylesheet.copyButtonVisible
+              : userMessageStylesheet.copyButtonHidden,
+          ]}
+          accessibilityLabel="Copy message"
+          onHoverChange={setCopyButtonHovered}
+        />
       </Pressable>
     </View>
   );
@@ -251,6 +257,7 @@ interface TurnCopyButtonProps {
   containerStyle?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
   copiedAccessibilityLabel?: string;
+  onHoverChange?: (hovered: boolean) => void;
 }
 
 export const TurnCopyButton = memo(function TurnCopyButton({
@@ -258,6 +265,7 @@ export const TurnCopyButton = memo(function TurnCopyButton({
   containerStyle,
   accessibilityLabel,
   copiedAccessibilityLabel,
+  onHoverChange,
 }: TurnCopyButtonProps) {
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -292,6 +300,8 @@ export const TurnCopyButton = memo(function TurnCopyButton({
   return (
     <Pressable
       onPress={handleCopy}
+      onHoverIn={Platform.OS === "web" ? () => onHoverChange?.(true) : undefined}
+      onHoverOut={Platform.OS === "web" ? () => onHoverChange?.(false) : undefined}
       style={[turnCopyButtonStylesheet.container, containerStyle]}
       accessibilityRole="button"
       accessibilityLabel={

@@ -31,6 +31,7 @@ import type {
   AgentMode,
   AgentModelDefinition,
   AgentPermissionRequest,
+  AgentPermissionRequestKind,
   AgentPermissionResponse,
   AgentPermissionUpdate,
   AgentPersistenceHandle,
@@ -328,6 +329,17 @@ function isPermissionUpdate(value: AgentPermissionUpdate): value is PermissionUp
   return Array.isArray(rules) && typeof behavior === "string" && typeof destination === "string";
 }
 
+function resolvePermissionKind(
+  toolName: string,
+  input: Record<string, unknown>
+): AgentPermissionRequestKind {
+  if (toolName === "ExitPlanMode") return "plan";
+  if (toolName === "AskUserQuestion" && Array.isArray(input.questions)) {
+    return "question";
+  }
+  return "tool";
+}
+
 export class ClaudeAgentClient implements AgentClient {
   readonly provider: "claude" = "claude";
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -483,6 +495,7 @@ class ClaudeAgentSession implements AgentSession {
   private lastOptionsModel: string | null = null;
   private activeSidechains = new Map<string, string>();
   private compacting = false;
+  private queryRestartNeeded = false;
 
   constructor(
     config: ClaudeAgentConfig,
@@ -722,37 +735,16 @@ class ClaudeAgentSession implements AgentSession {
         ? thinkingOptionId
         : null;
 
-    const query = await this.ensureQuery();
-
     if (!normalizedThinkingOptionId || normalizedThinkingOptionId === "default") {
-      // Claude Code TUI exposes only ON/OFF. Default to OFF.
-      try {
-        await query.setMaxThinkingTokens(0);
-      } catch {
-        await query.setMaxThinkingTokens(1);
-      }
       this.config.thinkingOptionId = undefined;
-      return;
-    }
-
-    if (normalizedThinkingOptionId === "on") {
-      await query.setMaxThinkingTokens(null);
-      this.config.thinkingOptionId = normalizedThinkingOptionId;
-      return;
-    }
-
-    if (normalizedThinkingOptionId === "off") {
-      try {
-        await query.setMaxThinkingTokens(0);
-      } catch {
-        // Some runtimes may reject 0; use a tiny cap as "off".
-        await query.setMaxThinkingTokens(1);
-      }
+    } else if (normalizedThinkingOptionId === "on") {
+      this.config.thinkingOptionId = "on";
+    } else if (normalizedThinkingOptionId === "off") {
       this.config.thinkingOptionId = "off";
-      return;
+    } else {
+      throw new Error(`Unknown thinking option: ${normalizedThinkingOptionId}`);
     }
-
-    throw new Error(`Unknown thinking option: ${normalizedThinkingOptionId}`);
+    this.queryRestartNeeded = true;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -874,8 +866,16 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async ensureQuery(): Promise<Query> {
-    if (this.query) {
+    if (this.query && !this.queryRestartNeeded) {
       return this.query;
+    }
+
+    if (this.queryRestartNeeded && this.query) {
+      this.input?.end();
+      try { await this.query.return?.(); } catch { /* ignore */ }
+      this.query = null;
+      this.input = null;
+      this.queryRestartNeeded = false;
     }
 
     const input = new Pushable<SDKUserMessage>();
@@ -894,11 +894,10 @@ class ClaudeAgentSession implements AgentSession {
         ? configuredThinkingOptionId
         : "off";
     let maxThinkingTokens: number | undefined;
-    if (typeof thinkingOptionId === "string" && thinkingOptionId.length > 0) {
-      if (thinkingOptionId === "off") {
-        maxThinkingTokens = 0;
-      }
-      // For "on" we omit maxThinkingTokens (SDK default max).
+    if (thinkingOptionId === "on") {
+      maxThinkingTokens = 10000;
+    } else if (thinkingOptionId === "off") {
+      maxThinkingTokens = 0;
     }
 
     const appendedSystemPrompt = [
@@ -1117,6 +1116,7 @@ class ClaudeAgentSession implements AgentSession {
       this.logger.info({ durationMs: Date.now() - t1 }, "interruptActiveTurn: query.return() returned");
       this.query = null;
       this.input = null;
+      this.queryRestartNeeded = false;
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to interrupt active turn");
     }
@@ -1361,7 +1361,7 @@ class ClaudeAgentSession implements AgentSession {
       id: requestId,
       provider: "claude",
       name: toolName,
-      kind: toolName === "ExitPlanMode" ? "plan" : "tool",
+      kind: resolvePermissionKind(toolName, input),
       input,
       suggestions: options.suggestions?.map((suggestion) => ({ ...suggestion })),
       metadata: Object.keys(metadata).length ? metadata : undefined,

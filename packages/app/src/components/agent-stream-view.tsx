@@ -49,6 +49,7 @@ import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { parseToolCallDisplay } from "@/utils/tool-call-parsers";
 import { ToolCallDetailsContent } from "./tool-call-details";
+import { QuestionFormCard } from "./question-form-card";
 import { ToolCallSheetProvider } from "./tool-call-sheet";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -1069,6 +1070,16 @@ function PermissionRequestCard({
     },
     [permission.agentId, permission.request.id, respondToPermission]
   );
+
+  if (request.kind === "question") {
+    return (
+      <QuestionFormCard
+        permission={permission}
+        onRespond={handleResponse}
+        isResponding={isResponding}
+      />
+    );
+  }
 
   return (
     <View
