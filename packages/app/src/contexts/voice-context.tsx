@@ -12,6 +12,7 @@ const VOICE_VAD_DETECTION_GRACE_PERIOD_MS = 700;
 
 interface VoiceContextValue {
   isVoiceMode: boolean;
+  isVoiceSwitching: boolean;
   volume: number;
   isMuted: boolean;
   isDetecting: boolean;
@@ -57,7 +58,12 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   );
   const realtimeSessionRef = useRef<SessionState | null>(null);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
+  const [isVoiceSwitching, setIsVoiceSwitching] = useState(false);
   const bargeInPlaybackStopRef = useRef<number | null>(null);
+  const wasVoiceSocketConnectedRef = useRef(false);
+  const lastVoiceModeSyncedClientRef = useRef<SessionState["client"] | null>(null);
+  const voiceTransportReadyRef = useRef(false);
+  const voiceResyncInFlightRef = useRef(false);
 
   const realtimeAudio = useSpeechmaticsAudio({
     onSpeechStart: () => {
@@ -91,6 +97,10 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
       console.log("[Voice] Speech ended");
     },
     onAudioSegment: ({ audioData, isLast }) => {
+      if (!voiceTransportReadyRef.current) {
+        console.log("[Voice] Skipping audio segment: voice transport not ready");
+        return;
+      }
       console.log(
         "[Voice] Sending audio segment, length:",
         audioData.length,
@@ -134,6 +144,48 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     realtimeSessionRef.current = activeSession;
   }, [activeSession]);
 
+  useEffect(() => {
+    const connected = activeSession?.connection.isConnected ?? false;
+    const client = activeSession?.client ?? null;
+    if (!connected) {
+      voiceTransportReadyRef.current = false;
+    }
+
+    if (!isVoiceMode || !activeServerId || !client) {
+      wasVoiceSocketConnectedRef.current = connected;
+      if (!isVoiceMode) {
+        lastVoiceModeSyncedClientRef.current = null;
+      }
+      voiceTransportReadyRef.current = false;
+      return;
+    }
+
+    const connectionRecovered = connected && !wasVoiceSocketConnectedRef.current;
+    const clientChanged = lastVoiceModeSyncedClientRef.current !== client;
+    if (connected && (connectionRecovered || clientChanged)) {
+      if (!voiceResyncInFlightRef.current) {
+        voiceResyncInFlightRef.current = true;
+        voiceTransportReadyRef.current = false;
+        setIsVoiceSwitching(true);
+        void client.setVoiceMode(true).then(
+          () => {
+            console.log("[Voice] Re-synced voice mode after reconnect");
+            lastVoiceModeSyncedClientRef.current = client;
+            voiceTransportReadyRef.current = true;
+          },
+          (error) => {
+            console.error("[Voice] Failed to re-sync voice mode:", error);
+          }
+        ).finally(() => {
+          voiceResyncInFlightRef.current = false;
+          setIsVoiceSwitching(false);
+        });
+      }
+    }
+
+    wasVoiceSocketConnectedRef.current = connected;
+  }, [activeServerId, activeSession?.client, activeSession?.connection.isConnected, isVoiceMode]);
+
   const isPlayingAudio = activeSession?.isPlayingAudio ?? false;
 
   useEffect(() => {
@@ -155,56 +207,67 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
         throw new Error(`Host ${serverId} is not connected`);
       }
 
+      setIsVoiceSwitching(true);
+      voiceTransportReadyRef.current = false;
       try {
         realtimeSessionRef.current = session;
         setActiveServerId(serverId);
         await activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch((error) => {
           console.warn("[Voice] Failed to activate keep-awake:", error);
         });
-        await session.audioPlayer?.warmup?.();
-        await realtimeAudio.start();
-        setIsVoiceMode(true);
-        console.log("[Voice] Mode enabled");
-
         if (session?.client) {
           await session.client.setVoiceMode(true);
         } else {
           console.warn("[Voice] setVoiceMode skipped: daemon unavailable");
         }
+        await session.audioPlayer?.warmup?.();
+        await realtimeAudio.start();
+        voiceTransportReadyRef.current = true;
+        setIsVoiceMode(true);
+        lastVoiceModeSyncedClientRef.current = session.client;
+        console.log("[Voice] Mode enabled");
       } catch (error: any) {
         console.error("[Voice] Failed to start:", error);
+        await realtimeAudio.stop().catch(() => undefined);
         setActiveServerId((current) => (current === serverId ? null : current));
         await deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
         throw error;
+      } finally {
+        setIsVoiceSwitching(false);
       }
     },
     [getSession, realtimeAudio]
   );
 
   const stopVoice = useCallback(async () => {
+    setIsVoiceSwitching(true);
+    voiceTransportReadyRef.current = false;
     try {
       const session = realtimeSessionRef.current;
       session?.audioPlayer?.stop();
+      if (session?.client) {
+        await session.client.setVoiceMode(false);
+        lastVoiceModeSyncedClientRef.current = session.client;
+      } else {
+        console.warn("[Voice] setVoiceMode skipped: daemon unavailable");
+      }
       await realtimeAudio.stop();
       setIsVoiceMode(false);
       setActiveServerId(null);
       await deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
       console.log("[Voice] Mode disabled");
-
-      if (session?.client) {
-        await session.client.setVoiceMode(false);
-      } else {
-        console.warn("[Voice] setVoiceMode skipped: daemon unavailable");
-      }
     } catch (error: any) {
       console.error("[Voice] Failed to stop:", error);
       await deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
       throw error;
+    } finally {
+      setIsVoiceSwitching(false);
     }
   }, [realtimeAudio]);
 
   const value: VoiceContextValue = {
     isVoiceMode,
+    isVoiceSwitching,
     volume: realtimeAudio.volume,
     isMuted: realtimeAudio.isMuted,
     isDetecting: realtimeAudio.isDetecting,

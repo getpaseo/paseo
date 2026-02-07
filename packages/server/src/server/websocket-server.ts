@@ -389,7 +389,14 @@ export class VoiceAssistantWebSocketServer {
           ? { sessionMessageType: message.message.type }
           : {}),
       };
-      this.logger.debug(messageSummary, "Received message");
+      const isSessionNoise =
+        message.type === "session" &&
+        (message.message.type === "client_heartbeat" ||
+          message.message.type === "voice_audio_chunk" ||
+          message.message.type === "dictation_stream_chunk");
+      if (!isSessionNoise) {
+        this.logger.debug(messageSummary, "Received message");
+      }
 
       if (message.type === "ping") {
         this.sendToClient(ws, { type: "pong" });

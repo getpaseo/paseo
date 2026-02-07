@@ -4,7 +4,6 @@ import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { Agent } from "@/stores/session-store";
-import { isPerfLoggingEnabled } from "@/utils/perf";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 
 export interface AggregatedAgent extends AgentDirectoryEntry {
@@ -44,14 +43,12 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
   );
 
   const refreshAll = useCallback(() => {
-    console.log('[useAggregatedAgents] Manual refresh triggered for all sessions');
     for (const [serverId, client] of Object.entries(sessionClients)) {
       if (!client) {
         continue;
       }
       void (async () => {
         try {
-          console.log(`[useAggregatedAgents] Refreshing session ${serverId}`);
           const agentsList = await client.fetchAgents({
             filter: { labels: { ui: "true" } },
           });
@@ -131,27 +128,20 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
     const hasAnyData = allAgents.length > 0;
 
     // Check if any connection is currently loading
-    const connectingReasons: string[] = [];
-    const isConnecting = Array.from(connectionStates.entries()).some(([id, c]) => {
-      const shortId = id.substring(0, 20);
-
+    const isConnecting = Array.from(connectionStates.entries()).some(([, c]) => {
       // First-time connection (never received agent list)
       if (c.status === 'connecting' && !c.hasEverReceivedAgentList) {
-        connectingReasons.push(`${shortId}: first-time connecting`);
         return true;
       }
       if (c.status === 'online' && !c.hasEverReceivedAgentList) {
-        connectingReasons.push(`${shortId}: online but no fetch_agents yet`);
         return true;
       }
 
       // Reconnecting (have received agent list before)
       if (c.status === 'connecting' && c.hasEverReceivedAgentList) {
-        connectingReasons.push(`${shortId}: reconnecting`);
         return true;
       }
       if (c.status === 'online' && !c.agentListReady && c.hasEverReceivedAgentList) {
-        connectingReasons.push(`${shortId}: online but agentListReady=false (waiting for fetch_agents)`);
         return true;
       }
 
@@ -166,28 +156,6 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
 
     // isLoading: Generic loading flag (either initial or revalidating)
     const isLoading = isConnecting;
-
-    if (isPerfLoggingEnabled()) {
-      const connectionStatesArray = Array.from(connectionStates.entries()).map(([id, state]) => ({
-        id: id.substring(0, 20) + (id.length > 20 ? '...' : ''),
-        status: state.status,
-        agentListReady: state.agentListReady,
-        hasEverReceivedAgentList: state.hasEverReceivedAgentList,
-      }));
-
-      console.log('[useAggregatedAgents] States:', {
-        hasAnyData,
-        isConnecting,
-        isInitialLoad,
-        isRevalidating,
-        totalConnectionStates: connectionStates.size,
-        connectingReasons: connectingReasons.length > 0 ? connectingReasons : 'none',
-      });
-
-      console.log('[useAggregatedAgents] Connection States Detail:',
-        JSON.stringify(connectionStatesArray, null, 2)
-      );
-    }
 
     return {
       agents: allAgents,

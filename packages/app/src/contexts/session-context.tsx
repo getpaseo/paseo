@@ -872,10 +872,7 @@ export function SessionProvider({
       const { agentId, event, timestamp } = message.payload;
       const parsedTimestamp = new Date(timestamp);
 
-      console.log("[Session] agent_stream", { agentId, event, timestamp });
-
       if (event.type === "attention_required") {
-        console.log("[Session] attention_required", { agentId, shouldNotify: event.shouldNotify, reason: event.reason });
         if (event.shouldNotify) {
           notifyAgentAttention({
             agentId,
@@ -925,11 +922,6 @@ export function SessionProvider({
       (message) => {
         if (message.type !== "agent_stream_snapshot") return;
         const { agentId, events } = message.payload;
-
-        console.log("[Session] agent_stream_snapshot", {
-          agentId,
-          eventCount: events.length,
-        });
 
         const hydrated = hydrateStreamState(
           events.map(({ event, timestamp }) => ({
@@ -1059,15 +1051,8 @@ export function SessionProvider({
       });
 
       if (!isFinalChunk) {
-        console.log(
-          `[Session] Buffered chunk ${chunkIndex} for group ${playbackGroupId}`
-        );
         return;
       }
-
-      console.log(
-        `[Session] Received final chunk for group ${playbackGroupId}, total chunks: ${buffer.length}`
-      );
       buffer.sort((a, b) => a.chunkIndex - b.chunkIndex);
 
       let playbackFailed = false;
@@ -1108,10 +1093,6 @@ export function SessionProvider({
           concatenatedBytes.set(chunk, offset);
           offset += chunk.length;
         }
-
-        console.log(
-          `[Session] Playing concatenated audio: ${buffer.length} chunks, ${totalSize} bytes`
-        );
 
         const audioBlob = {
           type: mimeType,
@@ -1264,11 +1245,7 @@ export function SessionProvider({
       const transcriptText = message.payload.text.trim();
 
       if (!transcriptText) {
-        console.log(
-          "[Session] Empty transcription (false positive) - ignoring"
-        );
       } else {
-        console.log("[Session] Transcription received - stopping playback");
         audioPlayer.stop();
         setIsPlayingAudio(serverId, false);
         setCurrentAssistantMessage(serverId, "");

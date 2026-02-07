@@ -201,6 +201,10 @@ type SpeechModelsListPayload = SpeechModelsListResponse["payload"];
 type SpeechModelsDownloadPayload = SpeechModelsDownloadResponse["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ExecuteCommandPayload = ExecuteCommandResponse["payload"];
+type SetVoiceModePayload = Extract<
+  SessionOutboundMessage,
+  { type: "set_voice_mode_response" }
+>["payload"];
 type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type CreateTerminalPayload = CreateTerminalResponse["payload"];
@@ -1285,8 +1289,31 @@ export class DaemonClient {
   // Audio / Voice
   // ============================================================================
 
-  async setVoiceMode(enabled: boolean, voiceAgentId?: string): Promise<void> {
-    this.sendSessionMessage({ type: "set_voice_mode", enabled, voiceAgentId });
+  async setVoiceMode(
+    enabled: boolean,
+    voiceAgentId?: string
+  ): Promise<SetVoiceModePayload> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "set_voice_mode",
+      enabled,
+      ...(voiceAgentId ? { voiceAgentId } : {}),
+      requestId,
+    });
+    return this.sendRequest({
+      requestId,
+      message,
+      timeout: 10000,
+      select: (msg) => {
+        if (msg.type !== "set_voice_mode_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
   }
 
   async sendVoiceAudioChunk(

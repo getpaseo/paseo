@@ -348,6 +348,7 @@ export const SetVoiceModeMessageSchema = z.object({
   type: z.literal("set_voice_mode"),
   enabled: z.boolean(),
   voiceAgentId: z.string().optional(),
+  requestId: z.string().optional(),
 });
 
 export const SendAgentMessageSchema = z.object({
@@ -566,6 +567,17 @@ export const SetAgentThinkingResponseMessageSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     agentId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const SetVoiceModeResponseMessageSchema = z.object({
+  type: z.literal("set_voice_mode_response"),
+  payload: z.object({
+    requestId: z.string(),
+    enabled: z.boolean(),
+    voiceAgentId: z.string().nullable(),
     accepted: z.boolean(),
     error: z.string().nullable(),
   }),
@@ -1627,6 +1639,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentsResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   SendAgentMessageResponseMessageSchema,
+  SetVoiceModeResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
@@ -1689,6 +1702,9 @@ export type FetchAgentResponseMessage = z.infer<
 >;
 export type SendAgentMessageResponseMessage = z.infer<
   typeof SendAgentMessageResponseMessageSchema
+>;
+export type SetVoiceModeResponseMessage = z.infer<
+  typeof SetVoiceModeResponseMessageSchema
 >;
 export type WaitForFinishResponseMessage = z.infer<
   typeof WaitForFinishResponseMessageSchema

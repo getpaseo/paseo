@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useEffect } from "react";
-import { View, Pressable, Text, Platform, Alert } from "react-native";
+import { View, Pressable, Text, Platform, Alert, ActivityIndicator } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useAnimatedStyle,
@@ -57,7 +57,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   const trafficLightPadding = useTrafficLightPadding();
   const dragHandlers = useTauriDragHandlers();
   const { connectionStates } = useDaemonConnections();
-  const { isVoiceMode, startVoice, stopVoice } = useVoice();
+  const { isVoiceMode, isVoiceSwitching, startVoice, stopVoice } = useVoice();
   const [showVoiceHostPicker, setShowVoiceHostPicker] = useState(false);
 
   // Track user-initiated refresh to avoid showing spinner on background revalidation
@@ -148,6 +148,9 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   const hasAnyConfiguredHosts = connectionStates.size > 0;
 
   const handleToggleVoice = useCallback(() => {
+    if (isVoiceSwitching) {
+      return;
+    }
     if (isVoiceMode) {
       void stopVoice().catch((error) => {
         console.error("[SlidingSidebar] Failed to stop voice", error);
@@ -181,7 +184,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     }
 
     setShowVoiceHostPicker(true);
-  }, [hasAnyConfiguredHosts, isVoiceMode, startVoice, stopVoice, voiceEligibleHosts]);
+  }, [hasAnyConfiguredHosts, isVoiceMode, isVoiceSwitching, startVoice, stopVoice, voiceEligibleHosts]);
 
   const handleSelectVoiceHost = useCallback(
     (serverId: string) => {
@@ -324,11 +327,13 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                   accessible
                   accessibilityLabel="Voice"
                   accessibilityRole="button"
+                  disabled={isVoiceSwitching}
                   onPress={handleToggleVoice}
                 >
                   {({ hovered }) => (
-                    <AudioLines
-                      size={20}
+                    isVoiceSwitching ? (
+                      <ActivityIndicator
+                        size="small"
                         color={
                           isVoiceMode
                             ? theme.colors.foreground
@@ -337,7 +342,19 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                               : theme.colors.foregroundMuted
                         }
                       />
-                    )}
+                    ) : (
+                      <AudioLines
+                        size={20}
+                        color={
+                          isVoiceMode
+                            ? theme.colors.foreground
+                            : hovered
+                              ? theme.colors.foreground
+                              : theme.colors.foregroundMuted
+                        }
+                      />
+                    )
+                  )}
                   </Pressable>
                 <Pressable
                   style={styles.footerIconButton}
@@ -448,19 +465,33 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
             accessible
             accessibilityLabel="Voice"
             accessibilityRole="button"
+            disabled={isVoiceSwitching}
             onPress={handleToggleVoice}
           >
             {({ hovered }) => (
-              <AudioLines
-                size={20}
-                color={
-                  isVoiceMode
-                    ? theme.colors.foreground
-                    : hovered
+              isVoiceSwitching ? (
+                <ActivityIndicator
+                  size="small"
+                  color={
+                    isVoiceMode
                       ? theme.colors.foreground
-                      : theme.colors.foregroundMuted
-                }
-              />
+                      : hovered
+                        ? theme.colors.foreground
+                        : theme.colors.foregroundMuted
+                  }
+                />
+              ) : (
+                <AudioLines
+                  size={20}
+                  color={
+                    isVoiceMode
+                      ? theme.colors.foreground
+                      : hovered
+                        ? theme.colors.foreground
+                        : theme.colors.foregroundMuted
+                  }
+                />
+              )
             )}
           </Pressable>
           <Pressable

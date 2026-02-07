@@ -147,8 +147,16 @@ describe("daemon client E2E", () => {
     });
     expect(Array.isArray(voiceAgents)).toBe(true);
 
-    await expect(ctx.client.setVoiceMode(true)).resolves.toBeUndefined();
-    await expect(ctx.client.setVoiceMode(false)).resolves.toBeUndefined();
+    await expect(ctx.client.setVoiceMode(true)).resolves.toMatchObject({
+      enabled: true,
+      accepted: true,
+      error: null,
+    });
+    await expect(ctx.client.setVoiceMode(false)).resolves.toMatchObject({
+      enabled: false,
+      accepted: true,
+      error: null,
+    });
 
     await ctx.client.deleteAgent(randomUUID());
   }, 30000);

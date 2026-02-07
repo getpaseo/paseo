@@ -879,7 +879,7 @@ export class Session {
           break;
 
         case "set_voice_mode":
-          await this.handleSetVoiceMode(msg.enabled, msg.voiceAgentId);
+          await this.handleSetVoiceMode(msg.enabled, msg.voiceAgentId, msg.requestId);
           break;
 
         case "send_agent_message_request":
@@ -1259,7 +1259,8 @@ export class Session {
    */
   private async handleSetVoiceMode(
     enabled: boolean,
-    voiceAgentId?: string
+    voiceAgentId?: string,
+    requestId?: string
   ): Promise<void> {
     if (enabled) {
       let normalizedVoiceAgentId: string | null = null;
@@ -1282,6 +1283,18 @@ export class Session {
         },
         "Voice mode enabled (agent-backed)"
       );
+      if (requestId) {
+        this.emit({
+          type: "set_voice_mode_response",
+          payload: {
+            requestId,
+            enabled: true,
+            voiceAgentId: this.voiceAssistantAgentId,
+            accepted: true,
+            error: null,
+          },
+        });
+      }
       return;
     }
 
@@ -1290,6 +1303,18 @@ export class Session {
       { voiceAssistantAgentId: this.voiceAssistantAgentId },
       "Voice mode disabled (agent-backed)"
     );
+    if (requestId) {
+      this.emit({
+        type: "set_voice_mode_response",
+        payload: {
+          requestId,
+          enabled: false,
+          voiceAgentId: this.voiceAssistantAgentId,
+          accepted: true,
+          error: null,
+        },
+      });
+    }
   }
 
   private parseVoiceAgentId(rawId: string, source: string): string {
@@ -2471,7 +2496,6 @@ export class Session {
     lastActivityAt: string;
     appVisible: boolean;
   }): void {
-    this.sessionLogger.debug({ heartbeat: msg }, "Client heartbeat");
     this.clientActivity = {
       deviceType: msg.deviceType,
       focusedAgentId: msg.focusedAgentId,
@@ -4152,6 +4176,12 @@ export class Session {
   private async handleAudioChunk(
     msg: Extract<SessionInboundMessage, { type: "voice_audio_chunk" }>
   ): Promise<void> {
+    if (!this.isVoiceMode) {
+      this.sessionLogger.warn(
+        "Received voice_audio_chunk while voice mode is disabled; transcript will be emitted but voice assistant turn is skipped"
+      );
+    }
+
     await this.handleVoiceSpeechStart();
 
     const chunkBuffer = Buffer.from(msg.audio, "base64");
@@ -4192,11 +4222,6 @@ export class Session {
     if (this.audioBuffer.isPCM) {
       this.audioBuffer.totalPCMBytes += chunkBuffer.length;
     }
-
-    this.sessionLogger.debug(
-      { bytes: chunkBuffer.length, chunks: this.audioBuffer.chunks.length, pcmBytes: this.audioBuffer.totalPCMBytes },
-      `Buffered audio chunk (${chunkBuffer.length} bytes, chunks: ${this.audioBuffer.chunks.length}${this.audioBuffer.isPCM ? `, PCM bytes: ${this.audioBuffer.totalPCMBytes}` : ""})`
-    );
 
     // In voice mode, only process audio when the user has finished speaking (isLast = true)
     // This prevents partial transcriptions from being sent to the LLM
@@ -4343,6 +4368,15 @@ export class Session {
       });
 
       const transcriptText = result.text.trim();
+      this.sessionLogger.info(
+        {
+          requestId,
+          isVoiceMode: this.isVoiceMode,
+          transcriptLength: transcriptText.length,
+          transcript: transcriptText,
+        },
+        "Transcription result"
+      );
 
       // Emit transcription result
       this.emit({
@@ -4408,8 +4442,17 @@ export class Session {
         },
       });
 
-      // Set phase to LLM and process (TTS enabled in voice mode for voice agents)
       this.clearSpeechInProgress("transcription complete");
+      if (!this.isVoiceMode) {
+        this.sessionLogger.debug(
+          { requestId },
+          "Skipping voice agent processing because voice mode is disabled"
+        );
+        this.setPhase("idle");
+        return;
+      }
+
+      // Set phase to LLM and process (TTS enabled in voice mode for voice agents)
       this.setPhase("llm");
       this.currentStreamPromise = this.processVoiceTurn(result.text);
       await this.currentStreamPromise;
@@ -4560,7 +4603,6 @@ export class Session {
     this.agentManager.recordUserMessage(agentId, userText);
 
     let sawSpeakToolCall = false;
-    const assistantTextChunks: string[] = [];
     const iterator = this.agentManager.streamAgent(agentId, prompt);
     for await (const event of iterator) {
       if (event.type === "turn_failed") {
@@ -4571,9 +4613,6 @@ export class Session {
           if (event.item.name.toLowerCase().includes("speak")) {
             sawSpeakToolCall = true;
           }
-        }
-        if (event.item.type === "assistant_message" && event.item.text.trim().length > 0) {
-          assistantTextChunks.push(event.item.text.trim());
         }
       }
       if (event.type === "permission_requested") {
@@ -4594,26 +4633,10 @@ export class Session {
       }
     }
 
-    if (!sawSpeakToolCall && assistantTextChunks.length > 0) {
-      const fallbackText = assistantTextChunks.join(" ").trim();
-      await this.ttsManager.generateAndWaitForPlayback(
-        fallbackText,
-        (msg) => this.emit(msg),
-        this.abortController.signal,
-        true
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "assistant",
-          content: fallbackText,
-        },
-      });
+    if (!sawSpeakToolCall) {
       this.sessionLogger.warn(
         { voiceAssistantAgentId: agentId },
-        "Voice agent responded without speak tool; used fallback TTS from assistant text"
+        "Voice agent turn completed without speak tool call; no audio playback emitted"
       );
     }
   }

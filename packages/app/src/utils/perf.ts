@@ -1,21 +1,4 @@
-const getIsDevEnvironment = (): boolean => {
-  const globalDev = (globalThis as { __DEV__?: boolean } | undefined)?.__DEV__;
-  if (typeof globalDev === "boolean") {
-    return globalDev;
-  }
-  if (typeof process !== "undefined" && process.env?.NODE_ENV) {
-    return process.env.NODE_ENV !== "production";
-  }
-  return false;
-};
-
-const shouldDisablePerfLogging =
-  typeof process !== "undefined" && process.env?.EXPO_PUBLIC_DISABLE_PERF_LOGGING === "1";
-const shouldForcePerfLogging =
-  typeof process !== "undefined" && process.env?.EXPO_PUBLIC_ENABLE_PERF_LOGGING === "1";
-
-const PERF_LOGGING_ENABLED =
-  (shouldForcePerfLogging || getIsDevEnvironment()) && !shouldDisablePerfLogging;
+const PERF_LOGGING_ENABLED = false;
 
 export const isPerfLoggingEnabled = (): boolean => PERF_LOGGING_ENABLED;
 

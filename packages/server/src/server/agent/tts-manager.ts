@@ -10,6 +10,84 @@ interface PendingPlayback {
   streamEnded: boolean;
 }
 
+const MAX_TTS_SEGMENT_CHARS = 400;
+
+function splitTextForTts(text: string, maxChars: number): string[] {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    throw new Error("Cannot synthesize empty text");
+  }
+
+  if (normalized.length <= maxChars) {
+    return [normalized];
+  }
+
+  const parts: string[] = [];
+  const sentenceChunks = normalized.split(/(?<=[.!?])\s+/);
+
+  let current = "";
+  const pushCurrent = () => {
+    const trimmed = current.trim();
+    if (trimmed.length > 0) {
+      parts.push(trimmed);
+    }
+    current = "";
+  };
+
+  const appendFragment = (fragment: string) => {
+    const trimmed = fragment.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    if (!current) {
+      current = trimmed;
+      return;
+    }
+
+    const candidate = `${current} ${trimmed}`;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      return;
+    }
+
+    pushCurrent();
+    current = trimmed;
+  };
+
+  const splitLargeFragment = (fragment: string): string[] => {
+    const trimmed = fragment.trim();
+    if (trimmed.length <= maxChars) {
+      return [trimmed];
+    }
+
+    const out: string[] = [];
+    let remaining = trimmed;
+    while (remaining.length > maxChars) {
+      let idx = remaining.lastIndexOf(" ", maxChars);
+      if (idx < Math.floor(maxChars * 0.5)) {
+        idx = maxChars;
+      }
+      out.push(remaining.slice(0, idx).trim());
+      remaining = remaining.slice(idx).trim();
+    }
+    if (remaining.length > 0) {
+      out.push(remaining);
+    }
+    return out;
+  };
+
+  for (const sentence of sentenceChunks) {
+    const fragments = splitLargeFragment(sentence);
+    for (const fragment of fragments) {
+      appendFragment(fragment);
+    }
+  }
+  pushCurrent();
+
+  return parts;
+}
+
 /**
  * Per-session TTS manager
  * Handles TTS audio generation and playback confirmation tracking
@@ -29,6 +107,37 @@ export class TTSManager {
    * Returns a Promise that resolves when the client confirms playback completed
    */
   public async generateAndWaitForPlayback(
+    text: string,
+    emitMessage: (msg: SessionOutboundMessage) => void,
+    abortSignal: AbortSignal,
+    isVoiceMode: boolean
+  ): Promise<void> {
+    this.logger.info(
+      {
+        isVoiceMode,
+        textLength: text.length,
+        text,
+      },
+      "TTS input text"
+    );
+
+    const segments = splitTextForTts(text, MAX_TTS_SEGMENT_CHARS);
+    for (const segment of segments) {
+      if (abortSignal.aborted) {
+        this.logger.debug("Aborted before generating segmented audio");
+        return;
+      }
+
+      await this.generateSegmentAndWaitForPlayback(
+        segment,
+        emitMessage,
+        abortSignal,
+        isVoiceMode
+      );
+    }
+  }
+
+  private async generateSegmentAndWaitForPlayback(
     text: string,
     emitMessage: (msg: SessionOutboundMessage) => void,
     abortSignal: AbortSignal,
@@ -121,11 +230,6 @@ export class TTSManager {
             },
           });
 
-          this.logger.debug(
-            { chunkId, isLastChunk: next.done },
-            "Sent audio chunk"
-          );
-
           chunkIndex += 1;
 
           if (next.done) {
@@ -151,7 +255,6 @@ export class TTSManager {
       } else {
         this.logger.error({ err: error }, "Error streaming audio");
         this.pendingPlaybacks.delete(audioId);
-        pendingPlayback.reject(error as Error);
         throw error;
       }
     } finally {

@@ -210,9 +210,6 @@ export interface GroupedAgents {
 
 const ACTIVE_GRACE_PERIOD_MS = 2 * 24 * 60 * 60 * 1000; // 2 days (temporary for screenshots)
 
-// eslint-disable-next-line no-console
-console.log('[agent-grouping] ACTIVE_GRACE_PERIOD_MS:', ACTIVE_GRACE_PERIOD_MS, 'ms =', ACTIVE_GRACE_PERIOD_MS / (1000 * 60 * 60), 'hours');
-
 interface GroupAgentsOptions {
   /**
    * Optional function to read a remote URL for an agent.
@@ -251,17 +248,6 @@ export function groupAgents(
     const ageDiff = now - agent.lastActivityAt.getTime();
     const isRecentlyActive = ageDiff < ACTIVE_GRACE_PERIOD_MS;
     const isActive = isRunningOrAttention || isRecentlyActive;
-
-    // eslint-disable-next-line no-console
-    console.log('[agent-grouping] agent:', agent.title || agent.id, {
-      status: agent.status,
-      lastActivityAt: agent.lastActivityAt,
-      ageDiffHours: ageDiff / (1000 * 60 * 60),
-      gracePeriodHours: ACTIVE_GRACE_PERIOD_MS / (1000 * 60 * 60),
-      isRunningOrAttention,
-      isRecentlyActive,
-      isActive,
-    });
 
     if (isActive) {
       activeAgents.push(agent);
