@@ -10,7 +10,7 @@
     "android:debug": "APP_VARIANT=debug bash ./scripts/android-run-variant.sh",
     "android:fast:build": "APP_VARIANT=fast bash ./scripts/android-build-variant.sh",
     "android:debug:build": "APP_VARIANT=debug bash ./scripts/android-build-variant.sh",
-    "android:prod": "APP_VARIANT=prod expo run:android --variant=release",
+    "android:prod": "APP_VARIANT=prod npx expo prebuild --platform android --clean --no-install && (cd android && ./gradlew clean app:assembleRelease --rerun-tasks) && adb install -r android/app/build/outputs/apk/release/app-release.apk",
     "android:release": "npm run android:prod",
     "ios": "expo run:ios",
     "ios:release": "expo run:ios --configuration Release",

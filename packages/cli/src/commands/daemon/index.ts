@@ -3,12 +3,14 @@ import { startCommand } from './start.js'
 import { runStatusCommand } from './status.js'
 import { runStopCommand } from './stop.js'
 import { runRestartCommand } from './restart.js'
+import { pairCommand } from './pair.js'
 import { withOutput } from '../../output/index.js'
 
 export function createDaemonCommand(): Command {
   const daemon = new Command('daemon').description('Manage the Paseo daemon')
 
   daemon.addCommand(startCommand())
+  daemon.addCommand(pairCommand())
 
   daemon
     .command('status')

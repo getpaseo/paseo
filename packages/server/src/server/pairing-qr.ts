@@ -16,7 +16,7 @@ function shouldPrintPairingQr(): boolean {
   return Boolean(process.stdout.isTTY);
 }
 
-async function renderQr(url: string): Promise<string> {
+export async function renderPairingQr(url: string): Promise<string> {
   const terminalOptions: QRCodeToStringOptionsTerminal = {
     type: "terminal",
     small: true,
@@ -39,7 +39,7 @@ export async function printPairingQrIfEnabled(args: {
 }): Promise<void> {
   if (!shouldPrintPairingQr()) return;
 
-  const qr = await renderQr(args.url);
+  const qr = await renderPairingQr(args.url);
   const out = `\nScan to pair:\n${qr}\n${args.url}\n`;
 
   try {

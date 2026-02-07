@@ -18,7 +18,7 @@ import {
   forwardRef,
 } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Mic, ArrowUp, Paperclip, X, Square } from "lucide-react-native";
+import { Mic, MicOff, ArrowUp, Paperclip, X, Square } from "lucide-react-native";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -244,6 +244,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     isDictatingRef.current = isDictating;
   }, [isDictating]);
 
+  const isRealtimeVoiceForCurrentAgent =
+    !!voice &&
+    !!voiceServerId &&
+    !!voiceAgentId &&
+    voice.isVoiceModeForAgent(voiceServerId, voiceAgentId);
+
   useEffect(() => {
     if (isDictating || isDictationProcessing) {
       return;
@@ -314,20 +320,23 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   }));
 
   const handleVoicePress = useCallback(async () => {
-    const isRealtimeVoiceForCurrentAgent =
-      voice &&
-      !!voiceServerId &&
-      !!voiceAgentId &&
-      voice.isVoiceModeForAgent(voiceServerId, voiceAgentId);
+    if (isRealtimeVoiceForCurrentAgent && voice) {
+      voice.toggleMute();
+      return;
+    }
+
     if (isDictating) {
       await cancelDictation();
     } else {
-      if (isRealtimeVoiceForCurrentAgent) {
-        await voice.stopVoice();
-      }
       await startDictation();
     }
-  }, [isDictating, cancelDictation, startDictation, voice, voiceAgentId, voiceServerId]);
+  }, [
+    cancelDictation,
+    isDictating,
+    isRealtimeVoiceForCurrentAgent,
+    startDictation,
+    voice,
+  ]);
 
   const handleCancelRecording = useCallback(async () => {
     await cancelDictation();
@@ -623,6 +632,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             <Pressable
               onPress={handleVoicePress}
               disabled={!isConnected || disabled}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isRealtimeVoiceForCurrentAgent
+                  ? voice?.isMuted
+                    ? "Unmute realtime voice"
+                    : "Mute realtime voice"
+                  : isDictating
+                    ? "Stop dictation"
+                    : "Start dictation"
+              }
               style={[
                 styles.voiceButton,
                 (!isConnected || disabled) && styles.buttonDisabled,
@@ -631,6 +650,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             >
               {isDictating ? (
                 <Square size={14} color="white" fill="white" />
+              ) : isRealtimeVoiceForCurrentAgent && voice?.isMuted ? (
+                <MicOff size={20} color={theme.colors.foreground} />
               ) : (
                 <Mic size={20} color={theme.colors.foreground} />
               )}
