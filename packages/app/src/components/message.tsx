@@ -2,7 +2,6 @@ import {
   View,
   Text,
   Pressable,
-  Animated,
   ActivityIndicator,
   StyleProp,
   ViewStyle,
@@ -19,6 +18,14 @@ import {
   useContext,
 } from "react";
 import type { ReactNode, ComponentType } from "react";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+  Easing,
+  cancelAnimation,
+} from "react-native-reanimated";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import * as Linking from "expo-linking";
 import {
@@ -980,38 +987,23 @@ const ExpandableBadge = memo(function ExpandableBadge({
   const hasDetails = Boolean(renderDetails);
   const detailContent = hasDetails && isExpanded ? renderDetails?.() : null;
 
-  const spinAnim = useRef(new Animated.Value(0)).current;
+  const rotation = useSharedValue(0);
 
   useEffect(() => {
-    let loop: Animated.CompositeAnimation | null = null;
     if (isLoading) {
-      spinAnim.setValue(0);
-      loop = Animated.loop(
-        Animated.timing(spinAnim, {
-          toValue: 1,
-          duration: 1400,
-          useNativeDriver: true,
-          easing: (t) => t,
-        })
+      rotation.value = 0;
+      rotation.value = withRepeat(
+        withTiming(360, { duration: 1400, easing: Easing.linear }),
+        -1
       );
-      loop.start();
     } else {
-      spinAnim.stopAnimation();
+      cancelAnimation(rotation);
     }
+  }, [isLoading]);
 
-    return () => {
-      loop?.stop();
-    };
-  }, [isLoading, spinAnim]);
-
-  const spin = useMemo(
-    () =>
-      spinAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: ["0deg", "360deg"],
-      }),
-    [spinAnim]
-  );
+  const spinStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rotation.value}deg` }],
+  }));
 
   const IconComponent = icon;
   const iconColor = isError
@@ -1021,7 +1013,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
   let iconNode: ReactNode = null;
   if (isLoading) {
     iconNode = (
-      <Animated.View style={{ transform: [{ rotate: spin }] }}>
+      <Animated.View style={spinStyle}>
         <Loader2 size={12} color={iconColor} />
       </Animated.View>
     );

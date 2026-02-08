@@ -799,7 +799,6 @@ export class AgentManager {
       // Await the generator's .return() to ensure the finally block runs
       // and pendingRun is properly cleared before we return.
       await pendingRun.return(undefined as unknown as AgentStreamEvent);
-      return true;
     } catch (error) {
       this.logger.error(
         { err: error, agentId },
@@ -807,6 +806,24 @@ export class AgentManager {
       );
       throw error;
     }
+
+    // Clear any pending permissions that weren't cleaned up by handleStreamEvent.
+    // Due to microtask ordering, .return() may force the generator to its finally
+    // block before it consumes the turn_canceled event, skipping our cleanup code.
+    if (agent.pendingPermissions.size > 0) {
+      for (const [requestId] of agent.pendingPermissions) {
+        this.dispatchStream(agent.id, {
+          type: "permission_resolved",
+          provider: agent.provider,
+          requestId,
+          resolution: { behavior: "deny", message: "Interrupted" },
+        });
+      }
+      agent.pendingPermissions.clear();
+      this.emitState(agent);
+    }
+
+    return true;
   }
 
   getPendingPermissions(agentId: string): AgentPermissionRequest[] {
