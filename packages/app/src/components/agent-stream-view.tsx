@@ -826,8 +826,7 @@ function WorkingIndicator() {
             withTiming(1, { duration: bounceDuration }),
             withTiming(0, { duration: bounceDuration })
           ),
-          -1,
-          true
+          -1
         )
       );
     });

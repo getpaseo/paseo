@@ -2,6 +2,7 @@ import {
   View,
   TextInput,
   Pressable,
+  ActivityIndicator,
   NativeSyntheticEvent,
   TextInputContentSizeChangeEventData,
   TextInputKeyPressEventData,
@@ -533,7 +534,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
   const hasImages = images.length > 0;
   const hasSendableContent = value.trim().length > 0 || hasImages;
-  const shouldShowSendButton = hasSendableContent;
+  const shouldShowSendButton = hasSendableContent || isSubmitLoading;
   const isConnected = client?.isConnected ?? false;
 
   return (
@@ -675,7 +676,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                     styles.buttonDisabled,
                 ]}
               >
-                <ArrowUp size={20} color="white" />
+                {isSubmitLoading ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <ArrowUp size={20} color="white" />
+                )}
               </Pressable>
             )}
           </View>

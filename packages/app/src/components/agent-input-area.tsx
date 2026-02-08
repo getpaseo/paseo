@@ -101,6 +101,7 @@ export function AgentInputArea({
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedImages, setSelectedImages] = useState<ImageAttachment[]>([]);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
   const lastHandledFocusRequestIdRef = useRef<number | null>(null);
 
@@ -129,6 +130,13 @@ export function AgentInputArea({
   useEffect(() => {
     setCommandSelectedIndex(0);
   }, [commandFilter]);
+
+  // Clear send error when user edits the input
+  useEffect(() => {
+    if (sendError && userInput) {
+      setSendError(null);
+    }
+  }, [userInput, sendError]);
 
   const { pickImages } = useImageAttachmentPicker();
   const agentIdRef = useRef(agentId);
@@ -256,28 +264,38 @@ export function AgentInputArea({
       return;
     }
 
-    const isControlledLocal = value !== undefined;
-    setSelectedImages([]);
-    setIsProcessing(true);
-
-    try {
-      await submitMessage(trimmedMessage, imageAttachments);
-      // Clear input only after successful submission
-      // For controlled inputs with onSubmitMessage, the parent handles clearing
-      // because agent creation is async (WebSocket) and errors come back later
-      if (onSubmitMessageRef.current) {
-        // Parent manages input state - don't clear here
-        // Parent will clear on success via onChangeText
-      } else if (isControlledLocal) {
+    // Clear input optimistically before awaiting server ack.
+    // Save values so we can restore on error.
+    const savedImages = imageAttachments;
+    if (!onSubmitMessageRef.current) {
+      if (value !== undefined) {
         onChangeText?.("");
       } else {
         setUserInput("");
       }
+    }
+    setSelectedImages([]);
+    setSendError(null);
+    setIsProcessing(true);
+
+    try {
+      await submitMessage(trimmedMessage, imageAttachments);
     } catch (error) {
       console.error("[AgentInput] Failed to send message:", error);
-      if (imageAttachments) {
-        setSelectedImages(imageAttachments);
+      // Restore input so the user never loses their message
+      if (!onSubmitMessageRef.current) {
+        if (value !== undefined) {
+          onChangeText?.(trimmedMessage);
+        } else {
+          setUserInput(trimmedMessage);
+        }
       }
+      if (savedImages) {
+        setSelectedImages(savedImages);
+      }
+      setSendError(
+        error instanceof Error ? error.message : "Failed to send message"
+      );
     } finally {
       setIsProcessing(false);
     }
@@ -449,7 +467,14 @@ export function AgentInputArea({
 
     // Cancels current agent run before sending queued prompt
     handleCancelAgent();
-    await submitMessage(item.text, item.images);
+    try {
+      await submitMessage(item.text, item.images);
+    } catch (error) {
+      updateQueue((current) => [item, ...current]);
+      setSendError(
+        error instanceof Error ? error.message : "Failed to send message"
+      );
+    }
   }
 
   const handleQueue = useCallback((payload: MessagePayload) => {
@@ -616,6 +641,10 @@ export function AgentInputArea({
             />
           )}
 
+          {sendError && (
+            <Text style={styles.sendErrorText}>{sendError}</Text>
+          )}
+
           {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
           <MessageInput
             ref={messageInputRef}
@@ -623,7 +652,7 @@ export function AgentInputArea({
             onChangeText={setUserInput}
             onSubmit={handleSubmit}
             isSubmitDisabled={isProcessing || isSubmitLoading}
-            isSubmitLoading={isSubmitLoading}
+            isSubmitLoading={isProcessing || isSubmitLoading}
             images={selectedImages}
             onPickImages={handlePickImage}
             onRemoveImage={handleRemoveImage}
@@ -737,5 +766,9 @@ const styles = StyleSheet.create(((theme: Theme) => ({
   },
   queueSendButton: {
     backgroundColor: theme.colors.palette.blue[600],
+  },
+  sendErrorText: {
+    color: theme.colors.palette.red[500],
+    fontSize: theme.fontSize.sm,
   },
 })) as any) as Record<string, any>;
