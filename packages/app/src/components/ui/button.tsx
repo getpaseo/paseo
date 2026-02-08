@@ -31,8 +31,8 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.xl,
   },
   default: {
-    backgroundColor: theme.colors.palette.blue[500],
-    borderColor: theme.colors.palette.blue[500],
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent,
   },
   secondary: {
     backgroundColor: theme.colors.surface2,

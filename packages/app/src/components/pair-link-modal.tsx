@@ -3,7 +3,8 @@ import { Alert, Text, View } from "react-native";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Link } from "lucide-react-native";
 import { useDaemonRegistry, type HostProfile } from "@/contexts/daemon-registry-context";
-import { decodeOfferFragmentPayload } from "@/utils/daemon-endpoints";
+import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
+import { probeConnection } from "@/utils/test-daemon-connection";
 import { ConnectionOfferSchema } from "@server/shared/connection-offer";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
@@ -120,9 +121,20 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved, targetServe
     try {
       setIsSaving(true);
       setErrorMessage("");
+
+      const probeResult = await probeConnection(
+        {
+          id: "probe",
+          type: "relay",
+          relayEndpoint: normalizeHostPort(parsedOffer.relay.endpoint),
+          daemonPublicKeyB64: parsedOffer.daemonPublicKeyB64,
+        },
+        { serverId: parsedOffer.serverId },
+      );
+
       const isNewHost = !daemons.some((daemon) => daemon.serverId === parsedOffer.serverId);
       const profile = await upsertDaemonFromOfferUrl(raw);
-      onSaved?.({ profile, serverId: parsedOffer.serverId, hostname: null, isNewHost });
+      onSaved?.({ profile, serverId: parsedOffer.serverId, hostname: probeResult.hostname, isNewHost });
       handleClose();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to pair host";

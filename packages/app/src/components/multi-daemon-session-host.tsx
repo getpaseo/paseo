@@ -8,7 +8,7 @@ import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
 } from "@/utils/daemon-endpoints";
-import { probeDaemonEndpoint } from "@/utils/test-daemon-connection";
+import { probeConnection } from "@/utils/test-daemon-connection";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActiveConnection } from "@/contexts/daemon-connections-context";
 
@@ -157,9 +157,10 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
 
       upgradeProbeInFlightRef.current = true;
       try {
-        const { serverId } = await probeDaemonEndpoint(best.activeConnection.endpoint, {
-          timeoutMs: 2000,
-        });
+        const { serverId } = await probeConnection(
+          { id: "probe", type: "direct", endpoint: best.activeConnection.endpoint },
+          { timeoutMs: 2000 },
+        );
         if (cancelled) return;
         if (serverId !== daemon.serverId) return;
 

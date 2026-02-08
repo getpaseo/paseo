@@ -4,7 +4,7 @@ import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyl
 import { Link2 } from "lucide-react-native";
 import { useDaemonRegistry, type HostProfile } from "@/contexts/daemon-registry-context";
 import { normalizeHostPort } from "@/utils/daemon-endpoints";
-import { DaemonConnectionTestError, probeDaemonEndpoint } from "@/utils/test-daemon-connection";
+import { DaemonConnectionTestError, probeConnection } from "@/utils/test-daemon-connection";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 
@@ -179,7 +179,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved, targetServer
       setIsSaving(true);
       setErrorMessage("");
 
-      const { serverId, hostname } = await probeDaemonEndpoint(endpoint);
+      const { serverId, hostname } = await probeConnection({ id: "probe", type: "direct", endpoint });
       if (targetServerId && serverId !== targetServerId) {
         const message = `That endpoint belongs to ${serverId}, not ${targetServerId}.`;
         setErrorMessage(message);

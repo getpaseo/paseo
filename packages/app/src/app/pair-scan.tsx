@@ -8,7 +8,8 @@ import type { BarcodeScanningResult } from "expo-camera";
 import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { useSessionStore } from "@/stores/session-store";
 import { NameHostModal } from "@/components/name-host-modal";
-import { decodeOfferFragmentPayload } from "@/utils/daemon-endpoints";
+import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
+import { probeConnection } from "@/utils/test-daemon-connection";
 import { ConnectionOfferSchema } from "@server/shared/connection-offer";
 
 const styles = StyleSheet.create((theme) => ({
@@ -216,6 +217,16 @@ export default function PairScanScreen() {
           Alert.alert("Wrong daemon", `That QR code belongs to ${offer.serverId}, not ${targetServerId}.`);
           return;
         }
+
+        await probeConnection(
+          {
+            id: "probe",
+            type: "relay",
+            relayEndpoint: normalizeHostPort(offer.relay.endpoint),
+            daemonPublicKeyB64: offer.daemonPublicKeyB64,
+          },
+          { serverId: offer.serverId },
+        );
 
         const isNewHost = !daemons.some((daemon) => daemon.serverId === offer.serverId);
         const profile = await upsertDaemonFromOfferUrl(offerUrl);

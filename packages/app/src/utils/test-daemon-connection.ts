@@ -1,6 +1,7 @@
 import { DaemonClient } from "@server/client/daemon-client";
-import type { ConnectionState } from "@server/client/daemon-client";
-import { buildDaemonWebSocketUrl } from "./daemon-endpoints";
+import type { DaemonClientConfig } from "@server/client/daemon-client";
+import type { HostConnection } from "@/contexts/daemon-registry-context";
+import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "./daemon-endpoints";
 import { createTauriWebSocketTransportFactory } from "./tauri-daemon-transport";
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -39,82 +40,127 @@ export class DaemonConnectionTestError extends Error {
   }
 }
 
-export async function probeDaemonEndpoint(
-  endpoint: string,
-  options?: { timeoutMs?: number }
-): Promise<{ serverId: string; hostname: string | null }> {
-  const timeoutMs = options?.timeoutMs ?? 6000;
-  const url = buildDaemonWebSocketUrl(endpoint);
-
+function buildClientConfig(connection: HostConnection, serverId?: string): DaemonClientConfig {
   const tauriTransportFactory = createTauriWebSocketTransportFactory();
-  const client = new DaemonClient({
-    url,
+  const base = {
     suppressSendErrors: true,
     ...(tauriTransportFactory ? { transportFactory: tauriTransportFactory } : {}),
-  });
+  };
 
-  try {
-    return await new Promise<{ serverId: string; hostname: string | null }>((resolve, reject) => {
-      let cleanedUp = false;
-      let unsubscribe: (() => void) | null = null;
-      let unsubscribeStatus: (() => void) | null = null;
-      let serverId: string | null = null;
-      let hostname: string | null = null;
+  if (connection.type === "direct") {
+    return { ...base, url: buildDaemonWebSocketUrl(connection.endpoint) };
+  }
 
-      const cleanup = () => {
-        if (cleanedUp) return;
-        cleanedUp = true;
-        clearTimeout(timeout);
-        unsubscribe?.();
-        unsubscribeStatus?.();
-      };
+  if (!serverId) {
+    throw new Error("serverId is required to probe a relay connection");
+  }
 
-      const maybeFinishOk = () => {
-        if (!serverId) return;
-        cleanup();
-        resolve({ serverId, hostname });
-      };
+  return {
+    ...base,
+    url: buildRelayWebSocketUrl({ endpoint: connection.relayEndpoint, serverId }),
+    e2ee: { enabled: true, daemonPublicKeyB64: connection.daemonPublicKeyB64 },
+  };
+}
 
-      const finishErr = (error: Error) => {
-        if (cleanedUp) return;
-        cleanup();
-        reject(error);
-      };
+function connectAndProbe(
+  config: DaemonClientConfig,
+  timeoutMs: number,
+): Promise<{ client: DaemonClient; serverId: string; hostname: string | null }> {
+  const client = new DaemonClient(config);
 
-      const timeout = setTimeout(() => {
-        finishErr(
-          new DaemonConnectionTestError("Connection timed out", {
-            reason: "Connection timed out",
-            lastError: client.lastError ?? null,
-          })
-        );
-      }, timeoutMs);
+  return new Promise<{ client: DaemonClient; serverId: string; hostname: string | null }>((resolve, reject) => {
+    let cleanedUp = false;
+    let unsubscribe: (() => void) | null = null;
+    let unsubscribeStatus: (() => void) | null = null;
+    let serverId: string | null = null;
+    let hostname: string | null = null;
 
-      unsubscribe = client.subscribeConnectionStatus((state) => {
-        if (state.status === "disconnected") {
-          const reason = normalizeNonEmptyString(state.reason);
-          const lastError = normalizeNonEmptyString(client.lastError);
-          const message = pickBestReason(reason, lastError);
-          finishErr(new DaemonConnectionTestError(message, { reason, lastError }));
-        }
-      });
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      clearTimeout(timer);
+      unsubscribe?.();
+      unsubscribeStatus?.();
+    };
 
-      unsubscribeStatus = client.on("status", (message) => {
-        if (message.type !== "status") return;
-        const payload = message.payload as { status?: unknown; serverId?: unknown; hostname?: unknown };
-        if (payload?.status !== "server_info") return;
-        const raw = typeof payload.serverId === "string" ? payload.serverId.trim() : "";
-        if (!raw) return;
-        serverId = raw;
-        hostname = typeof payload.hostname === "string" ? payload.hostname.trim() : null;
-        if (hostname && hostname.length === 0) {
-          hostname = null;
-        }
-        maybeFinishOk();
-      });
+    const maybeFinishOk = () => {
+      if (!serverId) return;
+      cleanup();
+      resolve({ client, serverId, hostname });
+    };
 
-      void client.connect().catch(() => undefined);
+    const finishErr = (error: Error) => {
+      if (cleanedUp) return;
+      cleanup();
+      client.close().catch(() => undefined);
+      reject(error);
+    };
+
+    const timer = setTimeout(() => {
+      finishErr(
+        new DaemonConnectionTestError("Connection timed out", {
+          reason: "Connection timed out",
+          lastError: client.lastError ?? null,
+        })
+      );
+    }, timeoutMs);
+
+    unsubscribe = client.subscribeConnectionStatus((state) => {
+      if (state.status === "disconnected") {
+        const reason = normalizeNonEmptyString(state.reason);
+        const lastError = normalizeNonEmptyString(client.lastError);
+        const message = pickBestReason(reason, lastError);
+        finishErr(new DaemonConnectionTestError(message, { reason, lastError }));
+      }
     });
+
+    unsubscribeStatus = client.on("status", (message) => {
+      if (message.type !== "status") return;
+      const payload = message.payload as { status?: unknown; serverId?: unknown; hostname?: unknown };
+      if (payload?.status !== "server_info") return;
+      const raw = typeof payload.serverId === "string" ? payload.serverId.trim() : "";
+      if (!raw) return;
+      serverId = raw;
+      hostname = typeof payload.hostname === "string" ? payload.hostname.trim() : null;
+      if (hostname && hostname.length === 0) {
+        hostname = null;
+      }
+      maybeFinishOk();
+    });
+
+    void client.connect().catch(() => undefined);
+  });
+}
+
+interface ProbeOptions {
+  serverId?: string;
+  timeoutMs?: number;
+}
+
+function resolveTimeout(connection: HostConnection, options?: ProbeOptions): number {
+  if (options?.timeoutMs) return options.timeoutMs;
+  return connection.type === "relay" ? 10_000 : 6_000;
+}
+
+export async function probeConnection(
+  connection: HostConnection,
+  options?: ProbeOptions,
+): Promise<{ serverId: string; hostname: string | null }> {
+  const config = buildClientConfig(connection, options?.serverId);
+  const { client, serverId, hostname } = await connectAndProbe(config, resolveTimeout(connection, options));
+  await client.close().catch(() => undefined);
+  return { serverId, hostname };
+}
+
+export async function measureConnectionLatency(
+  connection: HostConnection,
+  options?: ProbeOptions,
+): Promise<number> {
+  const config = buildClientConfig(connection, options?.serverId);
+  const { client } = await connectAndProbe(config, resolveTimeout(connection, options));
+  try {
+    const { rttMs } = await client.ping({ timeoutMs: 5000 });
+    return rttMs;
   } finally {
     await client.close().catch(() => undefined);
   }

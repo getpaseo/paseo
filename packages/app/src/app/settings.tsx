@@ -4,7 +4,6 @@ import {
   View,
   Text,
   ScrollView,
-  TextInput,
   Pressable,
   Alert,
   Platform,
@@ -13,11 +12,13 @@ import { router, useLocalSearchParams } from "expo-router";
 import Constants from "expo-constants";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { Sun, Moon, Monitor, MoreVertical, Globe, Trash2, Pencil, RotateCw } from "lucide-react-native";
+import { useQueries } from "@tanstack/react-query";
+import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2 } from "lucide-react-native";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
-import { useDaemonRegistry, type HostProfile } from "@/contexts/daemon-registry-context";
+import { useDaemonRegistry, type HostProfile, type HostConnection } from "@/contexts/daemon-registry-context";
 import { useDaemonConnections, type ActiveConnection, type ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
+import { measureConnectionLatency } from "@/utils/test-daemon-connection";
 import { theme as defaultTheme } from "@/styles/theme";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
@@ -25,15 +26,13 @@ import { AddHostMethodModal } from "@/components/add-host-method-modal";
 import { AddHostModal } from "@/components/add-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
 import { NameHostModal } from "@/components/name-host-modal";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 
 const delay = (ms: number) =>
@@ -181,15 +180,24 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
-  menuButton: {
-    width: 36,
-    height: 32,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
+  hostCardPressed: {
+    opacity: 0.85,
   },
-  menuButtonPressed: {
-    backgroundColor: theme.colors.surface3,
+  advancedTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: "transparent",
+  },
+  advancedTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
   },
   disabled: {
     opacity: theme.opacity[50],
@@ -537,8 +545,18 @@ export default function SettingsScreen() {
   );
 
   const handleRemoveDaemon = useCallback((profile: HostProfile) => {
+    setEditingDaemon(null);
     setPendingRemoveHost(profile);
   }, []);
+
+  const handleAddConnectionFromModal = useCallback(() => {
+    if (!editingDaemon) return;
+    const serverId = editingDaemon.serverId;
+    setEditingDaemon(null);
+    setAddConnectionTargetServerId(serverId);
+    setPendingEditReopenServerId(serverId);
+    setIsAddHostMethodVisible(true);
+  }, [editingDaemon]);
 
   const handleThemeChange = useCallback(
     (newTheme: AppSettings["theme"]) => {
@@ -619,11 +637,7 @@ export default function SettingsScreen() {
                     connectionStatus={connectionStatus}
                     activeConnection={activeConnection}
                     lastError={lastConnectionError}
-                    onEdit={handleEditDaemon}
-                    onRemove={handleRemoveDaemon}
-                    restartConfirmationMessage={restartConfirmationMessage}
-                    waitForCondition={waitForCondition}
-                    isScreenMountedRef={isMountedRef}
+                    onPress={handleEditDaemon}
                   />
                 );
               })
@@ -748,13 +762,21 @@ export default function SettingsScreen() {
             </AdaptiveModalSheet>
           ) : null}
 
-          <EditHostModal
+          <HostDetailModal
             visible={Boolean(editingDaemon)}
             host={editingDaemonLive ?? editingDaemon}
+            connectionStatus={editingDaemon ? (connectionStates.get(editingDaemon.serverId)?.status ?? "idle") : "idle"}
+            activeConnection={editingDaemon ? (connectionStates.get(editingDaemon.serverId)?.activeConnection ?? null) : null}
+            lastError={editingDaemon ? (connectionStates.get(editingDaemon.serverId)?.lastError ?? null) : null}
             isSaving={isSavingEdit}
             onClose={handleCloseEditDaemon}
             onSave={(label) => void handleSaveEditDaemon(label)}
             onRemoveConnection={handleRemoveConnection}
+            onRemoveHost={handleRemoveDaemon}
+            onAddConnection={handleAddConnectionFromModal}
+            restartConfirmationMessage={restartConfirmationMessage}
+            waitForCondition={waitForCondition}
+            isScreenMountedRef={isMountedRef}
           />
 
           {/* Appearance */}
@@ -816,25 +838,185 @@ export default function SettingsScreen() {
   );
 }
 
-interface EditHostModalProps {
+interface HostDetailModalProps {
   visible: boolean;
   host: HostProfile | null;
+  connectionStatus: ConnectionStatus;
+  activeConnection: ActiveConnection | null;
+  lastError: string | null;
   isSaving: boolean;
   onClose: () => void;
   onSave: (label: string) => void;
   onRemoveConnection: (serverId: string, connectionId: string) => Promise<void>;
+  onRemoveHost: (host: HostProfile) => void;
+  onAddConnection: () => void;
+  restartConfirmationMessage: string;
+  waitForCondition: (predicate: () => boolean, timeoutMs: number, intervalMs?: number) => Promise<boolean>;
+  isScreenMountedRef: MutableRefObject<boolean>;
 }
 
-function EditHostModal({
+function HostDetailModal({
   visible,
   host,
+  connectionStatus,
+  activeConnection,
+  lastError,
   isSaving,
   onClose,
   onSave,
   onRemoveConnection,
-}: EditHostModalProps) {
+  onRemoveHost,
+  onAddConnection,
+  restartConfirmationMessage,
+  waitForCondition,
+  isScreenMountedRef,
+}: HostDetailModalProps) {
+  const { theme } = useUnistyles();
   const [draftLabel, setDraftLabel] = useState("");
   const activeServerIdRef = useRef<string | null>(null);
+  const [pendingRemoveConnection, setPendingRemoveConnection] = useState<{ serverId: string; connectionId: string; title: string } | null>(null);
+  const [isRemovingConnection, setIsRemovingConnection] = useState(false);
+
+  // Latency probes for each connection
+  const connections = host?.connections ?? [];
+  const latencyQueries = useQueries({
+    queries: connections.map((conn) => ({
+      queryKey: ["connection-latency", conn.id],
+      queryFn: () => measureConnectionLatency(conn, { serverId: host?.serverId }),
+      enabled: visible,
+      refetchInterval: 5_000,
+      staleTime: 4_000,
+      gcTime: 60_000,
+      retry: 1,
+    })),
+  });
+  const latencyByConnectionId = new Map(
+    connections.map((conn, i) => [conn.id, latencyQueries[i]] as const)
+  );
+
+  // Restart logic (moved from DaemonCard)
+  const daemonClient = useSessionStore((state) => host ? (state.sessions[host.serverId]?.client ?? null) : null);
+  const daemonConnection = useSessionStore((state) => host ? (state.sessions[host.serverId]?.connection ?? null) : null);
+  const isConnected = daemonConnection?.isConnected ?? false;
+  const isConnectedRef = useRef(isConnected);
+  const [isRestarting, setIsRestarting] = useState(false);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  const waitForDaemonRestart = useCallback(async () => {
+    const disconnectTimeoutMs = 7000;
+    const reconnectTimeoutMs = 30000;
+
+    if (isConnectedRef.current) {
+      await waitForCondition(() => !isConnectedRef.current, disconnectTimeoutMs);
+    }
+
+    const reconnected = await waitForCondition(() => isConnectedRef.current, reconnectTimeoutMs);
+
+    if (isScreenMountedRef.current) {
+      setIsRestarting(false);
+      if (!reconnected && host) {
+        Alert.alert(
+          "Unable to reconnect",
+          `${host.label} did not come back online. Please verify it restarted.`
+        );
+      }
+    }
+  }, [host, isScreenMountedRef, waitForCondition]);
+
+  const beginServerRestart = useCallback(() => {
+    if (!daemonClient || !host) return;
+
+    if (!isConnectedRef.current) {
+      Alert.alert(
+        "Host offline",
+        "This host is offline. Paseo reconnects automatically—wait until it's back online before restarting."
+      );
+      return;
+    }
+
+    setIsRestarting(true);
+    void daemonClient
+      .restartServer(`settings_daemon_restart_${host.serverId}`)
+      .catch((error) => {
+        console.error(`[Settings] Failed to restart daemon ${host.label}`, error);
+        if (!isScreenMountedRef.current) return;
+        setIsRestarting(false);
+        Alert.alert(
+          "Error",
+          "Failed to send the restart request. Paseo reconnects automatically—try again once the host shows as online."
+        );
+      });
+
+    void waitForDaemonRestart();
+  }, [daemonClient, host, isScreenMountedRef, waitForDaemonRestart]);
+
+  const handleRestartPress = useCallback(() => {
+    if (!daemonClient || !host) {
+      Alert.alert(
+        "Host unavailable",
+        "This host is not connected. Wait for it to come online before restarting."
+      );
+      return;
+    }
+
+    if (Platform.OS === "web") {
+      const hasBrowserConfirm =
+        typeof globalThis !== "undefined" &&
+        typeof (globalThis as any).confirm === "function";
+
+      const confirmed = hasBrowserConfirm
+        ? (globalThis as any).confirm(`Restart ${host.label}? ${restartConfirmationMessage}`)
+        : true;
+
+      if (confirmed) {
+        beginServerRestart();
+      }
+      return;
+    }
+
+    Alert.alert(`Restart ${host.label}`, restartConfirmationMessage, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Restart",
+        style: "destructive",
+        onPress: beginServerRestart,
+      },
+    ]);
+  }, [beginServerRestart, daemonClient, host, restartConfirmationMessage]);
+
+  // Status display
+  const statusLabel = formatConnectionStatus(connectionStatus);
+  const statusTone = getConnectionStatusTone(connectionStatus);
+  const statusColor =
+    statusTone === "success"
+      ? theme.colors.palette.green[400]
+      : statusTone === "warning"
+        ? theme.colors.palette.amber[500]
+        : statusTone === "error"
+          ? theme.colors.destructive
+          : theme.colors.foregroundMuted;
+  const statusPillBg =
+    statusTone === "success"
+      ? "rgba(74, 222, 128, 0.1)"
+      : statusTone === "warning"
+        ? "rgba(245, 158, 11, 0.1)"
+        : statusTone === "error"
+          ? "rgba(248, 113, 113, 0.1)"
+          : "rgba(161, 161, 170, 0.1)";
+  const connectionBadge = (() => {
+    if (!activeConnection) return null;
+    if (activeConnection.type === "relay") {
+      return { icon: <Globe size={12} color={theme.colors.foregroundMuted} />, text: "Relay" };
+    }
+    return {
+      icon: <Monitor size={12} color={theme.colors.foregroundMuted} />,
+      text: activeConnection.display,
+    };
+  })();
+  const connectionError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
 
   useEffect(() => {
     if (!visible || !host) return;
@@ -851,88 +1033,248 @@ function EditHostModal({
   useEffect(() => {
     if (!visible) {
       activeServerIdRef.current = null;
+      setIsRestarting(false);
     }
   }, [visible]);
 
   return (
-    <AdaptiveModalSheet
-      title="Edit host"
-      visible={visible}
-      onClose={onClose}
-      testID="edit-host-modal"
-    >
-      <View style={styles.formField}>
-        <Text style={styles.label}>Label</Text>
-        <AdaptiveTextInput
-          style={styles.input}
-          value={draftLabel}
-          onChangeText={setDraftLabel}
-          placeholder="My Host"
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
-        />
-      </View>
+    <>
+      <AdaptiveModalSheet
+        title={host?.label ?? "Host"}
+        visible={visible}
+        onClose={onClose}
+        testID="host-detail-modal"
+      >
+        {/* Status row */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing[2] }}>
+          <View style={[styles.statusPill, { backgroundColor: statusPillBg }]}>
+            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+            <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+          </View>
+          {connectionBadge ? (
+            <View style={styles.connectionPill}>
+              {connectionBadge.icon}
+              <Text style={styles.connectionText} numberOfLines={1}>
+                {connectionBadge.text}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        {connectionError ? (
+          <Text style={{ color: theme.colors.palette.red[300], fontSize: theme.fontSize.xs }}>
+            {connectionError}
+          </Text>
+        ) : null}
 
-      {host ? (
+        {/* Label */}
         <View style={styles.formField}>
-          <Text style={styles.label}>Connections</Text>
-          <View style={{ gap: 8 }}>
-            {host.connections.map((conn) => {
-              const title =
-                conn.type === "relay"
-                  ? `Relay (${conn.relayEndpoint})`
-                  : `Direct (${conn.endpoint})`;
-              return (
-                <View
-                  key={conn.id}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    paddingVertical: 10,
-                    paddingHorizontal: 12,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    borderColor: defaultTheme.colors.border,
-                    backgroundColor: defaultTheme.colors.surface2,
-                  }}
+          <Text style={styles.label}>Label</Text>
+          <AdaptiveTextInput
+            style={styles.input}
+            value={draftLabel}
+            onChangeText={setDraftLabel}
+            placeholder="My Host"
+            placeholderTextColor={defaultTheme.colors.mutedForeground}
+          />
+        </View>
+
+        {/* Connections */}
+        {host ? (
+          <View style={styles.formField}>
+            <Text style={styles.label}>Connections</Text>
+            <View style={{ gap: 8 }}>
+              {host.connections.map((conn) => {
+                const latency = latencyByConnectionId.get(conn.id);
+                return (
+                  <ConnectionRow
+                    key={conn.id}
+                    connection={conn}
+                    latencyMs={latency?.data ?? undefined}
+                    latencyLoading={latency?.isLoading ?? false}
+                    latencyError={latency?.isError ?? false}
+                    onRemove={() => {
+                      const title =
+                        conn.type === "relay"
+                          ? `Relay (${conn.relayEndpoint})`
+                          : `Direct (${conn.endpoint})`;
+                      setPendingRemoveConnection({ serverId: host.serverId, connectionId: conn.id, title });
+                    }}
+                  />
+                );
+              })}
+              <Pressable
+                style={styles.addButton}
+                onPress={onAddConnection}
+              >
+                <Text style={styles.addButtonText}>+ Add connection</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Save/Cancel + Advanced */}
+        <View style={{ borderTopWidth: 1, borderTopColor: theme.colors.border, marginTop: theme.spacing[2], paddingTop: theme.spacing[4] }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                style={({ pressed }) => [
+                  styles.advancedTrigger,
+                  pressed && { opacity: 0.85 },
+                ]}
+              >
+                <Settings size={14} color={theme.colors.foregroundMuted} />
+                <Text style={styles.advancedTriggerText}>Advanced</Text>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start" width={220}>
+                <DropdownMenuItem
+                  onSelect={handleRestartPress}
+                  leading={<RotateCw size={16} color={theme.colors.foregroundMuted} />}
+                  status={isRestarting ? "pending" : "idle"}
+                  pendingLabel="Restarting..."
+                  disabled={!daemonClient || !isConnectedRef.current}
                 >
-                  <Text style={{ color: defaultTheme.colors.foreground, fontSize: 12, flex: 1 }}>
-                    {title}
-                  </Text>
-                  <Pressable
-                    onPress={() => void onRemoveConnection(host.serverId, conn.id)}
-                  >
-                    <Text style={{ color: defaultTheme.colors.destructive, fontSize: 12, fontWeight: "500" }}>
-                      Remove
-                    </Text>
-                  </Pressable>
-                </View>
-              );
-            })}
+                  Restart daemon
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => { if (host) onRemoveHost(host); }}
+                  leading={<Trash2 size={16} color={theme.colors.destructive} />}
+                >
+                  Remove host
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <View style={styles.formActionsRow}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onPress={onClose}
+                disabled={isSaving}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onPress={() => onSave(draftLabel)}
+                disabled={isSaving}
+              >
+                {isSaving ? "Saving..." : "Save"}
+              </Button>
+            </View>
           </View>
         </View>
-      ) : null}
+      </AdaptiveModalSheet>
 
-      <View style={styles.formActionsRow}>
-        <Button
-          variant="secondary"
-          size="sm"
-          onPress={onClose}
-          disabled={isSaving}
+      {/* Remove connection confirmation */}
+      {pendingRemoveConnection ? (
+        <AdaptiveModalSheet
+          title="Remove connection"
+          visible
+          onClose={() => {
+            if (isRemovingConnection) return;
+            setPendingRemoveConnection(null);
+          }}
+          testID="remove-connection-confirm-modal"
         >
-          Cancel
-        </Button>
-        <Button
-          variant="default"
-          size="sm"
-          onPress={() => onSave(draftLabel)}
-          disabled={isSaving}
-        >
-          {isSaving ? "Saving..." : "Save"}
-        </Button>
-      </View>
-    </AdaptiveModalSheet>
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>
+            Remove {pendingRemoveConnection.title}? This cannot be undone.
+          </Text>
+          <View style={[styles.formActionsRow, { marginTop: theme.spacing[4] }]}>
+            <Button
+              variant="secondary"
+              size="sm"
+              style={{ flex: 1 }}
+              onPress={() => setPendingRemoveConnection(null)}
+              disabled={isRemovingConnection}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              style={{ flex: 1 }}
+              onPress={() => {
+                const { serverId, connectionId } = pendingRemoveConnection;
+                setIsRemovingConnection(true);
+                void onRemoveConnection(serverId, connectionId)
+                  .then(() => setPendingRemoveConnection(null))
+                  .catch((error) => {
+                    console.error("[Settings] Failed to remove connection", error);
+                    Alert.alert("Error", "Unable to remove connection");
+                  })
+                  .finally(() => setIsRemovingConnection(false));
+              }}
+              disabled={isRemovingConnection}
+              testID="remove-connection-confirm"
+            >
+              Remove
+            </Button>
+          </View>
+        </AdaptiveModalSheet>
+      ) : null}
+    </>
+  );
+}
+
+function ConnectionRow({
+  connection,
+  latencyMs,
+  latencyLoading,
+  latencyError,
+  onRemove,
+}: {
+  connection: HostConnection;
+  latencyMs: number | null | undefined;
+  latencyLoading: boolean;
+  latencyError: boolean;
+  onRemove: () => void;
+}) {
+  const { theme } = useUnistyles();
+  const title =
+    connection.type === "relay"
+      ? `Relay (${connection.relayEndpoint})`
+      : `Direct (${connection.endpoint})`;
+
+  const latencyText = (() => {
+    if (latencyLoading) return "...";
+    if (latencyError) return "Timeout";
+    if (latencyMs != null) return `${latencyMs}ms`;
+    return "\u2014";
+  })();
+
+  const latencyColor =
+    latencyError
+      ? theme.colors.palette.red[300]
+      : theme.colors.foregroundMuted;
+
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        backgroundColor: theme.colors.surface2,
+      }}
+    >
+      <Text style={{ color: theme.colors.foreground, fontSize: 12, flex: 1 }}>
+        {title}
+      </Text>
+      <Text style={{ color: latencyColor, fontSize: 11 }}>
+        {latencyText}
+      </Text>
+      <Pressable onPress={onRemove}>
+        <Text style={{ color: theme.colors.destructive, fontSize: 12, fontWeight: "500" }}>
+          Remove
+        </Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -941,11 +1283,7 @@ interface DaemonCardProps {
   connectionStatus: ConnectionStatus;
   activeConnection: ActiveConnection | null;
   lastError: string | null;
-  onEdit: (daemon: HostProfile) => void;
-  onRemove: (daemon: HostProfile) => void;
-  restartConfirmationMessage: string;
-  waitForCondition: (predicate: () => boolean, timeoutMs: number, intervalMs?: number) => Promise<boolean>;
-  isScreenMountedRef: MutableRefObject<boolean>;
+  onPress: (daemon: HostProfile) => void;
 }
 
 function DaemonCard({
@@ -953,11 +1291,7 @@ function DaemonCard({
   connectionStatus,
   activeConnection,
   lastError,
-  onEdit,
-  onRemove,
-  restartConfirmationMessage,
-  waitForCondition,
-  isScreenMountedRef,
+  onPress,
 }: DaemonCardProps) {
   const { theme } = useUnistyles();
   const statusLabel = formatConnectionStatus(connectionStatus);
@@ -972,111 +1306,6 @@ function DaemonCard({
           : theme.colors.foregroundMuted;
   const badgeText = statusLabel;
   const connectionError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
-  const daemonConnection = useSessionStore(
-    (state) => state.sessions[daemon.serverId]?.connection ?? null
-  );
-  const daemonClient = useSessionStore((state) => state.sessions[daemon.serverId]?.client ?? null);
-  const [isRestarting, setIsRestarting] = useState(false);
-  const isConnected = daemonConnection?.isConnected ?? false;
-  const isConnectedRef = useRef(isConnected);
-
-  useEffect(() => {
-    isConnectedRef.current = isConnected;
-  }, [isConnected]);
-
-  const waitForDaemonRestart = useCallback(async () => {
-    const disconnectTimeoutMs = 7000;
-    const reconnectTimeoutMs = 30000;
-
-    // Wait for disconnect first
-    if (isConnectedRef.current) {
-      await waitForCondition(() => !isConnectedRef.current, disconnectTimeoutMs);
-    }
-
-    // Wait for auto-reconnect
-    const reconnected = await waitForCondition(() => isConnectedRef.current, reconnectTimeoutMs);
-
-    if (isScreenMountedRef.current) {
-      setIsRestarting(false);
-      if (!reconnected) {
-        Alert.alert(
-          "Unable to reconnect",
-          `${daemon.label} did not come back online. Please verify it restarted.`
-        );
-      }
-    }
-  }, [daemon.label, isScreenMountedRef, waitForCondition]);
-
-  const beginServerRestart = useCallback(() => {
-    if (!daemonClient) {
-      Alert.alert(
-        "Host unavailable",
-        `${daemon.label} is not connected. Wait for it to come online before restarting.`
-      );
-      return;
-    }
-
-    if (!isConnectedRef.current) {
-      Alert.alert(
-        "Host offline",
-        "This host is offline. Paseo reconnects automatically—wait until it's back online before restarting."
-      );
-      return;
-    }
-
-    setIsRestarting(true);
-    void daemonClient
-      .restartServer(`settings_daemon_restart_${daemon.serverId}`)
-      .catch((error) => {
-        console.error(`[Settings] Failed to restart daemon ${daemon.label}`, error);
-        if (!isScreenMountedRef.current) {
-          return;
-        }
-        setIsRestarting(false);
-        Alert.alert(
-          "Error",
-          "Failed to send the restart request. Paseo reconnects automatically—try again once the host shows as online."
-        );
-      });
-
-    void waitForDaemonRestart();
-  }, [daemon.label, daemon.serverId, daemonClient, isScreenMountedRef, waitForDaemonRestart]);
-
-  const handleRestartPress = useCallback(() => {
-    if (!daemonClient) {
-      Alert.alert(
-        "Host unavailable",
-        `${daemon.label} is not connected. Wait for it to come online before restarting.`
-      );
-      return;
-    }
-
-    if (Platform.OS === "web") {
-      const hasBrowserConfirm =
-        typeof globalThis !== "undefined" &&
-        typeof (globalThis as any).confirm === "function";
-
-      const confirmed = hasBrowserConfirm
-        ? (globalThis as any).confirm(`Restart ${daemon.label}? ${restartConfirmationMessage}`)
-        : true;
-
-      if (confirmed) {
-        beginServerRestart();
-      }
-      return;
-    }
-
-    Alert.alert(`Restart ${daemon.label}`, restartConfirmationMessage, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Restart",
-        style: "destructive",
-        onPress: beginServerRestart,
-      },
-    ]);
-  }, [beginServerRestart, daemon.label, daemonClient, restartConfirmationMessage]);
-
-  // Status pill background with 10% opacity
   const statusPillBg =
     statusTone === "success"
       ? "rgba(74, 222, 128, 0.1)"
@@ -1084,7 +1313,7 @@ function DaemonCard({
         ? "rgba(245, 158, 11, 0.1)"
         : statusTone === "error"
           ? "rgba(248, 113, 113, 0.1)"
-      : "rgba(161, 161, 170, 0.1)";
+          : "rgba(161, 161, 170, 0.1)";
   const connectionBadge = (() => {
     if (!activeConnection) return null;
     if (activeConnection.type === "relay") {
@@ -1097,7 +1326,13 @@ function DaemonCard({
   })();
 
   return (
-    <View style={styles.hostCard} testID={`daemon-card-${daemon.serverId}`}>
+    <Pressable
+      style={({ pressed }) => [styles.hostCard, pressed && styles.hostCardPressed]}
+      onPress={() => onPress(daemon)}
+      testID={`daemon-card-${daemon.serverId}`}
+      accessibilityRole="button"
+      accessibilityLabel={`${daemon.label}, ${statusLabel}`}
+    >
       <View style={styles.hostCardContent}>
         <View style={styles.hostHeaderRow}>
           <Text style={styles.hostLabel} numberOfLines={1}>{daemon.label}</Text>
@@ -1119,50 +1354,10 @@ function DaemonCard({
                 ) : null}
               </View>
             ) : null}
-
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                testID={`daemon-menu-trigger-${daemon.serverId}`}
-                style={({ pressed }) => [
-                  styles.menuButton,
-                  pressed ? styles.menuButtonPressed : null,
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={`Host actions for ${daemon.label}`}
-              >
-                <MoreVertical size={16} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" width={220} testID={`daemon-menu-content-${daemon.serverId}`}>
-                <DropdownMenuItem
-                  onSelect={() => onEdit(daemon)}
-                  leading={<Pencil size={16} color={theme.colors.foregroundMuted} />}
-                  testID={`daemon-menu-edit-${daemon.serverId}`}
-                >
-                  Edit
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={handleRestartPress}
-                  leading={<RotateCw size={16} color={theme.colors.foregroundMuted} />}
-                  status={isRestarting ? "pending" : "idle"}
-                  pendingLabel="Restarting..."
-                  disabled={!daemonClient || !isConnectedRef.current}
-                  testID={`daemon-menu-restart-${daemon.serverId}`}
-                >
-                  Restart daemon
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={() => onRemove(daemon)}
-                  leading={<Trash2 size={16} color={theme.colors.foregroundMuted} />}
-                  testID={`daemon-menu-remove-${daemon.serverId}`}
-                >
-                  Remove
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </View>
         </View>
         {connectionError ? <Text style={styles.hostError}>{connectionError}</Text> : null}
       </View>
-    </View>
+    </Pressable>
   );
 }
