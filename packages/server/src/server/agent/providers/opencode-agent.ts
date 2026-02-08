@@ -26,6 +26,7 @@ import type {
   McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
+import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -620,15 +621,14 @@ class OpenCodeAgentSession implements AgentSession {
               yield {
                 type: "timeline",
                 provider: "opencode",
-                item: {
-                  type: "tool_call",
-                  name: toolName,
+                item: mapOpencodeToolCall({
+                  toolName,
                   callId: toolPart.callID ?? toolPart.id,
-                  status: this.mapToolState(state?.status),
+                  status: state?.status,
                   input: state?.input,
                   output: state?.output,
                   error: state?.error,
-                },
+                }),
               };
             }
           }
@@ -895,15 +895,14 @@ class OpenCodeAgentSession implements AgentSession {
             events.push({
               type: "timeline",
               provider: "opencode",
-              item: {
-                type: "tool_call",
-                name: toolName,
-                callId: part.callID as string | undefined,
-                status: this.mapToolState(status),
+              item: mapOpencodeToolCall({
+                toolName,
+                callId: (part.callID as string | undefined) ?? (part.id as string | undefined),
+                status,
                 input,
                 output,
                 error,
-              },
+              }),
             });
           }
         } else if (partType === "step-finish") {
@@ -981,21 +980,6 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     return events;
-  }
-
-  private mapToolState(state?: string): string {
-    switch (state) {
-      case "pending":
-        return "pending";
-      case "running":
-        return "running";
-      case "complete":
-        return "completed";
-      case "error":
-        return "failed";
-      default:
-        return "pending";
-    }
   }
 
   private extractAndResetUsage(): AgentUsage | undefined {

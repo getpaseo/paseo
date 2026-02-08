@@ -103,29 +103,73 @@ export type AgentUsage = {
   totalCostUsd?: number;
 };
 
-/**
- * Tool call kind categories for UI rendering hints.
- * Derived from the tool name, not sent over the wire.
- */
-export type ToolCallKind = "read" | "edit" | "execute" | "search" | "other";
+export type ToolCallDetail =
+  | {
+      type: "shell";
+      command: string;
+      cwd?: string;
+      output?: string;
+      exitCode?: number | null;
+    }
+  | {
+      type: "read";
+      filePath: string;
+      content?: string;
+      offset?: number;
+      limit?: number;
+    }
+  | {
+      type: "edit";
+      filePath: string;
+      oldString?: string;
+      newString?: string;
+      unifiedDiff?: string;
+    }
+  | {
+      type: "write";
+      filePath: string;
+      content?: string;
+    }
+  | {
+      type: "search";
+      query: string;
+    };
 
-/**
- * Clean tool call structure.
- * - `name`: Tool identifier (e.g., "Read", "Bash", "Edit", "shell", "read_file", "apply_patch")
- * - `input`: Tool input parameters
- * - `output`: Tool result
- * - `error`: Error if tool failed
- */
-export interface ToolCallTimelineItem {
+type ToolCallBase = {
   type: "tool_call";
+  callId: string;
   name: string;
-  callId?: string;
-  status?: string;
-  input?: unknown;
-  output?: unknown;
-  error?: unknown;
+  input: unknown | null;
+  output: unknown | null;
+  detail?: ToolCallDetail;
   metadata?: Record<string, unknown>;
-}
+};
+
+type ToolCallRunningTimelineItem = ToolCallBase & {
+  status: "running";
+  error: null;
+};
+
+type ToolCallCompletedTimelineItem = ToolCallBase & {
+  status: "completed";
+  error: null;
+};
+
+type ToolCallFailedTimelineItem = ToolCallBase & {
+  status: "failed";
+  error: unknown;
+};
+
+type ToolCallCanceledTimelineItem = ToolCallBase & {
+  status: "canceled";
+  error: null;
+};
+
+export type ToolCallTimelineItem =
+  | ToolCallRunningTimelineItem
+  | ToolCallCompletedTimelineItem
+  | ToolCallFailedTimelineItem
+  | ToolCallCanceledTimelineItem;
 
 export type CompactionTimelineItem = {
   type: "compaction";

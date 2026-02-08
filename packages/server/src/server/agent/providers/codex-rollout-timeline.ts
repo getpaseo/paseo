@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { Logger } from "pino";
 
 import type { AgentTimelineItem } from "../agent-sdk-types.js";
+import { mapCodexRolloutToolCall } from "./codex/tool-call-mapper.js";
 
 const MAX_ROLLOUT_SEARCH_DEPTH = 4;
 
@@ -434,14 +435,12 @@ export async function parseRolloutFile(
       ? [record.item]
       : record.kind === "call"
         ? [
-            {
-              type: "tool_call",
+            mapCodexRolloutToolCall({
+              callId: record.callId ?? null,
               name: record.name,
-              callId: record.callId,
-              status: "completed",
-              input: record.input,
-              output: record.callId ? outputsByCallId.get(record.callId) : undefined,
-            },
+              input: record.input ?? null,
+              output: record.callId ? outputsByCallId.get(record.callId) ?? null : null,
+            }),
           ]
         : []
   );

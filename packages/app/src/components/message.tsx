@@ -62,18 +62,22 @@ import {
   useUnistyles,
   UnistylesRuntime,
 } from "react-native-unistyles";
-import { baseColors, theme } from "@/styles/theme";
+import { theme } from "@/styles/theme";
 import {
   createMarkdownStyles,
 } from "@/styles/markdown-styles";
 import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry } from "@/types/stream";
-import { parseToolCallDisplay, type ToolCallKind } from "@/utils/tool-call-parsers";
+import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
+import {
+  buildToolCallDisplayModel,
+  formatToolCallError,
+  type ToolCallKind,
+} from "@/utils/tool-call-display";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import { parseInlinePathToken, type InlinePathTarget } from "@/utils/inline-path";
 export type { InlinePathTarget } from "@/utils/inline-path";
-import { resolveToolCallPreview } from "./tool-call-preview";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 
@@ -104,6 +108,29 @@ export function MessageOuterSpacingProvider({
 function useDisableOuterSpacing(disableOuterSpacing: boolean | undefined) {
   const contextValue = useContext(MessageOuterSpacingContext);
   return disableOuterSpacing ?? contextValue;
+}
+
+function hexToRgba(hexColor: string, alpha: number) {
+  const clampedAlpha = Math.max(0, Math.min(1, alpha));
+  const hex = hexColor.replace("#", "");
+  const normalized =
+    hex.length === 3
+      ? hex
+          .split("")
+          .map((char) => `${char}${char}`)
+          .join("")
+      : hex;
+
+  if (!/^[\da-fA-F]{6}$/.test(normalized)) {
+    return `rgba(255, 255, 255, ${clampedAlpha})`;
+  }
+
+  const intValue = Number.parseInt(normalized, 16);
+  const red = (intValue >> 16) & 255;
+  const green = (intValue >> 8) & 255;
+  const blue = intValue & 255;
+
+  return `rgba(${red}, ${green}, ${blue}, ${clampedAlpha})`;
 }
 
 const userMessageStylesheet = StyleSheet.create((theme) => ({
@@ -418,8 +445,9 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
   shimmerOverlay: {
     position: "absolute",
-    top: 0,
-    bottom: 0,
+    top: 3,
+    bottom: 3,
+    borderRadius: 999,
   },
 }));
 
@@ -1026,6 +1054,14 @@ const ExpandableBadge = memo(function ExpandableBadge({
   }, [isLoading]);
 
   const shimmerBandWidth = 14;
+  const shimmerGradientColors = useMemo(
+    () => ({
+      edge: hexToRgba(theme.colors.foreground, 0),
+      soft: hexToRgba(theme.colors.foreground, 0.08),
+      core: hexToRgba(theme.colors.foreground, 0.24),
+    }),
+    [theme.colors.foreground]
+  );
   const shimmerStyle = useAnimatedStyle(() => {
     const travel = badgeWidth + shimmerBandWidth;
     return {
@@ -1112,13 +1148,13 @@ const ExpandableBadge = memo(function ExpandableBadge({
                           x2="1"
                           y2="0"
                         >
-                          <Stop offset="0" stopColor={baseColors.white} stopOpacity="0" />
-                          <Stop offset="0.34" stopColor={baseColors.white} stopOpacity="0" />
-                          <Stop offset="0.46" stopColor={baseColors.white} stopOpacity="0.12" />
-                          <Stop offset="0.5" stopColor={baseColors.white} stopOpacity="0.34" />
-                          <Stop offset="0.54" stopColor={baseColors.white} stopOpacity="0.12" />
-                          <Stop offset="0.66" stopColor={baseColors.white} stopOpacity="0" />
-                          <Stop offset="1" stopColor={baseColors.white} stopOpacity="0" />
+                          <Stop offset="0" stopColor={shimmerGradientColors.edge} />
+                          <Stop offset="0.38" stopColor={shimmerGradientColors.edge} />
+                          <Stop offset="0.48" stopColor={shimmerGradientColors.soft} />
+                          <Stop offset="0.5" stopColor={shimmerGradientColors.core} />
+                          <Stop offset="0.52" stopColor={shimmerGradientColors.soft} />
+                          <Stop offset="0.62" stopColor={shimmerGradientColors.edge} />
+                          <Stop offset="1" stopColor={shimmerGradientColors.edge} />
                         </LinearGradient>
                       </Defs>
                       <Rect width="100%" height="100%" fill="url(#shimmerGrad)" />
@@ -1155,11 +1191,11 @@ const ExpandableBadge = memo(function ExpandableBadge({
 
 interface ToolCallProps {
   toolName: string;
-  provider?: string;
   args: any;
   result?: any;
   error?: any;
-  status: "executing" | "completed" | "failed";
+  status: "executing" | "running" | "completed" | "failed" | "canceled";
+  detail?: ToolCallDetail;
   cwd?: string;
   metadata?: Record<string, unknown>;
   isLastInSequence?: boolean;
@@ -1183,11 +1219,11 @@ const TOOL_CALL_COMMIT_THRESHOLD_MS = 16;
 
 export const ToolCall = memo(function ToolCall({
   toolName,
-  provider,
   args,
   result,
   error,
   status,
+  detail,
   cwd,
   metadata,
   isLastInSequence = false,
@@ -1204,20 +1240,14 @@ export const ToolCall = memo(function ToolCall({
     UnistylesRuntime.breakpoint === "xs" ||
     UnistylesRuntime.breakpoint === "sm";
 
-  const displayInfo = useMemo(
-    () =>
-      parseToolCallDisplay({
-        name: toolName,
-        provider,
-        input: args,
-        output: result,
-        error,
-        metadata,
-        cwd,
-      }),
-    [toolName, provider, args, result, error, metadata, cwd]
+  const displayModel = useMemo(
+    () => buildToolCallDisplayModel({ name: toolName, detail, metadata, cwd }),
+    [toolName, detail, metadata, cwd]
   );
-  const { kind, displayName, summary, detail, errorText } = displayInfo;
+  const displayName = displayModel.displayName;
+  const kind: ToolCallKind = displayModel.kind;
+  const summary = displayModel.summary;
+  const errorText = useMemo(() => formatToolCallError(error), [error]);
   const IconComponent = toolKindIcons[kind] || Wrench;
 
   // Check if there's any content to display
@@ -1229,11 +1259,19 @@ export const ToolCall = memo(function ToolCall({
       toggleStartRef.current = getNowMs();
     }
     if (isMobile) {
-      openToolCall(displayInfo);
+      openToolCall({
+        kind,
+        displayName,
+        summary,
+        detail,
+        input: args,
+        output: result,
+        errorText,
+      });
     } else {
       setIsExpanded((prev) => !prev);
     }
-  }, [isMobile, openToolCall, displayInfo]);
+  }, [isMobile, openToolCall, kind, displayName, summary, detail, args, result, errorText]);
 
   useEffect(() => {
     if (isMobile || !isPerfLoggingEnabled()) {
@@ -1292,8 +1330,16 @@ export const ToolCall = memo(function ToolCall({
   // Render inline details for desktop
   const renderDetails = useCallback(() => {
     if (isMobile) return null;
-    return <ToolCallDetailsContent detail={detail} errorText={errorText} maxHeight={400} />;
-  }, [isMobile, detail, errorText]);
+    return (
+      <ToolCallDetailsContent
+        detail={detail}
+        input={args}
+        output={result}
+        errorText={errorText}
+        maxHeight={400}
+      />
+    );
+  }, [isMobile, detail, args, result, errorText]);
 
   return (
     <ExpandableBadge
@@ -1310,7 +1356,7 @@ export const ToolCall = memo(function ToolCall({
             ? () => null
             : undefined
       }
-      isLoading={status === "executing"}
+      isLoading={status === "executing" || status === "running"}
       isError={status === "failed"}
       isLastInSequence={isLastInSequence}
       disableOuterSpacing={disableOuterSpacing}

@@ -246,7 +246,9 @@ class FakeAgentSession implements AgentSession {
           name: tool.name,
           callId,
           status: "running",
-          input: tool.input ?? undefined,
+          input: tool.input ?? null,
+          output: null,
+          error: null,
         },
       };
       await this.appendHistoryEvent(toolRunning);
@@ -325,8 +327,9 @@ class FakeAgentSession implements AgentSession {
           name: tool.name,
           callId,
           status: "completed",
-          input: tool.input ?? undefined,
+          input: tool.input ?? null,
           output: toolOutput ?? { ok: true },
+          error: null,
         },
       };
       await this.appendHistoryEvent(toolCompleted);

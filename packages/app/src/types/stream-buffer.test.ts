@@ -23,8 +23,12 @@ const toolCallEvent = (): AgentStreamEventPayload => ({
   provider: "codex",
   item: {
     type: "tool_call",
+    callId: "buffer-tool-call",
     name: "run",
-    status: "executing",
+    status: "running",
+    input: { command: "echo hi" },
+    output: null,
+    error: null,
   },
 });
 

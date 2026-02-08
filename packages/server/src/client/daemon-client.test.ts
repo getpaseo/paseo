@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DaemonClient, type DaemonTransport } from "./daemon-client";
 
@@ -47,6 +48,18 @@ function createMockTransport() {
     triggerError: (event?: unknown) => onError(event),
     triggerMessage: (data: unknown) => onMessage(data),
   };
+}
+
+function loadLegacySnapshotFixture(): unknown {
+  const url = new URL("../shared/__fixtures__/legacy-agent-stream-snapshot-inProgress.json", import.meta.url);
+  return JSON.parse(readFileSync(url, "utf8"));
+}
+
+function wrapSessionMessage(message: unknown): string {
+  return JSON.stringify({
+    type: "session",
+    message,
+  });
 }
 
 describe("DaemonClient", () => {
@@ -170,5 +183,123 @@ describe("DaemonClient", () => {
 
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
+  });
+
+  test("parses agent_stream tool_call payloads (including legacy inProgress) without crashing", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const received: unknown[] = [];
+    const unsubscribe = client.on("agent_stream", (msg) => {
+      received.push(msg);
+    });
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent_stream",
+        payload: {
+          agentId: "agent_cli",
+          timestamp: "2026-02-08T20:20:00.000Z",
+          event: {
+            type: "timeline",
+            provider: "codex",
+            item: {
+              type: "tool_call",
+              callId: "call_cli_stream",
+              name: "shell",
+              status: "inProgress",
+              input: { command: "pwd" },
+            },
+          },
+        },
+      })
+    );
+
+    unsubscribe();
+
+    expect(received).toHaveLength(1);
+    const streamMsg = received[0] as {
+      payload: {
+        event: {
+          type: "timeline";
+          item: {
+            type: "tool_call";
+            status: string;
+            error: unknown;
+            output: unknown;
+          };
+        };
+      };
+    };
+
+    expect(streamMsg.payload.event.item.status).toBe("running");
+    expect(streamMsg.payload.event.item.error).toBeNull();
+    expect(streamMsg.payload.event.item.output).toBeNull();
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test("parses agent_stream_snapshot tool_call payloads without crashing", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const received: unknown[] = [];
+    const unsubscribe = client.on("agent_stream_snapshot", (msg) => {
+      received.push(msg);
+    });
+
+    const snapshot = loadLegacySnapshotFixture();
+    mock.triggerMessage(wrapSessionMessage(snapshot));
+
+    unsubscribe();
+
+    expect(received).toHaveLength(1);
+    const snapshotMsg = received[0] as {
+      payload: {
+        events: Array<{
+          event: {
+            type: "timeline";
+            item: {
+              type: "tool_call";
+              status: string;
+              error: unknown;
+              output: unknown;
+            };
+          };
+        }>;
+      };
+    };
+
+    const firstTimeline = snapshotMsg.payload.events[0]?.event;
+    expect(firstTimeline?.type).toBe("timeline");
+    if (firstTimeline?.type === "timeline" && firstTimeline.item.type === "tool_call") {
+      expect(firstTimeline.item.status).toBe("running");
+      expect(firstTimeline.item.error).toBeNull();
+      expect(firstTimeline.item.output).toBeNull();
+    }
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });

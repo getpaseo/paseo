@@ -1,0 +1,24 @@
+{
+  "type": "agent_stream_snapshot",
+  "payload": {
+    "agentId": "agent_fixture_legacy",
+    "events": [
+      {
+        "timestamp": "2026-02-08T20:00:00.000Z",
+        "event": {
+          "type": "timeline",
+          "provider": "codex",
+          "item": {
+            "type": "tool_call",
+            "callId": "call_fixture_legacy",
+            "name": "shell",
+            "status": "inProgress",
+            "input": {
+              "command": "pwd"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

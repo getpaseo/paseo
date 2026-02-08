@@ -47,7 +47,6 @@ import type { Agent } from "@/contexts/session-context";
 import { useSessionStore } from "@/stores/session-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import type { DaemonClient } from "@server/client/daemon-client";
-import { parseToolCallDisplay } from "@/utils/tool-call-parsers";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { QuestionFormCard } from "./question-form-card";
 import { ToolCallSheetProvider } from "./tool-call-sheet";
@@ -363,11 +362,11 @@ export function AgentStreamView({
             return (
               <ToolCall
                 toolName={data.name}
-                provider={data.provider}
                 args={data.input}
                 result={data.result}
                 error={data.error}
-                status={data.status as "executing" | "completed" | "failed"}
+                status={data.status}
+                detail={data.detail}
                 cwd={agent.cwd}
                 metadata={data.metadata}
                 isLastInSequence={isLastInSequence}
@@ -904,17 +903,6 @@ function PermissionRequestCard({
     return undefined;
   }, [request]);
 
-  const toolCallDisplay = useMemo(() => {
-    if (isPlanRequest) {
-      return null;
-    }
-    return parseToolCallDisplay({
-      name: request.name ?? "unknown",
-      provider: request.provider,
-      input: request.input,
-    });
-  }, [isPlanRequest, request.name, request.provider, request.input]);
-
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 
   const markdownRules = useMemo(() => {
@@ -1133,8 +1121,12 @@ function PermissionRequestCard({
         </View>
       ) : null}
 
-      {!isPlanRequest && toolCallDisplay ? (
-        <ToolCallDetailsContent detail={toolCallDisplay.detail} maxHeight={200} />
+      {!isPlanRequest ? (
+        <ToolCallDetailsContent
+          input={request.input ?? null}
+          output={null}
+          maxHeight={200}
+        />
       ) : null}
 
       <Text

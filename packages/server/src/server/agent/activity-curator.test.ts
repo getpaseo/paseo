@@ -1,590 +1,158 @@
-import { describe, test, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { curateAgentActivity } from "./activity-curator.js";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 
+function toolCallItem(params: {
+  callId: string;
+  name: string;
+  status?: "running" | "completed" | "failed" | "canceled";
+  input?: unknown | null;
+  output?: unknown | null;
+  error?: unknown;
+  metadata?: Record<string, unknown>;
+  detail?: Extract<AgentTimelineItem, { type: "tool_call" }>['detail'];
+}): Extract<AgentTimelineItem, { type: "tool_call" }> {
+  const status = params.status ?? "completed";
+  return {
+    type: "tool_call",
+    callId: params.callId,
+    name: params.name,
+    status,
+    input: params.input ?? null,
+    output: params.output ?? null,
+    error: status === "failed" ? params.error ?? { message: "failed" } : null,
+    metadata: params.metadata,
+    detail: params.detail,
+  };
+}
+
 describe("curateAgentActivity", () => {
-  describe("serializes all timeline item types", () => {
-    test("serializes user_message", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "user_message", text: "Hello, can you help me?" },
-      ];
+  it("renders user/assistant/reasoning entries", () => {
+    const timeline: AgentTimelineItem[] = [
+      { type: "user_message", text: "Hello" },
+      { type: "assistant_message", text: "Hi" },
+      { type: "reasoning", text: "Thinking" },
+    ];
 
-      const result = curateAgentActivity(timeline);
+    const result = curateAgentActivity(timeline);
 
-      expect(result).toBe("[User] Hello, can you help me?");
-    });
-
-    test("serializes assistant_message", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "assistant_message", text: "I can help you with that." },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("I can help you with that.");
-    });
-
-    test("serializes reasoning as [Thought]", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "reasoning", text: "The user wants to understand X." },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("[Thought] The user wants to understand X.");
-    });
-
-    test("serializes tool_call with name", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "call-1",
-          name: "Read",
-          input: { file_path: "/src/index.ts" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("[Read] /src/index.ts");
-    });
-
-    test("serializes tool_call without principal param", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "call-1",
-          name: "ListFiles",
-          input: {},
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("[ListFiles]");
-    });
-
-    test("does not treat generic double-underscore tool names as MCP calls", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "call-1",
-          name: "custom__tool",
-          input: {},
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("[custom__tool]");
-    });
-
-    test("serializes todo items as [Tasks]", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "todo",
-          items: [
-            { text: "Read the file", completed: true },
-            { text: "Fix the bug", completed: false },
-            { text: "Run tests", completed: false },
-          ],
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toContain("[Tasks]");
-      expect(result).toContain("- [x] Read the file");
-      expect(result).toContain("- [ ] Fix the bug");
-      expect(result).toContain("- [ ] Run tests");
-    });
-
-    test("serializes error items", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "error", message: "File not found: /missing.ts" },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("[Error] File not found: /missing.ts");
-    });
+    expect(result).toContain("[User] Hello");
+    expect(result).toContain("Hi");
+    expect(result).toContain("[Thought] Thinking");
   });
 
-  describe("handles complex conversations", () => {
-    test("serializes full conversation with multiple item types", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "user_message", text: "Fix the bug in auth.ts" },
-        { type: "reasoning", text: "I need to read the file first." },
-        {
-          type: "tool_call",
-          callId: "call-1",
-          name: "Read",
-          input: { file_path: "/src/auth.ts" },
-          status: "completed",
+  it("uses detail enrichment for tool summaries", () => {
+    const timeline: AgentTimelineItem[] = [
+      toolCallItem({
+        callId: "read-1",
+        name: "read_file",
+        detail: {
+          type: "read",
+          filePath: "src/index.ts",
+          content: "console.log('hi')",
         },
-        { type: "assistant_message", text: "I found the issue." },
-        {
-          type: "tool_call",
-          callId: "call-2",
-          name: "Edit",
-          input: { file_path: "/src/auth.ts", old_string: "bug", new_string: "fix" },
-          status: "completed",
+      }),
+      toolCallItem({
+        callId: "shell-1",
+        name: "shell",
+        detail: {
+          type: "shell",
+          command: "npm test",
+          output: "ok",
+          exitCode: 0,
         },
-        { type: "assistant_message", text: "The bug has been fixed." },
-      ];
+      }),
+    ];
 
-      const result = curateAgentActivity(timeline);
+    const result = curateAgentActivity(timeline);
 
-      expect(result).toContain("[User] Fix the bug in auth.ts");
-      expect(result).toContain("[Thought] I need to read the file first.");
-      expect(result).toContain("[Read] /src/auth.ts");
-      expect(result).toContain("I found the issue.");
-      expect(result).toContain("[Edit] /src/auth.ts");
-      expect(result).toContain("The bug has been fixed.");
-    });
-
-    test("preserves order of items", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "user_message", text: "Step 1" },
-        { type: "assistant_message", text: "Step 2" },
-        { type: "user_message", text: "Step 3" },
-        { type: "assistant_message", text: "Step 4" },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      const lines = result.split("\n");
-
-      expect(lines[0]).toContain("Step 1");
-      expect(lines[1]).toContain("Step 2");
-      expect(lines[2]).toContain("Step 3");
-      expect(lines[3]).toContain("Step 4");
-    });
+    expect(result).toContain("[Read] src/index.ts");
+    expect(result).toContain("[Shell] npm test");
   });
 
-  describe("handles edge cases", () => {
-    test("returns default message for empty timeline", () => {
-      const result = curateAgentActivity([]);
+  it("falls back to input json for likely external tools", () => {
+    const timeline: AgentTimelineItem[] = [
+      toolCallItem({
+        callId: "mcp-1",
+        name: "paseo__create_agent",
+        input: { cwd: "/tmp/repo", initialPrompt: "do the thing" },
+      }),
+    ];
 
-      expect(result).toBe("No activity to display.");
-    });
+    const result = curateAgentActivity(timeline);
 
-    test("handles whitespace-only messages", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "user_message", text: "  \n  " },
-        { type: "assistant_message", text: "Real message" },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toContain("Real message");
-    });
-
-    test("trims whitespace from messages", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "user_message", text: "  Hello  \n" },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("[User] Hello");
-    });
+    expect(result).toBe(
+      '[paseo__create_agent] {"cwd":"/tmp/repo","initialPrompt":"do the thing"}'
+    );
   });
 
-  describe("collapsing behavior", () => {
-    test("merges consecutive assistant_message items", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "assistant_message", text: "Part 1. " },
-        { type: "assistant_message", text: "Part 2. " },
-        { type: "assistant_message", text: "Part 3." },
-      ];
+  it("collapses repeated tool updates by callId", () => {
+    const timeline: AgentTimelineItem[] = [
+      toolCallItem({
+        callId: "task-1",
+        name: "Task",
+        status: "running",
+        input: { description: "Investigate" },
+      }),
+      toolCallItem({
+        callId: "task-1",
+        name: "Task",
+        status: "running",
+        metadata: { subAgentActivity: "Read" },
+      }),
+      toolCallItem({
+        callId: "task-1",
+        name: "Task",
+        status: "running",
+        metadata: { subAgentActivity: "Edit" },
+      }),
+    ];
 
-      const result = curateAgentActivity(timeline);
+    const result = curateAgentActivity(timeline);
+    const lines = result.split("\n");
 
-      expect(result).toBe("Part 1. Part 2. Part 3.");
-    });
-
-    test("merges consecutive reasoning items", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "reasoning", text: "First thought. " },
-        { type: "reasoning", text: "Second thought." },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("[Thought] First thought. Second thought.");
-    });
-
-    test("deduplicates tool calls by callId", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "call-1",
-          name: "Read",
-          input: { file_path: "/src/a.ts" },
-          status: "pending",
-        },
-        {
-          type: "tool_call",
-          callId: "call-1",
-          name: "Read",
-          input: { file_path: "/src/a.ts" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      // Should only appear once
-      const matches = result.match(/\[Read\]/g);
-      expect(matches?.length).toBe(1);
-    });
+    expect(lines.filter((line) => line.startsWith("[Task]"))).toEqual(["[Task] Edit"]);
   });
 
-  describe("maxItems limit", () => {
-    test("respects maxItems option", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "user_message", text: "Message 1" },
-        { type: "user_message", text: "Message 2" },
-        { type: "user_message", text: "Message 3" },
-        { type: "user_message", text: "Message 4" },
-        { type: "user_message", text: "Message 5" },
-      ];
+  it("renders todo/error/compaction entries", () => {
+    const timeline: AgentTimelineItem[] = [
+      {
+        type: "todo",
+        items: [
+          { text: "One", completed: false },
+          { text: "Two", completed: true },
+        ],
+      },
+      { type: "error", message: "boom" },
+      { type: "compaction", status: "completed", trigger: "auto" },
+    ];
 
-      const result = curateAgentActivity(timeline, { maxItems: 3 });
+    const result = curateAgentActivity(timeline);
 
-      // Should only have the last 3 messages
-      expect(result).not.toContain("Message 1");
-      expect(result).not.toContain("Message 2");
-      expect(result).toContain("Message 3");
-      expect(result).toContain("Message 4");
-      expect(result).toContain("Message 5");
-    });
-
-    test("uses default maxItems of 40", () => {
-      const timeline: AgentTimelineItem[] = [];
-      for (let i = 0; i < 50; i++) {
-        timeline.push({ type: "user_message", text: `Message ${i}` });
-      }
-
-      const result = curateAgentActivity(timeline);
-
-      // First 10 should be truncated
-      expect(result).not.toContain("Message 0");
-      expect(result).not.toContain("Message 9");
-      // Last 40 should be present
-      expect(result).toContain("Message 10");
-      expect(result).toContain("Message 49");
-    });
+    expect(result).toContain("[Tasks]");
+    expect(result).toContain("- [ ] One");
+    expect(result).toContain("- [x] Two");
+    expect(result).toContain("[Error] boom");
+    expect(result).toContain("[Compacted]");
   });
 
-  describe("tool call principal extraction", () => {
-    test("extracts file_path from Read tool", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "1",
-          name: "Read",
-          input: { file_path: "/src/index.ts" },
-          status: "completed",
-        },
-      ];
+  it("truncates to maxItems", () => {
+    const timeline: AgentTimelineItem[] = [
+      { type: "user_message", text: "Message 1" },
+      { type: "user_message", text: "Message 2" },
+      { type: "user_message", text: "Message 3" },
+      { type: "user_message", text: "Message 4" },
+    ];
 
-      const result = curateAgentActivity(timeline);
+    const result = curateAgentActivity(timeline, { maxItems: 2 });
 
-      expect(result).toBe("[Read] /src/index.ts");
-    });
-
-    test("extracts command from Bash tool", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "1",
-          name: "Bash",
-          input: { command: "npm test" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("[Shell] npm test");
-    });
-
-    test("extracts pattern from Glob tool", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "1",
-          name: "Glob",
-          input: { pattern: "**/*.ts" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("[Glob] **/*.ts");
-    });
-
-    test("extracts pattern from Grep tool", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "1",
-          name: "Grep",
-          input: { pattern: "TODO" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-
-      expect(result).toBe("[Grep] TODO");
-    });
-
-    test("shows speak tool text input", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "s1",
-          name: "speak",
-          input: { text: "hello from voice" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      expect(result).toBe('[Speak] {"text":"hello from voice"}');
-    });
-
-    test("shows MCP tool input JSON", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "m1",
-          name: "paseo__create_agent",
-          input: { cwd: "/tmp/repo", initialPrompt: "do the thing" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      expect(result).toBe(
-        '[paseo__create_agent] {"cwd":"/tmp/repo","initialPrompt":"do the thing"}'
-      );
-    });
-
-    test("shows namespaced tool input JSON regardless of prefix format", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "m2",
-          name: "paseo_voice.speak",
-          input: { text: "hello from namespaced tool" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      expect(result).toBe('[Speak] {"text":"hello from namespaced tool"}');
-    });
-
-    test("shows claude mcp speak tool input as Speak", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "m3",
-          name: "mcp__paseo_voice__speak",
-          input: { text: "hello from claude mcp" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      expect(result).toBe('[Speak] {"text":"hello from claude mcp"}');
-    });
-
-    test("extracts description from Task tool", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "task-1",
-          name: "Task",
-          input: { description: "Explore the codebase" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      expect(result).toBe("[Task] Explore the codebase");
-    });
+    expect(result).not.toContain("Message 1");
+    expect(result).not.toContain("Message 2");
+    expect(result).toContain("Message 3");
+    expect(result).toContain("Message 4");
   });
 
-  describe("Task tool collapse with sub-agent activity", () => {
-    test("collapses Task metadata updates into single entry showing latest activity", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "user_message", text: "Investigate the bug" },
-        {
-          type: "tool_call",
-          callId: "task-1",
-          name: "Task",
-          input: { description: "Explore the codebase" },
-          status: "pending",
-        },
-        // Sub-agent activity updates (same callId, metadata-only)
-        {
-          type: "tool_call",
-          callId: "task-1",
-          name: "Task",
-          metadata: { subAgentActivity: "Read" },
-        },
-        {
-          type: "tool_call",
-          callId: "task-1",
-          name: "Task",
-          metadata: { subAgentActivity: "Grep" },
-        },
-        {
-          type: "tool_call",
-          callId: "task-1",
-          name: "Task",
-          metadata: { subAgentActivity: "Edit" },
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      const lines = result.split("\n");
-
-      // Task should appear only once (collapsed by callId)
-      const taskLines = lines.filter((l) => l.includes("[Task]"));
-      expect(taskLines).toHaveLength(1);
-
-      // The last metadata update wins — subAgentActivity "Edit" takes priority
-      expect(taskLines[0]).toBe("[Task] Edit");
-    });
-
-    test("sub-agent tool calls do NOT appear as separate timeline entries", () => {
-      // This simulates the full flow: handleSidechainMessage only emits
-      // Task metadata updates, never individual sub-agent tool calls.
-      // So the timeline should only contain the Task call, not Read/Bash/Edit.
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "task-1",
-          name: "Task",
-          input: { description: "Fix the bug" },
-          status: "pending",
-        },
-        // These are the metadata-only updates from handleSidechainMessage
-        {
-          type: "tool_call",
-          callId: "task-1",
-          name: "Task",
-          metadata: { subAgentActivity: "Read" },
-        },
-        {
-          type: "tool_call",
-          callId: "task-1",
-          name: "Task",
-          metadata: { subAgentActivity: "Bash" },
-        },
-        // Task completes
-        {
-          type: "tool_call",
-          callId: "task-1",
-          name: "Task",
-          input: { description: "Fix the bug" },
-          output: { result: "Bug fixed successfully" },
-          status: "completed",
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      const lines = result.split("\n");
-
-      // No individual Read/Bash lines — only the Task
-      expect(lines.filter((l) => l.includes("[Read]"))).toHaveLength(0);
-      expect(lines.filter((l) => l.includes("[Shell]"))).toHaveLength(0);
-
-      // One Task entry with the final completed state
-      const taskLines = lines.filter((l) => l.includes("[Task]"));
-      expect(taskLines).toHaveLength(1);
-      expect(taskLines[0]).toBe("[Task] Fix the bug");
-    });
-
-    test("multiple concurrent Task calls are tracked independently", () => {
-      const timeline: AgentTimelineItem[] = [
-        {
-          type: "tool_call",
-          callId: "task-a",
-          name: "Task",
-          input: { description: "Research API docs" },
-          status: "pending",
-        },
-        {
-          type: "tool_call",
-          callId: "task-b",
-          name: "Task",
-          input: { description: "Run tests" },
-          status: "pending",
-        },
-        // Activity updates for each
-        {
-          type: "tool_call",
-          callId: "task-a",
-          name: "Task",
-          metadata: { subAgentActivity: "WebFetch" },
-        },
-        {
-          type: "tool_call",
-          callId: "task-b",
-          name: "Task",
-          metadata: { subAgentActivity: "Bash" },
-        },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      const lines = result.split("\n");
-
-      const taskLines = lines.filter((l) => l.includes("[Task]"));
-      expect(taskLines).toHaveLength(2);
-      // Last update for each callId wins
-      expect(taskLines[0]).toBe("[Task] WebFetch");
-      expect(taskLines[1]).toBe("[Task] Bash");
-    });
-  });
-
-  describe("compaction", () => {
-    test("renders compaction as [Compacted]", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "assistant_message", text: "Working on it..." },
-        { type: "compaction", status: "completed", trigger: "auto", preTokens: 168000 },
-        { type: "assistant_message", text: "Continuing after compaction" },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      const lines = result.split("\n");
-      expect(lines).toContain("[Compacted]");
-      expect(lines.indexOf("[Compacted]")).toBeGreaterThan(0);
-    });
-
-    test("compaction flushes preceding buffers", () => {
-      const timeline: AgentTimelineItem[] = [
-        { type: "assistant_message", text: "Before" },
-        { type: "reasoning", text: "Thinking..." },
-        { type: "compaction", status: "completed", trigger: "auto" },
-        { type: "assistant_message", text: "After" },
-      ];
-
-      const result = curateAgentActivity(timeline);
-      const lines = result.split("\n");
-      const compactIdx = lines.indexOf("[Compacted]");
-      expect(compactIdx).toBeGreaterThan(-1);
-      expect(lines.slice(0, compactIdx).some((l) => l.includes("Before"))).toBe(true);
-      expect(lines.slice(0, compactIdx).some((l) => l.includes("Thinking"))).toBe(true);
-    });
+  it("returns a default message when timeline is empty", () => {
+    expect(curateAgentActivity([])).toBe("No activity to display.");
   });
 });

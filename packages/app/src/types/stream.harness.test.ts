@@ -4,12 +4,13 @@ import {
   hydrateStreamState,
   type StreamItem,
   type AgentToolCallItem,
-  type ToolCallStatus,
   isAgentToolCallItem,
 } from "./stream";
 import type { AgentStreamEventPayload } from "@server/shared/messages";
+import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 
 type HarnessUpdate = { event: AgentStreamEventPayload; timestamp: Date };
+type ToolStatus = "running" | "completed" | "failed" | "canceled";
 
 const HARNESS_CALL_IDS = {
   command: "harness-command",
@@ -31,60 +32,80 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
     timestamp: new Date("2025-02-01T10:00:00Z"),
   },
   {
-    event: buildToolStartEvent({
+    event: buildToolEvent({
       callId: HARNESS_CALL_IDS.edit,
       name: "apply_patch",
+      status: "running",
       input: {
         file_path: "README.md",
         patch: "*** Begin Patch\n*** Update File: README.md\n@@\n-Old line\n+New line\n*** End Patch",
+      },
+      detail: {
+        type: "edit",
+        filePath: "README.md",
+        unifiedDiff: "@@\n-Old line\n+New line",
       },
     }),
     timestamp: new Date("2025-02-01T10:00:01Z"),
   },
   {
-    event: buildToolResultEvent({
+    event: buildToolEvent({
       callId: HARNESS_CALL_IDS.edit,
       name: "apply_patch",
+      status: "completed",
       output: {
-        changes: [
+        files: [
           {
-            file_path: "README.md",
-            previous_content: "Old line\n",
-            content: "New line\n",
+            path: "README.md",
+            patch: "@@\n-Old line\n+New line",
           },
         ],
       },
+      input: null,
     }),
     timestamp: new Date("2025-02-01T10:00:02Z"),
   },
   {
-    event: buildToolStartEvent({
+    event: buildToolEvent({
       callId: HARNESS_CALL_IDS.read,
       name: "read_file",
+      status: "running",
       input: { file_path: "README.md" },
+      detail: {
+        type: "read",
+        filePath: "README.md",
+      },
     }),
     timestamp: new Date("2025-02-01T10:00:03Z"),
   },
   {
-    event: buildToolResultEvent({
+    event: buildToolEvent({
       callId: HARNESS_CALL_IDS.read,
       name: "read_file",
+      status: "completed",
       output: { content: "# README\nNew line\n" },
+      input: null,
     }),
     timestamp: new Date("2025-02-01T10:00:04Z"),
   },
   {
-    event: buildToolStartEvent({
+    event: buildToolEvent({
       callId: HARNESS_CALL_IDS.command,
       name: "shell",
+      status: "running",
       input: { command: "ls" },
+      detail: {
+        type: "shell",
+        command: "ls",
+      },
     }),
     timestamp: new Date("2025-02-01T10:00:05Z"),
   },
   {
-    event: buildToolResultEvent({
+    event: buildToolEvent({
       callId: HARNESS_CALL_IDS.command,
       name: "shell",
+      status: "completed",
       output: {
         result: {
           command: "ls",
@@ -92,12 +113,12 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
         },
         metadata: { exit_code: 0, cwd: "/tmp/harness" },
       },
+      input: null,
     }),
     timestamp: new Date("2025-02-01T10:00:06Z"),
   },
 ];
 
-// Hydration snapshot recorded after refreshing the chat – this is the broken state we need to codify.
 const STREAM_HARNESS_HYDRATED: HarnessUpdate[] = [
   {
     event: {
@@ -112,96 +133,112 @@ const STREAM_HARNESS_HYDRATED: HarnessUpdate[] = [
     timestamp: new Date("2025-02-01T10:05:00Z"),
   },
   {
-    event: buildToolStartEvent({
+    event: buildToolEvent({
       callId: HARNESS_CALL_IDS.edit,
       name: "apply_patch",
       status: "completed",
+      input: {
+        file_path: "README.md",
+      },
+      output: null,
     }),
     timestamp: new Date("2025-02-01T10:05:01Z"),
   },
   {
-    event: buildToolStartEvent({
+    event: buildToolEvent({
       callId: HARNESS_CALL_IDS.read,
       name: "read_file",
       status: "completed",
+      input: { file_path: "README.md" },
+      output: null,
     }),
     timestamp: new Date("2025-02-01T10:05:02Z"),
   },
   {
-    event: buildToolStartEvent({
+    event: buildToolEvent({
       callId: HARNESS_CALL_IDS.command,
       name: "shell",
       status: "completed",
+      input: { command: "ls" },
+      output: null,
     }),
     timestamp: new Date("2025-02-01T10:05:03Z"),
   },
 ];
 
-describe("stream harness captures hydrated regression", () => {
-  it("records tool payloads during the live run", () => {
+describe("stream harness canonical payloads", () => {
+  it("keeps provider detail payloads during live run", () => {
     const liveState = hydrateStreamState(STREAM_HARNESS_LIVE);
     const snapshots = extractHarnessSnapshots(liveState);
 
-    expect(snapshots.edit?.payload.data.parsedEdits?.[0]?.diffLines.length).toBeGreaterThan(0);
-    expect(snapshots.read?.payload.data.parsedReads?.[0]?.content).toContain("New line");
-    expect(snapshots.command?.payload.data.parsedCommand?.output).toContain("README.md");
+    expect(snapshots.edit?.payload.data.detail).toEqual({
+      type: "edit",
+      filePath: "README.md",
+      unifiedDiff: "@@\n-Old line\n+New line",
+    });
+    expect(snapshots.read?.payload.data.detail).toEqual({
+      type: "read",
+      filePath: "README.md",
+    });
+    expect(snapshots.command?.payload.data.detail).toEqual({
+      type: "shell",
+      command: "ls",
+    });
   });
 
-  it("documents that hydrated events without output lose parsed payloads", () => {
-    // After a refresh, hydrated events only contain status but no input/output data.
-    // Without full data, parsed payloads cannot be reconstructed.
+  it("keeps tool records hydrated even when output is missing", () => {
     const hydratedState = hydrateStreamState(STREAM_HARNESS_HYDRATED);
     const snapshots = extractHarnessSnapshots(hydratedState);
 
-    // Hydrated events exist but lack parsed content since input/output were not provided
-    expect(snapshots.edit?.payload.data.parsedEdits).toBeUndefined();
-    expect(snapshots.read?.payload.data.parsedReads).toBeUndefined();
-    expect(snapshots.command?.payload.data.parsedCommand).toBeUndefined();
+    expect(snapshots.edit?.payload.data.status).toBe("completed");
+    expect(snapshots.read?.payload.data.status).toBe("completed");
+    expect(snapshots.command?.payload.data.status).toBe("completed");
   });
 });
 
-function buildToolStartEvent({
+function buildToolEvent({
   callId,
   name,
-  input,
-  status = "executing",
+  status,
+  input = null,
+  output = null,
+  error,
+  detail,
 }: {
   callId: string;
   name: string;
-  input?: Record<string, unknown>;
-  status?: ToolCallStatus;
+  status: ToolStatus;
+  input?: Record<string, unknown> | null;
+  output?: Record<string, unknown> | null;
+  error?: unknown;
+  detail?: ToolCallDetail;
 }): AgentStreamEventPayload {
-  return {
-    type: "timeline",
-    provider: "claude",
-    item: {
-      type: "tool_call",
-      name,
-      status,
-      callId,
-      input,
-    },
+  const baseItem = {
+    type: "tool_call" as const,
+    name,
+    status,
+    callId,
+    input,
+    output,
+    ...(detail ? { detail } : {}),
   };
-}
 
-function buildToolResultEvent({
-  callId,
-  name,
-  output,
-}: {
-  callId: string;
-  name: string;
-  output?: Record<string, unknown>;
-}): AgentStreamEventPayload {
+  const item =
+    status === "failed"
+      ? {
+          ...baseItem,
+          status: "failed" as const,
+          error: error ?? { message: "failed" },
+        }
+      : {
+          ...baseItem,
+          error: null,
+        };
+
   return {
     type: "timeline",
     provider: "claude",
-    item: {
-      type: "tool_call",
-      name,
-      callId,
-      output,
-    },
+    item,
   };
 }
 

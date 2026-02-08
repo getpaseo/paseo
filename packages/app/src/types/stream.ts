@@ -1,13 +1,10 @@
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type {
+  AgentProvider,
+  ToolCallDetail,
+} from "@server/server/agent/agent-sdk-types";
 import type { AgentStreamEventPayload } from "@server/shared/messages";
 import {
-  extractCommandDetails,
-  extractEditEntries,
-  extractReadEntries,
   extractTaskEntriesFromToolCall,
-  type CommandDetails,
-  type EditEntry,
-  type ReadEntry,
 } from "../utils/tool-call-parsers";
 
 /**
@@ -86,7 +83,8 @@ export interface ThoughtItem {
   status: ThoughtStatus;
 }
 
-export type ToolCallStatus = "executing" | "completed" | "failed";
+export type OrchestratorToolCallStatus = "executing" | "completed" | "failed";
+export type AgentToolCallStatus = "running" | "completed" | "failed" | "canceled";
 
 interface OrchestratorToolCallData {
   toolCallId: string;
@@ -94,20 +92,18 @@ interface OrchestratorToolCallData {
   arguments: unknown;
   result?: unknown;
   error?: unknown;
-  status: ToolCallStatus;
+  status: OrchestratorToolCallStatus;
 }
 
 export interface AgentToolCallData {
   provider: AgentProvider;
+  callId: string;
   name: string;
-  status?: ToolCallStatus;
-  callId?: string;
-  input?: unknown;
-  result?: unknown;
-  error?: unknown;
-  parsedEdits?: EditEntry[];
-  parsedReads?: ReadEntry[];
-  parsedCommand?: CommandDetails | null;
+  status: AgentToolCallStatus;
+  input: unknown | null;
+  result: unknown | null;
+  error: unknown | null;
+  detail?: ToolCallDetail;
   metadata?: Record<string, unknown>;
 }
 
@@ -171,14 +167,6 @@ function normalizeChunk(text: string): { chunk: string; hasContent: boolean } {
     return { chunk: "", hasContent: false };
   }
   return { chunk, hasContent: /\S/.test(chunk) };
-}
-
-function coerceString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length ? trimmed : null;
 }
 
 function appendUserMessage(
@@ -310,97 +298,59 @@ function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
   return mutated ? nextState : state;
 }
 
-function mergeToolCallRaw(existingRaw: unknown, nextRaw: unknown): unknown {
-  if (existingRaw === undefined || existingRaw === null) {
-    return nextRaw;
-  }
-  if (nextRaw === undefined || nextRaw === null) {
-    return existingRaw;
-  }
-  if (Array.isArray(existingRaw)) {
-    return [...existingRaw, nextRaw];
-  }
-  return [existingRaw, nextRaw];
-}
-
-function computeParsedToolPayload(result: unknown): {
-  parsedEdits?: EditEntry[];
-  parsedReads?: ReadEntry[];
-  parsedCommand?: CommandDetails | null;
-} {
-  const edits = extractEditEntries(result);
-  const reads = extractReadEntries(result);
-  const command = extractCommandDetails(result);
-
-  return {
-    parsedEdits: edits.length > 0 ? edits : undefined,
-    parsedReads: reads.length > 0 ? reads : undefined,
-    parsedCommand: command ?? undefined,
-  };
-}
-
-function normalizeComparableString(value?: string | null): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim().toLowerCase();
-  return trimmed.length ? trimmed : null;
-}
-
 function findExistingAgentToolCallIndex(
   state: StreamItem[],
-  callId: string | null,
-  data: AgentToolCallData
+  callId: string
 ): number {
-  const normalizedCallId = normalizeComparableString(callId);
-  if (normalizedCallId) {
-    const existingIndex = state.findIndex(
-      (entry) =>
-        entry.kind === "tool_call" &&
-        entry.payload.source === "agent" &&
-        normalizeComparableString(entry.payload.data.callId) ===
-          normalizedCallId
-    );
-    if (existingIndex >= 0) {
-      return existingIndex;
-    }
+  return state.findIndex(
+    (entry) =>
+      entry.kind === "tool_call" &&
+      entry.payload.source === "agent" &&
+      entry.payload.data.callId === callId
+  );
+}
+
+function hasNonEmptyObject(value: unknown): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.keys(value as Record<string, unknown>).length > 0
+  );
+}
+
+function mergeCanonicalValue(
+  existing: unknown | null,
+  incoming: unknown | null
+): unknown | null {
+  if (incoming === null) {
+    return existing;
   }
 
-  const fallbackCandidates: Array<{ index: number; item: AgentToolCallItem }> =
-    [];
-  const metadataMatches: Array<{ index: number; item: AgentToolCallItem }> = [];
-  for (let i = 0; i < state.length; i += 1) {
-    const entry = state[i];
-    if (entry.kind !== "tool_call" || entry.payload.source !== "agent") {
-      continue;
-    }
-    const payload = entry.payload.data;
-    const providerMatches =
-      payload.provider === data.provider && payload.name === data.name;
-    if (providerMatches) {
-      metadataMatches.push({ index: i, item: entry as AgentToolCallItem });
-    }
-    if (payload.callId) {
-      continue;
-    }
-    if (payload.status !== "executing") {
-      continue;
-    }
-    if (providerMatches) {
-      fallbackCandidates.push({ index: i, item: entry as AgentToolCallItem });
-    }
+  if (!hasNonEmptyObject(incoming) && hasNonEmptyObject(existing)) {
+    return existing;
   }
 
-  if (fallbackCandidates.length) {
-    return fallbackCandidates[0]?.index ?? -1;
-  }
+  return incoming;
+}
 
-  // If this update still lacks a call id, fall back to metadata matches (e.g. replayed hydration events)
-  if (!normalizedCallId && metadataMatches.length) {
-    return metadataMatches[0]?.index ?? -1;
+function mergeAgentToolCallStatus(
+  existing: AgentToolCallStatus,
+  incoming: AgentToolCallStatus
+): AgentToolCallStatus {
+  if (existing === "failed" || incoming === "failed") {
+    return "failed";
   }
-
-  return -1;
+  if (existing === "canceled") {
+    return "canceled";
+  }
+  if (incoming === "canceled") {
+    return existing === "completed" ? "completed" : "canceled";
+  }
+  if (existing === "completed" || incoming === "completed") {
+    return "completed";
+  }
+  return "running";
 }
 
 function appendAgentToolCall(
@@ -408,49 +358,26 @@ function appendAgentToolCall(
   data: AgentToolCallData,
   timestamp: Date
 ): StreamItem[] {
-  const normalizedStatus = normalizeToolCallStatus(
-    data.status,
-    data.result,
-    data.error
-  );
-  const callId = data.callId;
-
-  const payloadData: AgentToolCallData = {
-    ...data,
-    status: normalizedStatus,
-    callId: callId ?? data.callId,
-  };
-
-  const existingIndex = findExistingAgentToolCallIndex(
-    state,
-    callId ?? null,
-    payloadData
-  );
+  const existingIndex = findExistingAgentToolCallIndex(state, data.callId);
 
   if (existingIndex >= 0) {
     const next = [...state];
     const existing = next[existingIndex] as AgentToolCallItem;
-    const mergedInput =
-      hasValue(payloadData.input)
-        ? payloadData.input
-        : existing.payload.data.input;
-    const mergedResult =
-      hasValue(payloadData.result)
-        ? payloadData.result
-        : existing.payload.data.result;
-    const mergedError =
-      hasValue(payloadData.error)
-        ? payloadData.error
-        : existing.payload.data.error;
-    const mergedStatus = mergeToolCallStatus(
+    const mergedInput = mergeCanonicalValue(existing.payload.data.input, data.input);
+    const mergedResult = mergeCanonicalValue(existing.payload.data.result, data.result);
+    const mergedStatus = mergeAgentToolCallStatus(
       existing.payload.data.status,
-      payloadData.status ?? existing.payload.data.status ?? "executing"
+      data.status
     );
+    const mergedError =
+      mergedStatus === "failed"
+        ? data.error ?? existing.payload.data.error ?? { message: "Tool call failed" }
+        : null;
     const mergedMetadata =
-      payloadData.metadata || existing.payload.data.metadata
-        ? { ...existing.payload.data.metadata, ...payloadData.metadata }
+      data.metadata || existing.payload.data.metadata
+        ? { ...existing.payload.data.metadata, ...data.metadata }
         : undefined;
-    const parsed = computeParsedToolPayload(mergedResult);
+
     next[existingIndex] = {
       ...existing,
       timestamp,
@@ -458,235 +385,33 @@ function appendAgentToolCall(
         source: "agent",
         data: {
           ...existing.payload.data,
-          ...payloadData,
+          ...data,
           status: mergedStatus,
           input: mergedInput,
           result: mergedResult,
           error: mergedError,
+          detail: data.detail ?? existing.payload.data.detail,
           metadata: mergedMetadata,
-          callId: payloadData.callId ?? existing.payload.data.callId,
-          parsedEdits: parsed.parsedEdits ?? existing.payload.data.parsedEdits,
-          parsedReads: parsed.parsedReads ?? existing.payload.data.parsedReads,
-          parsedCommand:
-            parsed.parsedCommand ?? existing.payload.data.parsedCommand,
         },
       },
     };
     return next;
   }
 
-  const id = callId
-    ? `agent_tool_${callId}`
-    : createUniqueTimelineId(
-        state,
-        "tool",
-        `${data.provider}:${data.name}`,
-        timestamp
-      );
-
   const item: ToolCallItem = {
     kind: "tool_call",
-    id,
+    id: `agent_tool_${data.callId}`,
     timestamp,
     payload: {
       source: "agent",
       data: {
-        ...payloadData,
-        ...computeParsedToolPayload(payloadData.result),
+        ...data,
+        error: data.status === "failed" ? data.error : null,
       },
     },
   };
 
   return [...state, item];
-}
-
-const FAILED_STATUS_PATTERN =
-  /fail|error|deny|reject|cancel|abort|exception|refus/;
-const COMPLETED_STATUS_PATTERN =
-  /complete|success|granted|applied|done|resolved|finish|succeed|ok/;
-
-function normalizeStatusString(
-  status?: string | null
-): "executing" | "completed" | "failed" | null {
-  if (!status) {
-    return null;
-  }
-  const normalized = status.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  if (FAILED_STATUS_PATTERN.test(normalized)) {
-    return "failed";
-  }
-  if (COMPLETED_STATUS_PATTERN.test(normalized)) {
-    return "completed";
-  }
-  return "executing";
-}
-
-function hasValue(value: unknown): boolean {
-  return value !== undefined && value !== null;
-}
-
-function inferStatusFromRaw(raw: unknown): "completed" | "failed" | null {
-  if (!hasValue(raw)) {
-    return null;
-  }
-
-  const queue: unknown[] = Array.isArray(raw) ? [...raw] : [raw];
-  const visited = new Set<object>();
-
-  while (queue.length > 0) {
-    const candidate = queue.shift();
-    if (!candidate || typeof candidate !== "object") {
-      continue;
-    }
-    if (visited.has(candidate as object)) {
-      continue;
-    }
-    visited.add(candidate as object);
-    const record = candidate as Record<string, unknown>;
-
-    if (record.is_error === true) {
-      return "failed";
-    }
-
-    const statusValue = normalizeStatusString(
-      typeof record.status === "string" ? record.status : undefined
-    );
-    if (statusValue === "failed") {
-      return "failed";
-    }
-    if (statusValue === "completed") {
-      return "completed";
-    }
-
-    if ("error" in record && hasValue(record.error)) {
-      return "failed";
-    }
-
-    if (typeof record.stderr === "string" && record.stderr.length > 0) {
-      return "failed";
-    }
-
-    const typeValue =
-      typeof record.type === "string" ? record.type.toLowerCase() : "";
-    if (typeValue) {
-      if (FAILED_STATUS_PATTERN.test(typeValue)) {
-        return "failed";
-      }
-      if (/result|response|output|success/.test(typeValue)) {
-        return "completed";
-      }
-    }
-
-    const exitCode =
-      typeof record.exitCode === "number"
-        ? record.exitCode
-        : typeof record.exit_code === "number"
-        ? record.exit_code
-        : null;
-    if (exitCode !== null) {
-      return exitCode === 0 ? "completed" : "failed";
-    }
-
-    const successValue =
-      typeof record.success === "boolean" ? record.success : null;
-    if (successValue !== null) {
-      return successValue ? "completed" : "failed";
-    }
-
-    for (const value of Object.values(record)) {
-      if (typeof value === "object" && value !== null) {
-        queue.push(value);
-      }
-    }
-  }
-
-  return null;
-}
-
-function normalizeToolCallStatus(
-  status?: string,
-  result?: unknown,
-  error?: unknown
-): ToolCallStatus {
-  const normalizedFromStatus = normalizeStatusString(status);
-  if (normalizedFromStatus === "failed") {
-    return "failed";
-  }
-  if (normalizedFromStatus === "completed") {
-    return "completed";
-  }
-
-  if (hasValue(error)) {
-    return "failed";
-  }
-  if (hasValue(result)) {
-    return "completed";
-  }
-
-  return normalizedFromStatus ?? "executing";
-}
-
-function mergeToolCallStatus(
-  existing: ToolCallStatus | undefined,
-  incoming: ToolCallStatus
-): ToolCallStatus {
-  if (existing === "failed" || incoming === "failed") {
-    return "failed";
-  }
-  if (existing === "completed" || incoming === "completed") {
-    return "completed";
-  }
-  return incoming ?? existing ?? "executing";
-}
-
-const TOOL_CALL_ID_KEYS = [
-  "toolCallId",
-  "tool_call_id",
-  "callId",
-  "call_id",
-  "tool_use_id",
-  "toolUseId",
-];
-
-function extractToolCallId(raw: unknown, depth = 0): string | null {
-  if (!raw || depth > 4) {
-    return null;
-  }
-  if (typeof raw === "string" || typeof raw === "number") {
-    return null;
-  }
-  if (Array.isArray(raw)) {
-    for (const entry of raw) {
-      const nested = extractToolCallId(entry, depth + 1);
-      if (nested) {
-        return nested;
-      }
-    }
-    return null;
-  }
-  if (typeof raw === "object") {
-    const record = raw as Record<string, unknown>;
-    for (const key of TOOL_CALL_ID_KEYS) {
-      const value = record[key];
-      if (typeof value === "string" && value.length > 0) {
-        return value;
-      }
-    }
-    const idValue = record.id;
-    if (typeof idValue === "string" && /tool|call/i.test(idValue)) {
-      return idValue;
-    }
-    for (const value of Object.values(record)) {
-      const nested = extractToolCallId(value, depth + 1);
-      if (nested) {
-        return nested;
-      }
-    }
-  }
-  return null;
 }
 
 function appendActivityLog(
@@ -826,12 +551,13 @@ export function reduceStreamUpdate(
             state,
             {
               provider: event.provider,
-              name: item.name,
-              status: normalizeStatusString(item.status) ?? "executing",
               callId: item.callId,
+              name: item.name,
+              status: item.status,
               input: item.input,
               result: item.output,
               error: item.error,
+              detail: item.detail,
               metadata: item.metadata,
             },
             timestamp

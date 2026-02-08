@@ -21,7 +21,6 @@ import type {
   ListModelsOptions,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
-  ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import type { Logger } from "pino";
 
@@ -35,6 +34,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { z } from "zod";
 import { loadCodexPersistedTimeline } from "./codex-rollout-timeline.js";
+import { mapCodexToolCallFromThreadItem } from "./codex/tool-call-mapper.js";
 
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
@@ -634,12 +634,6 @@ function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
   };
 }
 
-function createToolCallTimelineItem(
-  data: Omit<ToolCallTimelineItem, "type">
-): AgentTimelineItem {
-  return { type: "tool_call", ...data };
-}
-
 function extractUserText(content: unknown): string | null {
   if (!Array.isArray(content)) return null;
   const parts: string[] = [];
@@ -647,20 +641,6 @@ function extractUserText(content: unknown): string | null {
     if (item && typeof item === "object") {
       const obj = item as { type?: string; text?: string };
       if (obj.type === "text" && typeof obj.text === "string") {
-        parts.push(obj.text);
-      }
-    }
-  }
-  return parts.length > 0 ? parts.join("\n") : null;
-}
-
-function extractContentText(content: unknown): string | null {
-  if (!Array.isArray(content)) return null;
-  const parts: string[] = [];
-  for (const item of content) {
-    if (item && typeof item === "object") {
-      const obj = item as { text?: string };
-      if (typeof obj.text === "string") {
         parts.push(obj.text);
       }
     }
@@ -692,19 +672,6 @@ function planStepsToTodoItems(steps: Array<{ step: string; status: string }>): {
   }));
 }
 
-function normalizeCodexFilePath(filePath: unknown, cwd: string | null | undefined): string | null {
-  if (typeof filePath !== "string") return null;
-  const trimmed = filePath.trim();
-  if (!trimmed) return null;
-  if (typeof cwd === "string" && cwd.trim().length > 0) {
-    const normalizedCwd = cwd.endsWith(path.sep) ? cwd : `${cwd}${path.sep}`;
-    if (trimmed.startsWith(normalizedCwd)) {
-      return trimmed.slice(normalizedCwd.length);
-    }
-  }
-  return trimmed;
-}
-
 function threadItemToTimeline(
   item: any,
   options?: { includeUserMessage?: boolean; cwd?: string | null }
@@ -734,79 +701,11 @@ function threadItemToTimeline(
       const text = summary || content;
       return text ? { type: "reasoning", text } : null;
     }
-    case "commandExecution": {
-      const output = {
-        type: "command",
-        command: item.command,
-        output: item.aggregatedOutput ?? "",
-        exitCode: item.exitCode ?? undefined,
-      };
-      return createToolCallTimelineItem({
-        name: "shell",
-        status: item.status,
-        callId: item.id,
-        input: { command: item.command, cwd: item.cwd },
-        output,
-      });
-    }
-    case "fileChange": {
-      const files = Array.isArray(item.changes)
-        ? item.changes.map((change: any) => ({
-            path: normalizeCodexFilePath(change.path, cwd) ?? change.path,
-            kind: change.kind,
-          }))
-        : [];
-      const outputFiles = Array.isArray(item.changes)
-        ? item.changes.map((change: any) => ({
-            path: normalizeCodexFilePath(change.path, cwd) ?? change.path,
-            patch:
-              typeof change.diff === "string"
-                ? truncateUtf8Bytes(change.diff, MAX_FILE_PATCH_BYTES).text
-                : change.diff,
-            kind: change.kind,
-          }))
-        : [];
-      return createToolCallTimelineItem({
-        name: "apply_patch",
-        status: item.status,
-        callId: item.id,
-        input: { files },
-        output: { files: outputFiles },
-      });
-    }
-    case "mcpToolCall": {
-      if (item.tool === "read_file") {
-        const pathValue = item.arguments?.path ?? item.arguments?.file_path ?? null;
-        const content = extractContentText(item.result?.content) ?? "";
-        return createToolCallTimelineItem({
-          name: "read_file",
-          status: item.status,
-          callId: item.id,
-          input: pathValue ? { path: pathValue } : item.arguments,
-          output: pathValue
-            ? { type: "read_file", path: pathValue, content }
-            : item.result ?? undefined,
-          error: item.error ?? undefined,
-        });
-      }
-      return createToolCallTimelineItem({
-        name: `${item.server}.${item.tool}`,
-        status: item.status,
-        callId: item.id,
-        input: item.arguments,
-        output: item.result ?? undefined,
-        error: item.error ?? undefined,
-      });
-    }
-    case "webSearch": {
-      return createToolCallTimelineItem({
-        name: "web_search",
-        status: "completed",
-        callId: item.id,
-        input: { query: item.query },
-        output: item.action ?? undefined,
-      });
-    }
+    case "commandExecution":
+    case "fileChange":
+    case "mcpToolCall":
+    case "webSearch":
+      return mapCodexToolCallFromThreadItem(item, { cwd });
     default:
       return null;
   }
@@ -855,21 +754,6 @@ function normalizeImageData(mimeType: string, data: string): ImageDataPayload {
   }
   return { mimeType, data };
 }
-
-function truncateUtf8Bytes(text: string, maxBytes: number): { text: string; truncated: boolean } {
-  if (maxBytes <= 0) {
-    return { text: "", truncated: text.length > 0 };
-  }
-  const bytes = Buffer.byteLength(text, "utf8");
-  if (bytes <= maxBytes) {
-    return { text, truncated: false };
-  }
-  const buffer = Buffer.from(text, "utf8");
-  const sliced = buffer.subarray(0, maxBytes);
-  return { text: sliced.toString("utf8"), truncated: true };
-}
-
-const MAX_FILE_PATCH_BYTES = 128 * 1024;
 
 const ThreadStartedNotificationSchema = z.object({
   thread: z.object({ id: z.string() }).passthrough(),

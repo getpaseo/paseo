@@ -16,12 +16,21 @@ import {
   BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import { Pencil, Eye, SquareTerminal, Search, Bot, Wrench, X } from "lucide-react-native";
-import type { ToolCallDisplayInfo } from "@/utils/tool-call-parsers";
+import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
+import type { ToolCallKind } from "@/utils/tool-call-display";
 import { ToolCallDetailsContent } from "./tool-call-details";
 
 // ----- Types -----
 
-export type ToolCallSheetData = ToolCallDisplayInfo;
+export type ToolCallSheetData = {
+  kind: ToolCallKind;
+  displayName: string;
+  summary?: string;
+  detail?: ToolCallDetail;
+  input?: unknown | null;
+  output?: unknown | null;
+  errorText?: string;
+};
 
 interface ToolCallSheetContextValue {
   openToolCall: (data: ToolCallSheetData) => void;
@@ -133,7 +142,7 @@ interface ToolCallSheetContentProps {
 }
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
-  const { kind, displayName, detail, errorText } = data;
+  const { kind, displayName, detail, input, output, errorText } = data;
 
   const IconComponent = toolKindIcons[kind] || Wrench;
 
@@ -157,7 +166,12 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
         style={styles.content}
         contentContainerStyle={styles.contentContainer}
       >
-        <ToolCallDetailsContent detail={detail} errorText={errorText} />
+        <ToolCallDetailsContent
+          detail={detail}
+          input={input}
+          output={output}
+          errorText={errorText}
+        />
       </BottomSheetScrollView>
     </View>
   );

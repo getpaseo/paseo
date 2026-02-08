@@ -1,5 +1,4 @@
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
-import { parseToolCallDisplay } from "../../utils/tool-call-parsers.js";
 import { isLikelyExternalToolName } from "./tool-name-normalization.js";
 
 const DEFAULT_MAX_ITEMS = 40;
@@ -45,6 +44,50 @@ function formatToolInputJson(input: unknown): string | null {
   }
 }
 
+function resolveToolDisplayName(item: Extract<AgentTimelineItem, { type: "tool_call" }>): string {
+  switch (item.detail?.type) {
+    case "shell":
+      return "Shell";
+    case "read":
+      return "Read";
+    case "edit":
+      return "Edit";
+    case "write":
+      return "Write";
+    case "search":
+      return "Search";
+    default:
+      return item.name;
+  }
+}
+
+function resolveToolSummary(
+  item: Extract<AgentTimelineItem, { type: "tool_call" }>
+): string | undefined {
+  if (item.name.trim().toLowerCase() === "task") {
+    const metadata = item.metadata as { subAgentActivity?: unknown } | undefined;
+    if (typeof metadata?.subAgentActivity === "string") {
+      const summary = metadata.subAgentActivity.trim();
+      if (summary.length > 0) {
+        return summary;
+      }
+    }
+  }
+
+  switch (item.detail?.type) {
+    case "shell":
+      return item.detail.command;
+    case "read":
+    case "edit":
+    case "write":
+      return item.detail.filePath;
+    case "search":
+      return item.detail.query;
+    default:
+      return undefined;
+  }
+}
+
 /**
  * Collapse timeline items:
  * - Dedupe tool calls by callId (pending/completed -> single)
@@ -86,26 +129,35 @@ function collapseTimeline(items: AgentTimelineItem[]): AgentTimelineItem[] {
       flushAssistant();
       flushToolCalls();
       reasoningBuffer += item.text;
-    } else if (item.type === "tool_call" && item.callId) {
+    } else if (item.type === "tool_call") {
       flushAssistant();
       flushReasoning();
       const existing = toolCallMap.get(item.callId);
       if (existing && existing.type === "tool_call") {
-        toolCallMap.set(item.callId, {
-          ...existing,
-          ...item,
-          input: item.input ?? existing.input,
-          output: item.output ?? existing.output,
-          metadata: item.metadata,
-        });
+        if (item.status === "failed") {
+          toolCallMap.set(item.callId, {
+            ...existing,
+            ...item,
+            input: item.input ?? existing.input,
+            output: item.output ?? existing.output,
+            detail: item.detail ?? existing.detail,
+            error: item.error,
+            metadata: item.metadata,
+          });
+        } else {
+          toolCallMap.set(item.callId, {
+            ...existing,
+            ...item,
+            input: item.input ?? existing.input,
+            output: item.output ?? existing.output,
+            detail: item.detail ?? existing.detail,
+            error: null,
+            metadata: item.metadata,
+          });
+        }
       } else {
         toolCallMap.set(item.callId, item);
       }
-    } else if (item.type === "tool_call") {
-      flushAssistant();
-      flushReasoning();
-      flushToolCalls();
-      result.push(item);
     } else {
       flushAssistant();
       flushReasoning();
@@ -159,11 +211,8 @@ export function curateAgentActivity(
       case "tool_call": {
         flushBuffers(lines, buffers);
         const inputJson = formatToolInputJson(item.input);
-        const { displayName, summary } = parseToolCallDisplay({
-          name: item.name,
-          input: item.input,
-          metadata: item.metadata,
-        });
+        const displayName = resolveToolDisplayName(item);
+        const summary = resolveToolSummary(item);
         if (isLikelyExternalToolName(item.name) && inputJson) {
           lines.push(`[${displayName}] ${inputJson}`);
           break;

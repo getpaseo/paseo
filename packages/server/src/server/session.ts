@@ -1929,6 +1929,8 @@ export class Session {
           worktreePath: worktree.worktreePath,
           branchName: worktree.branchName,
         },
+        output: null,
+        error: null,
       });
       if (!started) {
         return;
@@ -1945,6 +1947,10 @@ export class Session {
         name: "paseo_worktree_setup",
         callId,
         status: "completed",
+        input: {
+          worktreePath: worktree.worktreePath,
+          branchName: worktree.branchName,
+        },
         output: {
           worktreePath: worktree.worktreePath,
           commands: results.map((result) => ({
@@ -1954,6 +1960,7 @@ export class Session {
             output: `${result.stdout ?? ""}${result.stderr ? `\n${result.stderr}` : ""}`.trim(),
           })),
         },
+        error: null,
       });
     } catch (error: any) {
       if (error instanceof WorktreeSetupError) {
@@ -1965,6 +1972,10 @@ export class Session {
         name: "paseo_worktree_setup",
         callId,
         status: "failed",
+        input: {
+          worktreePath: worktree.worktreePath,
+          branchName: worktree.branchName,
+        },
         output: {
           worktreePath: worktree.worktreePath,
           commands: results.map((result) => ({

@@ -3,10 +3,10 @@ import { View, Text, Platform, ScrollView as RNScrollView } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
+import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import {
   buildLineDiff,
   parseUnifiedDiff,
-  type ToolCallDetail,
 } from "@/utils/tool-call-parsers";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
@@ -16,34 +16,39 @@ const ScrollView = Platform.OS === "web" ? RNScrollView : GHScrollView;
 // ---- Content Component ----
 
 interface ToolCallDetailsContentProps {
-  detail: ToolCallDetail;
+  detail?: ToolCallDetail;
+  input?: unknown | null;
+  output?: unknown | null;
   errorText?: string;
   maxHeight?: number;
 }
 
 export function ToolCallDetailsContent({
   detail,
+  input,
+  output,
   errorText,
   maxHeight = 300,
 }: ToolCallDetailsContentProps) {
   // Compute diff lines for edit type
   const diffLines = useMemo(() => {
-    if (detail.type !== "edit") return undefined;
+    if (!detail || detail.type !== "edit") return undefined;
     // Use pre-computed unified diff if available (e.g., from apply_patch)
     if (detail.unifiedDiff) {
       return parseUnifiedDiff(detail.unifiedDiff);
     }
-    return buildLineDiff(detail.oldString, detail.newString);
+    return buildLineDiff(detail.oldString ?? "", detail.newString ?? "");
   }, [detail]);
 
   const sections: ReactNode[] = [];
-  const isFullBleed = detail.type === "edit" || detail.type === "shell";
+  const isFullBleed =
+    detail?.type === "edit" || detail?.type === "shell" || detail?.type === "write";
   const codeBlockStyle = isFullBleed ? styles.fullBleedBlock : styles.diffContainer;
 
-  if (detail.type === "shell") {
+  if (detail?.type === "shell") {
     const command = detail.command.replace(/\n+$/, "");
-    const output = detail.output.replace(/^\n+/, "");
-    const hasOutput = output.length > 0;
+    const commandOutput = (detail.output ?? "").replace(/^\n+/, "");
+    const hasOutput = commandOutput.length > 0;
     sections.push(
       <View key="shell" style={styles.section}>
         <View style={codeBlockStyle}>
@@ -63,7 +68,7 @@ export function ToolCallDetailsContent({
                 <Text selectable style={styles.scrollText}>
                   <Text style={styles.shellPrompt}>$ </Text>
                   {command}
-                  {hasOutput ? `\n\n${output}` : ""}
+                  {hasOutput ? `\n\n${commandOutput}` : ""}
                 </Text>
               </View>
             </ScrollView>
@@ -71,7 +76,7 @@ export function ToolCallDetailsContent({
         </View>
       </View>
     );
-  } else if (detail.type === "edit") {
+  } else if (detail?.type === "edit") {
     sections.push(
       <View key="edit" style={styles.section}>
         {diffLines ? (
@@ -81,7 +86,28 @@ export function ToolCallDetailsContent({
         ) : null}
       </View>
     );
-  } else if (detail.type === "read") {
+  } else if (detail?.type === "write") {
+    sections.push(
+      <View key="write" style={styles.section}>
+        {detail.content ? (
+          <ScrollView
+            style={[styles.scrollArea, { maxHeight }]}
+            contentContainerStyle={styles.scrollContent}
+            nestedScrollEnabled
+            showsVerticalScrollIndicator={true}
+          >
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              showsHorizontalScrollIndicator={true}
+            >
+              <Text selectable style={styles.scrollText}>{detail.content}</Text>
+            </ScrollView>
+          </ScrollView>
+        ) : null}
+      </View>
+    );
+  } else if (detail?.type === "read") {
     sections.push(
       <View key="read" style={styles.section}>
         {(detail.offset !== undefined || detail.limit !== undefined) ? (
@@ -109,68 +135,49 @@ export function ToolCallDetailsContent({
         ) : null}
       </View>
     );
-  } else if (detail.type === "thinking") {
-    // Thinking: display the content as plain text
+  } else if (detail?.type === "search") {
     sections.push(
-      <View key="thinking" style={styles.section}>
-        <ScrollView
-          style={[styles.scrollArea, { maxHeight }]}
-          contentContainerStyle={styles.scrollContent}
-          nestedScrollEnabled
-          showsVerticalScrollIndicator={true}
-        >
-          <Text selectable style={styles.scrollText}>{detail.content}</Text>
-        </ScrollView>
+      <View key="search" style={styles.section}>
+        <Text selectable style={styles.scrollText}>{detail.query}</Text>
       </View>
     );
   } else {
-    // Generic tool: show input/output as key-value pairs
-    if (detail.input.length > 0) {
-      sections.push(
-        <View key="input-header" style={styles.groupHeader}>
-          <Text style={styles.groupHeaderText}>Input</Text>
-        </View>
-      );
-      detail.input.forEach((pair, index) => {
-        sections.push(
-          <View key={`input-${index}-${pair.key}`} style={styles.section}>
-            <Text style={styles.sectionTitle}>{pair.key}</Text>
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              style={styles.jsonScroll}
-              contentContainerStyle={styles.jsonContent}
-              showsHorizontalScrollIndicator={true}
-            >
-              <Text selectable style={styles.scrollText}>{pair.value}</Text>
-            </ScrollView>
-          </View>
-        );
-      });
-    }
+    const sectionsFromTopLevel = [
+      { title: "Input", value: input },
+      { title: "Output", value: output },
+    ].filter((entry) => entry.value !== null && entry.value !== undefined);
 
-    if (detail.output.length > 0) {
+    for (const section of sectionsFromTopLevel) {
+      let value = "";
+      try {
+        value =
+          typeof section.value === "string"
+            ? section.value
+            : JSON.stringify(section.value, null, 2);
+      } catch {
+        value = String(section.value);
+      }
+      if (!value.length) {
+        continue;
+      }
       sections.push(
-        <View key="output-header" style={styles.groupHeader}>
-          <Text style={styles.groupHeaderText}>Output</Text>
+        <View key={`${section.title}-header`} style={styles.groupHeader}>
+          <Text style={styles.groupHeaderText}>{section.title}</Text>
         </View>
       );
-      detail.output.forEach((pair, index) => {
-        sections.push(
-          <View key={`output-${index}-${pair.key}`} style={styles.section}>
-            <Text style={styles.sectionTitle}>{pair.key}</Text>
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              style={styles.jsonScroll}
-              contentContainerStyle={styles.jsonContent}
-              showsHorizontalScrollIndicator={true}
-            >
-              <Text selectable style={styles.scrollText}>{pair.value}</Text>
-            </ScrollView>
-          </View>
-        );
-      });
+      sections.push(
+        <View key={`${section.title}-value`} style={styles.section}>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            style={styles.jsonScroll}
+            contentContainerStyle={styles.jsonContent}
+            showsHorizontalScrollIndicator={true}
+          >
+            <Text selectable style={styles.scrollText}>{value}</Text>
+          </ScrollView>
+        </View>
+      );
     }
   }
 

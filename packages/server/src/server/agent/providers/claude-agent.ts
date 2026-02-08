@@ -22,6 +22,12 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "pino";
+import {
+  mapClaudeCanceledToolCall,
+  mapClaudeCompletedToolCall,
+  mapClaudeFailedToolCall,
+  mapClaudeRunningToolCall,
+} from "./claude/tool-call-mapper.js";
 
 import type {
   AgentCapabilityFlags,
@@ -177,8 +183,6 @@ type PendingPermission = {
 };
 
 type ToolUseClassification = "generic" | "command" | "file_change";
-type ToolCallTimelineItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
-
 type ToolUseCacheEntry = {
   id: string;
   name: string;
@@ -763,11 +767,14 @@ class ClaudeAgentSession implements AgentSession {
     if (response.behavior === "allow") {
       if (pending.request.kind === "plan") {
         await this.setMode("acceptEdits");
-        this.pushToolCall({
+        this.pushToolCall(
+          mapClaudeCompletedToolCall({
           name: "plan_approval",
-          status: "granted",
           callId: pending.request.id,
-        });
+          input: pending.request.input ?? null,
+          output: { approved: true },
+        })
+        );
       }
       const result: PermissionResult = {
         behavior: "allow",
@@ -1165,16 +1172,19 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.activeSidechains.set(parentToolUseId, toolName);
 
-    return [{
-      type: "timeline",
-      item: {
-        type: "tool_call",
-        name: "Task",
-        callId: parentToolUseId,
-        metadata: { subAgentActivity: toolName },
+    return [
+      {
+        type: "timeline",
+        item: mapClaudeRunningToolCall({
+          name: "Task",
+          callId: parentToolUseId,
+          input: null,
+          output: null,
+          metadata: { subAgentActivity: toolName },
+        }),
+        provider: "claude",
       },
-      provider: "claude",
-    }];
+    ];
   }
 
   private translateMessageToEvents(message: SDKMessage, turnContext: TurnContext): AgentStreamEvent[] {
@@ -1428,23 +1438,23 @@ class ClaudeAgentSession implements AgentSession {
   private flushPendingToolCalls() {
     for (const [id, entry] of this.toolUseCache) {
       if (entry.started) {
-        this.pushToolCall({
-          name: entry.name,
-          status: "failed",
-          callId: id,
-          input: entry.input,
-          error: { message: "Interrupted" },
-        });
+        this.pushToolCall(
+          mapClaudeCanceledToolCall({
+            name: entry.name,
+            callId: id,
+            input: entry.input ?? null,
+            output: null,
+          })
+        );
       }
     }
     this.toolUseCache.clear();
   }
 
   private pushToolCall(
-    data: Omit<ToolCallTimelineItem, "type">,
+    item: Extract<AgentTimelineItem, { type: "tool_call" }>,
     target?: AgentTimelineItem[]
   ) {
-    const item: AgentTimelineItem = { type: "tool_call", ...data };
     if (target) {
       target.push(item);
       return;
@@ -1611,12 +1621,12 @@ class ClaudeAgentSession implements AgentSession {
     entry.started = true;
     this.toolUseCache.set(entry.id, entry);
     this.pushToolCall(
-      {
+      mapClaudeRunningToolCall({
         name: entry.name,
-        status: "pending",
         callId: entry.id,
-        input: entry.input ?? this.normalizeToolInput(block.input),
-      },
+        input: entry.input ?? this.normalizeToolInput(block.input) ?? null,
+        output: null,
+      }),
       items
     );
   }
@@ -1624,22 +1634,37 @@ class ClaudeAgentSession implements AgentSession {
   private handleToolResult(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
     const entry = typeof block.tool_use_id === "string" ? this.toolUseCache.get(block.tool_use_id) : undefined;
     const toolName = entry?.name ?? block.tool_name ?? "tool";
-    const status = block.is_error ? "failed" : "completed";
+    const callId =
+      typeof block.tool_use_id === "string" && block.tool_use_id.length > 0
+        ? block.tool_use_id
+        : entry?.id ?? null;
 
     // Extract output from block.content (SDK always returns content in string form)
     const output = this.buildToolOutput(block, entry);
 
-    this.pushToolCall(
-      {
-        name: toolName,
-        status,
-        callId: typeof block.tool_use_id === "string" ? block.tool_use_id : undefined,
-        input: entry?.input,
-        output,
-        error: block.is_error ? block : undefined,
-      },
-      items
-    );
+    if (block.is_error) {
+      this.pushToolCall(
+        mapClaudeFailedToolCall({
+          name: toolName,
+          callId,
+          input: entry?.input ?? null,
+          output: output ?? null,
+          error: block,
+        }),
+        items
+      );
+    } else {
+      this.pushToolCall(
+        mapClaudeCompletedToolCall({
+          name: toolName,
+          callId,
+          input: entry?.input ?? null,
+          output: output ?? null,
+        }),
+        items
+      );
+    }
+
     if (typeof block.tool_use_id === "string") {
       this.toolUseCache.delete(block.tool_use_id);
     }
@@ -1866,12 +1891,14 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.applyToolInput(entry, normalized);
     this.toolUseCache.set(toolId, entry);
-    this.pushToolCall({
-      name: entry.name,
-      status: "pending",
-      callId: toolId,
-      input: normalized,
-    });
+    this.pushToolCall(
+      mapClaudeRunningToolCall({
+        name: entry.name,
+        callId: toolId,
+        input: normalized,
+        output: null,
+      })
+    );
   }
 
   private normalizeToolInput(input: unknown): AgentMetadata | null {
