@@ -98,6 +98,7 @@ describe("parseToolCallDisplay", () => {
   describe("summary (was extractPrincipalParam)", () => {
     test("extracts and strips shell wrapper from command string", () => {
       const result = parseToolCallDisplay({
+        provider: "claude",
         name: "Bash",
         input: { command: "/bin/zsh -lc cd /Users/dev/project && npm run format" },
       });
@@ -120,10 +121,46 @@ describe("parseToolCallDisplay", () => {
       expect(result.summary).toBe("npm run build");
     });
 
+    test("falls back to output command when shell input is missing", () => {
+      const result = parseToolCallDisplay({
+        name: "Bash",
+        output: { type: "command", command: "pwd", output: "/tmp" },
+      });
+      expect(result.summary).toBe("pwd");
+    });
+
     test("extracts file_path and strips cwd", () => {
       const result = parseToolCallDisplay({
         name: "Read",
         input: { file_path: "/Users/dev/project/src/file.ts" },
+        cwd: "/Users/dev/project",
+      });
+      expect(result.summary).toBe("src/file.ts");
+    });
+
+    test("falls back to read output path when input is missing", () => {
+      const result = parseToolCallDisplay({
+        provider: "codex",
+        name: "Read",
+        output: {
+          type: "file_read",
+          filePath: "/Users/dev/project/src/file.ts",
+          content: "hello",
+        },
+        cwd: "/Users/dev/project",
+      });
+      expect(result.summary).toBe("src/file.ts");
+    });
+
+    test("falls back to edit output path when input is missing", () => {
+      const result = parseToolCallDisplay({
+        name: "Edit",
+        output: {
+          type: "file_edit",
+          filePath: "/Users/dev/project/src/file.ts",
+          oldContent: "a",
+          newContent: "b",
+        },
         cwd: "/Users/dev/project",
       });
       expect(result.summary).toBe("src/file.ts");
@@ -168,7 +205,7 @@ describe("parseToolCallDisplay", () => {
   });
 
   describe("summary from metadata", () => {
-    test("subAgentActivity in metadata takes priority over input", () => {
+    test("subAgentActivity in metadata takes priority for Task", () => {
       const result = parseToolCallDisplay({
         name: "Task",
         input: { description: "Explore codebase" },
@@ -184,6 +221,15 @@ describe("parseToolCallDisplay", () => {
         metadata: { subAgentActivity: "Bash" },
       });
       expect(result.summary).toBe("Bash");
+    });
+
+    test("non-Task tools keep their parsed summary even when metadata is present", () => {
+      const result = parseToolCallDisplay({
+        name: "Bash",
+        input: { command: "pwd" },
+        metadata: { subAgentActivity: "Read" },
+      });
+      expect(result.summary).toBe("pwd");
     });
   });
 

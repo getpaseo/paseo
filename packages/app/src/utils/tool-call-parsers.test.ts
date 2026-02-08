@@ -64,6 +64,35 @@ describe("parseToolCallDisplay", () => {
     }
   });
 
+  test("falls back to output command when shell input is missing", () => {
+    const output = { type: "command", command: "pwd", output: "/some/path" };
+
+    const info: ToolCallDisplayInfo = parseToolCallDisplay({ name: "Bash", output });
+    expect(info.summary).toBe("pwd");
+    expect(info.detail.type).toBe("shell");
+    if (info.detail.type === "shell") {
+      expect(info.detail.command).toBe("pwd");
+      expect(info.detail.output).toBe("/some/path");
+    }
+  });
+
+  test("falls back to read output path when input is missing", () => {
+    const info: ToolCallDisplayInfo = parseToolCallDisplay({
+      name: "Read",
+      output: {
+        type: "file_read",
+        filePath: "/some/file.txt",
+        content: "hello",
+      },
+    });
+    expect(info.summary).toBe("/some/file.txt");
+    expect(info.detail.type).toBe("read");
+    if (info.detail.type === "read") {
+      expect(info.detail.filePath).toBe("/some/file.txt");
+      expect(info.detail.content).toBe("hello");
+    }
+  });
+
   test("strips shell + cd wrapper from command (Codex exec_command style)", () => {
     const input = {
       command:
@@ -110,6 +139,14 @@ describe("parseToolCallDisplay", () => {
     expect(info.displayName).toBe("Read");
   });
 
+  test("uses stable label for Edit in frontend", () => {
+    const input = { file_path: "/some/file.txt", old_string: "a", new_string: "b" };
+    const first = parseToolCallDisplay({ name: "Edit", input });
+    const second = parseToolCallDisplay({ name: "Edit", input });
+    expect(first.displayName).toBe("Edit");
+    expect(second.displayName).toBe("Edit");
+  });
+
   test("normalizes tool names - paseo_voice.speak to Speak", () => {
     const input = { text: "hello from namespaced speak" };
     const info = parseToolCallDisplay({ name: "paseo_voice.speak", input });
@@ -128,6 +165,15 @@ describe("parseToolCallDisplay", () => {
     expect(info.displayName).toBe("MyCustomTool");
   });
 
+  test("does not let Task metadata override non-Task summary", () => {
+    const info = parseToolCallDisplay({
+      name: "shell",
+      input: { command: "pwd" },
+      metadata: { subAgentActivity: "Read" },
+    });
+    expect(info.summary).toBe("pwd");
+  });
+
   test("parses non-command tool call into generic detail", () => {
     const input = { file_path: "/some/file.txt" };
     const output = { content: "file contents here", lineCount: 42 };
@@ -141,12 +187,16 @@ describe("parseToolCallDisplay", () => {
     }
   });
 
-  test("handles file_write output as generic", () => {
+  test("handles file_write output as edit", () => {
     const input = { file_path: "/some/file.txt", content: "new content" };
     const output = { type: "file_write", filePath: "/some/file.txt" };
 
     const info: ToolCallDisplayInfo = parseToolCallDisplay({ name: "Write", input, output });
-    expect(info.detail.type).toBe("generic");
+    expect(info.detail.type).toBe("edit");
+    expect(info.summary).toBe("/some/file.txt");
+    if (info.detail.type === "edit") {
+      expect(info.detail.filePath).toBe("/some/file.txt");
+    }
   });
 
   test("handles undefined input and output gracefully", () => {
@@ -366,14 +416,13 @@ describe("parseToolCallDisplay - read_file (Codex)", () => {
     }
   });
 
-  test("Codex read_file falls through to generic when result is missing", () => {
+  test("Codex read_file stays read when result is missing", () => {
     const input = {
       path: "/some/file.txt",
     };
 
     const info = parseToolCallDisplay({ name: "read_file", input });
-    // Without result, it can't match the schema so falls through to generic
-    expect(info.detail.type).toBe("generic");
+    expect(info.detail.type).toBe("read");
     expect(info.displayName).toBe("Read");
   });
 });

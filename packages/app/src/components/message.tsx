@@ -420,7 +420,6 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     position: "absolute",
     top: 0,
     bottom: 0,
-    width: 100,
   },
 }));
 
@@ -1017,7 +1016,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
     if (isLoading) {
       shimmer.value = -1;
       shimmer.value = withRepeat(
-        withTiming(1, { duration: 2400, easing: Easing.bezier(0.4, 0, 0.6, 1) }),
+        withTiming(1, { duration: 3200, easing: Easing.linear }),
         -1
       );
     } else {
@@ -1026,7 +1025,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
     }
   }, [isLoading]);
 
-  const shimmerBandWidth = 100;
+  const shimmerBandWidth = 14;
   const shimmerStyle = useAnimatedStyle(() => {
     const travel = badgeWidth + shimmerBandWidth;
     return {
@@ -1098,7 +1097,11 @@ const ExpandableBadge = memo(function ExpandableBadge({
                 {isLoading && badgeWidth > 0 ? (
                   <Animated.View
                     pointerEvents="none"
-                    style={[expandableBadgeStylesheet.shimmerOverlay, shimmerStyle]}
+                    style={[
+                      expandableBadgeStylesheet.shimmerOverlay,
+                      { width: shimmerBandWidth },
+                      shimmerStyle,
+                    ]}
                   >
                     <Svg width="100%" height="100%" preserveAspectRatio="none">
                       <Defs>
@@ -1109,10 +1112,13 @@ const ExpandableBadge = memo(function ExpandableBadge({
                           x2="1"
                           y2="0"
                         >
-                          <Stop offset="0" stopColor={theme.colors.surface1} stopOpacity="0" />
-                          <Stop offset="0.35" stopColor={theme.colors.surface1} stopOpacity="1" />
-                          <Stop offset="0.65" stopColor={theme.colors.surface1} stopOpacity="1" />
-                          <Stop offset="1" stopColor={theme.colors.surface1} stopOpacity="0" />
+                          <Stop offset="0" stopColor={baseColors.white} stopOpacity="0" />
+                          <Stop offset="0.34" stopColor={baseColors.white} stopOpacity="0" />
+                          <Stop offset="0.46" stopColor={baseColors.white} stopOpacity="0.12" />
+                          <Stop offset="0.5" stopColor={baseColors.white} stopOpacity="0.34" />
+                          <Stop offset="0.54" stopColor={baseColors.white} stopOpacity="0.12" />
+                          <Stop offset="0.66" stopColor={baseColors.white} stopOpacity="0" />
+                          <Stop offset="1" stopColor={baseColors.white} stopOpacity="0" />
                         </LinearGradient>
                       </Defs>
                       <Rect width="100%" height="100%" fill="url(#shimmerGrad)" />
@@ -1149,6 +1155,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
 
 interface ToolCallProps {
   toolName: string;
+  provider?: string;
   args: any;
   result?: any;
   error?: any;
@@ -1176,6 +1183,7 @@ const TOOL_CALL_COMMIT_THRESHOLD_MS = 16;
 
 export const ToolCall = memo(function ToolCall({
   toolName,
+  provider,
   args,
   result,
   error,
@@ -1197,8 +1205,17 @@ export const ToolCall = memo(function ToolCall({
     UnistylesRuntime.breakpoint === "sm";
 
   const displayInfo = useMemo(
-    () => parseToolCallDisplay({ name: toolName, input: args, output: result, error, metadata, cwd }),
-    [toolName, args, result, error, metadata, cwd]
+    () =>
+      parseToolCallDisplay({
+        name: toolName,
+        provider,
+        input: args,
+        output: result,
+        error,
+        metadata,
+        cwd,
+      }),
+    [toolName, provider, args, result, error, metadata, cwd]
   );
   const { kind, displayName, summary, detail, errorText } = displayInfo;
   const IconComponent = toolKindIcons[kind] || Wrench;

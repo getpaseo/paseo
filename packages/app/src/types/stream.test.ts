@@ -384,6 +384,54 @@ function testToolCallParsedPayloadHydration() {
   assert.ok(commandPass, 'Command payload should persist across hydration');
 }
 
+function testNullToolPayloadDoesNotEraseKnownInput() {
+  const timestampStart = new Date("2025-01-01T10:36:00Z");
+  const timestampFinish = new Date("2025-01-01T10:36:05Z");
+  const callId = "null-input-preserve";
+
+  const updates: Array<{ event: AgentStreamEventPayload; timestamp: Date }> = [
+    {
+      event: {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "tool_call",
+          name: "shell",
+          status: "pending",
+          callId,
+          input: { command: "pwd" },
+        },
+      },
+      timestamp: timestampStart,
+    },
+    {
+      event: {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "tool_call",
+          name: "shell",
+          status: "completed",
+          callId,
+          input: null,
+          output: { type: "command", output: "/tmp" },
+        },
+      },
+      timestamp: timestampFinish,
+    },
+  ];
+
+  const state = hydrateStreamState(updates);
+  const commandEntry = state.find(
+    (item): item is AgentToolCallItem =>
+      isAgentToolCallItem(item) && item.payload.data.callId === callId
+  );
+
+  assert.ok(commandEntry, "Tool call should exist");
+  assert.strictEqual(commandEntry.payload.data.status, "completed");
+  assert.deepStrictEqual(commandEntry.payload.data.input, { command: "pwd" });
+}
+
 function buildClaudeToolUseBlock({
   id,
   name,
@@ -1116,6 +1164,7 @@ describe('stream timeline reducers', () => {
   it('infers failure from error payloads', testToolCallFailureInferenceFromError);
   it('reconciles late call IDs against pending entries', testToolCallLateCallIdReconciliation);
   it('persists parsed read/edit/command payloads after hydration', testToolCallParsedPayloadHydration);
+  it('preserves known input when later tool updates send null input', testNullToolPayloadDoesNotEraseKnownInput);
   it('hydrates Claude tool bodies with parsed content', testClaudeHydratedToolBodies);
   it('preserves whitespace in assistant chunk concatenation', testAssistantWhitespacePreservation);
   it('hydrates user messages and deduplicates optimistic/live entries', testUserMessageHydration);

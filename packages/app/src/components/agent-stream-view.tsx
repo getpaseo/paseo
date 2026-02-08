@@ -363,6 +363,7 @@ export function AgentStreamView({
             return (
               <ToolCall
                 toolName={data.name}
+                provider={data.provider}
                 args={data.input}
                 result={data.result}
                 error={data.error}
@@ -907,8 +908,12 @@ function PermissionRequestCard({
     if (isPlanRequest) {
       return null;
     }
-    return parseToolCallDisplay({ name: request.name ?? "unknown", input: request.input });
-  }, [isPlanRequest, request.name, request.input]);
+    return parseToolCallDisplay({
+      name: request.name ?? "unknown",
+      provider: request.provider,
+      input: request.input,
+    });
+  }, [isPlanRequest, request.name, request.provider, request.input]);
 
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 

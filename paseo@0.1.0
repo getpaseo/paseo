@@ -1,0 +1,4 @@
+
+> paseo@0.1.0 cli
+> npx tsx packages/cli/src/index.js logs cli --filter tools
+

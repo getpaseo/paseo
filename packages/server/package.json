@@ -16,6 +16,7 @@
     "generate:config-schema": "tsx scripts/generate-config-schema.ts",
     "speech:models": "tsx scripts/list-speech-models.ts",
     "speech:download": "tsx scripts/download-speech-models.ts",
+    "speech:transcribe:local": "tsx scripts/transcribe-local-wav.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",

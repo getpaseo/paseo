@@ -159,7 +159,11 @@ export function curateAgentActivity(
       case "tool_call": {
         flushBuffers(lines, buffers);
         const inputJson = formatToolInputJson(item.input);
-        const { displayName, summary } = parseToolCallDisplay({ name: item.name, input: item.input, metadata: item.metadata });
+        const { displayName, summary } = parseToolCallDisplay({
+          name: item.name,
+          input: item.input,
+          metadata: item.metadata,
+        });
         if (isLikelyExternalToolName(item.name) && inputJson) {
           lines.push(`[${displayName}] ${inputJson}`);
           break;

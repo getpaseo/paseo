@@ -431,15 +431,15 @@ function appendAgentToolCall(
     const next = [...state];
     const existing = next[existingIndex] as AgentToolCallItem;
     const mergedInput =
-      payloadData.input !== undefined
+      hasValue(payloadData.input)
         ? payloadData.input
         : existing.payload.data.input;
     const mergedResult =
-      payloadData.result !== undefined
+      hasValue(payloadData.result)
         ? payloadData.result
         : existing.payload.data.result;
     const mergedError =
-      payloadData.error !== undefined
+      hasValue(payloadData.error)
         ? payloadData.error
         : existing.payload.data.error;
     const mergedStatus = mergeToolCallStatus(
