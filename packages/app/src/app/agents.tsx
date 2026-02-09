@@ -3,10 +3,10 @@ import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentList } from "@/components/agent-list";
-import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
+import { useAllAgentsList } from "@/hooks/use-all-agents-list";
 
 export default function AgentsScreen() {
-  const { agents, isRevalidating, refreshAll } = useAggregatedAgents();
+  const { agents, isRevalidating, refreshAll } = useAllAgentsList();
 
   // Track user-initiated refresh to avoid showing spinner on background revalidation
   const [isManualRefresh, setIsManualRefresh] = useState(false);
@@ -36,6 +36,7 @@ export default function AgentsScreen() {
       <BackHeader title="All agents" />
       <AgentList
         agents={sortedAgents}
+        showCheckoutInfo={false}
         isRefreshing={isManualRefresh && isRevalidating}
         onRefresh={handleRefresh}
       />
