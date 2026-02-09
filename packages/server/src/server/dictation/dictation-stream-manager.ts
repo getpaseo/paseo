@@ -16,10 +16,22 @@ import { parsePcmRateFromFormat, pcm16lePeakAbs } from "../speech/audio.js";
 const PCM_CHANNELS = 1;
 const PCM_BITS_PER_SAMPLE = 16;
 const DEFAULT_DICTATION_FINAL_TIMEOUT_MS = 10000;
+const DEFAULT_DICTATION_AUTO_COMMIT_SECONDS = 15;
 const DICTATION_SILENCE_PEAK_THRESHOLD = Number.parseInt(
   process.env.PASEO_DICTATION_SILENCE_PEAK_THRESHOLD ?? "300",
   10
 );
+
+function parseNonNegativeNumber(value: string | undefined): number | null {
+  if (value === undefined) {
+    return null;
+  }
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
 
 function convertPCMToWavBuffer(
   pcmBuffer: Buffer,
@@ -64,6 +76,7 @@ type DictationStreamState = {
   receivedChunks: Map<number, Buffer>;
   nextSeqToForward: number;
   ackSeq: number;
+  autoCommitBytes: number;
   bytesSinceCommit: number;
   peakSinceCommit: number;
   committedSegmentIds: string[];
@@ -98,6 +111,7 @@ export class DictationStreamManager {
   private readonly sessionId: string;
   private readonly stt: SpeechToTextProvider | null;
   private readonly finalTimeoutMs: number;
+  private readonly autoCommitSeconds: number;
   private readonly streams = new Map<string, DictationStreamState>();
 
   constructor(params: {
@@ -106,12 +120,17 @@ export class DictationStreamManager {
     sessionId: string;
     stt: SpeechToTextProvider | null;
     finalTimeoutMs?: number;
+    autoCommitSeconds?: number;
   }) {
     this.logger = params.logger.child({ component: "dictation-stream-manager" });
     this.emit = params.emit;
     this.sessionId = params.sessionId;
     this.stt = params.stt;
     this.finalTimeoutMs = params.finalTimeoutMs ?? DEFAULT_DICTATION_FINAL_TIMEOUT_MS;
+    this.autoCommitSeconds =
+      params.autoCommitSeconds ??
+      parseNonNegativeNumber(process.env.PASEO_DICTATION_AUTO_COMMIT_SECONDS) ??
+      DEFAULT_DICTATION_AUTO_COMMIT_SECONDS;
   }
 
   public cleanupAll(): void {
@@ -213,6 +232,10 @@ export class DictationStreamManager {
     );
 
     const outputRate = stt.requiredSampleRate;
+    const autoCommitBytes =
+      this.autoCommitSeconds > 0
+        ? Math.max(1, Math.round(this.autoCommitSeconds * outputRate * 2))
+        : 0;
 
     this.streams.set(dictationId, {
       dictationId,
@@ -234,6 +257,7 @@ export class DictationStreamManager {
       receivedChunks: new Map(),
       nextSeqToForward: 0,
       ackSeq: -1,
+      autoCommitBytes,
       bytesSinceCommit: 0,
       peakSinceCommit: 0,
       committedSegmentIds: [],
@@ -290,6 +314,13 @@ export class DictationStreamManager {
         state.debugAudioChunks.push(resampled);
         state.bytesSinceCommit += resampled.length;
         state.peakSinceCommit = Math.max(state.peakSinceCommit, pcm16lePeakAbs(resampled));
+        try {
+          this.maybeAutoCommitDictationSegment(params.dictationId, state);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          void this.failAndCleanupDictationStream(params.dictationId, message, true);
+          return;
+        }
 
         if (state.debugChunkWriter) {
           void state.debugChunkWriter.writeChunk(seq, resampled).catch((err) => {
@@ -449,6 +480,42 @@ export class DictationStreamManager {
       // no-op
     }
     this.streams.delete(dictationId);
+  }
+
+  private maybeAutoCommitDictationSegment(dictationId: string, state: DictationStreamState): void {
+    if (state.finishRequested) {
+      return;
+    }
+    if (state.autoCommitBytes <= 0 || state.bytesSinceCommit < state.autoCommitBytes) {
+      return;
+    }
+    if (state.peakSinceCommit < DICTATION_SILENCE_PEAK_THRESHOLD) {
+      this.logger.debug(
+        {
+          dictationId,
+          autoCommitBytes: state.autoCommitBytes,
+          bytesSinceCommit: state.bytesSinceCommit,
+          peakSinceCommit: state.peakSinceCommit,
+        },
+        "Dictation auto-segment: clearing silence-only segment"
+      );
+      state.stt.clear();
+      state.bytesSinceCommit = 0;
+      state.peakSinceCommit = 0;
+      return;
+    }
+
+    this.logger.debug(
+      {
+        dictationId,
+        autoCommitBytes: state.autoCommitBytes,
+        bytesSinceCommit: state.bytesSinceCommit,
+      },
+      "Dictation auto-segment: committing buffered audio"
+    );
+    state.bytesSinceCommit = 0;
+    state.peakSinceCommit = 0;
+    state.stt.commit();
   }
 
   private maybeSealDictationStreamFinish(dictationId: string): void {

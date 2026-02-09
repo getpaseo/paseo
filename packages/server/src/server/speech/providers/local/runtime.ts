@@ -107,7 +107,7 @@ async function createLocalSttEngine(params: {
 }): Promise<LocalSttEngine> {
   const { modelId, modelsDir, logger } = params;
 
-  if (modelId === "parakeet-tdt-0.6b-v3-int8") {
+  if (modelId === "parakeet-tdt-0.6b-v3-int8" || modelId === "parakeet-tdt-0.6b-v2-int8") {
     const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
     return {
       kind: "offline",

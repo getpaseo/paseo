@@ -433,7 +433,7 @@ export class Session {
     this.defaultLocalSpeechModelIds =
       dictation?.localModels?.defaultModelIds && dictation.localModels.defaultModelIds.length > 0
         ? [...new Set(dictation.localModels.defaultModelIds)]
-        : ["parakeet-tdt-0.6b-v3-int8", "pocket-tts-onnx-int8"];
+        : ["parakeet-tdt-0.6b-v2-int8", "pocket-tts-onnx-int8"];
     this.registerVoiceSpeakHandler = voiceBridge?.registerVoiceSpeakHandler;
     this.unregisterVoiceSpeakHandler = voiceBridge?.unregisterVoiceSpeakHandler;
     this.registerVoiceCallerContext = voiceBridge?.registerVoiceCallerContext;

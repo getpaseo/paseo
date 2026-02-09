@@ -34,13 +34,13 @@ describe("resolveSpeechConfig", () => {
       modelsDir: path.join(paseoHome, "models", "local-speech"),
       autoDownload: true,
       models: {
-        dictationStt: "parakeet-tdt-0.6b-v3-int8",
-        voiceStt: "parakeet-tdt-0.6b-v3-int8",
+        dictationStt: "parakeet-tdt-0.6b-v2-int8",
+        voiceStt: "parakeet-tdt-0.6b-v2-int8",
         voiceTts: "pocket-tts-onnx-int8",
       },
     });
-    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v3-int8");
-    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v2-int8");
+    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v2-int8");
     expect(result.speech.local?.models.voiceTts).toBe("pocket-tts-onnx-int8");
   });
 
@@ -120,8 +120,8 @@ describe("resolveSpeechConfig", () => {
       persisted,
     });
 
-    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v3-int8");
-    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v2-int8");
+    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v2-int8");
     expect(result.speech.local?.models.voiceTts).toBe("pocket-tts-onnx-int8");
   });
 });

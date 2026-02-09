@@ -149,4 +149,57 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
       }
     }
   });
+
+  it("auto-commits while streaming and assembles final transcript in segment order", async () => {
+    const originalDebug = process.env.PASEO_DICTATION_DEBUG;
+    process.env.PASEO_DICTATION_DEBUG = "false";
+
+    try {
+      const session = new FakeRealtimeSession();
+      const emitted: Array<{ type: string; payload: any }> = [];
+      const manager = new DictationStreamManager({
+        logger: pino({ level: "silent" }),
+        emit: (msg) => emitted.push(msg),
+        sessionId: "s1",
+        stt: new FakeSttProvider(session),
+        autoCommitSeconds: 1,
+      });
+
+      await manager.handleStart("d-segmented", "audio/pcm;rate=24000;bits=16");
+
+      await manager.handleChunk({
+        dictationId: "d-segmented",
+        seq: 0,
+        audioBase64: buildPcmBase64(2000, 24000),
+        format: "audio/pcm;rate=24000;bits=16",
+      });
+      expect(session.commitCalls).toBe(1);
+
+      session.emitCommitted("seg-1");
+      session.emitTranscript("seg-1", "hello", true);
+
+      await manager.handleChunk({
+        dictationId: "d-segmented",
+        seq: 1,
+        audioBase64: buildPcmBase64(2000, 12000),
+        format: "audio/pcm;rate=24000;bits=16",
+      });
+
+      await manager.handleFinish("d-segmented", 1);
+      expect(session.commitCalls).toBe(2);
+
+      session.emitCommitted("seg-2");
+      session.emitTranscript("seg-2", "world", true);
+      await tick();
+
+      const final = emitted.find((msg) => msg.type === "dictation_stream_final");
+      expect(final?.payload.text).toBe("hello world");
+    } finally {
+      if (originalDebug === undefined) {
+        delete process.env.PASEO_DICTATION_DEBUG;
+      } else {
+        process.env.PASEO_DICTATION_DEBUG = originalDebug;
+      }
+    }
+  });
 });

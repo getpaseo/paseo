@@ -39,6 +39,16 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
     description: "Streaming Paraformer (often strong accuracy; heavier).",
     aliases: ["paraformer"],
   },
+  "parakeet-tdt-0.6b-v2-int8": {
+    kind: "stt-offline",
+    archiveUrl:
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
+    extractedDir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+    requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+    description: "NVIDIA Parakeet TDT v2 (offline NeMo transducer, English).",
+    aliases: ["parakeet-v2", "parakeet-tdt-v2"],
+    defaultFor: "stt",
+  },
   "parakeet-tdt-0.6b-v3-int8": {
     kind: "stt-offline",
     archiveUrl:
@@ -47,7 +57,6 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
     requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
     description: "NVIDIA Parakeet TDT v3 (offline NeMo transducer, multilingual).",
     aliases: ["parakeet", "parakeet-v3", "parakeet-tdt"],
-    defaultFor: "stt",
   },
   "kitten-nano-en-v0_1-fp16": {
     kind: "tts",

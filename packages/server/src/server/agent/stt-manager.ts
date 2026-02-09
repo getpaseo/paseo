@@ -10,6 +10,22 @@ interface TranscriptionMetadata {
   label?: string;
 }
 
+const BATCH_APPEND_CHUNK_SECONDS = 1;
+const DEFAULT_BATCH_COMMIT_EVERY_SECONDS = 15;
+const BATCH_FINAL_TIMEOUT_MS = 120_000;
+
+function resolveBatchCommitEverySeconds(): number {
+  const fromEnv = process.env.PASEO_STT_BATCH_COMMIT_EVERY_SECONDS;
+  if (!fromEnv) {
+    return DEFAULT_BATCH_COMMIT_EVERY_SECONDS;
+  }
+  const parsed = Number.parseFloat(fromEnv);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_BATCH_COMMIT_EVERY_SECONDS;
+  }
+  return parsed;
+}
+
 export interface SessionTranscriptionResult extends TranscriptionResult {
   debugRecordingPath?: string;
   byteLength: number;
@@ -97,38 +113,168 @@ export class STTManager {
 
     try {
       const startedAt = Date.now();
-      const finalEventPromise = new Promise<{
-        transcript: string;
-        language?: string;
-        logprobs?: TranscriptionResult["logprobs"];
-        avgLogprob?: number;
-        isLowConfidence?: boolean;
-      }>((resolve, reject) => {
-        session.on("error", reject);
-        session.on("transcript", (payload) => {
-          if (!payload.isFinal) {
-            return;
-          }
-          resolve({
-            transcript: payload.transcript,
-            language: payload.language,
-            logprobs: payload.logprobs,
-            avgLogprob: payload.avgLogprob,
-            isLowConfidence: payload.isLowConfidence,
-          });
-        });
+      await session.connect();
+
+      const committedSegmentIds: string[] = [];
+      const transcriptsBySegmentId = new Map<string, string>();
+      const finalTranscriptSegmentIds = new Set<string>();
+      const transcriptMetaBySegmentId = new Map<
+        string,
+        {
+          language?: string;
+          logprobs?: TranscriptionResult["logprobs"];
+          avgLogprob?: number;
+          isLowConfidence?: boolean;
+        }
+      >();
+
+      let expectedFinals = 0;
+      let settle: (() => void) | null = null;
+      let fail: ((error: Error) => void) | null = null;
+      let settled = false;
+      const allFinalsReady = new Promise<void>((resolve, reject) => {
+        settle = resolve;
+        fail = reject;
       });
 
-      await session.connect();
-      session.appendPcm16(pcmForModel);
-      session.commit();
-      const finalEvent = await finalEventPromise;
+      const resolveIfComplete = () => {
+        if (settled) {
+          return;
+        }
+        if (expectedFinals > 0 && finalTranscriptSegmentIds.size >= expectedFinals) {
+          settled = true;
+          settle?.();
+          return;
+        }
+        if (expectedFinals === 0 && finalTranscriptSegmentIds.size > 0) {
+          settled = true;
+          settle?.();
+        }
+      };
+
+      const rejectWith = (error: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        fail?.(error);
+      };
+
+      session.on("error", (error) => {
+        rejectWith(error instanceof Error ? error : new Error(String(error)));
+      });
+
+      session.on("committed", ({ segmentId }) => {
+        committedSegmentIds.push(segmentId);
+        expectedFinals += 1;
+        resolveIfComplete();
+      });
+
+      session.on("transcript", (payload) => {
+        transcriptsBySegmentId.set(payload.segmentId, payload.transcript);
+        if (!payload.isFinal) {
+          return;
+        }
+        finalTranscriptSegmentIds.add(payload.segmentId);
+        transcriptMetaBySegmentId.set(payload.segmentId, {
+          language: payload.language,
+          logprobs: payload.logprobs,
+          avgLogprob: payload.avgLogprob,
+          isLowConfidence: payload.isLowConfidence,
+        });
+        resolveIfComplete();
+      });
+
+      const appendChunkBytes = Math.max(
+        1,
+        Math.round(session.requiredSampleRate * 2 * BATCH_APPEND_CHUNK_SECONDS)
+      );
+      const commitEverySeconds = resolveBatchCommitEverySeconds();
+      const commitEveryBytes =
+        commitEverySeconds > 0
+          ? Math.max(1, Math.round(session.requiredSampleRate * 2 * commitEverySeconds))
+          : 0;
+
+      let bytesSinceCommit = 0;
+      for (let offset = 0; offset < pcmForModel.length; offset += appendChunkBytes) {
+        const chunk = pcmForModel.subarray(
+          offset,
+          Math.min(pcmForModel.length, offset + appendChunkBytes)
+        );
+        if (chunk.length === 0) {
+          continue;
+        }
+        session.appendPcm16(chunk);
+        bytesSinceCommit += chunk.length;
+
+        if (commitEveryBytes > 0 && bytesSinceCommit >= commitEveryBytes) {
+          session.commit();
+          bytesSinceCommit = 0;
+        }
+      }
+
+      if (bytesSinceCommit > 0 || expectedFinals === 0) {
+        session.commit();
+      }
+
+      const finalTimeout = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        this.logger.warn(
+          {
+            expectedFinals,
+            receivedFinals: finalTranscriptSegmentIds.size,
+            label: metadata?.label,
+          },
+          "Timed out waiting for final STT segments; returning available transcripts"
+        );
+        settle?.();
+      }, BATCH_FINAL_TIMEOUT_MS);
+
+      await allFinalsReady;
+      clearTimeout(finalTimeout);
+
+      const committedSet = new Set(committedSegmentIds);
+      const orderedSegmentIds: string[] = [...committedSegmentIds];
+      for (const segmentId of transcriptsBySegmentId.keys()) {
+        if (!committedSet.has(segmentId)) {
+          orderedSegmentIds.push(segmentId);
+        }
+      }
+
+      const transcript = orderedSegmentIds
+        .map((segmentId) => transcriptsBySegmentId.get(segmentId) ?? "")
+        .join(" ")
+        .trim();
+      const orderedFinalMeta = orderedSegmentIds
+        .filter((segmentId) => finalTranscriptSegmentIds.has(segmentId))
+        .map((segmentId) => transcriptMetaBySegmentId.get(segmentId))
+        .filter(
+          (
+            meta
+          ): meta is {
+            language?: string;
+            logprobs?: TranscriptionResult["logprobs"];
+            avgLogprob?: number;
+            isLowConfidence?: boolean;
+          } => Boolean(meta)
+        );
+      const language = orderedFinalMeta.find((meta) => meta.language)?.language;
+      const singleSegmentMeta = orderedFinalMeta.length === 1 ? orderedFinalMeta[0] : null;
+      const allLowConfidence =
+        orderedFinalMeta.length > 0 &&
+        orderedFinalMeta.every((meta) => meta.isLowConfidence === true);
+
       const result: TranscriptionResult = {
-        text: finalEvent.transcript,
-        language: finalEvent.language,
-        logprobs: finalEvent.logprobs,
-        avgLogprob: finalEvent.avgLogprob,
-        isLowConfidence: finalEvent.isLowConfidence,
+        text: transcript,
+        ...(language ? { language } : {}),
+        ...(singleSegmentMeta?.logprobs ? { logprobs: singleSegmentMeta.logprobs } : {}),
+        ...(singleSegmentMeta?.avgLogprob !== undefined
+          ? { avgLogprob: singleSegmentMeta.avgLogprob }
+          : {}),
+        ...(allLowConfidence ? { isLowConfidence: true } : {}),
         duration: Date.now() - startedAt,
       };
 
