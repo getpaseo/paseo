@@ -7,6 +7,7 @@ import {
   commitAll,
   getCheckoutDiff,
   getCheckoutStatus,
+  getCheckoutStatusLite,
   mergeToBase,
   mergeFromBase,
   MergeConflictError,
@@ -76,6 +77,14 @@ describe("checkout git utilities", () => {
       .toString()
       .trim();
     expect(message).toBe("update file");
+  });
+
+  it("returns lightweight checkout status for normal repos", async () => {
+    const status = await getCheckoutStatusLite(repoDir);
+    expect(status.isGit).toBe(true);
+    expect(status.currentBranch).toBe("main");
+    expect(status.isPaseoOwnedWorktree).toBe(false);
+    expect(status.mainRepoRoot).toBeNull();
   });
 
   it("exposes hasRemote when origin is configured", async () => {
@@ -194,6 +203,21 @@ describe("checkout git utilities", () => {
       .toString()
       .trim();
     expect(message).toBe("worktree update");
+  });
+
+  it("returns lightweight checkout status for .paseo worktrees", async () => {
+    const result = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "lite-alpha",
+      paseoHome,
+    });
+
+    const status = await getCheckoutStatusLite(result.worktreePath, { paseoHome });
+    expect(status.isGit).toBe(true);
+    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.mainRepoRoot).toBe(repoDir);
   });
 
   it("returns mainRepoRoot pointing to first non-bare worktree for bare repos", async () => {

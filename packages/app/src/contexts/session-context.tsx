@@ -237,6 +237,7 @@ function normalizeAgentSnapshot(
     attentionTimestamp,
     archivedAt,
     labels: snapshot.labels,
+    projectPlacement: null,
   };
 }
 
@@ -557,7 +558,10 @@ export function SessionProvider({
         return;
       }
 
-      const agent = normalizeAgentSnapshot(update.agent, serverId);
+      const agent = {
+        ...normalizeAgentSnapshot(update.agent, serverId),
+        projectPlacement: update.project,
+      };
 
       console.log("[Session] Agent update:", agent.id, agent.status);
 

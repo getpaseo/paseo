@@ -296,6 +296,35 @@ export type CheckoutStatusGit = CheckoutStatusGitNonPaseo | CheckoutStatusGitPas
 
 export type CheckoutStatusResult = CheckoutStatus | CheckoutStatusGit;
 
+export type CheckoutStatusLiteNotGit = {
+  isGit: false;
+  currentBranch: null;
+  remoteUrl: null;
+  isPaseoOwnedWorktree: false;
+  mainRepoRoot: null;
+};
+
+export type CheckoutStatusLiteGitNonPaseo = {
+  isGit: true;
+  currentBranch: string | null;
+  remoteUrl: string | null;
+  isPaseoOwnedWorktree: false;
+  mainRepoRoot: null;
+};
+
+export type CheckoutStatusLiteGitPaseo = {
+  isGit: true;
+  currentBranch: string | null;
+  remoteUrl: string | null;
+  isPaseoOwnedWorktree: true;
+  mainRepoRoot: string;
+};
+
+export type CheckoutStatusLiteResult =
+  | CheckoutStatusLiteNotGit
+  | CheckoutStatusLiteGitNonPaseo
+  | CheckoutStatusLiteGitPaseo;
+
 export interface CheckoutDiffResult {
   diff: string;
   structured?: ParsedDiffFile[];
@@ -466,6 +495,11 @@ async function getConfiguredBaseRefForCwd(
   cwd: string,
   context?: CheckoutContext
 ): Promise<ConfiguredBaseRefForCwd> {
+  // Fast-path reject: non-worktree paths do not need expensive ownership checks.
+  if (!/[\\/]worktrees[\\/]/.test(cwd)) {
+    return { baseRef: null, isPaseoOwnedWorktree: false };
+  }
+
   const ownership = await isPaseoOwnedWorktreeCwd(cwd, { paseoHome: context?.paseoHome });
   if (!ownership.allowed) {
     return { baseRef: null, isPaseoOwnedWorktree: false };
@@ -636,6 +670,43 @@ async function getAheadOfOrigin(cwd: string, currentBranch: string): Promise<num
   }
 }
 
+type CheckoutInspectionContext = {
+  worktreeRoot: string;
+  currentBranch: string | null;
+  remoteUrl: string | null;
+  configured: ConfiguredBaseRefForCwd;
+};
+
+async function inspectCheckoutContext(
+  cwd: string,
+  context?: CheckoutContext
+): Promise<CheckoutInspectionContext | null> {
+  try {
+    const root = await getWorktreeRoot(cwd);
+    if (!root) {
+      return null;
+    }
+
+    const [currentBranch, remoteUrl, configured] = await Promise.all([
+      getCurrentBranch(cwd),
+      getOriginRemoteUrl(cwd),
+      getConfiguredBaseRefForCwd(cwd, context),
+    ]);
+
+    return {
+      worktreeRoot: root,
+      currentBranch,
+      remoteUrl,
+      configured,
+    };
+  } catch (error) {
+    if (isGitError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 const PER_FILE_DIFF_MAX_BYTES = 1024 * 1024; // 1MB
 const TOTAL_DIFF_MAX_BYTES = 2 * 1024 * 1024; // 2MB
 const UNTRACKED_BINARY_SNIFF_BYTES = 16 * 1024;
@@ -762,25 +833,17 @@ export async function getCheckoutStatus(
   cwd: string,
   context?: CheckoutContext
 ): Promise<CheckoutStatusResult> {
-  let worktreeRoot: string;
-  try {
-    const root = await getWorktreeRoot(cwd);
-    if (!root) {
-      return { isGit: false };
-    }
-    worktreeRoot = root;
-  } catch (error) {
-    if (isGitError(error)) {
-      return { isGit: false };
-    }
-    throw error;
+  const inspected = await inspectCheckoutContext(cwd, context);
+  if (!inspected) {
+    return { isGit: false };
   }
 
-  const currentBranch = await getCurrentBranch(cwd);
+  const worktreeRoot = inspected.worktreeRoot;
+  const currentBranch = inspected.currentBranch;
+  const remoteUrl = inspected.remoteUrl;
+  const configured = inspected.configured;
   const isDirty = await isWorkingTreeDirty(cwd);
-  const remoteUrl = await getOriginRemoteUrl(cwd);
   const hasRemote = remoteUrl !== null;
-  const configured = await getConfiguredBaseRefForCwd(cwd, context);
   const baseRef = configured.baseRef ?? (await resolveBaseRef(cwd));
   const aheadBehind =
     baseRef && currentBranch ? await getAheadBehind(cwd, baseRef, currentBranch) : null;
@@ -815,6 +878,40 @@ export async function getCheckoutStatus(
     hasRemote,
     remoteUrl,
     isPaseoOwnedWorktree: false,
+  };
+}
+
+export async function getCheckoutStatusLite(
+  cwd: string,
+  context?: CheckoutContext
+): Promise<CheckoutStatusLiteResult> {
+  const inspected = await inspectCheckoutContext(cwd, context);
+  if (!inspected) {
+    return {
+      isGit: false,
+      currentBranch: null,
+      remoteUrl: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    };
+  }
+
+  if (inspected.configured.isPaseoOwnedWorktree) {
+    return {
+      isGit: true,
+      currentBranch: inspected.currentBranch,
+      remoteUrl: inspected.remoteUrl,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: await getMainRepoRoot(cwd),
+    };
+  }
+
+  return {
+    isGit: true,
+    currentBranch: inspected.currentBranch,
+    remoteUrl: inspected.remoteUrl,
+    isPaseoOwnedWorktree: false,
+    mainRepoRoot: null,
   };
 }
 

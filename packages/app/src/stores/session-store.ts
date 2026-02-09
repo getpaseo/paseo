@@ -17,7 +17,11 @@ import type {
   AgentUsage,
   AgentPersistenceHandle,
 } from "@server/server/agent/agent-sdk-types";
-import type { FileDownloadTokenResponse, GitSetupOptions } from "@server/shared/messages";
+import type {
+  FileDownloadTokenResponse,
+  GitSetupOptions,
+  ProjectPlacementPayload,
+} from "@server/shared/messages";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 
 // Re-export types that were in session-context
@@ -95,6 +99,7 @@ export interface Agent {
   attentionTimestamp?: Date | null;
   archivedAt?: Date | null;
   labels: Record<string, string>;
+  projectPlacement?: ProjectPlacementPayload | null;
 }
 
 export type ExplorerEntryKind = "file" | "directory";

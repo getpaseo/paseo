@@ -513,6 +513,14 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  notifyAgentState(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.internal) {
+      return;
+    }
+    this.emitState(agent);
+  }
+
   async clearAgentAttention(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     if (agent.attention.requiresAttention) {

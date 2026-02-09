@@ -12,17 +12,16 @@ import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyl
 import { Plus, Settings, Users } from "lucide-react-native";
 import { router } from "expo-router";
 import { usePanelStore } from "@/stores/panel-store";
-import { GroupedAgentList } from "./grouped-agent-list";
-import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
+import { SidebarAgentList } from "./sidebar-agent-list";
+import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
+import { useSidebarAgentsGrouped } from "@/hooks/use-sidebar-agents-grouped";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { useTauriDragHandlers, useTrafficLightPadding } from "@/utils/tauri-window";
-import { useSidebarAgentSections } from "@/hooks/use-sidebar-agent-sections";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 import { deriveSidebarShortcutAgentKeys } from "@/utils/sidebar-shortcuts";
 
 const DESKTOP_SIDEBAR_WIDTH = 320;
-const SIDEBAR_AGENT_LIMIT = 50; // temporary for screenshots
 
 interface SlidingSidebarProps {
   selectedAgentId?: string;
@@ -40,7 +39,13 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   // Derive isOpen from the unified panel state
   const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
 
-  const { agents, isRevalidating, refreshAll } = useAggregatedAgents();
+  const {
+    sections,
+    checkoutByAgentKey,
+    isInitialLoad,
+    isRevalidating,
+    refreshAll,
+  } = useSidebarAgentsGrouped({ isOpen });
   const {
     translateX,
     backdropOpacity,
@@ -68,21 +73,11 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     }
   }, [isRevalidating, isManualRefresh]);
 
-  const sortedAgents = useMemo(() => {
-    return [...agents].sort((a, b) => {
-      if (a.requiresAttention && !b.requiresAttention) return -1;
-      if (!a.requiresAttention && b.requiresAttention) return 1;
-      return 0;
-    });
-  }, [agents]);
-
-  // Pass all agents to grouping, limit is applied inside groupAgents per-project
-  const sidebarSections = useSidebarAgentSections(sortedAgents);
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore((s) => s.collapsedProjectKeys);
   const setSidebarShortcutAgentKeys = useKeyboardNavStore((s) => s.setSidebarShortcutAgentKeys);
   const sidebarShortcutAgentKeys = useMemo(() => {
-    return deriveSidebarShortcutAgentKeys(sidebarSections, collapsedProjectKeys, 9);
-  }, [collapsedProjectKeys, sidebarSections]);
+    return deriveSidebarShortcutAgentKeys(sections, collapsedProjectKeys, 9);
+  }, [collapsedProjectKeys, sections]);
 
   useEffect(() => {
     setSidebarShortcutAgentKeys(sidebarShortcutAgentKeys);
@@ -226,14 +221,19 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
               </View>
 
               {/* Middle: scrollable agent list */}
-              <GroupedAgentList
-                agents={sortedAgents}
-                isRefreshing={isManualRefresh && isRevalidating}
-                onRefresh={handleRefresh}
-                selectedAgentId={selectedAgentId}
-                onAgentSelect={handleAgentSelectMobile}
-                parentGestureRef={closeGestureRef}
-              />
+              {isInitialLoad ? (
+                <SidebarAgentListSkeleton />
+              ) : (
+                <SidebarAgentList
+                  sections={sections}
+                  checkoutByAgentKey={checkoutByAgentKey}
+                  isRefreshing={isManualRefresh && isRevalidating}
+                  onRefresh={handleRefresh}
+                  selectedAgentId={selectedAgentId}
+                  onAgentSelect={handleAgentSelectMobile}
+                  parentGestureRef={closeGestureRef}
+                />
+              )}
 
               {/* Footer */}
               <View style={styles.sidebarFooter}>
@@ -301,12 +301,17 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
       </View>
 
       {/* Middle: scrollable agent list */}
-      <GroupedAgentList
-        agents={sortedAgents}
-        isRefreshing={isManualRefresh && isRevalidating}
-        onRefresh={handleRefresh}
-        selectedAgentId={selectedAgentId}
-      />
+      {isInitialLoad ? (
+        <SidebarAgentListSkeleton />
+      ) : (
+        <SidebarAgentList
+          sections={sections}
+          checkoutByAgentKey={checkoutByAgentKey}
+          isRefreshing={isManualRefresh && isRevalidating}
+          onRefresh={handleRefresh}
+          selectedAgentId={selectedAgentId}
+        />
+      )}
 
       {/* Footer */}
       <View style={styles.sidebarFooter}>

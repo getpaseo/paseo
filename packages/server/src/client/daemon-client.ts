@@ -117,9 +117,7 @@ export type DaemonEvent =
   | {
       type: "agent_update";
       agentId: string;
-      payload:
-        | { kind: "upsert"; agent: AgentSnapshotPayload }
-        | { kind: "remove"; agentId: string };
+      payload: Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
     }
   | {
       type: "agent_stream";
@@ -218,6 +216,10 @@ type AgentRefreshedStatusPayload = z.infer<
 type RestartRequestedStatusPayload = z.infer<
   typeof RestartRequestedStatusPayloadSchema
 >;
+type FetchAgentsGroupedByProjectPayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_agents_grouped_by_project_response" }
+>["payload"];
 
 export type WaitForFinishResult = {
   status: "idle" | "error" | "permission" | "timeout";
@@ -850,6 +852,33 @@ export class DaemonClient {
           return null;
         }
         return msg.payload.agents;
+      },
+    });
+  }
+
+  async fetchAgentsGroupedByProject(options?: {
+    filter?: { labels?: Record<string, string> };
+    requestId?: string;
+  }): Promise<FetchAgentsGroupedByProjectPayload> {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "fetch_agents_grouped_by_project_request",
+      requestId: resolvedRequestId,
+      ...(options?.filter ? { filter: options.filter } : {}),
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "fetch_agents_grouped_by_project_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
       },
     });
   }

@@ -19,7 +19,6 @@ import {
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { type GestureType } from "react-native-gesture-handler";
-import { useQueryClient } from "@tanstack/react-query";
 import { Archive, ChevronDown, ChevronRight, Plus } from "lucide-react-native";
 import {
   DraggableList,
@@ -29,11 +28,6 @@ import { parseRepoNameFromRemoteUrl, parseRepoShortNameFromRemoteUrl } from "@/u
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import {
-  CHECKOUT_STATUS_STALE_TIME,
-  checkoutStatusQueryKey,
-  useCheckoutStatusCacheOnly,
-} from "@/hooks/use-checkout-status-query";
-import {
   buildAgentNavigationKey,
   startNavigationTiming,
 } from "@/utils/navigation-timing";
@@ -41,7 +35,10 @@ import {
   useSectionOrderStore,
 } from "@/stores/section-order-store";
 import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
-import { useSidebarAgentSections, type SidebarSectionData } from "@/hooks/use-sidebar-agent-sections";
+import {
+  type SidebarCheckoutLite,
+  type SidebarSectionData,
+} from "@/hooks/use-sidebar-agents-grouped";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 import { getIsTauri } from "@/constants/layout";
@@ -49,8 +46,9 @@ import { AgentStatusDot } from "@/components/agent-status-dot";
 
 type SectionData = SidebarSectionData;
 
-interface GroupedAgentListProps {
-  agents: AggregatedAgent[];
+interface SidebarAgentListProps {
+  sections: SidebarSectionData[];
+  checkoutByAgentKey: Map<string, SidebarCheckoutLite>;
   isRefreshing?: boolean;
   onRefresh?: () => void;
   selectedAgentId?: string;
@@ -62,6 +60,7 @@ interface GroupedAgentListProps {
 
 interface SectionHeaderProps {
   section: SectionData;
+  checkout: SidebarCheckoutLite | null;
   isCollapsed: boolean;
   onToggle: () => void;
   onCreateAgent: (workingDir: string) => void;
@@ -71,6 +70,7 @@ interface SectionHeaderProps {
 
 function SectionHeader({
   section,
+  checkout,
   isCollapsed,
   onToggle,
   onCreateAgent,
@@ -79,13 +79,6 @@ function SectionHeader({
 }: SectionHeaderProps) {
   const { theme } = useUnistyles();
   const [isHovered, setIsHovered] = useState(false);
-
-  // For project sections, try to get repo name from checkout status
-  const checkoutQuery = useCheckoutStatusCacheOnly({
-    serverId: section.firstAgentServerId ?? "",
-    cwd: section.workingDir ?? "",
-  });
-  const checkout = checkoutQuery.data ?? null;
 
   // Get project icon
   const iconQuery = useProjectIconQuery({
@@ -185,8 +178,9 @@ function SectionHeader({
   );
 }
 
-interface GroupedAgentRowProps {
+interface SidebarAgentRowProps {
   agent: AggregatedAgent;
+  checkout: SidebarCheckoutLite | null;
   isSelected: boolean;
   shortcutNumber: number | null;
   onPress: () => void;
@@ -194,14 +188,15 @@ interface GroupedAgentRowProps {
   onArchive: (e: { stopPropagation: () => void }) => void;
 }
 
-function GroupedAgentRow({
+function SidebarAgentRow({
   agent,
+  checkout,
   isSelected,
   shortcutNumber,
   onPress,
   onLongPress,
   onArchive,
-}: GroupedAgentRowProps) {
+}: SidebarAgentRowProps) {
   const { theme } = useUnistyles();
   const [isHovered, setIsHovered] = useState(false);
   const [isArchiveHovered, setIsArchiveHovered] = useState(false);
@@ -233,17 +228,10 @@ function GroupedAgentRow({
       setIsArchiveConfirmVisible(false);
     }, 50);
   }, [clearHoverOutTimeout]);
-
-  const checkoutQuery = useCheckoutStatusCacheOnly({
-    serverId: agent.serverId,
-    cwd: agent.cwd,
-  });
-  const checkout = checkoutQuery.data ?? null;
   const activeBranchLabel = checkout?.isGit
     ? ((checkout.currentBranch && checkout.currentBranch !== "HEAD"
         ? checkout.currentBranch
         : null) ??
-      checkout.baseRef ??
       "git")
     : null;
 
@@ -355,18 +343,18 @@ function GroupedAgentRow({
   );
 }
 
-export function GroupedAgentList({
-  agents,
+export function SidebarAgentList({
+  sections,
+  checkoutByAgentKey,
   isRefreshing = false,
   onRefresh,
   selectedAgentId,
   onAgentSelect,
   listFooterComponent,
   parentGestureRef,
-}: GroupedAgentListProps) {
+}: SidebarAgentListProps) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
-  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
 
@@ -448,42 +436,8 @@ export function GroupedAgentList({
     [onAgentSelect]
   );
 
-  // Prefetch checkout status for all agents in the sidebar.
-  // The sidebar shows a limited number of agents, so we fetch all of them upfront
-  // to ensure project grouping (by remote URL) is stable from the start.
-  useEffect(() => {
-    for (const agent of agents) {
-      const session = useSessionStore.getState().sessions[agent.serverId];
-      const client = session?.client ?? null;
-      const isConnected = session?.connection.isConnected ?? false;
-      if (!client || !isConnected) {
-        continue;
-      }
-
-      const queryKey = checkoutStatusQueryKey(agent.serverId, agent.cwd);
-      const queryState = queryClient.getQueryState(queryKey);
-      const isFetching = queryState?.fetchStatus === "fetching";
-      const isFresh =
-        typeof queryState?.dataUpdatedAt === "number" &&
-        Date.now() - queryState.dataUpdatedAt < CHECKOUT_STATUS_STALE_TIME;
-      if (isFetching || isFresh) {
-        continue;
-      }
-
-      void queryClient.prefetchQuery({
-        queryKey,
-        queryFn: async () => await client.getCheckoutStatus(agent.cwd),
-        staleTime: CHECKOUT_STATUS_STALE_TIME,
-      }).catch((error) => {
-        console.warn("[checkout_status] prefetch failed", error);
-      });
-    }
-  }, [agents, queryClient]);
-
   // Section order from store
   const setProjectOrder = useSectionOrderStore((state) => state.setProjectOrder);
-
-  const sections: SectionData[] = useSidebarAgentSections(agents);
 
   const handleDragEnd = useCallback(
     (newData: SectionData[]) => {
@@ -510,11 +464,19 @@ export function GroupedAgentList({
   const renderSection = useCallback(
     ({ item: section, drag, isActive }: DraggableRenderItemInfo<SectionData>) => {
       const isCollapsed = collapsedProjectKeys.has(section.projectKey);
+      const firstAgent = section.agents[0];
+      const firstAgentKey = firstAgent
+        ? `${firstAgent.serverId}:${firstAgent.id}`
+        : null;
+      const firstAgentCheckout = firstAgentKey
+        ? (checkoutByAgentKey.get(firstAgentKey) ?? null)
+        : null;
 
       return (
         <View style={[styles.sectionContainer, isActive && styles.sectionDragging]}>
           <SectionHeader
             section={section}
+            checkout={firstAgentCheckout}
             isCollapsed={isCollapsed}
             onToggle={() => toggleProjectCollapsed(section.projectKey)}
             onCreateAgent={handleCreateAgentInProject}
@@ -523,9 +485,12 @@ export function GroupedAgentList({
           />
           {!isCollapsed &&
             section.agents.map((agent) => (
-              <GroupedAgentRow
+              <SidebarAgentRow
                 key={`${agent.serverId}:${agent.id}`}
                 agent={agent}
+                checkout={
+                  checkoutByAgentKey.get(`${agent.serverId}:${agent.id}`) ?? null
+                }
                 isSelected={selectedAgentId === `${agent.serverId}:${agent.id}`}
                 shortcutNumber={
                   showShortcutBadges
@@ -546,6 +511,7 @@ export function GroupedAgentList({
       handleAgentPress,
       handleArchiveAgent,
       handleCreateAgentInProject,
+      checkoutByAgentKey,
       selectedAgentId,
       showShortcutBadges,
       shortcutIndexByAgentKey,

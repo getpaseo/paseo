@@ -151,6 +151,56 @@ describe("DaemonClient", () => {
     });
   });
 
+  test("fetches project-grouped agents via RPC", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.fetchAgentsGroupedByProject({
+      filter: { labels: { ui: "true" } },
+    });
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "fetch_agents_grouped_by_project_request";
+        requestId: string;
+        filter?: { labels?: Record<string, string> };
+      };
+    };
+    expect(request.message.type).toBe("fetch_agents_grouped_by_project_request");
+
+    mock.triggerMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "fetch_agents_grouped_by_project_response",
+          payload: {
+            requestId: request.message.requestId,
+            groups: [],
+          },
+        },
+      })
+    );
+
+    await expect(promise).resolves.toEqual({
+      requestId: request.message.requestId,
+      groups: [],
+    });
+  });
+
   test("cancels waiters when send fails (no leaked timeouts)", async () => {
     vi.useFakeTimers();
     const logger = createMockLogger();

@@ -19,6 +19,8 @@ import {
   type UnsubscribeTerminalRequest,
   type TerminalInput,
   type KillTerminalRequest,
+  type ProjectCheckoutLitePayload,
+  type ProjectPlacementPayload,
 } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { parseAndHighlightDiff, type ParsedDiffFile } from "./utils/diff-highlighter.js";
@@ -90,6 +92,7 @@ import {
 import {
   getCheckoutDiff,
   getCheckoutStatus,
+  getCheckoutStatusLite,
   NotGitRepoError,
   MergeConflictError,
   MergeFromBaseConflictError,
@@ -119,6 +122,8 @@ const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 let restartRequested = false;
 const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
 const RESTART_EXIT_DELAY_MS = 250;
+const PROJECT_PLACEMENT_CACHE_TTL_MS = 10_000;
+const MAX_AGENTS_PER_PROJECT = 5;
 
 /**
  * Default model used for auto-generating commit messages and PR descriptions.
@@ -137,6 +142,78 @@ const VOICE_AGENT_SYSTEM_INSTRUCTION = [
   "Never use bash, file-edit, or web tools directly.",
   "Only use the paseo MCP tools.",
 ].join(" ");
+
+function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
+  if (!remoteUrl) {
+    return null;
+  }
+
+  const trimmed = remoteUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let host: string | null = null;
+  let path: string | null = null;
+
+  const scpLike = trimmed.match(/^[^@]+@([^:]+):(.+)$/);
+  if (scpLike) {
+    host = scpLike[1] ?? null;
+    path = scpLike[2] ?? null;
+  } else if (trimmed.includes("://")) {
+    try {
+      const parsed = new URL(trimmed);
+      host = parsed.hostname || null;
+      path = parsed.pathname ? parsed.pathname.replace(/^\//, "") : null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (!host || !path) {
+    return null;
+  }
+
+  let cleanedPath = path.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  if (cleanedPath.endsWith(".git")) {
+    cleanedPath = cleanedPath.slice(0, -4);
+  }
+  if (!cleanedPath.includes("/")) {
+    return null;
+  }
+
+  const cleanedHost = host.toLowerCase();
+  if (cleanedHost === "github.com") {
+    return `remote:github.com/${cleanedPath}`;
+  }
+
+  return `remote:${cleanedHost}/${cleanedPath}`;
+}
+
+function deriveProjectGroupingKey(cwd: string, remoteUrl: string | null): string {
+  const remoteKey = deriveRemoteProjectKey(remoteUrl);
+  if (remoteKey) {
+    return remoteKey;
+  }
+
+  const worktreeMarker = ".paseo/worktrees/";
+  const idx = cwd.indexOf(worktreeMarker);
+  if (idx !== -1) {
+    return cwd.slice(0, idx).replace(/\/$/, "");
+  }
+
+  return cwd;
+}
+
+function deriveProjectGroupingName(projectKey: string): string {
+  const githubRemotePrefix = "remote:github.com/";
+  if (projectKey.startsWith(githubRemotePrefix)) {
+    return projectKey.slice(githubRemotePrefix.length) || projectKey;
+  }
+
+  const segments = projectKey.split(/[\\/]/).filter(Boolean);
+  return segments[segments.length - 1] || projectKey;
+}
 
 function escapeXmlText(value: string): string {
   return value
@@ -370,6 +447,10 @@ export class Session {
         filter?: { labels?: Record<string, string>; agentId?: string };
       }
     | null = null;
+  private readonly projectPlacementCache = new Map<
+    string,
+    { expiresAt: number; promise: Promise<ProjectPlacementPayload> }
+  >();
   private clientActivity: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
@@ -819,6 +900,73 @@ export class Session {
     );
   }
 
+  private buildFallbackProjectCheckout(cwd: string): ProjectCheckoutLitePayload {
+    return {
+      cwd,
+      isGit: false,
+      currentBranch: null,
+      remoteUrl: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    };
+  }
+
+  private toProjectCheckoutLite(
+    cwd: string,
+    status: Awaited<ReturnType<typeof getCheckoutStatusLite>>
+  ): ProjectCheckoutLitePayload {
+    if (!status.isGit) {
+      return this.buildFallbackProjectCheckout(cwd);
+    }
+
+    if (status.isPaseoOwnedWorktree) {
+      return {
+        cwd,
+        isGit: true,
+        currentBranch: status.currentBranch,
+        remoteUrl: status.remoteUrl,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: status.mainRepoRoot,
+      };
+    }
+
+    return {
+      cwd,
+      isGit: true,
+      currentBranch: status.currentBranch,
+      remoteUrl: status.remoteUrl,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    };
+  }
+
+  private async buildProjectPlacement(cwd: string): Promise<ProjectPlacementPayload> {
+    const checkout = await getCheckoutStatusLite(cwd, { paseoHome: this.paseoHome })
+      .then((status) => this.toProjectCheckoutLite(cwd, status))
+      .catch(() => this.buildFallbackProjectCheckout(cwd));
+    const projectKey = deriveProjectGroupingKey(cwd, checkout.remoteUrl);
+    return {
+      projectKey,
+      projectName: deriveProjectGroupingName(projectKey),
+      checkout,
+    };
+  }
+
+  private getProjectPlacement(cwd: string): Promise<ProjectPlacementPayload> {
+    const now = Date.now();
+    const cached = this.projectPlacementCache.get(cwd);
+    if (cached && cached.expiresAt > now) {
+      return cached.promise;
+    }
+
+    const promise = this.buildProjectPlacement(cwd);
+    this.projectPlacementCache.set(cwd, {
+      expiresAt: now + PROJECT_PLACEMENT_CACHE_TTL_MS,
+      promise,
+    });
+    return promise;
+  }
+
   private async forwardAgentUpdate(agent: ManagedAgent): Promise<void> {
     try {
       const subscription = this.agentUpdatesSubscription;
@@ -830,9 +978,10 @@ export class Session {
       const matches = this.matchesAgentFilter(payload, subscription.filter);
 
       if (matches) {
+        const project = await this.getProjectPlacement(payload.cwd);
         this.emit({
           type: "agent_update",
-          payload: { kind: "upsert", agent: payload },
+          payload: { kind: "upsert", agent: payload, project },
         });
         return;
       }
@@ -866,6 +1015,10 @@ export class Session {
 
         case "fetch_agents_request":
           await this.handleFetchAgents(msg.requestId, msg.filter);
+          break;
+
+        case "fetch_agents_grouped_by_project_request":
+          await this.handleFetchAgentsGroupedByProject(msg.requestId, msg.filter);
           break;
 
         case "fetch_agent_request":
@@ -1254,6 +1407,7 @@ export class Session {
           archivedAt,
         });
       }
+      this.agentManager.notifyAgentState(agentId);
     } catch (error: any) {
       this.sessionLogger.error(
         { err: error, agentId },
@@ -4072,6 +4226,87 @@ export class Session {
       this.emit({
         type: "fetch_agents_response",
         payload: { requestId, agents: [] },
+      });
+    }
+  }
+
+  private async listAgentsGroupedByProjectPayload(filter?: {
+    labels?: Record<string, string>;
+  }): Promise<Array<{
+    projectKey: string;
+    projectName: string;
+    agents: Array<{
+      agent: AgentSnapshotPayload;
+      checkout: ProjectCheckoutLitePayload;
+    }>;
+  }>> {
+    const agents = await this.listAgentPayloads(filter);
+    const visibleAgents = agents
+      .filter((agent) => !agent.archivedAt)
+      .sort(
+        (left, right) =>
+          Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || "")
+      );
+
+    const grouped = new Map<
+      string,
+      {
+        projectKey: string;
+        projectName: string;
+        agents: Array<{
+          agent: AgentSnapshotPayload;
+          checkout: ProjectCheckoutLitePayload;
+        }>;
+      }
+    >();
+
+    // Warm project placement status for all visible roots up front to avoid serial N+1 latency.
+    for (const agent of visibleAgents) {
+      void this.getProjectPlacement(agent.cwd);
+    }
+
+    for (const agent of visibleAgents) {
+      const project = await this.getProjectPlacement(agent.cwd);
+      const projectKey = project.projectKey;
+
+      let group = grouped.get(projectKey);
+      if (!group) {
+        group = {
+          projectKey,
+          projectName: project.projectName,
+          agents: [],
+        };
+        grouped.set(projectKey, group);
+      }
+
+      if (group.agents.length >= MAX_AGENTS_PER_PROJECT) {
+        continue;
+      }
+
+      group.agents.push({ agent, checkout: project.checkout });
+    }
+
+    return Array.from(grouped.values());
+  }
+
+  private async handleFetchAgentsGroupedByProject(
+    requestId: string,
+    filter?: { labels?: Record<string, string> }
+  ): Promise<void> {
+    try {
+      const groups = await this.listAgentsGroupedByProjectPayload(filter);
+      this.emit({
+        type: "fetch_agents_grouped_by_project_response",
+        payload: { requestId, groups },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error },
+        "Failed to handle fetch_agents_grouped_by_project_request"
+      );
+      this.emit({
+        type: "fetch_agents_grouped_by_project_response",
+        payload: { requestId, groups: [] },
       });
     }
   }

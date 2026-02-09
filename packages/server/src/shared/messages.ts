@@ -454,6 +454,16 @@ export const FetchAgentsRequestMessageSchema = z.object({
     .optional(),
 });
 
+export const FetchAgentsGroupedByProjectRequestMessageSchema = z.object({
+  type: z.literal("fetch_agents_grouped_by_project_request"),
+  requestId: z.string(),
+  filter: z
+    .object({
+      labels: z.record(z.string()).optional(),
+    })
+    .optional(),
+});
+
 export const FetchAgentRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_request"),
   requestId: z.string(),
@@ -948,6 +958,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
+  FetchAgentsGroupedByProjectRequestMessageSchema,
   FetchAgentRequestMessageSchema,
   SubscribeAgentUpdatesMessageSchema,
   UnsubscribeAgentUpdatesMessageSchema,
@@ -1191,12 +1202,52 @@ export const ArtifactMessageSchema = z.object({
   }),
 });
 
+export const ProjectCheckoutLiteNotGitPayloadSchema = z.object({
+  cwd: z.string(),
+  isGit: z.literal(false),
+  currentBranch: z.null(),
+  remoteUrl: z.null(),
+  isPaseoOwnedWorktree: z.literal(false),
+  mainRepoRoot: z.null(),
+});
+
+export const ProjectCheckoutLiteGitNonPaseoPayloadSchema = z.object({
+  cwd: z.string(),
+  isGit: z.literal(true),
+  currentBranch: z.string().nullable(),
+  remoteUrl: z.string().nullable(),
+  isPaseoOwnedWorktree: z.literal(false),
+  mainRepoRoot: z.null(),
+});
+
+export const ProjectCheckoutLiteGitPaseoPayloadSchema = z.object({
+  cwd: z.string(),
+  isGit: z.literal(true),
+  currentBranch: z.string().nullable(),
+  remoteUrl: z.string().nullable(),
+  isPaseoOwnedWorktree: z.literal(true),
+  mainRepoRoot: z.string(),
+});
+
+export const ProjectCheckoutLitePayloadSchema = z.union([
+  ProjectCheckoutLiteNotGitPayloadSchema,
+  ProjectCheckoutLiteGitNonPaseoPayloadSchema,
+  ProjectCheckoutLiteGitPaseoPayloadSchema,
+]);
+
+export const ProjectPlacementPayloadSchema = z.object({
+  projectKey: z.string(),
+  projectName: z.string(),
+  checkout: ProjectCheckoutLitePayloadSchema,
+});
+
 export const AgentUpdateMessageSchema = z.object({
   type: z.literal("agent_update"),
   payload: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("upsert"),
       agent: AgentSnapshotPayloadSchema,
+      project: ProjectPlacementPayloadSchema,
     }),
     z.object({
       kind: z.literal("remove"),
@@ -1248,6 +1299,25 @@ export const FetchAgentsResponseMessageSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     agents: z.array(AgentSnapshotPayloadSchema),
+  }),
+});
+
+const ProjectGroupedAgentEntryPayloadSchema = z.object({
+  agent: AgentSnapshotPayloadSchema,
+  checkout: ProjectCheckoutLitePayloadSchema,
+});
+
+const ProjectGroupPayloadSchema = z.object({
+  projectKey: z.string(),
+  projectName: z.string(),
+  agents: z.array(ProjectGroupedAgentEntryPayloadSchema),
+});
+
+export const FetchAgentsGroupedByProjectResponseMessageSchema = z.object({
+  type: z.literal("fetch_agents_grouped_by_project_response"),
+  payload: z.object({
+    requestId: z.string(),
+    groups: z.array(ProjectGroupPayloadSchema),
   }),
 });
 
@@ -1715,6 +1785,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentStreamSnapshotMessageSchema,
   AgentStatusMessageSchema,
   FetchAgentsResponseMessageSchema,
+  FetchAgentsGroupedByProjectResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
@@ -1772,8 +1843,13 @@ export type AgentStreamSnapshotMessage = z.infer<
   typeof AgentStreamSnapshotMessageSchema
 >;
 export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
+export type ProjectCheckoutLitePayload = z.infer<typeof ProjectCheckoutLitePayloadSchema>;
+export type ProjectPlacementPayload = z.infer<typeof ProjectPlacementPayloadSchema>;
 export type FetchAgentsResponseMessage = z.infer<
   typeof FetchAgentsResponseMessageSchema
+>;
+export type FetchAgentsGroupedByProjectResponseMessage = z.infer<
+  typeof FetchAgentsGroupedByProjectResponseMessageSchema
 >;
 export type FetchAgentResponseMessage = z.infer<
   typeof FetchAgentResponseMessageSchema
@@ -1803,6 +1879,9 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 // Type exports for inbound message types
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
+export type FetchAgentsGroupedByProjectRequestMessage = z.infer<
+  typeof FetchAgentsGroupedByProjectRequestMessageSchema
+>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
