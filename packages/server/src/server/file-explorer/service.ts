@@ -96,14 +96,31 @@ export async function listDirectoryEntries({
 
   const dirents = await fs.readdir(directoryPath, { withFileTypes: true });
 
-  const entries = await Promise.all(
+  const entriesWithNulls = await Promise.all(
     dirents.map(async (dirent) => {
       const targetPath = path.join(directoryPath, dirent.name);
       const kind: ExplorerEntryKind = dirent.isDirectory()
         ? "directory"
         : "file";
-      return buildEntryPayload({ root, targetPath, name: dirent.name, kind });
+      try {
+        return await buildEntryPayload({
+          root,
+          targetPath,
+          name: dirent.name,
+          kind,
+        });
+      } catch (error) {
+        // Directories can contain dangling links (e.g. AGENTS.md -> CLAUDE.md).
+        // Skip entries whose targets disappeared instead of failing the whole listing.
+        if (isMissingEntryError(error)) {
+          return null;
+        }
+        throw error;
+      }
     })
+  );
+  const entries = entriesWithNulls.filter(
+    (entry): entry is FileExplorerEntry => entry !== null
   );
 
   entries.sort((a, b) => {
@@ -234,6 +251,11 @@ async function buildEntryPayload({
     size: stats.size,
     modifiedAt: stats.mtime.toISOString(),
   };
+}
+
+function isMissingEntryError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP";
 }
 
 function normalizeRelativePath({
