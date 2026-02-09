@@ -8,6 +8,7 @@ import type { PendingPermission } from "@/types/shared";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type {
   AgentPermissionResponse,
+  AgentPermissionRequest,
   AgentSessionConfig,
   AgentProvider,
   AgentMode,
@@ -54,9 +55,9 @@ export type MessageEntry =
       id: string;
       timestamp: number;
       toolName: string;
-      args: any;
-      result?: any;
-      error?: any;
+      args: unknown | null;
+      result?: unknown | null;
+      error?: unknown | null;
       status: "executing" | "completed" | "failed";
     };
 
@@ -80,7 +81,7 @@ export interface Agent {
   capabilities: AgentCapabilityFlags;
   currentModeId: string | null;
   availableModes: AgentMode[];
-  pendingPermissions: any[];
+  pendingPermissions: AgentPermissionRequest[];
   persistence: AgentPersistenceHandle | null;
   runtimeInfo?: AgentRuntimeInfo;
   lastUsage?: AgentUsage;

@@ -1,24 +1,10 @@
 import { z } from "zod";
+import { stripCwdPrefix } from "../shared/path-utils.js";
 
 const SHELL_WRAPPER_PREFIX_PATTERN =
   /^\/bin\/(?:zsh|bash|sh)\s+(?:-[a-zA-Z]+\s+)?/;
 const CD_AND_PATTERN = /^cd\s+(?:"[^"]+"|'[^']+'|\S+)\s+&&\s+/;
-
-export function stripCwdPrefix(filePath: string, cwd?: string): string {
-  if (!cwd || !filePath) return filePath;
-
-  const normalizedCwd = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
-  const normalizedPath = filePath.replace(/\\/g, "/");
-
-  const prefix = `${normalizedCwd}/`;
-  if (normalizedPath.startsWith(prefix)) {
-    return normalizedPath.slice(prefix.length);
-  }
-  if (normalizedPath === normalizedCwd) {
-    return ".";
-  }
-  return filePath;
-}
+export { stripCwdPrefix };
 
 export function stripShellWrapperPrefix(command: string): string {
   const prefixMatch = command.match(SHELL_WRAPPER_PREFIX_PATTERN);

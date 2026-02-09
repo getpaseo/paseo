@@ -1,4 +1,5 @@
 import type { ToolCallTimelineItem } from "../server/agent/agent-sdk-types.js";
+import { stripCwdPrefix } from "./path-utils.js";
 
 export type ToolCallDisplayInput = Pick<
   ToolCallTimelineItem,
@@ -36,24 +37,6 @@ function humanizeToolName(name: string): string {
     .filter((segment) => segment.length > 0)
     .map((segment) => `${segment[0]?.toUpperCase() ?? ""}${segment.slice(1)}`)
     .join(" ");
-}
-
-function stripCwdPrefix(filePath: string, cwd?: string): string {
-  if (!cwd || !filePath) {
-    return filePath;
-  }
-
-  const normalizedCwd = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
-  const normalizedPath = filePath.replace(/\\/g, "/");
-  const prefix = `${normalizedCwd}/`;
-
-  if (normalizedPath.startsWith(prefix)) {
-    return normalizedPath.slice(prefix.length);
-  }
-  if (normalizedPath === normalizedCwd) {
-    return ".";
-  }
-  return filePath;
 }
 
 function formatErrorText(error: unknown): string | undefined {

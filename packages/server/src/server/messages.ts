@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import { toAgentPayload } from "./agent/agent-projections.js";
 import type { AgentStreamEvent } from "./agent/agent-sdk-types.js";
@@ -9,10 +8,9 @@ import type {
 import { AgentStreamEventPayloadSchema as AgentStreamEventPayloadRuntimeSchema } from "../shared/messages.js";
 
 export * from "../shared/messages.js";
-type AgentStreamEventPayloadInput = z.input<typeof AgentStreamEventPayloadRuntimeSchema>;
 
 function validateStreamEventPayload(
-  payload: AgentStreamEventPayloadInput
+  payload: unknown
 ): AgentStreamEventPayload | null {
   const parsed = AgentStreamEventPayloadRuntimeSchema.safeParse(payload);
   if (!parsed.success) {
@@ -44,5 +42,5 @@ export function serializeAgentStreamEvent(
     });
   }
 
-  return validateStreamEventPayload(event as AgentStreamEventPayloadInput);
+  return validateStreamEventPayload(event);
 }
