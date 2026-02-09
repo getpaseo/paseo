@@ -1,52 +1,7 @@
-import { z } from "zod";
-
 type ReadChunkLike = {
   text?: string;
   content?: string;
   output?: string;
-};
-
-type ToolAliasKind = "shell" | "read" | "write" | "edit" | "search";
-export type KnownToolAliases = Record<ToolAliasKind, readonly string[]>;
-
-export const CLAUDE_KNOWN_TOOL_ALIASES: KnownToolAliases = {
-  shell: ["Bash", "bash", "shell", "exec_command"],
-  read: ["Read", "read", "read_file", "view_file"],
-  write: ["Write", "write", "write_file", "create_file"],
-  edit: [
-    "Edit",
-    "MultiEdit",
-    "multi_edit",
-    "edit",
-    "apply_patch",
-    "apply_diff",
-    "str_replace_editor",
-  ],
-  search: ["WebSearch", "web_search", "search"],
-};
-
-export const OPENCODE_KNOWN_TOOL_ALIASES: KnownToolAliases = {
-  shell: ["shell", "bash", "exec_command"],
-  read: ["read", "read_file"],
-  write: ["write", "write_file", "create_file"],
-  edit: ["edit", "apply_patch", "apply_diff"],
-  search: ["search", "web_search"],
-};
-
-export const CODEX_MCP_KNOWN_TOOL_ALIASES: KnownToolAliases = {
-  shell: ["shell", "bash", "exec", "exec_command", "command"],
-  read: ["read", "read_file"],
-  write: ["write", "write_file", "create_file"],
-  edit: ["edit", "apply_patch", "apply_diff"],
-  search: ["search", "web_search"],
-};
-
-export const CODEX_ROLLOUT_KNOWN_TOOL_ALIASES: KnownToolAliases = {
-  shell: ["Bash", "shell", "bash", "exec_command"],
-  read: ["read", "read_file"],
-  write: ["write", "write_file", "create_file"],
-  edit: ["edit", "apply_patch", "apply_diff"],
-  search: ["search", "web_search"],
 };
 
 export function nonEmptyString(value: unknown): string | undefined {
@@ -135,15 +90,4 @@ export function coerceToolCallId(params: {
   }
 
   return `${params.providerPrefix}-${hashText(`${params.toolName}:${serialized}`)}`;
-}
-
-export function unionToolDetailSchemas(schemas: z.ZodTypeAny[]): z.ZodTypeAny {
-  if (schemas.length === 0) {
-    throw new Error("Expected at least one schema when building tool detail union");
-  }
-  let union = schemas[0];
-  for (let i = 1; i < schemas.length; i += 1) {
-    union = union.or(schemas[i]);
-  }
-  return union;
 }
