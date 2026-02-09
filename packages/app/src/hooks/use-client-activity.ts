@@ -8,6 +8,7 @@ const ACTIVITY_HEARTBEAT_THROTTLE_MS = 5_000;
 interface ClientActivityOptions {
   client: DaemonClient;
   focusedAgentId: string | null;
+  onAppResumed?: (awayMs: number) => void;
 }
 
 /**
@@ -16,9 +17,17 @@ interface ClientActivityOptions {
  * - App visibility tracking
  * - Records lastActivityAt only on real user activity (not on heartbeat)
  */
-export function useClientActivity({ client, focusedAgentId }: ClientActivityOptions): void {
+export function useClientActivity({
+  client,
+  focusedAgentId,
+  onAppResumed,
+}: ClientActivityOptions): void {
   const lastActivityAtRef = useRef<Date>(new Date());
   const appVisibleRef = useRef(AppState.currentState === "active");
+  const appVisibilityChangedAtRef = useRef<Date>(new Date());
+  const backgroundedAtMsRef = useRef<number | null>(
+    AppState.currentState === "active" ? null : Date.now()
+  );
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevFocusedAgentIdRef = useRef<string | null>(focusedAgentId);
   const lastImmediateHeartbeatAtRef = useRef<number>(0);
@@ -36,8 +45,33 @@ export function useClientActivity({ client, focusedAgentId }: ClientActivityOpti
       focusedAgentId,
       lastActivityAt: lastActivityAtRef.current.toISOString(),
       appVisible: appVisibleRef.current,
+      appVisibilityChangedAt: appVisibilityChangedAtRef.current.toISOString(),
     });
   }, [client, deviceType, focusedAgentId]);
+
+  const setAppVisible = useCallback(
+    (nextVisible: boolean) => {
+      const previousVisible = appVisibleRef.current;
+      if (previousVisible === nextVisible) {
+        return;
+      }
+      appVisibleRef.current = nextVisible;
+      appVisibilityChangedAtRef.current = new Date();
+
+      if (!nextVisible) {
+        backgroundedAtMsRef.current = Date.now();
+        return;
+      }
+
+      const backgroundedAt = backgroundedAtMsRef.current;
+      backgroundedAtMsRef.current = null;
+      if (backgroundedAt !== null) {
+        onAppResumed?.(Math.max(0, Date.now() - backgroundedAt));
+      }
+      recordUserActivity();
+    },
+    [onAppResumed, recordUserActivity]
+  );
 
   const maybeSendImmediateHeartbeat = useCallback(() => {
     if (!client.isConnected) return;
@@ -52,16 +86,13 @@ export function useClientActivity({ client, focusedAgentId }: ClientActivityOpti
   // Track app visibility
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      appVisibleRef.current = nextState === "active";
-      if (nextState === "active") {
-        recordUserActivity();
-      }
+      setAppVisible(nextState === "active");
       // Send immediately on visibility changes so the server can adapt streaming behavior.
       sendHeartbeat();
     });
 
     return () => subscription.remove();
-  }, [recordUserActivity, sendHeartbeat]);
+  }, [sendHeartbeat, setAppVisible]);
 
   // Track user activity on web for accurate staleness.
   useEffect(() => {
@@ -75,9 +106,8 @@ export function useClientActivity({ client, focusedAgentId }: ClientActivityOpti
 
     const handleVisibilityChange = () => {
       const visible = document.visibilityState === "visible";
-      appVisibleRef.current = visible;
+      setAppVisible(visible);
       if (visible) {
-        recordUserActivity();
         maybeSendImmediateHeartbeat();
       }
     };
@@ -97,7 +127,7 @@ export function useClientActivity({ client, focusedAgentId }: ClientActivityOpti
       window.removeEventListener("wheel", handleUserActivity);
       window.removeEventListener("touchstart", handleUserActivity);
     };
-  }, [maybeSendImmediateHeartbeat, recordUserActivity]);
+  }, [maybeSendImmediateHeartbeat, recordUserActivity, setAppVisible]);
 
   // Send heartbeat on focused agent change
   useEffect(() => {

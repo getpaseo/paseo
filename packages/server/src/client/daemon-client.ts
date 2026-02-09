@@ -772,6 +772,7 @@ export class DaemonClient {
     focusedAgentId: string | null;
     lastActivityAt: string;
     appVisible: boolean;
+    appVisibilityChangedAt?: string;
   }): void {
     this.sendSessionMessage({
       type: "client_heartbeat",
@@ -779,6 +780,7 @@ export class DaemonClient {
       focusedAgentId: params.focusedAgentId,
       lastActivityAt: params.lastActivityAt,
       appVisible: params.appVisible,
+      appVisibilityChangedAt: params.appVisibilityChangedAt,
     });
   }
 

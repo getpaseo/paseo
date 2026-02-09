@@ -66,6 +66,7 @@ const derivePendingPermissionKey = (
 };
 
 const NOTIFICATION_PREVIEW_LIMIT = 220;
+const HISTORY_STALE_AFTER_MS = 60_000;
 
 const normalizeNotificationText = (text: string): string =>
   text.replace(/\s+/g, " ").trim();
@@ -304,6 +305,12 @@ export function SessionProvider({
   const setInitializingAgents = useSessionStore(
     (state) => state.setInitializingAgents
   );
+  const bumpHistorySyncGeneration = useSessionStore(
+    (state) => state.bumpHistorySyncGeneration
+  );
+  const markAgentHistorySynchronized = useSessionStore(
+    (state) => state.markAgentHistorySynchronized
+  );
   const setHasHydratedAgents = useSessionStore(
     (state) => state.setHasHydratedAgents
   );
@@ -329,8 +336,18 @@ export function SessionProvider({
     (state) => state.sessions[serverId]?.focusedAgentId ?? null
   );
 
+  const handleAppResumed = useCallback(
+    (awayMs: number) => {
+      if (awayMs < HISTORY_STALE_AFTER_MS) {
+        return;
+      }
+      bumpHistorySyncGeneration(serverId);
+    },
+    [bumpHistorySyncGeneration, serverId]
+  );
+
   // Client activity tracking (heartbeat, push token registration)
-  useClientActivity({ client, focusedAgentId });
+  useClientActivity({ client, focusedAgentId, onAppResumed: handleAppResumed });
   usePushTokenRegistration({ client, serverId });
 
   // State for voice detection flags (will be set by RealtimeContext)
@@ -457,6 +474,15 @@ export function SessionProvider({
     });
     return unsubscribe;
   }, [client]);
+
+  const wasConnectedRef = useRef(client.isConnected);
+  useEffect(() => {
+    const wasConnected = wasConnectedRef.current;
+    if (!wasConnected && connectionSnapshot.isConnected) {
+      bumpHistorySyncGeneration(serverId);
+    }
+    wasConnectedRef.current = connectionSnapshot.isConnected;
+  }, [serverId, connectionSnapshot.isConnected, bumpHistorySyncGeneration]);
 
   useEffect(() => {
     updateSessionConnection(serverId, connectionSnapshot);
@@ -994,6 +1020,7 @@ export function SessionProvider({
 
         // Resolve the initialization promise (even for empty history)
         resolveInitDeferred(initKey);
+        markAgentHistorySynchronized(serverId, agentId);
       }
     );
 
@@ -1436,6 +1463,7 @@ export function SessionProvider({
     clearDraftInput,
     notifyAgentAttention,
     applyAgentUpdatePayload,
+    markAgentHistorySynchronized,
   ]);
 
   const initializeAgent = useCallback(

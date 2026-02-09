@@ -7,7 +7,6 @@ import {
   ScrollView,
   Platform,
   BackHandler,
-  AppState,
 } from "react-native";
 import { useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
@@ -333,6 +332,14 @@ function AgentScreenContent({
       ? state.sessions[serverId]?.initializingAgents?.get(resolvedAgentId) ?? false
       : false
   );
+  const historySyncGeneration = useSessionStore(
+    (state) => state.sessions[serverId]?.historySyncGeneration ?? 0
+  );
+  const agentHistorySyncGeneration = useSessionStore((state) =>
+    resolvedAgentId
+      ? state.sessions[serverId]?.agentHistorySyncGeneration?.get(resolvedAgentId) ?? -1
+      : -1
+  );
 
   // Select raw pending permissions - filter with useMemo to avoid new Map on every render
   const allPendingPermissions = useSessionStore(
@@ -409,6 +416,12 @@ function AgentScreenContent({
     const initKey = getInitKey(serverId, resolvedAgentId);
     return Boolean(getInitDeferred(initKey));
   }, [resolvedAgentId, isInitializing, serverId]);
+  const needsAuthoritativeSync = useMemo(() => {
+    if (!resolvedAgentId) {
+      return false;
+    }
+    return agentHistorySyncGeneration < historySyncGeneration;
+  }, [agentHistorySyncGeneration, historySyncGeneration, resolvedAgentId]);
 
   const optimisticStreamItems = useMemo<StreamItem[]>(() => {
     if (!isPendingCreateForRoute || !pendingCreate) {
@@ -439,6 +452,7 @@ function AgentScreenContent({
   }, [optimisticStreamItems, streamItems]);
 
   const shouldUseOptimisticStream = isPendingCreateForRoute && optimisticStreamItems.length > 0;
+  const shouldBlockForHistorySync = !shouldUseOptimisticStream && (needsAuthoritativeSync || isHistorySyncing);
 
   const placeholderAgent: Agent | null = useMemo(() => {
     if (!shouldUseOptimisticStream || !resolvedAgentId) {
@@ -515,60 +529,20 @@ function AgentScreenContent({
       return;
     }
 
-    // Skip if not connected - will re-run when connection is established
     if (!isConnected) {
       return;
     }
+    if (!needsAuthoritativeSync) {
+      return;
+    }
 
-    // ensureAgentIsInitialized handles deduplication via module-level promises map
-    // If already initialized or in-flight, returns resolved/pending promise immediately
     ensureAgentIsInitialized(resolvedAgentId).catch((error) => {
       console.warn("[AgentScreen] Agent initialization failed", {
         agentId: resolvedAgentId,
         error,
       });
     });
-  }, [resolvedAgentId, ensureAgentIsInitialized, isConnected]);
-
-  // When the app comes back to the foreground, re-sync history for the focused agent.
-  // This covers cases where the OS/backgrounding caused us to miss stream events.
-  const lastAppStateRef = useRef(AppState.currentState);
-  const lastResumeSyncAtRef = useRef(0);
-  useEffect(() => {
-    if (!resolvedAgentId) {
-      return;
-    }
-
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      const prev = lastAppStateRef.current;
-      lastAppStateRef.current = nextState;
-
-      if (nextState !== "active" || prev === "active") {
-        return;
-      }
-      if (!isConnected) {
-        return;
-      }
-
-      const now = Date.now();
-      // Avoid accidental double-syncs on rapid transitions.
-      if (now - lastResumeSyncAtRef.current < 2000) {
-        return;
-      }
-      lastResumeSyncAtRef.current = now;
-
-      ensureAgentIsInitialized(resolvedAgentId).catch((error) => {
-        console.warn("[AgentScreen] Agent initialization failed on resume", {
-          agentId: resolvedAgentId,
-          error,
-        });
-      });
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, [ensureAgentIsInitialized, isConnected, resolvedAgentId]);
+  }, [resolvedAgentId, ensureAgentIsInitialized, isConnected, needsAuthoritativeSync]);
 
   useEffect(() => {
     if (Platform.OS !== "web") {
@@ -638,7 +612,7 @@ function AgentScreenContent({
 
   const mainContent = (
     <View style={styles.outerContainer}>
-      <FileDropZone onFilesDropped={handleFilesDropped} disabled={isInitializing}>
+      <FileDropZone onFilesDropped={handleFilesDropped} disabled={isInitializing || shouldBlockForHistorySync}>
       <View style={styles.container}>
         {/* Header */}
         <MenuHeader
@@ -815,7 +789,7 @@ function AgentScreenContent({
 
                   <DropdownMenuItem
                     leading={<RotateCcw size={16} color={theme.colors.foreground} />}
-                    disabled={isInitializing}
+                    disabled={isInitializing || shouldBlockForHistorySync}
                     trailing={
                       isInitializing ? (
                         <ActivityIndicator
@@ -837,25 +811,36 @@ function AgentScreenContent({
 
           {/* Content Area with Keyboard Animation */}
           <View style={styles.contentContainer}>
-            <ReanimatedAnimated.View
-              style={[styles.content, animatedKeyboardStyle]}
-            >
-              <AgentStreamView
-                agentId={effectiveAgent.id}
-                serverId={serverId}
-                agent={effectiveAgent}
-                streamItems={
-                  shouldUseOptimisticStream ? mergedStreamItems : streamItems
-                }
-                pendingPermissions={pendingPermissions}
-                isSyncingHistory={isHistorySyncing && !shouldUseOptimisticStream}
-              />
-            </ReanimatedAnimated.View>
+            {shouldBlockForHistorySync ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={theme.colors.primary} />
+                <Text style={styles.loadingText}>Loading agent...</Text>
+              </View>
+            ) : (
+              <ReanimatedAnimated.View
+                style={[styles.content, animatedKeyboardStyle]}
+              >
+                <AgentStreamView
+                  agentId={effectiveAgent.id}
+                  serverId={serverId}
+                  agent={effectiveAgent}
+                  streamItems={
+                    shouldUseOptimisticStream ? mergedStreamItems : streamItems
+                  }
+                  pendingPermissions={pendingPermissions}
+                />
+              </ReanimatedAnimated.View>
+            )}
           </View>
 
           {/* Agent Input Area */}
-          {agent && resolvedAgentId && (
-            <AgentInputArea agentId={resolvedAgentId} serverId={serverId} autoFocus onAddImages={handleAddImagesCallback} />
+          {agent && resolvedAgentId && !shouldBlockForHistorySync && (
+            <AgentInputArea
+              agentId={resolvedAgentId}
+              serverId={serverId}
+              autoFocus
+              onAddImages={handleAddImagesCallback}
+            />
           )}
 
         </View>

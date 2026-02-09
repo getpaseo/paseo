@@ -375,7 +375,9 @@ export class Session {
     focusedAgentId: string | null;
     lastActivityAt: Date;
     appVisible: boolean;
+    appVisibilityChangedAt: Date;
   } | null = null;
+  private readonly MOBILE_BACKGROUND_STREAM_GRACE_MS = 60_000;
   private readonly terminalManager: TerminalManager | null;
   private terminalSubscriptions: Map<string, () => void> = new Map();
   private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null;
@@ -474,6 +476,7 @@ export class Session {
     focusedAgentId: string | null;
     lastActivityAt: Date;
     appVisible: boolean;
+    appVisibilityChangedAt: Date;
   } | null {
     return this.clientActivity;
   }
@@ -646,20 +649,23 @@ export class Session {
         }
 
         // Reduce bandwidth/CPU on mobile: only forward high-frequency agent stream events
-        // while the app is visible and the user is focused on that agent.
+        // for the focused agent, with a short grace window while backgrounded.
         //
         // History catch-up is handled via explicit `initialize_agent_request` which emits a
         // batched `agent_stream_snapshot`.
         const activity = this.clientActivity;
         if (activity?.deviceType === "mobile") {
-          if (!activity.appVisible) {
-            return;
-          }
           if (!activity.focusedAgentId) {
             return;
           }
           if (activity.focusedAgentId !== event.agentId) {
             return;
+          }
+          if (!activity.appVisible) {
+            const hiddenForMs = Date.now() - activity.appVisibilityChangedAt.getTime();
+            if (hiddenForMs >= this.MOBILE_BACKGROUND_STREAM_GRACE_MS) {
+              return;
+            }
           }
         }
 
@@ -2643,12 +2649,17 @@ export class Session {
     focusedAgentId: string | null;
     lastActivityAt: string;
     appVisible: boolean;
+    appVisibilityChangedAt?: string;
   }): void {
+    const appVisibilityChangedAt = msg.appVisibilityChangedAt
+      ? new Date(msg.appVisibilityChangedAt)
+      : new Date(msg.lastActivityAt);
     this.clientActivity = {
       deviceType: msg.deviceType,
       focusedAgentId: msg.focusedAgentId,
       lastActivityAt: new Date(msg.lastActivityAt),
       appVisible: msg.appVisible,
+      appVisibilityChangedAt,
     };
   }
 

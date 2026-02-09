@@ -184,6 +184,8 @@ export interface SessionState {
   // Stream state (head/tail model)
   agentStreamTail: Map<string, StreamItem[]>;
   agentStreamHead: Map<string, StreamItem[]>;
+  historySyncGeneration: number;
+  agentHistorySyncGeneration: Map<string, number>;
 
   // Initializing agents (used for UI loading state)
   initializingAgents: Map<string, boolean>;
@@ -236,6 +238,8 @@ interface SessionStoreActions {
   setAgentStreamTail: (serverId: string, state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
   setAgentStreamHead: (serverId: string, state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
   clearAgentStreamHead: (serverId: string, agentId: string) => void;
+  bumpHistorySyncGeneration: (serverId: string) => void;
+  markAgentHistorySynchronized: (serverId: string, agentId: string) => void;
 
   // Initializing agents
   setInitializingAgents: (serverId: string, state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>)) => void;
@@ -318,6 +322,8 @@ function createInitialSessionState(serverId: string, client: DaemonClient, audio
     currentAssistantMessage: "",
     agentStreamTail: new Map(),
     agentStreamHead: new Map(),
+    historySyncGeneration: 0,
+    agentHistorySyncGeneration: new Map(),
     initializingAgents: new Map(),
     agents: new Map(),
     pendingPermissions: new Map(),
@@ -594,6 +600,59 @@ export const useSessionStore = create<SessionStore>()(
           sessions: {
             ...prev.sessions,
             [serverId]: { ...session, agentStreamHead: nextHead },
+          },
+        };
+      });
+    },
+
+    bumpHistorySyncGeneration: (serverId) => {
+      set((prev) => {
+        const session = prev.sessions[serverId];
+        if (!session) {
+          return prev;
+        }
+        const nextGeneration = session.historySyncGeneration + 1;
+        logSessionStoreUpdate("bumpHistorySyncGeneration", serverId, {
+          generation: nextGeneration,
+        });
+        return {
+          ...prev,
+          sessions: {
+            ...prev.sessions,
+            [serverId]: {
+              ...session,
+              historySyncGeneration: nextGeneration,
+            },
+          },
+        };
+      });
+    },
+
+    markAgentHistorySynchronized: (serverId, agentId) => {
+      set((prev) => {
+        const session = prev.sessions[serverId];
+        if (!session) {
+          return prev;
+        }
+        const currentGeneration = session.historySyncGeneration;
+        const previousGeneration = session.agentHistorySyncGeneration.get(agentId);
+        if (previousGeneration === currentGeneration) {
+          return prev;
+        }
+        const nextMap = new Map(session.agentHistorySyncGeneration);
+        nextMap.set(agentId, currentGeneration);
+        logSessionStoreUpdate("markAgentHistorySynchronized", serverId, {
+          agentId,
+          generation: currentGeneration,
+        });
+        return {
+          ...prev,
+          sessions: {
+            ...prev.sessions,
+            [serverId]: {
+              ...session,
+              agentHistorySyncGeneration: nextMap,
+            },
           },
         };
       });

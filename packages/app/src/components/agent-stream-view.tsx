@@ -85,11 +85,6 @@ export interface AgentStreamViewProps {
   agent: Agent;
   streamItems: StreamItem[];
   pendingPermissions: Map<string, PendingPermission>;
-  /**
-   * True when we expect a history snapshot to arrive shortly (e.g. after opening an agent
-   * or resuming after connectivity changes) and should avoid showing the "empty" state.
-   */
-  isSyncingHistory?: boolean;
 }
 
 export function AgentStreamView({
@@ -98,7 +93,6 @@ export function AgentStreamView({
   agent,
   streamItems,
   pendingPermissions,
-  isSyncingHistory = false,
 }: AgentStreamViewProps) {
   const flatListRef = useRef<FlatList<StreamItem>>(null);
   const { theme } = useUnistyles();
@@ -521,9 +515,8 @@ export function AgentStreamView({
     });
   }, [agentId, pendingPermissionItems.length, streamHead, streamItems]);
 
-  const showSyncingIndicator = isSyncingHistory;
   const showWorkingIndicator = agent.status === "running";
-  const showBottomBar = showSyncingIndicator || showWorkingIndicator || isVoiceMode;
+  const showBottomBar = showWorkingIndicator || isVoiceMode;
 
   const listHeaderComponent = useMemo(() => {
     const hasPermissions = pendingPermissionItems.length > 0;
@@ -533,11 +526,7 @@ export function AgentStreamView({
       return null;
     }
 
-    const leftContent = showSyncingIndicator
-      ? <SyncingIndicator />
-      : showWorkingIndicator
-        ? <WorkingIndicator />
-        : null;
+    const leftContent = showWorkingIndicator ? <WorkingIndicator /> : null;
 
     return (
       <View style={stylesheet.contentWrapper}>
@@ -587,7 +576,6 @@ export function AgentStreamView({
     );
   }, [
     pendingPermissionItems,
-    showSyncingIndicator,
     showWorkingIndicator,
     client,
     streamHead,
@@ -629,17 +617,16 @@ export function AgentStreamView({
       return null;
     }
 
-    const shouldShowSyncing =
-      isSyncingHistory || agent.status === "running";
+    const shouldShowWorking = agent.status === "running";
 
-    if (shouldShowSyncing) {
+    if (shouldShowWorking) {
       return (
         <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
           <ActivityIndicator
             size="small"
             color={theme.colors.foregroundMuted}
           />
-          <Text style={stylesheet.emptyStateText}>Catching up…</Text>
+          <Text style={stylesheet.emptyStateText}>Working…</Text>
         </View>
       );
     }
@@ -653,7 +640,6 @@ export function AgentStreamView({
     );
   }, [
     agent.status,
-    isSyncingHistory,
     pendingPermissionItems.length,
     streamHead,
     theme.colors.foregroundMuted,
@@ -866,15 +852,6 @@ function WorkingIndicator() {
         <Animated.View style={[stylesheet.workingDot, dotTwoStyle]} />
         <Animated.View style={[stylesheet.workingDot, dotThreeStyle]} />
       </View>
-    </View>
-  );
-}
-
-function SyncingIndicator() {
-  return (
-    <View style={stylesheet.syncingIndicator}>
-      <ActivityIndicator size="small" color={stylesheet.syncingIndicatorText.color} />
-      <Text style={stylesheet.syncingIndicatorText}>Catching up…</Text>
     </View>
   );
 }

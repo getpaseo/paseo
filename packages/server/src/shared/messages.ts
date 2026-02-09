@@ -864,6 +864,7 @@ export const ClientHeartbeatMessageSchema = z.object({
   focusedAgentId: z.string().nullable(),
   lastActivityAt: z.string(),
   appVisible: z.boolean(),
+  appVisibilityChangedAt: z.string().optional(),
 });
 
 export const PingMessageSchema = z.object({
