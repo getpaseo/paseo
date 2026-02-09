@@ -53,8 +53,6 @@ import { ToolCallSheetProvider } from "./tool-call-sheet";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
-import { VoiceCompactIndicator } from "./voice-compact-indicator";
-import { useVoice } from "@/contexts/voice-context";
 
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
@@ -97,7 +95,6 @@ export function AgentStreamView({
   const flatListRef = useRef<FlatList<StreamItem>>(null);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { isVoiceModeForAgent } = useVoice();
   const [isNearBottom, setIsNearBottom] = useState(true);
   const hasScrolledInitially = useRef(false);
   const hasAutoScrolledOnce = useRef(false);
@@ -109,7 +106,6 @@ export function AgentStreamView({
 
   // Get serverId (fallback to agent's serverId if not provided)
   const resolvedServerId = serverId ?? agent.serverId ?? "";
-  const isVoiceMode = isVoiceModeForAgent(resolvedServerId, agentId);
 
   const client = useSessionStore(
     (state) => state.sessions[resolvedServerId]?.client ?? null
@@ -516,7 +512,7 @@ export function AgentStreamView({
   }, [agentId, pendingPermissionItems.length, streamHead, streamItems]);
 
   const showWorkingIndicator = agent.status === "running";
-  const showBottomBar = showWorkingIndicator || isVoiceMode;
+  const showBottomBar = showWorkingIndicator;
 
   const listHeaderComponent = useMemo(() => {
     const hasPermissions = pendingPermissionItems.length > 0;
@@ -563,14 +559,7 @@ export function AgentStreamView({
               })
             : null}
 
-          {showBottomBar ? (
-            <View style={stylesheet.bottomBarWrapper}>
-              <View style={stylesheet.bottomBarLeft}>{leftContent}</View>
-              <View style={stylesheet.bottomBarRight}>
-                {isVoiceMode ? <VoiceCompactIndicator /> : null}
-              </View>
-            </View>
-          ) : null}
+          {showBottomBar ? <View style={stylesheet.bottomBarWrapper}>{leftContent}</View> : null}
         </View>
       </View>
     );
@@ -582,7 +571,6 @@ export function AgentStreamView({
     renderStreamItemContent,
     tightGap,
     showBottomBar,
-    isVoiceMode,
   ]);
 
   const flatListExtraData = useMemo(
@@ -590,13 +578,11 @@ export function AgentStreamView({
       pendingPermissionCount: pendingPermissionItems.length,
       showWorkingIndicator,
       showBottomBar,
-      isVoiceMode,
     }),
     [
       pendingPermissionItems.length,
       showWorkingIndicator,
       showBottomBar,
-      isVoiceMode,
     ]
   );
 
@@ -1252,20 +1238,12 @@ const stylesheet = StyleSheet.create((theme) => ({
   bottomBarWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
     paddingLeft: 3,
     paddingRight: 3,
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[2],
     gap: theme.spacing[2],
-  },
-  bottomBarLeft: {
-    flex: 1,
-    alignItems: "flex-start",
-  },
-  bottomBarRight: {
-    flexShrink: 0,
-    alignItems: "flex-end",
   },
   workingIndicatorBubble: {
     flexDirection: "row",

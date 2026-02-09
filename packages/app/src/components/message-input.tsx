@@ -27,6 +27,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "./dictation-controls";
+import { RealtimeVoiceOverlay } from "./realtime-voice-overlay";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { usePanelStore } from "@/stores/panel-store";
 import { useVoiceOptional } from "@/contexts/voice-context";
@@ -250,6 +251,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     !!voiceServerId &&
     !!voiceAgentId &&
     voice.isVoiceModeForAgent(voiceServerId, voiceAgentId);
+  const showDictationOverlay =
+    isDictating || isDictationProcessing || dictationStatus === "failed";
+  const showRealtimeOverlay = isRealtimeVoiceForCurrentAgent;
+  const showOverlay = showDictationOverlay || showRealtimeOverlay;
 
   useEffect(() => {
     if (isDictating || isDictationProcessing) {
@@ -302,14 +307,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
   // Animate overlay
   useEffect(() => {
-    const showOverlay =
-      isDictating ||
-      isDictationProcessing ||
-      dictationStatus === "failed";
     overlayTransition.value = withTiming(showOverlay ? 1 : 0, {
       duration: 200,
     });
-  }, [isDictating, isDictationProcessing, dictationStatus, overlayTransition]);
+  }, [overlayTransition, showOverlay]);
 
   const overlayAnimatedStyle = useAnimatedStyle(() => ({
     opacity: overlayTransition.value,
@@ -360,6 +361,25 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   const handleDiscardFailedRecording = useCallback(() => {
     discardFailedDictation();
   }, [discardFailedDictation]);
+
+  const handleStopRealtimeVoice = useCallback(async () => {
+    if (!voice || !isRealtimeVoiceForCurrentAgent) {
+      return;
+    }
+
+    const tasks: Promise<unknown>[] = [];
+    if (isAgentRunning && client && voiceAgentId) {
+      tasks.push(client.cancelAgent(voiceAgentId));
+    }
+    tasks.push(voice.stopVoice());
+
+    const results = await Promise.allSettled(tasks);
+    results.forEach((result) => {
+      if (result.status === "rejected") {
+        console.error("[MessageInput] Failed to stop realtime voice", result.reason);
+      }
+    });
+  }, [client, isAgentRunning, isRealtimeVoiceForCurrentAgent, voice, voiceAgentId]);
 
   const handleSendMessage = useCallback(() => {
     const trimmed = value.trim();
@@ -602,7 +622,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           multiline
           scrollEnabled={IS_WEB ? inputHeight >= MAX_INPUT_HEIGHT : true}
           onContentSizeChange={handleContentSizeChange}
-          editable={!isDictating && isConnected && !disabled}
+          editable={
+            !isDictating && !isRealtimeVoiceForCurrentAgent && isConnected && !disabled
+          }
           onKeyPress={
             shouldHandleDesktopSubmit ? handleDesktopKeyPress : undefined
           }
@@ -705,27 +727,41 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
       {/* Dictation overlay */}
       <Animated.View style={[styles.overlayContainer, overlayAnimatedStyle]}>
-        <DictationOverlay
-          volume={dictationVolume}
-          duration={dictationDuration}
-          isRecording={isDictating}
-          isProcessing={isDictationProcessing}
-          status={dictationStatus}
-          errorText={dictationStatus === "failed" ? dictationError ?? undefined : undefined}
-          onCancel={handleCancelRecording}
-          onAccept={handleAcceptRecording}
-          onAcceptAndSend={handleAcceptAndSendRecording}
-          onRetry={
-            dictationStatus === "failed"
-              ? handleRetryFailedRecording
-              : undefined
-          }
-          onDiscard={
-            dictationStatus === "failed"
-              ? handleDiscardFailedRecording
-              : undefined
-          }
-        />
+        {showDictationOverlay ? (
+          <DictationOverlay
+            volume={dictationVolume}
+            duration={dictationDuration}
+            isRecording={isDictating}
+            isProcessing={isDictationProcessing}
+            status={dictationStatus}
+            errorText={dictationStatus === "failed" ? dictationError ?? undefined : undefined}
+            onCancel={handleCancelRecording}
+            onAccept={handleAcceptRecording}
+            onAcceptAndSend={handleAcceptAndSendRecording}
+            onRetry={
+              dictationStatus === "failed"
+                ? handleRetryFailedRecording
+                : undefined
+            }
+            onDiscard={
+              dictationStatus === "failed"
+                ? handleDiscardFailedRecording
+                : undefined
+            }
+          />
+        ) : showRealtimeOverlay && voice ? (
+          <RealtimeVoiceOverlay
+            volume={voice.volume}
+            isMuted={voice.isMuted}
+            isDetecting={voice.isDetecting}
+            isSpeaking={voice.isSpeaking}
+            isSwitching={voice.isVoiceSwitching}
+            onToggleMute={voice.toggleMute}
+            onStop={() => {
+              void handleStopRealtimeVoice();
+            }}
+          />
+        ) : null}
       </Animated.View>
     </View>
   );
