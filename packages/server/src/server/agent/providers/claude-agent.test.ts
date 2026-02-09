@@ -89,8 +89,21 @@ function extractCommandText(input: unknown): string | null {
   return null;
 }
 
+function extractToolCommand(detail: unknown): string | null {
+  if (!isKeyValueObject(detail) || typeof detail.type !== "string") {
+    return null;
+  }
+  if (detail.type === "shell" && typeof detail.command === "string") {
+    return detail.command;
+  }
+  if (detail.type === "unknown") {
+    return extractCommandText(detail.rawInput);
+  }
+  return null;
+}
+
 function isSleepCommandToolCall(item: ToolCallItem): boolean {
-  const inputCommand = extractCommandText(item.input)?.toLowerCase() ?? "";
+  const inputCommand = extractToolCommand(item.detail)?.toLowerCase() ?? "";
   return inputCommand.includes("sleep 60");
 }
 
@@ -98,7 +111,7 @@ function isPermissionCommandToolCall(item: ToolCallItem): boolean {
   if (item.name === "permission_request") {
     return false;
   }
-  const inputCommand = extractCommandText(item.input)?.toLowerCase() ?? "";
+  const inputCommand = extractToolCommand(item.detail)?.toLowerCase() ?? "";
   return inputCommand.includes("permission.txt");
 }
 
@@ -376,7 +389,7 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
             event.item.name.toLowerCase().includes("bash") &&
             event.item.status === "pending"
           ) {
-            pendingCommand = extractCommandText(event.item.input);
+            pendingCommand = extractToolCommand(event.item.detail);
           }
           if (event.type === "turn_completed" || event.type === "turn_failed") {
             break;
@@ -432,28 +445,20 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
           item.name !== "permission_request"
       );
       const fileChangeEvent = toolCalls.find((item) => {
-        // Check for file changes in structured output.files array
-        if (isKeyValueObject(item.output)) {
-          const files = item.output.files;
-          if (Array.isArray(files) && files.some((file) => typeof file?.path === "string" && file.path.includes("tool-test.txt"))) {
-            return true;
-          }
+        if (item.detail.type === "write" || item.detail.type === "edit") {
+          return item.detail.filePath.includes("tool-test.txt");
         }
-        // Also check for file path in output structure (write/edit tools)
-        if (isKeyValueObject(item.output)) {
-          const output = item.output;
-          if (output.type === "file_write" || output.type === "file_edit") {
-            const filePath = output.filePath;
-            if (typeof filePath === "string" && filePath.includes("tool-test.txt")) {
-              return true;
-            }
-          }
+        if (item.detail.type === "unknown") {
+          return (
+            rawContainsText(item.detail.rawInput, "tool-test.txt") ||
+            rawContainsText(item.detail.rawOutput, "tool-test.txt")
+          );
         }
-        return false;
+        return rawContainsText(item.detail, "tool-test.txt");
       });
 
       const sawPwdCommand = commandEvents.some(
-        (item) => (extractCommandText(item.input) ?? "").toLowerCase().includes("pwd") && item.status === "completed"
+        (item) => (extractToolCommand(item.detail) ?? "").toLowerCase().includes("pwd") && item.status === "completed"
       );
 
       expect(completed).toBe(true);
@@ -950,13 +955,13 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
         const liveSnapshots = extractAgentToolSnapshots(liveState);
         const commandTool = liveSnapshots.find((snapshot) =>
           snapshot.data.name.toLowerCase().includes("bash") &&
-          (extractCommandText(snapshot.data.input) ?? "").toLowerCase().includes("pwd")
+          (extractToolCommand(snapshot.data.detail) ?? "").toLowerCase().includes("pwd")
         );
         const editTool = liveSnapshots.find((snapshot) =>
-          rawContainsText(snapshot.data.result, "hydrate-proof.txt")
+          rawContainsText(snapshot.data.detail, "hydrate-proof.txt")
         );
         const readTool = liveSnapshots.find((snapshot) =>
-          rawContainsText(snapshot.data.result, "HYDRATION_PROOF_LINE_TWO")
+          rawContainsText(snapshot.data.detail, "HYDRATION_PROOF_LINE_TWO")
         );
 
         expect(commandTool).toBeTruthy();
@@ -993,23 +998,22 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
           commandTool!,
           hydratedMap,
           (data) =>
-            rawContainsText(data.result, cwd),
+            rawContainsText(data.detail, cwd),
           ({ live, hydrated }) => {
-            expect(rawContainsText(live.result, cwd)).toBe(true);
-            expect(rawContainsText(hydrated.result, cwd)).toBe(true);
-            expect((extractCommandText(live.input) ?? "").toLowerCase()).toContain("pwd");
-            expect((extractCommandText(hydrated.input) ?? "").toLowerCase()).toContain("pwd");
+            expect(rawContainsText(live.detail, cwd)).toBe(true);
+            expect(rawContainsText(hydrated.detail, cwd)).toBe(true);
+            expect((extractToolCommand(live.detail) ?? "").toLowerCase()).toContain("pwd");
+            expect((extractToolCommand(hydrated.detail) ?? "").toLowerCase()).toContain("pwd");
           }
         );
         assertHydratedReplica(
           editTool!,
           hydratedMap,
           (data) =>
-            isFileWriteResult(data.result) &&
-            data.result.filePath.includes("hydrate-proof.txt"),
+            rawContainsText(data.detail, "hydrate-proof.txt"),
           ({ live, hydrated }) => {
-            const liveDiff = JSON.stringify(live.result ?? {});
-            const hydratedDiff = JSON.stringify(hydrated.result ?? {});
+            const liveDiff = JSON.stringify(live.detail ?? {});
+            const hydratedDiff = JSON.stringify(hydrated.detail ?? {});
             expect(liveDiff).toContain("hydrate-proof.txt");
             expect(hydratedDiff).toContain("hydrate-proof.txt");
           }
@@ -1018,11 +1022,11 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
           readTool!,
           hydratedMap,
           (data) =>
-            rawContainsText(data.result, "HYDRATION_PROOF_LINE_ONE") &&
-            rawContainsText(data.result, "HYDRATION_PROOF_LINE_TWO"),
+            rawContainsText(data.detail, "HYDRATION_PROOF_LINE_ONE") &&
+            rawContainsText(data.detail, "HYDRATION_PROOF_LINE_TWO"),
           ({ live, hydrated }) => {
-            const liveReads = JSON.stringify(live.result ?? {});
-            const hydratedReads = JSON.stringify(hydrated.result ?? {});
+            const liveReads = JSON.stringify(live.detail ?? {});
+            const hydratedReads = JSON.stringify(hydrated.detail ?? {});
             expect(liveReads).toContain("HYDRATION_PROOF_LINE_ONE");
             expect(hydratedReads).toContain("HYDRATION_PROOF_LINE_ONE");
             expect(liveReads).toContain("HYDRATION_PROOF_LINE_TWO");

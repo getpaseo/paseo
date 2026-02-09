@@ -26,8 +26,11 @@ const toolCallEvent = (): AgentStreamEventPayload => ({
     callId: "buffer-tool-call",
     name: "run",
     status: "running",
-    input: { command: "echo hi" },
-    output: null,
+    detail: {
+      type: "unknown",
+      rawInput: { command: "echo hi" },
+      rawOutput: null,
+    },
     error: null,
   },
 });

@@ -100,10 +100,8 @@ export interface AgentToolCallData {
   callId: string;
   name: string;
   status: AgentToolCallStatus;
-  input: unknown | null;
-  result: unknown | null;
   error: unknown | null;
-  detail?: ToolCallDetail;
+  detail: ToolCallDetail;
   metadata?: Record<string, unknown>;
 }
 
@@ -328,7 +326,7 @@ function hasNonEmptyObject(value: unknown): boolean {
   return isRecord(value) && Object.keys(value).length > 0;
 }
 
-function mergeCanonicalValue(
+function mergeUnknownValue(
   existing: unknown | null,
   incoming: unknown | null
 ): unknown | null {
@@ -341,6 +339,34 @@ function mergeCanonicalValue(
   }
 
   return incoming;
+}
+
+function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail): ToolCallDetail {
+  if (existing.type === "unknown" && incoming.type !== "unknown") {
+    return incoming;
+  }
+
+  if (incoming.type === "unknown" && existing.type !== "unknown") {
+    return existing;
+  }
+
+  if (existing.type === "unknown" && incoming.type === "unknown") {
+    return {
+      type: "unknown",
+      rawInput: mergeUnknownValue(existing.rawInput, incoming.rawInput),
+      rawOutput: mergeUnknownValue(existing.rawOutput, incoming.rawOutput),
+    };
+  }
+
+  if (existing.type === incoming.type) {
+    return { ...existing, ...incoming };
+  }
+
+  return incoming;
+}
+
+function rawInputFromDetail(detail: ToolCallDetail): unknown | null {
+  return detail.type === "unknown" ? detail.rawInput : null;
 }
 
 function mergeAgentToolCallStatus(
@@ -375,8 +401,6 @@ function appendAgentToolCall(
     if (!existing || !isAgentToolCallItem(existing)) {
       return state;
     }
-    const mergedInput = mergeCanonicalValue(existing.payload.data.input, data.input);
-    const mergedResult = mergeCanonicalValue(existing.payload.data.result, data.result);
     const mergedStatus = mergeAgentToolCallStatus(
       existing.payload.data.status,
       data.status
@@ -389,6 +413,7 @@ function appendAgentToolCall(
       data.metadata || existing.payload.data.metadata
         ? { ...existing.payload.data.metadata, ...data.metadata }
         : undefined;
+    const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
 
     next[existingIndex] = {
       ...existing,
@@ -399,10 +424,8 @@ function appendAgentToolCall(
           ...existing.payload.data,
           ...data,
           status: mergedStatus,
-          input: mergedInput,
-          result: mergedResult,
           error: mergedError,
-          detail: data.detail ?? existing.payload.data.detail,
+          detail: mergedDetail,
           metadata: mergedMetadata,
         },
       },
@@ -527,7 +550,10 @@ export function reduceStreamUpdate(
           ) {
             // For Claude: TodoWrite often appears as a tool call that never resolves. Always render it
             // as Tasks when possible and otherwise hide it to avoid a stuck loading tool call.
-            const tasks = extractTaskEntriesFromToolCall(item.name, item.input);
+            const tasks = extractTaskEntriesFromToolCall(
+              item.name,
+              rawInputFromDetail(item.detail)
+            );
             if (tasks) {
               nextState = appendTodoList(
                 state,
@@ -544,7 +570,7 @@ export function reduceStreamUpdate(
 
           const tasks = extractTaskEntriesFromToolCall(
             item.name,
-            item.input
+            rawInputFromDetail(item.detail)
           );
           if (tasks) {
             nextState = appendTodoList(
@@ -566,8 +592,6 @@ export function reduceStreamUpdate(
               callId: item.callId,
               name: item.name,
               status: item.status,
-              input: item.input,
-              result: item.output,
               error: item.error,
               detail: item.detail,
               metadata: item.metadata,

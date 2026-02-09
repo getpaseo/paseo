@@ -133,15 +133,18 @@ export type ToolCallDetail =
   | {
       type: "search";
       query: string;
+    }
+  | {
+      type: "unknown";
+      rawInput: unknown | null;
+      rawOutput: unknown | null;
     };
 
 type ToolCallBase = {
   type: "tool_call";
   callId: string;
   name: string;
-  input: unknown | null;
-  output: unknown | null;
-  detail?: ToolCallDetail;
+  detail: ToolCallDetail;
   metadata?: Record<string, unknown>;
 };
 

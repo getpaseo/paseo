@@ -40,15 +40,19 @@ function canonicalToolTimeline(params: {
   metadata?: Record<string, unknown>;
   detail?: ToolCallDetail;
 }): AgentStreamEventPayload {
+  const detail: ToolCallDetail = params.detail ?? {
+    type: "unknown",
+    rawInput: params.input ?? null,
+    rawOutput: params.output ?? null,
+  };
+
   const baseItem = {
     type: "tool_call" as const,
     callId: params.callId,
     name: params.name,
     status: params.status,
-    input: params.input ?? null,
-    output: params.output ?? null,
+    detail,
     metadata: params.metadata,
-    ...(params.detail ? { detail: params.detail } : {}),
   };
 
   const item =
@@ -144,10 +148,13 @@ describe("stream reducer canonical tool calls", () => {
 
     assert.strictEqual(tools.length, 1);
     assert.strictEqual(tools[0].payload.data.status, "completed");
-    assert.deepStrictEqual(tools[0].payload.data.input, { command: "pwd" });
-    assert.deepStrictEqual(tools[0].payload.data.result, {
-      output: "/tmp/repo\n",
-      exitCode: 0,
+    assert.deepStrictEqual(tools[0].payload.data.detail, {
+      type: "unknown",
+      rawInput: { command: "pwd" },
+      rawOutput: {
+        output: "/tmp/repo\n",
+        exitCode: 0,
+      },
     });
   });
 
@@ -176,8 +183,6 @@ describe("stream reducer canonical tool calls", () => {
     const summary = buildToolCallDisplayModel({
       name: tool.payload.data.name,
       status: tool.payload.data.status,
-      input: tool.payload.data.input,
-      output: tool.payload.data.result,
       error: tool.payload.data.error,
       detail: tool.payload.data.detail,
     }).summary;
@@ -209,8 +214,6 @@ describe("stream reducer canonical tool calls", () => {
     const summary = buildToolCallDisplayModel({
       name: tool.payload.data.name,
       status: tool.payload.data.status,
-      input: tool.payload.data.input,
-      output: tool.payload.data.result,
       error: tool.payload.data.error,
       detail: tool.payload.data.detail,
       cwd: "/tmp/repo",
@@ -240,8 +243,6 @@ describe("stream reducer canonical tool calls", () => {
     const display = buildToolCallDisplayModel({
       name: tool.payload.data.name,
       status: tool.payload.data.status,
-      input: tool.payload.data.input,
-      output: tool.payload.data.result,
       error: tool.payload.data.error,
       detail: tool.payload.data.detail,
     });
@@ -279,7 +280,11 @@ describe("stream reducer canonical tool calls", () => {
     const tool = findToolByCallId(state, callId);
 
     assert.ok(tool);
-    assert.deepStrictEqual(tool.payload.data.input, { path: "README.md" });
+    assert.deepStrictEqual(tool.payload.data.detail, {
+      type: "unknown",
+      rawInput: { path: "README.md" },
+      rawOutput: { content: "hello" },
+    });
     assert.strictEqual(tool.payload.data.status, "completed");
   });
 

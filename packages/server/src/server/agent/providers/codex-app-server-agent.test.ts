@@ -49,20 +49,33 @@ function useTempCodexSessionDir(): () => void {
 
 function hasShellCommand(item: AgentTimelineItem, commandFragment: string): boolean {
   if (item.type !== "tool_call" || item.name !== "shell") return false;
-  const input = item.input as { command?: string } | undefined;
-  const command = input?.command ?? "";
+  if (item.detail.type === "shell") {
+    return item.detail.command.includes(commandFragment);
+  }
+  const unknownInput =
+    item.detail.type === "unknown" && typeof item.detail.rawInput === "object" && item.detail.rawInput
+      ? (item.detail.rawInput as { command?: string })
+      : undefined;
+  const command = unknownInput?.command ?? "";
   return command.includes(commandFragment);
 }
 
 function hasApplyPatchFile(item: AgentTimelineItem, fileName: string): boolean {
   if (item.type !== "tool_call" || item.name !== "apply_patch") return false;
-  const input = item.input as { files?: Array<{ path?: string }> } | undefined;
-  const output = item.output as
-    | { files?: Array<{ path?: string; patch?: string }>; diff?: string }
-    | undefined;
-  const inInput = (input?.files ?? []).some((file) => file?.path === fileName);
-  const inOutput = (output?.files ?? []).some((file) => file?.path === fileName);
-  const inDiff = typeof output?.diff === "string" && output.diff.includes(fileName);
+  if (item.detail.type === "edit") {
+    return item.detail.filePath === fileName || (item.detail.unifiedDiff?.includes(fileName) ?? false);
+  }
+  const unknownInput =
+    item.detail.type === "unknown" && typeof item.detail.rawInput === "object" && item.detail.rawInput
+      ? (item.detail.rawInput as { files?: Array<{ path?: string }> })
+      : undefined;
+  const unknownOutput =
+    item.detail.type === "unknown" && typeof item.detail.rawOutput === "object" && item.detail.rawOutput
+      ? (item.detail.rawOutput as { files?: Array<{ path?: string; patch?: string }>; diff?: string })
+      : undefined;
+  const inInput = (unknownInput?.files ?? []).some((file) => file?.path === fileName);
+  const inOutput = (unknownOutput?.files ?? []).some((file) => file?.path === fileName);
+  const inDiff = typeof unknownOutput?.diff === "string" && unknownOutput.diff.includes(fileName);
   return inInput || inOutput || inDiff;
 }
 

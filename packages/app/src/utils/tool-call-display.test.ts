@@ -7,8 +7,6 @@ describe("tool-call-display", () => {
     const display = buildToolCallDisplayModel({
       name: "shell",
       status: "running",
-      input: { command: "npm test" },
-      output: null,
       error: null,
       detail: {
         type: "shell",
@@ -26,8 +24,6 @@ describe("tool-call-display", () => {
     const display = buildToolCallDisplayModel({
       name: "read_file",
       status: "completed",
-      input: { path: "/tmp/repo/src/index.ts" },
-      output: { content: "hello" },
       error: null,
       detail: {
         type: "read",
@@ -46,9 +42,12 @@ describe("tool-call-display", () => {
     const display = buildToolCallDisplayModel({
       name: "task",
       status: "running",
-      input: null,
-      output: null,
       error: null,
+      detail: {
+        type: "unknown",
+        rawInput: null,
+        rawOutput: null,
+      },
       metadata: {
         subAgentActivity: "Running tests",
       },
@@ -64,9 +63,12 @@ describe("tool-call-display", () => {
     const display = buildToolCallDisplayModel({
       name: "custom_tool_name",
       status: "completed",
-      input: null,
-      output: null,
       error: null,
+      detail: {
+        type: "unknown",
+        rawInput: null,
+        rawOutput: null,
+      },
     });
 
     expect(display).toEqual({
@@ -74,13 +76,16 @@ describe("tool-call-display", () => {
     });
   });
 
-  it("does not derive command summary from raw input when detail is missing", () => {
+  it("does not derive command summary from unknown raw detail", () => {
     const display = buildToolCallDisplayModel({
       name: "exec_command",
       status: "running",
-      input: { command: "npm run test" },
-      output: null,
       error: null,
+      detail: {
+        type: "unknown",
+        rawInput: { command: "npm run test" },
+        rawOutput: null,
+      },
     });
 
     expect(display).toEqual({
@@ -92,9 +97,12 @@ describe("tool-call-display", () => {
     const display = buildToolCallDisplayModel({
       name: "shell",
       status: "failed",
-      input: { command: "false" },
-      output: null,
       error: { message: "boom" },
+      detail: {
+        type: "unknown",
+        rawInput: { command: "false" },
+        rawOutput: null,
+      },
     });
 
     expect(display.errorText).toBe('{\n  "message": "boom"\n}');

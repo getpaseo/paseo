@@ -2,7 +2,7 @@ import type { ToolCallTimelineItem } from "../server/agent/agent-sdk-types.js";
 
 export type ToolCallDisplayInput = Pick<
   ToolCallTimelineItem,
-  "name" | "status" | "input" | "output" | "error" | "metadata" | "detail"
+  "name" | "status" | "error" | "metadata" | "detail"
 > & {
   cwd?: string;
 };
@@ -79,33 +79,35 @@ export function buildToolCallDisplayModel(input: ToolCallDisplayInput): ToolCall
   let displayName = humanizeToolName(input.name);
   let summary: string | undefined;
 
-  if (input.detail) {
-    switch (input.detail.type) {
-      case "shell":
-        displayName = "Shell";
-        summary = input.detail.command;
-        break;
-      case "read":
-        displayName = "Read";
-        summary = stripCwdPrefix(input.detail.filePath, input.cwd);
-        break;
-      case "edit":
-        displayName = "Edit";
-        summary = stripCwdPrefix(input.detail.filePath, input.cwd);
-        break;
-      case "write":
-        displayName = "Write";
-        summary = stripCwdPrefix(input.detail.filePath, input.cwd);
-        break;
-      case "search":
-        displayName = "Search";
-        summary = input.detail.query;
-        break;
-    }
-  } else if (lowerName === "task") {
+  switch (input.detail.type) {
+    case "shell":
+      displayName = "Shell";
+      summary = input.detail.command;
+      break;
+    case "read":
+      displayName = "Read";
+      summary = stripCwdPrefix(input.detail.filePath, input.cwd);
+      break;
+    case "edit":
+      displayName = "Edit";
+      summary = stripCwdPrefix(input.detail.filePath, input.cwd);
+      break;
+    case "write":
+      displayName = "Write";
+      summary = stripCwdPrefix(input.detail.filePath, input.cwd);
+      break;
+    case "search":
+      displayName = "Search";
+      summary = input.detail.query;
+      break;
+    case "unknown":
+      break;
+  }
+
+  if (lowerName === "task" && input.detail.type === "unknown") {
     displayName = "Task";
     summary = isRecord(input.metadata) ? readString(input.metadata.subAgentActivity) : undefined;
-  } else if (lowerName === "thinking") {
+  } else if (lowerName === "thinking" && input.detail.type === "unknown") {
     displayName = "Thinking";
   }
 

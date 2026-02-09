@@ -362,8 +362,6 @@ export function AgentStreamView({
             return (
               <ToolCall
                 toolName={data.name}
-                args={data.input}
-                result={data.result}
                 error={data.error}
                 status={data.status}
                 detail={data.detail}
@@ -1123,8 +1121,11 @@ function PermissionRequestCard({
 
       {!isPlanRequest ? (
         <ToolCallDetailsContent
-          input={request.input ?? null}
-          output={null}
+          detail={{
+            type: "unknown",
+            rawInput: request.input ?? null,
+            rawOutput: null,
+          }}
           maxHeight={200}
         />
       ) : null}

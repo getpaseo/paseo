@@ -221,8 +221,10 @@ describe("DaemonClient", () => {
               callId: "call_cli_stream",
               name: "shell",
               status: "running",
-              input: { command: "pwd" },
-              output: null,
+              detail: {
+                type: "shell",
+                command: "pwd",
+              },
               error: null,
             },
           },
@@ -241,7 +243,9 @@ describe("DaemonClient", () => {
             type: "tool_call";
             status: string;
             error: unknown;
-            output: unknown;
+            detail: {
+              type: string;
+            };
           };
         };
       };
@@ -249,7 +253,7 @@ describe("DaemonClient", () => {
 
     expect(streamMsg.payload.event.item.status).toBe("running");
     expect(streamMsg.payload.event.item.error).toBeNull();
-    expect(streamMsg.payload.event.item.output).toBeNull();
+    expect(streamMsg.payload.event.item.detail.type).toBe("shell");
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
@@ -288,7 +292,11 @@ describe("DaemonClient", () => {
               callId: "call_cli_stream_legacy",
               name: "shell",
               status: "inProgress",
-              input: { command: "pwd" },
+              detail: {
+                type: "unknown",
+                rawInput: { command: "pwd" },
+                rawOutput: null,
+              },
             },
           },
         },
@@ -338,8 +346,10 @@ describe("DaemonClient", () => {
                   callId: "call_cli_snapshot",
                   name: "shell",
                   status: "running",
-                  input: { command: "pwd" },
-                  output: null,
+                  detail: {
+                    type: "shell",
+                    command: "pwd",
+                  },
                   error: null,
                 },
               },
@@ -361,7 +371,9 @@ describe("DaemonClient", () => {
               type: "tool_call";
               status: string;
               error: unknown;
-              output: unknown;
+              detail: {
+                type: string;
+              };
             };
           };
         }>;
@@ -373,7 +385,7 @@ describe("DaemonClient", () => {
     if (firstTimeline?.type === "timeline" && firstTimeline.item.type === "tool_call") {
       expect(firstTimeline.item.status).toBe("running");
       expect(firstTimeline.item.error).toBeNull();
-      expect(firstTimeline.item.output).toBeNull();
+      expect(firstTimeline.item.detail.type).toBe("shell");
     }
     expect(logger.warn).not.toHaveBeenCalled();
   });

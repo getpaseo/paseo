@@ -10,6 +10,7 @@ const TOOL_DETAIL_ICONS: Record<ToolCallDetail["type"], ToolCallIconComponent> =
   edit: Pencil,
   write: Pencil,
   search: Search,
+  unknown: Wrench,
 };
 
 export function resolveToolCallIcon(toolName: string, detail?: ToolCallDetail): ToolCallIconComponent {

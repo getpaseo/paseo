@@ -20,7 +20,11 @@ describe("codex tool-call mapper", () => {
     expect(item?.error).toBeNull();
     expect(item?.callId).toBe("codex-call-1");
     expect(item?.name).toBe("shell");
-    expect(item?.input).toEqual({ command: "pwd", cwd: "/tmp/repo" });
+    expect(item?.detail).toEqual({
+      type: "shell",
+      command: "pwd",
+      cwd: "/tmp/repo",
+    });
   });
 
   it("maps running known tool variants with detail for early summaries", () => {
@@ -133,7 +137,7 @@ describe("codex tool-call mapper", () => {
     }
   });
 
-  it("truncates large diff payloads deterministically in canonical output", () => {
+  it("truncates large diff payloads deterministically in canonical detail", () => {
     const hugeDiff = `@@\\n-${"a".repeat(14_000)}\\n+${"b".repeat(14_000)}\\n`;
     const item = mapCodexToolCallFromThreadItem(
       {
@@ -147,11 +151,12 @@ describe("codex tool-call mapper", () => {
 
     expect(item).toBeTruthy();
     expect(item?.status).toBe("completed");
-    expect(item?.output).toBeTruthy();
-    const output = item?.output as { files?: Array<{ patch?: string }> };
-    expect(output.files?.[0]?.patch).toBeDefined();
-    expect(output.files?.[0]?.patch?.includes("...[truncated ")).toBe(true);
-    expect((output.files?.[0]?.patch?.length ?? 0) < hugeDiff.length).toBe(true);
+    expect(item?.detail?.type).toBe("edit");
+    if (item?.detail?.type === "edit") {
+      expect(item.detail.unifiedDiff).toBeDefined();
+      expect(item.detail.unifiedDiff?.includes("...[truncated ")).toBe(true);
+      expect((item.detail.unifiedDiff?.length ?? 0) < hugeDiff.length).toBe(true);
+    }
   });
 
   it("maps write/edit/search known variants with distinct detail types", () => {
@@ -218,7 +223,7 @@ describe("codex tool-call mapper", () => {
     expect(item?.callId).toBe("codex-call-3");
   });
 
-  it("keeps unknown tools canonical without detail", () => {
+  it("maps unknown tools to unknown detail with raw payloads", () => {
     const item = mapCodexRolloutToolCall({
       callId: "codex-call-4",
       name: "my_custom_tool",
@@ -228,9 +233,11 @@ describe("codex tool-call mapper", () => {
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
-    expect(item.detail).toBeUndefined();
+    expect(item.detail).toEqual({
+      type: "unknown",
+      rawInput: { foo: "bar" },
+      rawOutput: { ok: true },
+    });
     expect(item.callId).toBe("codex-call-4");
-    expect(item.input).toEqual({ foo: "bar" });
-    expect(item.output).toEqual({ ok: true });
   });
 });

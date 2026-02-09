@@ -181,7 +181,7 @@ describe("opencode tool-call mapper", () => {
     });
   });
 
-  it("keeps unknown tools canonical without detail", () => {
+  it("maps unknown tools to unknown detail with raw payloads", () => {
     const item = mapOpencodeToolCall({
       toolName: "my_custom_tool",
       callId: "opencode-call-4",
@@ -192,8 +192,10 @@ describe("opencode tool-call mapper", () => {
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
-    expect(item.detail).toBeUndefined();
-    expect(item.input).toEqual({ foo: "bar" });
-    expect(item.output).toEqual({ ok: true });
+    expect(item.detail).toEqual({
+      type: "unknown",
+      rawInput: { foo: "bar" },
+      rawOutput: { ok: true },
+    });
   });
 });

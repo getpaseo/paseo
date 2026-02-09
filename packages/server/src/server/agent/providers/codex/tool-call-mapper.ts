@@ -827,26 +827,42 @@ function deriveRolloutDetail(name: string, input: unknown, output: unknown): Too
   return parsed.data;
 }
 
+function toCanonicalDetail(
+  knownDetail: ToolCallDetail | undefined,
+  rawInput: unknown | null,
+  rawOutput: unknown | null
+): ToolCallDetail {
+  if (knownDetail) {
+    return knownDetail;
+  }
+
+  return {
+    type: "unknown",
+    rawInput,
+    rawOutput,
+  };
+}
+
 function buildToolCall(params: {
   callId: string;
   name: string;
   status: ToolCallTimelineItem["status"];
-  input: unknown | null;
-  output: unknown | null;
+  rawInput: unknown | null;
+  rawOutput: unknown | null;
   error: unknown | null;
   detail?: ToolCallDetail;
   metadata?: Record<string, unknown>;
 }): ToolCallTimelineItem {
+  const detail = toCanonicalDetail(params.detail, params.rawInput, params.rawOutput);
+
   if (params.status === "failed") {
     return {
       type: "tool_call",
       callId: params.callId,
       name: params.name,
       status: "failed",
-      input: params.input,
-      output: params.output,
       error: params.error ?? { message: "Tool call failed" },
-      ...(params.detail ? { detail: params.detail } : {}),
+      detail,
       ...(params.metadata ? { metadata: params.metadata } : {}),
     };
   }
@@ -856,10 +872,8 @@ function buildToolCall(params: {
     callId: params.callId,
     name: params.name,
     status: params.status,
-    input: params.input,
-    output: params.output,
     error: null,
-    ...(params.detail ? { detail: params.detail } : {}),
+    detail,
     ...(params.metadata ? { metadata: params.metadata } : {}),
   };
 }
@@ -941,8 +955,8 @@ function mapCommandExecutionItem(
     callId,
     name,
     status,
-    input,
-    output,
+    rawInput: input,
+    rawOutput: output,
     error,
     ...(detail ? { detail } : {}),
   });
@@ -1003,8 +1017,8 @@ function mapFileChangeItem(
     callId,
     name,
     status,
-    input,
-    output,
+    rawInput: input,
+    rawOutput: output,
     error,
     ...(detail ? { detail } : {}),
   });
@@ -1027,8 +1041,8 @@ function mapMcpToolCallItem(
     callId,
     name,
     status,
-    input,
-    output,
+    rawInput: input,
+    rawOutput: output,
     error,
     ...(detail ? { detail } : {}),
   });
@@ -1052,8 +1066,8 @@ function mapWebSearchItem(item: z.infer<typeof CodexWebSearchItemSchema>): ToolC
     callId,
     name,
     status,
-    input,
-    output,
+    rawInput: input,
+    rawOutput: output,
     error,
     ...(detail ? { detail } : {}),
   });
@@ -1108,8 +1122,8 @@ export function mapCodexRolloutToolCall(params: {
     callId,
     name: parsed.name,
     status,
-    input,
-    output,
+    rawInput: input,
+    rawOutput: output,
     error,
     ...(detail ? { detail } : {}),
   });

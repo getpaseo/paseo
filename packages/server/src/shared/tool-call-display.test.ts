@@ -7,8 +7,6 @@ describe("shared tool-call display mapping", () => {
     const display = buildToolCallDisplayModel({
       name: "read_file",
       status: "running",
-      input: { path: "/tmp/repo/src/index.ts" },
-      output: null,
       error: null,
       detail: {
         type: "read",
@@ -23,13 +21,16 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
-  it("does not infer summaries from raw input when detail is missing", () => {
+  it("does not infer summaries from unknown raw detail", () => {
     const display = buildToolCallDisplayModel({
       name: "exec_command",
       status: "running",
-      input: { command: "npm test" },
-      output: null,
       error: null,
+      detail: {
+        type: "unknown",
+        rawInput: { command: "npm test" },
+        rawOutput: null,
+      },
     });
 
     expect(display).toEqual({
@@ -37,13 +38,16 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
-  it("keeps task metadata summary without detail", () => {
+  it("keeps task metadata summary on unknown detail", () => {
     const display = buildToolCallDisplayModel({
       name: "task",
       status: "running",
-      input: null,
-      output: null,
       error: null,
+      detail: {
+        type: "unknown",
+        rawInput: null,
+        rawOutput: null,
+      },
       metadata: {
         subAgentActivity: "Running tests",
       },
@@ -59,9 +63,12 @@ describe("shared tool-call display mapping", () => {
     const display = buildToolCallDisplayModel({
       name: "shell",
       status: "failed",
-      input: null,
-      output: null,
       error: { message: "boom" },
+      detail: {
+        type: "unknown",
+        rawInput: null,
+        rawOutput: null,
+      },
     });
 
     expect(display.errorText).toBe('{\n  "message": "boom"\n}');

@@ -27,8 +27,6 @@ export type ToolCallSheetData = {
   displayName: string;
   summary?: string;
   detail?: ToolCallDetail;
-  input?: unknown | null;
-  output?: unknown | null;
   errorText?: string;
 };
 
@@ -132,7 +130,7 @@ interface ToolCallSheetContentProps {
 }
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
-  const { toolName, displayName, detail, input, output, errorText } = data;
+  const { toolName, displayName, detail, errorText } = data;
 
   const IconComponent = resolveToolCallIcon(toolName, detail);
 
@@ -158,8 +156,6 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
       >
         <ToolCallDetailsContent
           detail={detail}
-          input={input}
-          output={output}
           errorText={errorText}
         />
       </BottomSheetScrollView>

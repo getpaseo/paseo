@@ -632,13 +632,29 @@ function deriveDetail(toolName: string, input: unknown, output: unknown): ToolCa
   return parsed.data;
 }
 
+function toCanonicalDetail(
+  knownDetail: ToolCallDetail | undefined,
+  rawInput: unknown | null,
+  rawOutput: unknown | null
+): ToolCallDetail {
+  if (knownDetail) {
+    return knownDetail;
+  }
+
+  return {
+    type: "unknown",
+    rawInput,
+    rawOutput,
+  };
+}
+
 export function mapOpencodeToolCall(params: OpencodeToolCallParams): ToolCallTimelineItem {
   const parsedParams = OpencodeToolCallParamsSchema.parse(params);
   const input = parsedParams.input ?? null;
   const output = parsedParams.output ?? null;
   const status = resolveStatus(parsedParams.status, parsedParams.error, output);
   const callId = coerceCallId(parsedParams.callId, parsedParams.toolName, input);
-  const detail = deriveDetail(parsedParams.toolName, input, output);
+  const detail = toCanonicalDetail(deriveDetail(parsedParams.toolName, input, output), input, output);
 
   if (status === "failed") {
     return {
@@ -646,10 +662,8 @@ export function mapOpencodeToolCall(params: OpencodeToolCallParams): ToolCallTim
       callId,
       name: parsedParams.toolName,
       status: "failed",
-      input,
-      output,
       error: parsedParams.error ?? { message: "Tool call failed" },
-      ...(detail ? { detail } : {}),
+      detail,
       ...(parsedParams.metadata ? { metadata: parsedParams.metadata } : {}),
     };
   }
@@ -659,10 +673,8 @@ export function mapOpencodeToolCall(params: OpencodeToolCallParams): ToolCallTim
     callId,
     name: parsedParams.toolName,
     status,
-    input,
-    output,
     error: null,
-    ...(detail ? { detail } : {}),
+    detail,
     ...(parsedParams.metadata ? { metadata: parsedParams.metadata } : {}),
   };
 }

@@ -1930,11 +1930,14 @@ export class Session {
         name: "paseo_worktree_setup",
         callId,
         status: "running",
-        input: {
-          worktreePath: worktree.worktreePath,
-          branchName: worktree.branchName,
+        detail: {
+          type: "unknown",
+          rawInput: {
+            worktreePath: worktree.worktreePath,
+            branchName: worktree.branchName,
+          },
+          rawOutput: null,
         },
-        output: null,
         error: null,
       });
       if (!started) {
@@ -1952,18 +1955,21 @@ export class Session {
         name: "paseo_worktree_setup",
         callId,
         status: "completed",
-        input: {
-          worktreePath: worktree.worktreePath,
-          branchName: worktree.branchName,
-        },
-        output: {
-          worktreePath: worktree.worktreePath,
-          commands: results.map((result) => ({
-            command: result.command,
-            cwd: result.cwd,
-            exitCode: result.exitCode,
-            output: `${result.stdout ?? ""}${result.stderr ? `\n${result.stderr}` : ""}`.trim(),
-          })),
+        detail: {
+          type: "unknown",
+          rawInput: {
+            worktreePath: worktree.worktreePath,
+            branchName: worktree.branchName,
+          },
+          rawOutput: {
+            worktreePath: worktree.worktreePath,
+            commands: results.map((result) => ({
+              command: result.command,
+              cwd: result.cwd,
+              exitCode: result.exitCode,
+              output: `${result.stdout ?? ""}${result.stderr ? `\n${result.stderr}` : ""}`.trim(),
+            })),
+          },
         },
         error: null,
       });
@@ -1977,18 +1983,21 @@ export class Session {
         name: "paseo_worktree_setup",
         callId,
         status: "failed",
-        input: {
-          worktreePath: worktree.worktreePath,
-          branchName: worktree.branchName,
-        },
-        output: {
-          worktreePath: worktree.worktreePath,
-          commands: results.map((result) => ({
-            command: result.command,
-            cwd: result.cwd,
-            exitCode: result.exitCode,
-            output: `${result.stdout ?? ""}${result.stderr ? `\n${result.stderr}` : ""}`.trim(),
-          })),
+        detail: {
+          type: "unknown",
+          rawInput: {
+            worktreePath: worktree.worktreePath,
+            branchName: worktree.branchName,
+          },
+          rawOutput: {
+            worktreePath: worktree.worktreePath,
+            commands: results.map((result) => ({
+              command: result.command,
+              cwd: result.cwd,
+              exitCode: result.exitCode,
+              output: `${result.stdout ?? ""}${result.stderr ? `\n${result.stderr}` : ""}`.trim(),
+            })),
+          },
         },
         error: { message },
       });

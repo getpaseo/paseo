@@ -1151,7 +1151,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
 
 interface ToolCallProps {
   toolName: string;
-  args: unknown | null;
+  args?: unknown | null;
   result?: unknown | null;
   error?: unknown | null;
   status: "executing" | "running" | "completed" | "failed" | "canceled";
@@ -1191,29 +1191,53 @@ export const ToolCall = memo(function ToolCall({
     UnistylesRuntime.breakpoint === "xs" ||
     UnistylesRuntime.breakpoint === "sm";
 
+  const effectiveDetail = useMemo<ToolCallDetail | undefined>(() => {
+    if (detail) {
+      return detail;
+    }
+    if (args !== undefined || result !== undefined) {
+      return {
+        type: "unknown",
+        rawInput: args ?? null,
+        rawOutput: result ?? null,
+      };
+    }
+    return undefined;
+  }, [detail, args, result]);
+
+  const displayDetail =
+    effectiveDetail ?? {
+      type: "unknown",
+      rawInput: null,
+      rawOutput: null,
+    };
+
   const displayModel = useMemo(
     () =>
       buildToolCallDisplayModel({
         name: toolName,
         status: status === "executing" ? "running" : status,
-        input: args ?? null,
-        output: result ?? null,
         error: error ?? null,
-        detail,
+        detail: displayDetail,
         metadata,
         cwd,
       }),
-    [toolName, status, args, result, error, detail, metadata, cwd]
+    [toolName, status, error, displayDetail, metadata, cwd]
   );
   const displayName = displayModel.displayName;
   const summary = displayModel.summary;
   const errorText = displayModel.errorText;
-  const iconCategory = detail?.type ?? toolName.trim().toLowerCase();
-  const IconComponent = resolveToolCallIcon(toolName, detail);
+  const iconCategory = effectiveDetail?.type ?? toolName.trim().toLowerCase();
+  const IconComponent = resolveToolCallIcon(toolName, effectiveDetail);
 
   // Check if there's any content to display
   const hasDetails =
-    args !== undefined || result !== undefined || error !== undefined;
+    Boolean(error) ||
+    (effectiveDetail
+      ? effectiveDetail.type !== "unknown" ||
+        effectiveDetail.rawInput !== null ||
+        effectiveDetail.rawOutput !== null
+      : false);
 
   const handleToggle = useCallback(() => {
     if (!isMobile && isPerfLoggingEnabled()) {
@@ -1224,15 +1248,13 @@ export const ToolCall = memo(function ToolCall({
         toolName,
         displayName,
         summary,
-        detail,
-        input: args,
-        output: result,
+        detail: effectiveDetail,
         errorText,
       });
     } else {
       setIsExpanded((prev) => !prev);
     }
-  }, [isMobile, openToolCall, toolName, displayName, summary, detail, args, result, errorText]);
+  }, [isMobile, openToolCall, toolName, displayName, summary, effectiveDetail, errorText]);
 
   useEffect(() => {
     if (isMobile || !isPerfLoggingEnabled()) {
@@ -1293,14 +1315,12 @@ export const ToolCall = memo(function ToolCall({
     if (isMobile) return null;
     return (
       <ToolCallDetailsContent
-        detail={detail}
-        input={args}
-        output={result}
+        detail={effectiveDetail}
         errorText={errorText}
         maxHeight={400}
       />
     );
-  }, [isMobile, detail, args, result, errorText]);
+  }, [isMobile, effectiveDetail, errorText]);
 
   return (
     <ExpandableBadge

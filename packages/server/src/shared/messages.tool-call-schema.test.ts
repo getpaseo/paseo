@@ -7,8 +7,10 @@ function canonicalBase() {
     type: "tool_call" as const,
     callId: "call_123",
     name: "shell",
-    input: { command: "pwd" },
-    output: null,
+    detail: {
+      type: "shell" as const,
+      command: "pwd",
+    },
   };
 }
 
@@ -18,17 +20,12 @@ describe("shared messages tool_call schema", () => {
       ...canonicalBase(),
       status: "running",
       error: null,
-      detail: {
-        type: "shell",
-        command: "pwd",
-      },
     });
 
     const completed = AgentTimelineItemPayloadSchema.parse({
       ...canonicalBase(),
       status: "completed",
       error: null,
-      output: { output: "/tmp/repo" },
     });
 
     const failed = AgentTimelineItemPayloadSchema.parse({
@@ -54,8 +51,10 @@ describe("shared messages tool_call schema", () => {
       type: "tool_call",
       name: "shell",
       status: "running",
-      input: { command: "pwd" },
-      output: null,
+      detail: {
+        type: "shell",
+        command: "pwd",
+      },
       error: null,
     });
 
@@ -82,12 +81,11 @@ describe("shared messages tool_call schema", () => {
       error: null,
     });
 
-    const missingOutput = AgentTimelineItemPayloadSchema.safeParse({
+    const missingDetail = AgentTimelineItemPayloadSchema.safeParse({
       type: "tool_call",
-      callId: "call_missing_output",
+      callId: "call_missing_detail",
       name: "shell",
       status: "running",
-      input: { command: "pwd" },
       error: null,
     });
 
@@ -99,7 +97,7 @@ describe("shared messages tool_call schema", () => {
 
     expect(completedWithError.success).toBe(false);
     expect(failedWithoutError.success).toBe(false);
-    expect(missingOutput.success).toBe(false);
+    expect(missingDetail.success).toBe(false);
     expect(legacyStatus.success).toBe(false);
   });
 });

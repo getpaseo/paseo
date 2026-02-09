@@ -19,8 +19,6 @@ describe("claude tool-call mapper", () => {
     expect(item.status).toBe("running");
     expect(item.error).toBeNull();
     expect(item.callId).toBe("claude-call-1");
-    expect(item.input).toEqual({ command: "pwd", cwd: "/tmp/repo" });
-    expect(item.output).toBeNull();
     expect(item.detail?.type).toBe("shell");
     if (item.detail?.type === "shell") {
       expect(item.detail.command).toBe("pwd");
@@ -85,8 +83,6 @@ describe("claude tool-call mapper", () => {
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
     expect(item.callId).toBe("claude-call-2");
-    expect(item.input).toEqual({ file_path: "README.md" });
-    expect(item.output).toEqual({ content: "hello" });
     expect(item.detail?.type).toBe("read");
     if (item.detail?.type === "read") {
       expect(item.detail.filePath).toBe("README.md");
@@ -141,8 +137,6 @@ describe("claude tool-call mapper", () => {
     expect(item.status).toBe("failed");
     expect(item.error).toEqual({ message: "Command failed" });
     expect(item.callId).toBe("claude-call-3");
-    expect(item.input).toEqual({ command: "false" });
-    expect(item.output).toBeNull();
   });
 
   it("maps write/edit/search known shapes with distinct detail types", () => {
@@ -181,7 +175,7 @@ describe("claude tool-call mapper", () => {
     });
   });
 
-  it("keeps unknown tools canonical without detail", () => {
+  it("maps unknown tools to unknown detail with raw payloads", () => {
     const item = mapClaudeCompletedToolCall({
       callId: "claude-call-4",
       name: "my_custom_tool",
@@ -191,8 +185,10 @@ describe("claude tool-call mapper", () => {
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
-    expect(item.detail).toBeUndefined();
-    expect(item.input).toEqual({ foo: "bar" });
-    expect(item.output).toEqual({ ok: true });
+    expect(item.detail).toEqual({
+      type: "unknown",
+      rawInput: { foo: "bar" },
+      rawOutput: { ok: true },
+    });
   });
 });

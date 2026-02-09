@@ -10,19 +10,23 @@ function toolCallItem(params: {
   output?: unknown | null;
   error?: unknown;
   metadata?: Record<string, unknown>;
-  detail?: Extract<AgentTimelineItem, { type: "tool_call" }>['detail'];
+  detail?: Extract<AgentTimelineItem, { type: "tool_call" }>["detail"];
 }): Extract<AgentTimelineItem, { type: "tool_call" }> {
   const status = params.status ?? "completed";
+  const detail =
+    params.detail ?? {
+      type: "unknown" as const,
+      rawInput: params.input ?? null,
+      rawOutput: params.output ?? null,
+    };
   return {
     type: "tool_call",
     callId: params.callId,
     name: params.name,
     status,
-    input: params.input ?? null,
-    output: params.output ?? null,
+    detail,
     error: status === "failed" ? params.error ?? { message: "failed" } : null,
     metadata: params.metadata,
-    detail: params.detail,
   };
 }
 

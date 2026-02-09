@@ -17,16 +17,12 @@ const ScrollView = Platform.OS === "web" ? RNScrollView : GHScrollView;
 
 interface ToolCallDetailsContentProps {
   detail?: ToolCallDetail;
-  input?: unknown | null;
-  output?: unknown | null;
   errorText?: string;
   maxHeight?: number;
 }
 
 export function ToolCallDetailsContent({
   detail,
-  input,
-  output,
   errorText,
   maxHeight = 300,
 }: ToolCallDetailsContentProps) {
@@ -141,10 +137,10 @@ export function ToolCallDetailsContent({
         <Text selectable style={styles.scrollText}>{detail.query}</Text>
       </View>
     );
-  } else {
+  } else if (detail?.type === "unknown") {
     const sectionsFromTopLevel = [
-      { title: "Input", value: input },
-      { title: "Output", value: output },
+      { title: "Input", value: detail.rawInput },
+      { title: "Output", value: detail.rawOutput },
     ].filter((entry) => entry.value !== null && entry.value !== undefined);
 
     for (const section of sectionsFromTopLevel) {

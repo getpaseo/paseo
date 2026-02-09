@@ -140,14 +140,22 @@ export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionReque
     metadata: z.record(z.unknown()).optional(),
   });
 
-// Structured tool result types for better client rendering
-// These types define the structure of the `output` field in tool_call timeline items
-export type StructuredToolResult =
-  | { type: "command"; command: string; output: string; exitCode?: number; cwd?: string }
-  | { type: "file_write"; filePath: string; oldContent: string; newContent: string }
-  | { type: "file_edit"; filePath: string; diff?: string; oldContent?: string; newContent?: string }
-  | { type: "file_read"; filePath: string; content: string }
-  | { type: "generic"; data: unknown };
+const UnknownValueSchema = z.union([
+  z.null(),
+  z.boolean(),
+  z.number(),
+  z.string(),
+  z.array(z.unknown()),
+  z.object({}).passthrough(),
+]);
+
+const NonNullUnknownSchema = z.union([
+  z.boolean(),
+  z.number(),
+  z.string(),
+  z.array(z.unknown()),
+  z.object({}).passthrough(),
+]);
 
 const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail> = z.discriminatedUnion("type", [
   z.object({
@@ -180,32 +188,18 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail> = z.discriminatedUn
     type: z.literal("search"),
     query: z.string(),
   }),
-]);
-
-const NonUndefinedUnknownSchema = z.union([
-  z.null(),
-  z.boolean(),
-  z.number(),
-  z.string(),
-  z.array(z.unknown()),
-  z.object({}).passthrough(),
-]);
-
-const NonNullUnknownSchema = z.union([
-  z.boolean(),
-  z.number(),
-  z.string(),
-  z.array(z.unknown()),
-  z.object({}).passthrough(),
+  z.object({
+    type: z.literal("unknown"),
+    rawInput: UnknownValueSchema,
+    rawOutput: UnknownValueSchema,
+  }),
 ]);
 
 const ToolCallBasePayloadSchema = z.object({
   type: z.literal("tool_call"),
   callId: z.string(),
   name: z.string(),
-  input: NonUndefinedUnknownSchema,
-  output: NonUndefinedUnknownSchema,
-  detail: ToolCallDetailPayloadSchema.optional(),
+  detail: ToolCallDetailPayloadSchema,
   metadata: z.record(z.unknown()).optional(),
 });
 

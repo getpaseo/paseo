@@ -1,4 +1,4 @@
-import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import type { AgentTimelineItem, ToolCallDetail } from "./agent-sdk-types.js";
 import { isLikelyExternalToolName } from "./tool-name-normalization.js";
 import { buildToolCallDisplayModel } from "../../shared/tool-call-display.js";
 
@@ -43,6 +43,46 @@ function formatToolInputJson(input: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+function hasNonEmptyObject(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length > 0;
+}
+
+function mergeUnknownValue(existing: unknown | null, incoming: unknown | null): unknown | null {
+  if (incoming === null) {
+    return existing;
+  }
+
+  if (!hasNonEmptyObject(incoming) && hasNonEmptyObject(existing)) {
+    return existing;
+  }
+
+  return incoming;
+}
+
+function mergeToolDetail(existing: ToolCallDetail, incoming: ToolCallDetail): ToolCallDetail {
+  if (existing.type === "unknown" && incoming.type !== "unknown") {
+    return incoming;
+  }
+  if (incoming.type === "unknown" && existing.type !== "unknown") {
+    return existing;
+  }
+  if (existing.type === "unknown" && incoming.type === "unknown") {
+    return {
+      type: "unknown",
+      rawInput: mergeUnknownValue(existing.rawInput, incoming.rawInput),
+      rawOutput: mergeUnknownValue(existing.rawOutput, incoming.rawOutput),
+    };
+  }
+  if (existing.type === incoming.type) {
+    return { ...existing, ...incoming };
+  }
+  return incoming;
+}
+
+function rawInputFromDetail(detail: ToolCallDetail): unknown {
+  return detail.type === "unknown" ? detail.rawInput : null;
 }
 
 /**
@@ -95,9 +135,7 @@ function collapseTimeline(items: AgentTimelineItem[]): AgentTimelineItem[] {
           toolCallMap.set(item.callId, {
             ...existing,
             ...item,
-            input: item.input ?? existing.input,
-            output: item.output ?? existing.output,
-            detail: item.detail ?? existing.detail,
+            detail: mergeToolDetail(existing.detail, item.detail),
             error: item.error,
             metadata: item.metadata,
           });
@@ -105,9 +143,7 @@ function collapseTimeline(items: AgentTimelineItem[]): AgentTimelineItem[] {
           toolCallMap.set(item.callId, {
             ...existing,
             ...item,
-            input: item.input ?? existing.input,
-            output: item.output ?? existing.output,
-            detail: item.detail ?? existing.detail,
+            detail: mergeToolDetail(existing.detail, item.detail),
             error: null,
             metadata: item.metadata,
           });
@@ -167,12 +203,10 @@ export function curateAgentActivity(
         break;
       case "tool_call": {
         flushBuffers(lines, buffers);
-        const inputJson = formatToolInputJson(item.input);
+        const inputJson = formatToolInputJson(rawInputFromDetail(item.detail));
         const display = buildToolCallDisplayModel({
           name: item.name,
           status: item.status,
-          input: item.input,
-          output: item.output,
           error: item.error,
           detail: item.detail,
           metadata: item.metadata,

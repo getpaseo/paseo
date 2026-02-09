@@ -213,14 +213,18 @@ function buildToolEvent({
   error?: unknown;
   detail?: ToolCallDetail;
 }): AgentStreamEventPayload {
+  const canonicalDetail: ToolCallDetail = detail ?? {
+    type: "unknown",
+    rawInput: input,
+    rawOutput: output,
+  };
+
   const baseItem = {
     type: "tool_call" as const,
     name,
     status,
     callId,
-    input,
-    output,
-    ...(detail ? { detail } : {}),
+    detail: canonicalDetail,
   };
 
   const item =

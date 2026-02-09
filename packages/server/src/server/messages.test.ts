@@ -33,8 +33,10 @@ describe("serializeAgentStreamEvent", () => {
         callId: "call_1",
         name: "shell",
         status: "running",
-        input: { command: "pwd" },
-        output: null,
+        detail: {
+          type: "shell",
+          command: "pwd",
+        },
         error: null,
       },
     };
@@ -45,7 +47,6 @@ describe("serializeAgentStreamEvent", () => {
       throw new Error("Expected timeline.tool_call event");
     }
     expect(serialized.item.status).toBe("running");
-    expect(serialized.item.output).toBeNull();
     expect(serialized.item.error).toBeNull();
   });
 
@@ -58,7 +59,11 @@ describe("serializeAgentStreamEvent", () => {
         callId: "call_legacy",
         name: "shell",
         status: "inProgress",
-        input: { command: "pwd" },
+        detail: {
+          type: "unknown",
+          rawInput: { command: "pwd" },
+          rawOutput: null,
+        },
       },
     } satisfies unknown;
 

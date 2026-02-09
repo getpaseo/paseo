@@ -614,22 +614,23 @@ function deriveDetail(name: string, input: unknown, output: unknown): ToolCallDe
 function buildBase(params: MapperParams): {
   callId: string;
   name: string;
-  input: unknown | null;
-  output: unknown | null;
-  detail?: ToolCallDetail;
+  detail: ToolCallDetail;
   metadata?: Record<string, unknown>;
 } {
   const parsedParams = ClaudeMapperParamsSchema.parse(params);
   const input = parsedParams.input ?? null;
   const output = parsedParams.output ?? null;
-  const detail = deriveDetail(parsedParams.name, input, output);
+  const detail =
+    deriveDetail(parsedParams.name, input, output) ?? {
+      type: "unknown",
+      rawInput: input,
+      rawOutput: output,
+    };
 
   return {
     callId: coerceCallId(parsedParams.callId, parsedParams.name, input),
     name: parsedParams.name,
-    input,
-    output,
-    ...(detail ? { detail } : {}),
+    detail,
     ...(parsedParams.metadata ? { metadata: parsedParams.metadata } : {}),
   };
 }
