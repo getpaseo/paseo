@@ -188,6 +188,14 @@ type FileDownloadTokenPayload = Extract<
   { type: "file_download_token_response" }
 >["payload"];
 
+type AgentUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent_update" }
+>["payload"];
+
+const getAgentIdFromUpdate = (update: AgentUpdatePayload): string =>
+  update.kind === "remove" ? update.agentId : update.agent.id;
+
 function normalizeAgentSnapshot(
   snapshot: AgentSnapshotPayload,
   serverId: string
@@ -310,7 +318,6 @@ export function SessionProvider({
   const setFileExplorer = useSessionStore((state) => state.setFileExplorer);
   const clearDraftInput = useDraftStore((state) => state.clearDraftInput);
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
-  const getSession = useSessionStore((state) => state.getSession);
   const updateSessionClient = useSessionStore((state) => state.updateSessionClient);
   const updateSessionConnection = useSessionStore(
     (state) => state.updateSessionConnection
@@ -354,6 +361,9 @@ export function SessionProvider({
   );
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
+  const pendingAgentUpdatesRef = useRef<Map<string, AgentUpdatePayload>>(
+    new Map()
+  );
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -499,9 +509,114 @@ export function SessionProvider({
   // If the client drops mid-initialization, clear pending flags
   useEffect(() => {
     if (!connectionSnapshot.isConnected) {
+      pendingAgentUpdatesRef.current.clear();
       setInitializingAgents(serverId, new Map());
     }
   }, [serverId, connectionSnapshot.isConnected, setInitializingAgents]);
+
+  const applyAgentUpdatePayload = useCallback(
+    (update: AgentUpdatePayload) => {
+      if (update.kind === "remove") {
+        const agentId = update.agentId;
+        previousAgentStatusRef.current.delete(agentId);
+        pendingAgentUpdatesRef.current.delete(agentId);
+
+        setAgents(serverId, (prev) => {
+          if (!prev.has(agentId)) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.delete(agentId);
+          return next;
+        });
+
+        setPendingPermissions(serverId, (prev) => {
+          if (prev.size === 0) {
+            return prev;
+          }
+          let changed = false;
+          const next = new Map(prev);
+          for (const [key, pending] of Array.from(next.entries())) {
+            if (pending.agentId === agentId) {
+              next.delete(key);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+
+        setQueuedMessages(serverId, (prev) => {
+          if (!prev.has(agentId)) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.delete(agentId);
+          return next;
+        });
+
+        return;
+      }
+
+      const agent = normalizeAgentSnapshot(update.agent, serverId);
+
+      console.log("[Session] Agent update:", agent.id, agent.status);
+
+      setAgents(serverId, (prev) => {
+        const next = new Map(prev);
+        next.set(agent.id, agent);
+        return next;
+      });
+
+      // Update agentLastActivity slice (top-level)
+      setAgentLastActivity(agent.id, agent.lastActivityAt);
+
+      setPendingPermissions(serverId, (prev) => {
+        const next = new Map(prev);
+        for (const [key, pending] of Array.from(next.entries())) {
+          if (pending.agentId === agent.id) {
+            next.delete(key);
+          }
+        }
+        for (const request of agent.pendingPermissions) {
+          const key = derivePendingPermissionKey(agent.id, request);
+          next.set(key, { key, agentId: agent.id, request });
+        }
+        return next;
+      });
+
+      // Flush queued messages when agent transitions from running to not running
+      const prevStatus = previousAgentStatusRef.current.get(agent.id);
+      if (prevStatus === "running" && agent.status !== "running") {
+        const session = useSessionStore.getState().sessions[serverId];
+        const queue = session?.queuedMessages.get(agent.id);
+        if (queue && queue.length > 0) {
+          const [next, ...rest] = queue;
+          console.log(
+            "[Session] Flushing queued message for agent:",
+            agent.id,
+            next.text
+          );
+          if (sendAgentMessageRef.current) {
+            void sendAgentMessageRef.current(agent.id, next.text, next.images);
+          }
+          setQueuedMessages(serverId, (prev) => {
+            const updated = new Map(prev);
+            updated.set(agent.id, rest);
+            return updated;
+          });
+        }
+      }
+
+      previousAgentStatusRef.current.set(agent.id, agent.status);
+    },
+    [
+      serverId,
+      setAgents,
+      setAgentLastActivity,
+      setPendingPermissions,
+      setQueuedMessages,
+    ]
+  );
 
   useEffect(() => {
     return () => {
@@ -774,97 +889,20 @@ export function SessionProvider({
     const unsubAgentUpdate = client.on("agent_update", (message) => {
       if (message.type !== "agent_update") return;
       const update = message.payload;
+      const agentId = getAgentIdFromUpdate(update);
+      const initKey = getInitKey(serverId, agentId);
+      const session = useSessionStore.getState().sessions[serverId];
+      const isSyncingHistory =
+        session?.initializingAgents.get(agentId) === true &&
+        Boolean(getInitDeferred(initKey));
 
-      if (update.kind === "remove") {
-        const agentId = update.agentId;
-        previousAgentStatusRef.current.delete(agentId);
-
-        setAgents(serverId, (prev) => {
-          if (!prev.has(agentId)) {
-            return prev;
-          }
-          const next = new Map(prev);
-          next.delete(agentId);
-          return next;
-        });
-
-        setPendingPermissions(serverId, (prev) => {
-          if (prev.size === 0) {
-            return prev;
-          }
-          let changed = false;
-          const next = new Map(prev);
-          for (const [key, pending] of Array.from(next.entries())) {
-            if (pending.agentId === agentId) {
-              next.delete(key);
-              changed = true;
-            }
-          }
-          return changed ? next : prev;
-        });
-
-        setQueuedMessages(serverId, (prev) => {
-          if (!prev.has(agentId)) {
-            return prev;
-          }
-          const next = new Map(prev);
-          next.delete(agentId);
-          return next;
-        });
-
+      if (isSyncingHistory) {
+        pendingAgentUpdatesRef.current.set(agentId, update);
         return;
       }
 
-      const agent = normalizeAgentSnapshot(update.agent, serverId);
-
-      console.log("[Session] Agent update:", agent.id, agent.status);
-
-      setAgents(serverId, (prev) => {
-        const next = new Map(prev);
-        next.set(agent.id, agent);
-        return next;
-      });
-
-      // Update agentLastActivity slice (top-level)
-      setAgentLastActivity(agent.id, agent.lastActivityAt);
-
-      setPendingPermissions(serverId, (prev) => {
-        const next = new Map(prev);
-        for (const [key, pending] of Array.from(next.entries())) {
-          if (pending.agentId === agent.id) {
-            next.delete(key);
-          }
-        }
-        for (const request of agent.pendingPermissions) {
-          const key = derivePendingPermissionKey(agent.id, request);
-          next.set(key, { key, agentId: agent.id, request });
-        }
-        return next;
-      });
-
-      // Flush queued messages when agent transitions from running to not running
-      const prevStatus = previousAgentStatusRef.current.get(agent.id);
-      if (prevStatus === "running" && agent.status !== "running") {
-        const session = useSessionStore.getState().sessions[serverId];
-        const queue = session?.queuedMessages.get(agent.id);
-        if (queue && queue.length > 0) {
-          const [next, ...rest] = queue;
-          console.log(
-            "[Session] Flushing queued message for agent:",
-            agent.id,
-            next.text
-          );
-          if (sendAgentMessageRef.current) {
-            void sendAgentMessageRef.current(agent.id, next.text, next.images);
-          }
-          setQueuedMessages(serverId, (prev) => {
-            const updated = new Map(prev);
-            updated.set(agent.id, rest);
-            return updated;
-          });
-        }
-      }
-      previousAgentStatusRef.current.set(agent.id, agent.status);
+      pendingAgentUpdatesRef.current.delete(agentId);
+      applyAgentUpdatePayload(update);
     });
 
     const unsubAgentStream = client.on("agent_stream", (message) => {
@@ -929,6 +967,8 @@ export function SessionProvider({
             timestamp: new Date(timestamp),
           }))
         );
+        const initKey = getInitKey(serverId, agentId);
+        const hasInFlightHistorySync = Boolean(getInitDeferred(initKey));
 
         setAgentStreamTail(serverId, (prev) => {
           const next = new Map(prev);
@@ -936,6 +976,12 @@ export function SessionProvider({
           return next;
         });
         clearAgentStreamHead(serverId, agentId);
+
+        const deferredUpdate = pendingAgentUpdatesRef.current.get(agentId);
+        pendingAgentUpdatesRef.current.delete(agentId);
+        if (hasInFlightHistorySync && deferredUpdate) {
+          applyAgentUpdatePayload(deferredUpdate);
+        }
 
         setInitializingAgents(serverId, (prev) => {
           if (prev.get(agentId) !== true) {
@@ -947,7 +993,6 @@ export function SessionProvider({
         });
 
         // Resolve the initialization promise (even for empty history)
-        const initKey = getInitKey(serverId, agentId);
         resolveInitDeferred(initKey);
       }
     );
@@ -1258,6 +1303,7 @@ export function SessionProvider({
       }
       const { agentId } = message.payload;
       console.log("[Session] Agent deleted:", agentId);
+      pendingAgentUpdatesRef.current.delete(agentId);
 
       setAgents(serverId, (prev) => {
         if (!prev.has(agentId)) {
@@ -1387,9 +1433,9 @@ export function SessionProvider({
     setFileExplorer,
     setHasHydratedAgents,
     updateConnectionStatus,
-    getSession,
     clearDraftInput,
     notifyAgentAttention,
+    applyAgentUpdatePayload,
   ]);
 
   const initializeAgent = useCallback(

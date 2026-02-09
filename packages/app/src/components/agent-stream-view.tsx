@@ -521,8 +521,9 @@ export function AgentStreamView({
     });
   }, [agentId, pendingPermissionItems.length, streamHead, streamItems]);
 
+  const showSyncingIndicator = isSyncingHistory;
   const showWorkingIndicator = agent.status === "running";
-  const showBottomBar = showWorkingIndicator || isVoiceMode;
+  const showBottomBar = showSyncingIndicator || showWorkingIndicator || isVoiceMode;
 
   const listHeaderComponent = useMemo(() => {
     const hasPermissions = pendingPermissionItems.length > 0;
@@ -532,7 +533,11 @@ export function AgentStreamView({
       return null;
     }
 
-    const leftContent = showWorkingIndicator ? <WorkingIndicator /> : null;
+    const leftContent = showSyncingIndicator
+      ? <SyncingIndicator />
+      : showWorkingIndicator
+        ? <WorkingIndicator />
+        : null;
 
     return (
       <View style={stylesheet.contentWrapper}>
@@ -582,6 +587,7 @@ export function AgentStreamView({
     );
   }, [
     pendingPermissionItems,
+    showSyncingIndicator,
     showWorkingIndicator,
     client,
     streamHead,
@@ -860,6 +866,15 @@ function WorkingIndicator() {
         <Animated.View style={[stylesheet.workingDot, dotTwoStyle]} />
         <Animated.View style={[stylesheet.workingDot, dotThreeStyle]} />
       </View>
+    </View>
+  );
+}
+
+function SyncingIndicator() {
+  return (
+    <View style={stylesheet.syncingIndicator}>
+      <ActivityIndicator size="small" color={stylesheet.syncingIndicatorText.color} />
+      <Text style={stylesheet.syncingIndicatorText}>Catching up…</Text>
     </View>
   );
 }
@@ -1297,6 +1312,17 @@ const stylesheet = StyleSheet.create((theme) => ({
     height: 6,
     borderRadius: 3,
     backgroundColor: theme.colors.foregroundMuted,
+  },
+  syncingIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    paddingLeft: theme.spacing[2],
+  },
+  syncingIndicatorText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   invertedWrapper: {
     transform: [{ scaleY: -1 }],

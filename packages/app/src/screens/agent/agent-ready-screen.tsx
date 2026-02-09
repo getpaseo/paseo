@@ -64,6 +64,7 @@ import { deriveBranchLabel, deriveProjectPath } from "@/utils/agent-display-info
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
 import { useToast } from "@/contexts/toast-context";
+import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -401,6 +402,13 @@ function AgentScreenContent({
   }, [resolvedAgentId, setFocusedAgentId]);
 
   const isInitializing = resolvedAgentId ? isInitializingFromMap !== false : false;
+  const isHistorySyncing = useMemo(() => {
+    if (!resolvedAgentId || !isInitializing) {
+      return false;
+    }
+    const initKey = getInitKey(serverId, resolvedAgentId);
+    return Boolean(getInitDeferred(initKey));
+  }, [resolvedAgentId, isInitializing, serverId]);
 
   const optimisticStreamItems = useMemo<StreamItem[]>(() => {
     if (!isPendingCreateForRoute || !pendingCreate) {
@@ -840,7 +848,7 @@ function AgentScreenContent({
                   shouldUseOptimisticStream ? mergedStreamItems : streamItems
                 }
                 pendingPermissions={pendingPermissions}
-                isSyncingHistory={isInitializing && !shouldUseOptimisticStream}
+                isSyncingHistory={isHistorySyncing && !shouldUseOptimisticStream}
               />
             </ReanimatedAnimated.View>
           </View>
