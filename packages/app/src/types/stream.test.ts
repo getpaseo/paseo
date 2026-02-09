@@ -175,6 +175,10 @@ describe("stream reducer canonical tool calls", () => {
 
     const summary = buildToolCallDisplayModel({
       name: tool.payload.data.name,
+      status: tool.payload.data.status,
+      input: tool.payload.data.input,
+      output: tool.payload.data.result,
+      error: tool.payload.data.error,
       detail: tool.payload.data.detail,
     }).summary;
     assert.strictEqual(summary, "npm test");
@@ -204,10 +208,45 @@ describe("stream reducer canonical tool calls", () => {
 
     const summary = buildToolCallDisplayModel({
       name: tool.payload.data.name,
+      status: tool.payload.data.status,
+      input: tool.payload.data.input,
+      output: tool.payload.data.result,
+      error: tool.payload.data.error,
       detail: tool.payload.data.detail,
       cwd: "/tmp/repo",
     }).summary;
     assert.strictEqual(summary, "README.md");
+  });
+
+  it("does not infer command summary when detail is absent", () => {
+    const callId = "running-summary-shell-input-only";
+    const state = hydrateStreamState([
+      {
+        event: canonicalToolTimeline({
+          provider: "codex",
+          callId,
+          name: "exec_command",
+          status: "running",
+          input: { command: "npm run lint" },
+          output: null,
+        }),
+        timestamp: new Date("2025-01-01T10:17:00Z"),
+      },
+    ]);
+
+    const tool = findToolByCallId(state, callId);
+    assert.ok(tool);
+
+    const display = buildToolCallDisplayModel({
+      name: tool.payload.data.name,
+      status: tool.payload.data.status,
+      input: tool.payload.data.input,
+      output: tool.payload.data.result,
+      error: tool.payload.data.error,
+      detail: tool.payload.data.detail,
+    });
+    assert.strictEqual(display.summary, undefined);
+    assert.strictEqual(display.displayName, "Exec Command");
   });
 
   it("preserves early input when later updates contain null input", () => {

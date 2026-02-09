@@ -46,13 +46,6 @@ import {
   Check,
   CheckSquare,
   X,
-  Wrench,
-  Pencil,
-  Eye,
-  SquareTerminal,
-  Search,
-  Brain,
-  Bot,
   Copy,
   TriangleAlertIcon,
   Scissors,
@@ -72,9 +65,8 @@ import type { TodoEntry } from "@/types/stream";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import {
   buildToolCallDisplayModel,
-  formatToolCallError,
-  type ToolCallKind,
 } from "@/utils/tool-call-display";
+import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import { parseInlinePathToken, type InlinePathTarget } from "@/utils/inline-path";
 export type { InlinePathTarget } from "@/utils/inline-path";
@@ -108,29 +100,6 @@ export function MessageOuterSpacingProvider({
 function useDisableOuterSpacing(disableOuterSpacing: boolean | undefined) {
   const contextValue = useContext(MessageOuterSpacingContext);
   return disableOuterSpacing ?? contextValue;
-}
-
-function hexToRgba(hexColor: string, alpha: number) {
-  const clampedAlpha = Math.max(0, Math.min(1, alpha));
-  const hex = hexColor.replace("#", "");
-  const normalized =
-    hex.length === 3
-      ? hex
-          .split("")
-          .map((char) => `${char}${char}`)
-          .join("")
-      : hex;
-
-  if (!/^[\da-fA-F]{6}$/.test(normalized)) {
-    return `rgba(255, 255, 255, ${clampedAlpha})`;
-  }
-
-  const intValue = Number.parseInt(normalized, 16);
-  const red = (intValue >> 16) & 255;
-  const green = (intValue >> 8) & 255;
-  const blue = intValue & 255;
-
-  return `rgba(${red}, ${green}, ${blue}, ${clampedAlpha})`;
 }
 
 const userMessageStylesheet = StyleSheet.create((theme) => ({
@@ -445,9 +414,8 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
   shimmerOverlay: {
     position: "absolute",
-    top: 3,
-    bottom: 3,
-    borderRadius: 999,
+    top: 0,
+    bottom: 0,
   },
 }));
 
@@ -1044,7 +1012,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
     if (isLoading) {
       shimmer.value = -1;
       shimmer.value = withRepeat(
-        withTiming(1, { duration: 3200, easing: Easing.linear }),
+        withTiming(1, { duration: 2400, easing: Easing.bezier(0.4, 0, 0.6, 1) }),
         -1
       );
     } else {
@@ -1053,15 +1021,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
     }
   }, [isLoading]);
 
-  const shimmerBandWidth = 14;
-  const shimmerGradientColors = useMemo(
-    () => ({
-      edge: hexToRgba(theme.colors.foreground, 0),
-      soft: hexToRgba(theme.colors.foreground, 0.08),
-      core: hexToRgba(theme.colors.foreground, 0.24),
-    }),
-    [theme.colors.foreground]
-  );
+  const shimmerBandWidth = 18;
   const shimmerStyle = useAnimatedStyle(() => {
     const travel = badgeWidth + shimmerBandWidth;
     return {
@@ -1148,13 +1108,13 @@ const ExpandableBadge = memo(function ExpandableBadge({
                           x2="1"
                           y2="0"
                         >
-                          <Stop offset="0" stopColor={shimmerGradientColors.edge} />
-                          <Stop offset="0.38" stopColor={shimmerGradientColors.edge} />
-                          <Stop offset="0.48" stopColor={shimmerGradientColors.soft} />
-                          <Stop offset="0.5" stopColor={shimmerGradientColors.core} />
-                          <Stop offset="0.52" stopColor={shimmerGradientColors.soft} />
-                          <Stop offset="0.62" stopColor={shimmerGradientColors.edge} />
-                          <Stop offset="1" stopColor={shimmerGradientColors.edge} />
+                          <Stop offset="0" stopColor={theme.colors.surface1} stopOpacity="0" />
+                          <Stop offset="0.42" stopColor={theme.colors.surface1} stopOpacity="0" />
+                          <Stop offset="0.48" stopColor={theme.colors.surface1} stopOpacity="0.35" />
+                          <Stop offset="0.5" stopColor={theme.colors.surface1} stopOpacity="1" />
+                          <Stop offset="0.52" stopColor={theme.colors.surface1} stopOpacity="0.35" />
+                          <Stop offset="0.58" stopColor={theme.colors.surface1} stopOpacity="0" />
+                          <Stop offset="1" stopColor={theme.colors.surface1} stopOpacity="0" />
                         </LinearGradient>
                       </Defs>
                       <Rect width="100%" height="100%" fill="url(#shimmerGrad)" />
@@ -1191,9 +1151,9 @@ const ExpandableBadge = memo(function ExpandableBadge({
 
 interface ToolCallProps {
   toolName: string;
-  args: any;
-  result?: any;
-  error?: any;
+  args: unknown | null;
+  result?: unknown | null;
+  error?: unknown | null;
   status: "executing" | "running" | "completed" | "failed" | "canceled";
   detail?: ToolCallDetail;
   cwd?: string;
@@ -1204,15 +1164,6 @@ interface ToolCallProps {
   onInlineDetailsExpandedChange?: (expanded: boolean) => void;
 }
 
-// Icon mapping for tool kinds
-const toolKindIcons: Record<string, any> = {
-  edit: Pencil,
-  read: Eye,
-  execute: SquareTerminal,
-  search: Search,
-  thinking: Brain,
-  agent: Bot,
-};
 const TOOL_CALL_LOG_TAG = "[ToolCall]";
 const TOOL_CALL_COMMIT_THRESHOLD_MS = 16;
 
@@ -1241,14 +1192,24 @@ export const ToolCall = memo(function ToolCall({
     UnistylesRuntime.breakpoint === "sm";
 
   const displayModel = useMemo(
-    () => buildToolCallDisplayModel({ name: toolName, detail, metadata, cwd }),
-    [toolName, detail, metadata, cwd]
+    () =>
+      buildToolCallDisplayModel({
+        name: toolName,
+        status: status === "executing" ? "running" : status,
+        input: args ?? null,
+        output: result ?? null,
+        error: error ?? null,
+        detail,
+        metadata,
+        cwd,
+      }),
+    [toolName, status, args, result, error, detail, metadata, cwd]
   );
   const displayName = displayModel.displayName;
-  const kind: ToolCallKind = displayModel.kind;
   const summary = displayModel.summary;
-  const errorText = useMemo(() => formatToolCallError(error), [error]);
-  const IconComponent = toolKindIcons[kind] || Wrench;
+  const errorText = displayModel.errorText;
+  const iconCategory = detail?.type ?? toolName.trim().toLowerCase();
+  const IconComponent = resolveToolCallIcon(toolName, detail);
 
   // Check if there's any content to display
   const hasDetails =
@@ -1260,7 +1221,7 @@ export const ToolCall = memo(function ToolCall({
     }
     if (isMobile) {
       openToolCall({
-        kind,
+        toolName,
         displayName,
         summary,
         detail,
@@ -1271,7 +1232,7 @@ export const ToolCall = memo(function ToolCall({
     } else {
       setIsExpanded((prev) => !prev);
     }
-  }, [isMobile, openToolCall, kind, displayName, summary, detail, args, result, errorText]);
+  }, [isMobile, openToolCall, toolName, displayName, summary, detail, args, result, errorText]);
 
   useEffect(() => {
     if (isMobile || !isPerfLoggingEnabled()) {
@@ -1288,7 +1249,7 @@ export const ToolCall = memo(function ToolCall({
         perfLog(TOOL_CALL_LOG_TAG, {
           event: isExpanded ? "expand_commit" : "collapse_commit",
           toolName,
-          kind,
+          iconCategory,
           durationMs: Math.round(durationMs),
         });
       }
@@ -1298,7 +1259,7 @@ export const ToolCall = memo(function ToolCall({
     } else {
       logCommit();
     }
-  }, [isExpanded, isMobile, toolName, kind]);
+  }, [isExpanded, isMobile, toolName, iconCategory]);
 
   useEffect(() => {
     if (!onInlineDetailsHoverChange || isMobile || isExpanded) {

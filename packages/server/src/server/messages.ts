@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import { toAgentPayload } from "./agent/agent-projections.js";
 import type { AgentStreamEvent } from "./agent/agent-sdk-types.js";
@@ -5,8 +6,20 @@ import type {
   AgentSnapshotPayload,
   AgentStreamEventPayload,
 } from "../shared/messages.js";
+import { AgentStreamEventPayloadSchema as AgentStreamEventPayloadRuntimeSchema } from "../shared/messages.js";
 
 export * from "../shared/messages.js";
+type AgentStreamEventPayloadInput = z.input<typeof AgentStreamEventPayloadRuntimeSchema>;
+
+function validateStreamEventPayload(
+  payload: AgentStreamEventPayloadInput
+): AgentStreamEventPayload | null {
+  const parsed = AgentStreamEventPayloadRuntimeSchema.safeParse(payload);
+  if (!parsed.success) {
+    return null;
+  }
+  return parsed.data;
+}
 
 export function serializeAgentSnapshot(
   agent: ManagedAgent,
@@ -17,21 +30,19 @@ export function serializeAgentSnapshot(
 
 export function serializeAgentStreamEvent(
   event: AgentStreamEvent
-): AgentStreamEventPayload {
+): AgentStreamEventPayload | null {
   if (event.type === "attention_required") {
     // Providers may emit attention_required without per-client notification context.
     // The websocket server emits attention_required with shouldNotify computed per client.
     // Normalize provider events so they satisfy the shared schema.
-    return {
-      ...(event as Omit<AgentStreamEventPayload, "shouldNotify">),
+    return validateStreamEventPayload({
+      type: "attention_required",
+      provider: event.provider,
+      reason: event.reason,
+      timestamp: event.timestamp,
       shouldNotify: false,
-    } as AgentStreamEventPayload;
+    });
   }
-  if (event.type !== "timeline") {
-    return event as AgentStreamEventPayload;
-  }
-  if (event.item.type !== "user_message") {
-    return event as AgentStreamEventPayload;
-  }
-  return event as AgentStreamEventPayload;
+
+  return validateStreamEventPayload(event as AgentStreamEventPayloadInput);
 }

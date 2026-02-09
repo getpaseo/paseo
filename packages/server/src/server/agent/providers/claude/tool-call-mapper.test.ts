@@ -28,6 +28,52 @@ describe("claude tool-call mapper", () => {
     }
   });
 
+  it("maps running known tool variants with detail for early summaries", () => {
+    const readItem = mapClaudeRunningToolCall({
+      callId: "claude-running-read",
+      name: "read_file",
+      input: { file_path: "README.md" },
+      output: null,
+    });
+    expect(readItem.detail).toEqual({
+      type: "read",
+      filePath: "README.md",
+    });
+
+    const writeItem = mapClaudeRunningToolCall({
+      callId: "claude-running-write",
+      name: "write_file",
+      input: { file_path: "src/new.ts" },
+      output: null,
+    });
+    expect(writeItem.detail).toEqual({
+      type: "write",
+      filePath: "src/new.ts",
+    });
+
+    const editItem = mapClaudeRunningToolCall({
+      callId: "claude-running-edit",
+      name: "apply_patch",
+      input: { file_path: "src/index.ts" },
+      output: null,
+    });
+    expect(editItem.detail).toEqual({
+      type: "edit",
+      filePath: "src/index.ts",
+    });
+
+    const searchItem = mapClaudeRunningToolCall({
+      callId: "claude-running-search",
+      name: "web_search",
+      input: { query: "tool call mapping" },
+      output: null,
+    });
+    expect(searchItem.detail).toEqual({
+      type: "search",
+      query: "tool call mapping",
+    });
+  });
+
   it("maps completed read calls with detail enrichment", () => {
     const item = mapClaudeCompletedToolCall({
       callId: "claude-call-2",
@@ -48,6 +94,41 @@ describe("claude tool-call mapper", () => {
     }
   });
 
+  it("preserves read content from array/object output variants", () => {
+    const arrayContent = mapClaudeCompletedToolCall({
+      callId: "claude-read-array",
+      name: "read_file",
+      input: { file_path: "README.md" },
+      output: {
+        content: [
+          { type: "output_text", text: "alpha" },
+          { type: "output_text", content: "beta" },
+        ],
+      },
+    });
+
+    expect(arrayContent.detail?.type).toBe("read");
+    if (arrayContent.detail?.type === "read") {
+      expect(arrayContent.detail.content).toBe("alpha\nbeta");
+    }
+
+    const objectContent = mapClaudeCompletedToolCall({
+      callId: "claude-read-object",
+      name: "read_file",
+      input: { file_path: "README.md" },
+      output: {
+        structured_content: {
+          content: { type: "output_text", text: "gamma" },
+        },
+      },
+    });
+
+    expect(objectContent.detail?.type).toBe("read");
+    if (objectContent.detail?.type === "read") {
+      expect(objectContent.detail.content).toBe("gamma");
+    }
+  });
+
   it("maps failed calls with required error", () => {
     const item = mapClaudeFailedToolCall({
       callId: "claude-call-3",
@@ -62,6 +143,42 @@ describe("claude tool-call mapper", () => {
     expect(item.callId).toBe("claude-call-3");
     expect(item.input).toEqual({ command: "false" });
     expect(item.output).toBeNull();
+  });
+
+  it("maps write/edit/search known shapes with distinct detail types", () => {
+    const writeItem = mapClaudeCompletedToolCall({
+      callId: "claude-write-1",
+      name: "write_file",
+      input: { file_path: "src/new.ts", content: "export const x = 1;" },
+      output: null,
+    });
+    expect(writeItem.detail?.type).toBe("write");
+    if (writeItem.detail?.type === "write") {
+      expect(writeItem.detail.filePath).toBe("src/new.ts");
+    }
+
+    const editItem = mapClaudeCompletedToolCall({
+      callId: "claude-edit-1",
+      name: "apply_patch",
+      input: { file_path: "src/index.ts", patch: "@@\\n-old\\n+new\\n" },
+      output: null,
+    });
+    expect(editItem.detail?.type).toBe("edit");
+    if (editItem.detail?.type === "edit") {
+      expect(editItem.detail.filePath).toBe("src/index.ts");
+      expect(editItem.detail.unifiedDiff).toContain("@@");
+    }
+
+    const searchItem = mapClaudeCompletedToolCall({
+      callId: "claude-search-1",
+      name: "web_search",
+      input: { query: "tool call mapping" },
+      output: null,
+    });
+    expect(searchItem.detail).toEqual({
+      type: "search",
+      query: "tool call mapping",
+    });
   });
 
   it("keeps unknown tools canonical without detail", () => {

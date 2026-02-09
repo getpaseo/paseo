@@ -663,9 +663,14 @@ export class Session {
           }
         }
 
+        const serializedEvent = serializeAgentStreamEvent(event.event);
+        if (!serializedEvent) {
+          return;
+        }
+
         const payload = {
           agentId: event.agentId,
-          event: serializeAgentStreamEvent(event.event),
+          event: serializedEvent,
           timestamp: new Date().toISOString(),
         } as const;
 
@@ -4287,14 +4292,22 @@ export class Session {
 
   private emitAgentTimelineSnapshot(agent: ManagedAgent): number {
     const timeline = this.agentManager.getTimeline(agent.id);
-    const events = timeline.map((item) => ({
-      event: serializeAgentStreamEvent({
+    const events = timeline.flatMap((item) => {
+      const serializedEvent = serializeAgentStreamEvent({
         type: "timeline",
         provider: agent.provider,
         item,
-      }),
-      timestamp: new Date().toISOString(),
-    }));
+      });
+      if (!serializedEvent) {
+        return [];
+      }
+      return [
+        {
+          event: serializedEvent,
+          timestamp: new Date().toISOString(),
+        },
+      ];
+    });
 
     this.emit({
       type: "agent_stream_snapshot",

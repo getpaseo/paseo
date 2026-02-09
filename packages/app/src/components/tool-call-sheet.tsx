@@ -15,15 +15,15 @@ import {
   BottomSheetBackdrop,
   BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
-import { Pencil, Eye, SquareTerminal, Search, Bot, Wrench, X } from "lucide-react-native";
+import { X } from "lucide-react-native";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
-import type { ToolCallKind } from "@/utils/tool-call-display";
+import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { ToolCallDetailsContent } from "./tool-call-details";
 
 // ----- Types -----
 
 export type ToolCallSheetData = {
-  kind: ToolCallKind;
+  toolName: string;
   displayName: string;
   summary?: string;
   detail?: ToolCallDetail;
@@ -48,16 +48,6 @@ export function useToolCallSheet(): ToolCallSheetContextValue {
   }
   return context;
 }
-
-// ----- Icon Mapping -----
-
-const toolKindIcons: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
-  edit: Pencil,
-  read: Eye,
-  execute: SquareTerminal,
-  search: Search,
-  agent: Bot,
-};
 
 // ----- Custom Background Component -----
 
@@ -142,9 +132,9 @@ interface ToolCallSheetContentProps {
 }
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
-  const { kind, displayName, detail, input, output, errorText } = data;
+  const { toolName, displayName, detail, input, output, errorText } = data;
 
-  const IconComponent = toolKindIcons[kind] || Wrench;
+  const IconComponent = resolveToolCallIcon(toolName, detail);
 
   return (
     <View style={styles.container}>

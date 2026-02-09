@@ -229,67 +229,13 @@ const ToolCallCanceledPayloadSchema = ToolCallBasePayloadSchema.extend({
   error: z.null(),
 });
 
-const LEGACY_TOOL_CALL_STATUS_MAP: Record<string, ToolCallTimelineItem["status"]> = {
-  inprogress: "running",
-  in_progress: "running",
-  started: "running",
-  complete: "completed",
-  done: "completed",
-  success: "completed",
-  errored: "failed",
-  error: "failed",
-  cancelled: "canceled",
-};
-
-function normalizeLegacyToolCallPayload(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return value;
-  }
-
-  const record = value as Record<string, unknown>;
-  if (record.type !== "tool_call") {
-    return value;
-  }
-
-  const normalized: Record<string, unknown> = { ...record };
-  const rawStatus = typeof record.status === "string" ? record.status.trim() : "";
-
-  if (rawStatus.length > 0) {
-    const statusKey = rawStatus.toLowerCase().replace(/[\s-]+/g, "_");
-    const mappedStatus = LEGACY_TOOL_CALL_STATUS_MAP[statusKey];
-    if (mappedStatus) {
-      normalized.status = mappedStatus;
-    }
-  }
-
-  if (!("input" in normalized)) {
-    normalized.input = null;
-  }
-
-  if (!("output" in normalized)) {
-    normalized.output = null;
-  }
-
-  if (normalized.status === "failed") {
-    if (normalized.error === undefined || normalized.error === null) {
-      normalized.error = { message: "Tool call failed" };
-    }
-  } else if (normalized.error === undefined || normalized.error !== null) {
-    normalized.error = null;
-  }
-
-  return normalized;
-}
-
-const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, z.ZodTypeDef, unknown> = z.preprocess(
-  normalizeLegacyToolCallPayload,
+const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, z.ZodTypeDef, unknown> =
   z.union([
     ToolCallRunningPayloadSchema,
     ToolCallCompletedPayloadSchema,
     ToolCallFailedPayloadSchema,
     ToolCallCanceledPayloadSchema,
-  ])
-);
+  ]);
 
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, z.ZodTypeDef, unknown> =
   z.union([
@@ -388,7 +334,7 @@ const AgentPersistenceHandleSchema: z.ZodType<AgentPersistenceHandle | null> =
     .object({
       provider: AgentProviderSchema,
       sessionId: z.string(),
-      nativeHandle: z.any().optional(),
+      nativeHandle: z.string().optional(),
       metadata: z.record(z.unknown()).optional(),
     })
     .nullable();

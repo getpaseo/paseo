@@ -1,5 +1,6 @@
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import { isLikelyExternalToolName } from "./tool-name-normalization.js";
+import { buildToolCallDisplayModel } from "../../shared/tool-call-display.js";
 
 const DEFAULT_MAX_ITEMS = 40;
 const MAX_TOOL_INPUT_CHARS = 400;
@@ -41,50 +42,6 @@ function formatToolInputJson(input: unknown): string | null {
     return `${encoded.slice(0, MAX_TOOL_INPUT_CHARS)}...`;
   } catch {
     return null;
-  }
-}
-
-function resolveToolDisplayName(item: Extract<AgentTimelineItem, { type: "tool_call" }>): string {
-  switch (item.detail?.type) {
-    case "shell":
-      return "Shell";
-    case "read":
-      return "Read";
-    case "edit":
-      return "Edit";
-    case "write":
-      return "Write";
-    case "search":
-      return "Search";
-    default:
-      return item.name;
-  }
-}
-
-function resolveToolSummary(
-  item: Extract<AgentTimelineItem, { type: "tool_call" }>
-): string | undefined {
-  if (item.name.trim().toLowerCase() === "task") {
-    const metadata = item.metadata as { subAgentActivity?: unknown } | undefined;
-    if (typeof metadata?.subAgentActivity === "string") {
-      const summary = metadata.subAgentActivity.trim();
-      if (summary.length > 0) {
-        return summary;
-      }
-    }
-  }
-
-  switch (item.detail?.type) {
-    case "shell":
-      return item.detail.command;
-    case "read":
-    case "edit":
-    case "write":
-      return item.detail.filePath;
-    case "search":
-      return item.detail.query;
-    default:
-      return undefined;
   }
 }
 
@@ -211,8 +168,17 @@ export function curateAgentActivity(
       case "tool_call": {
         flushBuffers(lines, buffers);
         const inputJson = formatToolInputJson(item.input);
-        const displayName = resolveToolDisplayName(item);
-        const summary = resolveToolSummary(item);
+        const display = buildToolCallDisplayModel({
+          name: item.name,
+          status: item.status,
+          input: item.input,
+          output: item.output,
+          error: item.error,
+          detail: item.detail,
+          metadata: item.metadata,
+        });
+        const displayName = display.displayName;
+        const summary = display.summary;
         if (isLikelyExternalToolName(item.name) && inputJson) {
           lines.push(`[${displayName}] ${inputJson}`);
           break;

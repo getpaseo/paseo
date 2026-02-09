@@ -158,6 +158,10 @@ export interface TodoListItem {
   items: TodoEntry[];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function normalizeChunk(text: string): { chunk: string; hasContent: boolean } {
   if (!text) {
     return { chunk: "", hasContent: false };
@@ -167,6 +171,16 @@ function normalizeChunk(text: string): { chunk: string; hasContent: boolean } {
     return { chunk: "", hasContent: false };
   }
   return { chunk, hasContent: /\S/.test(chunk) };
+}
+
+function markThoughtReady(item: ThoughtItem): ThoughtItem {
+  if (item.status === "ready") {
+    return item;
+  }
+  return {
+    ...item,
+    status: "ready",
+  };
 }
 
 function appendUserMessage(
@@ -228,7 +242,7 @@ function appendAssistantMessage(
   const secondLast = state[state.length - 2];
   if (last?.kind === "user_message" && secondLast?.kind === "assistant_message") {
     const updated: AssistantMessageItem = {
-      ...(secondLast as AssistantMessageItem),
+      ...secondLast,
       text: `${secondLast.text}${chunk}`,
       timestamp,
     };
@@ -290,7 +304,7 @@ function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
   const nextState = state.map((entry) => {
     if (entry.kind === "thought" && entry.status !== "ready") {
       mutated = true;
-      return { ...entry, status: "ready" as ThoughtStatus };
+      return markThoughtReady(entry);
     }
     return entry;
   });
@@ -311,12 +325,7 @@ function findExistingAgentToolCallIndex(
 }
 
 function hasNonEmptyObject(value: unknown): boolean {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      Object.keys(value as Record<string, unknown>).length > 0
-  );
+  return isRecord(value) && Object.keys(value).length > 0;
 }
 
 function mergeCanonicalValue(
@@ -362,7 +371,10 @@ function appendAgentToolCall(
 
   if (existingIndex >= 0) {
     const next = [...state];
-    const existing = next[existingIndex] as AgentToolCallItem;
+    const existing = next[existingIndex];
+    if (!existing || !isAgentToolCallItem(existing)) {
+      return state;
+    }
     const mergedInput = mergeCanonicalValue(existing.payload.data.input, data.input);
     const mergedResult = mergeCanonicalValue(existing.payload.data.result, data.result);
     const mergedStatus = mergeAgentToolCallStatus(
@@ -570,7 +582,10 @@ export function reduceStreamUpdate(
             // Avoid rendering legacy plan-mode todo timeline items as Tasks.
             break;
           }
-          const items = (item.items ?? []) as TodoEntry[];
+          const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
+            text: todo.text,
+            completed: Boolean(todo.completed),
+          }));
           nextState = appendTodoList(state, event.provider, items, timestamp);
           break;
         }
@@ -591,7 +606,10 @@ export function reduceStreamUpdate(
               (s) => s.kind === "compaction" && s.status === "loading"
             );
             if (loadingIdx >= 0) {
-              const existing = state[loadingIdx] as CompactionItem;
+              const existing = state[loadingIdx];
+              if (!existing || existing.kind !== "compaction") {
+                break;
+              }
               const updated: CompactionItem = {
                 ...existing,
                 status: "completed",
@@ -704,7 +722,7 @@ function getEventItemKind(
 function finalizeHeadItems(head: StreamItem[]): StreamItem[] {
   return head.map((item) => {
     if (item.kind === "thought" && item.status !== "ready") {
-      return { ...item, status: "ready" as ThoughtStatus };
+      return markThoughtReady(item);
     }
     return item;
   });
@@ -881,7 +899,7 @@ export function applyStreamEventWithBuffer(params: {
   const head: StreamItem[] = params.buffer
     ? [
         {
-          kind: "assistant_message" as const,
+          kind: "assistant_message",
           id: params.buffer.id,
           text: params.buffer.text,
           timestamp: params.buffer.timestamp,

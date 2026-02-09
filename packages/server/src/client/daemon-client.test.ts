@@ -179,13 +179,14 @@ describe("DaemonClient", () => {
     await expect(promise).rejects.toThrow("boom");
 
     // Ensure we didn't leave a waiter behind that will reject later.
-    expect((client as any).waiters.size).toBe(0);
+    const internal = client as unknown as { waiters: Set<unknown> };
+    expect(internal.waiters.size).toBe(0);
 
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
   });
 
-  test("parses agent_stream tool_call payloads (including legacy inProgress) without crashing", async () => {
+  test("parses canonical agent_stream tool_call payloads without crashing", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();
 
@@ -219,8 +220,10 @@ describe("DaemonClient", () => {
               type: "tool_call",
               callId: "call_cli_stream",
               name: "shell",
-              status: "inProgress",
+              status: "running",
               input: { command: "pwd" },
+              output: null,
+              error: null,
             },
           },
         },
@@ -250,7 +253,55 @@ describe("DaemonClient", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  test("parses agent_stream_snapshot tool_call payloads without crashing", async () => {
+  test("drops legacy agent_stream tool_call payloads and logs validation warning", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const received: unknown[] = [];
+    const unsubscribe = client.on("agent_stream", (msg) => {
+      received.push(msg);
+    });
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent_stream",
+        payload: {
+          agentId: "agent_cli",
+          timestamp: "2026-02-08T20:20:00.000Z",
+          event: {
+            type: "timeline",
+            provider: "codex",
+            item: {
+              type: "tool_call",
+              callId: "call_cli_stream_legacy",
+              name: "shell",
+              status: "inProgress",
+              input: { command: "pwd" },
+            },
+          },
+        },
+      })
+    );
+
+    unsubscribe();
+
+    expect(received).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  test("parses canonical agent_stream_snapshot tool_call payloads without crashing", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();
 
@@ -271,8 +322,32 @@ describe("DaemonClient", () => {
       received.push(msg);
     });
 
-    const snapshot = loadLegacySnapshotFixture();
-    mock.triggerMessage(wrapSessionMessage(snapshot));
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent_stream_snapshot",
+        payload: {
+          agentId: "agent_cli",
+          events: [
+            {
+              timestamp: "2026-02-08T20:20:00.000Z",
+              event: {
+                type: "timeline",
+                provider: "codex",
+                item: {
+                  type: "tool_call",
+                  callId: "call_cli_snapshot",
+                  name: "shell",
+                  status: "running",
+                  input: { command: "pwd" },
+                  output: null,
+                  error: null,
+                },
+              },
+            },
+          ],
+        },
+      })
+    );
 
     unsubscribe();
 
@@ -301,5 +376,35 @@ describe("DaemonClient", () => {
       expect(firstTimeline.item.output).toBeNull();
     }
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test("drops legacy agent_stream_snapshot tool_call payloads and logs validation warning", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const received: unknown[] = [];
+    const unsubscribe = client.on("agent_stream_snapshot", (msg) => {
+      received.push(msg);
+    });
+
+    const snapshot = loadLegacySnapshotFixture();
+    mock.triggerMessage(wrapSessionMessage(snapshot));
+
+    unsubscribe();
+
+    expect(received).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalled();
   });
 });

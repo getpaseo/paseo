@@ -13,17 +13,10 @@ function loadFixture(name: string): unknown {
 }
 
 describe("shared messages stream parsing", () => {
-  it("parses legacy inProgress tool_call snapshots and normalizes status", () => {
+  it("rejects legacy inProgress tool_call snapshots", () => {
     const fixture = loadFixture("legacy-agent-stream-snapshot-inProgress.json");
-    const parsed = AgentStreamSnapshotMessageSchema.parse(fixture);
-
-    const first = parsed.payload.events[0]?.event;
-    expect(first?.type).toBe("timeline");
-    if (first?.type === "timeline" && first.item.type === "tool_call") {
-      expect(first.item.status).toBe("running");
-      expect(first.item.error).toBeNull();
-      expect(first.item.output).toBeNull();
-    }
+    const parsed = AgentStreamSnapshotMessageSchema.safeParse(fixture);
+    expect(parsed.success).toBe(false);
   });
 
   it("parses representative agent_stream tool_call event", () => {
@@ -61,24 +54,16 @@ describe("shared messages stream parsing", () => {
     }
   });
 
-  it("parses websocket envelope for agent_stream_snapshot with legacy status", () => {
+  it("rejects websocket envelope for agent_stream_snapshot with legacy status", () => {
     const fixture = loadFixture("legacy-agent-stream-snapshot-inProgress.json") as {
       type: "agent_stream_snapshot";
       payload: unknown;
     };
 
-    const wrapped = WSOutboundMessageSchema.parse({
+    const wrapped = WSOutboundMessageSchema.safeParse({
       type: "session",
       message: fixture,
     });
-
-    if (wrapped.type === "session" && wrapped.message.type === "agent_stream_snapshot") {
-      const first = wrapped.message.payload.events[0]?.event;
-      expect(first?.type).toBe("timeline");
-      if (first?.type === "timeline" && first.item.type === "tool_call") {
-        expect(first.item.status).toBe("running");
-        expect(first.item.error).toBeNull();
-      }
-    }
+    expect(wrapped.success).toBe(false);
   });
 });

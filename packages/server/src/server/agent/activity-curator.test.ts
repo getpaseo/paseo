@@ -70,6 +70,38 @@ describe("curateAgentActivity", () => {
     expect(result).toContain("[Shell] npm test");
   });
 
+  it("does not infer summary from raw input when detail is missing", () => {
+    const timeline: AgentTimelineItem[] = [
+      toolCallItem({
+        callId: "shell-no-detail",
+        name: "exec_command",
+        status: "running",
+        input: { command: "npm run lint" },
+      }),
+      toolCallItem({
+        callId: "read-no-detail",
+        name: "read_file",
+        status: "running",
+        input: { path: "src/index.ts" },
+      }),
+      toolCallItem({
+        callId: "search-no-detail",
+        name: "web_search",
+        status: "running",
+        input: { query: "zod union" },
+      }),
+    ];
+
+    const result = curateAgentActivity(timeline);
+
+    expect(result).toContain("[Exec Command]");
+    expect(result).toContain("[Read File]");
+    expect(result).toContain("[Web Search]");
+    expect(result).not.toContain("npm run lint");
+    expect(result).not.toContain("src/index.ts");
+    expect(result).not.toContain("zod union");
+  });
+
   it("falls back to input json for likely external tools", () => {
     const timeline: AgentTimelineItem[] = [
       toolCallItem({

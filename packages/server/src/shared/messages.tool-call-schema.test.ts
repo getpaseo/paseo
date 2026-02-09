@@ -69,7 +69,7 @@ describe("shared messages tool_call schema", () => {
     expect(unknownStatus.success).toBe(false);
   });
 
-  it("normalizes recoverable legacy status/error combinations", () => {
+  it("rejects legacy status/error combinations without normalization", () => {
     const completedWithError = AgentTimelineItemPayloadSchema.safeParse({
       ...canonicalBase(),
       status: "completed",
@@ -91,18 +91,15 @@ describe("shared messages tool_call schema", () => {
       error: null,
     });
 
-    expect(completedWithError.success).toBe(true);
-    expect(failedWithoutError.success).toBe(true);
-    expect(missingOutput.success).toBe(true);
+    const legacyStatus = AgentTimelineItemPayloadSchema.safeParse({
+      ...canonicalBase(),
+      status: "inProgress",
+      error: null,
+    });
 
-    if (completedWithError.success && completedWithError.data.type === "tool_call") {
-      expect(completedWithError.data.error).toBeNull();
-    }
-    if (failedWithoutError.success && failedWithoutError.data.type === "tool_call") {
-      expect(failedWithoutError.data.error).toEqual({ message: "Tool call failed" });
-    }
-    if (missingOutput.success && missingOutput.data.type === "tool_call") {
-      expect(missingOutput.data.output).toBeNull();
-    }
+    expect(completedWithError.success).toBe(false);
+    expect(failedWithoutError.success).toBe(false);
+    expect(missingOutput.success).toBe(false);
+    expect(legacyStatus.success).toBe(false);
   });
 });

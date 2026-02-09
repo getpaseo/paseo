@@ -1,6 +1,13 @@
 import { z } from "zod";
 
 import type { ToolCallDetail, ToolCallTimelineItem } from "../../agent-sdk-types.js";
+import {
+  coerceToolCallId,
+  commandFromValue,
+  flattenReadContent as flattenToolReadContent,
+  nonEmptyString,
+  truncateDiffText,
+} from "../tool-call-mapper-utils.js";
 
 type CodexMapperOptions = { cwd?: string | null };
 
@@ -18,36 +25,32 @@ const CodexRolloutToolCallParamsSchema = z
   })
   .passthrough();
 
-const CodexFileReferenceSchema = z
-  .object({
-    file_path: z.string().optional(),
-    filePath: z.string().optional(),
-    path: z.string().optional(),
-    target_path: z.string().optional(),
-    targetPath: z.string().optional(),
-  })
-  .passthrough();
-
-const CodexFileReferenceCollectionSchema = CodexFileReferenceSchema.extend({
-  files: z.array(CodexFileReferenceSchema).optional(),
-}).passthrough();
-
-const CodexTextLikeSchema = z
-  .object({
-    output: z.string().optional(),
-    text: z.string().optional(),
-    content: z.string().optional(),
-  })
-  .passthrough();
+const CommandValueSchema = z.union([z.string(), z.array(z.string())]);
 
 const CodexShellInputSchema = z
-  .object({
-    command: z.union([z.string(), z.array(z.string())]).optional(),
-    cmd: z.union([z.string(), z.array(z.string())]).optional(),
-    cwd: z.string().optional(),
-    directory: z.string().optional(),
-  })
-  .passthrough();
+  .union([
+    z
+      .object({
+        command: CommandValueSchema,
+        cwd: z.string().optional(),
+        directory: z.string().optional(),
+      })
+      .passthrough(),
+    z
+      .object({
+        cmd: CommandValueSchema,
+        cwd: z.string().optional(),
+        directory: z.string().optional(),
+      })
+      .passthrough(),
+  ])
+  .transform((value) => {
+    const commandValue = "command" in value ? value.command : value.cmd;
+    return {
+      command: commandFromValue(commandValue),
+      cwd: nonEmptyString(value.cwd) ?? nonEmptyString(value.directory),
+    };
+  });
 
 const CodexShellOutputObjectSchema = z
   .object({
@@ -55,190 +58,427 @@ const CodexShellOutputObjectSchema = z
     output: z.string().optional(),
     text: z.string().optional(),
     content: z.string().optional(),
-    exitCode: z.number().nullable().optional(),
-    exit_code: z.number().nullable().optional(),
+    aggregatedOutput: z.string().optional(),
+    exitCode: z.number().finite().nullable().optional(),
+    exit_code: z.number().finite().nullable().optional(),
     metadata: z
       .object({
-        exitCode: z.number().nullable().optional(),
-        exit_code: z.number().nullable().optional(),
+        exitCode: z.number().finite().nullable().optional(),
+        exit_code: z.number().finite().nullable().optional(),
       })
       .passthrough()
       .optional(),
-    structuredContent: CodexTextLikeSchema.optional(),
-    structured_content: CodexTextLikeSchema.optional(),
-    result: CodexTextLikeSchema.optional(),
+    structuredContent: z
+      .object({
+        output: z.string().optional(),
+        text: z.string().optional(),
+        content: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+    structured_content: z
+      .object({
+        output: z.string().optional(),
+        text: z.string().optional(),
+        content: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+    result: z
+      .object({
+        command: z.string().optional(),
+        output: z.string().optional(),
+        text: z.string().optional(),
+        content: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough();
 
-const CodexShellOutputSchema = z.union([z.string(), CodexShellOutputObjectSchema]);
+const CodexShellOutputSchema = z.union([
+  z.string().transform((value) => ({
+    command: undefined,
+    output: nonEmptyString(value),
+    exitCode: undefined,
+  })),
+  CodexShellOutputObjectSchema.transform((value) => ({
+    command: nonEmptyString(value.command) ?? nonEmptyString(value.result?.command),
+    output:
+      nonEmptyString(value.output) ??
+      nonEmptyString(value.text) ??
+      nonEmptyString(value.content) ??
+      nonEmptyString(value.aggregatedOutput) ??
+      nonEmptyString(value.structuredContent?.output) ??
+      nonEmptyString(value.structuredContent?.text) ??
+      nonEmptyString(value.structuredContent?.content) ??
+      nonEmptyString(value.structured_content?.output) ??
+      nonEmptyString(value.structured_content?.text) ??
+      nonEmptyString(value.structured_content?.content) ??
+      nonEmptyString(value.result?.output) ??
+      nonEmptyString(value.result?.text) ??
+      nonEmptyString(value.result?.content),
+    exitCode:
+      value.exitCode ??
+      value.exit_code ??
+      value.metadata?.exitCode ??
+      value.metadata?.exit_code ??
+      undefined,
+  })),
+]);
 
-const CodexReadInputSchema = CodexFileReferenceCollectionSchema.extend({
-  offset: z.number().finite().optional(),
-  limit: z.number().finite().optional(),
-}).passthrough();
+const CodexPathSchema = z.union([
+  z.object({ path: z.string() }).passthrough().transform((value) => value.path),
+  z.object({ file_path: z.string() }).passthrough().transform((value) => value.file_path),
+  z.object({ filePath: z.string() }).passthrough().transform((value) => value.filePath),
+]);
 
-const CodexReadOutputSchema = z.union([
-  z.string(),
-  CodexFileReferenceCollectionSchema.extend({
+const CodexReadArgumentsSchema = z.union([
+  z
+    .object({
+      path: z.string(),
+      offset: z.number().finite().optional(),
+      limit: z.number().finite().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({ filePath: value.path, offset: value.offset, limit: value.limit })),
+  z
+    .object({
+      file_path: z.string(),
+      offset: z.number().finite().optional(),
+      limit: z.number().finite().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({ filePath: value.file_path, offset: value.offset, limit: value.limit })),
+  z
+    .object({
+      filePath: z.string(),
+      offset: z.number().finite().optional(),
+      limit: z.number().finite().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({ filePath: value.filePath, offset: value.offset, limit: value.limit })),
+]);
+
+const CodexReadChunkSchema = z.union([
+  z
+    .object({
+      text: z.string(),
+      content: z.string().optional(),
+      output: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      text: z.string().optional(),
+      content: z.string(),
+      output: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      text: z.string().optional(),
+      content: z.string().optional(),
+      output: z.string(),
+    })
+    .passthrough(),
+]);
+
+const CodexReadContentSchema = z.union([z.string(), CodexReadChunkSchema, z.array(CodexReadChunkSchema)]);
+
+const CodexReadPayloadSchema = z.union([
+  z
+    .object({
+      content: CodexReadContentSchema,
+      text: CodexReadContentSchema.optional(),
+      output: CodexReadContentSchema.optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      content: CodexReadContentSchema.optional(),
+      text: CodexReadContentSchema,
+      output: CodexReadContentSchema.optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      content: CodexReadContentSchema.optional(),
+      text: CodexReadContentSchema.optional(),
+      output: CodexReadContentSchema,
+    })
+    .passthrough(),
+]);
+
+const CodexReadResultWithPathSchema = z.union([
+  z
+    .object({
+      path: z.string(),
+      content: CodexReadContentSchema.optional(),
+      text: CodexReadContentSchema.optional(),
+      output: CodexReadContentSchema.optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.path,
+      content:
+        flattenReadContent(value.content) ??
+        flattenReadContent(value.text) ??
+        flattenReadContent(value.output),
+    })),
+  z
+    .object({
+      file_path: z.string(),
+      content: CodexReadContentSchema.optional(),
+      text: CodexReadContentSchema.optional(),
+      output: CodexReadContentSchema.optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.file_path,
+      content:
+        flattenReadContent(value.content) ??
+        flattenReadContent(value.text) ??
+        flattenReadContent(value.output),
+    })),
+  z
+    .object({
+      filePath: z.string(),
+      content: CodexReadContentSchema.optional(),
+      text: CodexReadContentSchema.optional(),
+      output: CodexReadContentSchema.optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.filePath,
+      content:
+        flattenReadContent(value.content) ??
+        flattenReadContent(value.text) ??
+        flattenReadContent(value.output),
+    })),
+]);
+
+const CodexReadResultSchema = z.union([
+  z.string().transform((value) => ({ filePath: undefined, content: nonEmptyString(value) })),
+  CodexReadChunkSchema.transform((value) => ({ filePath: undefined, content: flattenReadContent(value) })),
+  z.array(CodexReadChunkSchema).transform((value) => ({ filePath: undefined, content: flattenReadContent(value) })),
+  CodexReadPayloadSchema.transform((value) => ({
+    filePath: undefined,
+    content:
+      flattenReadContent(value.content) ??
+      flattenReadContent(value.text) ??
+      flattenReadContent(value.output),
+  })),
+  z
+    .object({ data: CodexReadPayloadSchema })
+    .passthrough()
+    .transform((value) => ({
+      filePath: undefined,
+      content:
+        flattenReadContent(value.data.content) ??
+        flattenReadContent(value.data.text) ??
+        flattenReadContent(value.data.output),
+    })),
+  z
+    .object({ structuredContent: CodexReadPayloadSchema })
+    .passthrough()
+    .transform((value) => ({
+      filePath: undefined,
+      content:
+        flattenReadContent(value.structuredContent.content) ??
+        flattenReadContent(value.structuredContent.text) ??
+        flattenReadContent(value.structuredContent.output),
+    })),
+  z
+    .object({ structured_content: CodexReadPayloadSchema })
+    .passthrough()
+    .transform((value) => ({
+      filePath: undefined,
+      content:
+        flattenReadContent(value.structured_content.content) ??
+        flattenReadContent(value.structured_content.text) ??
+        flattenReadContent(value.structured_content.output),
+    })),
+  CodexReadResultWithPathSchema,
+]);
+
+const CodexWriteContentSchema = z
+  .object({
     content: z.string().optional(),
-    text: z.string().optional(),
-    output: z.string().optional(),
-    structuredContent: CodexTextLikeSchema.optional(),
-    structured_content: CodexTextLikeSchema.optional(),
-    data: CodexTextLikeSchema.optional(),
-  }).passthrough(),
-]);
-
-const CodexWriteInputSchema = CodexFileReferenceCollectionSchema.extend({
-  content: z.string().optional(),
-  newContent: z.string().optional(),
-  new_content: z.string().optional(),
-}).passthrough();
-
-const CodexWriteOutputSchema = CodexFileReferenceCollectionSchema.extend({
-  content: z.string().optional(),
-  newContent: z.string().optional(),
-  new_content: z.string().optional(),
-}).passthrough();
-
-const CodexEditInputSchema = CodexFileReferenceCollectionSchema.extend({
-  old_string: z.string().optional(),
-  old_str: z.string().optional(),
-  oldContent: z.string().optional(),
-  old_content: z.string().optional(),
-  new_string: z.string().optional(),
-  new_str: z.string().optional(),
-  newContent: z.string().optional(),
-  new_content: z.string().optional(),
-  content: z.string().optional(),
-  patch: z.string().optional(),
-  diff: z.string().optional(),
-  unified_diff: z.string().optional(),
-  unifiedDiff: z.string().optional(),
-}).passthrough();
-
-const CodexEditOutputSchema = CodexFileReferenceCollectionSchema.extend({
-  patch: z.string().optional(),
-  diff: z.string().optional(),
-  unified_diff: z.string().optional(),
-  unifiedDiff: z.string().optional(),
-  files: z
-    .array(
-      CodexFileReferenceSchema.extend({
-        patch: z.string().optional(),
-        diff: z.string().optional(),
-        unified_diff: z.string().optional(),
-        unifiedDiff: z.string().optional(),
-      }).passthrough()
-    )
-    .optional(),
-}).passthrough();
-
-const CodexSearchInputSchema = z
-  .object({
-    query: z.string().optional(),
-    q: z.string().optional(),
+    new_content: z.string().optional(),
+    newContent: z.string().optional(),
   })
   .passthrough();
 
-const CodexShellToolNameSchema = z.union([
-  z.literal("shell"),
-  z.literal("bash"),
-  z.literal("exec"),
-  z.literal("exec_command"),
-  z.literal("command"),
-  z.literal("Bash"),
+const CodexWriteArgumentsSchema = z
+  .intersection(CodexPathSchema.transform((filePath) => ({ filePath })), CodexWriteContentSchema)
+  .transform((value) => ({
+    filePath: value.filePath,
+    content:
+      nonEmptyString(value.content) ??
+      nonEmptyString(value.new_content) ??
+      nonEmptyString(value.newContent),
+  }));
+
+const CodexWriteResultSchema = z.union([
+  z
+    .intersection(CodexPathSchema.transform((filePath) => ({ filePath })), CodexWriteContentSchema)
+    .transform((value) => ({
+      filePath: value.filePath,
+      content:
+        nonEmptyString(value.content) ??
+        nonEmptyString(value.new_content) ??
+        nonEmptyString(value.newContent),
+    })),
+  CodexWriteContentSchema.transform((value) => ({
+    filePath: undefined,
+    content:
+      nonEmptyString(value.content) ??
+      nonEmptyString(value.new_content) ??
+      nonEmptyString(value.newContent),
+  })),
 ]);
 
-const CodexReadToolNameSchema = z.union([
-  z.literal("read"),
-  z.literal("read_file"),
-]);
-
-const CodexWriteToolNameSchema = z.union([
-  z.literal("write"),
-  z.literal("write_file"),
-  z.literal("create_file"),
-]);
-
-const CodexEditToolNameSchema = z.union([
-  z.literal("edit"),
-  z.literal("apply_patch"),
-]);
-
-const CodexSearchToolNameSchema = z.union([
-  z.literal("web_search"),
-  z.literal("search"),
-]);
-
-const CodexBuiltinToolNameSchema = z.enum([
-  "shell",
-  "bash",
-  "exec",
-  "exec_command",
-  "command",
-  "read",
-  "read_file",
-  "write",
-  "write_file",
-  "create_file",
-  "edit",
-  "apply_patch",
-  "web_search",
-  "search",
-]);
-
-const CodexShellDetailCandidateSchema = z
+const CodexEditTextSchema = z
   .object({
-    name: CodexShellToolNameSchema,
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-    cwd: z.string().optional().nullable(),
+    old_string: z.string().optional(),
+    old_str: z.string().optional(),
+    oldContent: z.string().optional(),
+    old_content: z.string().optional(),
+    new_string: z.string().optional(),
+    new_str: z.string().optional(),
+    newContent: z.string().optional(),
+    new_content: z.string().optional(),
+    content: z.string().optional(),
+    patch: z.string().optional(),
+    diff: z.string().optional(),
+    unified_diff: z.string().optional(),
+    unifiedDiff: z.string().optional(),
   })
-  .transform(({ input, output }) => resolveShellDetail(input, output));
+  .passthrough();
 
-const CodexReadDetailCandidateSchema = z
-  .object({
-    name: CodexReadToolNameSchema,
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-    cwd: z.string().optional().nullable(),
-  })
-  .transform(({ input, output, cwd }) => resolveReadDetail(input, output, { cwd }));
+const CodexEditArgumentsSchema = z
+  .intersection(CodexPathSchema.transform((filePath) => ({ filePath })), CodexEditTextSchema)
+  .transform((value) => ({
+    filePath: value.filePath,
+    oldString:
+      nonEmptyString(value.old_string) ??
+      nonEmptyString(value.old_str) ??
+      nonEmptyString(value.oldContent) ??
+      nonEmptyString(value.old_content),
+    newString:
+      nonEmptyString(value.new_string) ??
+      nonEmptyString(value.new_str) ??
+      nonEmptyString(value.newContent) ??
+      nonEmptyString(value.new_content) ??
+      nonEmptyString(value.content),
+    unifiedDiff: truncateDiffText(
+      nonEmptyString(value.patch) ??
+        nonEmptyString(value.diff) ??
+        nonEmptyString(value.unified_diff) ??
+        nonEmptyString(value.unifiedDiff)
+    ),
+  }));
 
-const CodexWriteDetailCandidateSchema = z
-  .object({
-    name: CodexWriteToolNameSchema,
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-    cwd: z.string().optional().nullable(),
-  })
-  .transform(({ input, output, cwd }) => resolveWriteDetail(input, output, { cwd }));
+const CodexEditResultFileSchema = z.union([
+  z
+    .object({
+      path: z.string(),
+      patch: z.string().optional(),
+      diff: z.string().optional(),
+      unified_diff: z.string().optional(),
+      unifiedDiff: z.string().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.path,
+      unifiedDiff: truncateDiffText(
+        nonEmptyString(value.patch) ??
+          nonEmptyString(value.diff) ??
+          nonEmptyString(value.unified_diff) ??
+          nonEmptyString(value.unifiedDiff)
+      ),
+    })),
+  z
+    .object({
+      file_path: z.string(),
+      patch: z.string().optional(),
+      diff: z.string().optional(),
+      unified_diff: z.string().optional(),
+      unifiedDiff: z.string().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.file_path,
+      unifiedDiff: truncateDiffText(
+        nonEmptyString(value.patch) ??
+          nonEmptyString(value.diff) ??
+          nonEmptyString(value.unified_diff) ??
+          nonEmptyString(value.unifiedDiff)
+      ),
+    })),
+  z
+    .object({
+      filePath: z.string(),
+      patch: z.string().optional(),
+      diff: z.string().optional(),
+      unified_diff: z.string().optional(),
+      unifiedDiff: z.string().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.filePath,
+      unifiedDiff: truncateDiffText(
+        nonEmptyString(value.patch) ??
+          nonEmptyString(value.diff) ??
+          nonEmptyString(value.unified_diff) ??
+          nonEmptyString(value.unifiedDiff)
+      ),
+    })),
+]);
 
-const CodexEditDetailCandidateSchema = z
-  .object({
-    name: CodexEditToolNameSchema,
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-    cwd: z.string().optional().nullable(),
-  })
-  .transform(({ input, output, cwd }) => resolveEditDetail(input, output, { cwd }));
+const CodexEditResultSchema = z.union([
+  z
+    .intersection(CodexPathSchema.transform((filePath) => ({ filePath })), CodexEditTextSchema)
+    .transform((value) => ({
+      filePath: value.filePath,
+      newString:
+        nonEmptyString(value.newContent) ??
+        nonEmptyString(value.new_content) ??
+        nonEmptyString(value.content),
+      unifiedDiff: truncateDiffText(
+        nonEmptyString(value.patch) ??
+          nonEmptyString(value.diff) ??
+          nonEmptyString(value.unified_diff) ??
+          nonEmptyString(value.unifiedDiff)
+      ),
+    })),
+  z
+    .object({ files: z.array(CodexEditResultFileSchema).min(1) })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.files[0]?.filePath,
+      unifiedDiff: value.files[0]?.unifiedDiff,
+      newString: undefined,
+    })),
+  CodexEditTextSchema.transform((value) => ({
+    filePath: undefined,
+    newString:
+      nonEmptyString(value.newContent) ??
+      nonEmptyString(value.new_content) ??
+      nonEmptyString(value.content),
+    unifiedDiff: truncateDiffText(
+      nonEmptyString(value.patch) ??
+        nonEmptyString(value.diff) ??
+        nonEmptyString(value.unified_diff) ??
+        nonEmptyString(value.unifiedDiff)
+    ),
+  })),
+]);
 
-const CodexSearchDetailCandidateSchema = z
-  .object({
-    name: CodexSearchToolNameSchema,
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-    cwd: z.string().optional().nullable(),
-  })
-  .transform(({ input }) => resolveSearchDetail(input));
-
-const CodexKnownToolDetailSchema = z.union([
-  CodexShellDetailCandidateSchema,
-  CodexReadDetailCandidateSchema,
-  CodexWriteDetailCandidateSchema,
-  CodexEditDetailCandidateSchema,
-  CodexSearchDetailCandidateSchema,
+const CodexSearchArgumentsSchema = z.union([
+  z.object({ query: z.string() }).passthrough().transform((value) => ({ query: value.query })),
+  z.object({ q: z.string() }).passthrough().transform((value) => ({ query: value.q })),
 ]);
 
 const CodexCommandExecutionItemSchema = z
@@ -247,7 +487,7 @@ const CodexCommandExecutionItemSchema = z
     id: z.string().optional(),
     status: z.string().optional(),
     error: z.unknown().optional(),
-    command: z.union([z.string(), z.array(z.string())]).optional(),
+    command: CommandValueSchema.optional(),
     cwd: z.string().optional(),
     aggregatedOutput: z.string().optional(),
     exitCode: z.number().nullable().optional(),
@@ -307,26 +547,19 @@ const CodexThreadItemSchema = z.discriminatedUnion("type", [
   CodexWebSearchItemSchema,
 ]);
 
-function hashText(value: string): string {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash << 5) - hash + value.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36);
+function flattenReadContent(
+  value: z.infer<typeof CodexReadContentSchema> | undefined
+): string | undefined {
+  return flattenToolReadContent(value);
 }
 
 function coerceCallId(raw: string | null | undefined, name: string, input: unknown): string {
-  if (typeof raw === "string" && raw.trim().length > 0) {
-    return raw;
-  }
-  let serialized = "";
-  try {
-    serialized = JSON.stringify(input) ?? "";
-  } catch {
-    serialized = String(input);
-  }
-  return `codex-${hashText(`${name}:${serialized}`)}`;
+  return coerceToolCallId({
+    providerPrefix: "codex",
+    rawCallId: raw,
+    toolName: name,
+    input,
+  });
 }
 
 function normalizeCodexFilePath(filePath: string | undefined, cwd: string | null | undefined): string | undefined {
@@ -344,42 +577,6 @@ function normalizeCodexFilePath(filePath: string | undefined, cwd: string | null
     }
   }
   return trimmed;
-}
-
-function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
-  return values.find((value) => typeof value === "string" && value.length > 0);
-}
-
-function commandFromValue(value: string | string[] | undefined): string | undefined {
-  if (typeof value === "string" && value.length > 0) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    const tokens = value.filter((token): token is string => typeof token === "string" && token.length > 0);
-    if (tokens.length > 0) {
-      return tokens.join(" ");
-    }
-  }
-  return undefined;
-}
-
-function resolveFilePath(
-  value: z.infer<typeof CodexFileReferenceCollectionSchema>,
-  cwd: string | null | undefined
-): string | undefined {
-  return normalizeCodexFilePath(
-    firstNonEmpty(
-      value.file_path,
-      value.filePath,
-      value.path,
-      value.target_path,
-      value.targetPath,
-      value.files?.[0]?.path,
-      value.files?.[0]?.filePath,
-      value.files?.[0]?.file_path
-    ),
-    cwd
-  );
 }
 
 function resolveStatus(rawStatus: string | undefined, error: unknown, output: unknown): ToolCallTimelineItem["status"] {
@@ -406,221 +603,210 @@ function resolveStatus(rawStatus: string | undefined, error: unknown, output: un
   return output !== null && output !== undefined ? "completed" : "running";
 }
 
-function resolveShellDetail(input: unknown, output: unknown): ToolCallDetail | undefined {
-  const parsedInput = CodexShellInputSchema.safeParse(input);
-  const parsedOutput = CodexShellOutputSchema.safeParse(output);
-
-  const command =
-    (parsedInput.success
-      ? commandFromValue(parsedInput.data.command) ?? commandFromValue(parsedInput.data.cmd)
-      : undefined) ??
-    (parsedOutput.success && typeof parsedOutput.data !== "string"
-      ? parsedOutput.data.command
-      : undefined);
-
+function toShellDetail(
+  input: z.infer<typeof CodexShellInputSchema> | null,
+  output: z.infer<typeof CodexShellOutputSchema> | null
+): ToolCallDetail | undefined {
+  const command = input?.command ?? output?.command;
   if (!command) {
     return undefined;
   }
 
-  const cwd = parsedInput.success
-    ? firstNonEmpty(parsedInput.data.cwd, parsedInput.data.directory)
-    : undefined;
-
-  const outputText =
-    parsedOutput.success
-      ? typeof parsedOutput.data === "string"
-        ? parsedOutput.data
-        : firstNonEmpty(
-            parsedOutput.data.output,
-            parsedOutput.data.text,
-            parsedOutput.data.content,
-            parsedOutput.data.structuredContent?.output,
-            parsedOutput.data.structuredContent?.text,
-            parsedOutput.data.structuredContent?.content,
-            parsedOutput.data.structured_content?.output,
-            parsedOutput.data.structured_content?.text,
-            parsedOutput.data.structured_content?.content,
-            parsedOutput.data.result?.output,
-            parsedOutput.data.result?.text,
-            parsedOutput.data.result?.content
-          )
-      : undefined;
-
-  const exitCode =
-    parsedOutput.success && typeof parsedOutput.data !== "string"
-      ? parsedOutput.data.exitCode ??
-        parsedOutput.data.exit_code ??
-        parsedOutput.data.metadata?.exitCode ??
-        parsedOutput.data.metadata?.exit_code ??
-        null
-      : null;
-
   return {
     type: "shell",
     command,
-    ...(cwd !== undefined ? { cwd } : {}),
-    ...(outputText !== undefined ? { output: outputText } : {}),
-    ...(exitCode !== null ? { exitCode } : { exitCode: null }),
+    ...(input?.cwd ? { cwd: input.cwd } : {}),
+    ...(output?.output ? { output: output.output } : {}),
+    ...(output?.exitCode !== undefined ? { exitCode: output.exitCode } : {}),
   };
 }
 
-function resolveReadDetail(input: unknown, output: unknown, options?: CodexMapperOptions): ToolCallDetail | undefined {
-  const parsedInput = CodexReadInputSchema.safeParse(input);
-  const parsedOutput = CodexReadOutputSchema.safeParse(output);
-
-  const filePath = firstNonEmpty(
-    parsedInput.success ? resolveFilePath(parsedInput.data, options?.cwd) : undefined,
-    parsedOutput.success && typeof parsedOutput.data !== "string"
-      ? resolveFilePath(parsedOutput.data, options?.cwd)
-      : undefined
-  );
-
+function toReadDetail(
+  input: z.infer<typeof CodexReadArgumentsSchema> | null,
+  output: z.infer<typeof CodexReadResultSchema> | null,
+  cwd: string | null | undefined
+): ToolCallDetail | undefined {
+  const filePath = normalizeCodexFilePath(input?.filePath ?? output?.filePath, cwd);
   if (!filePath) {
     return undefined;
   }
-
-  const content =
-    parsedOutput.success
-      ? typeof parsedOutput.data === "string"
-        ? parsedOutput.data
-        : firstNonEmpty(
-            parsedOutput.data.content,
-            parsedOutput.data.text,
-            parsedOutput.data.output,
-            parsedOutput.data.structuredContent?.content,
-            parsedOutput.data.structuredContent?.text,
-            parsedOutput.data.structuredContent?.output,
-            parsedOutput.data.structured_content?.content,
-            parsedOutput.data.structured_content?.text,
-            parsedOutput.data.structured_content?.output,
-            parsedOutput.data.data?.content,
-            parsedOutput.data.data?.text,
-            parsedOutput.data.data?.output
-          )
-      : undefined;
 
   return {
     type: "read",
     filePath,
-    ...(content !== undefined ? { content } : {}),
-    ...(parsedInput.success && parsedInput.data.offset !== undefined ? { offset: parsedInput.data.offset } : {}),
-    ...(parsedInput.success && parsedInput.data.limit !== undefined ? { limit: parsedInput.data.limit } : {}),
+    ...(output?.content ? { content: output.content } : {}),
+    ...(input?.offset !== undefined ? { offset: input.offset } : {}),
+    ...(input?.limit !== undefined ? { limit: input.limit } : {}),
   };
 }
 
-function resolveWriteDetail(input: unknown, output: unknown, options?: CodexMapperOptions): ToolCallDetail | undefined {
-  const parsedInput = CodexWriteInputSchema.safeParse(input);
-  const parsedOutput = CodexWriteOutputSchema.safeParse(output);
-
-  const filePath = firstNonEmpty(
-    parsedInput.success ? resolveFilePath(parsedInput.data, options?.cwd) : undefined,
-    parsedOutput.success ? resolveFilePath(parsedOutput.data, options?.cwd) : undefined
-  );
-
+function toWriteDetail(
+  input: z.infer<typeof CodexWriteArgumentsSchema> | null,
+  output: z.infer<typeof CodexWriteResultSchema> | null,
+  cwd: string | null | undefined
+): ToolCallDetail | undefined {
+  const filePath = normalizeCodexFilePath(input?.filePath ?? output?.filePath, cwd);
   if (!filePath) {
     return undefined;
   }
-
-  const content = firstNonEmpty(
-    parsedInput.success
-      ? firstNonEmpty(parsedInput.data.content, parsedInput.data.newContent, parsedInput.data.new_content)
-      : undefined,
-    parsedOutput.success
-      ? firstNonEmpty(parsedOutput.data.content, parsedOutput.data.newContent, parsedOutput.data.new_content)
-      : undefined
-  );
 
   return {
     type: "write",
     filePath,
-    ...(content !== undefined ? { content } : {}),
+    ...(input?.content ? { content: input.content } : output?.content ? { content: output.content } : {}),
   };
 }
 
-function resolveEditDetail(input: unknown, output: unknown, options?: CodexMapperOptions): ToolCallDetail | undefined {
-  const parsedInput = CodexEditInputSchema.safeParse(input);
-  const parsedOutput = CodexEditOutputSchema.safeParse(output);
-
-  const filePath = firstNonEmpty(
-    parsedInput.success ? resolveFilePath(parsedInput.data, options?.cwd) : undefined,
-    parsedOutput.success ? resolveFilePath(parsedOutput.data, options?.cwd) : undefined
-  );
-
+function toEditDetail(
+  input: z.infer<typeof CodexEditArgumentsSchema> | null,
+  output: z.infer<typeof CodexEditResultSchema> | null,
+  cwd: string | null | undefined
+): ToolCallDetail | undefined {
+  const filePath = normalizeCodexFilePath(input?.filePath ?? output?.filePath, cwd);
   if (!filePath) {
     return undefined;
   }
 
-  const oldString = parsedInput.success
-    ? firstNonEmpty(
-        parsedInput.data.old_string,
-        parsedInput.data.old_str,
-        parsedInput.data.oldContent,
-        parsedInput.data.old_content
-      )
-    : undefined;
-
-  const newString = parsedInput.success
-    ? firstNonEmpty(
-        parsedInput.data.new_string,
-        parsedInput.data.new_str,
-        parsedInput.data.newContent,
-        parsedInput.data.new_content,
-        parsedInput.data.content
-      )
-    : undefined;
-
-  const unifiedDiff = firstNonEmpty(
-    parsedInput.success
-      ? firstNonEmpty(
-          parsedInput.data.patch,
-          parsedInput.data.diff,
-          parsedInput.data.unified_diff,
-          parsedInput.data.unifiedDiff
-        )
-      : undefined,
-    parsedOutput.success
-      ? firstNonEmpty(
-          parsedOutput.data.patch,
-          parsedOutput.data.diff,
-          parsedOutput.data.unified_diff,
-          parsedOutput.data.unifiedDiff,
-          parsedOutput.data.files?.[0]?.patch,
-          parsedOutput.data.files?.[0]?.diff,
-          parsedOutput.data.files?.[0]?.unified_diff,
-          parsedOutput.data.files?.[0]?.unifiedDiff
-        )
-      : undefined
-  );
-
   return {
     type: "edit",
     filePath,
-    ...(oldString !== undefined ? { oldString } : {}),
-    ...(newString !== undefined ? { newString } : {}),
-    ...(unifiedDiff !== undefined ? { unifiedDiff } : {}),
+    ...(input?.oldString ? { oldString: input.oldString } : {}),
+    ...(input?.newString ? { newString: input.newString } : output?.newString ? { newString: output.newString } : {}),
+    ...(input?.unifiedDiff
+      ? { unifiedDiff: input.unifiedDiff }
+      : output?.unifiedDiff
+        ? { unifiedDiff: output.unifiedDiff }
+        : {}),
   };
 }
 
-function resolveSearchDetail(input: unknown): ToolCallDetail | undefined {
-  const parsedInput = CodexSearchInputSchema.safeParse(input);
-  if (!parsedInput.success) {
-    return undefined;
-  }
-  const query = firstNonEmpty(parsedInput.data.query, parsedInput.data.q);
-  if (!query) {
+function toSearchDetail(input: z.infer<typeof CodexSearchArgumentsSchema> | null): ToolCallDetail | undefined {
+  if (!input?.query) {
     return undefined;
   }
   return {
     type: "search",
-    query,
+    query: input.query,
   };
 }
 
-function deriveDetail(name: string, input: unknown, output: unknown, options?: CodexMapperOptions): ToolCallDetail | undefined {
-  const parsed = CodexKnownToolDetailSchema.safeParse({
-    name,
-    input,
-    output,
+function codexMcpToolBranch<ToolName extends string, InputSchema extends z.ZodTypeAny, OutputSchema extends z.ZodTypeAny>(
+  tool: ToolName,
+  inputSchema: InputSchema,
+  outputSchema: OutputSchema,
+  mapper: (
+    input: z.infer<InputSchema> | null,
+    output: z.infer<OutputSchema> | null,
+    cwd: string | null | undefined
+  ) => ToolCallDetail | undefined
+) {
+  return z
+    .object({
+      tool: z.literal(tool),
+      arguments: inputSchema.nullable(),
+      result: outputSchema.nullable(),
+      cwd: z.string().optional().nullable(),
+    })
+    .transform(({ arguments: input, result: output, cwd }) => mapper(input, output, cwd));
+}
+
+const CodexKnownMcpToolDetailSchema = z.union([
+  codexMcpToolBranch("shell", CodexShellInputSchema, CodexShellOutputSchema, (input, output) =>
+    toShellDetail(input, output)
+  ),
+  codexMcpToolBranch("bash", CodexShellInputSchema, CodexShellOutputSchema, (input, output) =>
+    toShellDetail(input, output)
+  ),
+  codexMcpToolBranch("exec", CodexShellInputSchema, CodexShellOutputSchema, (input, output) =>
+    toShellDetail(input, output)
+  ),
+  codexMcpToolBranch("exec_command", CodexShellInputSchema, CodexShellOutputSchema, (input, output) =>
+    toShellDetail(input, output)
+  ),
+  codexMcpToolBranch("command", CodexShellInputSchema, CodexShellOutputSchema, (input, output) =>
+    toShellDetail(input, output)
+  ),
+  codexMcpToolBranch("read", CodexReadArgumentsSchema, CodexReadResultSchema, toReadDetail),
+  codexMcpToolBranch("read_file", CodexReadArgumentsSchema, CodexReadResultSchema, toReadDetail),
+  codexMcpToolBranch("write", CodexWriteArgumentsSchema, CodexWriteResultSchema, toWriteDetail),
+  codexMcpToolBranch("write_file", CodexWriteArgumentsSchema, CodexWriteResultSchema, toWriteDetail),
+  codexMcpToolBranch("create_file", CodexWriteArgumentsSchema, CodexWriteResultSchema, toWriteDetail),
+  codexMcpToolBranch("edit", CodexEditArgumentsSchema, CodexEditResultSchema, toEditDetail),
+  codexMcpToolBranch("apply_patch", CodexEditArgumentsSchema, CodexEditResultSchema, toEditDetail),
+  codexMcpToolBranch("apply_diff", CodexEditArgumentsSchema, CodexEditResultSchema, toEditDetail),
+  codexMcpToolBranch("search", CodexSearchArgumentsSchema, z.unknown(), (input) => toSearchDetail(input)),
+  codexMcpToolBranch("web_search", CodexSearchArgumentsSchema, z.unknown(), (input) => toSearchDetail(input)),
+]);
+
+function codexRolloutToolBranch<Name extends string, InputSchema extends z.ZodTypeAny, OutputSchema extends z.ZodTypeAny>(
+  name: Name,
+  inputSchema: InputSchema,
+  outputSchema: OutputSchema,
+  mapper: (
+    input: z.infer<InputSchema> | null,
+    output: z.infer<OutputSchema> | null
+  ) => ToolCallDetail | undefined
+) {
+  return z
+    .object({
+      name: z.literal(name),
+      input: inputSchema.nullable(),
+      output: outputSchema.nullable(),
+    })
+    .transform(({ input, output }) => mapper(input, output));
+}
+
+const CodexKnownRolloutDetailSchema = z.union([
+  codexRolloutToolBranch("Bash", CodexShellInputSchema, CodexShellOutputSchema, (input, output) =>
+    toShellDetail(input, output)
+  ),
+  codexRolloutToolBranch("shell", CodexShellInputSchema, CodexShellOutputSchema, (input, output) =>
+    toShellDetail(input, output)
+  ),
+  codexRolloutToolBranch("bash", CodexShellInputSchema, CodexShellOutputSchema, (input, output) =>
+    toShellDetail(input, output)
+  ),
+  codexRolloutToolBranch("exec_command", CodexShellInputSchema, CodexShellOutputSchema, (input, output) =>
+    toShellDetail(input, output)
+  ),
+  codexRolloutToolBranch("read", CodexReadArgumentsSchema, CodexReadResultSchema, (input, output) =>
+    toReadDetail(input, output, null)
+  ),
+  codexRolloutToolBranch("read_file", CodexReadArgumentsSchema, CodexReadResultSchema, (input, output) =>
+    toReadDetail(input, output, null)
+  ),
+  codexRolloutToolBranch("write", CodexWriteArgumentsSchema, CodexWriteResultSchema, (input, output) =>
+    toWriteDetail(input, output, null)
+  ),
+  codexRolloutToolBranch("write_file", CodexWriteArgumentsSchema, CodexWriteResultSchema, (input, output) =>
+    toWriteDetail(input, output, null)
+  ),
+  codexRolloutToolBranch("create_file", CodexWriteArgumentsSchema, CodexWriteResultSchema, (input, output) =>
+    toWriteDetail(input, output, null)
+  ),
+  codexRolloutToolBranch("edit", CodexEditArgumentsSchema, CodexEditResultSchema, (input, output) =>
+    toEditDetail(input, output, null)
+  ),
+  codexRolloutToolBranch("apply_patch", CodexEditArgumentsSchema, CodexEditResultSchema, (input, output) =>
+    toEditDetail(input, output, null)
+  ),
+  codexRolloutToolBranch("apply_diff", CodexEditArgumentsSchema, CodexEditResultSchema, (input, output) =>
+    toEditDetail(input, output, null)
+  ),
+  codexRolloutToolBranch("search", CodexSearchArgumentsSchema, z.unknown(), (input) => toSearchDetail(input)),
+  codexRolloutToolBranch("web_search", CodexSearchArgumentsSchema, z.unknown(), (input) => toSearchDetail(input)),
+]);
+
+function deriveMcpToolDetail(
+  tool: string,
+  input: unknown,
+  output: unknown,
+  options?: CodexMapperOptions
+): ToolCallDetail | undefined {
+  const parsed = CodexKnownMcpToolDetailSchema.safeParse({
+    tool,
+    arguments: input,
+    result: output,
     cwd: options?.cwd ?? null,
   });
   if (!parsed.success) {
@@ -629,20 +815,28 @@ function deriveDetail(name: string, input: unknown, output: unknown, options?: C
   return parsed.data;
 }
 
-function buildToolCall(
-  params: {
-    callId: string;
-    name: string;
-    status: ToolCallTimelineItem["status"];
-    input: unknown | null;
-    output: unknown | null;
-    error: unknown | null;
-    metadata?: Record<string, unknown>;
-  },
-  options?: CodexMapperOptions
-): ToolCallTimelineItem {
-  const detail = deriveDetail(params.name, params.input, params.output, options);
+function deriveRolloutDetail(name: string, input: unknown, output: unknown): ToolCallDetail | undefined {
+  const parsed = CodexKnownRolloutDetailSchema.safeParse({
+    name,
+    input,
+    output,
+  });
+  if (!parsed.success) {
+    return undefined;
+  }
+  return parsed.data;
+}
 
+function buildToolCall(params: {
+  callId: string;
+  name: string;
+  status: ToolCallTimelineItem["status"];
+  input: unknown | null;
+  output: unknown | null;
+  error: unknown | null;
+  detail?: ToolCallDetail;
+  metadata?: Record<string, unknown>;
+}): ToolCallTimelineItem {
   if (params.status === "failed") {
     return {
       type: "tool_call",
@@ -652,7 +846,7 @@ function buildToolCall(
       input: params.input,
       output: params.output,
       error: params.error ?? { message: "Tool call failed" },
-      ...(detail ? { detail } : {}),
+      ...(params.detail ? { detail: params.detail } : {}),
       ...(params.metadata ? { metadata: params.metadata } : {}),
     };
   }
@@ -665,10 +859,28 @@ function buildToolCall(
     input: params.input,
     output: params.output,
     error: null,
-    ...(detail ? { detail } : {}),
+    ...(params.detail ? { detail: params.detail } : {}),
     ...(params.metadata ? { metadata: params.metadata } : {}),
   };
 }
+
+const CODEX_BUILTIN_TOOL_NAMES = new Set([
+  "shell",
+  "bash",
+  "exec",
+  "exec_command",
+  "command",
+  "read",
+  "read_file",
+  "write",
+  "write_file",
+  "create_file",
+  "edit",
+  "apply_patch",
+  "apply_diff",
+  "web_search",
+  "search",
+]);
 
 function buildMcpToolName(server: string | undefined, tool: string): string {
   const trimmedTool = tool.trim();
@@ -676,9 +888,8 @@ function buildMcpToolName(server: string | undefined, tool: string): string {
     return "tool";
   }
 
-  const builtin = CodexBuiltinToolNameSchema.safeParse(trimmedTool);
-  if (builtin.success) {
-    return builtin.data;
+  if (CODEX_BUILTIN_TOOL_NAMES.has(trimmedTool)) {
+    return trimmedTool;
   }
 
   const trimmedServer = typeof server === "string" ? server.trim() : "";
@@ -694,10 +905,9 @@ function toNullableObject(value: Record<string, unknown>): Record<string, unknow
 }
 
 function mapCommandExecutionItem(
-  item: z.infer<typeof CodexCommandExecutionItemSchema>,
-  options?: CodexMapperOptions
+  item: z.infer<typeof CodexCommandExecutionItemSchema>
 ): ToolCallTimelineItem {
-  const command = commandFromValue(item.command);
+  const command = item.command ? commandFromValue(item.command) : undefined;
   const input = toNullableObject({
     ...(command !== undefined ? { command } : {}),
     ...(item.cwd !== undefined ? { cwd: item.cwd } : {}),
@@ -712,22 +922,30 @@ function mapCommandExecutionItem(
         }
       : null;
 
+  const detail = command
+    ? {
+        type: "shell" as const,
+        command,
+        ...(item.cwd ? { cwd: item.cwd } : {}),
+        ...(item.aggregatedOutput ? { output: item.aggregatedOutput } : {}),
+        ...(item.exitCode !== undefined ? { exitCode: item.exitCode } : {}),
+      }
+    : undefined;
+
   const name = "shell";
   const callId = coerceCallId(item.id, name, input);
   const error = item.error ?? null;
   const status = resolveStatus(item.status, error, output);
 
-  return buildToolCall(
-    {
-      callId,
-      name,
-      status,
-      input,
-      output,
-      error,
-    },
-    options
-  );
+  return buildToolCall({
+    callId,
+    name,
+    status,
+    input,
+    output,
+    error,
+    ...(detail ? { detail } : {}),
+  });
 }
 
 function mapFileChangeItem(
@@ -736,39 +954,60 @@ function mapFileChangeItem(
 ): ToolCallTimelineItem {
   const changes = item.changes ?? [];
 
-  const files = changes.map((change) => ({
-    ...(normalizeCodexFilePath(change.path, options?.cwd) !== undefined
-      ? { path: normalizeCodexFilePath(change.path, options?.cwd) }
-      : {}),
-    ...(change.kind !== undefined ? { kind: change.kind } : {}),
-  }));
+  const files = changes
+    .map((change) => ({
+      path: normalizeCodexFilePath(change.path, options?.cwd),
+      kind: change.kind,
+      diff: change.diff,
+    }))
+    .filter((change) => change.path !== undefined);
 
-  const outputFiles = changes.map((change) => ({
-    ...(normalizeCodexFilePath(change.path, options?.cwd) !== undefined
-      ? { path: normalizeCodexFilePath(change.path, options?.cwd) }
+  const input = toNullableObject({
+    ...(files.length > 0
+      ? {
+          files: files.map((file) => ({
+            path: file.path,
+            ...(file.kind !== undefined ? { kind: file.kind } : {}),
+          })),
+        }
       : {}),
-    ...(change.diff !== undefined ? { patch: change.diff } : {}),
-    ...(change.kind !== undefined ? { kind: change.kind } : {}),
-  }));
+  });
 
-  const input = toNullableObject({ ...(files.length > 0 ? { files } : {}) });
-  const output = toNullableObject({ ...(outputFiles.length > 0 ? { files: outputFiles } : {}) });
+  const output = toNullableObject({
+    ...(files.length > 0
+      ? {
+          files: files.map((file) => ({
+            path: file.path,
+            ...(file.kind !== undefined ? { kind: file.kind } : {}),
+            ...(file.diff !== undefined ? { patch: truncateDiffText(file.diff) } : {}),
+          })),
+        }
+      : {}),
+  });
+
+  const firstFile = files[0];
+  const detail = firstFile?.path
+    ? {
+        type: "edit" as const,
+        filePath: firstFile.path,
+        ...(firstFile.diff !== undefined ? { unifiedDiff: truncateDiffText(firstFile.diff) } : {}),
+      }
+    : undefined;
+
   const name = "apply_patch";
   const callId = coerceCallId(item.id, name, input);
   const error = item.error ?? null;
   const status = resolveStatus(item.status, error, output);
 
-  return buildToolCall(
-    {
-      callId,
-      name,
-      status,
-      input,
-      output,
-      error,
-    },
-    options
-  );
+  return buildToolCall({
+    callId,
+    name,
+    status,
+    input,
+    output,
+    error,
+    ...(detail ? { detail } : {}),
+  });
 }
 
 function mapMcpToolCallItem(
@@ -782,55 +1021,55 @@ function mapMcpToolCallItem(
   const error = item.error ?? null;
   const callId = coerceCallId(item.id ?? item.callID ?? item.call_id, name, input);
   const status = resolveStatus(item.status, error, output);
+  const detail = deriveMcpToolDetail(tool, input, output, options);
 
-  return buildToolCall(
-    {
-      callId,
-      name,
-      status,
-      input,
-      output,
-      error,
-    },
-    options
-  );
+  return buildToolCall({
+    callId,
+    name,
+    status,
+    input,
+    output,
+    error,
+    ...(detail ? { detail } : {}),
+  });
 }
 
-function mapWebSearchItem(
-  item: z.infer<typeof CodexWebSearchItemSchema>,
-  options?: CodexMapperOptions
-): ToolCallTimelineItem {
+function mapWebSearchItem(item: z.infer<typeof CodexWebSearchItemSchema>): ToolCallTimelineItem {
   const input = item.query !== undefined ? { query: item.query } : null;
   const output = item.action ?? null;
   const name = "web_search";
   const callId = coerceCallId(item.id, name, input);
   const error = item.error ?? null;
   const status = resolveStatus(item.status ?? "completed", error, output);
+  const detail = item.query
+    ? {
+        type: "search" as const,
+        query: item.query,
+      }
+    : undefined;
 
-  return buildToolCall(
-    {
-      callId,
-      name,
-      status,
-      input,
-      output,
-      error,
-    },
-    options
-  );
+  return buildToolCall({
+    callId,
+    name,
+    status,
+    input,
+    output,
+    error,
+    ...(detail ? { detail } : {}),
+  });
 }
 
 function createCodexThreadItemToTimelineSchema(options?: CodexMapperOptions) {
   return CodexThreadItemSchema.transform((item): ToolCallTimelineItem => {
     switch (item.type) {
       case "commandExecution":
-        return mapCommandExecutionItem(item, options);
+        return mapCommandExecutionItem(item);
       case "fileChange":
         return mapFileChangeItem(item, options);
       case "mcpToolCall":
         return mapMcpToolCallItem(item, options);
       case "webSearch":
-        return mapWebSearchItem(item, options);
+        return mapWebSearchItem(item);
       default: {
         const exhaustiveCheck: never = item;
         throw new Error(`Unhandled Codex thread item type: ${String(exhaustiveCheck)}`);
@@ -863,6 +1102,7 @@ export function mapCodexRolloutToolCall(params: {
   const error = parsed.error ?? null;
   const status = resolveStatus("completed", error, output);
   const callId = coerceCallId(parsed.callId, parsed.name, input);
+  const detail = deriveRolloutDetail(parsed.name, input, output);
 
   return buildToolCall({
     callId,
@@ -871,5 +1111,6 @@ export function mapCodexRolloutToolCall(params: {
     input,
     output,
     error,
+    ...(detail ? { detail } : {}),
   });
 }

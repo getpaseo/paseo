@@ -1,10 +1,11 @@
 import { describe, expect, test } from "vitest";
 
+import type { AgentStreamEvent } from "./agent/agent-sdk-types.js";
 import { serializeAgentStreamEvent } from "./messages.js";
 
 describe("serializeAgentStreamEvent", () => {
   test("preserves user_message text as-is", () => {
-    const event = {
+    const event: AgentStreamEvent = {
       type: "timeline",
       provider: "claude",
       item: {
@@ -12,10 +13,56 @@ describe("serializeAgentStreamEvent", () => {
         text: "<paseo-instructions>\nX\n</paseo-instructions>\n\nHello",
         messageId: "m1",
       },
-    } as any;
+    };
 
-    const serialized = serializeAgentStreamEvent(event) as any;
+    const serialized = serializeAgentStreamEvent(event);
+    expect(serialized).not.toBeNull();
+    if (!serialized || serialized.type !== "timeline" || serialized.item.type !== "user_message") {
+      throw new Error("Expected timeline.user_message event");
+    }
     expect(serialized.item.text).toBe(event.item.text);
     expect(serialized.item.messageId).toBe("m1");
+  });
+
+  test("passes canonical tool_call payloads through unchanged", () => {
+    const event: AgentStreamEvent = {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "tool_call",
+        callId: "call_1",
+        name: "shell",
+        status: "running",
+        input: { command: "pwd" },
+        output: null,
+        error: null,
+      },
+    };
+
+    const serialized = serializeAgentStreamEvent(event);
+    expect(serialized).not.toBeNull();
+    if (!serialized || serialized.type !== "timeline" || serialized.item.type !== "tool_call") {
+      throw new Error("Expected timeline.tool_call event");
+    }
+    expect(serialized.item.status).toBe("running");
+    expect(serialized.item.output).toBeNull();
+    expect(serialized.item.error).toBeNull();
+  });
+
+  test("drops invalid legacy tool_call items", () => {
+    const event = {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "tool_call",
+        callId: "call_legacy",
+        name: "shell",
+        status: "inProgress",
+        input: { command: "pwd" },
+      },
+    } satisfies unknown;
+
+    const serialized = serializeAgentStreamEvent(event as AgentStreamEvent);
+    expect(serialized).toBeNull();
   });
 });

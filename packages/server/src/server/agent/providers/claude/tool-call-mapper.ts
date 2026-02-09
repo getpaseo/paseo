@@ -1,6 +1,13 @@
 import { z } from "zod";
 
 import type { ToolCallDetail, ToolCallTimelineItem } from "../../agent-sdk-types.js";
+import {
+  coerceToolCallId,
+  commandFromValue,
+  flattenReadContent as flattenToolReadContent,
+  nonEmptyString,
+  truncateDiffText,
+} from "../tool-call-mapper-utils.js";
 
 type MapperParams = {
   callId?: string | null;
@@ -9,6 +16,8 @@ type MapperParams = {
   output?: unknown;
   metadata?: Record<string, unknown>;
 };
+
+const MAX_DIFF_TEXT_CHARS = 12_000;
 
 const ClaudeMapperParamsSchema = z
   .object({
@@ -24,74 +33,32 @@ const ClaudeFailedMapperParamsSchema = ClaudeMapperParamsSchema.extend({
   error: z.unknown(),
 });
 
-const ClaudeShellToolNameSchema = z.union([
-  z.literal("Bash"),
-  z.literal("bash"),
-  z.literal("shell"),
-  z.literal("exec_command"),
-]);
-
-const ClaudeReadToolNameSchema = z.union([
-  z.literal("Read"),
-  z.literal("read"),
-  z.literal("read_file"),
-  z.literal("view_file"),
-]);
-
-const ClaudeWriteToolNameSchema = z.union([
-  z.literal("Write"),
-  z.literal("write"),
-  z.literal("write_file"),
-  z.literal("create_file"),
-]);
-
-const ClaudeEditToolNameSchema = z.union([
-  z.literal("Edit"),
-  z.literal("edit"),
-  z.literal("multi_edit"),
-  z.literal("multiedit"),
-  z.literal("apply_patch"),
-  z.literal("apply_diff"),
-  z.literal("str_replace_editor"),
-]);
-
-const ClaudeSearchToolNameSchema = z.union([
-  z.literal("WebSearch"),
-  z.literal("web_search"),
-  z.literal("websearch"),
-  z.literal("search"),
-]);
-
-const ClaudeFileReferenceSchema = z
-  .object({
-    file_path: z.string().optional(),
-    filePath: z.string().optional(),
-    path: z.string().optional(),
-    target_path: z.string().optional(),
-    targetPath: z.string().optional(),
-  })
-  .passthrough();
-
-const ClaudeFileReferenceCollectionSchema = ClaudeFileReferenceSchema.extend({
-  files: z.array(ClaudeFileReferenceSchema).optional(),
-}).passthrough();
-
-const ClaudeTextLikeSchema = z
-  .object({
-    output: z.string().optional(),
-    text: z.string().optional(),
-    content: z.string().optional(),
-  })
-  .passthrough();
+const CommandValueSchema = z.union([z.string(), z.array(z.string())]);
 
 const ClaudeShellInputSchema = z
-  .object({
-    command: z.union([z.string(), z.array(z.string())]).optional(),
-    cmd: z.union([z.string(), z.array(z.string())]).optional(),
-    cwd: z.string().optional(),
-    directory: z.string().optional(),
-  })
-  .passthrough();
+  .union([
+    z
+      .object({
+        command: CommandValueSchema,
+        cwd: z.string().optional(),
+        directory: z.string().optional(),
+      })
+      .passthrough(),
+    z
+      .object({
+        cmd: CommandValueSchema,
+        cwd: z.string().optional(),
+        directory: z.string().optional(),
+      })
+      .passthrough(),
+  ])
+  .transform((value) => {
+    const commandValue = "command" in value ? value.command : value.cmd;
+    return {
+      command: commandFromValue(commandValue),
+      cwd: nonEmptyString(value.cwd) ?? nonEmptyString(value.directory),
+    };
+  });
 
 const ClaudeShellOutputObjectSchema = z
   .object({
@@ -100,17 +67,31 @@ const ClaudeShellOutputObjectSchema = z
     text: z.string().optional(),
     content: z.string().optional(),
     aggregated_output: z.string().optional(),
-    exitCode: z.number().finite().optional(),
-    exit_code: z.number().finite().optional(),
+    exitCode: z.number().finite().nullable().optional(),
+    exit_code: z.number().finite().nullable().optional(),
     metadata: z
       .object({
-        exitCode: z.number().finite().optional(),
-        exit_code: z.number().finite().optional(),
+        exitCode: z.number().finite().nullable().optional(),
+        exit_code: z.number().finite().nullable().optional(),
       })
       .passthrough()
       .optional(),
-    structuredContent: ClaudeTextLikeSchema.optional(),
-    structured_content: ClaudeTextLikeSchema.optional(),
+    structuredContent: z
+      .object({
+        output: z.string().optional(),
+        text: z.string().optional(),
+        content: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+    structured_content: z
+      .object({
+        output: z.string().optional(),
+        text: z.string().optional(),
+        content: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
     result: z
       .object({
         command: z.string().optional(),
@@ -123,401 +104,500 @@ const ClaudeShellOutputObjectSchema = z
   })
   .passthrough();
 
-const ClaudeShellOutputSchema = z.union([z.string(), ClaudeShellOutputObjectSchema]);
-
-const ClaudeReadInputSchema = ClaudeFileReferenceCollectionSchema.extend({
-  offset: z.number().finite().optional(),
-  limit: z.number().finite().optional(),
-}).passthrough();
-
-const ClaudeReadOutputSchema = z.union([
-  z.string(),
-  ClaudeFileReferenceCollectionSchema.extend({
-    content: z.string().optional(),
-    text: z.string().optional(),
-    output: z.string().optional(),
-    data: ClaudeTextLikeSchema.optional(),
-    structuredContent: ClaudeTextLikeSchema.optional(),
-    structured_content: ClaudeTextLikeSchema.optional(),
-  }).passthrough(),
+const ClaudeShellOutputSchema = z.union([
+  z.string().transform((value) => ({
+    command: undefined,
+    output: nonEmptyString(value),
+    exitCode: undefined,
+  })),
+  ClaudeShellOutputObjectSchema.transform((value) => ({
+    command: nonEmptyString(value.command) ?? nonEmptyString(value.result?.command),
+    output:
+      nonEmptyString(value.output) ??
+      nonEmptyString(value.text) ??
+      nonEmptyString(value.content) ??
+      nonEmptyString(value.aggregated_output) ??
+      nonEmptyString(value.structuredContent?.output) ??
+      nonEmptyString(value.structuredContent?.text) ??
+      nonEmptyString(value.structuredContent?.content) ??
+      nonEmptyString(value.structured_content?.output) ??
+      nonEmptyString(value.structured_content?.text) ??
+      nonEmptyString(value.structured_content?.content) ??
+      nonEmptyString(value.result?.output) ??
+      nonEmptyString(value.result?.text) ??
+      nonEmptyString(value.result?.content),
+    exitCode:
+      value.exitCode ??
+      value.exit_code ??
+      value.metadata?.exitCode ??
+      value.metadata?.exit_code ??
+      undefined,
+  })),
 ]);
 
-const ClaudeWriteInputSchema = ClaudeFileReferenceCollectionSchema.extend({
-  content: z.string().optional(),
-  new_content: z.string().optional(),
-  newContent: z.string().optional(),
-}).passthrough();
+const ClaudeReadPathInputSchema = z.union([
+  z
+    .object({
+      file_path: z.string(),
+      offset: z.number().finite().optional(),
+      limit: z.number().finite().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.file_path,
+      offset: value.offset,
+      limit: value.limit,
+    })),
+  z
+    .object({
+      path: z.string(),
+      offset: z.number().finite().optional(),
+      limit: z.number().finite().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.path,
+      offset: value.offset,
+      limit: value.limit,
+    })),
+  z
+    .object({
+      filePath: z.string(),
+      offset: z.number().finite().optional(),
+      limit: z.number().finite().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.filePath,
+      offset: value.offset,
+      limit: value.limit,
+    })),
+]);
 
-const ClaudeWriteOutputSchema = ClaudeFileReferenceCollectionSchema.extend({
-  content: z.string().optional(),
-  new_content: z.string().optional(),
-  newContent: z.string().optional(),
-}).passthrough();
+const ClaudeReadChunkSchema = z.union([
+  z
+    .object({
+      text: z.string(),
+      content: z.string().optional(),
+      output: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      text: z.string().optional(),
+      content: z.string(),
+      output: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      text: z.string().optional(),
+      content: z.string().optional(),
+      output: z.string(),
+    })
+    .passthrough(),
+]);
 
-const ClaudeEditInputSchema = ClaudeFileReferenceCollectionSchema.extend({
-  old_string: z.string().optional(),
-  old_str: z.string().optional(),
-  oldContent: z.string().optional(),
-  old_content: z.string().optional(),
-  new_string: z.string().optional(),
-  new_str: z.string().optional(),
-  newContent: z.string().optional(),
-  new_content: z.string().optional(),
-  content: z.string().optional(),
-  patch: z.string().optional(),
-  diff: z.string().optional(),
-  unified_diff: z.string().optional(),
-  unifiedDiff: z.string().optional(),
-}).passthrough();
+const ClaudeReadContentSchema = z.union([
+  z.string(),
+  ClaudeReadChunkSchema,
+  z.array(ClaudeReadChunkSchema),
+]);
 
-const ClaudeEditOutputSchema = ClaudeFileReferenceCollectionSchema.extend({
-  content: z.string().optional(),
-  new_content: z.string().optional(),
-  newContent: z.string().optional(),
-  patch: z.string().optional(),
-  diff: z.string().optional(),
-  unified_diff: z.string().optional(),
-  unifiedDiff: z.string().optional(),
-  files: z
-    .array(
-      ClaudeFileReferenceSchema.extend({
-        patch: z.string().optional(),
-        diff: z.string().optional(),
-        unified_diff: z.string().optional(),
-        unifiedDiff: z.string().optional(),
-      }).passthrough()
-    )
-    .optional(),
-}).passthrough();
+const ClaudeReadPayloadSchema = z.union([
+  z
+    .object({
+      content: ClaudeReadContentSchema,
+      text: ClaudeReadContentSchema.optional(),
+      output: ClaudeReadContentSchema.optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      content: ClaudeReadContentSchema.optional(),
+      text: ClaudeReadContentSchema,
+      output: ClaudeReadContentSchema.optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      content: ClaudeReadContentSchema.optional(),
+      text: ClaudeReadContentSchema.optional(),
+      output: ClaudeReadContentSchema,
+    })
+    .passthrough(),
+]);
 
-const ClaudeSearchInputSchema = z
+const ClaudeReadOutputSchema = z.union([
+  z.string().transform((value) => ({ content: nonEmptyString(value) })),
+  ClaudeReadChunkSchema.transform((value) => ({ content: flattenReadContent(value) })),
+  z.array(ClaudeReadChunkSchema).transform((value) => ({ content: flattenReadContent(value) })),
+  ClaudeReadPayloadSchema.transform((value) => ({
+    content:
+      flattenReadContent(value.content) ??
+      flattenReadContent(value.text) ??
+      flattenReadContent(value.output),
+  })),
+  z
+    .object({ data: ClaudeReadPayloadSchema })
+    .passthrough()
+    .transform((value) => ({
+      content:
+        flattenReadContent(value.data.content) ??
+        flattenReadContent(value.data.text) ??
+        flattenReadContent(value.data.output),
+    })),
+  z
+    .object({ structuredContent: ClaudeReadPayloadSchema })
+    .passthrough()
+    .transform((value) => ({
+      content:
+        flattenReadContent(value.structuredContent.content) ??
+        flattenReadContent(value.structuredContent.text) ??
+        flattenReadContent(value.structuredContent.output),
+    })),
+  z
+    .object({ structured_content: ClaudeReadPayloadSchema })
+    .passthrough()
+    .transform((value) => ({
+      content:
+        flattenReadContent(value.structured_content.content) ??
+        flattenReadContent(value.structured_content.text) ??
+        flattenReadContent(value.structured_content.output),
+    })),
+]);
+
+const ClaudeWritePathInputSchema = z.union([
+  z.object({ file_path: z.string() }).passthrough().transform((value) => ({ filePath: value.file_path })),
+  z.object({ path: z.string() }).passthrough().transform((value) => ({ filePath: value.path })),
+  z.object({ filePath: z.string() }).passthrough().transform((value) => ({ filePath: value.filePath })),
+]);
+
+const ClaudeWriteContentSchema = z
   .object({
-    query: z.string().optional(),
-    q: z.string().optional(),
+    content: z.string().optional(),
+    new_content: z.string().optional(),
+    newContent: z.string().optional(),
   })
   .passthrough();
 
-const ClaudeShellDetailCandidateSchema = z
-  .object({
-    name: ClaudeShellToolNameSchema,
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-  })
-  .transform(({ input, output }) => resolveShellDetail(input, output));
+const ClaudeWriteInputSchema = z
+  .intersection(ClaudeWritePathInputSchema, ClaudeWriteContentSchema)
+  .transform((value) => ({
+    filePath: value.filePath,
+    content:
+      nonEmptyString(value.content) ??
+      nonEmptyString(value.new_content) ??
+      nonEmptyString(value.newContent),
+  }));
 
-const ClaudeReadDetailCandidateSchema = z
-  .object({
-    name: ClaudeReadToolNameSchema,
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-  })
-  .transform(({ input, output }) => resolveReadDetail(input, output));
-
-const ClaudeWriteDetailCandidateSchema = z
-  .object({
-    name: ClaudeWriteToolNameSchema,
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-  })
-  .transform(({ input, output }) => resolveWriteDetail(input, output));
-
-const ClaudeEditDetailCandidateSchema = z
-  .object({
-    name: ClaudeEditToolNameSchema,
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-  })
-  .transform(({ input, output }) => resolveEditDetail(input, output));
-
-const ClaudeSearchDetailCandidateSchema = z
-  .object({
-    name: ClaudeSearchToolNameSchema,
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-  })
-  .transform(({ input }) => resolveSearchDetail(input));
-
-const ClaudeKnownToolDetailSchema = z.union([
-  ClaudeShellDetailCandidateSchema,
-  ClaudeReadDetailCandidateSchema,
-  ClaudeWriteDetailCandidateSchema,
-  ClaudeEditDetailCandidateSchema,
-  ClaudeSearchDetailCandidateSchema,
+const ClaudeWriteOutputSchema = z.union([
+  z
+    .intersection(ClaudeWritePathInputSchema, ClaudeWriteContentSchema)
+    .transform((value) => ({
+      filePath: value.filePath,
+      content:
+        nonEmptyString(value.content) ??
+        nonEmptyString(value.new_content) ??
+        nonEmptyString(value.newContent),
+    })),
+  ClaudeWriteContentSchema.transform((value) => ({
+    filePath: undefined,
+    content:
+      nonEmptyString(value.content) ??
+      nonEmptyString(value.new_content) ??
+      nonEmptyString(value.newContent),
+  })),
 ]);
 
-function hashText(value: string): string {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash << 5) - hash + value.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36);
+const ClaudeEditTextSchema = z
+  .object({
+    old_string: z.string().optional(),
+    old_str: z.string().optional(),
+    oldContent: z.string().optional(),
+    old_content: z.string().optional(),
+    new_string: z.string().optional(),
+    new_str: z.string().optional(),
+    newContent: z.string().optional(),
+    new_content: z.string().optional(),
+    content: z.string().optional(),
+    patch: z.string().optional(),
+    diff: z.string().optional(),
+    unified_diff: z.string().optional(),
+    unifiedDiff: z.string().optional(),
+  })
+  .passthrough();
+
+const ClaudeEditInputSchema = z
+  .intersection(ClaudeWritePathInputSchema, ClaudeEditTextSchema)
+  .transform((value) => ({
+    filePath: value.filePath,
+    oldString:
+      nonEmptyString(value.old_string) ??
+      nonEmptyString(value.old_str) ??
+      nonEmptyString(value.oldContent) ??
+      nonEmptyString(value.old_content),
+    newString:
+      nonEmptyString(value.new_string) ??
+      nonEmptyString(value.new_str) ??
+      nonEmptyString(value.newContent) ??
+      nonEmptyString(value.new_content) ??
+      nonEmptyString(value.content),
+    unifiedDiff: truncateDiffText(
+      nonEmptyString(value.patch) ??
+        nonEmptyString(value.diff) ??
+        nonEmptyString(value.unified_diff) ??
+        nonEmptyString(value.unifiedDiff),
+      MAX_DIFF_TEXT_CHARS
+    ),
+  }));
+
+const ClaudeEditOutputFileSchema = z.union([
+  z
+    .object({
+      path: z.string(),
+      patch: z.string().optional(),
+      diff: z.string().optional(),
+      unified_diff: z.string().optional(),
+      unifiedDiff: z.string().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.path,
+      unifiedDiff: truncateDiffText(
+        nonEmptyString(value.patch) ??
+          nonEmptyString(value.diff) ??
+          nonEmptyString(value.unified_diff) ??
+          nonEmptyString(value.unifiedDiff),
+        MAX_DIFF_TEXT_CHARS
+      ),
+    })),
+  z
+    .object({
+      file_path: z.string(),
+      patch: z.string().optional(),
+      diff: z.string().optional(),
+      unified_diff: z.string().optional(),
+      unifiedDiff: z.string().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.file_path,
+      unifiedDiff: truncateDiffText(
+        nonEmptyString(value.patch) ??
+          nonEmptyString(value.diff) ??
+          nonEmptyString(value.unified_diff) ??
+          nonEmptyString(value.unifiedDiff),
+        MAX_DIFF_TEXT_CHARS
+      ),
+    })),
+  z
+    .object({
+      filePath: z.string(),
+      patch: z.string().optional(),
+      diff: z.string().optional(),
+      unified_diff: z.string().optional(),
+      unifiedDiff: z.string().optional(),
+    })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.filePath,
+      unifiedDiff: truncateDiffText(
+        nonEmptyString(value.patch) ??
+          nonEmptyString(value.diff) ??
+          nonEmptyString(value.unified_diff) ??
+          nonEmptyString(value.unifiedDiff),
+        MAX_DIFF_TEXT_CHARS
+      ),
+    })),
+]);
+
+const ClaudeEditOutputSchema = z.union([
+  z
+    .intersection(ClaudeWritePathInputSchema, ClaudeEditTextSchema)
+    .transform((value) => ({
+      filePath: value.filePath,
+      newString:
+        nonEmptyString(value.newContent) ??
+        nonEmptyString(value.new_content) ??
+        nonEmptyString(value.content),
+      unifiedDiff: truncateDiffText(
+        nonEmptyString(value.patch) ??
+          nonEmptyString(value.diff) ??
+          nonEmptyString(value.unified_diff) ??
+          nonEmptyString(value.unifiedDiff),
+        MAX_DIFF_TEXT_CHARS
+      ),
+    })),
+  z
+    .object({ files: z.array(ClaudeEditOutputFileSchema).min(1) })
+    .passthrough()
+    .transform((value) => ({
+      filePath: value.files[0]?.filePath,
+      unifiedDiff: value.files[0]?.unifiedDiff,
+      newString: undefined,
+    })),
+  ClaudeEditTextSchema.transform((value) => ({
+    filePath: undefined,
+    newString:
+      nonEmptyString(value.newContent) ??
+      nonEmptyString(value.new_content) ??
+      nonEmptyString(value.content),
+    unifiedDiff: truncateDiffText(
+      nonEmptyString(value.patch) ??
+        nonEmptyString(value.diff) ??
+        nonEmptyString(value.unified_diff) ??
+        nonEmptyString(value.unifiedDiff),
+      MAX_DIFF_TEXT_CHARS
+    ),
+  })),
+]);
+
+const ClaudeSearchInputSchema = z.union([
+  z.object({ query: z.string() }).passthrough().transform((value) => ({ query: value.query })),
+  z.object({ q: z.string() }).passthrough().transform((value) => ({ query: value.q })),
+]);
+
+function flattenReadContent(
+  value: z.infer<typeof ClaudeReadContentSchema> | undefined
+): string | undefined {
+  return flattenToolReadContent(value);
 }
 
 function coerceCallId(callId: string | null | undefined, name: string, input: unknown): string {
-  if (typeof callId === "string" && callId.trim().length > 0) {
-    return callId;
-  }
-  let serialized = "";
-  try {
-    serialized = JSON.stringify(input) ?? "";
-  } catch {
-    serialized = String(input);
-  }
-  return `claude-${hashText(`${name}:${serialized}`)}`;
+  return coerceToolCallId({
+    providerPrefix: "claude",
+    rawCallId: callId,
+    toolName: name,
+    input,
+  });
 }
 
-function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
-  return values.find((value) => typeof value === "string" && value.length > 0);
-}
-
-function commandFromValue(value: string | string[] | undefined): string | undefined {
-  if (typeof value === "string" && value.length > 0) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    const tokens = value.filter((token): token is string => typeof token === "string" && token.length > 0);
-    if (tokens.length > 0) {
-      return tokens.join(" ");
-    }
-  }
-  return undefined;
-}
-
-function resolveFilePath(value: z.infer<typeof ClaudeFileReferenceCollectionSchema>): string | undefined {
-  return firstNonEmpty(
-    value.file_path,
-    value.filePath,
-    value.path,
-    value.target_path,
-    value.targetPath,
-    value.files?.[0]?.path,
-    value.files?.[0]?.filePath,
-    value.files?.[0]?.file_path
-  );
-}
-
-function resolveShellDetail(input: unknown, output: unknown): ToolCallDetail | undefined {
-  const parsedInput = ClaudeShellInputSchema.safeParse(input);
-  const parsedOutput = ClaudeShellOutputSchema.safeParse(output);
-
-  const command =
-    (parsedInput.success
-      ? commandFromValue(parsedInput.data.command) ?? commandFromValue(parsedInput.data.cmd)
-      : undefined) ??
-    (parsedOutput.success && typeof parsedOutput.data !== "string"
-      ? firstNonEmpty(parsedOutput.data.command, parsedOutput.data.result?.command)
-      : undefined);
-
+function toShellDetail(
+  input: z.infer<typeof ClaudeShellInputSchema> | null,
+  output: z.infer<typeof ClaudeShellOutputSchema> | null
+): ToolCallDetail | undefined {
+  const command = input?.command ?? output?.command;
   if (!command) {
     return undefined;
   }
 
-  const outputText =
-    parsedOutput.success
-      ? typeof parsedOutput.data === "string"
-        ? parsedOutput.data
-        : firstNonEmpty(
-            parsedOutput.data.output,
-            parsedOutput.data.text,
-            parsedOutput.data.content,
-            parsedOutput.data.aggregated_output,
-            parsedOutput.data.structuredContent?.output,
-            parsedOutput.data.structuredContent?.text,
-            parsedOutput.data.structuredContent?.content,
-            parsedOutput.data.structured_content?.output,
-            parsedOutput.data.structured_content?.text,
-            parsedOutput.data.structured_content?.content,
-            parsedOutput.data.result?.output,
-            parsedOutput.data.result?.text,
-            parsedOutput.data.result?.content
-          )
-      : undefined;
-
-  const exitCode =
-    parsedOutput.success && typeof parsedOutput.data !== "string"
-      ? parsedOutput.data.exitCode ??
-        parsedOutput.data.exit_code ??
-        parsedOutput.data.metadata?.exitCode ??
-        parsedOutput.data.metadata?.exit_code ??
-        null
-      : null;
-
-  const cwd =
-    parsedInput.success
-      ? firstNonEmpty(parsedInput.data.cwd, parsedInput.data.directory)
-      : undefined;
-
   return {
     type: "shell",
     command,
-    ...(cwd !== undefined ? { cwd } : {}),
-    ...(outputText !== undefined ? { output: outputText } : {}),
-    ...(exitCode !== null ? { exitCode } : { exitCode: null }),
+    ...(input?.cwd ? { cwd: input.cwd } : {}),
+    ...(output?.output ? { output: output.output } : {}),
+    ...(output?.exitCode !== undefined ? { exitCode: output.exitCode } : {}),
   };
 }
 
-function resolveReadDetail(input: unknown, output: unknown): ToolCallDetail | undefined {
-  const parsedInput = ClaudeReadInputSchema.safeParse(input);
-  const parsedOutput = ClaudeReadOutputSchema.safeParse(output);
-
-  const inputPath = parsedInput.success ? resolveFilePath(parsedInput.data) : undefined;
-  const outputPath =
-    parsedOutput.success && typeof parsedOutput.data !== "string"
-      ? resolveFilePath(parsedOutput.data)
-      : undefined;
-  const filePath = firstNonEmpty(inputPath, outputPath);
-
-  if (!filePath) {
+function toReadDetail(
+  input: z.infer<typeof ClaudeReadPathInputSchema> | null,
+  output: z.infer<typeof ClaudeReadOutputSchema> | null
+): ToolCallDetail | undefined {
+  if (!input?.filePath) {
     return undefined;
   }
-
-  const content =
-    parsedOutput.success
-      ? typeof parsedOutput.data === "string"
-        ? parsedOutput.data
-        : firstNonEmpty(
-            parsedOutput.data.content,
-            parsedOutput.data.text,
-            parsedOutput.data.output,
-            parsedOutput.data.data?.content,
-            parsedOutput.data.data?.text,
-            parsedOutput.data.data?.output,
-            parsedOutput.data.structuredContent?.content,
-            parsedOutput.data.structuredContent?.text,
-            parsedOutput.data.structuredContent?.output,
-            parsedOutput.data.structured_content?.content,
-            parsedOutput.data.structured_content?.text,
-            parsedOutput.data.structured_content?.output
-          )
-      : undefined;
-
-  const offset = parsedInput.success ? parsedInput.data.offset : undefined;
-  const limit = parsedInput.success ? parsedInput.data.limit : undefined;
 
   return {
     type: "read",
-    filePath,
-    ...(content !== undefined ? { content } : {}),
-    ...(offset !== undefined ? { offset } : {}),
-    ...(limit !== undefined ? { limit } : {}),
+    filePath: input.filePath,
+    ...(output?.content ? { content: output.content } : {}),
+    ...(input.offset !== undefined ? { offset: input.offset } : {}),
+    ...(input.limit !== undefined ? { limit: input.limit } : {}),
   };
 }
 
-function resolveWriteDetail(input: unknown, output: unknown): ToolCallDetail | undefined {
-  const parsedInput = ClaudeWriteInputSchema.safeParse(input);
-  const parsedOutput = ClaudeWriteOutputSchema.safeParse(output);
-
-  const filePath = firstNonEmpty(
-    parsedInput.success ? resolveFilePath(parsedInput.data) : undefined,
-    parsedOutput.success ? resolveFilePath(parsedOutput.data) : undefined
-  );
-
+function toWriteDetail(
+  input: z.infer<typeof ClaudeWriteInputSchema> | null,
+  output: z.infer<typeof ClaudeWriteOutputSchema> | null
+): ToolCallDetail | undefined {
+  const filePath = input?.filePath ?? output?.filePath;
   if (!filePath) {
     return undefined;
   }
-
-  const content = firstNonEmpty(
-    parsedInput.success
-      ? firstNonEmpty(parsedInput.data.content, parsedInput.data.new_content, parsedInput.data.newContent)
-      : undefined,
-    parsedOutput.success
-      ? firstNonEmpty(parsedOutput.data.content, parsedOutput.data.new_content, parsedOutput.data.newContent)
-      : undefined
-  );
 
   return {
     type: "write",
     filePath,
-    ...(content !== undefined ? { content } : {}),
+    ...(input?.content ? { content: input.content } : output?.content ? { content: output.content } : {}),
   };
 }
 
-function resolveEditDetail(input: unknown, output: unknown): ToolCallDetail | undefined {
-  const parsedInput = ClaudeEditInputSchema.safeParse(input);
-  const parsedOutput = ClaudeEditOutputSchema.safeParse(output);
-
-  const filePath = firstNonEmpty(
-    parsedInput.success ? resolveFilePath(parsedInput.data) : undefined,
-    parsedOutput.success ? resolveFilePath(parsedOutput.data) : undefined
-  );
-
+function toEditDetail(
+  input: z.infer<typeof ClaudeEditInputSchema> | null,
+  output: z.infer<typeof ClaudeEditOutputSchema> | null
+): ToolCallDetail | undefined {
+  const filePath = input?.filePath ?? output?.filePath;
   if (!filePath) {
     return undefined;
   }
 
-  const oldString = parsedInput.success
-    ? firstNonEmpty(
-        parsedInput.data.old_string,
-        parsedInput.data.old_str,
-        parsedInput.data.oldContent,
-        parsedInput.data.old_content
-      )
-    : undefined;
-
-  const newString = firstNonEmpty(
-    parsedInput.success
-      ? firstNonEmpty(
-          parsedInput.data.new_string,
-          parsedInput.data.new_str,
-          parsedInput.data.newContent,
-          parsedInput.data.new_content,
-          parsedInput.data.content
-        )
-      : undefined,
-    parsedOutput.success
-      ? firstNonEmpty(parsedOutput.data.newContent, parsedOutput.data.new_content, parsedOutput.data.content)
-      : undefined
-  );
-
-  const unifiedDiff = firstNonEmpty(
-    parsedInput.success
-      ? firstNonEmpty(
-          parsedInput.data.patch,
-          parsedInput.data.diff,
-          parsedInput.data.unified_diff,
-          parsedInput.data.unifiedDiff
-        )
-      : undefined,
-    parsedOutput.success
-      ? firstNonEmpty(
-          parsedOutput.data.patch,
-          parsedOutput.data.diff,
-          parsedOutput.data.unified_diff,
-          parsedOutput.data.unifiedDiff,
-          parsedOutput.data.files?.[0]?.patch,
-          parsedOutput.data.files?.[0]?.diff,
-          parsedOutput.data.files?.[0]?.unified_diff,
-          parsedOutput.data.files?.[0]?.unifiedDiff
-        )
-      : undefined
-  );
-
   return {
     type: "edit",
     filePath,
-    ...(oldString !== undefined ? { oldString } : {}),
-    ...(newString !== undefined ? { newString } : {}),
-    ...(unifiedDiff !== undefined ? { unifiedDiff } : {}),
+    ...(input?.oldString ? { oldString: input.oldString } : {}),
+    ...(input?.newString ? { newString: input.newString } : output?.newString ? { newString: output.newString } : {}),
+    ...(input?.unifiedDiff
+      ? { unifiedDiff: input.unifiedDiff }
+      : output?.unifiedDiff
+        ? { unifiedDiff: output.unifiedDiff }
+        : {}),
   };
 }
 
-function resolveSearchDetail(input: unknown): ToolCallDetail | undefined {
-  const parsedInput = ClaudeSearchInputSchema.safeParse(input);
-  if (!parsedInput.success) {
+function toSearchDetail(input: z.infer<typeof ClaudeSearchInputSchema> | null): ToolCallDetail | undefined {
+  if (!input?.query) {
     return undefined;
   }
-
-  const query = firstNonEmpty(parsedInput.data.query, parsedInput.data.q);
-  if (!query) {
-    return undefined;
-  }
-
   return {
     type: "search",
-    query,
+    query: input.query,
   };
 }
+
+function claudeToolBranch<Name extends string, InputSchema extends z.ZodTypeAny, OutputSchema extends z.ZodTypeAny>(
+  name: Name,
+  inputSchema: InputSchema,
+  outputSchema: OutputSchema,
+  mapper: (
+    input: z.infer<InputSchema> | null,
+    output: z.infer<OutputSchema> | null
+  ) => ToolCallDetail | undefined
+) {
+  return z
+    .object({
+      name: z.literal(name),
+      input: inputSchema.nullable(),
+      output: outputSchema.nullable(),
+    })
+    .transform(({ input, output }) => mapper(input, output));
+}
+
+const ClaudeKnownToolDetailSchema = z.union([
+  claudeToolBranch("Bash", ClaudeShellInputSchema, ClaudeShellOutputSchema, toShellDetail),
+  claudeToolBranch("bash", ClaudeShellInputSchema, ClaudeShellOutputSchema, toShellDetail),
+  claudeToolBranch("shell", ClaudeShellInputSchema, ClaudeShellOutputSchema, toShellDetail),
+  claudeToolBranch("exec_command", ClaudeShellInputSchema, ClaudeShellOutputSchema, toShellDetail),
+  claudeToolBranch("Read", ClaudeReadPathInputSchema, ClaudeReadOutputSchema, toReadDetail),
+  claudeToolBranch("read", ClaudeReadPathInputSchema, ClaudeReadOutputSchema, toReadDetail),
+  claudeToolBranch("read_file", ClaudeReadPathInputSchema, ClaudeReadOutputSchema, toReadDetail),
+  claudeToolBranch("view_file", ClaudeReadPathInputSchema, ClaudeReadOutputSchema, toReadDetail),
+  claudeToolBranch("Write", ClaudeWriteInputSchema, ClaudeWriteOutputSchema, toWriteDetail),
+  claudeToolBranch("write", ClaudeWriteInputSchema, ClaudeWriteOutputSchema, toWriteDetail),
+  claudeToolBranch("write_file", ClaudeWriteInputSchema, ClaudeWriteOutputSchema, toWriteDetail),
+  claudeToolBranch("create_file", ClaudeWriteInputSchema, ClaudeWriteOutputSchema, toWriteDetail),
+  claudeToolBranch("Edit", ClaudeEditInputSchema, ClaudeEditOutputSchema, toEditDetail),
+  claudeToolBranch("MultiEdit", ClaudeEditInputSchema, ClaudeEditOutputSchema, toEditDetail),
+  claudeToolBranch("multi_edit", ClaudeEditInputSchema, ClaudeEditOutputSchema, toEditDetail),
+  claudeToolBranch("edit", ClaudeEditInputSchema, ClaudeEditOutputSchema, toEditDetail),
+  claudeToolBranch("apply_patch", ClaudeEditInputSchema, ClaudeEditOutputSchema, toEditDetail),
+  claudeToolBranch("apply_diff", ClaudeEditInputSchema, ClaudeEditOutputSchema, toEditDetail),
+  claudeToolBranch("str_replace_editor", ClaudeEditInputSchema, ClaudeEditOutputSchema, toEditDetail),
+  claudeToolBranch("WebSearch", ClaudeSearchInputSchema, z.unknown(), (input) => toSearchDetail(input)),
+  claudeToolBranch("web_search", ClaudeSearchInputSchema, z.unknown(), (input) => toSearchDetail(input)),
+  claudeToolBranch("search", ClaudeSearchInputSchema, z.unknown(), (input) => toSearchDetail(input)),
+]);
 
 function deriveDetail(name: string, input: unknown, output: unknown): ToolCallDetail | undefined {
   const parsed = ClaudeKnownToolDetailSchema.safeParse({
@@ -540,13 +620,12 @@ function buildBase(params: MapperParams): {
   metadata?: Record<string, unknown>;
 } {
   const parsedParams = ClaudeMapperParamsSchema.parse(params);
-  const callId = coerceCallId(parsedParams.callId, parsedParams.name, parsedParams.input);
   const input = parsedParams.input ?? null;
   const output = parsedParams.output ?? null;
   const detail = deriveDetail(parsedParams.name, input, output);
 
   return {
-    callId,
+    callId: coerceCallId(parsedParams.callId, parsedParams.name, input),
     name: parsedParams.name,
     input,
     output,
