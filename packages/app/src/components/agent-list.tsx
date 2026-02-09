@@ -31,6 +31,7 @@ import {
 
 interface AgentListProps {
   agents: AggregatedAgent[];
+  showCheckoutInfo?: boolean;
   isRefreshing?: boolean;
   onRefresh?: () => void;
   selectedAgentId?: string;
@@ -74,6 +75,7 @@ function deriveDateSectionLabel(lastActivityAt: Date): string {
 
 export function AgentList({
   agents,
+  showCheckoutInfo = true,
   isRefreshing = false,
   onRefresh,
   selectedAgentId,
@@ -143,8 +145,11 @@ export function AgentList({
     []
   );
 
-  const onViewableItemsChanged = useRef(
+  const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
+      if (!showCheckoutInfo) {
+        return;
+      }
       for (const token of viewableItems) {
         const agent = token.item as AggregatedAgent | undefined;
         if (!agent) {
@@ -176,7 +181,8 @@ export function AgentList({
           console.warn("[checkout_status] prefetch failed", error);
         });
       }
-    }
+    },
+    [queryClient, showCheckoutInfo]
   );
 
   const AgentListRow = useCallback(
@@ -190,8 +196,10 @@ export function AgentList({
         cwd: agent.cwd,
       });
       const checkout = checkoutQuery.data ?? null;
-      const projectPath = deriveProjectPath(agent.cwd, checkout);
-      const branchLabel = deriveBranchLabel(checkout);
+      const projectPath = showCheckoutInfo
+        ? deriveProjectPath(agent.cwd, checkout)
+        : agent.cwd;
+      const branchLabel = showCheckoutInfo ? deriveBranchLabel(checkout) : null;
 
       return (
         <Pressable
@@ -233,6 +241,7 @@ export function AgentList({
       handleAgentLongPress,
       handleAgentPress,
       selectedAgentId,
+      showCheckoutInfo,
     ]
   );
 
@@ -293,7 +302,7 @@ export function AgentList({
         updateCellsBatchingPeriod={16}
         removeClippedSubviews={true}
         ListFooterComponent={listFooterComponent}
-        onViewableItemsChanged={onViewableItemsChanged.current}
+        onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         refreshControl={
           onRefresh ? (

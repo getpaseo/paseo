@@ -174,6 +174,23 @@ type AgentScreenContentProps = {
   agentId?: string;
 };
 
+type MissingAgentState =
+  | { kind: "idle" }
+  | { kind: "resolving" }
+  | { kind: "not_found"; message: string }
+  | { kind: "error"; message: string };
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function isNotFoundErrorMessage(message: string): boolean {
+  return /agent not found|not found/i.test(message);
+}
+
 function AgentScreenContent({
   serverId,
   agentId,
@@ -363,6 +380,10 @@ function AgentScreenContent({
     (state) => state.sessions[serverId]?.connection.isConnected ?? false
   );
   const { ensureAgentIsInitialized, refreshAgent } = useAgentInitialization(serverId);
+  const [missingAgentState, setMissingAgentState] = useState<MissingAgentState>({
+    kind: "idle",
+  });
+  const initAttemptTokenRef = useRef(0);
   const setFocusedAgentId = useCallback(
     (agentId: string | null) => {
       useSessionStore.getState().setFocusedAgentId(serverId, agentId);
@@ -545,6 +566,59 @@ function AgentScreenContent({
   }, [resolvedAgentId, ensureAgentIsInitialized, isConnected, needsAuthoritativeSync]);
 
   useEffect(() => {
+    // Clear stale resolution state when route target changes.
+    initAttemptTokenRef.current += 1;
+    setMissingAgentState({ kind: "idle" });
+  }, [serverId, resolvedAgentId]);
+
+  useEffect(() => {
+    if (!resolvedAgentId || !ensureAgentIsInitialized) {
+      return;
+    }
+    if (agent || shouldUseOptimisticStream) {
+      if (missingAgentState.kind !== "idle") {
+        setMissingAgentState({ kind: "idle" });
+      }
+      return;
+    }
+    if (!isConnected) {
+      return;
+    }
+    if (missingAgentState.kind === "resolving" || missingAgentState.kind === "not_found") {
+      return;
+    }
+
+    setMissingAgentState({ kind: "resolving" });
+    const attemptToken = ++initAttemptTokenRef.current;
+
+    ensureAgentIsInitialized(resolvedAgentId)
+      .then(() => {
+        if (attemptToken !== initAttemptTokenRef.current) {
+          return;
+        }
+        setMissingAgentState({ kind: "idle" });
+      })
+      .catch((error) => {
+        if (attemptToken !== initAttemptTokenRef.current) {
+          return;
+        }
+        const message = toErrorMessage(error);
+        if (isNotFoundErrorMessage(message)) {
+          setMissingAgentState({ kind: "not_found", message });
+          return;
+        }
+        setMissingAgentState({ kind: "error", message });
+      });
+  }, [
+    agent,
+    ensureAgentIsInitialized,
+    isConnected,
+    missingAgentState.kind,
+    resolvedAgentId,
+    shouldUseOptimisticStream,
+  ]);
+
+  useEffect(() => {
     if (Platform.OS !== "web") {
       return;
     }
@@ -600,11 +674,28 @@ function AgentScreenContent({
   );
 
   if (!effectiveAgent) {
+    if (missingAgentState.kind === "not_found") {
+      return (
+        <View style={styles.container} testID="agent-not-found">
+          <MenuHeader title="Agent" />
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>Agent not found</Text>
+          </View>
+        </View>
+      );
+    }
+
     return (
-      <View style={styles.container} testID="agent-not-found">
+      <View style={styles.container} testID="agent-loading">
         <MenuHeader title="Agent" />
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Agent not found</Text>
+          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          <Text style={styles.loadingText}>Loading agent…</Text>
+          {missingAgentState.kind === "error" ? (
+            <Text style={styles.loadingSubtext} numberOfLines={2}>
+              {missingAgentState.message}
+            </Text>
+          ) : null}
         </View>
       </View>
     );
@@ -969,6 +1060,13 @@ const styles = StyleSheet.create((theme) => ({
   loadingText: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
+  },
+  loadingSubtext: {
+    marginTop: theme.spacing[1],
+    textAlign: "center",
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    paddingHorizontal: theme.spacing[6],
   },
   centerState: {
     flex: 1,
