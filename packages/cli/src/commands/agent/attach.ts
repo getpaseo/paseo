@@ -86,7 +86,7 @@ function printStreamEvent(event: AgentStreamEventPayload): void {
       break
 
     default:
-      // Other event types (thread_started, provider_event, etc.) are internal
+      // Other event types are internal
       break
   }
 }

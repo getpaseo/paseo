@@ -281,11 +281,6 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
       provider: AgentProviderSchema,
     }),
     z.object({
-      type: z.literal("provider_event"),
-      provider: AgentProviderSchema,
-      raw: z.unknown(),
-    }),
-    z.object({
       type: z.literal("turn_started"),
       provider: AgentProviderSchema,
     }),

@@ -1671,7 +1671,6 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   private handleNotification(method: string, params: unknown): void {
-    this.emitEvent({ type: "provider_event", provider: CODEX_PROVIDER, raw: { method, params } });
     const parsed = CodexNotificationSchema.parse({ method, params });
 
     if (parsed.kind === "thread_started") {
