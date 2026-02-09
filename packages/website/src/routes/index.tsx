@@ -20,8 +20,14 @@ export const Route = createFileRoute('/')({
 function Home() {
   return (
     <CursorFieldProvider>
-      {/* Hero section */}
-      <div className="relative">
+      {/* Hero section with background image */}
+      <div
+        className="relative bg-cover bg-center bg-no-repeat"
+        style={{ backgroundImage: 'url(/hero-bg.jpg)' }}
+      >
+        <div className="absolute inset-0 bg-background/90" />
+        <div className="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black to-transparent" />
+
         <div className="relative p-6 pb-10 md:px-20 md:pt-20 md:pb-12 max-w-3xl mx-auto">
           <Nav />
           <Hero />
