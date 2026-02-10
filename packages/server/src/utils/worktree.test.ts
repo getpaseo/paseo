@@ -323,6 +323,70 @@ describe("paseo worktree manager", () => {
     expect(remaining.some((worktree) => worktree.path === created.worktreePath)).toBe(false);
   });
 
+  it("runs destroy commands from paseo.json before deleting a worktree", async () => {
+    const paseoConfig = {
+      worktree: {
+        destroy: [
+          'echo "root=$PASEO_ROOT_PATH" > "$PASEO_ROOT_PATH/destroy.log"',
+          'echo "worktree=$PASEO_WORKTREE_PATH" >> "$PASEO_ROOT_PATH/destroy.log"',
+          'echo "branch=$PASEO_BRANCH_NAME" >> "$PASEO_ROOT_PATH/destroy.log"',
+        ],
+      },
+    };
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+    execSync(
+      "git add paseo.json && git -c commit.gpgsign=false commit -m 'add destroy commands'",
+      { cwd: repoDir }
+    );
+
+    const created = await createWorktree({
+      branchName: "destroy-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "destroy-test",
+      paseoHome,
+    });
+
+    await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
+    expect(existsSync(created.worktreePath)).toBe(false);
+
+    const destroyLog = readFileSync(join(repoDir, "destroy.log"), "utf8");
+    expect(destroyLog).toContain(`root=${repoDir}`);
+    expect(destroyLog).toContain(`worktree=${created.worktreePath}`);
+    expect(destroyLog).toContain("branch=destroy-branch");
+  });
+
+  it("does not remove worktree when a destroy command fails", async () => {
+    const paseoConfig = {
+      worktree: {
+        destroy: [
+          'echo "started" > "$PASEO_ROOT_PATH/destroy-start.log"',
+          "echo boom 1>&2; exit 9",
+        ],
+      },
+    };
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+    execSync(
+      "git add paseo.json && git -c commit.gpgsign=false commit -m 'add failing destroy commands'",
+      { cwd: repoDir }
+    );
+
+    const created = await createWorktree({
+      branchName: "destroy-failure-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "destroy-failure-test",
+      paseoHome,
+    });
+
+    await expect(
+      deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome })
+    ).rejects.toThrow("Worktree destroy command failed");
+
+    expect(existsSync(created.worktreePath)).toBe(true);
+    expect(existsSync(join(repoDir, "destroy-start.log"))).toBe(true);
+  });
+
 });
 
 describe("slugify", () => {

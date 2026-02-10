@@ -9,6 +9,7 @@ import { resolvePaseoHome } from "../server/paseo-home.js";
 interface PaseoConfig {
   worktree?: {
     setup?: string[];
+    destroy?: string[];
   };
 }
 
@@ -37,6 +38,18 @@ export class WorktreeSetupError extends Error {
   constructor(message: string, results: WorktreeSetupCommandResult[]) {
     super(message);
     this.name = "WorktreeSetupError";
+    this.results = results;
+  }
+}
+
+export type WorktreeDestroyCommandResult = WorktreeSetupCommandResult;
+
+export class WorktreeDestroyError extends Error {
+  readonly results: WorktreeDestroyCommandResult[];
+
+  constructor(message: string, results: WorktreeDestroyCommandResult[]) {
+    super(message);
+    this.name = "WorktreeDestroyError";
     this.results = results;
   }
 }
@@ -82,6 +95,15 @@ export function getWorktreeSetupCommands(repoRoot: string): string[] {
     return [];
   }
   return setupCommands.filter((cmd) => typeof cmd === "string" && cmd.trim().length > 0);
+}
+
+export function getWorktreeDestroyCommands(repoRoot: string): string[] {
+  const config = readPaseoConfig(repoRoot);
+  const destroyCommands = config?.worktree?.destroy;
+  if (!destroyCommands || destroyCommands.length === 0) {
+    return [];
+  }
+  return destroyCommands.filter((cmd) => typeof cmd === "string" && cmd.trim().length > 0);
 }
 
 async function execSetupCommand(
@@ -186,6 +208,67 @@ export async function runWorktreeSetupCommands(options: {
       }
       throw new WorktreeSetupError(
         `Worktree setup command failed: ${cmd}\n${result.stderr}`.trim(),
+        results
+      );
+    }
+  }
+
+  return results;
+}
+
+async function resolveBranchNameForWorktreePath(worktreePath: string): Promise<string> {
+  try {
+    const { stdout } = await execAsync("git branch --show-current", {
+      cwd: worktreePath,
+      env: READ_ONLY_GIT_ENV,
+    });
+    const branchName = stdout.trim();
+    if (branchName.length > 0) {
+      return branchName;
+    }
+  } catch {
+    // ignore
+  }
+
+  return basename(worktreePath);
+}
+
+export async function runWorktreeDestroyCommands(options: {
+  worktreePath: string;
+  branchName?: string;
+  repoRootPath?: string;
+}): Promise<WorktreeDestroyCommandResult[]> {
+  // Read paseo.json from the worktree (it will have the same content as the source repo)
+  const destroyCommands = getWorktreeDestroyCommands(options.worktreePath);
+  if (destroyCommands.length === 0) {
+    return [];
+  }
+
+  const repoRootPath =
+    options.repoRootPath ?? (await inferRepoRootPathFromWorktreePath(options.worktreePath));
+  const branchName =
+    options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
+
+  const destroyEnv = {
+    ...process.env,
+    // Root is the original git repo root (shared across worktrees), not the worktree itself.
+    // This allows destroy scripts to clean resources using paths from the main checkout.
+    PASEO_ROOT_PATH: repoRootPath,
+    PASEO_WORKTREE_PATH: options.worktreePath,
+    PASEO_BRANCH_NAME: branchName,
+  };
+
+  const results: WorktreeDestroyCommandResult[] = [];
+  for (const cmd of destroyCommands) {
+    const result = await execSetupCommand(cmd, {
+      cwd: options.worktreePath,
+      env: destroyEnv,
+    });
+    results.push(result);
+
+    if (result.exitCode !== 0) {
+      throw new WorktreeDestroyError(
+        `Worktree destroy command failed: ${cmd}\n${result.stderr}`.trim(),
         results
       );
     }
@@ -541,6 +624,10 @@ export async function deletePaseoWorktree({
   if (!resolvedWorktree.startsWith(resolvedRoot)) {
     throw new Error("Refusing to delete non-Paseo worktree");
   }
+
+  await runWorktreeDestroyCommands({
+    worktreePath: resolvedWorktree,
+  });
 
   await execAsync(`git worktree remove "${resolvedWorktree}" --force`, {
     cwd,
