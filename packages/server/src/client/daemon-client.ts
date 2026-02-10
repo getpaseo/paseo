@@ -183,6 +183,10 @@ type GitDiffPayload = GitDiffResponse["payload"];
 type HighlightedDiffPayload = HighlightedDiffResponse["payload"];
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 type CheckoutDiffPayload = CheckoutDiffResponse["payload"];
+type SubscribeCheckoutDiffPayload = Extract<
+  SessionOutboundMessage,
+  { type: "subscribe_checkout_diff_response" }
+>["payload"];
 type CheckoutCommitPayload = CheckoutCommitResponse["payload"];
 type CheckoutMergePayload = CheckoutMergeResponse["payload"];
 type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
@@ -296,6 +300,10 @@ export class DaemonClient {
     string,
     { labels?: Record<string, string>; agentId?: string } | undefined
   >();
+  private checkoutDiffSubscriptions = new Map<
+    string,
+    { cwd: string; compare: { mode: "uncommitted" | "base"; baseRef?: string } }
+  >();
   private logger: Logger;
   private pendingSendQueue: PendingSend[] = [];
   private relayClientId: string | null = null;
@@ -401,6 +409,7 @@ export class DaemonClient {
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" });
           this.resubscribeAgentUpdates();
+          this.resubscribeCheckoutDiffSubscriptions();
           this.flushPendingSendQueue();
           this.resolveConnect();
         }),
@@ -946,6 +955,22 @@ export class DaemonClient {
         type: "subscribe_agent_updates",
         subscriptionId,
         ...(filter ? { filter } : {}),
+      });
+      this.sendSessionMessage(message);
+    }
+  }
+
+  private resubscribeCheckoutDiffSubscriptions(): void {
+    if (this.checkoutDiffSubscriptions.size === 0) {
+      return;
+    }
+    for (const [subscriptionId, subscription] of this.checkoutDiffSubscriptions) {
+      const message = SessionInboundMessageSchema.parse({
+        type: "subscribe_checkout_diff_request",
+        subscriptionId,
+        cwd: subscription.cwd,
+        compare: subscription.compare,
+        requestId: this.createRequestId(),
       });
       this.sendSessionMessage(message);
     }
@@ -1521,16 +1546,30 @@ export class DaemonClient {
     return responsePromise;
   }
 
+  private normalizeCheckoutDiffCompare(
+    compare: { mode: "uncommitted" | "base"; baseRef?: string }
+  ): { mode: "uncommitted" | "base"; baseRef?: string } {
+    if (compare.mode === "uncommitted") {
+      return { mode: "uncommitted" };
+    }
+    const trimmedBaseRef = compare.baseRef?.trim();
+    if (!trimmedBaseRef) {
+      return { mode: "base" };
+    }
+    return { mode: "base", baseRef: trimmedBaseRef };
+  }
+
   async getCheckoutDiff(
     cwd: string,
     compare: { mode: "uncommitted" | "base"; baseRef?: string },
     requestId?: string
   ): Promise<CheckoutDiffPayload> {
+    const normalizedCompare = this.normalizeCheckoutDiffCompare(compare);
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_diff_request",
       cwd,
-      compare,
+      compare: normalizedCompare,
       requestId: resolvedRequestId,
     });
     return this.sendRequest({
@@ -1547,6 +1586,65 @@ export class DaemonClient {
         }
         return msg.payload;
       },
+    });
+  }
+
+  async subscribeCheckoutDiff(
+    cwd: string,
+    compare: { mode: "uncommitted" | "base"; baseRef?: string },
+    options?: { subscriptionId?: string; requestId?: string }
+  ): Promise<SubscribeCheckoutDiffPayload> {
+    const subscriptionId = options?.subscriptionId ?? crypto.randomUUID();
+    const normalizedCompare = this.normalizeCheckoutDiffCompare(compare);
+    const previousSubscription = this.checkoutDiffSubscriptions.get(subscriptionId) ?? null;
+    this.checkoutDiffSubscriptions.set(subscriptionId, {
+      cwd,
+      compare: normalizedCompare,
+    });
+
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "subscribe_checkout_diff_request",
+      subscriptionId,
+      cwd,
+      compare: normalizedCompare,
+      requestId: resolvedRequestId,
+    });
+
+    try {
+      return await this.sendRequest({
+        requestId: resolvedRequestId,
+        message,
+        timeout: 60000,
+        options: { skipQueue: true },
+        select: (msg) => {
+          if (msg.type !== "subscribe_checkout_diff_response") {
+            return null;
+          }
+          if (msg.payload.requestId !== resolvedRequestId) {
+            return null;
+          }
+          if (msg.payload.subscriptionId !== subscriptionId) {
+            return null;
+          }
+          return msg.payload;
+        },
+      });
+    } catch (error) {
+      if (previousSubscription) {
+        this.checkoutDiffSubscriptions.set(subscriptionId, previousSubscription);
+      } else {
+        this.checkoutDiffSubscriptions.delete(subscriptionId);
+      }
+      throw error;
+    }
+  }
+
+  unsubscribeCheckoutDiff(subscriptionId: string): void {
+    this.checkoutDiffSubscriptions.delete(subscriptionId);
+    this.sendSessionMessage({
+      type: "unsubscribe_checkout_diff_request",
+      subscriptionId,
     });
   }
 

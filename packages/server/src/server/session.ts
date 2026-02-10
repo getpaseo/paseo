@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import { watch, type FSWatcher } from "node:fs";
 import { stat } from "fs/promises";
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -19,6 +20,8 @@ import {
   type UnsubscribeTerminalRequest,
   type TerminalInput,
   type KillTerminalRequest,
+  type SubscribeCheckoutDiffRequest,
+  type UnsubscribeCheckoutDiffRequest,
   type ProjectCheckoutLitePayload,
   type ProjectPlacementPayload,
 } from "./messages.js";
@@ -130,6 +133,7 @@ const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
 const RESTART_EXIT_DELAY_MS = 250;
 const PROJECT_PLACEMENT_CACHE_TTL_MS = 10_000;
 const MAX_AGENTS_PER_PROJECT = 5;
+const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
 
 /**
  * Default model used for auto-generating commit messages and PR descriptions.
@@ -217,6 +221,29 @@ function escapeXmlText(value: string): string {
 }
 
 type ProcessingPhase = "idle" | "transcribing" | "llm";
+
+type CheckoutDiffCompareInput = Extract<
+  SessionInboundMessage,
+  { type: "checkout_diff_request" }
+>["compare"];
+
+type CheckoutDiffSnapshotPayload = Omit<
+  Extract<SessionOutboundMessage, { type: "checkout_diff_update" }>["payload"],
+  "subscriptionId"
+>;
+
+type CheckoutDiffWatchTarget = {
+  key: string;
+  cwd: string;
+  compare: CheckoutDiffCompareInput;
+  subscriptions: Set<string>;
+  watchers: FSWatcher[];
+  debounceTimer: NodeJS.Timeout | null;
+  refreshPromise: Promise<void> | null;
+  refreshQueued: boolean;
+  latestPayload: CheckoutDiffSnapshotPayload | null;
+  latestFingerprint: string | null;
+};
 
 type NormalizedGitOptions = {
   baseBranch?: string;
@@ -464,6 +491,8 @@ export class Session {
   private readonly MOBILE_BACKGROUND_STREAM_GRACE_MS = 60_000;
   private readonly terminalManager: TerminalManager | null;
   private terminalSubscriptions: Map<string, () => void> = new Map();
+  private readonly checkoutDiffSubscriptions = new Map<string, { targetKey: string }>();
+  private readonly checkoutDiffTargets = new Map<string, CheckoutDiffWatchTarget>();
   private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null;
   private readonly localSpeechModelsDir: string;
   private readonly defaultLocalSpeechModelIds: LocalSpeechModelId[];
@@ -1159,6 +1188,14 @@ export class Session {
 
         case "checkout_diff_request":
           await this.handleCheckoutDiffRequest(msg);
+          break;
+
+        case "subscribe_checkout_diff_request":
+          await this.handleSubscribeCheckoutDiffRequest(msg);
+          break;
+
+        case "unsubscribe_checkout_diff_request":
+          this.handleUnsubscribeCheckoutDiffRequest(msg);
           break;
 
         case "checkout_commit_request":
@@ -3464,11 +3501,102 @@ export class Session {
     }
   }
 
-  private async handleCheckoutDiffRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_diff_request" }>
-  ): Promise<void> {
-    const { cwd, requestId, compare } = msg;
+  private normalizeCheckoutDiffCompare(compare: CheckoutDiffCompareInput): CheckoutDiffCompareInput {
+    if (compare.mode === "uncommitted") {
+      return { mode: "uncommitted" };
+    }
+    const trimmedBaseRef = compare.baseRef?.trim();
+    return trimmedBaseRef
+      ? { mode: "base", baseRef: trimmedBaseRef }
+      : { mode: "base" };
+  }
 
+  private buildCheckoutDiffTargetKey(cwd: string, compare: CheckoutDiffCompareInput): string {
+    return JSON.stringify([
+      cwd,
+      compare.mode,
+      compare.mode === "base" ? (compare.baseRef ?? "") : "",
+    ]);
+  }
+
+  private closeCheckoutDiffWatchTarget(target: CheckoutDiffWatchTarget): void {
+    if (target.debounceTimer) {
+      clearTimeout(target.debounceTimer);
+      target.debounceTimer = null;
+    }
+    for (const watcher of target.watchers) {
+      watcher.close();
+    }
+    target.watchers = [];
+  }
+
+  private removeCheckoutDiffSubscription(subscriptionId: string): void {
+    const subscription = this.checkoutDiffSubscriptions.get(subscriptionId);
+    if (!subscription) {
+      return;
+    }
+    this.checkoutDiffSubscriptions.delete(subscriptionId);
+
+    const target = this.checkoutDiffTargets.get(subscription.targetKey);
+    if (!target) {
+      return;
+    }
+    target.subscriptions.delete(subscriptionId);
+    if (target.subscriptions.size === 0) {
+      this.closeCheckoutDiffWatchTarget(target);
+      this.checkoutDiffTargets.delete(subscription.targetKey);
+    }
+  }
+
+  private async resolveCheckoutGitDir(cwd: string): Promise<string | null> {
+    try {
+      const { stdout } = await execAsync("git rev-parse --absolute-git-dir", {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      });
+      const gitDir = stdout.trim();
+      return gitDir.length > 0 ? gitDir : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private scheduleCheckoutDiffTargetRefresh(target: CheckoutDiffWatchTarget): void {
+    if (target.debounceTimer) {
+      clearTimeout(target.debounceTimer);
+    }
+    target.debounceTimer = setTimeout(() => {
+      target.debounceTimer = null;
+      void this.refreshCheckoutDiffTarget(target);
+    }, CHECKOUT_DIFF_WATCH_DEBOUNCE_MS);
+  }
+
+  private emitCheckoutDiffUpdate(
+    target: CheckoutDiffWatchTarget,
+    snapshot: CheckoutDiffSnapshotPayload
+  ): void {
+    if (target.subscriptions.size === 0) {
+      return;
+    }
+    for (const subscriptionId of target.subscriptions) {
+      this.emit({
+        type: "checkout_diff_update",
+        payload: {
+          subscriptionId,
+          ...snapshot,
+        },
+      });
+    }
+  }
+
+  private checkoutDiffSnapshotFingerprint(snapshot: CheckoutDiffSnapshotPayload): string {
+    return JSON.stringify(snapshot);
+  }
+
+  private async computeCheckoutDiffSnapshot(
+    cwd: string,
+    compare: CheckoutDiffCompareInput
+  ): Promise<CheckoutDiffSnapshotPayload> {
     try {
       const diffResult = await getCheckoutDiff(
         cwd,
@@ -3479,26 +3607,187 @@ export class Session {
         },
         { paseoHome: this.paseoHome }
       );
-      this.emit({
-        type: "checkout_diff_response",
-        payload: {
-          cwd,
-          files: diffResult.structured ?? [],
-          error: null,
-          requestId,
-        },
+      const files = [...(diffResult.structured ?? [])];
+      files.sort((a, b) => {
+        if (a.path === b.path) return 0;
+        return a.path < b.path ? -1 : 1;
       });
+      return {
+        cwd,
+        files,
+        error: null,
+      };
     } catch (error) {
-      this.emit({
-        type: "checkout_diff_response",
-        payload: {
-          cwd,
-          files: [],
-          error: this.toCheckoutError(error),
-          requestId,
-        },
-      });
+      return {
+        cwd,
+        files: [],
+        error: this.toCheckoutError(error),
+      };
     }
+  }
+
+  private async refreshCheckoutDiffTarget(target: CheckoutDiffWatchTarget): Promise<void> {
+    if (target.refreshPromise) {
+      target.refreshQueued = true;
+      return;
+    }
+
+    target.refreshPromise = (async () => {
+      do {
+        target.refreshQueued = false;
+        const snapshot = await this.computeCheckoutDiffSnapshot(
+          target.cwd,
+          target.compare
+        );
+        target.latestPayload = snapshot;
+        const fingerprint = this.checkoutDiffSnapshotFingerprint(snapshot);
+        if (fingerprint !== target.latestFingerprint) {
+          target.latestFingerprint = fingerprint;
+          this.emitCheckoutDiffUpdate(target, snapshot);
+        }
+      } while (target.refreshQueued);
+    })();
+
+    try {
+      await target.refreshPromise;
+    } finally {
+      target.refreshPromise = null;
+    }
+  }
+
+  private async ensureCheckoutDiffWatchTarget(
+    cwd: string,
+    compare: CheckoutDiffCompareInput
+  ): Promise<CheckoutDiffWatchTarget> {
+    const targetKey = this.buildCheckoutDiffTargetKey(cwd, compare);
+    const existing = this.checkoutDiffTargets.get(targetKey);
+    if (existing) {
+      return existing;
+    }
+
+    const target: CheckoutDiffWatchTarget = {
+      key: targetKey,
+      cwd,
+      compare,
+      subscriptions: new Set(),
+      watchers: [],
+      debounceTimer: null,
+      refreshPromise: null,
+      refreshQueued: false,
+      latestPayload: null,
+      latestFingerprint: null,
+    };
+
+    const watchPaths = new Set<string>([cwd]);
+    const gitDir = await this.resolveCheckoutGitDir(cwd);
+    if (gitDir) {
+      watchPaths.add(gitDir);
+    }
+
+    for (const watchPath of watchPaths) {
+      const createWatcher = (recursive: boolean): FSWatcher =>
+        watch(
+          watchPath,
+          { recursive },
+          () => {
+            this.scheduleCheckoutDiffTargetRefresh(target);
+          }
+        );
+
+      let watcher: FSWatcher | null = null;
+      try {
+        watcher = createWatcher(true);
+      } catch (error) {
+        try {
+          watcher = createWatcher(false);
+          this.sessionLogger.warn(
+            { err: error, watchPath, cwd, compare },
+            "Checkout diff recursive watch unavailable; using non-recursive fallback"
+          );
+        } catch (fallbackError) {
+          this.sessionLogger.warn(
+            { err: fallbackError, watchPath, cwd, compare },
+            "Failed to start checkout diff watcher"
+          );
+        }
+      }
+
+      if (!watcher) {
+        continue;
+      }
+
+      watcher.on("error", (error) => {
+        this.sessionLogger.warn(
+          { err: error, watchPath, cwd, compare },
+          "Checkout diff watcher error"
+        );
+      });
+      target.watchers.push(watcher);
+    }
+
+    this.checkoutDiffTargets.set(targetKey, target);
+    return target;
+  }
+
+  private async handleSubscribeCheckoutDiffRequest(
+    msg: SubscribeCheckoutDiffRequest
+  ): Promise<void> {
+    const cwd = expandTilde(msg.cwd);
+    const compare = this.normalizeCheckoutDiffCompare(msg.compare);
+
+    this.removeCheckoutDiffSubscription(msg.subscriptionId);
+    const target = await this.ensureCheckoutDiffWatchTarget(cwd, compare);
+    target.subscriptions.add(msg.subscriptionId);
+    this.checkoutDiffSubscriptions.set(msg.subscriptionId, {
+      targetKey: target.key,
+    });
+
+    const snapshot =
+      target.latestPayload ?? (await this.computeCheckoutDiffSnapshot(cwd, compare));
+    target.latestPayload = snapshot;
+    target.latestFingerprint = this.checkoutDiffSnapshotFingerprint(snapshot);
+
+    this.emit({
+      type: "subscribe_checkout_diff_response",
+      payload: {
+        subscriptionId: msg.subscriptionId,
+        ...snapshot,
+        requestId: msg.requestId,
+      },
+    });
+  }
+
+  private handleUnsubscribeCheckoutDiffRequest(
+    msg: UnsubscribeCheckoutDiffRequest
+  ): void {
+    this.removeCheckoutDiffSubscription(msg.subscriptionId);
+  }
+
+  private scheduleCheckoutDiffRefreshForCwd(cwd: string): void {
+    const resolvedCwd = expandTilde(cwd);
+    for (const target of this.checkoutDiffTargets.values()) {
+      if (target.cwd !== resolvedCwd) {
+        continue;
+      }
+      this.scheduleCheckoutDiffTargetRefresh(target);
+    }
+  }
+
+  private async handleCheckoutDiffRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_diff_request" }>
+  ): Promise<void> {
+    const cwd = expandTilde(msg.cwd);
+    const compare = this.normalizeCheckoutDiffCompare(msg.compare);
+    const snapshot = await this.computeCheckoutDiffSnapshot(cwd, compare);
+    this.emit({
+      type: "checkout_diff_response",
+      payload: {
+        cwd,
+        files: snapshot.files,
+        error: snapshot.error,
+        requestId: msg.requestId,
+      },
+    });
   }
 
   private async handleCheckoutCommitRequest(
@@ -3519,6 +3808,7 @@ export class Session {
         message,
         addAll: msg.addAll ?? true,
       });
+      this.scheduleCheckoutDiffRefreshForCwd(cwd);
 
       this.emit({
         type: "checkout_commit_response",
@@ -3592,6 +3882,7 @@ export class Session {
         },
         { paseoHome: this.paseoHome }
       );
+      this.scheduleCheckoutDiffRefreshForCwd(cwd);
 
       this.emit({
         type: "checkout_merge_response",
@@ -3638,6 +3929,7 @@ export class Session {
           requireCleanTarget: msg.requireCleanTarget ?? true,
         },
       );
+      this.scheduleCheckoutDiffRefreshForCwd(cwd);
 
       this.emit({
         type: "checkout_merge_from_base_response",
@@ -5569,6 +5861,12 @@ export class Session {
       unsubscribe();
     }
     this.terminalSubscriptions.clear();
+
+    for (const target of this.checkoutDiffTargets.values()) {
+      this.closeCheckoutDiffWatchTarget(target);
+    }
+    this.checkoutDiffTargets.clear();
+    this.checkoutDiffSubscriptions.clear();
   }
 
   // ============================================================================

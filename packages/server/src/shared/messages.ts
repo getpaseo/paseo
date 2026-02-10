@@ -714,6 +714,19 @@ export const CheckoutDiffRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const SubscribeCheckoutDiffRequestSchema = z.object({
+  type: z.literal("subscribe_checkout_diff_request"),
+  subscriptionId: z.string(),
+  cwd: z.string(),
+  compare: CheckoutDiffCompareSchema,
+  requestId: z.string(),
+});
+
+export const UnsubscribeCheckoutDiffRequestSchema = z.object({
+  type: z.literal("unsubscribe_checkout_diff_request"),
+  subscriptionId: z.string(),
+});
+
 export const CheckoutCommitRequestSchema = z.object({
   type: z.literal("checkout_commit_request"),
   cwd: z.string(),
@@ -988,6 +1001,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   GitDiffRequestSchema,
   CheckoutStatusRequestSchema,
   CheckoutDiffRequestSchema,
+  SubscribeCheckoutDiffRequestSchema,
+  UnsubscribeCheckoutDiffRequestSchema,
   CheckoutCommitRequestSchema,
   CheckoutMergeRequestSchema,
   CheckoutMergeFromBaseRequestSchema,
@@ -1465,6 +1480,25 @@ export const CheckoutDiffResponseSchema = z.object({
   }),
 });
 
+const CheckoutDiffSubscriptionPayloadSchema = z.object({
+  subscriptionId: z.string(),
+  cwd: z.string(),
+  files: z.array(ParsedDiffFileSchema),
+  error: CheckoutErrorSchema.nullable(),
+});
+
+export const SubscribeCheckoutDiffResponseSchema = z.object({
+  type: z.literal("subscribe_checkout_diff_response"),
+  payload: CheckoutDiffSubscriptionPayloadSchema.extend({
+    requestId: z.string(),
+  }),
+});
+
+export const CheckoutDiffUpdateSchema = z.object({
+  type: z.literal("checkout_diff_update"),
+  payload: CheckoutDiffSubscriptionPayloadSchema,
+});
+
 export const CheckoutCommitResponseSchema = z.object({
   type: z.literal("checkout_commit_response"),
   payload: z.object({
@@ -1801,6 +1835,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   GitDiffResponseSchema,
   CheckoutStatusResponseSchema,
   CheckoutDiffResponseSchema,
+  SubscribeCheckoutDiffResponseSchema,
+  CheckoutDiffUpdateSchema,
   CheckoutCommitResponseSchema,
   CheckoutMergeResponseSchema,
   CheckoutMergeFromBaseResponseSchema,
@@ -1911,6 +1947,16 @@ export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
 export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;
 export type CheckoutDiffRequest = z.infer<typeof CheckoutDiffRequestSchema>;
 export type CheckoutDiffResponse = z.infer<typeof CheckoutDiffResponseSchema>;
+export type SubscribeCheckoutDiffRequest = z.infer<
+  typeof SubscribeCheckoutDiffRequestSchema
+>;
+export type UnsubscribeCheckoutDiffRequest = z.infer<
+  typeof UnsubscribeCheckoutDiffRequestSchema
+>;
+export type SubscribeCheckoutDiffResponse = z.infer<
+  typeof SubscribeCheckoutDiffResponseSchema
+>;
+export type CheckoutDiffUpdate = z.infer<typeof CheckoutDiffUpdateSchema>;
 export type CheckoutCommitRequest = z.infer<typeof CheckoutCommitRequestSchema>;
 export type CheckoutCommitResponse = z.infer<typeof CheckoutCommitResponseSchema>;
 export type CheckoutMergeRequest = z.infer<typeof CheckoutMergeRequestSchema>;
