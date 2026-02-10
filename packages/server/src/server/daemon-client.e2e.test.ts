@@ -771,6 +771,110 @@ describe("daemon client E2E", () => {
   );
 
   speechTest(
+    "voice mode flushes buffered audio after inactivity when isLast is missing",
+    async () => {
+      const voiceCwd = tmpCwd();
+      const voiceAgent = await ctx.client.createAgent({
+        config: {
+          ...getFullAccessConfig("codex"),
+          cwd: voiceCwd,
+        },
+      });
+      await ctx.client.setVoiceMode(true, voiceAgent.id);
+
+      const transcription = waitForSignal(40_000, (resolve) => {
+        const unsubscribe = ctx.client.on("transcription_result", (message) => {
+          if (message.type !== "transcription_result") {
+            return;
+          }
+          resolve(message.payload);
+        });
+        return unsubscribe;
+      });
+
+      const errorSignal = waitForSignal(40_000, (resolve) => {
+        const unsubscribeStatus = ctx.client.on("status", (message) => {
+          if (message.type !== "status") {
+            return;
+          }
+          if (message.payload.status !== "error") {
+            return;
+          }
+          resolve(`status:error ${message.payload.message}`);
+        });
+
+        const unsubscribeLog = ctx.client.on("activity_log", (message) => {
+          if (message.type !== "activity_log") {
+            return;
+          }
+          if (message.payload.type !== "error") {
+            return;
+          }
+          resolve(`activity_log:error ${message.payload.content}`);
+        });
+
+        return () => {
+          unsubscribeStatus();
+          unsubscribeLog();
+        };
+      });
+
+      try {
+        const fixturePath = path.resolve(
+          process.cwd(),
+          "..",
+          "app",
+          "e2e",
+          "fixtures",
+          "recording.wav"
+        );
+        const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+        const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
+        expect(sampleRate).toBe(16000);
+
+        const format = "audio/pcm;rate=16000;bits=16";
+        const chunkBytes = 3200; // 100ms @ 16kHz mono PCM16
+        const maxChunksWithoutLast = 25;
+
+        let sentChunks = 0;
+        for (
+          let offset = 0;
+          offset < pcm16.length && sentChunks < maxChunksWithoutLast;
+          offset += chunkBytes
+        ) {
+          const chunk = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
+          await ctx.client.sendVoiceAudioChunk(chunk.toString("base64"), format, false);
+          sentChunks += 1;
+        }
+
+        const outcome = await Promise.race([
+          transcription.then((payload) => ({ kind: "ok" as const, payload })),
+          errorSignal.then((error) => ({ kind: "error" as const, error })),
+        ]);
+
+        if (outcome.kind === "error") {
+          throw new Error(outcome.error);
+        }
+
+        expect(typeof outcome.payload.text).toBe("string");
+        if (outcome.payload.byteLength !== undefined) {
+          expect(outcome.payload.byteLength).toBeGreaterThan(0);
+        }
+        if (outcome.payload.text.trim().length > 0) {
+          expect(outcome.payload.text.trim().length).toBeGreaterThan(1);
+        } else {
+          expect(outcome.payload.isLowConfidence).toBe(true);
+        }
+      } finally {
+        await Promise.allSettled([transcription, errorSignal]);
+        await ctx.client.setVoiceMode(false);
+        rmSync(voiceCwd, { recursive: true, force: true });
+      }
+    },
+    90_000
+  );
+
+  speechTest(
     "streams dictation PCM and returns final transcript",
     async () => {
       const fixturePath = path.resolve(

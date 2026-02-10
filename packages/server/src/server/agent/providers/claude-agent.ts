@@ -783,6 +783,20 @@ class ClaudeAgentSession implements AgentSession {
       };
       pending.resolve(result);
     } else {
+      if (pending.request.kind === "tool") {
+        this.pushToolCall(
+          mapClaudeFailedToolCall({
+            name: pending.request.name,
+            callId:
+              (typeof pending.request.metadata?.toolUseId === "string"
+                ? pending.request.metadata.toolUseId
+                : null) ?? pending.request.id,
+            input: pending.request.input ?? null,
+            output: null,
+            error: { message: response.message ?? "Permission denied" },
+          })
+        );
+      }
       const result: PermissionResult = {
         behavior: "deny",
         message: response.message ?? "Permission request denied",
@@ -1361,6 +1375,7 @@ class ClaudeAgentSession implements AgentSession {
     options
   ): Promise<PermissionResult> => {
     const requestId = `permission-${randomUUID()}`;
+    const kind = resolvePermissionKind(toolName, input);
     const metadata: AgentMetadata = {};
     if (options.toolUseID) {
       metadata.toolUseId = options.toolUseID;
@@ -1368,13 +1383,23 @@ class ClaudeAgentSession implements AgentSession {
     if (toolName === "ExitPlanMode" && typeof input.plan === "string") {
       metadata.planText = input.plan;
     }
+    const detail =
+      kind === "tool"
+        ? mapClaudeRunningToolCall({
+            name: toolName,
+            callId: options.toolUseID ?? requestId,
+            input,
+            output: null,
+          }).detail
+        : undefined;
 
     const request: AgentPermissionRequest = {
       id: requestId,
       provider: "claude",
       name: toolName,
-      kind: resolvePermissionKind(toolName, input),
+      kind,
       input,
+      detail,
       suggestions: options.suggestions?.map((suggestion) => ({ ...suggestion })),
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };

@@ -5,6 +5,7 @@ import {
   closestCenter,
   KeyboardSensor,
   PointerSensor,
+  type Modifier,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -24,6 +25,11 @@ import type {
 } from "./draggable-list.types";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
+
+const restrictToVerticalAxis: Modifier = ({ transform }) => ({
+  ...transform,
+  x: 0,
+});
 
 interface SortableItemProps<T> {
   id: string;
@@ -157,6 +163,7 @@ export function DraggableList<T>({
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
+        modifiers={[restrictToVerticalAxis]}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >

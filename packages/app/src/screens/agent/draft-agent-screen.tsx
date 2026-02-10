@@ -104,6 +104,7 @@ type DraftAgentParams = {
   provider?: string;
   modeId?: string;
   model?: string;
+  thinkingOptionId?: string;
   workingDir?: string;
 };
 
@@ -146,6 +147,7 @@ export function DraftAgentScreen({
   const resolvedProvider = getValidProvider(getParamValue(params.provider));
   const resolvedMode = getValidMode(resolvedProvider, getParamValue(params.modeId));
   const resolvedModel = getParamValue(params.model);
+  const resolvedThinkingOptionId = getParamValue(params.thinkingOptionId);
   const resolvedWorkingDir = getParamValue(params.workingDir);
 
   const onlineServerIds = useMemo(() => {
@@ -172,8 +174,17 @@ export function DraftAgentScreen({
     if (resolvedModel) {
       values.model = resolvedModel;
     }
+    if (resolvedThinkingOptionId) {
+      values.thinkingOptionId = resolvedThinkingOptionId;
+    }
     return values;
-  }, [resolvedMode, resolvedModel, resolvedProvider, resolvedWorkingDir]);
+  }, [
+    resolvedMode,
+    resolvedModel,
+    resolvedProvider,
+    resolvedThinkingOptionId,
+    resolvedWorkingDir,
+  ]);
 
   const {
     selectedServerId,
@@ -184,11 +195,14 @@ export function DraftAgentScreen({
     setModeFromUser,
     selectedModel,
     setModelFromUser,
+    selectedThinkingOptionId,
+    setThinkingOptionFromUser,
     workingDir,
     setWorkingDirFromUser,
     providerDefinitions,
     modeOptions,
     availableModels,
+    availableThinkingOptions,
     isModelLoading,
     modelError,
     refreshProviderModels,
@@ -688,6 +702,7 @@ export function DraftAgentScreen({
     const cwd = (isAttachWorktree && selectedWorktreePath ? selectedWorktreePath : workingDir).trim() || ".";
     const provider = selectedProvider;
     const model = selectedModel.trim() || null;
+    const thinkingOptionId = selectedThinkingOptionId.trim() || null;
     const modeId = modeOptions.length > 0 && selectedMode !== "" ? selectedMode : null;
 
     return {
@@ -713,6 +728,7 @@ export function DraftAgentScreen({
       title: "New agent",
       cwd,
       model,
+      thinkingOptionId,
       labels: {},
     };
   }, [
@@ -722,6 +738,7 @@ export function DraftAgentScreen({
     modeOptions.length,
     selectedMode,
     selectedModel,
+    selectedThinkingOptionId,
     selectedProvider,
     selectedServerId,
     selectedWorktreePath,
@@ -797,11 +814,15 @@ export function DraftAgentScreen({
       const modeId =
         modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
       const trimmedModel = selectedModel.trim();
+      const trimmedThinkingOptionId = selectedThinkingOptionId.trim();
       const config: AgentSessionConfig = {
         provider: selectedProvider,
         cwd: resolvedWorkingDir,
         ...(modeId ? { modeId } : {}),
         ...(trimmedModel ? { model: trimmedModel } : {}),
+        ...(trimmedThinkingOptionId
+          ? { thinkingOptionId: trimmedThinkingOptionId }
+          : {}),
       };
       const effectiveBaseBranch = baseBranch.trim();
       const effectiveWorktreeSlug =
@@ -874,6 +895,7 @@ export function DraftAgentScreen({
       router,
       selectedMode,
       selectedModel,
+      selectedThinkingOptionId,
       selectedProvider,
       selectedServerId,
       createAgentClient,
@@ -979,6 +1001,9 @@ export function DraftAgentScreen({
               selectedModel={selectedModel}
               isModelLoading={isModelLoading}
               onSelectModel={setModelFromUser}
+              thinkingOptions={availableThinkingOptions}
+              selectedThinkingOptionId={selectedThinkingOptionId}
+              onSelectThinkingOption={setThinkingOptionFromUser}
             />
             {isMobile && trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
               <View style={styles.formSeparator} />

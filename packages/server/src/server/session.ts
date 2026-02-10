@@ -31,6 +31,7 @@ import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
 import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
 import {
   DictationStreamManager,
+  type DictationStreamOutboundMessage,
 } from "./dictation/dictation-stream-manager.js";
 import {
   buildConfigOverrides,
@@ -241,6 +242,8 @@ const MIN_STREAMING_SEGMENT_DURATION_MS = 1000;
 const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS
 );
+const VOICE_MODE_INACTIVITY_FLUSH_MS = 4500;
+const VOICE_INTERNAL_DICTATION_ID_PREFIX = "__voice_turn__:";
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
 const AgentIdSchema = z.string().uuid();
 const VOICE_MCP_SERVER_NAME = "paseo_voice";
@@ -256,6 +259,18 @@ interface AudioBufferState {
   isPCM: boolean;
   totalPCMBytes: number;
 }
+
+type VoiceTranscriptionResultPayload = {
+  text: string;
+  requestId: string;
+  language?: string;
+  duration?: number;
+  avgLogprob?: number;
+  isLowConfidence?: boolean;
+  byteLength?: number;
+  format?: string;
+  debugRecordingPath?: string;
+};
 
 export type SessionOptions = {
   clientId: string;
@@ -384,11 +399,25 @@ export class Session {
   private speechInProgress = false;
 
   private readonly dictationStreamManager: DictationStreamManager;
+  private readonly voiceStreamManager: DictationStreamManager;
 
   // Audio buffering for interruption handling
   private pendingAudioSegments: Array<{ audio: Buffer; format: string }> = [];
   private bufferTimeout: NodeJS.Timeout | null = null;
+  private voiceModeInactivityTimeout: NodeJS.Timeout | null = null;
   private audioBuffer: AudioBufferState | null = null;
+  private activeVoiceDictationId: string | null = null;
+  private activeVoiceDictationFormat: string | null = null;
+  private activeVoiceDictationNextSeq = 0;
+  private activeVoiceDictationStartPromise: Promise<void> | null = null;
+  private activeVoiceDictationFinalizePromise: Promise<void> | null = null;
+  private activeVoiceDictationResultPromise:
+    | Promise<{ text: string; debugRecordingPath?: string }>
+    | null = null;
+  private activeVoiceDictationResolve:
+    | ((value: { text: string; debugRecordingPath?: string }) => void)
+    | null = null;
+  private activeVoiceDictationReject: ((error: Error) => void) | null = null;
 
   // Optional TTS debug capture (persisted per utterance)
   private readonly ttsDebugStreams = new Map<
@@ -511,8 +540,15 @@ export class Session {
     this.dictationStreamManager = new DictationStreamManager({
       logger: this.sessionLogger,
       sessionId: this.sessionId,
-      emit: (msg) => this.emit(msg as unknown as SessionOutboundMessage),
+      emit: (msg) => this.handleDictationManagerMessage(msg),
       stt: dictation?.stt ?? null,
+      finalTimeoutMs: dictation?.finalTimeoutMs,
+    });
+    this.voiceStreamManager = new DictationStreamManager({
+      logger: this.sessionLogger.child({ stream: "voice-internal" }),
+      sessionId: this.sessionId,
+      emit: (msg) => this.handleDictationManagerMessage(msg),
+      stt: stt,
       finalTimeoutMs: dictation?.finalTimeoutMs,
     });
 
@@ -1573,6 +1609,9 @@ export class Session {
   private async disableVoiceModeForActiveAgent(
     restoreAgentConfig: boolean
   ): Promise<void> {
+    this.clearVoiceModeInactivityTimeout();
+    this.cancelActiveVoiceDictationStream("voice mode disabled");
+
     const agentId = this.voiceModeAgentId;
     if (!agentId) {
       this.voiceModeBaseConfig = null;
@@ -1605,6 +1644,234 @@ export class Session {
 
     this.voiceModeBaseConfig = null;
     this.voiceModeAgentId = null;
+  }
+
+  private isInternalVoiceDictationId(dictationId: string): boolean {
+    return dictationId.startsWith(VOICE_INTERNAL_DICTATION_ID_PREFIX);
+  }
+
+  private handleDictationManagerMessage(msg: DictationStreamOutboundMessage): void {
+    if (msg.type === "activity_log") {
+      const metadata = msg.payload.metadata as { dictationId?: unknown } | undefined;
+      const dictationId =
+        metadata && typeof metadata.dictationId === "string" ? metadata.dictationId : null;
+      if (dictationId && this.isInternalVoiceDictationId(dictationId)) {
+        return;
+      }
+      this.emit(msg as unknown as SessionOutboundMessage);
+      return;
+    }
+
+    const payloadWithDictationId = msg.payload as { dictationId?: unknown };
+    const dictationId =
+      payloadWithDictationId && typeof payloadWithDictationId.dictationId === "string"
+        ? payloadWithDictationId.dictationId
+        : null;
+
+    if (!dictationId || !this.isInternalVoiceDictationId(dictationId)) {
+      this.emit(msg as unknown as SessionOutboundMessage);
+      return;
+    }
+
+    if (msg.type === "dictation_stream_final") {
+      if (dictationId !== this.activeVoiceDictationId || !this.activeVoiceDictationResolve) {
+        return;
+      }
+      this.activeVoiceDictationResolve({
+        text: msg.payload.text,
+        ...(msg.payload.debugRecordingPath
+          ? { debugRecordingPath: msg.payload.debugRecordingPath }
+          : {}),
+      });
+      return;
+    }
+
+    if (msg.type === "dictation_stream_error") {
+      if (dictationId !== this.activeVoiceDictationId || !this.activeVoiceDictationReject) {
+        return;
+      }
+      this.activeVoiceDictationReject(new Error(msg.payload.error));
+      return;
+    }
+
+    // Ack/partial messages for internal voice dictation are consumed server-side.
+  }
+
+  private resetActiveVoiceDictationState(): void {
+    this.activeVoiceDictationId = null;
+    this.activeVoiceDictationFormat = null;
+    this.activeVoiceDictationNextSeq = 0;
+    this.activeVoiceDictationStartPromise = null;
+    this.activeVoiceDictationFinalizePromise = null;
+    this.activeVoiceDictationResultPromise = null;
+    this.activeVoiceDictationResolve = null;
+    this.activeVoiceDictationReject = null;
+  }
+
+  private cancelActiveVoiceDictationStream(reason: string): void {
+    const dictationId = this.activeVoiceDictationId;
+    if (!dictationId) {
+      return;
+    }
+
+    this.sessionLogger.debug({ dictationId, reason }, "Cancelling active internal voice dictation stream");
+    if (this.activeVoiceDictationReject) {
+      this.activeVoiceDictationReject(new Error(`Voice dictation cancelled: ${reason}`));
+    }
+    this.voiceStreamManager.handleCancel(dictationId);
+    this.resetActiveVoiceDictationState();
+  }
+
+  private async ensureActiveVoiceDictationStream(format: string): Promise<void> {
+    if (this.activeVoiceDictationId && this.activeVoiceDictationFormat === format) {
+      if (this.activeVoiceDictationStartPromise) {
+        await this.activeVoiceDictationStartPromise;
+      }
+      return;
+    }
+
+    if (this.activeVoiceDictationId) {
+      await this.finalizeActiveVoiceDictationStream("voice format changed");
+    }
+
+    const dictationId = `${VOICE_INTERNAL_DICTATION_ID_PREFIX}${uuidv4()}`;
+    let resolve:
+      | ((value: { text: string; debugRecordingPath?: string }) => void)
+      | null = null;
+    let reject: ((error: Error) => void) | null = null;
+    const resultPromise = new Promise<{ text: string; debugRecordingPath?: string }>(
+      (resolveFn, rejectFn) => {
+        resolve = resolveFn;
+        reject = rejectFn;
+      }
+    );
+    // Prevent process-level unhandled rejection warnings when cancellation races are resolved later.
+    void resultPromise.catch(() => undefined);
+
+    this.activeVoiceDictationId = dictationId;
+    this.activeVoiceDictationFormat = format;
+    this.activeVoiceDictationNextSeq = 0;
+    this.activeVoiceDictationFinalizePromise = null;
+    this.activeVoiceDictationResultPromise = resultPromise;
+    this.activeVoiceDictationResolve = resolve;
+    this.activeVoiceDictationReject = reject;
+    this.setPhase("transcribing");
+    this.emit({
+      type: "activity_log",
+      payload: {
+        id: uuidv4(),
+        timestamp: new Date(),
+        type: "system",
+        content: "Transcribing audio...",
+      },
+    });
+
+    const startPromise = this.voiceStreamManager.handleStart(dictationId, format);
+    this.activeVoiceDictationStartPromise = startPromise;
+    try {
+      await startPromise;
+    } catch (error) {
+      this.resetActiveVoiceDictationState();
+      throw error;
+    } finally {
+      if (this.activeVoiceDictationId === dictationId) {
+        this.activeVoiceDictationStartPromise = null;
+      }
+    }
+  }
+
+  private async appendToActiveVoiceDictationStream(
+    audioBase64: string,
+    format: string
+  ): Promise<void> {
+    if (this.activeVoiceDictationFinalizePromise) {
+      await this.activeVoiceDictationFinalizePromise.catch(() => undefined);
+    }
+    await this.ensureActiveVoiceDictationStream(format);
+    const dictationId = this.activeVoiceDictationId;
+    if (!dictationId) {
+      throw new Error("Voice dictation stream did not initialize");
+    }
+
+    const seq = this.activeVoiceDictationNextSeq;
+    this.activeVoiceDictationNextSeq += 1;
+    await this.voiceStreamManager.handleChunk({
+      dictationId,
+      seq,
+      audioBase64,
+      format,
+    });
+  }
+
+  private async finalizeActiveVoiceDictationStream(reason: string): Promise<void> {
+    const dictationId = this.activeVoiceDictationId;
+    if (!dictationId) {
+      return;
+    }
+    this.clearVoiceModeInactivityTimeout();
+    if (this.activeVoiceDictationStartPromise) {
+      await this.activeVoiceDictationStartPromise;
+    }
+
+    if (this.activeVoiceDictationFinalizePromise) {
+      await this.activeVoiceDictationFinalizePromise;
+      return;
+    }
+
+    const finalSeq = this.activeVoiceDictationNextSeq - 1;
+    const resultPromise = this.activeVoiceDictationResultPromise;
+    if (!resultPromise) {
+      this.resetActiveVoiceDictationState();
+      return;
+    }
+
+    this.activeVoiceDictationFinalizePromise = (async () => {
+      this.sessionLogger.debug(
+        { dictationId, finalSeq, reason },
+        "Finalizing internal voice dictation stream"
+      );
+      await this.voiceStreamManager.handleFinish(dictationId, finalSeq);
+      const result = await resultPromise;
+      this.resetActiveVoiceDictationState();
+      const requestId = uuidv4();
+      const transcriptText = result.text.trim();
+      this.sessionLogger.info(
+        {
+          requestId,
+          isVoiceMode: this.isVoiceMode,
+          transcriptLength: transcriptText.length,
+          transcript: transcriptText,
+        },
+        "Transcription result"
+      );
+      await this.handleTranscriptionResultPayload({
+        text: result.text,
+        requestId,
+        ...(result.debugRecordingPath
+          ? { debugRecordingPath: result.debugRecordingPath, format: "audio/wav" }
+          : {}),
+      });
+    })();
+
+    try {
+      await this.activeVoiceDictationFinalizePromise;
+    } catch (error) {
+      this.resetActiveVoiceDictationState();
+      this.setPhase("idle");
+      this.clearSpeechInProgress("transcription error");
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Transcription error: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        },
+      });
+      throw error;
+    }
   }
 
   /**
@@ -4553,8 +4820,23 @@ export class Session {
 
     await this.handleVoiceSpeechStart();
 
-    const chunkBuffer = Buffer.from(msg.audio, "base64");
     const chunkFormat = msg.format || "audio/wav";
+
+    if (this.isVoiceMode) {
+      await this.appendToActiveVoiceDictationStream(msg.audio, chunkFormat);
+      if (!msg.isLast) {
+        this.setVoiceModeInactivityTimeout();
+        this.sessionLogger.debug("Voice mode: streaming chunk, waiting for speech end");
+        return;
+      }
+
+      this.clearVoiceModeInactivityTimeout();
+      this.sessionLogger.debug("Voice mode: speech ended, finalizing streaming transcription");
+      await this.finalizeActiveVoiceDictationStream("speech ended");
+      return;
+    }
+
+    const chunkBuffer = Buffer.from(msg.audio, "base64");
     const isPCMChunk = chunkFormat.toLowerCase().includes("pcm");
 
     if (!this.audioBuffer) {
@@ -4590,16 +4872,6 @@ export class Session {
     this.audioBuffer.chunks.push(chunkBuffer);
     if (this.audioBuffer.isPCM) {
       this.audioBuffer.totalPCMBytes += chunkBuffer.length;
-    }
-
-    // In voice mode, only process audio when the user has finished speaking (isLast = true)
-    // This prevents partial transcriptions from being sent to the LLM
-    if (this.isVoiceMode) {
-      if (!msg.isLast) {
-        this.sessionLogger.debug("Voice mode: buffering audio, waiting for speech end");
-        return;
-      }
-      this.sessionLogger.debug("Voice mode: speech ended, processing complete audio");
     }
 
     // In non-voice mode, use streaming threshold to process chunks
@@ -4747,85 +5019,17 @@ export class Session {
         "Transcription result"
       );
 
-      // Emit transcription result
-      this.emit({
-        type: "transcription_result",
-        payload: {
-          text: result.text,
-          language: result.language,
-          duration: result.duration,
-          requestId,
-          avgLogprob: result.avgLogprob,
-          isLowConfidence: result.isLowConfidence,
-          byteLength: result.byteLength,
-          format: result.format,
-          debugRecordingPath: result.debugRecordingPath,
-        },
+      await this.handleTranscriptionResultPayload({
+        text: result.text,
+        language: result.language,
+        duration: result.duration,
+        requestId,
+        avgLogprob: result.avgLogprob,
+        isLowConfidence: result.isLowConfidence,
+        byteLength: result.byteLength,
+        format: result.format,
+        debugRecordingPath: result.debugRecordingPath,
       });
-
-      if (!transcriptText) {
-        this.sessionLogger.debug("Empty transcription (false positive), not aborting");
-        this.setPhase("idle");
-        this.clearSpeechInProgress("empty transcription");
-        return;
-      }
-
-      // Has content - abort any in-progress stream now
-      this.createAbortController();
-
-      // Wait for aborted stream to finish cleanup (save partial response)
-      if (this.currentStreamPromise) {
-        this.sessionLogger.debug("Waiting for aborted stream to finish cleanup");
-        await this.currentStreamPromise;
-      }
-
-      if (result.debugRecordingPath) {
-        this.emit({
-          type: "activity_log",
-          payload: {
-            id: uuidv4(),
-            timestamp: new Date(),
-            type: "system",
-            content: `Saved input audio: ${result.debugRecordingPath}`,
-            metadata: {
-              recordingPath: result.debugRecordingPath,
-              format: result.format,
-              requestId,
-            },
-          },
-        });
-      }
-
-      // Emit activity log
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "transcript",
-          content: result.text,
-          metadata: {
-            language: result.language,
-            duration: result.duration,
-          },
-        },
-      });
-
-      this.clearSpeechInProgress("transcription complete");
-      if (!this.isVoiceMode) {
-        this.sessionLogger.debug(
-          { requestId },
-          "Skipping voice agent processing because voice mode is disabled"
-        );
-        this.setPhase("idle");
-        return;
-      }
-
-      // Set phase to LLM and process (TTS enabled in voice mode for voice agents)
-      this.setPhase("llm");
-      this.currentStreamPromise = this.processVoiceTurn(result.text);
-      await this.currentStreamPromise;
-      this.setPhase("idle");
     } catch (error: any) {
       this.setPhase("idle");
       this.clearSpeechInProgress("transcription error");
@@ -4840,6 +5044,89 @@ export class Session {
       });
       throw error;
     }
+  }
+
+  private async handleTranscriptionResultPayload(
+    result: VoiceTranscriptionResultPayload
+  ): Promise<void> {
+    const transcriptText = result.text.trim();
+
+    this.emit({
+      type: "transcription_result",
+      payload: {
+        text: result.text,
+        ...(result.language ? { language: result.language } : {}),
+        ...(result.duration !== undefined ? { duration: result.duration } : {}),
+        requestId: result.requestId,
+        ...(result.avgLogprob !== undefined ? { avgLogprob: result.avgLogprob } : {}),
+        ...(result.isLowConfidence !== undefined ? { isLowConfidence: result.isLowConfidence } : {}),
+        ...(result.byteLength !== undefined ? { byteLength: result.byteLength } : {}),
+        ...(result.format ? { format: result.format } : {}),
+        ...(result.debugRecordingPath ? { debugRecordingPath: result.debugRecordingPath } : {}),
+      },
+    });
+
+    if (!transcriptText) {
+      this.sessionLogger.debug("Empty transcription (false positive), not aborting");
+      this.setPhase("idle");
+      this.clearSpeechInProgress("empty transcription");
+      return;
+    }
+
+    // Has content - abort any in-progress stream now
+    this.createAbortController();
+
+    // Wait for aborted stream to finish cleanup (save partial response)
+    if (this.currentStreamPromise) {
+      this.sessionLogger.debug("Waiting for aborted stream to finish cleanup");
+      await this.currentStreamPromise;
+    }
+
+    if (result.debugRecordingPath) {
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "system",
+          content: `Saved input audio: ${result.debugRecordingPath}`,
+          metadata: {
+            recordingPath: result.debugRecordingPath,
+            ...(result.format ? { format: result.format } : {}),
+            requestId: result.requestId,
+          },
+        },
+      });
+    }
+
+    this.emit({
+      type: "activity_log",
+      payload: {
+        id: uuidv4(),
+        timestamp: new Date(),
+        type: "transcript",
+        content: result.text,
+        metadata: {
+          ...(result.language ? { language: result.language } : {}),
+          ...(result.duration !== undefined ? { duration: result.duration } : {}),
+        },
+      },
+    });
+
+    this.clearSpeechInProgress("transcription complete");
+    if (!this.isVoiceMode) {
+      this.sessionLogger.debug(
+        { requestId: result.requestId },
+        "Skipping voice agent processing because voice mode is disabled"
+      );
+      this.setPhase("idle");
+      return;
+    }
+
+    this.setPhase("llm");
+    this.currentStreamPromise = this.processVoiceTurn(result.text);
+    await this.currentStreamPromise;
+    this.setPhase("idle");
   }
 
   private registerVoiceBridgeForAgent(agentId: string): void {
@@ -5061,6 +5348,8 @@ export class Session {
       this.audioBuffer = null;
     }
 
+    this.cancelActiveVoiceDictationStream("new speech turn started");
+    this.clearVoiceModeInactivityTimeout();
     this.clearBufferTimeout();
 
     this.abortController.abort();
@@ -5124,6 +5413,43 @@ export class Session {
         await this.processAudio(combined, segments[0].format);
       }
     }, 10000); // 10 second timeout
+  }
+
+  private setVoiceModeInactivityTimeout(): void {
+    if (!this.isVoiceMode) {
+      return;
+    }
+
+    this.clearVoiceModeInactivityTimeout();
+    this.voiceModeInactivityTimeout = setTimeout(() => {
+      this.voiceModeInactivityTimeout = null;
+      if (!this.isVoiceMode || !this.activeVoiceDictationId) {
+        return;
+      }
+
+      this.sessionLogger.warn(
+        {
+          timeoutMs: VOICE_MODE_INACTIVITY_FLUSH_MS,
+          dictationId: this.activeVoiceDictationId,
+          nextSeq: this.activeVoiceDictationNextSeq,
+        },
+        "Voice mode inactivity timeout reached without isLast; finalizing active voice dictation stream"
+      );
+
+      void this.finalizeActiveVoiceDictationStream("inactivity timeout").catch((error) => {
+        this.sessionLogger.error(
+          { err: error },
+          "Failed to finalize voice dictation stream after inactivity timeout"
+        );
+      });
+    }, VOICE_MODE_INACTIVITY_FLUSH_MS);
+  }
+
+  private clearVoiceModeInactivityTimeout(): void {
+    if (this.voiceModeInactivityTimeout) {
+      clearTimeout(this.voiceModeInactivityTimeout);
+      this.voiceModeInactivityTimeout = null;
+    }
   }
 
   /**
@@ -5206,15 +5532,18 @@ export class Session {
     this.abortController.abort();
 
     // Clear timeouts
+    this.clearVoiceModeInactivityTimeout();
     this.clearBufferTimeout();
 
     // Clear buffers
+    this.cancelActiveVoiceDictationStream("session cleanup");
     this.pendingAudioSegments = [];
     this.audioBuffer = null;
 
     // Cleanup managers
     this.ttsManager.cleanup();
     this.sttManager.cleanup();
+    this.voiceStreamManager.cleanupAll();
     this.dictationStreamManager.cleanupAll();
 
     // Close MCP clients

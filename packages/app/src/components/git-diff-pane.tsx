@@ -177,6 +177,7 @@ interface DiffFileSectionProps {
   file: ParsedDiffFile;
   isExpanded: boolean;
   onToggle: (path: string) => void;
+  onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }
 
@@ -218,6 +219,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   file,
   isExpanded,
   onToggle,
+  onHeaderHeightChange,
   testID,
 }: DiffFileSectionProps) {
   const expandStartRef = useRef<number | null>(null);
@@ -292,6 +294,9 @@ const DiffFileHeader = memo(function DiffFileHeader({
         styles.fileSectionHeaderContainer,
         !isExpanded && styles.fileSectionBorder,
       ]}
+      onLayout={(event) => {
+        onHeaderHeightChange?.(file.path, event.nativeEvent.layout.height);
+      }}
       testID={testID}
     >
       <Pressable
@@ -329,7 +334,15 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 });
 
-function DiffFileBody({ file, testID }: { file: ParsedDiffFile; testID?: string }) {
+function DiffFileBody({
+  file,
+  onBodyHeightChange,
+  testID,
+}: {
+  file: ParsedDiffFile;
+  onBodyHeightChange?: (path: string, height: number) => void;
+  testID?: string;
+}) {
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const [isAtLeftEdge, setIsAtLeftEdge] = useState(true);
   const horizontalScroll = useHorizontalScrollOptional();
@@ -368,7 +381,13 @@ function DiffFileBody({ file, testID }: { file: ParsedDiffFile; testID?: string 
   );
 
   return (
-    <View style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]} testID={testID}>
+    <View
+      style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]}
+      onLayout={(event) => {
+        onBodyHeightChange?.(file.path, event.nativeEvent.layout.height);
+      }}
+      testID={testID}
+    >
       {file.status === "too_large" || file.status === "binary" ? (
         <View style={styles.statusMessageContainer}>
           <Text style={styles.statusMessageText}>
@@ -464,6 +483,10 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   // Track user-initiated refresh to avoid iOS RefreshControl animation on background fetches
   const [isManualRefresh, setIsManualRefresh] = useState(false);
   const [expandedByPath, setExpandedByPath] = useState<Record<string, boolean>>({});
+  const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
+  const headerHeightByPathRef = useRef<Record<string, number>>({});
+  const bodyHeightByPathRef = useRef<Record<string, number>>({});
+  const defaultHeaderHeightRef = useRef<number>(44);
   const diffMetrics = useMemo(() => {
     let hunkCount = 0;
     let lineCount = 0;
@@ -533,13 +556,6 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     [shipDefaultStorageKey]
   );
 
-  const handleToggleExpanded = useCallback((path: string) => {
-    setExpandedByPath((prev) => ({
-      ...prev,
-      [path]: !prev[path],
-    }));
-  }, []);
-
   const { flatItems, stickyHeaderIndices } = useMemo(() => {
     const items: DiffFlatItem[] = [];
     const stickyIndices: number[] = [];
@@ -554,6 +570,60 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     }
     return { flatItems: items, stickyHeaderIndices: stickyIndices };
   }, [files, expandedByPath]);
+
+  const handleHeaderHeightChange = useCallback((path: string, height: number) => {
+    if (!Number.isFinite(height) || height <= 0) {
+      return;
+    }
+    headerHeightByPathRef.current[path] = height;
+    defaultHeaderHeightRef.current = height;
+  }, []);
+
+  const handleBodyHeightChange = useCallback((path: string, height: number) => {
+    if (!Number.isFinite(height) || height < 0) {
+      return;
+    }
+    bodyHeightByPathRef.current[path] = height;
+  }, []);
+
+  const computeHeaderOffset = useCallback(
+    (path: string): number => {
+      const defaultHeaderHeight = defaultHeaderHeightRef.current;
+      let offset = 0;
+      for (const file of files) {
+        if (file.path === path) {
+          break;
+        }
+        offset += headerHeightByPathRef.current[file.path] ?? defaultHeaderHeight;
+        if (expandedByPath[file.path]) {
+          offset += bodyHeightByPathRef.current[file.path] ?? 0;
+        }
+      }
+      return Math.max(0, offset);
+    },
+    [expandedByPath, files]
+  );
+
+  const handleToggleExpanded = useCallback(
+    (path: string) => {
+      const isCurrentlyExpanded = expandedByPath[path] ?? false;
+      const targetOffset = isCurrentlyExpanded ? computeHeaderOffset(path) : null;
+
+      // Anchor to the clicked header before collapsing so visual context is preserved.
+      if (isCurrentlyExpanded && targetOffset !== null) {
+        diffListRef.current?.scrollToOffset({
+          offset: targetOffset,
+          animated: false,
+        });
+      }
+
+      setExpandedByPath((prev) => ({
+        ...prev,
+        [path]: !prev[path],
+      }));
+    },
+    [computeHeaderOffset, expandedByPath]
+  );
 
   const allExpanded = useMemo(() => {
     if (files.length === 0) return false;
@@ -707,15 +777,20 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
             file={item.file}
             isExpanded={item.isExpanded}
             onToggle={handleToggleExpanded}
+            onHeaderHeightChange={handleHeaderHeightChange}
             testID={`diff-file-${item.fileIndex}`}
           />
         );
       }
       return (
-        <DiffFileBody file={item.file} testID={`diff-file-${item.fileIndex}-body`} />
+        <DiffFileBody
+          file={item.file}
+          onBodyHeightChange={handleBodyHeightChange}
+          testID={`diff-file-${item.fileIndex}-body`}
+        />
       );
     },
-    [handleToggleExpanded]
+    [handleBodyHeightChange, handleHeaderHeightChange, handleToggleExpanded]
   );
 
   const flatKeyExtractor = useCallback(
@@ -808,6 +883,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   } else {
     bodyContent = (
       <FlatList
+        ref={diffListRef}
         data={flatItems}
         renderItem={renderFlatItem}
         keyExtractor={flatKeyExtractor}
@@ -818,9 +894,12 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         testID="git-diff-scroll"
         onRefresh={handleRefresh}
         refreshing={isManualRefresh && isDiffFetching}
-        initialNumToRender={6}
-        maxToRenderPerBatch={6}
-        windowSize={5}
+        // Mixed-height rows (header + potentially very large body) are prone to clipping artifacts.
+        // Keep a larger render window and disable clipping to avoid bodies disappearing mid-scroll.
+        removeClippedSubviews={false}
+        initialNumToRender={12}
+        maxToRenderPerBatch={12}
+        windowSize={10}
       />
     );
   }

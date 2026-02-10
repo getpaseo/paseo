@@ -95,21 +95,34 @@ const RolloutResponseFunctionCallPayloadSchema = z.object({
   type: z.literal("function_call"),
   name: z.string().optional(),
   call_id: z.string().optional(),
-  arguments: z.string().optional(),
+  arguments: z.unknown().optional(),
 });
 
-const RolloutResponseCustomToolCallPayloadSchema = z.object({
-  type: z.literal("custom_tool_call"),
-  name: z.string().optional(),
-  call_id: z.string().optional(),
-  arguments: z.string().optional(),
-});
+const RolloutResponseCustomToolCallPayloadSchema = z
+  .object({
+    type: z.literal("custom_tool_call"),
+    name: z.string().optional(),
+    call_id: z.string().optional(),
+    arguments: z.unknown().optional(),
+    input: z.unknown().optional(),
+  })
+  .passthrough();
 
-const RolloutResponseFunctionCallOutputPayloadSchema = z.object({
-  type: z.literal("function_call_output"),
-  call_id: z.string().optional(),
-  output: z.string().optional(),
-});
+const RolloutResponseFunctionCallOutputPayloadSchema = z
+  .object({
+    type: z.literal("function_call_output"),
+    call_id: z.string().optional(),
+    output: z.unknown().optional(),
+  })
+  .passthrough();
+
+const RolloutResponseCustomToolCallOutputPayloadSchema = z
+  .object({
+    type: z.literal("custom_tool_call_output"),
+    call_id: z.string().optional(),
+    output: z.unknown().optional(),
+  })
+  .passthrough();
 
 const RolloutEventAgentReasoningPayloadSchema = z.object({
   type: z.literal("agent_reasoning"),
@@ -154,7 +167,7 @@ type RolloutResponseReasoningPayload = z.infer<
 type ParsedRolloutRecord =
   | { kind: "timeline"; item: AgentTimelineItem }
   | { kind: "call"; name: string; callId?: string; input?: unknown }
-  | { kind: "output"; callId: string; output: string }
+  | { kind: "output"; callId: string; output: unknown }
   | { kind: "ignore" };
 
 const RolloutMessageContentSchema = z
@@ -252,6 +265,22 @@ function parseJsonLikeString(value: string): unknown {
   }
 }
 
+function parseJsonLikeValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return parseJsonLikeString(value);
+  }
+  return value;
+}
+
+function readOutputPayloadValue(payload: Record<string, unknown>): unknown {
+  if (payload.output !== undefined) {
+    return parseJsonLikeValue(payload.output);
+  }
+
+  const { type: _type, call_id: _callId, ...rest } = payload;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
 const FunctionCallInputNormalizationSchema = z
   .union([
     z.object({ cmd: z.string() }).transform((input) => ({ name: "Bash", input: { command: input.cmd } })),
@@ -284,7 +313,8 @@ const RolloutResponseRecordSchema = z
       ])
       .transform((payload): ParsedRolloutRecord => {
         const rawName = payload.name ?? "unknown";
-        const parsedArguments = payload.arguments ? parseJsonLikeString(payload.arguments) : undefined;
+        const rawInput = payload.arguments ?? ("input" in payload ? payload.input : undefined);
+        const parsedArguments = parseJsonLikeValue(rawInput);
         const normalized =
           rawName === "exec_command" || rawName === "shell"
             ? FunctionCallInputNormalizationSchema.parse(parsedArguments)
@@ -299,12 +329,20 @@ const RolloutResponseRecordSchema = z
               input: normalized.input,
             };
       }),
-    RolloutResponseFunctionCallOutputPayloadSchema.transform(
-      (payload): ParsedRolloutRecord =>
-        payload.call_id && payload.output
-          ? { kind: "output", callId: payload.call_id, output: payload.output }
-          : { kind: "ignore" }
-    ),
+    z
+      .union([
+        RolloutResponseFunctionCallOutputPayloadSchema,
+        RolloutResponseCustomToolCallOutputPayloadSchema,
+      ])
+      .transform((payload): ParsedRolloutRecord => {
+        if (!payload.call_id) {
+          return { kind: "ignore" };
+        }
+        const output = readOutputPayloadValue(payload);
+        return output !== undefined
+          ? { kind: "output", callId: payload.call_id, output }
+          : { kind: "ignore" };
+      }),
     z.unknown().transform((): ParsedRolloutRecord => ({ kind: "ignore" })),
   ]);
 
@@ -391,6 +429,37 @@ function parseJsonRolloutTimeline(
   return timeline;
 }
 
+function timelineTextFingerprint(item: AgentTimelineItem): string | null {
+  switch (item.type) {
+    case "user_message":
+    case "assistant_message":
+    case "reasoning":
+      return `${item.type}\u0000${item.text}`;
+    default:
+      return null;
+  }
+}
+
+function dedupeMirroredTextTimelineItems(
+  timeline: AgentTimelineItem[]
+): AgentTimelineItem[] {
+  const deduped: AgentTimelineItem[] = [];
+  for (const item of timeline) {
+    const prev = deduped[deduped.length - 1];
+    if (!prev) {
+      deduped.push(item);
+      continue;
+    }
+    const currentFingerprint = timelineTextFingerprint(item);
+    const previousFingerprint = timelineTextFingerprint(prev);
+    if (currentFingerprint && previousFingerprint && currentFingerprint === previousFingerprint) {
+      continue;
+    }
+    deduped.push(item);
+  }
+  return deduped;
+}
+
 export async function parseRolloutFile(
   filePath: string
 ): Promise<AgentTimelineItem[]> {
@@ -403,7 +472,7 @@ export async function parseRolloutFile(
     const parsed = JSON.parse(trimmed);
     const jsonTimeline = parseJsonRolloutTimeline(parsed);
     if (jsonTimeline) {
-      return jsonTimeline;
+      return dedupeMirroredTextTimelineItems(jsonTimeline);
     }
   } catch {
     // Fall back to JSONL parsing.
@@ -428,9 +497,9 @@ export async function parseRolloutFile(
 
   const outputsByCallId = parsedRecords
     .filter((record): record is Extract<ParsedRolloutRecord, { kind: "output" }> => record.kind === "output")
-    .reduce((map, record) => map.set(record.callId, record.output), new Map<string, string>());
+    .reduce((map, record) => map.set(record.callId, record.output), new Map<string, unknown>());
 
-  return parsedRecords.flatMap((record): AgentTimelineItem[] =>
+  const timeline = parsedRecords.flatMap((record): AgentTimelineItem[] =>
     record.kind === "timeline"
       ? [record.item]
       : record.kind === "call"
@@ -444,6 +513,7 @@ export async function parseRolloutFile(
           ]
         : []
   );
+  return dedupeMirroredTextTimelineItems(timeline);
 }
 
 export type CodexPersistedTimelineOptions = {

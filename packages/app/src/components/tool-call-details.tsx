@@ -138,31 +138,14 @@ export function ToolCallDetailsContent({
       </View>
     );
   } else if (detail?.type === "unknown") {
-    const sectionsFromTopLevel = [
-      { title: "Input", value: detail.input },
-      { title: "Output", value: detail.output },
-    ].filter((entry) => entry.value !== null && entry.value !== undefined);
+    const plainInputText =
+      typeof detail.input === "string" && detail.output === null
+        ? detail.input
+        : null;
 
-    for (const section of sectionsFromTopLevel) {
-      let value = "";
-      try {
-        value =
-          typeof section.value === "string"
-            ? section.value
-            : JSON.stringify(section.value, null, 2);
-      } catch {
-        value = String(section.value);
-      }
-      if (!value.length) {
-        continue;
-      }
+    if (plainInputText !== null) {
       sections.push(
-        <View key={`${section.title}-header`} style={styles.groupHeader}>
-          <Text style={styles.groupHeaderText}>{section.title}</Text>
-        </View>
-      );
-      sections.push(
-        <View key={`${section.title}-value`} style={styles.section}>
+        <View key="unknown-plain-text" style={styles.section}>
           <ScrollView
             horizontal
             nestedScrollEnabled
@@ -170,10 +153,48 @@ export function ToolCallDetailsContent({
             contentContainerStyle={styles.jsonContent}
             showsHorizontalScrollIndicator={true}
           >
-            <Text selectable style={styles.scrollText}>{value}</Text>
+            <Text selectable style={styles.scrollText}>{plainInputText}</Text>
           </ScrollView>
         </View>
       );
+    } else {
+      const sectionsFromTopLevel = [
+        { title: "Input", value: detail.input },
+        { title: "Output", value: detail.output },
+      ].filter((entry) => entry.value !== null && entry.value !== undefined);
+
+      for (const section of sectionsFromTopLevel) {
+        let value = "";
+        try {
+          value =
+            typeof section.value === "string"
+              ? section.value
+              : JSON.stringify(section.value, null, 2);
+        } catch {
+          value = String(section.value);
+        }
+        if (!value.length) {
+          continue;
+        }
+        sections.push(
+          <View key={`${section.title}-header`} style={styles.groupHeader}>
+            <Text style={styles.groupHeaderText}>{section.title}</Text>
+          </View>
+        );
+        sections.push(
+          <View key={`${section.title}-value`} style={styles.section}>
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              style={styles.jsonScroll}
+              contentContainerStyle={styles.jsonContent}
+              showsHorizontalScrollIndicator={true}
+            >
+              <Text selectable style={styles.scrollText}>{value}</Text>
+            </ScrollView>
+          </View>
+        );
+      }
     }
   }
 

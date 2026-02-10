@@ -223,6 +223,7 @@ export type AgentPermissionRequest = {
   title?: string;
   description?: string;
   input?: AgentMetadata;
+  detail?: ToolCallDetail;
   suggestions?: AgentPermissionUpdate[];
   metadata?: AgentMetadata;
 };

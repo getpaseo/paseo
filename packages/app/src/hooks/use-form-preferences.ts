@@ -10,6 +10,7 @@ const FORM_PREFERENCES_QUERY_KEY = ["form-preferences"];
 const providerPreferencesSchema = z.object({
   model: z.string().optional(),
   mode: z.string().optional(),
+  thinkingOptionId: z.string().optional(),
 });
 
 const formPreferencesSchema = z.object({

@@ -3,8 +3,18 @@ import { Platform } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { getIsTauri } from "@/constants/layout";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
+import { useSessionStore } from "@/stores/session-store";
 import { parseSidebarAgentKey } from "@/utils/sidebar-shortcuts";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
+import {
+  checkoutStatusQueryKey,
+  type CheckoutStatusPayload,
+} from "@/hooks/use-checkout-status-query";
+import { queryClient } from "@/query/query-client";
+import {
+  buildNewAgentRoute,
+  resolveNewAgentWorkingDir,
+} from "@/utils/new-agent-routing";
 
 export function useGlobalKeyboardNav({
   enabled,
@@ -81,6 +91,29 @@ export function useGlobalKeyboardNav({
       navigate(`/agent/${serverId}/${agentId}` as any);
     };
 
+    const navigateToNewAgent = () => {
+      let target = "/agent";
+      if (selectedAgentId) {
+        const separatorIndex = selectedAgentId.indexOf(":");
+        if (separatorIndex > 0) {
+          const serverId = selectedAgentId.slice(0, separatorIndex);
+          const agentId = selectedAgentId.slice(separatorIndex + 1);
+          const agent = useSessionStore.getState().sessions[serverId]?.agents?.get(agentId);
+          const cwd = agent?.cwd?.trim();
+          if (cwd) {
+            const checkout =
+              queryClient.getQueryData<CheckoutStatusPayload>(
+                checkoutStatusQueryKey(serverId, cwd)
+              ) ?? null;
+            const workingDir = resolveNewAgentWorkingDir(cwd, checkout);
+            target = buildNewAgentRoute(workingDir);
+          }
+        }
+      }
+
+      router.push(target as any);
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandle()) {
         return;
@@ -103,9 +136,28 @@ export function useGlobalKeyboardNav({
         }
       }
 
+      const isMod = event.metaKey || event.ctrlKey;
+      const isKeyN = event.code === "KeyN" || lowerKey === "n";
+
+      // Cmd/Ctrl+Alt+N: new agent (web + Tauri)
+      // Note: intentionally works even when focus is inside an input/textarea.
+      if (isMod && event.altKey && !event.shiftKey && isKeyN) {
+        event.preventDefault();
+        navigateToNewAgent();
+        return;
+      }
+
+      // Cmd/Ctrl+N: new agent (Tauri only)
+      // Note: intentionally works even when focus is inside an input/textarea.
+      if (isTauri && isMod && !event.altKey && !event.shiftKey && isKeyN) {
+        event.preventDefault();
+        navigateToNewAgent();
+        return;
+      }
+
       // Cmd+B: toggle sidebar
       if (
-        (event.metaKey || event.ctrlKey) &&
+        isMod &&
         (event.code === "KeyB" || lowerKey === "b")
       ) {
         // The MessageInput already handles Cmd+B inside editable fields. If we also
@@ -121,7 +173,7 @@ export function useGlobalKeyboardNav({
       // Cmd+.: toggle sidebar (VS Code quick-fix muscle memory)
       // Note: intentionally works even when focus is inside an input/textarea.
       if (
-        (event.metaKey || event.ctrlKey) &&
+        isMod &&
         (event.code === "Period" || key === ".")
       ) {
         // Ignore while command center is open.
@@ -137,7 +189,7 @@ export function useGlobalKeyboardNav({
       if (
         selectedAgentId &&
         toggleFileExplorer &&
-        (event.metaKey || event.ctrlKey) &&
+        isMod &&
         (event.code === "KeyE" || lowerKey === "e")
       ) {
         // Same double-toggle issue as Cmd+B when focus is inside a text input.
@@ -168,7 +220,7 @@ export function useGlobalKeyboardNav({
       }
 
       // Cmd+K: command center
-      if ((event.metaKey || event.ctrlKey) && lowerKey === "k") {
+      if (isMod && lowerKey === "k") {
         event.preventDefault();
         const s = useKeyboardNavStore.getState();
         if (!s.commandCenterOpen) {
@@ -205,7 +257,7 @@ export function useGlobalKeyboardNav({
       }
 
       // Cmd/Ctrl+number: Tauri only (avoid browser tab switching)
-      if (isTauri && (event.metaKey || event.ctrlKey)) {
+      if (isTauri && isMod) {
         event.preventDefault();
         navigateToSidebarShortcut(digit);
       }

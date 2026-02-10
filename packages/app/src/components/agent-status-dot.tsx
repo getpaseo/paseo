@@ -4,9 +4,11 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 export function AgentStatusDot({
   status,
   requiresAttention,
+  showInactive = false,
 }: {
   status: string | null | undefined;
   requiresAttention: boolean | null | undefined;
+  showInactive?: boolean;
 }) {
   const { theme } = useUnistyles();
 
@@ -15,7 +17,9 @@ export function AgentStatusDot({
     ? theme.colors.palette.blue[500]
     : requiresAttention
       ? theme.colors.success
-      : null;
+      : showInactive
+        ? theme.colors.border
+        : null;
 
   if (!color) {
     return null;
@@ -31,4 +35,3 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
   },
 }));
-

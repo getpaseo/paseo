@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { __private__ } from "./use-agent-form-state";
+import type { AgentModelDefinition } from "@server/server/agent/agent-sdk-types";
 
 describe("useAgentFormState", () => {
   describe("__private__.combineInitialValues", () => {
@@ -35,5 +36,115 @@ describe("useAgentFormState", () => {
       });
     });
   });
-});
 
+  describe("__private__.resolveFormState", () => {
+    const codexModels: AgentModelDefinition[] = [
+      {
+        provider: "codex",
+        id: "gpt-5.3-codex",
+        label: "gpt-5.3-codex",
+        isDefault: true,
+        defaultThinkingOptionId: "xhigh",
+        thinkingOptions: [
+          { id: "low", label: "low" },
+          { id: "xhigh", label: "xhigh", isDefault: true },
+        ],
+      },
+    ];
+
+    it("auto-selects the model's default thinking option when none is configured", () => {
+      const resolved = __private__.resolveFormState(
+        undefined,
+        { provider: "codex" },
+        codexModels,
+        {
+          serverId: false,
+          provider: false,
+          modeId: false,
+          model: false,
+          thinkingOptionId: false,
+          workingDir: false,
+        },
+        {
+          serverId: null,
+          provider: "codex",
+          modeId: "",
+          model: "",
+          thinkingOptionId: "",
+          workingDir: "",
+        },
+        new Set<string>()
+      );
+
+      expect(resolved.thinkingOptionId).toBe("xhigh");
+    });
+
+    it("keeps provider thinking preference when it is valid for the effective model", () => {
+      const resolved = __private__.resolveFormState(
+        undefined,
+        {
+          provider: "codex",
+          providerPreferences: {
+            codex: {
+              thinkingOptionId: "low",
+            },
+          },
+        },
+        codexModels,
+        {
+          serverId: false,
+          provider: false,
+          modeId: false,
+          model: false,
+          thinkingOptionId: false,
+          workingDir: false,
+        },
+        {
+          serverId: null,
+          provider: "codex",
+          modeId: "",
+          model: "",
+          thinkingOptionId: "",
+          workingDir: "",
+        },
+        new Set<string>()
+      );
+
+      expect(resolved.thinkingOptionId).toBe("low");
+    });
+
+    it("falls back to model default when saved thinking preference is invalid", () => {
+      const resolved = __private__.resolveFormState(
+        undefined,
+        {
+          provider: "codex",
+          providerPreferences: {
+            codex: {
+              thinkingOptionId: "medium",
+            },
+          },
+        },
+        codexModels,
+        {
+          serverId: false,
+          provider: false,
+          modeId: false,
+          model: false,
+          thinkingOptionId: false,
+          workingDir: false,
+        },
+        {
+          serverId: null,
+          provider: "codex",
+          modeId: "",
+          model: "",
+          thinkingOptionId: "",
+          workingDir: "",
+        },
+        new Set<string>()
+      );
+
+      expect(resolved.thinkingOptionId).toBe("xhigh");
+    });
+  });
+});

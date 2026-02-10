@@ -17,6 +17,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  ToolCallTimelineItem,
   AgentUsage,
   ListModelsOptions,
   ListPersistedAgentsOptions,
@@ -34,7 +35,10 @@ import path from "node:path";
 import readline from "node:readline";
 import { z } from "zod";
 import { loadCodexPersistedTimeline } from "./codex-rollout-timeline.js";
-import { mapCodexToolCallFromThreadItem } from "./codex/tool-call-mapper.js";
+import {
+  mapCodexRolloutToolCall,
+  mapCodexToolCallFromThreadItem,
+} from "./codex/tool-call-mapper.js";
 
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
@@ -112,6 +116,32 @@ function normalizeCodexThinkingOptionId(
     return undefined;
   }
   return normalized;
+}
+
+function normalizeCodexModelId(modelId: string | null | undefined): string | undefined {
+  if (typeof modelId !== "string") {
+    return undefined;
+  }
+  const normalized = modelId.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized;
+}
+
+type CodexConfiguredDefaults = {
+  model?: string;
+  thinkingOptionId?: string;
+};
+
+function mergeCodexConfiguredDefaults(
+  primary: CodexConfiguredDefaults,
+  fallback: CodexConfiguredDefaults
+): CodexConfiguredDefaults {
+  return {
+    model: primary.model ?? fallback.model,
+    thinkingOptionId: primary.thinkingOptionId ?? fallback.thinkingOptionId,
+  };
 }
 
 function resolveCodexBinary(): string {
@@ -672,6 +702,230 @@ function planStepsToTodoItems(steps: Array<{ step: string; status: string }>): {
   }));
 }
 
+type CodexPatchFileChange = {
+  path: string;
+  kind?: string;
+  content?: string;
+};
+
+function normalizeCodexThreadItemType(rawType: string | undefined): string | undefined {
+  if (!rawType) {
+    return rawType;
+  }
+  switch (rawType) {
+    case "UserMessage":
+      return "userMessage";
+    case "AgentMessage":
+      return "agentMessage";
+    case "Reasoning":
+      return "reasoning";
+    case "Plan":
+      return "plan";
+    case "CommandExecution":
+      return "commandExecution";
+    case "FileChange":
+      return "fileChange";
+    case "McpToolCall":
+      return "mcpToolCall";
+    case "WebSearch":
+      return "webSearch";
+    default:
+      return rawType;
+  }
+}
+
+function normalizeCodexCommandValue(
+  value: unknown
+): string | string[] | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed.length) {
+      return null;
+    }
+    const wrapperMatch = trimmed.match(
+      /^(?:\/bin\/)?(?:zsh|bash|sh)\s+-(?:lc|c)\s+([\s\S]+)$/
+    );
+    if (!wrapperMatch) {
+      return trimmed;
+    }
+    const candidate = wrapperMatch[1]?.trim() ?? "";
+    if (!candidate.length) {
+      return trimmed;
+    }
+    if (
+      (candidate.startsWith('"') && candidate.endsWith('"')) ||
+      (candidate.startsWith("'") && candidate.endsWith("'"))
+    ) {
+      return candidate.slice(1, -1);
+    }
+    return candidate;
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const parts = value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (parts.length === 0) {
+    return null;
+  }
+  if (parts.length >= 3 && (parts[1] === "-lc" || parts[1] === "-c")) {
+    return parts[2] ?? parts;
+  }
+  return parts;
+}
+
+function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
+  if (!changes || typeof changes !== "object") {
+    return [];
+  }
+  return Object.entries(changes as Record<string, unknown>)
+    .map(([path, value]): CodexPatchFileChange | null => {
+      const normalizedPath = path.trim();
+      if (!normalizedPath) {
+        return null;
+      }
+      const parsed =
+        value && typeof value === "object"
+          ? (value as { type?: unknown; content?: unknown })
+          : null;
+      return {
+        path: normalizedPath,
+        kind: typeof parsed?.type === "string" ? parsed.type : undefined,
+        content: typeof parsed?.content === "string" ? parsed.content : undefined,
+      };
+    })
+    .filter((entry): entry is CodexPatchFileChange => entry !== null);
+}
+
+function codexPatchTextFields(
+  text: string | null | undefined
+): { patch?: string; content?: string } {
+  if (typeof text !== "string") {
+    return {};
+  }
+  const normalized = text.trimStart();
+  const looksLikeUnifiedDiff =
+    normalized.startsWith("diff --git") ||
+    normalized.startsWith("@@") ||
+    normalized.startsWith("--- ") ||
+    normalized.startsWith("+++ ");
+  return looksLikeUnifiedDiff ? { patch: text } : { content: text };
+}
+
+function toRunningToolCall(item: ToolCallTimelineItem): ToolCallTimelineItem {
+  return {
+    ...item,
+    status: "running",
+    error: null,
+  };
+}
+
+function mapCodexExecNotificationToToolCall(params: {
+  callId?: string | null;
+  command: unknown;
+  cwd?: string | null;
+  output?: string | null;
+  exitCode?: number | null;
+  success?: boolean | null;
+  stderr?: string | null;
+  running: boolean;
+}): ToolCallTimelineItem | null {
+  const command = normalizeCodexCommandValue(params.command);
+  if (!command) {
+    return null;
+  }
+  const isFailure =
+    params.running
+      ? false
+      : params.success === false ||
+        (typeof params.exitCode === "number" && params.exitCode !== 0);
+  const output =
+    params.running
+      ? null
+      : {
+          command,
+          ...(params.output !== null && params.output !== undefined
+            ? { output: params.output }
+            : {}),
+          ...(params.exitCode !== null && params.exitCode !== undefined
+            ? { exitCode: params.exitCode }
+            : {}),
+        };
+  const mapped = mapCodexRolloutToolCall({
+    callId: params.callId ?? null,
+    name: "shell",
+    input: {
+      command,
+      ...(params.cwd ? { cwd: params.cwd } : {}),
+    },
+    output,
+    error: isFailure
+      ? { message: params.stderr?.trim() || "Command failed" }
+      : null,
+    cwd: params.cwd ?? null,
+  });
+  return params.running ? toRunningToolCall(mapped) : mapped;
+}
+
+function mapCodexPatchNotificationToToolCall(params: {
+  callId?: string | null;
+  changes: unknown;
+  cwd?: string | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  success?: boolean | null;
+  latestUnifiedDiff?: string | null;
+  running: boolean;
+}): ToolCallTimelineItem {
+  const files = parseCodexPatchChanges(params.changes);
+  const firstPath = files[0]?.path;
+  const firstContent = files
+    .map((file) => file.content?.trim())
+    .find((value): value is string => typeof value === "string" && value.length > 0);
+  const patchText = params.latestUnifiedDiff?.trim() || firstContent;
+  const patchFields = codexPatchTextFields(patchText);
+  const mapped = mapCodexRolloutToolCall({
+    callId: params.callId ?? null,
+    name: "apply_patch",
+    input: firstPath
+      ? {
+          path: firstPath,
+          ...patchFields,
+          files: files.map((file) => ({ path: file.path, kind: file.kind })),
+        }
+      : {
+          changes: params.changes ?? null,
+          ...patchFields,
+        },
+    output: params.running
+      ? null
+      : {
+          ...(files.length > 0
+            ? {
+                files: files.map((file) => ({
+                  path: file.path,
+                  ...(file.kind ? { kind: file.kind } : {}),
+                  ...patchFields,
+                })),
+              }
+            : {}),
+          ...(params.stdout ? { stdout: params.stdout } : {}),
+          ...(params.stderr ? { stderr: params.stderr } : {}),
+          ...(params.success !== null && params.success !== undefined
+            ? { success: params.success }
+            : {}),
+        },
+    error:
+      params.running || params.success !== false
+        ? null
+        : { message: params.stderr?.trim() || "Patch apply failed" },
+    cwd: params.cwd ?? null,
+  });
+  return params.running ? toRunningToolCall(mapped) : mapped;
+}
+
 function threadItemToTimeline(
   item: any,
   options?: { includeUserMessage?: boolean; cwd?: string | null }
@@ -679,25 +933,37 @@ function threadItemToTimeline(
   if (!item || typeof item !== "object") return null;
   const includeUserMessage = options?.includeUserMessage ?? true;
   const cwd = options?.cwd ?? null;
-  switch (item.type) {
+  const normalizedType = normalizeCodexThreadItemType(
+    typeof item.type === "string" ? item.type : undefined
+  );
+  const normalizedItem =
+    normalizedType && normalizedType !== item.type
+      ? ({ ...item, type: normalizedType } as typeof item)
+      : item;
+
+  switch (normalizedType) {
     case "userMessage": {
       if (!includeUserMessage) {
         return null;
       }
-      const text = extractUserText(item.content) ?? "";
+      const text = extractUserText(normalizedItem.content) ?? "";
       return { type: "user_message", text };
     }
     case "agentMessage": {
-      return { type: "assistant_message", text: item.text ?? "" };
+      return { type: "assistant_message", text: normalizedItem.text ?? "" };
     }
     case "plan": {
-      const text = item.text ?? "";
+      const text = normalizedItem.text ?? "";
       const items = parsePlanTextToTodoItems(text);
       return { type: "todo", items };
     }
     case "reasoning": {
-      const summary = Array.isArray(item.summary) ? item.summary.join("\n") : "";
-      const content = Array.isArray(item.content) ? item.content.join("\n") : "";
+      const summary = Array.isArray(normalizedItem.summary)
+        ? normalizedItem.summary.join("\n")
+        : "";
+      const content = Array.isArray(normalizedItem.content)
+        ? normalizedItem.content.join("\n")
+        : "";
       const text = summary || content;
       return text ? { type: "reasoning", text } : null;
     }
@@ -705,7 +971,7 @@ function threadItemToTimeline(
     case "fileChange":
     case "mcpToolCall":
     case "webSearch":
-      return mapCodexToolCallFromThreadItem(item, { cwd });
+      return mapCodexToolCallFromThreadItem(normalizedItem, { cwd });
     default:
       return null;
   }
@@ -772,6 +1038,7 @@ const TurnCompletedNotificationSchema = z.object({
           message: z.string().optional(),
         })
         .passthrough()
+        .nullable()
         .optional(),
     })
     .passthrough(),
@@ -827,6 +1094,83 @@ const CodexEventTaskCompleteNotificationSchema = z.object({
     .passthrough(),
 }).passthrough();
 
+const CodexEventItemLifecycleNotificationSchema = z.object({
+  msg: z
+    .object({
+      type: z.enum(["item_started", "item_completed"]),
+      item: z
+        .object({
+          id: z.string().optional(),
+          type: z.string().optional(),
+        })
+        .passthrough(),
+    })
+    .passthrough(),
+}).passthrough();
+
+const CodexEventExecCommandBeginNotificationSchema = z.object({
+  msg: z
+    .object({
+      type: z.literal("exec_command_begin"),
+      call_id: z.string().optional(),
+      command: z.unknown().optional(),
+      cwd: z.string().optional(),
+    })
+    .passthrough(),
+}).passthrough();
+
+const CodexEventExecCommandEndNotificationSchema = z.object({
+  msg: z
+    .object({
+      type: z.literal("exec_command_end"),
+      call_id: z.string().optional(),
+      command: z.unknown().optional(),
+      cwd: z.string().optional(),
+      stdout: z.string().optional(),
+      stderr: z.string().optional(),
+      aggregated_output: z.string().optional(),
+      aggregatedOutput: z.string().optional(),
+      formatted_output: z.string().optional(),
+      exit_code: z.number().nullable().optional(),
+      exitCode: z.number().nullable().optional(),
+      success: z.boolean().optional(),
+    })
+    .passthrough(),
+}).passthrough();
+
+const CodexEventPatchApplyBeginNotificationSchema = z.object({
+  msg: z
+    .object({
+      type: z.literal("patch_apply_begin"),
+      call_id: z.string().optional(),
+      changes: z.unknown().optional(),
+    })
+    .passthrough(),
+}).passthrough();
+
+const CodexEventPatchApplyEndNotificationSchema = z.object({
+  msg: z
+    .object({
+      type: z.literal("patch_apply_end"),
+      call_id: z.string().optional(),
+      changes: z.unknown().optional(),
+      stdout: z.string().optional(),
+      stderr: z.string().optional(),
+      success: z.boolean().optional(),
+    })
+    .passthrough(),
+}).passthrough();
+
+const CodexEventTurnDiffNotificationSchema = z.object({
+  msg: z
+    .object({
+      type: z.literal("turn_diff"),
+      unified_diff: z.string().optional(),
+      diff: z.string().optional(),
+    })
+    .passthrough(),
+}).passthrough();
+
 type ParsedCodexNotification =
   | { kind: "thread_started"; threadId: string }
   | { kind: "turn_started"; turnId: string }
@@ -836,8 +1180,45 @@ type ParsedCodexNotification =
   | { kind: "token_usage_updated"; tokenUsage: unknown }
   | { kind: "agent_message_delta"; itemId: string; delta: string }
   | { kind: "reasoning_delta"; itemId: string; delta: string }
-  | { kind: "item_completed"; item: { id?: string; type?: string; [key: string]: unknown } }
-  | { kind: "item_started"; item: { id?: string; type?: string; [key: string]: unknown } }
+  | {
+      kind: "item_completed";
+      source: "item" | "codex_event";
+      item: { id?: string; type?: string; [key: string]: unknown };
+    }
+  | {
+      kind: "item_started";
+      source: "item" | "codex_event";
+      item: { id?: string; type?: string; [key: string]: unknown };
+    }
+  | {
+      kind: "exec_command_started";
+      callId: string | null;
+      command: unknown;
+      cwd: string | null;
+    }
+  | {
+      kind: "exec_command_completed";
+      callId: string | null;
+      command: unknown;
+      cwd: string | null;
+      output: string | null;
+      exitCode: number | null;
+      success: boolean | null;
+      stderr: string | null;
+    }
+  | {
+      kind: "patch_apply_started";
+      callId: string | null;
+      changes: unknown;
+    }
+  | {
+      kind: "patch_apply_completed";
+      callId: string | null;
+      changes: unknown;
+      stdout: string | null;
+      stderr: string | null;
+      success: boolean | null;
+    }
   | { kind: "invalid_payload"; method: string; params: unknown }
   | { kind: "unknown_method"; method: string; params: unknown };
 
@@ -915,15 +1296,119 @@ const CodexNotificationSchema = z.union([
     ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
   ),
   z.object({ method: z.literal("item/completed"), params: ItemLifecycleNotificationSchema }).transform(
-    ({ params }): ParsedCodexNotification => ({ kind: "item_completed", item: params.item })
+    ({ params }): ParsedCodexNotification => ({ kind: "item_completed", source: "item", item: params.item })
   ),
   z.object({ method: z.literal("item/completed"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
   ),
   z.object({ method: z.literal("item/started"), params: ItemLifecycleNotificationSchema }).transform(
-    ({ params }): ParsedCodexNotification => ({ kind: "item_started", item: params.item })
+    ({ params }): ParsedCodexNotification => ({ kind: "item_started", source: "item", item: params.item })
   ),
   z.object({ method: z.literal("item/started"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("codex/event/item_started"),
+    params: CodexEventItemLifecycleNotificationSchema,
+  }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "item_started",
+      source: "codex_event",
+      item: params.msg.item,
+    })
+  ),
+  z.object({ method: z.literal("codex/event/item_started"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("codex/event/item_completed"),
+    params: CodexEventItemLifecycleNotificationSchema,
+  }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "item_completed",
+      source: "codex_event",
+      item: params.msg.item,
+    })
+  ),
+  z.object({ method: z.literal("codex/event/item_completed"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("codex/event/exec_command_begin"),
+    params: CodexEventExecCommandBeginNotificationSchema,
+  }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "exec_command_started",
+      callId: params.msg.call_id ?? null,
+      command: params.msg.command ?? null,
+      cwd: params.msg.cwd ?? null,
+    })
+  ),
+  z.object({ method: z.literal("codex/event/exec_command_begin"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("codex/event/exec_command_end"),
+    params: CodexEventExecCommandEndNotificationSchema,
+  }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "exec_command_completed",
+      callId: params.msg.call_id ?? null,
+      command: params.msg.command ?? null,
+      cwd: params.msg.cwd ?? null,
+      output:
+        params.msg.aggregated_output ??
+        params.msg.aggregatedOutput ??
+        params.msg.formatted_output ??
+        params.msg.stdout ??
+        null,
+      exitCode: params.msg.exit_code ?? params.msg.exitCode ?? null,
+      success: params.msg.success ?? null,
+      stderr: params.msg.stderr ?? null,
+    })
+  ),
+  z.object({ method: z.literal("codex/event/exec_command_end"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("codex/event/patch_apply_begin"),
+    params: CodexEventPatchApplyBeginNotificationSchema,
+  }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "patch_apply_started",
+      callId: params.msg.call_id ?? null,
+      changes: params.msg.changes ?? null,
+    })
+  ),
+  z.object({ method: z.literal("codex/event/patch_apply_begin"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("codex/event/patch_apply_end"),
+    params: CodexEventPatchApplyEndNotificationSchema,
+  }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "patch_apply_completed",
+      callId: params.msg.call_id ?? null,
+      changes: params.msg.changes ?? null,
+      stdout: params.msg.stdout ?? null,
+      stderr: params.msg.stderr ?? null,
+      success: params.msg.success ?? null,
+    })
+  ),
+  z.object({ method: z.literal("codex/event/patch_apply_end"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
+  ),
+  z.object({
+    method: z.literal("codex/event/turn_diff"),
+    params: CodexEventTurnDiffNotificationSchema,
+  }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "diff_updated",
+      diff: params.msg.unified_diff ?? params.msg.diff ?? "",
+    })
+  ),
+  z.object({ method: z.literal("codex/event/turn_diff"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({ kind: "invalid_payload", method, params })
   ),
   z.object({
@@ -966,6 +1451,53 @@ async function writeImageAttachment(mimeType: string, data: string): Promise<str
   const filePath = path.join(attachmentsDir, filename);
   await fs.writeFile(filePath, Buffer.from(normalized.data, "base64"));
   return filePath;
+}
+
+async function readCodexConfiguredDefaults(
+  client: CodexAppServerClient,
+  logger: Logger
+): Promise<CodexConfiguredDefaults> {
+  let savedConfigDefaults: CodexConfiguredDefaults = {};
+  try {
+    const response = (await client.request("getUserSavedConfig", {})) as {
+      config?: {
+        model?: string | null;
+        modelReasoningEffort?: string | null;
+      };
+    };
+    savedConfigDefaults = {
+      model: normalizeCodexModelId(response?.config?.model),
+      thinkingOptionId: normalizeCodexThinkingOptionId(
+        response?.config?.modelReasoningEffort ?? null
+      ),
+    };
+  } catch (error) {
+    logger.debug({ error }, "Failed to read Codex saved config defaults");
+  }
+
+  if (savedConfigDefaults.model && savedConfigDefaults.thinkingOptionId) {
+    return savedConfigDefaults;
+  }
+
+  let configReadDefaults: CodexConfiguredDefaults = {};
+  try {
+    const response = (await client.request("config/read", {})) as {
+      config?: {
+        model?: string | null;
+        model_reasoning_effort?: string | null;
+      };
+    };
+    configReadDefaults = {
+      model: normalizeCodexModelId(response?.config?.model),
+      thinkingOptionId: normalizeCodexThinkingOptionId(
+        response?.config?.model_reasoning_effort ?? null
+      ),
+    };
+  } catch (error) {
+    logger.debug({ error }, "Failed to read Codex config defaults");
+  }
+
+  return mergeCodexConfiguredDefaults(savedConfigDefaults, configReadDefaults);
 }
 
 export async function codexAppServerTurnInputFromPrompt(
@@ -1033,8 +1565,11 @@ class CodexAppServerAgentSession implements AgentSession {
   private resolvedPermissionRequests = new Set<string>();
   private pendingAgentMessages = new Map<string, string>();
   private pendingReasoning = new Map<string, string[]>();
+  private emittedItemStartedIds = new Set<string>();
+  private emittedItemCompletedIds = new Set<string>();
   private warnedUnknownNotificationMethods = new Set<string>();
   private warnedInvalidNotificationPayloads = new Set<string>();
+  private latestTurnUnifiedDiff: string | null = null;
   private latestUsage: AgentUsage | undefined;
   private connected = false;
   private collaborationModes: Array<{
@@ -1443,9 +1978,40 @@ class CodexAppServerAgentSession implements AgentSession {
     if (!pending) {
       throw new Error(`No pending Codex app-server permission request with id '${requestId}'`);
     }
+    const pendingRequest = this.pendingPermissions.get(requestId) ?? null;
     this.pendingPermissionHandlers.delete(requestId);
     this.pendingPermissions.delete(requestId);
     this.resolvedPermissionRequests.add(requestId);
+
+    if (response.behavior === "deny" && pendingRequest?.kind === "tool") {
+      const fallbackName =
+        pendingRequest.name === "CodexBash"
+          ? "shell"
+          : pendingRequest.name === "CodexFileChange"
+            ? "apply_patch"
+            : pendingRequest.name;
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: {
+          type: "tool_call",
+          callId: requestId,
+          name: fallbackName,
+          status: "failed",
+          error: { message: response.message ?? "Permission denied" },
+          detail:
+            pendingRequest.detail ?? {
+              type: "unknown",
+              input: pendingRequest.input ?? null,
+              output: null,
+            },
+          metadata: {
+            permissionRequestId: requestId,
+            denied: true,
+          },
+        },
+      });
+    }
 
     this.emitEvent({
       type: "permission_resolved",
@@ -1608,6 +2174,10 @@ class CodexAppServerAgentSession implements AgentSession {
     // Resolve model - if not specified, query available models and pick default
     let model = this.config.model;
     if (!model) {
+      const configuredDefaults = await readCodexConfiguredDefaults(this.client, this.logger);
+      model = configuredDefaults.model;
+    }
+    if (!model) {
       const modelResponse = (await this.client.request("model/list", {})) as CodexModelListResponse;
       const models = modelResponse?.data ?? [];
       const defaultModel = models.find((m) => m.isDefault) ?? models[0];
@@ -1616,6 +2186,7 @@ class CodexAppServerAgentSession implements AgentSession {
       }
       model = defaultModel.id;
     }
+    this.config.model = model;
 
     const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
     const approvalPolicy = this.config.approvalPolicy ?? preset.approvalPolicy;
@@ -1681,6 +2252,9 @@ class CodexAppServerAgentSession implements AgentSession {
 
     if (parsed.kind === "turn_started") {
       this.currentTurnId = parsed.turnId;
+      this.latestTurnUnifiedDiff = null;
+      this.emittedItemStartedIds.clear();
+      this.emittedItemCompletedIds.clear();
       this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
       return;
     }
@@ -1697,6 +2271,9 @@ class CodexAppServerAgentSession implements AgentSession {
       } else {
         this.emitEvent({ type: "turn_completed", provider: CODEX_PROVIDER, usage: this.latestUsage });
       }
+      this.latestTurnUnifiedDiff = null;
+      this.emittedItemStartedIds.clear();
+      this.emittedItemCompletedIds.clear();
       this.eventQueue?.end();
       return;
     }
@@ -1717,13 +2294,12 @@ class CodexAppServerAgentSession implements AgentSession {
     }
 
     if (parsed.kind === "diff_updated") {
-      if (parsed.diff.trim().length > 0) {
-        // NOTE: Codex app-server emits frequent `turn/diff/updated` notifications
-        // containing a full accumulated unified diff for the *entire turn*.
-        // This is not a concrete file-change tool call; it is progress telemetry.
-        // We intentionally do NOT store it in the agent timeline to avoid
-        // snapshot bloat and relay/WebSocket size limits.
-      }
+      const trimmedDiff = parsed.diff.trim();
+      this.latestTurnUnifiedDiff = trimmedDiff.length > 0 ? trimmedDiff : null;
+      // NOTE: Codex app-server emits frequent `turn/diff/updated` notifications
+      // containing a full accumulated unified diff for the *entire turn*.
+      // This is not a concrete file-change tool call; it is progress telemetry.
+      // We intentionally do NOT store every diff update in the timeline.
       return;
     }
 
@@ -1745,13 +2321,79 @@ class CodexAppServerAgentSession implements AgentSession {
       return;
     }
 
+    if (parsed.kind === "exec_command_started") {
+      const timelineItem = mapCodexExecNotificationToToolCall({
+        callId: parsed.callId,
+        command: parsed.command,
+        cwd: parsed.cwd ?? this.config.cwd ?? null,
+        running: true,
+      });
+      if (timelineItem) {
+        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      }
+      return;
+    }
+
+    if (parsed.kind === "exec_command_completed") {
+      const timelineItem = mapCodexExecNotificationToToolCall({
+        callId: parsed.callId,
+        command: parsed.command,
+        cwd: parsed.cwd ?? this.config.cwd ?? null,
+        output: parsed.output,
+        exitCode: parsed.exitCode,
+        success: parsed.success,
+        stderr: parsed.stderr,
+        running: false,
+      });
+      if (timelineItem) {
+        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      }
+      return;
+    }
+
+    if (parsed.kind === "patch_apply_started") {
+      const timelineItem = mapCodexPatchNotificationToToolCall({
+        callId: parsed.callId,
+        changes: parsed.changes,
+        cwd: this.config.cwd ?? null,
+        latestUnifiedDiff: this.latestTurnUnifiedDiff,
+        running: true,
+      });
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      return;
+    }
+
+    if (parsed.kind === "patch_apply_completed") {
+      const timelineItem = mapCodexPatchNotificationToToolCall({
+        callId: parsed.callId,
+        changes: parsed.changes,
+        cwd: this.config.cwd ?? null,
+        stdout: parsed.stdout,
+        stderr: parsed.stderr,
+        success: parsed.success,
+        latestUnifiedDiff: this.latestTurnUnifiedDiff,
+        running: false,
+      });
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      return;
+    }
+
     if (parsed.kind === "item_completed") {
+      // Codex emits mirrored lifecycle notifications via both `codex/event/item_*`
+      // and canonical `item/*`. We render only the canonical channel to avoid
+      // duplicated assistant/reasoning rows.
+      if (parsed.source === "codex_event") {
+        return;
+      }
       const timelineItem = threadItemToTimeline(parsed.item, {
         includeUserMessage: false,
         cwd: this.config.cwd ?? null,
       });
       if (timelineItem) {
         const itemId = parsed.item.id;
+        if (itemId && this.emittedItemCompletedIds.has(itemId)) {
+          return;
+        }
         if (timelineItem.type === "assistant_message" && itemId) {
           const buffered = this.pendingAgentMessages.get(itemId);
           if (buffered && buffered.length > 0) {
@@ -1765,17 +2407,31 @@ class CodexAppServerAgentSession implements AgentSession {
           }
         }
         this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+        if (itemId) {
+          this.emittedItemCompletedIds.add(itemId);
+          this.emittedItemStartedIds.delete(itemId);
+        }
       }
       return;
     }
 
     if (parsed.kind === "item_started") {
+      if (parsed.source === "codex_event") {
+        return;
+      }
       const timelineItem = threadItemToTimeline(parsed.item, {
         includeUserMessage: false,
         cwd: this.config.cwd ?? null,
       });
       if (timelineItem && timelineItem.type === "tool_call") {
+        const itemId = parsed.item.id;
+        if (itemId && this.emittedItemStartedIds.has(itemId)) {
+          return;
+        }
         this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+        if (itemId) {
+          this.emittedItemStartedIds.add(itemId);
+        }
       }
       return;
     }
@@ -1817,6 +2473,12 @@ class CodexAppServerAgentSession implements AgentSession {
       cwd?: string | null;
       reason?: string | null;
     };
+    const commandPreview = mapCodexExecNotificationToToolCall({
+      callId: parsed.itemId,
+      command: parsed.command,
+      cwd: parsed.cwd ?? this.config.cwd ?? null,
+      running: true,
+    });
     const requestId = `permission-${parsed.itemId}`;
     const title = parsed.command ? `Run command: ${parsed.command}` : "Run command";
     const request: AgentPermissionRequest = {
@@ -1830,6 +2492,15 @@ class CodexAppServerAgentSession implements AgentSession {
         command: parsed.command ?? undefined,
         cwd: parsed.cwd ?? undefined,
       },
+      detail:
+        commandPreview?.detail ?? {
+          type: "unknown",
+          input: {
+            command: parsed.command ?? null,
+            cwd: parsed.cwd ?? null,
+          },
+          output: null,
+        },
       metadata: {
         itemId: parsed.itemId,
         threadId: parsed.threadId,
@@ -1853,6 +2524,13 @@ class CodexAppServerAgentSession implements AgentSession {
       kind: "tool",
       title: "Apply file changes",
       description: parsed.reason ?? undefined,
+      detail: {
+        type: "unknown",
+        input: {
+          reason: parsed.reason ?? null,
+        },
+        output: null,
+      },
       metadata: {
         itemId: parsed.itemId,
         threadId: parsed.threadId,
@@ -1876,6 +2554,13 @@ class CodexAppServerAgentSession implements AgentSession {
       kind: "tool",
       title: "Tool action requires approval",
       description: undefined,
+      detail: {
+        type: "unknown",
+        input: {
+          questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+        },
+        output: null,
+      },
       metadata: {
         itemId: parsed.itemId,
         threadId: parsed.threadId,
@@ -2020,12 +2705,21 @@ export class CodexAppServerAgentClient implements AgentClient {
 
       const response = (await client.request("model/list", {})) as { data?: Array<any> };
       const models = Array.isArray(response?.data) ? response.data : [];
+      const configuredDefaults = await readCodexConfiguredDefaults(client, this.logger);
+      const configuredDefaultModelId = configuredDefaults.model;
+      const configuredDefaultThinkingOptionId = configuredDefaults.thinkingOptionId;
+      const hasConfiguredDefaultModel =
+        typeof configuredDefaultModelId === "string"
+          ? models.some((model) => model?.id === configuredDefaultModelId)
+          : false;
       return models.map((model) => {
         const defaultReasoningEffort = normalizeCodexThinkingOptionId(
           typeof model.defaultReasoningEffort === "string"
             ? model.defaultReasoningEffort
             : null
         );
+        const resolvedDefaultReasoningEffort =
+          configuredDefaultThinkingOptionId ?? defaultReasoningEffort;
 
         const thinkingById = new Map<string, { id: string; label: string; description?: string }>();
         if (Array.isArray(model.supportedReasoningEfforts)) {
@@ -2042,27 +2736,35 @@ export class CodexAppServerAgentClient implements AgentClient {
           }
         }
 
-        if (defaultReasoningEffort && !thinkingById.has(defaultReasoningEffort)) {
-          thinkingById.set(defaultReasoningEffort, {
-            id: defaultReasoningEffort,
-            label: defaultReasoningEffort,
-            description: "Model default reasoning effort",
+        if (resolvedDefaultReasoningEffort && !thinkingById.has(resolvedDefaultReasoningEffort)) {
+          thinkingById.set(resolvedDefaultReasoningEffort, {
+            id: resolvedDefaultReasoningEffort,
+            label: resolvedDefaultReasoningEffort,
+            description:
+              configuredDefaultThinkingOptionId === resolvedDefaultReasoningEffort
+                ? "Configured default reasoning effort"
+                : "Model default reasoning effort",
           });
         }
 
         const thinkingOptions = Array.from(thinkingById.values()).map((option) => ({
           ...option,
-          isDefault: option.id === defaultReasoningEffort,
+          isDefault: option.id === resolvedDefaultReasoningEffort,
         }));
         const defaultThinkingOptionId =
-          defaultReasoningEffort ?? thinkingOptions.find((option) => option.isDefault)?.id ?? thinkingOptions[0]?.id;
+          resolvedDefaultReasoningEffort ??
+          thinkingOptions.find((option) => option.isDefault)?.id ??
+          thinkingOptions[0]?.id;
+        const isDefaultModel = hasConfiguredDefaultModel
+          ? model.id === configuredDefaultModelId
+          : model.isDefault;
 
         return {
           provider: CODEX_PROVIDER,
           id: model.id,
           label: model.displayName,
           description: model.description,
-          isDefault: model.isDefault,
+          isDefault: isDefaultModel,
           thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
           defaultThinkingOptionId,
           metadata: {

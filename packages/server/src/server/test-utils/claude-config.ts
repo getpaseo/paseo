@@ -3,6 +3,14 @@ import { tmpdir } from "os";
 import path from "path";
 import { seedClaudeAuth } from "./claude-auth.js";
 
+function isIgnorableCleanupError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOTEMPTY" || code === "EBUSY" || code === "EPERM";
+}
+
 /**
  * Sets up an isolated Claude config directory for testing.
  * Creates a temp directory with:
@@ -39,6 +47,12 @@ export function useTempClaudeConfigDir(): () => void {
     } else {
       process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
     }
-    rmSync(configDir, { recursive: true, force: true });
+    try {
+      rmSync(configDir, { recursive: true, force: true });
+    } catch (error) {
+      if (!isIgnorableCleanupError(error)) {
+        throw error;
+      }
+    }
   };
 }

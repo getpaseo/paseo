@@ -14,16 +14,19 @@ const TOOL_DETAIL_ICONS: Record<ToolCallDetail["type"], ToolCallIconComponent> =
 };
 
 export function resolveToolCallIcon(toolName: string, detail?: ToolCallDetail): ToolCallIconComponent {
+  const lowerName = toolName.trim().toLowerCase();
+
+  // Thoughts are rendered through ToolCall with unknown detail payloads.
+  if (lowerName === "thinking" && (!detail || detail.type === "unknown")) {
+    return Brain;
+  }
+
   if (detail) {
     return TOOL_DETAIL_ICONS[detail.type];
   }
 
-  const lowerName = toolName.trim().toLowerCase();
   if (lowerName === "task") {
     return Bot;
-  }
-  if (lowerName === "thinking") {
-    return Brain;
   }
   return Wrench;
 }

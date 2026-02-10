@@ -492,6 +492,9 @@ interface AgentConfigRowProps {
   selectedModel: string;
   isModelLoading: boolean;
   onSelectModel: (modelId: string) => void;
+  thinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
+  selectedThinkingOptionId: string;
+  onSelectThinkingOption: (thinkingOptionId: string) => void;
   disabled?: boolean;
 }
 
@@ -506,6 +509,9 @@ export function AgentConfigRow({
   selectedModel,
   isModelLoading,
   onSelectModel,
+  thinkingOptions,
+  selectedThinkingOptionId,
+  onSelectThinkingOption,
   disabled,
 }: AgentConfigRowProps): ReactElement {
   const providerOptions: ComboSelectOption[] = useMemo(
@@ -540,7 +546,18 @@ export function AgentConfigRow({
     return opts;
   }, [models]);
 
+  const thinkingSelectOptions: ComboSelectOption[] = useMemo(
+    () =>
+      thinkingOptions.map((option) => ({
+        id: option.id,
+        label: option.label,
+      })),
+    [thinkingOptions]
+  );
+
   const effectiveSelectedMode = selectedMode || (modeOptions.length > 0 ? modeOptions[0]?.id : "");
+  const effectiveSelectedThinkingOption =
+    selectedThinkingOptionId || thinkingSelectOptions[0]?.id || "";
 
   return (
     <View style={styles.agentConfigRow}>
@@ -584,6 +601,21 @@ export function AgentConfigRow({
           showLabel={false}
         />
       </View>
+      {thinkingSelectOptions.length > 0 ? (
+        <View style={styles.agentConfigColumn}>
+          <ComboSelect
+            label="Thinking"
+            title="Select thinking effort"
+            value={effectiveSelectedThinkingOption}
+            options={thinkingSelectOptions}
+            placeholder="Select..."
+            disabled={disabled}
+            onSelect={onSelectThinkingOption}
+            icon={<Brain size={16} color={defaultTheme.colors.foregroundMuted} />}
+            showLabel={false}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }

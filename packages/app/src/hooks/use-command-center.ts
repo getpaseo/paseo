@@ -5,9 +5,19 @@ import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 import { useAggregatedAgents, type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import {
+  checkoutStatusQueryKey,
+  type CheckoutStatusPayload,
+} from "@/hooks/use-checkout-status-query";
+import { queryClient } from "@/query/query-client";
+import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
 } from "@/utils/command-center-focus-restore";
+import {
+  buildNewAgentRoute,
+  resolveNewAgentWorkingDir,
+} from "@/utils/new-agent-routing";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import { focusWithRetries } from "@/utils/web-focus";
 
 function agentKey(agent: Pick<AggregatedAgent, "serverId" | "id">): string {
@@ -41,6 +51,74 @@ function parseAgentKeyFromPathname(pathname: string): string | null {
   return `${match[1]}:${match[2]}`;
 }
 
+function parseAgentRouteFromPathname(
+  pathname: string
+): { serverId: string; agentId: string } | null {
+  const match = pathname.match(/^\/agent\/([^/]+)\/([^/]+)/);
+  if (!match) return null;
+  const [, serverId, agentId] = match;
+  if (!serverId || !agentId) return null;
+  return { serverId, agentId };
+}
+
+type CommandCenterActionDefinition = {
+  id: string;
+  title: string;
+  icon?: "plus" | "settings";
+  shortcutKeys?: ShortcutKey[];
+  keywords: string[];
+  buildRoute: (params: { newAgentRoute: string }) => string;
+};
+
+const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
+  {
+    id: "new-agent",
+    title: "New agent",
+    icon: "plus",
+    shortcutKeys: ["mod", "alt", "N"],
+    keywords: ["new", "new agent", "create", "start", "launch", "agent"],
+    buildRoute: ({ newAgentRoute }) => newAgentRoute,
+  },
+  {
+    id: "settings",
+    title: "Settings",
+    icon: "settings",
+    keywords: ["settings", "preferences", "config", "configuration"],
+    buildRoute: () => "/settings",
+  },
+];
+
+function matchesActionQuery(
+  query: string,
+  action: CommandCenterActionDefinition
+): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  if (action.title.toLowerCase().includes(normalized)) {
+    return true;
+  }
+  return action.keywords.some((keyword) => keyword.includes(normalized));
+}
+
+export type CommandCenterActionItem = {
+  kind: "action";
+  id: string;
+  title: string;
+  icon?: "plus" | "settings";
+  route: string;
+  shortcutKeys?: ShortcutKey[];
+};
+
+export type CommandCenterItem =
+  | {
+      kind: "action";
+      action: CommandCenterActionItem;
+    }
+  | {
+      kind: "agent";
+      agent: AggregatedAgent;
+    };
+
 export function useCommandCenter() {
   const pathname = usePathname();
   const { agents } = useAggregatedAgents();
@@ -53,7 +131,7 @@ export function useCommandCenter() {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
 
-  const results = useMemo(() => {
+  const agentResults = useMemo(() => {
     const filtered = agents.filter((agent) => isMatch(agent, query));
     filtered.sort(sortAgents);
     return filtered;
@@ -64,11 +142,62 @@ export function useCommandCenter() {
     [pathname]
   );
 
+  const newAgentRoute = useMemo(() => {
+    const routeAgent = parseAgentRouteFromPathname(pathname);
+    if (!routeAgent) {
+      return "/agent";
+    }
+
+    const { serverId, agentId } = routeAgent;
+    const currentAgent = useSessionStore.getState().sessions[serverId]?.agents?.get(agentId);
+    const cwd = currentAgent?.cwd?.trim();
+    if (!cwd) {
+      return "/agent";
+    }
+
+    const checkout =
+      queryClient.getQueryData<CheckoutStatusPayload>(
+        checkoutStatusQueryKey(serverId, cwd)
+      ) ?? null;
+    const workingDir = resolveNewAgentWorkingDir(cwd, checkout);
+    return buildNewAgentRoute(workingDir);
+  }, [pathname]);
+
+  const actionItems = useMemo(() => {
+    return COMMAND_CENTER_ACTIONS.filter((action) =>
+      matchesActionQuery(query, action)
+    ).map<CommandCenterActionItem>((action) => ({
+      kind: "action",
+      id: action.id,
+      title: action.title,
+      icon: action.icon,
+      route: action.buildRoute({ newAgentRoute }),
+      shortcutKeys: action.shortcutKeys,
+    }));
+  }, [newAgentRoute, query]);
+
+  const items = useMemo(() => {
+    const next: CommandCenterItem[] = [];
+    for (const action of actionItems) {
+      next.push({
+        kind: "action",
+        action,
+      });
+    }
+    for (const agent of agentResults) {
+      next.push({
+        kind: "agent",
+        agent,
+      });
+    }
+    return next;
+  }, [actionItems, agentResults]);
+
   const handleClose = useCallback(() => {
     setOpen(false);
   }, [setOpen]);
 
-  const handleSelect = useCallback(
+  const handleSelectAgent = useCallback(
     (agent: AggregatedAgent) => {
       didNavigateRef.current = true;
       const session = useSessionStore.getState().sessions[agent.serverId];
@@ -84,6 +213,24 @@ export function useCommandCenter() {
       navigate(`/agent/${agent.serverId}/${agent.id}` as any);
     },
     [pathname, requestFocusChatInput, setOpen]
+  );
+
+  const handleSelectAction = useCallback((action: CommandCenterActionItem) => {
+    didNavigateRef.current = true;
+    clearCommandCenterFocusRestoreElement();
+    setOpen(false);
+    router.push(action.route as any);
+  }, [setOpen]);
+
+  const handleSelectItem = useCallback(
+    (item: CommandCenterItem) => {
+      if (item.kind === "action") {
+        handleSelectAction(item.action);
+        return;
+      }
+      handleSelectAgent(item.agent);
+    },
+    [handleSelectAction, handleSelectAgent]
   );
 
   useEffect(() => {
@@ -126,10 +273,10 @@ export function useCommandCenter() {
 
   useEffect(() => {
     if (!open) return;
-    if (activeIndex >= results.length) {
-      setActiveIndex(results.length > 0 ? results.length - 1 : 0);
+    if (activeIndex >= items.length) {
+      setActiveIndex(items.length > 0 ? items.length - 1 : 0);
     }
-  }, [activeIndex, open, results.length]);
+  }, [activeIndex, items.length, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -152,21 +299,21 @@ export function useCommandCenter() {
       }
 
       if (key === "Enter") {
-        if (results.length === 0) return;
+        if (items.length === 0) return;
         event.preventDefault();
-        const index = Math.max(0, Math.min(activeIndex, results.length - 1));
-        handleSelect(results[index]!);
+        const index = Math.max(0, Math.min(activeIndex, items.length - 1));
+        handleSelectItem(items[index]!);
         return;
       }
 
       if (key === "ArrowDown" || key === "ArrowUp") {
-        if (results.length === 0) return;
+        if (items.length === 0) return;
         event.preventDefault();
         setActiveIndex((current) => {
           const delta = key === "ArrowDown" ? 1 : -1;
           const next = current + delta;
-          if (next < 0) return results.length - 1;
-          if (next >= results.length) return 0;
+          if (next < 0) return items.length - 1;
+          if (next >= items.length) return 0;
           return next;
         });
       }
@@ -175,7 +322,7 @@ export function useCommandCenter() {
     // react-native-web can stop propagation on key events, so listen in capture phase.
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [activeIndex, handleClose, handleSelect, open, results]);
+  }, [activeIndex, handleClose, handleSelectItem, items, open]);
 
   return {
     open,
@@ -184,9 +331,8 @@ export function useCommandCenter() {
     setQuery,
     activeIndex,
     setActiveIndex,
-    results,
+    items,
     handleClose,
-    handleSelect,
+    handleSelectItem,
   };
 }
-

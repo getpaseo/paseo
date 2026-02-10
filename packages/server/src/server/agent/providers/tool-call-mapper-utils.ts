@@ -21,6 +21,70 @@ export function commandFromValue(value: unknown): string | undefined {
   return tokens.length > 0 ? tokens.join(" ") : undefined;
 }
 
+const CODEX_SHELL_ENVELOPE_HEADER_LINES = new Set([
+  "chunk id:",
+  "wall time:",
+  "process exited with code",
+  "original token count:",
+]);
+
+function isCodexShellEnvelopeHeaderLine(line: string): boolean {
+  const normalized = line.trim().toLowerCase();
+  for (const prefix of CODEX_SHELL_ENVELOPE_HEADER_LINES) {
+    if (normalized.startsWith(prefix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function looksLikeCodexShellEnvelope(lines: string[]): boolean {
+  if (lines.length === 0) {
+    return false;
+  }
+  const first = lines[0]?.trim().toLowerCase() ?? "";
+  if (!first.startsWith("chunk id:")) {
+    return false;
+  }
+
+  const headerWindow = lines.slice(0, 8).map((line) => line.trim().toLowerCase());
+  const hasWallTime = headerWindow.some((line) => line.startsWith("wall time:"));
+  const hasExitCode = headerWindow.some((line) => line.startsWith("process exited with code"));
+  return hasWallTime && hasExitCode;
+}
+
+export function extractCodexShellOutput(value: string | undefined): string | undefined {
+  const text = nonEmptyString(value);
+  if (!text) {
+    return undefined;
+  }
+
+  const normalized = text.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  if (!looksLikeCodexShellEnvelope(lines)) {
+    return text;
+  }
+
+  const outputLineIndex = lines.findIndex((line) => line.trim() === "Output:");
+  if (outputLineIndex >= 0) {
+    return nonEmptyString(lines.slice(outputLineIndex + 1).join("\n"));
+  }
+
+  let firstBodyLineIndex = -1;
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (!isCodexShellEnvelopeHeaderLine(line)) {
+      firstBodyLineIndex = index;
+      break;
+    }
+  }
+
+  if (firstBodyLineIndex === -1) {
+    return undefined;
+  }
+  return nonEmptyString(lines.slice(firstBodyLineIndex).join("\n"));
+}
+
 export function flattenReadContent<Chunk extends ReadChunkLike>(
   value: string | Chunk | Chunk[] | undefined
 ): string | undefined {

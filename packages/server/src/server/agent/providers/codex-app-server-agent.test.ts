@@ -203,6 +203,43 @@ describe("Codex app-server provider (integration)", () => {
     30000
   );
 
+  test.runIf(isCodexInstalled())(
+    "listModels honors configured Codex model + reasoning defaults",
+    async () => {
+      const codexHome = tmpCwd("codex-home-defaults-");
+      const prevCodexHome = process.env.CODEX_HOME;
+      process.env.CODEX_HOME = codexHome;
+      writeFileSync(
+        path.join(codexHome, "config.toml"),
+        [
+          'model = "gpt-5.3-codex"',
+          'model_reasoning_effort = "xhigh"',
+        ].join("\n"),
+        "utf8"
+      );
+
+      try {
+        const client = new CodexAppServerAgentClient(logger);
+        const models = await client.listModels();
+        const configuredModel = models.find((model) => model.id === "gpt-5.3-codex");
+        expect(configuredModel).toBeDefined();
+        expect(configuredModel?.isDefault).toBe(true);
+        expect(configuredModel?.defaultThinkingOptionId).toBe("xhigh");
+        expect(configuredModel?.thinkingOptions?.some((option) => option.id === "xhigh")).toBe(
+          true
+        );
+      } finally {
+        if (prevCodexHome === undefined) {
+          delete process.env.CODEX_HOME;
+        } else {
+          process.env.CODEX_HOME = prevCodexHome;
+        }
+        rmSync(codexHome, { recursive: true, force: true });
+      }
+    },
+    30000
+  );
+
   test.runIf(isCodexInstalled())("accepts image prompt blocks without request validation errors", async () => {
     const cleanup = useTempCodexSessionDir();
     const cwd = tmpCwd("codex-image-prompt-");
@@ -473,6 +510,10 @@ describe("Codex app-server provider (integration)", () => {
         if (event.type === "permission_requested" && event.request.name === "CodexBash") {
           sawPermission = true;
           captured = event.request;
+          expect(captured.detail?.type).toBe("shell");
+          if (captured.detail?.type === "shell") {
+            expect(captured.detail.command).toContain("printf");
+          }
           await session.respondToPermission(event.request.id, { behavior: "allow" });
         }
         if (
@@ -509,6 +550,87 @@ describe("Codex app-server provider (integration)", () => {
       ).toBe(true);
       expect(existsSync(filePath)).toBe(true);
       expect(readFileSync(filePath, "utf8")).toContain("ok");
+    } finally {
+      cleanup();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 60000);
+
+  test.runIf(isCodexInstalled())("command approval deny emits failed tool call and skips execution", async () => {
+    const cleanup = useTempCodexSessionDir();
+    const cwd = tmpCwd("codex-cmd-deny-");
+    const filePath = path.join(cwd, "permission-deny.txt");
+    writeFileSync(filePath, "ok", "utf8");
+
+    try {
+      const client = new CodexAppServerAgentClient(logger);
+      const session = await client.createSession({
+        provider: "codex",
+        cwd,
+        modeId: "auto",
+        approvalPolicy: "on-request",
+        model: CODEX_TEST_MODEL,
+        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+      });
+
+      let sawPermission = false;
+      let captured: AgentPermissionRequest | null = null;
+      let sawPermissionResolvedDeny = false;
+      const timelineItems: AgentTimelineItem[] = [];
+
+      const events = session.stream(
+        [
+          "You must use your shell tool to run the exact command",
+          "`rm -f permission-deny.txt`.",
+          "If approval is denied, reply DENIED and stop.",
+        ].join(" ")
+      );
+
+      let failure: string | null = null;
+      for await (const event of events) {
+        if (event.type === "permission_requested" && event.request.name === "CodexBash") {
+          sawPermission = true;
+          captured = event.request;
+          await session.respondToPermission(event.request.id, {
+            behavior: "deny",
+            message: "Denied by test",
+          });
+        }
+        if (
+          event.type === "permission_resolved" &&
+          captured &&
+          event.requestId === captured.id &&
+          event.resolution.behavior === "deny"
+        ) {
+          sawPermissionResolvedDeny = true;
+        }
+        if (event.type === "timeline" && event.item.type === "tool_call") {
+          timelineItems.push(event.item);
+        }
+        if (event.type === "turn_failed") {
+          failure = event.error;
+          break;
+        }
+        if (event.type === "turn_completed") {
+          break;
+        }
+      }
+
+      await session.close();
+
+      if (failure) {
+        throw new Error(failure);
+      }
+
+      expect(sawPermission).toBe(true);
+      expect(sawPermissionResolvedDeny).toBe(true);
+      expect(
+        timelineItems.some(
+          (item) =>
+            item.status === "failed" && hasShellCommand(item, "permission-deny.txt")
+        )
+      ).toBe(true);
+      expect(existsSync(filePath)).toBe(true);
     } finally {
       cleanup();
       rmSync(cwd, { recursive: true, force: true });
@@ -643,6 +765,225 @@ describe("Codex app-server provider (integration)", () => {
         if (patchItem?.type === "tool_call") {
           expect(hasApplyPatchFile(patchItem, "patch.txt")).toBe(true);
         }
+      } finally {
+        cleanup();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    120000
+  );
+
+  test.runIf(isCodexInstalled())(
+    "emits expandable canonical detail for apply_patch tool calls",
+    async () => {
+      const cleanup = useTempCodexSessionDir();
+      const cwd = tmpCwd("codex-patch-detail-");
+      const patchFile = path.join(cwd, "expandable-patch.txt");
+
+      try {
+        const client = new CodexAppServerAgentClient(logger);
+        const session = await client.createSession({
+          provider: "codex",
+          cwd,
+          modeId: "full-access",
+          approvalPolicy: "on-request",
+          model: CODEX_TEST_MODEL,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        });
+        const persistenceHandle = session.describePersistence();
+
+        const timelineItems: AgentTimelineItem[] = [];
+        let failure: string | null = null;
+        const patch = [
+          "*** Begin Patch",
+          "*** Add File: expandable-patch.txt",
+          "+expandable",
+          "*** End Patch",
+        ].join("\n");
+        const events = session.stream(
+          [
+            "Use the apply_patch tool and nothing else.",
+            "Do not use shell or any other file-edit tool.",
+            "Apply this patch exactly:",
+            patch,
+            "After tool completion, reply PATCH_DONE.",
+          ].join("\n")
+        );
+
+        for await (const event of events) {
+          if (event.type === "permission_requested") {
+            await session.respondToPermission(event.request.id, { behavior: "allow" });
+          }
+          if (event.type === "timeline") {
+            timelineItems.push(event.item);
+          }
+          if (event.type === "turn_failed") {
+            failure = event.error;
+            break;
+          }
+          if (event.type === "turn_completed") {
+            break;
+          }
+        }
+
+        await session.close();
+
+        if (failure) {
+          throw new Error(failure);
+        }
+
+        const patchCalls = timelineItems.filter(
+          (item): item is Extract<AgentTimelineItem, { type: "tool_call" }> =>
+            item.type === "tool_call" &&
+            item.name.trim().replace(/[.\s-]+/g, "_").toLowerCase().endsWith("apply_patch")
+        );
+        if (patchCalls.length === 0) {
+          const fileExists = existsSync(patchFile);
+          const fileContent = fileExists ? readFileSync(patchFile, "utf8") : null;
+          const toolCalls = timelineItems
+            .filter((item): item is Extract<AgentTimelineItem, { type: "tool_call" }> => item.type === "tool_call")
+            .map((item) => ({
+              name: item.name,
+              status: item.status,
+              detail: item.detail,
+              error: item.error,
+            }));
+          let historyToolCalls: Array<{
+            name: string;
+            status: string;
+            detail: unknown;
+            error: unknown;
+          }> = [];
+          if (persistenceHandle) {
+            const resumed = await client.resumeSession(persistenceHandle);
+            for await (const event of resumed.streamHistory()) {
+              if (event.type === "timeline" && event.item.type === "tool_call") {
+                historyToolCalls.push({
+                  name: event.item.name,
+                  status: event.item.status,
+                  detail: event.item.detail,
+                  error: event.item.error,
+                });
+              }
+            }
+            await resumed.close();
+          }
+          throw new Error(
+            `No apply_patch call observed. fileExists=${fileExists} fileContent=${JSON.stringify(fileContent)} liveToolCalls=${JSON.stringify(toolCalls)} historyToolCalls=${JSON.stringify(historyToolCalls)}`
+          );
+        }
+        const completedPatchCall = patchCalls.find((item) => item.status === "completed");
+        expect(completedPatchCall).toBeDefined();
+        if (!completedPatchCall) {
+          return;
+        }
+
+        // Patch tool calls must be renderable as expandable details in the UI.
+        expect(completedPatchCall.detail.type).toBe("edit");
+        if (completedPatchCall.detail.type === "edit") {
+          const renderablePayload =
+            completedPatchCall.detail.unifiedDiff ?? completedPatchCall.detail.newString;
+          expect(typeof renderablePayload).toBe("string");
+          expect(renderablePayload).toContain("expandable");
+          expect(renderablePayload).not.toContain("*** Begin Patch");
+        }
+
+        const patchText =
+          (await waitForFileToContainText(patchFile, "expandable")) ??
+          readFileSync(patchFile, "utf8");
+        expect(patchText.trim()).toBe("expandable");
+      } finally {
+        cleanup();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    120000
+  );
+
+  test.runIf(isCodexInstalled())(
+    "avoids duplicate assistant timeline rows when mirrored item lifecycle notifications are emitted",
+    async () => {
+      const cleanup = useTempCodexSessionDir();
+      const cwd = tmpCwd("codex-mirrored-item-lifecycle-");
+
+      try {
+        const client = new CodexAppServerAgentClient(logger);
+        const session = await client.createSession({
+          provider: "codex",
+          cwd,
+          modeId: "full-access",
+          approvalPolicy: "never",
+          model: CODEX_TEST_MODEL,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        });
+
+        const lifecycleChannelsByItemId = new Map<string, { item: boolean; codexEvent: boolean }>();
+        const rawClient = (session as any).client as
+          | {
+              notificationHandler?: (method: string, params: unknown) => void;
+              setNotificationHandler?: (handler: (method: string, params: unknown) => void) => void;
+            }
+          | null;
+        const originalHandler = rawClient?.notificationHandler;
+        rawClient?.setNotificationHandler?.((method: string, params: unknown) => {
+          if (method === "item/completed" || method === "codex/event/item_completed") {
+            const record =
+              params && typeof params === "object" && "msg" in (params as Record<string, unknown>)
+                ? ((params as { msg?: { item?: { id?: unknown; type?: unknown } } }).msg?.item ?? null)
+                : ((params as { item?: { id?: unknown; type?: unknown } })?.item ?? null);
+            const itemId = typeof record?.id === "string" ? record.id : null;
+            const normalizedType =
+              typeof record?.type === "string"
+                ? record.type.replace(/[._-]/g, "").toLowerCase()
+                : "";
+            if (itemId && normalizedType === "agentmessage") {
+              const existing = lifecycleChannelsByItemId.get(itemId) ?? {
+                item: false,
+                codexEvent: false,
+              };
+              if (method === "item/completed") {
+                existing.item = true;
+              } else {
+                existing.codexEvent = true;
+              }
+              lifecycleChannelsByItemId.set(itemId, existing);
+            }
+          }
+          originalHandler?.(method, params);
+        });
+
+        const assistantMessages: string[] = [];
+        let failure: string | null = null;
+        for await (const event of session.stream("Reply with exactly: DUPLICATE_CHECK_DONE")) {
+          if (event.type === "timeline" && event.item.type === "assistant_message") {
+            assistantMessages.push(event.item.text);
+          }
+          if (event.type === "turn_failed") {
+            failure = event.error;
+            break;
+          }
+          if (event.type === "turn_completed") {
+            break;
+          }
+        }
+
+        await session.close();
+        if (failure) {
+          throw new Error(failure);
+        }
+
+        const normalizedMessages = assistantMessages.map((text) => text.trim()).filter(Boolean);
+        expect(
+          normalizedMessages.some((text) => text.toLowerCase().includes("duplicate_check_done"))
+        ).toBe(true);
+        const adjacentDuplicates = normalizedMessages.filter(
+          (text, index) => index > 0 && normalizedMessages[index - 1] === text
+        );
+        expect(adjacentDuplicates.length).toBe(0);
+        const sawMirroredLifecycleForAgentMessage = Array.from(
+          lifecycleChannelsByItemId.values()
+        ).some((entry) => entry.item && entry.codexEvent);
+        expect(sawMirroredLifecycleForAgentMessage).toBe(true);
       } finally {
         cleanup();
         rmSync(cwd, { recursive: true, force: true });

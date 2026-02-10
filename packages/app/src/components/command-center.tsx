@@ -7,12 +7,14 @@ import {
   View,
   Platform,
 } from "react-native";
+import { Plus, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useCommandCenter } from "@/hooks/use-command-center";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
 import { AgentStatusDot } from "@/components/agent-status-dot";
+import { Shortcut } from "@/components/ui/shortcut";
 
 function agentKey(agent: Pick<AggregatedAgent, "serverId" | "id">): string {
   return `${agent.serverId}:${agent.id}`;
@@ -26,12 +28,15 @@ export function CommandCenter() {
     query,
     setQuery,
     activeIndex,
-    results,
+    items,
     handleClose,
-    handleSelect,
+    handleSelectItem,
   } = useCommandCenter();
 
   if (Platform.OS !== "web") return null;
+
+  const actionItems = items.filter((item) => item.kind === "action");
+  const agentItems = items.filter((item) => item.kind === "agent");
 
   return (
     <Modal
@@ -49,7 +54,7 @@ export function CommandCenter() {
               ref={inputRef}
               value={query}
               onChangeText={setQuery}
-              placeholder="Search agents…"
+              placeholder="Type a command or search agents..."
               placeholderTextColor={theme.colors.foregroundMuted}
               style={[
                 styles.input,
@@ -67,44 +72,125 @@ export function CommandCenter() {
             keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
           >
-            {results.length === 0 ? (
+            {items.length === 0 ? (
               <Text style={[styles.emptyText, { color: theme.colors.foregroundMuted }]}>
                 No matches
               </Text>
             ) : (
-              results.map((agent, index) => {
-                const active = index === activeIndex;
-                return (
-                  <Pressable
-                    key={agentKey(agent)}
-                    style={({ hovered, pressed }) => [
-                      styles.row,
-                      (hovered || pressed || active) && {
-                        backgroundColor: theme.colors.surface1,
-                      },
-                    ]}
-                    onPress={() => handleSelect(agent)}
-                  >
-                    <View style={styles.rowContent}>
-                      <View style={styles.rowTitle}>
-                        <AgentStatusDot status={agent.status} requiresAttention={agent.requiresAttention} />
-                        <Text
-                          style={[styles.title, { color: theme.colors.foreground }]}
-                          numberOfLines={1}
+              <>
+                {actionItems.length > 0 ? (
+                  <>
+                    <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
+                      Actions
+                    </Text>
+                    {actionItems.map((item, index) => {
+                      const active = index === activeIndex;
+                      const action = item.action;
+                      const actionIcon =
+                        action.icon === "plus" ? (
+                          <Plus
+                            size={16}
+                            strokeWidth={2.4}
+                            color={theme.colors.foregroundMuted}
+                          />
+                        ) : action.icon === "settings" ? (
+                          <Settings
+                            size={16}
+                            strokeWidth={2.2}
+                            color={theme.colors.foregroundMuted}
+                          />
+                        ) : null;
+                      return (
+                        <Pressable
+                          key={`action:${action.id}`}
+                          style={({ hovered, pressed }) => [
+                            styles.row,
+                            (hovered || pressed || active) && {
+                              backgroundColor: theme.colors.surface1,
+                            },
+                          ]}
+                          onPress={() => handleSelectItem(item)}
                         >
-                          {agent.title || "New agent"}
-                        </Text>
-                      </View>
-                      <Text
-                        style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
-                        numberOfLines={1}
-                      >
-                        {agent.serverLabel} · {shortenPath(agent.cwd)} · {formatTimeAgo(agent.lastActivityAt)}
-                      </Text>
-                    </View>
-                  </Pressable>
-                );
-              })
+                          <View style={styles.rowContent}>
+                            <View style={styles.rowMain}>
+                              {actionIcon ? (
+                                <View style={styles.iconSlot}>{actionIcon}</View>
+                              ) : null}
+                              <View style={styles.textContent}>
+                                <Text
+                                  style={[styles.title, { color: theme.colors.foreground }]}
+                                  numberOfLines={1}
+                                >
+                                  {action.title}
+                                </Text>
+                              </View>
+                            </View>
+                            {action.shortcutKeys ? (
+                              <Shortcut keys={action.shortcutKeys} style={styles.rowShortcut} />
+                            ) : null}
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </>
+                ) : null}
+
+                {agentItems.length > 0 ? (
+                  <>
+                    {actionItems.length > 0 ? (
+                      <View
+                        style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
+                      />
+                    ) : null}
+                    <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
+                      Agents
+                    </Text>
+                    {agentItems.map((item, index) => {
+                      const rowIndex = actionItems.length + index;
+                      const active = rowIndex === activeIndex;
+                      const agent = item.agent;
+                      return (
+                        <Pressable
+                          key={agentKey(agent)}
+                          style={({ hovered, pressed }) => [
+                            styles.row,
+                            (hovered || pressed || active) && {
+                              backgroundColor: theme.colors.surface1,
+                            },
+                          ]}
+                          onPress={() => handleSelectItem(item)}
+                        >
+                          <View style={styles.rowContent}>
+                            <View style={styles.rowMain}>
+                              <View style={styles.iconSlot}>
+                                <AgentStatusDot
+                                  status={agent.status}
+                                  requiresAttention={agent.requiresAttention}
+                                  showInactive
+                                />
+                              </View>
+                              <View style={styles.textContent}>
+                                <Text
+                                  style={[styles.title, { color: theme.colors.foreground }]}
+                                  numberOfLines={1}
+                                >
+                                  {agent.title || "New agent"}
+                                </Text>
+                                <Text
+                                  style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
+                                  numberOfLines={1}
+                                >
+                                  {agent.serverLabel} · {shortenPath(agent.cwd)} · {formatTimeAgo(agent.lastActivityAt)}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </>
+                ) : null}
+              </>
             )}
           </ScrollView>
         </View>
@@ -152,24 +238,55 @@ const styles = StyleSheet.create((theme) => ({
   resultsContent: {
     paddingVertical: theme.spacing[2],
   },
+  sectionLabel: {
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: 0,
+    paddingBottom: theme.spacing[2],
+    fontSize: theme.fontSize.xs,
+  },
+  sectionDivider: {
+    height: 1,
+    marginTop: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+  },
   row: {
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
   },
   rowContent: {
-    gap: 2,
-  },
-  rowTitle: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+  },
+  rowMain: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[3],
+  },
+  iconSlot: {
+    width: 16,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  textContent: {
+    gap: 2,
+  },
+  rowShortcut: {
+    marginLeft: theme.spacing[2],
+    flexShrink: 0,
   },
   title: {
     fontSize: theme.fontSize.base,
     fontWeight: "400",
+    lineHeight: 20,
   },
   subtitle: {
     fontSize: theme.fontSize.sm,
+    lineHeight: 18,
   },
   emptyText: {
     paddingHorizontal: theme.spacing[4],

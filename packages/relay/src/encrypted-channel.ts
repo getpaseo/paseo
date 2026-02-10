@@ -85,6 +85,21 @@ export async function createClientChannel(
   const helloText = JSON.stringify(hello);
 
   let retry: ReturnType<typeof setInterval> | null = null;
+  const emitSendError = (error: unknown) => {
+    const err = error instanceof Error ? error : new Error(String(error));
+    events.onerror?.(err);
+  };
+  const sendHello = () => {
+    try {
+      transport.send(helloText);
+      return true;
+    } catch (error) {
+      // This can happen during daemon restarts while the socket transitions
+      // through CLOSING/CLOSED states. Report it but do not throw from timers.
+      emitSendError(error);
+      return false;
+    }
+  };
   const clearRetry = () => {
     if (retry) {
       clearInterval(retry);
@@ -95,13 +110,13 @@ export async function createClientChannel(
   channel.onTransitionToOpen(() => clearRetry());
   channel.onClose(() => clearRetry());
 
-  transport.send(helloText);
+  sendHello();
   retry = setInterval(() => {
     if (channel.isOpen()) {
       clearRetry();
       return;
     }
-    transport.send(helloText);
+    sendHello();
   }, HANDSHAKE_RETRY_MS);
   // Avoid keeping Node processes alive (e.g. tests) if the handshake is stuck.
   (retry as unknown as { unref?: () => void }).unref?.();

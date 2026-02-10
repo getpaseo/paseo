@@ -4,7 +4,7 @@ import type { ToolCallDetail, ToolCallTimelineItem } from "../../agent-sdk-types
 import { CommandValueSchema } from "../tool-call-detail-primitives.js";
 import {
   coerceToolCallId,
-  commandFromValue,
+  extractCodexShellOutput,
   truncateDiffText,
 } from "../tool-call-mapper-utils.js";
 import {
@@ -59,6 +59,7 @@ const CodexFileChangeItemSchema = z
             path: z.string().optional(),
             kind: z.string().optional(),
             diff: z.string().optional(),
+            content: z.string().optional(),
           })
           .passthrough()
       )
@@ -106,6 +107,213 @@ function coerceCallId(raw: string | null | undefined, name: string, input: unkno
     toolName: name,
     input,
   });
+}
+
+function maybeUnwrapShellWrapperCommand(command: string): string {
+  const trimmed = command.trim();
+  const wrapperMatch = trimmed.match(
+    /^(?:\/bin\/)?(?:zsh|bash|sh)\s+-(?:lc|c)\s+([\s\S]+)$/
+  );
+  if (!wrapperMatch) {
+    return trimmed;
+  }
+  const candidate = wrapperMatch[1]?.trim() ?? "";
+  if (!candidate) {
+    return trimmed;
+  }
+  if (
+    (candidate.startsWith('"') && candidate.endsWith('"')) ||
+    (candidate.startsWith("'") && candidate.endsWith("'"))
+  ) {
+    return candidate.slice(1, -1);
+  }
+  return candidate;
+}
+
+function normalizeCommandExecutionCommand(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const normalized = maybeUnwrapShellWrapperCommand(value);
+    return normalized.length > 0 ? normalized : undefined;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const parts = value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (parts.length === 0) {
+    return undefined;
+  }
+  if (parts.length >= 3 && (parts[1] === "-lc" || parts[1] === "-c")) {
+    const unwrapped = parts[2]?.trim();
+    return unwrapped && unwrapped.length > 0 ? unwrapped : undefined;
+  }
+  return parts.join(" ");
+}
+
+function looksLikeUnifiedDiff(text: string): boolean {
+  const normalized = text.trimStart();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized.startsWith("diff --git") ||
+    normalized.startsWith("@@") ||
+    normalized.startsWith("--- ") ||
+    normalized.startsWith("+++ ")
+  );
+}
+
+type CodexApplyPatchDirective = {
+  kind: "add" | "update" | "delete";
+  path: string;
+};
+
+function parseCodexApplyPatchDirective(line: string): CodexApplyPatchDirective | null {
+  const trimmed = line.trim();
+  if (trimmed.startsWith("*** Add File:")) {
+    return { kind: "add", path: trimmed.replace("*** Add File:", "").trim() };
+  }
+  if (trimmed.startsWith("*** Update File:")) {
+    return { kind: "update", path: trimmed.replace("*** Update File:", "").trim() };
+  }
+  if (trimmed.startsWith("*** Delete File:")) {
+    return { kind: "delete", path: trimmed.replace("*** Delete File:", "").trim() };
+  }
+  return null;
+}
+
+function looksLikeCodexApplyPatch(text: string): boolean {
+  const normalized = text.trimStart();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.startsWith("*** Begin Patch")) {
+    return true;
+  }
+  return text.split(/\r?\n/).some((line) => parseCodexApplyPatchDirective(line) !== null);
+}
+
+function normalizeDiffHeaderPath(rawPath: string): string {
+  return rawPath.trim().replace(/^["']+|["']+$/g, "");
+}
+
+function codexApplyPatchToUnifiedDiff(text: string): string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  let sawDiffBody = false;
+
+  for (const line of lines) {
+    const directive = parseCodexApplyPatchDirective(line);
+    if (directive) {
+      const path = normalizeDiffHeaderPath(directive.path);
+      if (path.length > 0) {
+        if (output.length > 0 && output[output.length - 1] !== "") {
+          output.push("");
+        }
+        const left = directive.kind === "add" ? "/dev/null" : `a/${path}`;
+        const right = directive.kind === "delete" ? "/dev/null" : `b/${path}`;
+        output.push(`diff --git a/${path} b/${path}`);
+        output.push(`--- ${left}`);
+        output.push(`+++ ${right}`);
+      }
+      continue;
+    }
+
+    const trimmed = line.trim();
+    if (
+      trimmed === "*** Begin Patch" ||
+      trimmed === "*** End Patch" ||
+      trimmed === "*** End of File" ||
+      trimmed.startsWith("*** Move to:")
+    ) {
+      continue;
+    }
+
+    if (line.startsWith("@@")) {
+      output.push(line);
+      sawDiffBody = true;
+      continue;
+    }
+    if (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) {
+      output.push(line);
+      sawDiffBody = true;
+      continue;
+    }
+    if (line.startsWith("\\ No newline at end of file")) {
+      output.push(line);
+      sawDiffBody = true;
+      continue;
+    }
+  }
+
+  if (!sawDiffBody) {
+    return text;
+  }
+
+  const normalized = output.join("\n").trim();
+  return normalized.length > 0 ? normalized : text;
+}
+
+function classifyDiffLikeText(
+  text: string
+): { isDiff: true; text: string } | { isDiff: false; text: string } {
+  if (looksLikeUnifiedDiff(text)) {
+    return { isDiff: true, text };
+  }
+  if (looksLikeCodexApplyPatch(text)) {
+    return { isDiff: true, text: codexApplyPatchToUnifiedDiff(text) };
+  }
+  return { isDiff: false, text };
+}
+
+function asEditTextFields(
+  text: string | undefined
+): { unifiedDiff?: string; newString?: string } {
+  if (typeof text !== "string" || text.length === 0) {
+    return {};
+  }
+  const classified = classifyDiffLikeText(text);
+  if (classified.isDiff) {
+    return { unifiedDiff: truncateDiffText(classified.text) };
+  }
+  return { newString: text };
+}
+
+function asEditFileOutputFields(
+  text: string | undefined
+): { patch?: string; content?: string } {
+  if (typeof text !== "string" || text.length === 0) {
+    return {};
+  }
+  const classified = classifyDiffLikeText(text);
+  if (classified.isDiff) {
+    return { patch: truncateDiffText(classified.text) };
+  }
+  return { content: text };
+}
+
+function asPatchOrContentFields(text: string | undefined): { patch?: string; content?: string } {
+  if (typeof text !== "string" || text.length === 0) {
+    return {};
+  }
+  const classified = classifyDiffLikeText(text);
+  if (classified.isDiff) {
+    return { patch: truncateDiffText(classified.text) };
+  }
+  return { content: text };
+}
+
+function removePatchLikeFields(input: Record<string, unknown>): Record<string, unknown> {
+  const {
+    patch: _patch,
+    diff: _diff,
+    unified_diff: _unifiedDiffSnake,
+    unifiedDiff: _unifiedDiffCamel,
+    ...rest
+  } = input;
+  return rest;
 }
 
 function resolveStatus(
@@ -189,20 +397,121 @@ function toNullableObject(value: Record<string, unknown>): Record<string, unknow
   return Object.keys(value).length > 0 ? value : null;
 }
 
+function extractPatchPrimaryFilePath(patch: string): string | undefined {
+  for (const line of patch.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("*** Add File:")) {
+      return trimmed.replace("*** Add File:", "").trim();
+    }
+    if (trimmed.startsWith("*** Update File:")) {
+      return trimmed.replace("*** Update File:", "").trim();
+    }
+    if (trimmed.startsWith("*** Delete File:")) {
+      return trimmed.replace("*** Delete File:", "").trim();
+    }
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeApplyPatchInput(input: unknown): unknown {
+  if (typeof input === "string") {
+    const filePath = extractPatchPrimaryFilePath(input);
+    const textFields = asPatchOrContentFields(input);
+    return filePath ? { path: filePath, ...textFields } : textFields;
+  }
+
+  if (!isRecord(input)) {
+    return input;
+  }
+
+  const existingPath =
+    (typeof input.path === "string" && input.path.trim().length > 0 && input.path.trim()) ||
+    (typeof input.file_path === "string" &&
+      input.file_path.trim().length > 0 &&
+      input.file_path.trim()) ||
+    (typeof input.filePath === "string" &&
+      input.filePath.trim().length > 0 &&
+      input.filePath.trim());
+  const patchText =
+    (typeof input.patch === "string" && input.patch) ||
+    (typeof input.diff === "string" && input.diff) ||
+    (typeof input.unified_diff === "string" && input.unified_diff) ||
+    (typeof input.unifiedDiff === "string" && input.unifiedDiff) ||
+    undefined;
+  const contentText = typeof input.content === "string" ? input.content : undefined;
+  const inferredPatchFromContent = !patchText && typeof contentText === "string" ? contentText : undefined;
+  const patchOrContentText = patchText ?? inferredPatchFromContent;
+
+  if (existingPath && !patchOrContentText) {
+    return input;
+  }
+
+  if (!patchOrContentText) {
+    return input;
+  }
+
+  const base = removePatchLikeFields(input);
+  if (inferredPatchFromContent) {
+    delete (base as { content?: unknown }).content;
+  }
+  const filePath = existingPath || extractPatchPrimaryFilePath(patchOrContentText);
+  const textFields = asPatchOrContentFields(patchOrContentText);
+  return filePath ? { ...base, path: filePath, ...textFields } : { ...base, ...textFields };
+}
+
+function deriveApplyPatchDetailFromInput(
+  input: unknown,
+  cwd: string | null | undefined
+): ToolCallDetail | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+
+  const pathValue =
+    (typeof input.path === "string" && input.path.trim()) ||
+    (typeof input.file_path === "string" && input.file_path.trim()) ||
+    (typeof input.filePath === "string" && input.filePath.trim()) ||
+    "";
+  if (!pathValue) {
+    return null;
+  }
+
+  const normalizedPath = normalizeCodexFilePath(pathValue, cwd) ?? pathValue;
+  const diffText =
+    (typeof input.patch === "string" && input.patch) ||
+    (typeof input.diff === "string" && input.diff) ||
+    (typeof input.unified_diff === "string" && input.unified_diff) ||
+    (typeof input.unifiedDiff === "string" && input.unifiedDiff) ||
+    (typeof input.content === "string" && input.content) ||
+    undefined;
+
+  const textFields = asEditTextFields(diffText);
+  return {
+    type: "edit",
+    filePath: normalizedPath,
+    ...textFields,
+  };
+}
+
 function mapCommandExecutionItem(
   item: z.infer<typeof CodexCommandExecutionItemSchema>
 ): ToolCallTimelineItem {
-  const command = item.command ? commandFromValue(item.command) : undefined;
+  const command = normalizeCommandExecutionCommand(item.command);
+  const parsedOutput = extractCodexShellOutput(item.aggregatedOutput);
   const input = toNullableObject({
     ...(command !== undefined ? { command } : {}),
     ...(item.cwd !== undefined ? { cwd: item.cwd } : {}),
   });
 
   const output =
-    item.aggregatedOutput !== undefined || item.exitCode !== undefined
+    parsedOutput !== undefined || item.exitCode !== undefined
       ? {
           ...(command !== undefined ? { command } : {}),
-          ...(item.aggregatedOutput !== undefined ? { output: item.aggregatedOutput } : {}),
+          ...(parsedOutput !== undefined ? { output: parsedOutput } : {}),
           ...(item.exitCode !== undefined ? { exitCode: item.exitCode } : {}),
         }
       : null;
@@ -212,7 +521,7 @@ function mapCommandExecutionItem(
         type: "shell" as const,
         command,
         ...(item.cwd ? { cwd: item.cwd } : {}),
-        ...(item.aggregatedOutput ? { output: item.aggregatedOutput } : {}),
+        ...(parsedOutput ? { output: parsedOutput } : {}),
         ...(item.exitCode !== undefined ? { exitCode: item.exitCode } : {}),
       }
     : {
@@ -251,7 +560,7 @@ function mapFileChangeItem(
       return {
         path: pathValue,
         kind: change.kind,
-        diff: change.diff,
+        diff: change.diff ?? change.content,
       };
     })
     .filter((change) => change.path !== undefined);
@@ -273,18 +582,19 @@ function mapFileChangeItem(
           files: files.map((file) => ({
             path: file.path,
             ...(file.kind !== undefined ? { kind: file.kind } : {}),
-            ...(file.diff !== undefined ? { patch: truncateDiffText(file.diff) } : {}),
+            ...asEditFileOutputFields(file.diff),
           })),
         }
       : {}),
   });
 
   const firstFile = files[0];
+  const firstTextFields = asEditTextFields(firstFile?.diff);
   const detail = firstFile?.path
     ? {
         type: "edit" as const,
         filePath: firstFile.path,
-        ...(firstFile.diff !== undefined ? { unifiedDiff: truncateDiffText(firstFile.diff) } : {}),
+        ...firstTextFields,
       }
     : {
         type: "unknown" as const,
@@ -400,19 +710,31 @@ export function mapCodexRolloutToolCall(params: {
   input?: unknown;
   output?: unknown;
   error?: unknown;
+  cwd?: string | null;
 }): ToolCallTimelineItem {
   const parsed = CodexRolloutToolCallParamsSchema.parse(params);
-  const input = parsed.input ?? null;
+  const rawInput = parsed.input ?? null;
+  const normalizedName = parsed.name.trim().toLowerCase();
+  const input =
+    normalizedName === "apply_patch" || normalizedName === "apply_diff"
+      ? normalizeApplyPatchInput(rawInput)
+      : rawInput;
   const output = parsed.output ?? null;
   const error = parsed.error ?? null;
   const status = resolveStatus("completed", error, output);
   const callId = coerceCallId(parsed.callId, parsed.name, input);
-  const detail = deriveCodexToolDetail({
+  let detail = deriveCodexToolDetail({
     name: parsed.name,
     input,
     output,
-    cwd: null,
+    cwd: params.cwd ?? null,
   });
+  if (detail.type === "unknown" && (normalizedName === "apply_patch" || normalizedName === "apply_diff")) {
+    const fallbackDetail = deriveApplyPatchDetailFromInput(input, params.cwd ?? null);
+    if (fallbackDetail) {
+      detail = fallbackDetail;
+    }
+  }
 
   return buildToolCall({
     callId,

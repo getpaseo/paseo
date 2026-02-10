@@ -368,26 +368,35 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
   );
 
   test(
-    "shows the command inside pending tool calls",
+    "shows the command inside permission requests",
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
+      const filePath = path.join(cwd, "permission.txt");
+      writeFileSync(filePath, "ok", "utf8");
 
-      let pendingCommand: string | null = null;
-      const events = session.stream("Run the exact command `pwd` via Bash and stop.");
+      let requestedCommand: string | null = null;
+      const events = session.stream(
+        "Run the exact command `rm -f permission.txt` via Bash and stop."
+      );
 
       try {
         for await (const event of events) {
-          await autoApprove(session, event);
           if (
-            event.type === "timeline" &&
-            event.item.type === "tool_call" &&
-            event.item.name.toLowerCase().includes("bash") &&
-            event.item.status === "pending"
+            event.type === "permission_requested" &&
+            event.request.kind === "tool" &&
+            event.request.name.toLowerCase().includes("bash")
           ) {
-            pendingCommand = extractToolCommand(event.item.detail);
+            requestedCommand = extractToolCommand(
+              event.request.detail ?? {
+                type: "unknown",
+                input: event.request.input ?? null,
+                output: null,
+              }
+            );
+            await session.respondToPermission(event.request.id, { behavior: "allow" });
           }
           if (event.type === "turn_completed" || event.type === "turn_failed") {
             break;
@@ -398,8 +407,8 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
         rmSync(cwd, { recursive: true, force: true });
       }
 
-      expect(pendingCommand).toBeTruthy();
-      expect(pendingCommand?.toLowerCase()).toContain("pwd");
+      expect(requestedCommand).toBeTruthy();
+      expect(requestedCommand?.toLowerCase()).toContain("permission.txt");
     },
     150_000
   );
@@ -501,6 +510,14 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       for await (const event of session.stream(prompt)) {
         if (event.type === "permission_requested" && !captured) {
           captured = event.request;
+          const requestedCommand = extractToolCommand(
+            captured.detail ?? {
+              type: "unknown",
+              input: captured.input ?? null,
+              output: null,
+            }
+          );
+          expect((requestedCommand ?? "").toLowerCase()).toContain("permission.txt");
           expect(session.getPendingPermissions().length).toBeGreaterThan(0);
           await session.respondToPermission(captured.id, { behavior: "allow" });
         }
@@ -597,6 +614,14 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
               item.status === "completed"
           )
         ).toBe(false);
+        expect(
+          timeline.some(
+            (item) =>
+              item.type === "tool_call" &&
+              isPermissionCommandToolCall(item) &&
+              item.status === "failed"
+          )
+        ).toBe(true);
         expect(existsSync(filePath)).toBe(true);
       } finally {
         await cleanup();
@@ -668,6 +693,14 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
               item.status === "completed"
           )
         ).toBe(false);
+        expect(
+          timeline.some(
+            (item) =>
+              item.type === "tool_call" &&
+              isPermissionCommandToolCall(item) &&
+              item.status === "failed"
+          )
+        ).toBe(true);
         expect(existsSync(filePath)).toBe(true);
       } finally {
         await cleanup();
@@ -902,6 +935,79 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const filePath = path.join(cwd, "dummy.txt");
       expect(existsSync(filePath)).toBe(true);
       expect(readFileSync(filePath, "utf8")).toContain("plan-test");
+
+      await session.close();
+      rmSync(cwd, { recursive: true, force: true });
+    },
+    180_000
+  );
+
+  test(
+    "handles AskUserQuestion approval flow",
+    async () => {
+      const cwd = tmpCwd();
+      const client = new ClaudeAgentClient({ logger });
+      const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
+      const session = await client.createSession(config);
+
+      const prompt = [
+        "You must call the AskUserQuestion tool exactly once and wait for the user's answer.",
+        "Create one question with header 'color', prompt 'Choose a color', and options Blue and Red.",
+        "Set multiSelect to false.",
+        "After receiving the answer, reply with exactly QUESTION_FLOW_DONE.",
+        "Do not use any other tools.",
+      ].join(" ");
+
+      let capturedQuestion: AgentPermissionRequest | null = null;
+      let sawResolvedAllow = false;
+      let sawDone = false;
+
+      for await (const event of session.stream(prompt)) {
+        if (
+          event.type === "permission_requested" &&
+          event.request.kind === "question" &&
+          !capturedQuestion
+        ) {
+          capturedQuestion = event.request;
+          const baseInput =
+            typeof capturedQuestion.input === "object" && capturedQuestion.input !== null
+              ? (capturedQuestion.input as Record<string, unknown>)
+              : {};
+          await session.respondToPermission(capturedQuestion.id, {
+            behavior: "allow",
+            updatedInput: {
+              ...baseInput,
+              answers: { color: "Blue" },
+            },
+          });
+        }
+
+        if (
+          event.type === "permission_resolved" &&
+          capturedQuestion &&
+          event.requestId === capturedQuestion.id &&
+          event.resolution.behavior === "allow"
+        ) {
+          sawResolvedAllow = true;
+        }
+
+        if (
+          event.type === "timeline" &&
+          event.item.type === "assistant_message" &&
+          event.item.text.includes("QUESTION_FLOW_DONE")
+        ) {
+          sawDone = true;
+        }
+
+        if (event.type === "turn_completed" || event.type === "turn_failed") {
+          break;
+        }
+      }
+
+      expect(capturedQuestion).not.toBeNull();
+      expect(sawResolvedAllow).toBe(true);
+      expect(session.getPendingPermissions()).toHaveLength(0);
+      expect(sawDone).toBe(true);
 
       await session.close();
       rmSync(cwd, { recursive: true, force: true });

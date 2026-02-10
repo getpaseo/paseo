@@ -27,6 +27,63 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("unwraps shell wrapper arrays for commandExecution", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "commandExecution",
+      id: "codex-call-wrapper-array",
+      status: "running",
+      command: ["/bin/zsh", "-lc", "echo hello"],
+      cwd: "/tmp/repo",
+    });
+
+    expect(item?.detail).toEqual({
+      type: "shell",
+      command: "echo hello",
+      cwd: "/tmp/repo",
+    });
+  });
+
+  it("unwraps shell wrapper strings for commandExecution", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "commandExecution",
+      id: "codex-call-wrapper-string",
+      status: "running",
+      command: '/bin/zsh -lc "echo hello"',
+      cwd: "/tmp/repo",
+    });
+
+    expect(item?.detail).toEqual({
+      type: "shell",
+      command: "echo hello",
+      cwd: "/tmp/repo",
+    });
+  });
+
+  it("keeps only command output body when commandExecution output is wrapped in shell envelope", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "commandExecution",
+      id: "codex-call-envelope-output",
+      status: "completed",
+      command: "echo hello",
+      cwd: "/tmp/repo",
+      aggregatedOutput:
+        "Chunk ID: e87d40\nWall time: 0.0521 seconds\nProcess exited with code 0\nOriginal token count: 192\nOutput:\n214  export type AgentPermissionRequestKind = \"tool\";",
+      exitCode: 0,
+    });
+
+    expect(item?.detail?.type).toBe("shell");
+    if (item?.detail?.type === "shell") {
+      expect(item.detail.output).toBe(
+        "214  export type AgentPermissionRequestKind = \"tool\";"
+      );
+      expect(item.detail.output).not.toContain("Chunk ID:");
+      expect(item.detail.output).not.toContain("Wall time:");
+      expect(item.detail.output).not.toContain("Process exited with code");
+      expect(item.detail.output).not.toContain("Original token count:");
+      expect(item.detail.output).not.toContain("Output:");
+    }
+  });
+
   it("maps running known tool variants with detail for early summaries", () => {
     const readItem = mapCodexToolCallFromThreadItem(
       {
@@ -159,6 +216,26 @@ describe("codex tool-call mapper", () => {
     }
   });
 
+  it("maps fileChange content fallback into editable text when unified diff is absent", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "codex-content-1",
+        status: "completed",
+        changes: [{ path: "/tmp/repo/src/content-only.ts", kind: "modify", content: "line one\nline two\n" }],
+      },
+      { cwd: "/tmp/repo" }
+    );
+
+    expect(item).toBeTruthy();
+    expect(item?.detail?.type).toBe("edit");
+    if (item?.detail?.type === "edit") {
+      expect(item.detail.filePath).toBe("src/content-only.ts");
+      expect(item.detail.newString).toContain("line one");
+      expect(item.detail.unifiedDiff).toBeUndefined();
+    }
+  });
+
   it("maps write/edit/search known variants with distinct detail types", () => {
     const writeItem = mapCodexToolCallFromThreadItem(
       {
@@ -239,5 +316,99 @@ describe("codex tool-call mapper", () => {
       output: { ok: true },
     });
     expect(item.callId).toBe("codex-call-4");
+  });
+
+  it("maps apply_patch rollout calls with raw patch input into edit detail", () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: /tmp/repo/src/index.ts",
+      "@@",
+      "-old",
+      "+new",
+      "*** End Patch",
+    ].join("\n");
+    const item = mapCodexRolloutToolCall({
+      callId: "codex-call-apply",
+      name: "apply_patch",
+      input: patch,
+      output: '{"output":"Success. Updated the following files:\\nM src/index.ts\\n"}',
+      cwd: "/tmp/repo",
+    });
+
+    expect(item.status).toBe("completed");
+    expect(item.error).toBeNull();
+    expect(item.detail.type).toBe("edit");
+    if (item.detail.type === "edit") {
+      expect(item.detail.filePath).toBe("src/index.ts");
+      expect(item.detail.unifiedDiff).toContain("diff --git");
+      expect(item.detail.unifiedDiff).toContain("@@");
+      expect(item.detail.unifiedDiff).toContain("-old");
+      expect(item.detail.unifiedDiff).toContain("+new");
+      expect(item.detail.unifiedDiff).not.toContain("*** Begin Patch");
+      expect(item.detail.newString).toBeUndefined();
+    }
+  });
+
+  it("maps apply_patch object content payloads into unified diff detail", () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: /tmp/repo/src/object.ts",
+      "@@",
+      "-before",
+      "+after",
+      "*** End Patch",
+    ].join("\n");
+
+    const item = mapCodexRolloutToolCall({
+      callId: "codex-call-apply-object",
+      name: "apply_patch",
+      input: {
+        path: "/tmp/repo/src/object.ts",
+        content: patch,
+      },
+      output: null,
+      cwd: "/tmp/repo",
+    });
+
+    expect(item.detail.type).toBe("edit");
+    if (item.detail.type === "edit") {
+      expect(item.detail.filePath).toBe("src/object.ts");
+      expect(item.detail.unifiedDiff).toContain("diff --git");
+      expect(item.detail.unifiedDiff).toContain("@@");
+      expect(item.detail.unifiedDiff).toContain("-before");
+      expect(item.detail.unifiedDiff).toContain("+after");
+      expect(item.detail.unifiedDiff).not.toContain("*** Begin Patch");
+      expect(item.detail.newString).toBeUndefined();
+    }
+  });
+
+  it("maps fileChange content that contains codex patch envelopes as unified diffs", () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: /tmp/repo/src/from-file-change.ts",
+      "@@",
+      "-alpha",
+      "+beta",
+      "*** End Patch",
+    ].join("\n");
+
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "codex-file-change-patch-content",
+        status: "completed",
+        changes: [{ path: "/tmp/repo/src/from-file-change.ts", kind: "modify", content: patch }],
+      },
+      { cwd: "/tmp/repo" }
+    );
+
+    expect(item?.detail?.type).toBe("edit");
+    if (item?.detail?.type === "edit") {
+      expect(item.detail.filePath).toBe("src/from-file-change.ts");
+      expect(item.detail.unifiedDiff).toContain("-alpha");
+      expect(item.detail.unifiedDiff).toContain("+beta");
+      expect(item.detail.unifiedDiff).not.toContain("*** Begin Patch");
+      expect(item.detail.newString).toBeUndefined();
+    }
   });
 });

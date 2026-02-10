@@ -1099,11 +1099,13 @@ function PermissionRequestCard({
 
       {!isPlanRequest ? (
         <ToolCallDetailsContent
-          detail={{
-            type: "unknown",
-            input: request.input ?? null,
-            output: null,
-          }}
+          detail={
+            request.detail ?? {
+              type: "unknown",
+              input: request.input ?? null,
+              output: null,
+            }
+          }
           maxHeight={200}
         />
       ) : null}

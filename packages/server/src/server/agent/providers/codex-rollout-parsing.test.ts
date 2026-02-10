@@ -40,7 +40,7 @@ describe("codex rollout parsing", () => {
         type: "tool_call",
         name: "Bash",
         callId: "call_MhTWDF2mpM4dhbNmHNt6ikDF",
-        input: { command: "task show cc4ea7d1" },
+        detail: { type: "shell", command: "task show cc4ea7d1" },
       });
     });
 
@@ -78,8 +78,11 @@ describe("codex rollout parsing", () => {
         type: "tool_call",
         name: "Bash",
         callId: "call_abc123",
-        input: { command: "echo hello" },
-        output: expect.stringContaining("hello"),
+        detail: {
+          type: "shell",
+          command: "echo hello",
+          output: "hello",
+        },
       });
     });
 
@@ -143,7 +146,7 @@ describe("codex rollout parsing", () => {
         type: "tool_call",
         name: "Bash",
         callId: "call_shell123",
-        input: { command: "ls -la" },
+        detail: { type: "shell", command: "ls -la" },
       });
     });
   });
@@ -249,9 +252,59 @@ describe("codex rollout parsing", () => {
         type: "tool_call",
         name: "Bash",
         callId: "call_legacy_1",
-        input: { command: "echo hello" },
-        output: "hello",
+        detail: { type: "shell", command: "echo hello", output: "hello" },
       });
+    });
+
+    test("parses custom_tool_call apply_patch with input/output into editable tool detail", async () => {
+      const rolloutPath = join(tmpDir, "rollout.jsonl");
+      const patch = [
+        "*** Begin Patch",
+        "*** Add File: src/new-file.ts",
+        "+export const value = 1;",
+        "*** End Patch",
+      ].join("\n");
+      const lines = [
+        JSON.stringify({
+          timestamp: "2026-02-09T10:00:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            name: "apply_patch",
+            call_id: "call_patch_custom_1",
+            input: patch,
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-02-09T10:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: "call_patch_custom_1",
+            output: '{"output":"Success. Updated the following files:\\nA src/new-file.ts\\n","metadata":{"exit_code":0}}',
+          },
+        }),
+      ];
+      writeFileSync(rolloutPath, lines.join("\n") + "\n");
+
+      const timeline = await parseRolloutFile(rolloutPath);
+      const toolCalls = timeline.filter((i) => i.type === "tool_call");
+      expect(toolCalls.length).toBe(1);
+
+      const patchCall = toolCalls[0];
+      expect(patchCall).toMatchObject({
+        type: "tool_call",
+        name: "apply_patch",
+        callId: "call_patch_custom_1",
+        status: "completed",
+      });
+      expect(patchCall.detail.type).toBe("edit");
+      if (patchCall.detail.type === "edit") {
+        expect(patchCall.detail.filePath).toBe("src/new-file.ts");
+        expect(patchCall.detail.unifiedDiff).toContain("diff --git");
+        expect(patchCall.detail.unifiedDiff).toContain("+export const value = 1;");
+        expect(patchCall.detail.unifiedDiff).not.toContain("*** Begin Patch");
+      }
     });
 
     test("parses legacy event_msg shape using msg", async () => {
@@ -288,6 +341,70 @@ describe("codex rollout parsing", () => {
       expect(timeline).toContainEqual({ type: "reasoning", text: "thinking" });
       expect(timeline).toContainEqual({ type: "assistant_message", text: "done" });
       expect(timeline).toContainEqual({ type: "user_message", text: "question" });
+    });
+
+    test("deduplicates mirrored response_item and event_msg text records", async () => {
+      const rolloutPath = join(tmpDir, "rollout.jsonl");
+      const lines = [
+        JSON.stringify({
+          timestamp: "2026-01-22T07:08:54.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "question" }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-01-22T07:08:54.001Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "question",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-01-22T07:08:54.010Z",
+          type: "response_item",
+          payload: {
+            type: "reasoning",
+            content: [{ type: "reasoning_text", text: "thinking" }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-01-22T07:08:54.011Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_reasoning",
+            text: "thinking",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-01-22T07:08:54.020Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "answer" }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-01-22T07:08:54.021Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "answer",
+          },
+        }),
+      ];
+      writeFileSync(rolloutPath, lines.join("\n") + "\n");
+
+      const timeline = await parseRolloutFile(rolloutPath);
+      expect(timeline).toEqual([
+        { type: "user_message", text: "question" },
+        { type: "reasoning", text: "thinking" },
+        { type: "assistant_message", text: "answer" },
+      ]);
     });
   });
 
@@ -362,8 +479,11 @@ describe("codex rollout parsing", () => {
       expect(timeline[2]).toMatchObject({
         type: "tool_call",
         name: "Bash",
-        input: { command: "npm test" },
-        output: expect.stringContaining("All tests passed!"),
+        detail: {
+          type: "shell",
+          command: "npm test",
+          output: "All tests passed!",
+        },
       });
       expect(timeline[3]).toMatchObject({
         type: "assistant_message",

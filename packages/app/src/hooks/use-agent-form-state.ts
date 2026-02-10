@@ -19,6 +19,7 @@ export interface FormInitialValues {
   provider?: AgentProvider;
   modeId?: string | null;
   model?: string | null;
+  thinkingOptionId?: string | null;
   workingDir?: string;
 }
 
@@ -28,6 +29,7 @@ interface UserModifiedFields {
   provider: boolean;
   modeId: boolean;
   model: boolean;
+  thinkingOptionId: boolean;
   workingDir: boolean;
 }
 
@@ -36,6 +38,7 @@ const INITIAL_USER_MODIFIED: UserModifiedFields = {
   provider: false,
   modeId: false,
   model: false,
+  thinkingOptionId: false,
   workingDir: false,
 };
 
@@ -45,6 +48,7 @@ interface FormState {
   provider: AgentProvider;
   modeId: string;
   model: string;
+  thinkingOptionId: string;
   workingDir: string;
 }
 
@@ -67,6 +71,8 @@ type UseAgentFormStateResult = {
   setModeFromUser: (modeId: string) => void;
   selectedModel: string;
   setModelFromUser: (modelId: string) => void;
+  selectedThinkingOptionId: string;
+  setThinkingOptionFromUser: (thinkingOptionId: string) => void;
   workingDir: string;
   setWorkingDir: (value: string) => void;
   setWorkingDirFromUser: (value: string) => void;
@@ -75,6 +81,7 @@ type UseAgentFormStateResult = {
   agentDefinition?: AgentProviderDefinition;
   modeOptions: AgentMode[];
   availableModels: AgentModelDefinition[];
+  availableThinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
   isModelLoading: boolean;
   modelError: string | null;
   refreshProviderModels: () => void;
@@ -90,6 +97,32 @@ const fallbackDefinition = providerDefinitions[0];
 const DEFAULT_PROVIDER: AgentProvider = fallbackDefinition?.id ?? "claude";
 const DEFAULT_MODE_FOR_DEFAULT_PROVIDER =
   fallbackDefinition?.defaultModeId ?? "";
+
+function resolveDefaultModel(
+  availableModels: AgentModelDefinition[] | null
+): AgentModelDefinition | null {
+  if (!availableModels || availableModels.length === 0) {
+    return null;
+  }
+  return availableModels.find((model) => model.isDefault) ?? availableModels[0] ?? null;
+}
+
+function resolveEffectiveModel(
+  availableModels: AgentModelDefinition[] | null,
+  modelId: string
+): AgentModelDefinition | null {
+  if (!availableModels || availableModels.length === 0) {
+    return null;
+  }
+  const normalizedModelId = modelId.trim();
+  if (!normalizedModelId) {
+    return resolveDefaultModel(availableModels);
+  }
+  return (
+    availableModels.find((model) => model.id === normalizedModelId) ??
+    resolveDefaultModel(availableModels)
+  );
+}
 
 /**
  * Pure function that resolves form state from multiple data sources.
@@ -175,7 +208,43 @@ function resolveFormState(
     }
   }
 
-  // 4. Resolve serverId (independent)
+  // 4. Resolve thinking option (depends on effective model)
+  const initialThinkingOptionId =
+    typeof initialValues?.thinkingOptionId === "string"
+      ? initialValues.thinkingOptionId.trim()
+      : "";
+  const preferredThinkingOptionId =
+    providerPrefs?.thinkingOptionId?.trim() ?? "";
+
+  if (!userModified.thinkingOptionId) {
+    if (initialThinkingOptionId.length > 0) {
+      result.thinkingOptionId = initialThinkingOptionId;
+    } else if (preferredThinkingOptionId.length > 0) {
+      result.thinkingOptionId = preferredThinkingOptionId;
+    } else {
+      result.thinkingOptionId = "";
+    }
+  }
+
+  // Validate thinking option once model metadata is available.
+  if (availableModels) {
+    const effectiveModel = resolveEffectiveModel(availableModels, result.model);
+    const thinkingOptions = effectiveModel?.thinkingOptions ?? [];
+    if (thinkingOptions.length === 0) {
+      result.thinkingOptionId = "";
+    } else {
+      const thinkingIds = new Set(thinkingOptions.map((option) => option.id));
+      const defaultThinkingOptionId =
+        effectiveModel?.defaultThinkingOptionId ??
+        thinkingOptions[0]?.id ??
+        "";
+      if (!result.thinkingOptionId || !thinkingIds.has(result.thinkingOptionId)) {
+        result.thinkingOptionId = defaultThinkingOptionId;
+      }
+    }
+  }
+
+  // 5. Resolve serverId (independent)
   // Only use stored serverId if the host still exists in the registry
   if (!userModified.serverId) {
     if (initialValues?.serverId !== undefined) {
@@ -186,7 +255,7 @@ function resolveFormState(
     // else keep current
   }
 
-  // 5. Resolve workingDir (independent)
+  // 6. Resolve workingDir (independent)
   if (!userModified.workingDir) {
     if (initialValues?.workingDir !== undefined) {
       result.workingDir = initialValues.workingDir;
@@ -258,6 +327,7 @@ export function useAgentFormState(
     provider: DEFAULT_PROVIDER,
     modeId: DEFAULT_MODE_FOR_DEFAULT_PROVIDER,
     model: "",
+    thinkingOptionId: "",
     workingDir: "",
   }));
   const formStateRef = useRef(formState);
@@ -342,6 +412,7 @@ export function useAgentFormState(
       resolved.provider !== formStateRef.current.provider ||
       resolved.modeId !== formStateRef.current.modeId ||
       resolved.model !== formStateRef.current.model ||
+      resolved.thinkingOptionId !== formStateRef.current.thinkingOptionId ||
       resolved.workingDir !== formStateRef.current.workingDir
     ) {
       setFormState(resolved);
@@ -430,6 +501,7 @@ export function useAgentFormState(
         provider,
         modeId: providerPrefs?.mode ?? providerDef?.defaultModeId ?? "",
         model: providerPrefs?.model ?? "",
+        thinkingOptionId: providerPrefs?.thinkingOptionId ?? "",
       }));
     },
     [preferences?.providerPreferences, updatePreferences]
@@ -449,6 +521,15 @@ export function useAgentFormState(
       setFormState((prev) => ({ ...prev, model: modelId }));
       setUserModified((prev) => ({ ...prev, model: true }));
       void updateProviderPreferences(formState.provider, { model: modelId });
+    },
+    [formState.provider, updateProviderPreferences]
+  );
+
+  const setThinkingOptionFromUser = useCallback(
+    (thinkingOptionId: string) => {
+      setFormState((prev) => ({ ...prev, thinkingOptionId }));
+      setUserModified((prev) => ({ ...prev, thinkingOptionId: true }));
+      void updateProviderPreferences(formState.provider, { thinkingOptionId });
     },
     [formState.provider, updateProviderPreferences]
   );
@@ -475,27 +556,40 @@ export function useAgentFormState(
   }, [providerModelsQuery]);
 
   const persistFormPreferences = useCallback(async () => {
+    const providerPreferenceUpdates: {
+      mode: string;
+      model: string;
+      thinkingOptionId?: string;
+    } = {
+      mode: formState.modeId,
+      model: formState.model,
+    };
+    if (userModified.thinkingOptionId) {
+      providerPreferenceUpdates.thinkingOptionId = formState.thinkingOptionId;
+    }
+
     await updatePreferences({
       workingDir: formState.workingDir,
       provider: formState.provider,
       serverId: formState.serverId ?? undefined,
     });
-    await updateProviderPreferences(formState.provider, {
-      mode: formState.modeId,
-      model: formState.model,
-    });
+    await updateProviderPreferences(formState.provider, providerPreferenceUpdates);
   }, [
     formState.modeId,
     formState.model,
     formState.provider,
     formState.serverId,
+    formState.thinkingOptionId,
     formState.workingDir,
+    userModified.thinkingOptionId,
     updatePreferences,
     updateProviderPreferences,
   ]);
 
   const agentDefinition = providerDefinitionMap.get(formState.provider);
   const modeOptions = agentDefinition?.modes ?? [];
+  const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
+  const availableThinkingOptions = effectiveModel?.thinkingOptions ?? [];
   const isModelLoading = providerModelsQuery.isLoading || providerModelsQuery.isFetching;
   const modelError =
     providerModelsQuery.error instanceof Error ? providerModelsQuery.error.message : null;
@@ -513,6 +607,8 @@ export function useAgentFormState(
       setModeFromUser,
       selectedModel: formState.model,
       setModelFromUser,
+      selectedThinkingOptionId: formState.thinkingOptionId,
+      setThinkingOptionFromUser,
       workingDir: formState.workingDir,
       setWorkingDir,
       setWorkingDirFromUser,
@@ -521,6 +617,7 @@ export function useAgentFormState(
       agentDefinition,
       modeOptions,
       availableModels: availableModels ?? [],
+      availableThinkingOptions,
       isModelLoading,
       modelError,
       refreshProviderModels,
@@ -532,17 +629,20 @@ export function useAgentFormState(
       formState.provider,
       formState.modeId,
       formState.model,
+      formState.thinkingOptionId,
       formState.workingDir,
       setSelectedServerId,
       setSelectedServerIdFromUser,
       setProviderFromUser,
       setModeFromUser,
       setModelFromUser,
+      setThinkingOptionFromUser,
       setWorkingDir,
       setWorkingDirFromUser,
       agentDefinition,
       modeOptions,
       availableModels,
+      availableThinkingOptions,
       isModelLoading,
       modelError,
       refreshProviderModels,

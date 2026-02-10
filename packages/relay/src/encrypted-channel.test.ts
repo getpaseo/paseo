@@ -158,6 +158,49 @@ describe("EncryptedChannel", () => {
     expect(sentData.length).toBeGreaterThan(plaintext.length + 20);
   });
 
+  it("does not throw uncaught when handshake hello retry send fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const daemonKeyPair = await generateKeyPair();
+      const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
+
+      const transport: Transport = {
+        send: vi.fn(),
+        close: vi.fn(),
+        onmessage: null,
+        onclose: null,
+        onerror: null,
+      };
+
+      let sendAttempts = 0;
+      (transport.send as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        sendAttempts += 1;
+        if (sendAttempts >= 2) {
+          throw new Error("WebSocket not open (readyState=2)");
+        }
+      });
+
+      const onerror = vi.fn();
+      await createClientChannel(transport, daemonPubKeyB64, { onerror });
+
+      expect(() => {
+        vi.advanceTimersByTime(1000);
+      }).not.toThrow();
+
+      expect(onerror).toHaveBeenCalledTimes(1);
+      expect(onerror.mock.calls[0][0]).toBeInstanceOf(Error);
+      expect((onerror.mock.calls[0][0] as Error).message).toContain(
+        "WebSocket not open"
+      );
+
+      // Close the transport to stop retry timer.
+      transport.onclose?.(1000, "closed");
+      vi.runOnlyPendingTimers();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("fails handshake on invalid hello", async () => {
     const [daemonTransport] = createMockTransportPair();
 

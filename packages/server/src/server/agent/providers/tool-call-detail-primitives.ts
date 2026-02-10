@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ToolCallDetail } from "../agent-sdk-types.js";
 import {
   commandFromValue,
+  extractCodexShellOutput,
   flattenReadContent as flattenToolReadContent,
   nonEmptyString,
   truncateDiffText,
@@ -83,12 +84,11 @@ const ToolShellOutputObjectSchema = z
 export const ToolShellOutputSchema = z.union([
   z.string().transform((value) => ({
     command: undefined,
-    output: nonEmptyString(value),
+    output: extractCodexShellOutput(value),
     exitCode: undefined,
   })),
-  ToolShellOutputObjectSchema.transform((value) => ({
-    command: nonEmptyString(value.command) ?? nonEmptyString(value.result?.command),
-    output:
+  ToolShellOutputObjectSchema.transform((value) => {
+    const rawOutput =
       nonEmptyString(value.output) ??
       nonEmptyString(value.text) ??
       nonEmptyString(value.content) ??
@@ -102,14 +102,19 @@ export const ToolShellOutputSchema = z.union([
       nonEmptyString(value.structured_content?.content) ??
       nonEmptyString(value.result?.output) ??
       nonEmptyString(value.result?.text) ??
-      nonEmptyString(value.result?.content),
-    exitCode:
-      value.exitCode ??
-      value.exit_code ??
-      value.metadata?.exitCode ??
-      value.metadata?.exit_code ??
-      undefined,
-  })),
+      nonEmptyString(value.result?.content);
+
+    return {
+      command: nonEmptyString(value.command) ?? nonEmptyString(value.result?.command),
+      output: extractCodexShellOutput(rawOutput),
+      exitCode:
+        value.exitCode ??
+        value.exit_code ??
+        value.metadata?.exitCode ??
+        value.metadata?.exit_code ??
+        undefined,
+    };
+  }),
 ]);
 
 export const ToolPathInputSchema = z.union([
