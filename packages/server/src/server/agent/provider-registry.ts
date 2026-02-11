@@ -4,6 +4,7 @@ import type {
   AgentProvider,
   ListModelsOptions,
 } from "./agent-sdk-types.js";
+import type { AgentProviderRuntimeSettingsMap } from "./provider-launch-config.js";
 import type { Logger } from "pino";
 
 import { ClaudeAgentClient } from "./providers/claude-agent.js";
@@ -30,25 +31,45 @@ export interface ProviderDefinition extends AgentProviderDefinition {
   fetchModels: (options?: ListModelsOptions) => Promise<AgentModelDefinition[]>;
 }
 
-export function buildProviderRegistry(logger: Logger): Record<AgentProvider, ProviderDefinition> {
-  const claudeClient = new ClaudeAgentClient({ logger });
-  const codexClient = new CodexAppServerAgentClient(logger);
-  const opencodeClient = new OpenCodeAgentClient(logger);
+type BuildProviderRegistryOptions = {
+  runtimeSettings?: AgentProviderRuntimeSettingsMap;
+};
+
+export function buildProviderRegistry(
+  logger: Logger,
+  options?: BuildProviderRegistryOptions
+): Record<AgentProvider, ProviderDefinition> {
+  const runtimeSettings = options?.runtimeSettings;
+  const claudeClient = new ClaudeAgentClient({
+    logger,
+    runtimeSettings: runtimeSettings?.claude,
+  });
+  const codexClient = new CodexAppServerAgentClient(
+    logger,
+    runtimeSettings?.codex
+  );
+  const opencodeClient = new OpenCodeAgentClient(
+    logger,
+    runtimeSettings?.opencode
+  );
 
   return {
     claude: {
       ...AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === "claude")!,
-      createClient: (logger: Logger) => new ClaudeAgentClient({ logger }),
+      createClient: (logger: Logger) =>
+        new ClaudeAgentClient({ logger, runtimeSettings: runtimeSettings?.claude }),
       fetchModels: (options) => claudeClient.listModels(options),
     },
     codex: {
       ...AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === "codex")!,
-      createClient: (logger: Logger) => new CodexAppServerAgentClient(logger),
+      createClient: (logger: Logger) =>
+        new CodexAppServerAgentClient(logger, runtimeSettings?.codex),
       fetchModels: (options) => codexClient.listModels(options),
     },
     opencode: {
       ...AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === "opencode")!,
-      createClient: (logger: Logger) => new OpenCodeAgentClient(logger),
+      createClient: (logger: Logger) =>
+        new OpenCodeAgentClient(logger, runtimeSettings?.opencode),
       fetchModels: (options) => opencodeClient.listModels(options),
     },
   };
@@ -57,8 +78,11 @@ export function buildProviderRegistry(logger: Logger): Record<AgentProvider, Pro
 // Deprecated: Use buildProviderRegistry instead
 export const PROVIDER_REGISTRY: Record<AgentProvider, ProviderDefinition> = null as any;
 
-export function createAllClients(logger: Logger): Record<AgentProvider, AgentClient> {
-  const registry = buildProviderRegistry(logger);
+export function createAllClients(
+  logger: Logger,
+  options?: BuildProviderRegistryOptions
+): Record<AgentProvider, AgentClient> {
+  const registry = buildProviderRegistry(logger, options);
   return {
     claude: registry.claude.createClient(logger),
     codex: registry.codex.createClient(logger),
@@ -66,6 +90,12 @@ export function createAllClients(logger: Logger): Record<AgentProvider, AgentCli
   };
 }
 
-export async function shutdownProviders(logger: Logger): Promise<void> {
-  await OpenCodeServerManager.getInstance(logger).shutdown();
+export async function shutdownProviders(
+  logger: Logger,
+  options?: BuildProviderRegistryOptions
+): Promise<void> {
+  await OpenCodeServerManager.getInstance(
+    logger,
+    options?.runtimeSettings?.opencode
+  ).shutdown();
 }

@@ -39,6 +39,12 @@ import {
   mapCodexRolloutToolCall,
   mapCodexToolCallFromThreadItem,
 } from "./codex/tool-call-mapper.js";
+import {
+  applyProviderEnv,
+  isProviderCommandAvailable,
+  resolveProviderCommandPrefix,
+  type ProviderRuntimeSettings,
+} from "../provider-launch-config.js";
 
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
@@ -155,6 +161,15 @@ function resolveCodexBinary(): string {
   }
   throw new Error(
     "Codex CLI not found. Please install codex globally: npm install -g @openai/codex"
+  );
+}
+
+function resolveCodexLaunchPrefix(
+  runtimeSettings?: ProviderRuntimeSettings
+): { command: string; args: string[] } {
+  return resolveProviderCommandPrefix(
+    runtimeSettings?.command,
+    resolveCodexBinary
   );
 }
 
@@ -1750,7 +1765,8 @@ class CodexAppServerAgentSession implements AgentSession {
   constructor(
     config: AgentSessionConfig,
     private readonly resumeHandle: { sessionId: string; metadata?: Record<string, unknown> } | null,
-    logger: Logger
+    logger: Logger,
+    private readonly spawnAppServer: () => ChildProcessWithoutNullStreams
   ) {
     this.logger = logger.child({ module: "agent", provider: CODEX_PROVIDER });
     if (config.modeId === undefined) {
@@ -1773,11 +1789,7 @@ class CodexAppServerAgentSession implements AgentSession {
 
   async connect(): Promise<void> {
     if (this.connected) return;
-    const binaryPath = resolveCodexBinary();
-    const child = spawn(binaryPath, ["app-server"], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
-    });
+    const child = this.spawnAppServer();
     this.client = new CodexAppServerClient(child, this.logger);
     this.client.setNotificationHandler((method, params) => this.handleNotification(method, params));
     this.registerRequestHandlers();
@@ -2854,11 +2866,27 @@ export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly runtimeSettings?: ProviderRuntimeSettings
+  ) {}
+
+  private spawnAppServer(): ChildProcessWithoutNullStreams {
+    const launchPrefix = resolveCodexLaunchPrefix(this.runtimeSettings);
+    return spawn(launchPrefix.command, [...launchPrefix.args, "app-server"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: applyProviderEnv(process.env, this.runtimeSettings),
+    });
+  }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
-    const session = new CodexAppServerAgentSession(sessionConfig, null, this.logger);
+    const session = new CodexAppServerAgentSession(
+      sessionConfig,
+      null,
+      this.logger,
+      () => this.spawnAppServer()
+    );
     await session.connect();
     return session;
   }
@@ -2871,7 +2899,12 @@ export class CodexAppServerAgentClient implements AgentClient {
       provider: CODEX_PROVIDER,
       cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
     };
-    const session = new CodexAppServerAgentSession(merged, handle, this.logger);
+    const session = new CodexAppServerAgentSession(
+      merged,
+      handle,
+      this.logger,
+      () => this.spawnAppServer()
+    );
     await session.connect();
     return session;
   }
@@ -2879,10 +2912,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions
   ): Promise<PersistedAgentDescriptor[]> {
-    const binaryPath = resolveCodexBinary();
-    const child = spawn(binaryPath, ["app-server"], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = this.spawnAppServer();
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
@@ -2957,10 +2987,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const binaryPath = resolveCodexBinary();
-    const child = spawn(binaryPath, ["app-server"], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = this.spawnAppServer();
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
@@ -3050,11 +3077,6 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    try {
-      const codexPath = execSync("which codex", { encoding: "utf8" }).trim();
-      return Boolean(codexPath);
-    } catch {
-      return false;
-    }
+    return isProviderCommandAvailable(this.runtimeSettings?.command, resolveCodexBinary);
   }
 }

@@ -57,6 +57,9 @@
                 },
                 "endpoint": {
                   "type": "string"
+                },
+                "publicEndpoint": {
+                  "type": "string"
                 }
               },
               "additionalProperties": false
@@ -102,6 +105,92 @@
           },
           "additionalProperties": false
         },
+        "agents": {
+          "type": "object",
+          "properties": {
+            "providers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "default"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "append"
+                          },
+                          "args": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "replace"
+                          },
+                          "argv": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "argv"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "propertyNames": {
+                "enum": [
+                  "claude",
+                  "codex",
+                  "opencode"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "features": {
           "type": "object",
           "properties": {
@@ -112,10 +201,17 @@
                   "type": "object",
                   "properties": {
                     "provider": {
-                      "type": "string",
-                      "enum": [
-                        "openai",
-                        "local"
+                      "allOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "openai",
+                            "local"
+                          ]
+                        }
                       ]
                     },
                     "model": {
@@ -156,11 +252,7 @@
                   "type": "object",
                   "properties": {
                     "provider": {
-                      "type": "string",
-                      "enum": [
-                        "openai",
-                        "local"
-                      ]
+                      "$ref": "#/definitions/PaseoConfigV1/properties/features/properties/dictation/properties/stt/properties/provider"
                     },
                     "model": {
                       "type": "string",
@@ -173,11 +265,7 @@
                   "type": "object",
                   "properties": {
                     "provider": {
-                      "type": "string",
-                      "enum": [
-                        "openai",
-                        "local"
-                      ]
+                      "$ref": "#/definitions/PaseoConfigV1/properties/features/properties/dictation/properties/stt/properties/provider"
                     },
                     "model": {
                       "type": "string",
@@ -193,6 +281,12 @@
                         "nova",
                         "shimmer"
                       ]
+                    },
+                    "speakerId": {
+                      "type": "integer"
+                    },
+                    "speed": {
+                      "type": "number"
                     }
                   },
                   "additionalProperties": false

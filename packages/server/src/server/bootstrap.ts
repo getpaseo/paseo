@@ -64,6 +64,7 @@ import type {
   AgentClient,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
+import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { acquirePidLock, releasePidLock, isLocked, PidLockError } from "./pid-lock.js";
 import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
 import {
@@ -120,6 +121,7 @@ export type PaseoDaemonConfig = {
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
+  agentProviderSettings?: AgentProviderRuntimeSettingsMap;
 };
 
 export interface PaseoDaemon {
@@ -274,7 +276,9 @@ export async function createPaseoDaemon(
   const agentStorage = new AgentStorage(config.agentStoragePath, logger);
   const agentManager = new AgentManager({
     clients: {
-      ...createAllClients(logger),
+      ...createAllClients(logger, {
+        runtimeSettings: config.agentProviderSettings,
+      }),
       ...config.agentClients,
     },
     registry: agentStorage,
@@ -496,7 +500,8 @@ export async function createPaseoDaemon(
       finalTimeoutMs: config.dictationFinalTimeoutMs,
       stt: dictationSttService,
       localModels: localModelConfig ?? undefined,
-    }
+    },
+    config.agentProviderSettings
   );
 
     const start = async () => {
@@ -590,7 +595,9 @@ export async function createPaseoDaemon(
       await agentManager.flush().catch(() => undefined);
       detachAgentStoragePersistence();
       await agentStorage.flush().catch(() => undefined);
-      await shutdownProviders(logger);
+      await shutdownProviders(logger, {
+        runtimeSettings: config.agentProviderSettings,
+      });
       terminalManager.killAll();
       cleanupSpeechRuntime();
       await relayTransport?.stop().catch(() => undefined);

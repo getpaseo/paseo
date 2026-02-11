@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
@@ -15,6 +15,7 @@ import {
   type PermissionResult,
   type PermissionUpdate,
   type Query,
+  type SpawnOptions,
   type SDKMessage,
   type SDKPartialAssistantMessage,
   type SDKResultMessage,
@@ -56,6 +57,11 @@ import type {
   McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
+import {
+  applyProviderEnv,
+  isProviderCommandAvailable,
+  type ProviderRuntimeSettings,
+} from "../provider-launch-config.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;
@@ -131,14 +137,55 @@ type ClaudeOptions = Options;
 type ClaudeAgentClientOptions = {
   defaults?: { agents?: Record<string, AgentDefinition> };
   logger: Logger;
+  runtimeSettings?: ProviderRuntimeSettings;
 };
 
 type ClaudeAgentSessionOptions = {
   defaults?: { agents?: Record<string, AgentDefinition> };
   claudePath: string | null;
+  runtimeSettings?: ProviderRuntimeSettings;
   handle?: AgentPersistenceHandle;
   logger: Logger;
 };
+
+function resolveClaudeBinary(): string {
+  try {
+    const claudePath = execSync("which claude", { encoding: "utf8" }).trim();
+    if (claudePath) {
+      return claudePath;
+    }
+  } catch {
+    // fall through
+  }
+  throw new Error(
+    "Claude CLI not found. Install claude or configure agents.providers.claude.command.mode='replace'."
+  );
+}
+
+function resolveClaudeSpawnCommand(
+  spawnOptions: SpawnOptions,
+  runtimeSettings?: ProviderRuntimeSettings
+): { command: string; args: string[] } {
+  const commandConfig = runtimeSettings?.command;
+  if (!commandConfig || commandConfig.mode === "default") {
+    return {
+      command: spawnOptions.command,
+      args: [...spawnOptions.args],
+    };
+  }
+
+  if (commandConfig.mode === "append") {
+    return {
+      command: spawnOptions.command,
+      args: [...(commandConfig.args ?? []), ...spawnOptions.args],
+    };
+  }
+
+  return {
+    command: commandConfig.argv[0]!,
+    args: [...commandConfig.argv.slice(1), ...spawnOptions.args],
+  };
+}
 
 
 export function extractUserMessageText(content: unknown): string | null {
@@ -351,10 +398,12 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly logger: Logger;
   private readonly claudePath: string | null;
+  private readonly runtimeSettings?: ProviderRuntimeSettings;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
     this.logger = options.logger.child({ module: "agent", provider: "claude" });
+    this.runtimeSettings = options.runtimeSettings;
     try {
       this.claudePath = execSync("which claude", { encoding: "utf8" }).trim() || null;
     } catch {
@@ -362,11 +411,39 @@ export class ClaudeAgentClient implements AgentClient {
     }
   }
 
+  private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
+    const hasEnvOverrides = Object.keys(this.runtimeSettings?.env ?? {}).length > 0;
+    const commandMode = this.runtimeSettings?.command?.mode;
+    const needsCustomSpawn =
+      hasEnvOverrides || commandMode === "append" || commandMode === "replace";
+
+    if (!needsCustomSpawn) {
+      return options;
+    }
+
+    return {
+      ...options,
+      spawnClaudeCodeProcess: (spawnOptions) => {
+        const resolved = resolveClaudeSpawnCommand(
+          spawnOptions,
+          this.runtimeSettings
+        );
+        return spawn(resolved.command, resolved.args, {
+          cwd: spawnOptions.cwd,
+          env: applyProviderEnv(spawnOptions.env, this.runtimeSettings),
+          signal: spawnOptions.signal,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      },
+    };
+  }
+
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const claudeConfig = this.assertConfig(config);
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       claudePath: this.claudePath,
+      runtimeSettings: this.runtimeSettings,
       logger: this.logger,
     });
   }
@@ -385,6 +462,7 @@ export class ClaudeAgentClient implements AgentClient {
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       claudePath: this.claudePath,
+      runtimeSettings: this.runtimeSettings,
       handle,
       logger: this.logger,
     });
@@ -399,7 +477,10 @@ export class ClaudeAgentClient implements AgentClient {
       ...(this.claudePath ? { pathToClaudeCodeExecutable: this.claudePath } : {}),
     };
 
-    const claudeQuery = query({ prompt, options: claudeOptions });
+    const claudeQuery = query({
+      prompt,
+      options: this.applyRuntimeSettings(claudeOptions),
+    });
     try {
       const models: ModelInfo[] = await claudeQuery.supportedModels();
       return models.map((model) => ({
@@ -451,6 +532,10 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
+    const commandConfig = this.runtimeSettings?.command;
+    if (commandConfig?.mode === "replace") {
+      return isProviderCommandAvailable(commandConfig, resolveClaudeBinary);
+    }
     return this.claudePath !== null;
   }
 
@@ -469,6 +554,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly config: ClaudeAgentConfig;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly claudePath: string | null;
+  private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly logger: Logger;
   private query: Query | null = null;
   private input: Pushable<SDKUserMessage> | null = null;
@@ -508,6 +594,7 @@ class ClaudeAgentSession implements AgentSession {
     this.config = config;
     this.defaults = options.defaults;
     this.claudePath = options.claudePath;
+    this.runtimeSettings = options.runtimeSettings;
     this.logger = options.logger;
     const handle = options.handle;
 
@@ -971,7 +1058,34 @@ class ClaudeAgentSession implements AgentSession {
     if (this.claudeSessionId) {
       base.resume = this.claudeSessionId;
     }
-    return base;
+    return this.applyRuntimeSettings(base);
+  }
+
+  private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
+    const hasEnvOverrides = Object.keys(this.runtimeSettings?.env ?? {}).length > 0;
+    const commandMode = this.runtimeSettings?.command?.mode;
+    const needsCustomSpawn =
+      hasEnvOverrides || commandMode === "append" || commandMode === "replace";
+
+    if (!needsCustomSpawn) {
+      return options;
+    }
+
+    return {
+      ...options,
+      spawnClaudeCodeProcess: (spawnOptions) => {
+        const resolved = resolveClaudeSpawnCommand(
+          spawnOptions,
+          this.runtimeSettings
+        );
+        return spawn(resolved.command, resolved.args, {
+          cwd: spawnOptions.cwd,
+          env: applyProviderEnv(spawnOptions.env, this.runtimeSettings),
+          signal: spawnOptions.signal,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      },
+    };
   }
 
   private normalizeMcpServers(

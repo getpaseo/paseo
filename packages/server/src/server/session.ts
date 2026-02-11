@@ -48,6 +48,7 @@ import type {
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 import { buildProviderRegistry } from "./agent/provider-registry.js";
+import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import { scheduleAgentMetadataGeneration } from "./agent/agent-metadata-generator.js";
@@ -297,6 +298,7 @@ export type SessionOptions = {
       defaultModelIds: LocalSpeechModelId[];
     };
   };
+  agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
 };
 
 function convertPCMToWavBuffer(
@@ -468,6 +470,7 @@ export class Session {
   private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
   private readonly ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
   private readonly removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
+  private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
@@ -488,6 +491,7 @@ export class Session {
       voice,
       voiceBridge,
       dictation,
+      agentProviderRuntimeSettings,
     } = options;
     this.clientId = clientId;
     this.sessionId = uuidv4();
@@ -515,13 +519,16 @@ export class Session {
     this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext;
     this.ensureVoiceMcpSocketForAgent = voiceBridge?.ensureVoiceMcpSocketForAgent;
     this.removeVoiceMcpSocketForAgent = voiceBridge?.removeVoiceMcpSocketForAgent;
+    this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.abortController = new AbortController();
     this.sessionLogger = logger.child({
       module: "session",
       clientId: this.clientId,
       sessionId: this.sessionId,
     });
-    this.providerRegistry = buildProviderRegistry(this.sessionLogger);
+    this.providerRegistry = buildProviderRegistry(this.sessionLogger, {
+      runtimeSettings: this.agentProviderRuntimeSettings,
+    });
 
     // Initialize per-session managers
     this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);

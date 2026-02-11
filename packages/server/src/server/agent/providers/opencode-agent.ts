@@ -26,6 +26,12 @@ import type {
   McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
+import {
+  applyProviderEnv,
+  isProviderCommandAvailable,
+  resolveProviderCommandPrefix,
+  type ProviderRuntimeSettings,
+} from "../provider-launch-config.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
@@ -62,6 +68,20 @@ type OpenCodeMcpConfig =
     };
 
 const MCP_ALREADY_PRESENT_ERROR_TOKENS = ["already", "exists", "connected"] as const;
+
+function resolveOpenCodeBinary(): string {
+  try {
+    const opencodePath = execSync("which opencode", { encoding: "utf8" }).trim();
+    if (opencodePath) {
+      return opencodePath;
+    }
+  } catch {
+    // fall through
+  }
+  throw new Error(
+    "OpenCode CLI not found. Please install opencode globally so Paseo can launch the provider."
+  );
+}
 
 function toOpenCodeMcpConfig(config: McpServerConfig): OpenCodeMcpConfig {
   if (config.type === "stdio") {
@@ -122,15 +142,31 @@ export class OpenCodeServerManager {
   private port: number | null = null;
   private startPromise: Promise<{ port: number; url: string }> | null = null;
   private readonly logger: Logger;
+  private readonly runtimeSettings?: ProviderRuntimeSettings;
+  private readonly runtimeSettingsKey: string;
 
-  private constructor(logger: Logger) {
+  private constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
     this.logger = logger;
+    this.runtimeSettings = runtimeSettings;
+    this.runtimeSettingsKey = JSON.stringify(runtimeSettings ?? {});
   }
 
-  static getInstance(logger: Logger): OpenCodeServerManager {
+  static getInstance(
+    logger: Logger,
+    runtimeSettings?: ProviderRuntimeSettings
+  ): OpenCodeServerManager {
+    const nextSettingsKey = JSON.stringify(runtimeSettings ?? {});
     if (!OpenCodeServerManager.instance) {
-      OpenCodeServerManager.instance = new OpenCodeServerManager(logger);
+      OpenCodeServerManager.instance = new OpenCodeServerManager(logger, runtimeSettings);
       OpenCodeServerManager.registerExitHandler();
+    } else if (OpenCodeServerManager.instance.runtimeSettingsKey !== nextSettingsKey) {
+      logger.warn(
+        {
+          existingRuntimeSettings: OpenCodeServerManager.instance.runtimeSettingsKey,
+          requestedRuntimeSettings: nextSettingsKey,
+        },
+        "OpenCode server manager already initialized with different runtime settings"
+      );
     }
     return OpenCodeServerManager.instance;
   }
@@ -174,12 +210,20 @@ export class OpenCodeServerManager {
   private async startServer(): Promise<{ port: number; url: string }> {
     this.port = await findAvailablePort();
     const url = `http://127.0.0.1:${this.port}`;
+    const launchPrefix = resolveProviderCommandPrefix(
+      this.runtimeSettings?.command,
+      resolveOpenCodeBinary
+    );
 
     return new Promise((resolve, reject) => {
-      this.server = spawn("opencode", ["serve", "--port", String(this.port)], {
+      this.server = spawn(
+        launchPrefix.command,
+        [...launchPrefix.args, "serve", "--port", String(this.port)],
+        {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env },
-      });
+        env: applyProviderEnv(process.env, this.runtimeSettings),
+      }
+      );
 
       let started = false;
       const timeout = setTimeout(() => {
@@ -242,10 +286,15 @@ export class OpenCodeAgentClient implements AgentClient {
 
   private readonly serverManager: OpenCodeServerManager;
   private readonly logger: Logger;
+  private readonly runtimeSettings?: ProviderRuntimeSettings;
 
-  constructor(logger: Logger) {
+  constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
     this.logger = logger.child({ module: "agent", provider: "opencode" });
-    this.serverManager = OpenCodeServerManager.getInstance(this.logger);
+    this.runtimeSettings = runtimeSettings;
+    this.serverManager = OpenCodeServerManager.getInstance(
+      this.logger,
+      runtimeSettings
+    );
   }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
@@ -381,12 +430,10 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    try {
-      const opencodePath = execSync("which opencode", { encoding: "utf8" }).trim();
-      return Boolean(opencodePath);
-    } catch {
-      return false;
-    }
+    return isProviderCommandAvailable(
+      this.runtimeSettings?.command,
+      resolveOpenCodeBinary
+    );
   }
 
   private assertConfig(config: AgentSessionConfig): OpenCodeAgentConfig {

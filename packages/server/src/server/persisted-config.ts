@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
+import { AgentProviderRuntimeSettingsMapSchema } from "./agent/provider-launch-config.js";
 
 const LogConfigSchema = z
   .object({
@@ -122,6 +123,12 @@ export const PersistedConfigSchema = z
       .optional(),
 
     providers: ProvidersSchema.optional(),
+    agents: z
+      .object({
+        providers: AgentProviderRuntimeSettingsMapSchema.optional(),
+      })
+      .strict()
+      .optional(),
     features: z
       .object({
         dictation: FeatureDictationSchema.optional(),

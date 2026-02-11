@@ -17,6 +17,7 @@ import type { AllowedHostsConfig } from "./allowed-hosts.js";
 import { isHostAllowed } from "./allowed-hosts.js";
 import { Session } from "./session.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
+import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
@@ -92,6 +93,7 @@ export class VoiceAssistantWebSocketServer {
     VoiceSpeakHandler
   >();
   private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
+  private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
 
   constructor(
     server: HTTPServer,
@@ -117,7 +119,8 @@ export class VoiceAssistantWebSocketServer {
         modelsDir: string;
         defaultModelIds: LocalSpeechModelId[];
       };
-    }
+    },
+    agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -131,6 +134,7 @@ export class VoiceAssistantWebSocketServer {
     this.terminalManager = terminalManager ?? null;
     this.voice = voice ?? null;
     this.dictation = dictation ?? null;
+    this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(
@@ -257,6 +261,7 @@ export class VoiceAssistantWebSocketServer {
         removeVoiceMcpSocketForAgent: this.voice?.removeVoiceMcpSocketForAgent,
       },
       dictation: this.dictation ?? undefined,
+      agentProviderRuntimeSettings: this.agentProviderRuntimeSettings,
     });
 
     this.sessions.set(ws, session);

@@ -125,5 +125,6 @@ export function loadConfig(
     voiceLlmProvider,
     voiceLlmProviderExplicit,
     voiceLlmModel,
+    agentProviderSettings: persisted.agents?.providers,
   };
 }
