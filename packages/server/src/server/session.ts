@@ -134,6 +134,7 @@ const RESTART_EXIT_DELAY_MS = 250;
 const PROJECT_PLACEMENT_CACHE_TTL_MS = 10_000;
 const MAX_AGENTS_PER_PROJECT = 5;
 const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
+const CHECKOUT_DIFF_FALLBACK_REFRESH_MS = 5_000;
 
 /**
  * Default model used for auto-generating commit messages and PR descriptions.
@@ -232,9 +233,11 @@ type CheckoutDiffSnapshotPayload = Omit<
 type CheckoutDiffWatchTarget = {
   key: string;
   cwd: string;
+  diffCwd: string;
   compare: CheckoutDiffCompareInput;
   subscriptions: Set<string>;
   watchers: FSWatcher[];
+  fallbackRefreshInterval: NodeJS.Timeout | null;
   debounceTimer: NodeJS.Timeout | null;
   refreshPromise: Promise<void> | null;
   refreshQueued: boolean;
@@ -3517,6 +3520,10 @@ export class Session {
       clearTimeout(target.debounceTimer);
       target.debounceTimer = null;
     }
+    if (target.fallbackRefreshInterval) {
+      clearInterval(target.fallbackRefreshInterval);
+      target.fallbackRefreshInterval = null;
+    }
     for (const watcher of target.watchers) {
       watcher.close();
     }
@@ -3549,6 +3556,22 @@ export class Session {
       });
       const gitDir = stdout.trim();
       return gitDir.length > 0 ? gitDir : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveCheckoutWatchRoot(cwd: string): Promise<string | null> {
+    try {
+      const { stdout } = await execAsync(
+        "git rev-parse --path-format=absolute --show-toplevel",
+        {
+          cwd,
+          env: READ_ONLY_GIT_ENV,
+        }
+      );
+      const root = stdout.trim();
+      return root.length > 0 ? root : null;
     } catch {
       return null;
     }
@@ -3588,11 +3611,13 @@ export class Session {
 
   private async computeCheckoutDiffSnapshot(
     cwd: string,
-    compare: CheckoutDiffCompareInput
+    compare: CheckoutDiffCompareInput,
+    options?: { diffCwd?: string }
   ): Promise<CheckoutDiffSnapshotPayload> {
+    const diffCwd = options?.diffCwd ?? cwd;
     try {
       const diffResult = await getCheckoutDiff(
-        cwd,
+        diffCwd,
         {
           mode: compare.mode,
           baseRef: compare.baseRef,
@@ -3630,7 +3655,8 @@ export class Session {
         target.refreshQueued = false;
         const snapshot = await this.computeCheckoutDiffSnapshot(
           target.cwd,
-          target.compare
+          target.compare,
+          { diffCwd: target.diffCwd }
         );
         target.latestPayload = snapshot;
         const fingerprint = this.checkoutDiffSnapshotFingerprint(snapshot);
@@ -3658,12 +3684,15 @@ export class Session {
       return existing;
     }
 
+    const watchRoot = await this.resolveCheckoutWatchRoot(cwd);
     const target: CheckoutDiffWatchTarget = {
       key: targetKey,
       cwd,
+      diffCwd: watchRoot ?? cwd,
       compare,
       subscriptions: new Set(),
       watchers: [],
+      fallbackRefreshInterval: null,
       debounceTimer: null,
       refreshPromise: null,
       refreshQueued: false,
@@ -3672,11 +3701,15 @@ export class Session {
     };
 
     const watchPaths = new Set<string>([cwd]);
+    if (watchRoot) {
+      watchPaths.add(watchRoot);
+    }
     const gitDir = await this.resolveCheckoutGitDir(cwd);
     if (gitDir) {
       watchPaths.add(gitDir);
     }
 
+    let hasWatchRootCoverage = false;
     for (const watchPath of watchPaths) {
       const createWatcher = (recursive: boolean): FSWatcher =>
         watch(
@@ -3716,6 +3749,28 @@ export class Session {
         );
       });
       target.watchers.push(watcher);
+      if (watchRoot && watchPath === watchRoot) {
+        hasWatchRootCoverage = true;
+      }
+    }
+
+    const missingRepoCoverage = Boolean(watchRoot) && !hasWatchRootCoverage;
+    if (target.watchers.length === 0 || missingRepoCoverage) {
+      target.fallbackRefreshInterval = setInterval(() => {
+        this.scheduleCheckoutDiffTargetRefresh(target);
+      }, CHECKOUT_DIFF_FALLBACK_REFRESH_MS);
+      this.sessionLogger.warn(
+        {
+          cwd,
+          compare,
+          intervalMs: CHECKOUT_DIFF_FALLBACK_REFRESH_MS,
+          reason:
+            target.watchers.length === 0
+              ? "no_watchers"
+              : "missing_repo_root_coverage",
+        },
+        "Checkout diff watchers unavailable; using timed refresh fallback"
+      );
     }
 
     this.checkoutDiffTargets.set(targetKey, target);
@@ -3736,7 +3791,10 @@ export class Session {
     });
 
     const snapshot =
-      target.latestPayload ?? (await this.computeCheckoutDiffSnapshot(cwd, compare));
+      target.latestPayload ??
+      (await this.computeCheckoutDiffSnapshot(cwd, compare, {
+        diffCwd: target.diffCwd,
+      }));
     target.latestPayload = snapshot;
     target.latestFingerprint = this.checkoutDiffSnapshotFingerprint(snapshot);
 
@@ -3759,7 +3817,7 @@ export class Session {
   private scheduleCheckoutDiffRefreshForCwd(cwd: string): void {
     const resolvedCwd = expandTilde(cwd);
     for (const target of this.checkoutDiffTargets.values()) {
-      if (target.cwd !== resolvedCwd) {
+      if (target.cwd !== resolvedCwd && target.diffCwd !== resolvedCwd) {
         continue;
       }
       this.scheduleCheckoutDiffTargetRefresh(target);

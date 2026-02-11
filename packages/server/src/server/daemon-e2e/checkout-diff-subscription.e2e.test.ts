@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { execSync } from "child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import {
@@ -114,6 +114,47 @@ describe("daemon E2E checkout diff subscriptions", () => {
           "alpha.txt",
           "zeta.txt",
         ]);
+
+        ctx.client.unsubscribeCheckoutDiff(subscriptionId);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    60000
+  );
+
+  test(
+    "pushes updates when subscribed from a subdirectory and files change outside it",
+    async () => {
+      const cwd = tmpCwd();
+
+      try {
+        initGitRepo(cwd);
+        commitFile(cwd, "base.txt", "base\n");
+
+        const nestedDir = path.join(cwd, "nested", "dir");
+        mkdirSync(nestedDir, { recursive: true });
+
+        const subscriptionId = "checkout-diff-subdir-e2e-subscription";
+        const initial = await ctx.client.subscribeCheckoutDiff(
+          nestedDir,
+          { mode: "uncommitted" },
+          { subscriptionId }
+        );
+
+        expect(initial.error).toBeNull();
+        expect(initial.files).toEqual([]);
+
+        writeFileSync(path.join(cwd, "outside-subdir.txt"), "changed outside\n");
+
+        const update = await waitForCheckoutDiffUpdate(
+          ctx,
+          subscriptionId,
+          (payload) => payload.files.some((file) => file.path === "outside-subdir.txt")
+        );
+
+        expect(update.error).toBeNull();
+        expect(update.files.some((file) => file.path === "outside-subdir.txt")).toBe(true);
 
         ctx.client.unsubscribeCheckoutDiff(subscriptionId);
       } finally {
