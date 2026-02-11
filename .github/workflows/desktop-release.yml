@@ -67,28 +67,28 @@ jobs:
 
           const tauriConfPath = path.join('packages', 'desktop', 'src-tauri', 'tauri.conf.json');
           const tauriConfText = fs.readFileSync(tauriConfPath, 'utf8');
-          const tauriRe = /(\"version\"\\s*:\\s*\")([^\"]+)(\")/;
+          const tauriRe = /("version"\s*:\s*")([^"]+)(")/;
           if (!tauriRe.test(tauriConfText)) {
             throw new Error(`Failed to find version field in ${tauriConfPath}`);
           }
           fs.writeFileSync(tauriConfPath, tauriConfText.replace(tauriRe, `$1${version}$3`));
 
           const cargoTomlPath = path.join('packages', 'desktop', 'src-tauri', 'Cargo.toml');
-          const cargoLines = fs.readFileSync(cargoTomlPath, 'utf8').split(/\\r?\\n/);
+          const cargoLines = fs.readFileSync(cargoTomlPath, 'utf8').split(/\r?\n/);
           let inPackage = false;
           let updated = false;
           const nextLines = cargoLines.map((line) => {
-            if (/^\\[package\\]\\s*$/.test(line)) inPackage = true;
-            else if (inPackage && /^\\[/.test(line)) inPackage = false;
+            if (/^\[package\]\s*$/.test(line)) inPackage = true;
+            else if (inPackage && /^\[/.test(line)) inPackage = false;
 
-            if (inPackage && /^version\\s*=\\s*\".*\"\\s*$/.test(line)) {
+            if (inPackage && /^version\s*=\s*".*"\s*$/.test(line)) {
               updated = true;
-              return `version = \"${version}\"`;
+              return `version = "${version}"`;
             }
             return line;
           });
           if (!updated) throw new Error(`Failed to update Cargo package version in ${cargoTomlPath}`);
-          fs.writeFileSync(cargoTomlPath, `${nextLines.join('\\n')}\\n`);
+          fs.writeFileSync(cargoTomlPath, `${nextLines.join('\n')}\n`);
           NODE
 
       - name: Build and publish Tauri release
