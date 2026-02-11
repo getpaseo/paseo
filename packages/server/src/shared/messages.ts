@@ -707,13 +707,6 @@ export const CheckoutStatusRequestSchema = z.object({
   requestId: z.string(),
 });
 
-export const CheckoutDiffRequestSchema = z.object({
-  type: z.literal("checkout_diff_request"),
-  cwd: z.string(),
-  compare: CheckoutDiffCompareSchema,
-  requestId: z.string(),
-});
-
 export const SubscribeCheckoutDiffRequestSchema = z.object({
   type: z.literal("subscribe_checkout_diff_request"),
   subscriptionId: z.string(),
@@ -1000,7 +993,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentPermissionResponseMessageSchema,
   GitDiffRequestSchema,
   CheckoutStatusRequestSchema,
-  CheckoutDiffRequestSchema,
   SubscribeCheckoutDiffRequestSchema,
   UnsubscribeCheckoutDiffRequestSchema,
   CheckoutCommitRequestSchema,
@@ -1470,16 +1462,6 @@ export const CheckoutStatusResponseSchema = z.object({
   ]),
 });
 
-export const CheckoutDiffResponseSchema = z.object({
-  type: z.literal("checkout_diff_response"),
-  payload: z.object({
-    cwd: z.string(),
-    files: z.array(ParsedDiffFileSchema),
-    error: CheckoutErrorSchema.nullable(),
-    requestId: z.string(),
-  }),
-});
-
 const CheckoutDiffSubscriptionPayloadSchema = z.object({
   subscriptionId: z.string(),
   cwd: z.string(),
@@ -1834,7 +1816,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentArchivedMessageSchema,
   GitDiffResponseSchema,
   CheckoutStatusResponseSchema,
-  CheckoutDiffResponseSchema,
   SubscribeCheckoutDiffResponseSchema,
   CheckoutDiffUpdateSchema,
   CheckoutCommitResponseSchema,
@@ -1945,8 +1926,6 @@ export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
 export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
 export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
 export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;
-export type CheckoutDiffRequest = z.infer<typeof CheckoutDiffRequestSchema>;
-export type CheckoutDiffResponse = z.infer<typeof CheckoutDiffResponseSchema>;
 export type SubscribeCheckoutDiffRequest = z.infer<
   typeof SubscribeCheckoutDiffRequestSchema
 >;

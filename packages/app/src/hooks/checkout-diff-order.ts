@@ -1,6 +1,6 @@
-import type { CheckoutDiffResponse } from "@server/shared/messages";
+import type { SubscribeCheckoutDiffResponse } from "@server/shared/messages";
 
-type ParsedDiffFile = CheckoutDiffResponse["payload"]["files"][number];
+type ParsedDiffFile = SubscribeCheckoutDiffResponse["payload"]["files"][number];
 
 export function compareCheckoutDiffPaths(left: string, right: string): number {
   if (left === right) {

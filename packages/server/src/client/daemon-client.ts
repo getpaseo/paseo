@@ -19,7 +19,6 @@ import type {
   GitSetupOptions,
   HighlightedDiffResponse,
   CheckoutStatusResponse,
-  CheckoutDiffResponse,
   CheckoutCommitResponse,
   CheckoutMergeResponse,
   CheckoutMergeFromBaseResponse,
@@ -182,11 +181,11 @@ export type CreateAgentRequestOptions = {
 type GitDiffPayload = GitDiffResponse["payload"];
 type HighlightedDiffPayload = HighlightedDiffResponse["payload"];
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
-type CheckoutDiffPayload = CheckoutDiffResponse["payload"];
 type SubscribeCheckoutDiffPayload = Extract<
   SessionOutboundMessage,
   { type: "subscribe_checkout_diff_response" }
 >["payload"];
+type CheckoutDiffPayload = Omit<SubscribeCheckoutDiffPayload, "subscriptionId">;
 type CheckoutCommitPayload = CheckoutCommitResponse["payload"];
 type CheckoutMergePayload = CheckoutMergeResponse["payload"];
 type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
@@ -1564,29 +1563,25 @@ export class DaemonClient {
     compare: { mode: "uncommitted" | "base"; baseRef?: string },
     requestId?: string
   ): Promise<CheckoutDiffPayload> {
-    const normalizedCompare = this.normalizeCheckoutDiffCompare(compare);
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "checkout_diff_request",
-      cwd,
-      compare: normalizedCompare,
-      requestId: resolvedRequestId,
-    });
-    return this.sendRequest({
-      requestId: resolvedRequestId,
-      message,
-      timeout: 60000,
-      options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "checkout_diff_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
-    });
+    const oneShotSubscriptionId = `oneshot-checkout-diff:${crypto.randomUUID()}`;
+    try {
+      const payload = await this.subscribeCheckoutDiff(cwd, compare, {
+        subscriptionId: oneShotSubscriptionId,
+        requestId,
+      });
+      return {
+        cwd: payload.cwd,
+        files: payload.files,
+        error: payload.error,
+        requestId: payload.requestId,
+      };
+    } finally {
+      try {
+        this.unsubscribeCheckoutDiff(oneShotSubscriptionId);
+      } catch {
+        // Ignore disconnect races during one-shot cleanup.
+      }
+    }
   }
 
   async subscribeCheckoutDiff(

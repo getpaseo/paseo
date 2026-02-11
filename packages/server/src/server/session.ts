@@ -222,10 +222,7 @@ function escapeXmlText(value: string): string {
 
 type ProcessingPhase = "idle" | "transcribing" | "llm";
 
-type CheckoutDiffCompareInput = Extract<
-  SessionInboundMessage,
-  { type: "checkout_diff_request" }
->["compare"];
+type CheckoutDiffCompareInput = SubscribeCheckoutDiffRequest["compare"];
 
 type CheckoutDiffSnapshotPayload = Omit<
   Extract<SessionOutboundMessage, { type: "checkout_diff_update" }>["payload"],
@@ -1184,10 +1181,6 @@ export class Session {
 
         case "validate_branch_request":
           await this.handleValidateBranchRequest(msg);
-          break;
-
-        case "checkout_diff_request":
-          await this.handleCheckoutDiffRequest(msg);
           break;
 
         case "subscribe_checkout_diff_request":
@@ -3771,23 +3764,6 @@ export class Session {
       }
       this.scheduleCheckoutDiffTargetRefresh(target);
     }
-  }
-
-  private async handleCheckoutDiffRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_diff_request" }>
-  ): Promise<void> {
-    const cwd = expandTilde(msg.cwd);
-    const compare = this.normalizeCheckoutDiffCompare(msg.compare);
-    const snapshot = await this.computeCheckoutDiffSnapshot(cwd, compare);
-    this.emit({
-      type: "checkout_diff_response",
-      payload: {
-        cwd,
-        files: snapshot.files,
-        error: snapshot.error,
-        requestId: msg.requestId,
-      },
-    });
   }
 
   private async handleCheckoutCommitRequest(

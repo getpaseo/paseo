@@ -3,7 +3,7 @@ import { useCallback, useEffect, useId, useMemo } from "react";
 import { UnistylesRuntime } from "react-native-unistyles";
 import { useSessionStore } from "@/stores/session-store";
 import { usePanelStore } from "@/stores/panel-store";
-import type { CheckoutDiffResponse } from "@server/shared/messages";
+import type { SubscribeCheckoutDiffResponse } from "@server/shared/messages";
 import { orderCheckoutDiffFiles } from "./checkout-diff-order";
 
 const CHECKOUT_DIFF_STALE_TIME = 30_000;
@@ -25,7 +25,12 @@ interface UseCheckoutDiffQueryOptions {
   enabled?: boolean;
 }
 
-export type ParsedDiffFile = CheckoutDiffResponse["payload"]["files"][number];
+type CheckoutDiffQueryPayload = Omit<
+  SubscribeCheckoutDiffResponse["payload"],
+  "subscriptionId"
+>;
+
+export type ParsedDiffFile = CheckoutDiffQueryPayload["files"][number];
 export type DiffHunk = ParsedDiffFile["hunks"][number];
 export type DiffLine = DiffHunk["lines"][number];
 export type HighlightToken = NonNullable<DiffLine["tokens"]>[number];
@@ -119,7 +124,7 @@ export function useCheckoutDiffQuery({
       if (message.payload.subscriptionId !== subscriptionId) {
         return;
       }
-      queryClient.setQueryData<CheckoutDiffResponse["payload"]>(queryKey, {
+      queryClient.setQueryData<CheckoutDiffQueryPayload>(queryKey, {
         cwd: message.payload.cwd,
         files: orderCheckoutDiffFiles(message.payload.files),
         error: message.payload.error,
@@ -135,7 +140,7 @@ export function useCheckoutDiffQuery({
         if (message.payload.subscriptionId !== subscriptionId) {
           return;
         }
-        queryClient.setQueryData<CheckoutDiffResponse["payload"]>(queryKey, {
+        queryClient.setQueryData<CheckoutDiffQueryPayload>(queryKey, {
           cwd: message.payload.cwd,
           files: orderCheckoutDiffFiles(message.payload.files),
           error: message.payload.error,
@@ -157,7 +162,7 @@ export function useCheckoutDiffQuery({
         if (cancelled) {
           return;
         }
-        queryClient.setQueryData<CheckoutDiffResponse["payload"]>(queryKey, {
+        queryClient.setQueryData<CheckoutDiffQueryPayload>(queryKey, {
           cwd: payload.cwd,
           files: orderCheckoutDiffFiles(payload.files),
           error: payload.error,
