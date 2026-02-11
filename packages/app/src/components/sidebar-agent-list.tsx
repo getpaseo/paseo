@@ -239,6 +239,7 @@ function SidebarAgentRow({
   const showArchive = canArchive &&
     shortcutNumber === null &&
     (isHovered || isArchiveHovered || isArchiveConfirmVisible);
+  const reserveArchiveSlot = canArchive && shortcutNumber === null && !activeBranchLabel;
 
   return (
     <Pressable
@@ -336,6 +337,8 @@ function SidebarAgentRow({
                 {activeBranchLabel}
               </Text>
             </View>
+          ) : reserveArchiveSlot ? (
+            <View style={[styles.branchBadge, styles.branchBadgePlaceholder]} />
           ) : null}
         </View>
       </View>
@@ -731,6 +734,10 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
     lineHeight: 12,
+  },
+  branchBadgePlaceholder: {
+    opacity: 0,
+    borderColor: "transparent",
   },
   archiveConfirmBadge: {
     minWidth: 76,
