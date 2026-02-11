@@ -20,6 +20,7 @@ jobs:
   publish-tauri:
     permissions:
       contents: write
+      packages: read
     runs-on: macos-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
@@ -44,7 +45,7 @@ jobs:
           targets: aarch64-apple-darwin
 
       - name: Install JS dependencies
-        run: npm install --workspace=@getpaseo/app --workspace=@getpaseo/desktop --include-workspace-root
+        run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
