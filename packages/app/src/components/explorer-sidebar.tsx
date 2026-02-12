@@ -262,13 +262,14 @@ function SidebarContent({
   const { theme } = useUnistyles();
   const { status } = useCheckoutStatusQuery({ serverId, cwd });
   const isGit = status?.isGit ?? false;
+  const hasResolvedCheckoutStatus = status !== null;
 
   // Switch to Files tab if Changes tab is hidden and user was on it
   useEffect(() => {
-    if (!isGit && activeTab === "changes") {
+    if (hasResolvedCheckoutStatus && !isGit && activeTab === "changes") {
       onTabPress("files");
     }
-  }, [isGit, activeTab, onTabPress]);
+  }, [hasResolvedCheckoutStatus, isGit, activeTab, onTabPress]);
 
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
