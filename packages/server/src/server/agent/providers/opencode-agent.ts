@@ -665,18 +665,21 @@ class OpenCodeAgentSession implements AgentSession {
             const state = toolPart.state;
 
             if (toolName) {
-              yield {
-                type: "timeline",
-                provider: "opencode",
-                item: mapOpencodeToolCall({
-                  toolName,
-                  callId: toolPart.callID ?? toolPart.id,
-                  status: state?.status,
-                  input: state?.input,
-                  output: state?.output,
-                  error: state?.error,
-                }),
-              };
+              const mappedToolCall = mapOpencodeToolCall({
+                toolName,
+                callId: toolPart.callID ?? toolPart.id,
+                status: state?.status,
+                input: state?.input,
+                output: state?.output,
+                error: state?.error,
+              });
+              if (mappedToolCall) {
+                yield {
+                  type: "timeline",
+                  provider: "opencode",
+                  item: mappedToolCall,
+                };
+              }
             }
           }
         }
@@ -939,18 +942,21 @@ class OpenCodeAgentSession implements AgentSession {
           const error = state?.error as string | undefined;
 
           if (toolName) {
-            events.push({
-              type: "timeline",
-              provider: "opencode",
-              item: mapOpencodeToolCall({
-                toolName,
-                callId: (part.callID as string | undefined) ?? (part.id as string | undefined),
-                status,
-                input,
-                output,
-                error,
-              }),
+            const mappedToolCall = mapOpencodeToolCall({
+              toolName,
+              callId: (part.callID as string | undefined) ?? (part.id as string | undefined),
+              status,
+              input,
+              output,
+              error,
             });
+            if (mappedToolCall) {
+              events.push({
+                type: "timeline",
+                provider: "opencode",
+                item: mappedToolCall,
+              });
+            }
           }
         } else if (partType === "step-finish") {
           // Extract usage from step-finish parts

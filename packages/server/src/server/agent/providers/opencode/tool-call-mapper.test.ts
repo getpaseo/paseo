@@ -2,15 +2,25 @@ import { describe, expect, it } from "vitest";
 
 import { mapOpencodeToolCall } from "./tool-call-mapper.js";
 
+function expectMapped<T>(item: T | null): T {
+  expect(item).toBeTruthy();
+  if (!item) {
+    throw new Error("Expected mapped tool call");
+  }
+  return item;
+}
+
 describe("opencode tool-call mapper", () => {
   it("maps running shell calls", () => {
-    const item = mapOpencodeToolCall({
-      toolName: "shell",
-      callId: "opencode-call-1",
-      status: "running",
-      input: { command: "pwd", cwd: "/tmp/repo" },
-      output: null,
-    });
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "shell",
+        callId: "opencode-call-1",
+        status: "running",
+        input: { command: "pwd", cwd: "/tmp/repo" },
+        output: null,
+      })
+    );
 
     expect(item.status).toBe("running");
     expect(item.error).toBeNull();
@@ -22,49 +32,57 @@ describe("opencode tool-call mapper", () => {
   });
 
   it("maps running known tool variants with detail for early summaries", () => {
-    const readItem = mapOpencodeToolCall({
-      toolName: "read_file",
-      callId: "opencode-running-read",
-      status: "running",
-      input: { file_path: "README.md" },
-      output: null,
-    });
+    const readItem = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "read_file",
+        callId: "opencode-running-read",
+        status: "running",
+        input: { file_path: "README.md" },
+        output: null,
+      })
+    );
     expect(readItem.detail).toEqual({
       type: "read",
       filePath: "README.md",
     });
 
-    const writeItem = mapOpencodeToolCall({
-      toolName: "write_file",
-      callId: "opencode-running-write",
-      status: "running",
-      input: { file_path: "src/new.ts" },
-      output: null,
-    });
+    const writeItem = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "write_file",
+        callId: "opencode-running-write",
+        status: "running",
+        input: { file_path: "src/new.ts" },
+        output: null,
+      })
+    );
     expect(writeItem.detail).toEqual({
       type: "write",
       filePath: "src/new.ts",
     });
 
-    const editItem = mapOpencodeToolCall({
-      toolName: "apply_patch",
-      callId: "opencode-running-edit",
-      status: "running",
-      input: { file_path: "src/index.ts" },
-      output: null,
-    });
+    const editItem = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "apply_patch",
+        callId: "opencode-running-edit",
+        status: "running",
+        input: { file_path: "src/index.ts" },
+        output: null,
+      })
+    );
     expect(editItem.detail).toEqual({
       type: "edit",
       filePath: "src/index.ts",
     });
 
-    const searchItem = mapOpencodeToolCall({
-      toolName: "web_search",
-      callId: "opencode-running-search",
-      status: "running",
-      input: { query: "opencode mapper" },
-      output: null,
-    });
+    const searchItem = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "web_search",
+        callId: "opencode-running-search",
+        status: "running",
+        input: { query: "opencode mapper" },
+        output: null,
+      })
+    );
     expect(searchItem.detail).toEqual({
       type: "search",
       query: "opencode mapper",
@@ -72,13 +90,15 @@ describe("opencode tool-call mapper", () => {
   });
 
   it("maps completed read calls", () => {
-    const item = mapOpencodeToolCall({
-      toolName: "read_file",
-      callId: "opencode-call-2",
-      status: "complete",
-      input: { file_path: "README.md" },
-      output: { content: "hello" },
-    });
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "read_file",
+        callId: "opencode-call-2",
+        status: "complete",
+        input: { file_path: "README.md" },
+        output: { content: "hello" },
+      })
+    );
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
@@ -91,35 +111,39 @@ describe("opencode tool-call mapper", () => {
   });
 
   it("preserves read content from array/object output variants", () => {
-    const arrayContent = mapOpencodeToolCall({
-      toolName: "read_file",
-      callId: "opencode-read-array",
-      status: "completed",
-      input: { file_path: "README.md" },
-      output: {
-        content: [
-          { type: "output_text", text: "alpha" },
-          { type: "output_text", output: "beta" },
-        ],
-      },
-    });
+    const arrayContent = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "read_file",
+        callId: "opencode-read-array",
+        status: "completed",
+        input: { file_path: "README.md" },
+        output: {
+          content: [
+            { type: "output_text", text: "alpha" },
+            { type: "output_text", output: "beta" },
+          ],
+        },
+      })
+    );
 
     expect(arrayContent.detail?.type).toBe("read");
     if (arrayContent.detail?.type === "read") {
       expect(arrayContent.detail.content).toBe("alpha\nbeta");
     }
 
-    const objectContent = mapOpencodeToolCall({
-      toolName: "read_file",
-      callId: "opencode-read-object",
-      status: "completed",
-      input: { file_path: "README.md" },
-      output: {
-        data: {
-          content: { type: "output_text", text: "gamma" },
+    const objectContent = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "read_file",
+        callId: "opencode-read-object",
+        status: "completed",
+        input: { file_path: "README.md" },
+        output: {
+          data: {
+            content: { type: "output_text", text: "gamma" },
+          },
         },
-      },
-    });
+      })
+    );
 
     expect(objectContent.detail?.type).toBe("read");
     if (objectContent.detail?.type === "read") {
@@ -128,14 +152,16 @@ describe("opencode tool-call mapper", () => {
   });
 
   it("maps failed calls with required error", () => {
-    const item = mapOpencodeToolCall({
-      toolName: "shell",
-      callId: "opencode-call-3",
-      status: "error",
-      input: { command: "false" },
-      output: null,
-      error: "command failed",
-    });
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "shell",
+        callId: "opencode-call-3",
+        status: "error",
+        input: { command: "false" },
+        output: null,
+        error: "command failed",
+      })
+    );
 
     expect(item.status).toBe("failed");
     expect(item.error).toBe("command failed");
@@ -143,38 +169,44 @@ describe("opencode tool-call mapper", () => {
   });
 
   it("maps write/edit/search known variants into canonical detail", () => {
-    const writeItem = mapOpencodeToolCall({
-      toolName: "write_file",
-      callId: "opencode-write-1",
-      status: "completed",
-      input: { file_path: "src/new.ts", content: "const x = 1;" },
-      output: null,
-    });
+    const writeItem = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "write_file",
+        callId: "opencode-write-1",
+        status: "completed",
+        input: { file_path: "src/new.ts", content: "const x = 1;" },
+        output: null,
+      })
+    );
     expect(writeItem.detail?.type).toBe("write");
     if (writeItem.detail?.type === "write") {
       expect(writeItem.detail.filePath).toBe("src/new.ts");
     }
 
-    const editItem = mapOpencodeToolCall({
-      toolName: "apply_patch",
-      callId: "opencode-edit-1",
-      status: "completed",
-      input: { file_path: "src/index.ts", diff: "@@\\n-old\\n+new\\n" },
-      output: null,
-    });
+    const editItem = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "apply_patch",
+        callId: "opencode-edit-1",
+        status: "completed",
+        input: { file_path: "src/index.ts", diff: "@@\\n-old\\n+new\\n" },
+        output: null,
+      })
+    );
     expect(editItem.detail?.type).toBe("edit");
     if (editItem.detail?.type === "edit") {
       expect(editItem.detail.filePath).toBe("src/index.ts");
       expect(editItem.detail.unifiedDiff).toContain("@@");
     }
 
-    const searchItem = mapOpencodeToolCall({
-      toolName: "web_search",
-      callId: "opencode-search-1",
-      status: "completed",
-      input: { query: "opencode mapper" },
-      output: null,
-    });
+    const searchItem = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "web_search",
+        callId: "opencode-search-1",
+        status: "completed",
+        input: { query: "opencode mapper" },
+        output: null,
+      })
+    );
     expect(searchItem.detail).toEqual({
       type: "search",
       query: "opencode mapper",
@@ -182,13 +214,15 @@ describe("opencode tool-call mapper", () => {
   });
 
   it("maps unknown tools to unknown detail with raw payloads", () => {
-    const item = mapOpencodeToolCall({
-      toolName: "my_custom_tool",
-      callId: "opencode-call-4",
-      status: "completed",
-      input: { foo: "bar" },
-      output: { ok: true },
-    });
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "my_custom_tool",
+        callId: "opencode-call-4",
+        status: "completed",
+        input: { foo: "bar" },
+        output: { ok: true },
+      })
+    );
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
@@ -197,5 +231,17 @@ describe("opencode tool-call mapper", () => {
       input: { foo: "bar" },
       output: { ok: true },
     });
+  });
+
+  it("drops tool calls when callId is missing", () => {
+    const item = mapOpencodeToolCall({
+      toolName: "read_file",
+      callId: null,
+      status: "completed",
+      input: { file_path: "README.md" },
+      output: { content: "hello" },
+    });
+
+    expect(item).toBeNull();
   });
 });

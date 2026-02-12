@@ -91,6 +91,127 @@ function parsePathFromOutput(output: Record<string, unknown>): string | undefine
   return nonEmptyString(output.path) ?? nonEmptyString(output.file_path);
 }
 
+function parseCodexApplyPatchDirective(
+  line: string
+): { kind: "add" | "update" | "delete"; path: string } | null {
+  const trimmed = line.trim();
+  if (trimmed.startsWith("*** Add File:")) {
+    return { kind: "add", path: trimmed.replace("*** Add File:", "").trim() };
+  }
+  if (trimmed.startsWith("*** Update File:")) {
+    return { kind: "update", path: trimmed.replace("*** Update File:", "").trim() };
+  }
+  if (trimmed.startsWith("*** Delete File:")) {
+    return { kind: "delete", path: trimmed.replace("*** Delete File:", "").trim() };
+  }
+  return null;
+}
+
+function extractPatchPrimaryFilePath(patch: string): string | undefined {
+  for (const line of patch.split(/\r?\n/)) {
+    const directive = parseCodexApplyPatchDirective(line);
+    if (directive && directive.path.length > 0) {
+      return directive.path;
+    }
+  }
+  return undefined;
+}
+
+function looksLikeUnifiedDiff(text: string): boolean {
+  const normalized = text.trimStart();
+  return (
+    normalized.startsWith("diff --git") ||
+    normalized.startsWith("@@") ||
+    normalized.startsWith("--- ") ||
+    normalized.startsWith("+++ ")
+  );
+}
+
+function looksLikeCodexApplyPatch(text: string): boolean {
+  const normalized = text.trimStart();
+  if (normalized.startsWith("*** Begin Patch")) {
+    return true;
+  }
+  return text.split(/\r?\n/).some((line) => parseCodexApplyPatchDirective(line) !== null);
+}
+
+function normalizeDiffHeaderPath(rawPath: string): string {
+  return rawPath.trim().replace(/^["']+|["']+$/g, "");
+}
+
+function codexApplyPatchToUnifiedDiff(text: string): string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  let sawDiffBody = false;
+
+  for (const line of lines) {
+    const directive = parseCodexApplyPatchDirective(line);
+    if (directive) {
+      const path = normalizeDiffHeaderPath(directive.path);
+      if (path.length > 0) {
+        if (output.length > 0 && output[output.length - 1] !== "") {
+          output.push("");
+        }
+        const left = directive.kind === "add" ? "/dev/null" : `a/${path}`;
+        const right = directive.kind === "delete" ? "/dev/null" : `b/${path}`;
+        output.push(`diff --git a/${path} b/${path}`);
+        output.push(`--- ${left}`);
+        output.push(`+++ ${right}`);
+      }
+      continue;
+    }
+
+    const trimmed = line.trim();
+    if (
+      trimmed === "*** Begin Patch" ||
+      trimmed === "*** End Patch" ||
+      trimmed === "*** End of File" ||
+      trimmed.startsWith("*** Move to:")
+    ) {
+      continue;
+    }
+
+    if (
+      line.startsWith("@@") ||
+      line.startsWith("+") ||
+      line.startsWith("-") ||
+      line.startsWith(" ") ||
+      line.startsWith("\\ No newline at end of file")
+    ) {
+      output.push(line);
+      sawDiffBody = true;
+    }
+  }
+
+  if (!sawDiffBody) {
+    return text;
+  }
+
+  const normalized = output.join("\n").trim();
+  return normalized.length > 0 ? normalized : text;
+}
+
+function toUnifiedDiffIfDiffLike(value: string | undefined): string | undefined {
+  if (!value || value.length === 0) {
+    return undefined;
+  }
+  if (looksLikeUnifiedDiff(value)) {
+    return truncateDiffText(value);
+  }
+  if (looksLikeCodexApplyPatch(value)) {
+    return truncateDiffText(codexApplyPatchToUnifiedDiff(value));
+  }
+  return undefined;
+}
+
+function toPlainEditTextIfNotDiff(value: string | undefined): string | undefined {
+  const text = nonEmptyString(value);
+  if (!text) {
+    return undefined;
+  }
+  return toUnifiedDiffIfDiffLike(text) ? undefined : text;
+}
+
 function extractReadOutputContent(value: unknown): string | undefined {
   if (typeof value === "string") {
     return nonEmptyString(value);
@@ -278,22 +399,31 @@ function parseEditDetail(
   cwd: string | null | undefined
 ): ToolCallDetail | undefined {
   const parsedInput = z
-    .object({
-      path: z.string().optional(),
-      file_path: z.string().optional(),
-      old_string: z.string().optional(),
-      new_string: z.string().optional(),
-      content: z.string().optional(),
-      patch: z.string().optional(),
-      diff: z.string().optional(),
-    })
-    .passthrough()
+    .union([
+      z.string().transform((text) => ({ kind: "string" as const, value: text })),
+      z
+        .object({
+          path: z.string().optional(),
+          file_path: z.string().optional(),
+          old_string: z.string().optional(),
+          new_string: z.string().optional(),
+          content: z.string().optional(),
+          patch: z.string().optional(),
+          diff: z.string().optional(),
+        })
+        .passthrough()
+        .transform((value) => ({ kind: "object" as const, value })),
+    ])
     .safeParse(input ?? {});
   if (!parsedInput.success) {
     return undefined;
   }
 
-  const filePath = normalizeDetailPath(parsePathFromInput(parsedInput.data), cwd);
+  const inputPath =
+    parsedInput.data.kind === "object"
+      ? parsePathFromInput(parsedInput.data.value)
+      : extractPatchPrimaryFilePath(parsedInput.data.value);
+  const filePath = normalizeDetailPath(inputPath, cwd);
   if (!filePath) {
     return undefined;
   }
@@ -308,22 +438,47 @@ function parseEditDetail(
     .passthrough()
     .safeParse(output ?? {});
 
-  const oldString = nonEmptyString(parsedInput.data.old_string);
+  const oldString =
+    parsedInput.data.kind === "object"
+      ? nonEmptyString(parsedInput.data.value.old_string)
+      : undefined;
+  const inputPatchText =
+    parsedInput.data.kind === "object"
+      ? nonEmptyString(parsedInput.data.value.patch) ??
+        nonEmptyString(parsedInput.data.value.diff)
+      : nonEmptyString(parsedInput.data.value);
+  const inputContentText =
+    parsedInput.data.kind === "object"
+      ? nonEmptyString(parsedInput.data.value.content)
+      : undefined;
+  const outputPatchText = parsedOutput.success
+    ? nonEmptyString(parsedOutput.data.patch) ??
+      nonEmptyString(parsedOutput.data.diff)
+    : undefined;
+  const outputContentText = parsedOutput.success
+    ? nonEmptyString(parsedOutput.data.content)
+    : undefined;
+  const outputNewString = parsedOutput.success
+    ? nonEmptyString(parsedOutput.data.new_string)
+    : undefined;
+
   const newString =
-    nonEmptyString(parsedInput.data.new_string) ??
-    nonEmptyString(parsedInput.data.content) ??
-    (parsedOutput.success
-      ? nonEmptyString(parsedOutput.data.new_string) ??
-        nonEmptyString(parsedOutput.data.content)
-      : undefined);
-  const unifiedDiff = truncateDiffText(
-    nonEmptyString(parsedInput.data.patch) ??
-      nonEmptyString(parsedInput.data.diff) ??
-      (parsedOutput.success
-        ? nonEmptyString(parsedOutput.data.patch) ??
-          nonEmptyString(parsedOutput.data.diff)
-        : undefined)
-  );
+    (parsedInput.data.kind === "object"
+      ? nonEmptyString(parsedInput.data.value.new_string)
+      : undefined) ??
+    toPlainEditTextIfNotDiff(inputContentText) ??
+    outputNewString ??
+    toPlainEditTextIfNotDiff(outputContentText);
+  const unifiedDiff =
+    toUnifiedDiffIfDiffLike(inputPatchText) ??
+    toUnifiedDiffIfDiffLike(inputContentText) ??
+    toUnifiedDiffIfDiffLike(outputPatchText) ??
+    toUnifiedDiffIfDiffLike(outputContentText) ??
+    toUnifiedDiffIfDiffLike(outputNewString);
+  const hasRenderableContent = !!oldString || !!newString || !!unifiedDiff;
+  if (output !== null && !hasRenderableContent) {
+    return undefined;
+  }
 
   return {
     type: "edit",
