@@ -982,6 +982,9 @@ function mapCodexExecNotificationToToolCall(params: {
       : null,
     cwd: params.cwd ?? null,
   });
+  if (!mapped) {
+    return null;
+  }
   return params.running ? toRunningToolCall(mapped) : mapped;
 }
 
@@ -993,7 +996,7 @@ function mapCodexPatchNotificationToToolCall(params: {
   stderr?: string | null;
   success?: boolean | null;
   running: boolean;
-}): ToolCallTimelineItem {
+}): ToolCallTimelineItem | null {
   const files = parseCodexPatchChanges(params.changes);
   const firstPath = files[0]?.path;
   const firstPatchText = files
@@ -1038,6 +1041,9 @@ function mapCodexPatchNotificationToToolCall(params: {
         : { message: params.stderr?.trim() || "Patch apply failed" },
     cwd: params.cwd ?? null,
   });
+  if (!mapped) {
+    return null;
+  }
   return params.running ? toRunningToolCall(mapped) : mapped;
 }
 
@@ -2565,11 +2571,13 @@ class CodexAppServerAgentSession implements AgentSession {
         cwd: this.config.cwd ?? null,
         running: true,
       });
-      this.warnOnIncompleteEditToolCall(timelineItem, "patch_apply_started", {
-        callId: parsed.callId,
-        changes: parsed.changes,
-      });
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      if (timelineItem) {
+        this.warnOnIncompleteEditToolCall(timelineItem, "patch_apply_started", {
+          callId: parsed.callId,
+          changes: parsed.changes,
+        });
+        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      }
       return;
     }
 
@@ -2587,12 +2595,14 @@ class CodexAppServerAgentSession implements AgentSession {
         success: parsed.success,
         running: false,
       });
-      this.warnOnIncompleteEditToolCall(timelineItem, "patch_apply_completed", {
-        callId: parsed.callId,
-        changes: parsed.changes,
-        stdout: parsed.stdout,
-      });
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      if (timelineItem) {
+        this.warnOnIncompleteEditToolCall(timelineItem, "patch_apply_completed", {
+          callId: parsed.callId,
+          changes: parsed.changes,
+          stdout: parsed.stdout,
+        });
+        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      }
       return;
     }
 

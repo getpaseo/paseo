@@ -1,5 +1,14 @@
 import type { ComponentType } from "react";
-import { Bot, Brain, Eye, Pencil, Search, SquareTerminal, Wrench } from "lucide-react-native";
+import {
+  Bot,
+  Brain,
+  Eye,
+  MicVocal,
+  Pencil,
+  Search,
+  SquareTerminal,
+  Wrench,
+} from "lucide-react-native";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 
 export type ToolCallIconComponent = ComponentType<{ size?: number; color?: string }>;
@@ -19,6 +28,9 @@ export function resolveToolCallIcon(toolName: string, detail?: ToolCallDetail): 
   // Thoughts are rendered through ToolCall with unknown detail payloads.
   if (lowerName === "thinking" && (!detail || detail.type === "unknown")) {
     return Brain;
+  }
+  if (lowerName === "speak") {
+    return MicVocal;
   }
 
   if (detail) {

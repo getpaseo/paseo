@@ -1300,16 +1300,21 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.activeSidechains.set(parentToolUseId, toolName);
 
+    const toolCall = mapClaudeRunningToolCall({
+      name: "Task",
+      callId: parentToolUseId,
+      input: null,
+      output: null,
+      metadata: { subAgentActivity: toolName },
+    });
+    if (!toolCall) {
+      return [];
+    }
+
     return [
       {
         type: "timeline",
-        item: mapClaudeRunningToolCall({
-          name: "Task",
-          callId: parentToolUseId,
-          input: null,
-          output: null,
-          metadata: { subAgentActivity: toolName },
-        }),
+        item: toolCall,
         provider: "claude",
       },
     ];
@@ -1497,14 +1502,14 @@ class ClaudeAgentSession implements AgentSession {
     if (toolName === "ExitPlanMode" && typeof input.plan === "string") {
       metadata.planText = input.plan;
     }
-    const detail =
+    const toolDetail =
       kind === "tool"
         ? mapClaudeRunningToolCall({
             name: toolName,
             callId: options.toolUseID ?? requestId,
             input,
             output: null,
-          }).detail
+          })?.detail
         : undefined;
 
     const request: AgentPermissionRequest = {
@@ -1513,7 +1518,7 @@ class ClaudeAgentSession implements AgentSession {
       name: toolName,
       kind,
       input,
-      detail,
+      detail: toolDetail,
       suggestions: options.suggestions?.map((suggestion) => ({ ...suggestion })),
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
@@ -1591,9 +1596,12 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private pushToolCall(
-    item: Extract<AgentTimelineItem, { type: "tool_call" }>,
+    item: Extract<AgentTimelineItem, { type: "tool_call" }> | null,
     target?: AgentTimelineItem[]
   ) {
+    if (!item) {
+      return;
+    }
     if (target) {
       target.push(item);
       return;

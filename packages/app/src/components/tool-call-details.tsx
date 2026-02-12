@@ -177,7 +177,7 @@ export function ToolCallDetailsContent({
     if (plainInputText !== null) {
       sections.push(
         <View key="unknown-plain-text" style={styles.plainTextSection}>
-          <Text selectable style={styles.scrollText}>{plainInputText}</Text>
+          <Text selectable style={styles.plainText}>{plainInputText}</Text>
         </View>
       );
     } else {
@@ -297,6 +297,13 @@ const styles = StyleSheet.create((theme) => {
   plainTextSection: {
     gap: theme.spacing[2],
     padding: theme.spacing[3],
+  },
+  plainText: {
+    fontFamily: Fonts.sans,
+    fontSize: theme.fontSize.base,
+    color: theme.colors.foreground,
+    lineHeight: 22,
+    overflowWrap: "anywhere",
   },
   sectionTitle: {
     color: theme.colors.foregroundMuted,

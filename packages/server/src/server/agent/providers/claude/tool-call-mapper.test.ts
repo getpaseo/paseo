@@ -6,14 +6,24 @@ import {
   mapClaudeRunningToolCall,
 } from "./tool-call-mapper.js";
 
+function expectMapped<T>(item: T | null): T {
+  expect(item).toBeTruthy();
+  if (!item) {
+    throw new Error("Expected mapped tool call");
+  }
+  return item;
+}
+
 describe("claude tool-call mapper", () => {
   it("maps running shell calls with canonical fields", () => {
-    const item = mapClaudeRunningToolCall({
-      callId: "claude-call-1",
-      name: "Bash",
-      input: { command: "pwd", cwd: "/tmp/repo" },
-      output: null,
-    });
+    const item = expectMapped(
+      mapClaudeRunningToolCall({
+        callId: "claude-call-1",
+        name: "Bash",
+        input: { command: "pwd", cwd: "/tmp/repo" },
+        output: null,
+      })
+    );
 
     expect(item.type).toBe("tool_call");
     expect(item.status).toBe("running");
@@ -27,45 +37,53 @@ describe("claude tool-call mapper", () => {
   });
 
   it("maps running known tool variants with detail for early summaries", () => {
-    const readItem = mapClaudeRunningToolCall({
-      callId: "claude-running-read",
-      name: "read_file",
-      input: { file_path: "README.md" },
-      output: null,
-    });
+    const readItem = expectMapped(
+      mapClaudeRunningToolCall({
+        callId: "claude-running-read",
+        name: "read_file",
+        input: { file_path: "README.md" },
+        output: null,
+      })
+    );
     expect(readItem.detail).toEqual({
       type: "read",
       filePath: "README.md",
     });
 
-    const writeItem = mapClaudeRunningToolCall({
-      callId: "claude-running-write",
-      name: "write_file",
-      input: { file_path: "src/new.ts" },
-      output: null,
-    });
+    const writeItem = expectMapped(
+      mapClaudeRunningToolCall({
+        callId: "claude-running-write",
+        name: "write_file",
+        input: { file_path: "src/new.ts" },
+        output: null,
+      })
+    );
     expect(writeItem.detail).toEqual({
       type: "write",
       filePath: "src/new.ts",
     });
 
-    const editItem = mapClaudeRunningToolCall({
-      callId: "claude-running-edit",
-      name: "apply_patch",
-      input: { file_path: "src/index.ts" },
-      output: null,
-    });
+    const editItem = expectMapped(
+      mapClaudeRunningToolCall({
+        callId: "claude-running-edit",
+        name: "apply_patch",
+        input: { file_path: "src/index.ts" },
+        output: null,
+      })
+    );
     expect(editItem.detail).toEqual({
       type: "edit",
       filePath: "src/index.ts",
     });
 
-    const searchItem = mapClaudeRunningToolCall({
-      callId: "claude-running-search",
-      name: "web_search",
-      input: { query: "tool call mapping" },
-      output: null,
-    });
+    const searchItem = expectMapped(
+      mapClaudeRunningToolCall({
+        callId: "claude-running-search",
+        name: "web_search",
+        input: { query: "tool call mapping" },
+        output: null,
+      })
+    );
     expect(searchItem.detail).toEqual({
       type: "search",
       query: "tool call mapping",
@@ -73,12 +91,14 @@ describe("claude tool-call mapper", () => {
   });
 
   it("maps completed read calls with detail enrichment", () => {
-    const item = mapClaudeCompletedToolCall({
-      callId: "claude-call-2",
-      name: "read_file",
-      input: { file_path: "README.md" },
-      output: { content: "hello" },
-    });
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-call-2",
+        name: "read_file",
+        input: { file_path: "README.md" },
+        output: { content: "hello" },
+      })
+    );
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
@@ -91,33 +111,37 @@ describe("claude tool-call mapper", () => {
   });
 
   it("preserves read content from array/object output variants", () => {
-    const arrayContent = mapClaudeCompletedToolCall({
-      callId: "claude-read-array",
-      name: "read_file",
-      input: { file_path: "README.md" },
-      output: {
-        content: [
-          { type: "output_text", text: "alpha" },
-          { type: "output_text", content: "beta" },
-        ],
-      },
-    });
+    const arrayContent = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-read-array",
+        name: "read_file",
+        input: { file_path: "README.md" },
+        output: {
+          content: [
+            { type: "output_text", text: "alpha" },
+            { type: "output_text", content: "beta" },
+          ],
+        },
+      })
+    );
 
     expect(arrayContent.detail?.type).toBe("read");
     if (arrayContent.detail?.type === "read") {
       expect(arrayContent.detail.content).toBe("alpha\nbeta");
     }
 
-    const objectContent = mapClaudeCompletedToolCall({
-      callId: "claude-read-object",
-      name: "read_file",
-      input: { file_path: "README.md" },
-      output: {
-        structured_content: {
-          content: { type: "output_text", text: "gamma" },
+    const objectContent = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-read-object",
+        name: "read_file",
+        input: { file_path: "README.md" },
+        output: {
+          structured_content: {
+            content: { type: "output_text", text: "gamma" },
+          },
         },
-      },
-    });
+      })
+    );
 
     expect(objectContent.detail?.type).toBe("read");
     if (objectContent.detail?.type === "read") {
@@ -126,13 +150,15 @@ describe("claude tool-call mapper", () => {
   });
 
   it("maps failed calls with required error", () => {
-    const item = mapClaudeFailedToolCall({
-      callId: "claude-call-3",
-      name: "shell",
-      input: { command: "false" },
-      output: null,
-      error: { message: "Command failed" },
-    });
+    const item = expectMapped(
+      mapClaudeFailedToolCall({
+        callId: "claude-call-3",
+        name: "shell",
+        input: { command: "false" },
+        output: null,
+        error: { message: "Command failed" },
+      })
+    );
 
     expect(item.status).toBe("failed");
     expect(item.error).toEqual({ message: "Command failed" });
@@ -140,35 +166,41 @@ describe("claude tool-call mapper", () => {
   });
 
   it("maps write/edit/search known shapes with distinct detail types", () => {
-    const writeItem = mapClaudeCompletedToolCall({
-      callId: "claude-write-1",
-      name: "write_file",
-      input: { file_path: "src/new.ts", content: "export const x = 1;" },
-      output: null,
-    });
+    const writeItem = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-write-1",
+        name: "write_file",
+        input: { file_path: "src/new.ts", content: "export const x = 1;" },
+        output: null,
+      })
+    );
     expect(writeItem.detail?.type).toBe("write");
     if (writeItem.detail?.type === "write") {
       expect(writeItem.detail.filePath).toBe("src/new.ts");
     }
 
-    const editItem = mapClaudeCompletedToolCall({
-      callId: "claude-edit-1",
-      name: "apply_patch",
-      input: { file_path: "src/index.ts", patch: "@@\\n-old\\n+new\\n" },
-      output: null,
-    });
+    const editItem = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-edit-1",
+        name: "apply_patch",
+        input: { file_path: "src/index.ts", patch: "@@\\n-old\\n+new\\n" },
+        output: null,
+      })
+    );
     expect(editItem.detail?.type).toBe("edit");
     if (editItem.detail?.type === "edit") {
       expect(editItem.detail.filePath).toBe("src/index.ts");
       expect(editItem.detail.unifiedDiff).toContain("@@");
     }
 
-    const searchItem = mapClaudeCompletedToolCall({
-      callId: "claude-search-1",
-      name: "web_search",
-      input: { query: "tool call mapping" },
-      output: null,
-    });
+    const searchItem = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-search-1",
+        name: "web_search",
+        input: { query: "tool call mapping" },
+        output: null,
+      })
+    );
     expect(searchItem.detail).toEqual({
       type: "search",
       query: "tool call mapping",
@@ -176,12 +208,14 @@ describe("claude tool-call mapper", () => {
   });
 
   it("maps unknown tools to unknown detail with raw payloads", () => {
-    const item = mapClaudeCompletedToolCall({
-      callId: "claude-call-4",
-      name: "my_custom_tool",
-      input: { foo: "bar" },
-      output: { ok: true },
-    });
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-call-4",
+        name: "my_custom_tool",
+        input: { foo: "bar" },
+        output: { ok: true },
+      })
+    );
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
@@ -190,5 +224,34 @@ describe("claude tool-call mapper", () => {
       input: { foo: "bar" },
       output: { ok: true },
     });
+  });
+
+  it("normalizes claude speak tool names through schema transforms", () => {
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-speak-1",
+        name: "mcp__paseo__speak",
+        input: { text: "Voice response from Claude." },
+        output: { ok: true },
+      })
+    );
+
+    expect(item.name).toBe("speak");
+    expect(item.detail).toEqual({
+      type: "unknown",
+      input: "Voice response from Claude.",
+      output: null,
+    });
+  });
+
+  it("drops tool calls when callId is missing", () => {
+    const item = mapClaudeCompletedToolCall({
+      callId: null,
+      name: "read_file",
+      input: { file_path: "README.md" },
+      output: { content: "hello" },
+    });
+
+    expect(item).toBeNull();
   });
 });

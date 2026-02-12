@@ -503,14 +503,15 @@ export async function parseRolloutFile(
     record.kind === "timeline"
       ? [record.item]
       : record.kind === "call"
-        ? [
-            mapCodexRolloutToolCall({
+        ? (() => {
+            const mapped = mapCodexRolloutToolCall({
               callId: record.callId ?? null,
               name: record.name,
               input: record.input ?? null,
               output: record.callId ? outputsByCallId.get(record.callId) ?? null : null,
-            }),
-          ]
+            });
+            return mapped ? [mapped] : [];
+          })()
         : []
   );
   return dedupeMirroredTextTimelineItems(timeline);

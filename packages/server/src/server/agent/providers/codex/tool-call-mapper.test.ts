@@ -5,6 +5,14 @@ import {
   mapCodexToolCallFromThreadItem,
 } from "./tool-call-mapper.js";
 
+function expectMapped<T>(item: T | null): T {
+  expect(item).toBeTruthy();
+  if (!item) {
+    throw new Error("Expected mapped tool call");
+  }
+  return item;
+}
+
 describe("codex tool-call mapper", () => {
   it("maps commandExecution start into running canonical call", () => {
     const item = mapCodexToolCallFromThreadItem({
@@ -301,12 +309,14 @@ describe("codex tool-call mapper", () => {
   });
 
   it("maps unknown tools to unknown detail with raw payloads", () => {
-    const item = mapCodexRolloutToolCall({
-      callId: "codex-call-4",
-      name: "my_custom_tool",
-      input: { foo: "bar" },
-      output: { ok: true },
-    });
+    const item = expectMapped(
+      mapCodexRolloutToolCall({
+        callId: "codex-call-4",
+        name: "my_custom_tool",
+        input: { foo: "bar" },
+        output: { ok: true },
+      })
+    );
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
@@ -327,13 +337,15 @@ describe("codex tool-call mapper", () => {
       "+new",
       "*** End Patch",
     ].join("\n");
-    const item = mapCodexRolloutToolCall({
-      callId: "codex-call-apply",
-      name: "apply_patch",
-      input: patch,
-      output: '{"output":"Success. Updated the following files:\\nM src/index.ts\\n"}',
-      cwd: "/tmp/repo",
-    });
+    const item = expectMapped(
+      mapCodexRolloutToolCall({
+        callId: "codex-call-apply",
+        name: "apply_patch",
+        input: patch,
+        output: '{"output":"Success. Updated the following files:\\nM src/index.ts\\n"}',
+        cwd: "/tmp/repo",
+      })
+    );
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
@@ -359,16 +371,18 @@ describe("codex tool-call mapper", () => {
       "*** End Patch",
     ].join("\n");
 
-    const item = mapCodexRolloutToolCall({
-      callId: "codex-call-apply-object",
-      name: "apply_patch",
-      input: {
-        path: "/tmp/repo/src/object.ts",
-        content: patch,
-      },
-      output: null,
-      cwd: "/tmp/repo",
-    });
+    const item = expectMapped(
+      mapCodexRolloutToolCall({
+        callId: "codex-call-apply-object",
+        name: "apply_patch",
+        input: {
+          path: "/tmp/repo/src/object.ts",
+          content: patch,
+        },
+        output: null,
+        cwd: "/tmp/repo",
+      })
+    );
 
     expect(item.detail.type).toBe("edit");
     if (item.detail.type === "edit") {
@@ -484,17 +498,80 @@ describe("codex tool-call mapper", () => {
   });
 
   it("maps path-only apply_patch rollout payloads to unknown detail instead of empty edit detail", () => {
-    const item = mapCodexRolloutToolCall({
-      callId: "codex-call-apply-path-only",
-      name: "apply_patch",
-      input: { path: "/tmp/repo/src/path-only-rollout.ts" },
-      output: { files: [{ path: "/tmp/repo/src/path-only-rollout.ts", kind: "modify" }] },
-      cwd: "/tmp/repo",
-    });
+    const item = expectMapped(
+      mapCodexRolloutToolCall({
+        callId: "codex-call-apply-path-only",
+        name: "apply_patch",
+        input: { path: "/tmp/repo/src/path-only-rollout.ts" },
+        output: { files: [{ path: "/tmp/repo/src/path-only-rollout.ts", kind: "modify" }] },
+        cwd: "/tmp/repo",
+      })
+    );
 
     expect(item.detail.type).toBe("unknown");
     if (item.detail.type === "unknown") {
       expect(item.detail.input).toEqual({ path: "/tmp/repo/src/path-only-rollout.ts" });
     }
+  });
+
+  it("normalizes namespaced speak mcp calls and extracts spoken text", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "mcpToolCall",
+      id: "codex-speak-thread-1",
+      status: "completed",
+      server: "paseo_voice",
+      tool: "speak",
+      arguments: { text: "Voice response from Codex." },
+      result: { ok: true },
+    });
+
+    expect(item).toBeTruthy();
+    expect(item?.name).toBe("speak");
+    expect(item?.detail).toEqual({
+      type: "unknown",
+      input: "Voice response from Codex.",
+      output: null,
+    });
+  });
+
+  it("normalizes exact codex speak rollout names and extracts spoken text", () => {
+    const item = expectMapped(
+      mapCodexRolloutToolCall({
+        callId: "codex-speak-rollout-1",
+        name: "mcp__paseo_voice__speak",
+        input: { text: "Rollout speech text." },
+        output: { ok: true },
+      })
+    );
+
+    expect(item.name).toBe("speak");
+    expect(item.detail).toEqual({
+      type: "unknown",
+      input: "Rollout speech text.",
+      output: null,
+    });
+  });
+
+  it("drops rollout tool calls when callId is missing", () => {
+    const item = mapCodexRolloutToolCall({
+      callId: null,
+      name: "read_file",
+      input: { path: "/tmp/repo/README.md" },
+      output: { content: "hello" },
+    });
+
+    expect(item).toBeNull();
+  });
+
+  it("drops thread mcp tool calls when id is missing", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "mcpToolCall",
+      status: "completed",
+      tool: "read_file",
+      arguments: { path: "/tmp/repo/README.md" },
+      result: { content: "hello" },
+    });
+
+    expect(item).toBeNull();
   });
 });

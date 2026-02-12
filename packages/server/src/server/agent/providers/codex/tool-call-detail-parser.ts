@@ -3,22 +3,11 @@ import { z } from "zod";
 import type { ToolCallDetail } from "../../agent-sdk-types.js";
 import { stripCwdPrefix } from "../../../../shared/path-utils.js";
 import {
-  ToolEditInputSchema,
-  ToolEditOutputSchema,
-  ToolReadInputSchema,
-  ToolReadOutputWithPathSchema,
-  ToolSearchInputSchema,
-  ToolShellInputSchema,
-  ToolShellOutputSchema,
-  ToolWriteInputSchema,
-  ToolWriteOutputSchema,
-  toEditToolDetail,
-  toReadToolDetail,
-  toSearchToolDetail,
-  toShellToolDetail,
-  toWriteToolDetail,
-  toolDetailBranchByNameWithCwd,
-} from "../tool-call-detail-primitives.js";
+  extractCodexShellOutput,
+  flattenReadContent,
+  nonEmptyString,
+  truncateDiffText,
+} from "../tool-call-mapper-utils.js";
 
 export type CodexToolDetailContext = {
   cwd?: string | null;
@@ -42,6 +31,17 @@ export const CODEX_BUILTIN_TOOL_NAMES = new Set([
   "search",
 ]);
 
+const StringOrStringArraySchema = z.union([z.string(), z.array(z.string())]);
+
+const CodexToolEnvelopeSchema = z
+  .object({
+    name: z.string().min(1),
+    input: z.unknown().nullable(),
+    output: z.unknown().nullable(),
+    cwd: z.string().nullable().optional(),
+  })
+  .passthrough();
+
 export function normalizeCodexFilePath(
   filePath: string,
   cwd: string | null | undefined
@@ -56,77 +56,352 @@ export function normalizeCodexFilePath(
   return filePath;
 }
 
-function normalizePathForCwd(cwd: string | null): (filePath: string) => string | undefined {
-  return (filePath) => normalizeCodexFilePath(filePath, cwd);
+function normalizeDetailPath(
+  filePath: string | undefined,
+  cwd: string | null | undefined
+): string | undefined {
+  if (typeof filePath !== "string") {
+    return undefined;
+  }
+  const trimmed = filePath.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return normalizeCodexFilePath(trimmed, cwd);
 }
 
-const CodexKnownToolDetailSchema = z.union([
-  toolDetailBranchByNameWithCwd("Bash", ToolShellInputSchema, ToolShellOutputSchema, (input, output) =>
-    toShellToolDetail(input, output)
-  ),
-  toolDetailBranchByNameWithCwd("shell", ToolShellInputSchema, ToolShellOutputSchema, (input, output) =>
-    toShellToolDetail(input, output)
-  ),
-  toolDetailBranchByNameWithCwd("bash", ToolShellInputSchema, ToolShellOutputSchema, (input, output) =>
-    toShellToolDetail(input, output)
-  ),
-  toolDetailBranchByNameWithCwd("exec", ToolShellInputSchema, ToolShellOutputSchema, (input, output) =>
-    toShellToolDetail(input, output)
-  ),
-  toolDetailBranchByNameWithCwd(
-    "exec_command",
-    ToolShellInputSchema,
-    ToolShellOutputSchema,
-    (input, output) => toShellToolDetail(input, output)
-  ),
-  toolDetailBranchByNameWithCwd("command", ToolShellInputSchema, ToolShellOutputSchema, (input, output) =>
-    toShellToolDetail(input, output)
-  ),
-  toolDetailBranchByNameWithCwd("read", ToolReadInputSchema, ToolReadOutputWithPathSchema, (input, output, cwd) =>
-    toReadToolDetail(input, output, { normalizePath: normalizePathForCwd(cwd) })
-  ),
-  toolDetailBranchByNameWithCwd(
-    "read_file",
-    ToolReadInputSchema,
-    ToolReadOutputWithPathSchema,
-    (input, output, cwd) => toReadToolDetail(input, output, { normalizePath: normalizePathForCwd(cwd) })
-  ),
-  toolDetailBranchByNameWithCwd("write", ToolWriteInputSchema, ToolWriteOutputSchema, (input, output, cwd) =>
-    toWriteToolDetail(input, output, { normalizePath: normalizePathForCwd(cwd) })
-  ),
-  toolDetailBranchByNameWithCwd(
-    "write_file",
-    ToolWriteInputSchema,
-    ToolWriteOutputSchema,
-    (input, output, cwd) => toWriteToolDetail(input, output, { normalizePath: normalizePathForCwd(cwd) })
-  ),
-  toolDetailBranchByNameWithCwd(
-    "create_file",
-    ToolWriteInputSchema,
-    ToolWriteOutputSchema,
-    (input, output, cwd) => toWriteToolDetail(input, output, { normalizePath: normalizePathForCwd(cwd) })
-  ),
-  toolDetailBranchByNameWithCwd("edit", ToolEditInputSchema, ToolEditOutputSchema, (input, output, cwd) =>
-    toEditToolDetail(input, output, { normalizePath: normalizePathForCwd(cwd) })
-  ),
-  toolDetailBranchByNameWithCwd(
-    "apply_patch",
-    ToolEditInputSchema,
-    ToolEditOutputSchema,
-    (input, output, cwd) => toEditToolDetail(input, output, { normalizePath: normalizePathForCwd(cwd) })
-  ),
-  toolDetailBranchByNameWithCwd(
-    "apply_diff",
-    ToolEditInputSchema,
-    ToolEditOutputSchema,
-    (input, output, cwd) => toEditToolDetail(input, output, { normalizePath: normalizePathForCwd(cwd) })
-  ),
-  toolDetailBranchByNameWithCwd("search", ToolSearchInputSchema, z.unknown(), (input) =>
-    toSearchToolDetail(input)
-  ),
-  toolDetailBranchByNameWithCwd("web_search", ToolSearchInputSchema, z.unknown(), (input) =>
-    toSearchToolDetail(input)
-  ),
+function commandFromValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return nonEmptyString(value);
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const tokens = value
+    .filter((token): token is string => typeof token === "string" && token.trim().length > 0)
+    .map((token) => token.trim());
+  return tokens.length > 0 ? tokens.join(" ") : undefined;
+}
+
+function parsePathFromInput(input: Record<string, unknown>): string | undefined {
+  return nonEmptyString(input.path) ?? nonEmptyString(input.file_path);
+}
+
+function parsePathFromOutput(output: Record<string, unknown>): string | undefined {
+  return nonEmptyString(output.path) ?? nonEmptyString(output.file_path);
+}
+
+function extractReadOutputContent(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return nonEmptyString(value);
+  }
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const output = value as Record<string, unknown>;
+  const direct =
+    flattenReadContent(output.content as any) ??
+    flattenReadContent(output.text as any) ??
+    flattenReadContent(output.output as any);
+  if (direct) {
+    return direct;
+  }
+
+  const structured = output.structured_content;
+  if (structured && typeof structured === "object") {
+    const structuredObj = structured as Record<string, unknown>;
+    return (
+      flattenReadContent(structuredObj.content as any) ??
+      flattenReadContent(structuredObj.text as any) ??
+      flattenReadContent(structuredObj.output as any)
+    );
+  }
+
+  return undefined;
+}
+
+function parseShellDetail(
+  input: unknown,
+  output: unknown
+): ToolCallDetail | undefined {
+  const parsedInput = z
+    .object({
+      command: StringOrStringArraySchema.optional(),
+      cmd: StringOrStringArraySchema.optional(),
+      cwd: z.string().optional(),
+      directory: z.string().optional(),
+    })
+    .passthrough()
+    .safeParse(input ?? {});
+
+  const command = commandFromValue(
+    parsedInput.success ? (parsedInput.data.command ?? parsedInput.data.cmd) : undefined
+  );
+  if (!command) {
+    return undefined;
+  }
+
+  const parsedOutput = z
+    .union([
+      z.string().transform((text) => ({ output: text, exitCode: undefined as number | null | undefined })),
+      z
+        .object({
+          output: z.string().optional(),
+          text: z.string().optional(),
+          content: z.string().optional(),
+          aggregatedOutput: z.string().optional(),
+          aggregated_output: z.string().optional(),
+          exitCode: z.number().nullable().optional(),
+          exit_code: z.number().nullable().optional(),
+        })
+        .passthrough()
+        .transform((value) => ({
+          output:
+            nonEmptyString(value.output) ??
+            nonEmptyString(value.text) ??
+            nonEmptyString(value.content) ??
+            nonEmptyString(value.aggregatedOutput) ??
+            nonEmptyString(value.aggregated_output),
+          exitCode: value.exitCode ?? value.exit_code,
+        })),
+    ])
+    .safeParse(output ?? null);
+
+  const shellOutput =
+    parsedOutput.success && parsedOutput.data.output
+      ? extractCodexShellOutput(parsedOutput.data.output)
+      : undefined;
+
+  return {
+    type: "shell",
+    command,
+    ...(parsedInput.success
+      ? {
+          ...(nonEmptyString(parsedInput.data.cwd) ? { cwd: parsedInput.data.cwd } : {}),
+          ...(nonEmptyString(parsedInput.data.directory) && !nonEmptyString(parsedInput.data.cwd)
+            ? { cwd: parsedInput.data.directory }
+            : {}),
+        }
+      : {}),
+    ...(shellOutput ? { output: shellOutput } : {}),
+    ...(parsedOutput.success && parsedOutput.data.exitCode !== undefined
+      ? { exitCode: parsedOutput.data.exitCode }
+      : {}),
+  };
+}
+
+function parseReadDetail(
+  input: unknown,
+  output: unknown,
+  cwd: string | null | undefined
+): ToolCallDetail | undefined {
+  const parsedInput = z.record(z.unknown()).safeParse(input ?? {});
+  const parsedOutput = z.record(z.unknown()).safeParse(output ?? {});
+
+  const filePath = normalizeDetailPath(
+    parsedInput.success ? parsePathFromInput(parsedInput.data) : undefined,
+    cwd
+  ) ??
+    normalizeDetailPath(
+      parsedOutput.success ? parsePathFromOutput(parsedOutput.data) : undefined,
+      cwd
+    );
+
+  if (!filePath) {
+    return undefined;
+  }
+
+  const offset =
+    parsedInput.success && typeof parsedInput.data.offset === "number"
+      ? parsedInput.data.offset
+      : undefined;
+  const limit =
+    parsedInput.success && typeof parsedInput.data.limit === "number"
+      ? parsedInput.data.limit
+      : undefined;
+
+  const content = extractReadOutputContent(output);
+  return {
+    type: "read",
+    filePath,
+    ...(content ? { content } : {}),
+    ...(offset !== undefined ? { offset } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  };
+}
+
+function parseWriteDetail(
+  input: unknown,
+  output: unknown,
+  cwd: string | null | undefined
+): ToolCallDetail | undefined {
+  const parsedInput = z.record(z.unknown()).safeParse(input ?? {});
+  if (!parsedInput.success) {
+    return undefined;
+  }
+
+  const filePath = normalizeDetailPath(parsePathFromInput(parsedInput.data), cwd);
+  if (!filePath) {
+    return undefined;
+  }
+
+  const parsedOutput = z.record(z.unknown()).safeParse(output ?? {});
+  const content =
+    nonEmptyString(parsedInput.data.content) ??
+    nonEmptyString(parsedInput.data.new_content) ??
+    nonEmptyString(parsedInput.data.newContent) ??
+    (parsedOutput.success
+      ? nonEmptyString(parsedOutput.data.content) ??
+        nonEmptyString(parsedOutput.data.new_content) ??
+        nonEmptyString(parsedOutput.data.newContent)
+      : undefined);
+
+  return {
+    type: "write",
+    filePath,
+    ...(content ? { content } : {}),
+  };
+}
+
+function parseEditDetail(
+  input: unknown,
+  output: unknown,
+  cwd: string | null | undefined
+): ToolCallDetail | undefined {
+  const parsedInput = z.record(z.unknown()).safeParse(input ?? {});
+  if (!parsedInput.success) {
+    return undefined;
+  }
+
+  const filePath = normalizeDetailPath(parsePathFromInput(parsedInput.data), cwd);
+  if (!filePath) {
+    return undefined;
+  }
+
+  const parsedOutput = z.record(z.unknown()).safeParse(output ?? {});
+
+  const oldString =
+    nonEmptyString(parsedInput.data.old_string) ??
+    nonEmptyString(parsedInput.data.old_str) ??
+    nonEmptyString(parsedInput.data.old_content) ??
+    nonEmptyString(parsedInput.data.oldContent);
+  const newString =
+    nonEmptyString(parsedInput.data.new_string) ??
+    nonEmptyString(parsedInput.data.new_str) ??
+    nonEmptyString(parsedInput.data.new_content) ??
+    nonEmptyString(parsedInput.data.newContent) ??
+    nonEmptyString(parsedInput.data.content) ??
+    (parsedOutput.success
+      ? nonEmptyString(parsedOutput.data.new_content) ??
+        nonEmptyString(parsedOutput.data.newContent) ??
+        nonEmptyString(parsedOutput.data.content)
+      : undefined);
+  const unifiedDiff = truncateDiffText(
+    nonEmptyString(parsedInput.data.patch) ??
+      nonEmptyString(parsedInput.data.diff) ??
+      nonEmptyString(parsedInput.data.unified_diff) ??
+      nonEmptyString(parsedInput.data.unifiedDiff) ??
+      (parsedOutput.success
+        ? nonEmptyString(parsedOutput.data.patch) ??
+          nonEmptyString(parsedOutput.data.diff) ??
+          nonEmptyString(parsedOutput.data.unified_diff) ??
+          nonEmptyString(parsedOutput.data.unifiedDiff)
+        : undefined)
+  );
+
+  return {
+    type: "edit",
+    filePath,
+    ...(oldString ? { oldString } : {}),
+    ...(newString ? { newString } : {}),
+    ...(unifiedDiff ? { unifiedDiff } : {}),
+  };
+}
+
+function parseSearchDetail(input: unknown): ToolCallDetail | undefined {
+  const parsed = z.object({ query: z.string() }).passthrough().safeParse(input ?? {});
+  if (!parsed.success || !parsed.data.query) {
+    return undefined;
+  }
+  return {
+    type: "search",
+    query: parsed.data.query,
+  };
+}
+
+function parseSpeakDetail(input: unknown): ToolCallDetail | undefined {
+  const parsed = z
+    .union([
+      z.string().transform((text) => ({ text })),
+      z.object({ text: z.string() }).passthrough(),
+    ])
+    .safeParse(input ?? null);
+  if (!parsed.success) {
+    return undefined;
+  }
+
+  const text = nonEmptyString(parsed.data.text);
+  if (!text) {
+    return undefined;
+  }
+
+  return {
+    type: "unknown",
+    input: text,
+    output: null,
+  };
+}
+
+const CodexToolDetailPass2Schema = z.union([
+  z
+    .object({
+      name: z.enum(["Bash", "shell", "bash", "exec", "exec_command", "command"]),
+      input: z.unknown().nullable(),
+      output: z.unknown().nullable(),
+      cwd: z.string().nullable().optional(),
+    })
+    .transform((value) => parseShellDetail(value.input, value.output)),
+  z
+    .object({
+      name: z.enum(["read", "read_file"]),
+      input: z.unknown().nullable(),
+      output: z.unknown().nullable(),
+      cwd: z.string().nullable().optional(),
+    })
+    .transform((value) => parseReadDetail(value.input, value.output, value.cwd ?? null)),
+  z
+    .object({
+      name: z.enum(["write", "write_file", "create_file"]),
+      input: z.unknown().nullable(),
+      output: z.unknown().nullable(),
+      cwd: z.string().nullable().optional(),
+    })
+    .transform((value) => parseWriteDetail(value.input, value.output, value.cwd ?? null)),
+  z
+    .object({
+      name: z.enum(["edit", "apply_patch", "apply_diff"]),
+      input: z.unknown().nullable(),
+      output: z.unknown().nullable(),
+      cwd: z.string().nullable().optional(),
+    })
+    .transform((value) => parseEditDetail(value.input, value.output, value.cwd ?? null)),
+  z
+    .object({
+      name: z.enum(["search", "web_search"]),
+      input: z.unknown().nullable(),
+      output: z.unknown().nullable(),
+      cwd: z.string().nullable().optional(),
+    })
+    .transform((value) => parseSearchDetail(value.input)),
+  z
+    .object({
+      name: z.literal("speak"),
+      input: z.unknown().nullable(),
+      output: z.unknown().nullable(),
+      cwd: z.string().nullable().optional(),
+    })
+    .transform((value) => parseSpeakDetail(value.input)),
 ]);
 
 export function deriveCodexToolDetail(params: {
@@ -135,18 +410,28 @@ export function deriveCodexToolDetail(params: {
   output: unknown;
   cwd?: string | null;
 }): ToolCallDetail {
-  const parsed = CodexKnownToolDetailSchema.safeParse({
+  const pass1 = CodexToolEnvelopeSchema.safeParse({
     name: params.name,
-    input: params.input,
-    output: params.output,
-    cwd: params.cwd ?? null,
-  });
-  if (parsed.success && parsed.data) {
-    return parsed.data;
-  }
-  return {
-    type: "unknown",
     input: params.input ?? null,
     output: params.output ?? null,
+    cwd: params.cwd ?? null,
+  });
+  if (!pass1.success) {
+    return {
+      type: "unknown",
+      input: params.input ?? null,
+      output: params.output ?? null,
+    };
+  }
+
+  const pass2 = CodexToolDetailPass2Schema.safeParse(pass1.data);
+  if (pass2.success && pass2.data) {
+    return pass2.data;
+  }
+
+  return {
+    type: "unknown",
+    input: pass1.data.input,
+    output: pass1.data.output,
   };
 }
