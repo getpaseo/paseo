@@ -272,6 +272,10 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontFamily: Fonts.mono,
     fontSize: 13,
   },
+  markdownCodeInlineLink: {
+    color: theme.colors.primary,
+    textDecorationLine: "underline",
+  },
   // Used in custom markdownRules for path chip styling
   pathChip: {
     backgroundColor: theme.colors.surface2,
@@ -287,6 +291,30 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: 13,
   },
 }));
+
+function getInlineCodeAutoLinkUrl(
+  markdownParser: ReturnType<typeof MarkdownIt>,
+  content: string
+): string | null {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const matches = markdownParser.linkify.match(trimmed) as
+    | Array<{ index: number; lastIndex: number; url: string }>
+    | null;
+  if (!matches || matches.length !== 1) {
+    return null;
+  }
+
+  const [match] = matches;
+  if (!match || match.index !== 0 || match.lastIndex !== trimmed.length) {
+    return null;
+  }
+
+  return match.url;
+}
 
 const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
   container: {
@@ -584,13 +612,35 @@ export const AssistantMessage = memo(function AssistantMessage({
           ? parseInlinePathToken(content)
           : null;
 
-        if (!parsed) {
+        if (parsed) {
           return (
             <Text
               key={node.key}
+              onPress={() => parsed && onInlinePathPress?.(parsed)}
+              selectable={false}
+              style={[
+                assistantMessageStylesheet.pathChip,
+                assistantMessageStylesheet.pathChipText,
+              ]}
+            >
+              {content}
+            </Text>
+          );
+        }
+
+        const inlineCodeLinkUrl = getInlineCodeAutoLinkUrl(markdownParser, content);
+        if (inlineCodeLinkUrl) {
+          return (
+            <Text
+              key={node.key}
+              accessibilityRole="link"
+              onPress={() => {
+                handleLinkPress(inlineCodeLinkUrl);
+              }}
               style={[
                 inheritedStyles,
                 assistantMessageStylesheet.markdownCodeInline,
+                assistantMessageStylesheet.markdownCodeInlineLink,
               ]}
             >
               {content}
@@ -601,11 +651,9 @@ export const AssistantMessage = memo(function AssistantMessage({
         return (
           <Text
             key={node.key}
-            onPress={() => parsed && onInlinePathPress?.(parsed)}
-            selectable={false}
             style={[
-              assistantMessageStylesheet.pathChip,
-              assistantMessageStylesheet.pathChipText,
+              inheritedStyles,
+              assistantMessageStylesheet.markdownCodeInline,
             ]}
           >
             {content}
@@ -658,7 +706,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [onInlinePathPress]);
+  }, [handleLinkPress, markdownParser, onInlinePathPress]);
 
   return (
     <View
