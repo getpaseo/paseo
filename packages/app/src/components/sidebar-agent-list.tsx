@@ -687,7 +687,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   agentItemUnselected: {
-    opacity: 0.75,
+    opacity: 1,
   },
   agentItemSelected: {
     backgroundColor: theme.colors.surface2,

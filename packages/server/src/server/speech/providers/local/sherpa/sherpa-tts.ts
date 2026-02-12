@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 
 import type { SpeechStreamResult, TextToSpeechProvider } from "../../../speech-provider.js";
 import { chunkBuffer, float32ToPcm16le } from "../../../audio.js";
-import { loadSherpaOnnx } from "./sherpa-onnx-loader.js";
+import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
 
 export type SherpaTtsPreset = "kokoro-en-v0_19" | "kitten-nano-en-v0_1-fp16";
 
@@ -37,7 +37,10 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
     this.speakerId = config.speakerId ?? 0;
     this.speed = config.speed ?? 1.0;
 
-    const sherpa = loadSherpaOnnx();
+    const sherpa = loadSherpaOnnxNode();
+    if (typeof sherpa.OfflineTts !== "function") {
+      throw new Error("sherpa-onnx-node OfflineTts is unavailable");
+    }
 
     const modelFile = config.preset === "kokoro-en-v0_19" ? "model.onnx" : "model.fp16.onnx";
     const modelPath = `${config.modelDir}/${modelFile}`;
@@ -50,30 +53,35 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
     assertFileExists(tokensPath, "TTS tokens");
     assertFileExists(dataDir, "TTS espeak-ng dataDir");
 
-    const modelConfigKey =
+    const modelConfig =
       config.preset === "kokoro-en-v0_19"
-        ? "offlineTtsKokoroModelConfig"
-        : "offlineTtsKittenModelConfig";
-
-    const modelConfig = {
-      [modelConfigKey]: {
-        model: modelPath,
-        voices: voicesPath,
-        tokens: tokensPath,
-        dataDir,
-        lengthScale: config.lengthScale ?? 1.0,
-      },
-      numThreads: config.numThreads ?? 2,
-      debug: 0,
-      provider: "cpu",
-    };
+        ? {
+            kokoro: {
+              model: modelPath,
+              voices: voicesPath,
+              tokens: tokensPath,
+              dataDir,
+              lengthScale: config.lengthScale ?? 1.0,
+            },
+          }
+        : {
+            kitten: {
+              model: modelPath,
+              voices: voicesPath,
+              tokens: tokensPath,
+              dataDir,
+              lengthScale: config.lengthScale ?? 1.0,
+            },
+          };
 
     const offlineTtsConfig = {
-      offlineTtsModelConfig: modelConfig,
+      model: modelConfig,
+      numThreads: config.numThreads ?? 2,
+      provider: "cpu",
       maxNumSentences: 1,
     };
 
-    this.tts = sherpa.createOfflineTts(offlineTtsConfig);
+    this.tts = new sherpa.OfflineTts(offlineTtsConfig);
     this.logger.info({ preset: config.preset, modelDir: config.modelDir }, "Sherpa offline TTS initialized");
   }
 
