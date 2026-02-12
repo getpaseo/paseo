@@ -1,97 +1,131 @@
-import { createContext, useCallback, useContext } from "react";
-import type { ReactNode } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  decodeOfferFragmentPayload,
-  normalizeHostPort,
-} from "@/utils/daemon-endpoints";
-import {
-  ConnectionOfferSchema,
-  type ConnectionOffer,
-} from "@server/shared/connection-offer";
+import { createContext, useCallback, useContext, useEffect, useRef } from 'react'
+import type { ReactNode } from 'react'
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { decodeOfferFragmentPayload, normalizeHostPort } from '@/utils/daemon-endpoints'
+import { probeConnection } from '@/utils/test-daemon-connection'
+import { ConnectionOfferSchema, type ConnectionOffer } from '@server/shared/connection-offer'
 
-const REGISTRY_STORAGE_KEY = "@paseo:daemon-registry";
-const DAEMON_REGISTRY_QUERY_KEY = ["daemon-registry"];
+const REGISTRY_STORAGE_KEY = '@paseo:daemon-registry'
+const DAEMON_REGISTRY_QUERY_KEY = ['daemon-registry']
+const DEFAULT_LOCALHOST_ENDPOINT = 'localhost:6767'
+const DEFAULT_LOCALHOST_BOOTSTRAP_KEY = '@paseo:default-localhost-bootstrap-v1'
+const DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS = 2500
+const E2E_STORAGE_KEY = '@paseo:e2e'
 
 export type DirectHostConnection = {
-  id: string;
-  type: "direct";
-  endpoint: string; // host:port
-};
-
-export type RelayHostConnection = {
-  id: string;
-  type: "relay";
-  relayEndpoint: string; // host:port
-  daemonPublicKeyB64: string;
-};
-
-export type HostConnection = DirectHostConnection | RelayHostConnection;
-
-export type HostProfile = {
-  serverId: string;
-  label: string;
-  connections: HostConnection[];
-  preferredConnectionId: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type UpdateHostInput = Partial<Omit<HostProfile, "serverId" | "createdAt">>;
-
-interface DaemonRegistryContextValue {
-  daemons: HostProfile[];
-  isLoading: boolean;
-  error: unknown | null;
-  upsertDirectConnection: (input: {
-    serverId: string;
-    endpoint: string;
-    label?: string;
-  }) => Promise<HostProfile>;
-  upsertRelayConnection: (input: {
-    serverId: string;
-    relayEndpoint: string;
-    daemonPublicKeyB64: string;
-    label?: string;
-  }) => Promise<HostProfile>;
-  updateHost: (serverId: string, updates: UpdateHostInput) => Promise<void>;
-  removeHost: (serverId: string) => Promise<void>;
-  removeConnection: (serverId: string, connectionId: string) => Promise<void>;
-  upsertDaemonFromOffer: (offer: ConnectionOffer) => Promise<HostProfile>;
-  upsertDaemonFromOfferUrl: (offerUrlOrFragment: string) => Promise<HostProfile>;
+  id: string
+  type: 'direct'
+  endpoint: string // host:port
 }
 
-const DaemonRegistryContext = createContext<DaemonRegistryContextValue | null>(null);
+export type RelayHostConnection = {
+  id: string
+  type: 'relay'
+  relayEndpoint: string // host:port
+  daemonPublicKeyB64: string
+}
+
+export type HostConnection = DirectHostConnection | RelayHostConnection
+
+export type HostProfile = {
+  serverId: string
+  label: string
+  connections: HostConnection[]
+  preferredConnectionId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type UpdateHostInput = Partial<Omit<HostProfile, 'serverId' | 'createdAt'>>
+
+interface DaemonRegistryContextValue {
+  daemons: HostProfile[]
+  isLoading: boolean
+  error: unknown | null
+  upsertDirectConnection: (input: {
+    serverId: string
+    endpoint: string
+    label?: string
+  }) => Promise<HostProfile>
+  upsertRelayConnection: (input: {
+    serverId: string
+    relayEndpoint: string
+    daemonPublicKeyB64: string
+    label?: string
+  }) => Promise<HostProfile>
+  updateHost: (serverId: string, updates: UpdateHostInput) => Promise<void>
+  removeHost: (serverId: string) => Promise<void>
+  removeConnection: (serverId: string, connectionId: string) => Promise<void>
+  upsertDaemonFromOffer: (offer: ConnectionOffer) => Promise<HostProfile>
+  upsertDaemonFromOfferUrl: (offerUrlOrFragment: string) => Promise<HostProfile>
+}
+
+const DaemonRegistryContext = createContext<DaemonRegistryContextValue | null>(null)
+
+function normalizeEndpointOrNull(endpoint: string): string | null {
+  try {
+    return normalizeHostPort(endpoint)
+  } catch {
+    return null
+  }
+}
+
+function isDefaultLocalhostConnection(connection: HostConnection): boolean {
+  return connection.type === 'direct' && connection.endpoint === DEFAULT_LOCALHOST_ENDPOINT
+}
+
+export function hostHasDirectEndpoint(host: HostProfile, endpoint: string): boolean {
+  const normalized = normalizeEndpointOrNull(endpoint)
+  if (!normalized) {
+    return false
+  }
+  return host.connections.some(
+    (connection) => connection.type === 'direct' && connection.endpoint === normalized
+  )
+}
+
+export function registryHasDirectEndpoint(hosts: HostProfile[], endpoint: string): boolean {
+  return hosts.some((host) => hostHasDirectEndpoint(host, endpoint))
+}
 
 export function useDaemonRegistry(): DaemonRegistryContextValue {
-  const ctx = useContext(DaemonRegistryContext);
+  const ctx = useContext(DaemonRegistryContext)
   if (!ctx) {
-    throw new Error("useDaemonRegistry must be used within DaemonRegistryProvider");
+    throw new Error('useDaemonRegistry must be used within DaemonRegistryProvider')
   }
-  return ctx;
+  return ctx
 }
 
 export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
-  const queryClient = useQueryClient();
-  const { data: daemons = [], isPending, error } = useQuery({
+  const queryClient = useQueryClient()
+  const localhostBootstrapAttemptedRef = useRef(false)
+  const {
+    data: daemons = [],
+    isPending,
+    error,
+  } = useQuery({
     queryKey: DAEMON_REGISTRY_QUERY_KEY,
     queryFn: loadDaemonRegistryFromStorage,
     staleTime: Infinity,
     gcTime: Infinity,
-  });
+  })
 
   const persist = useCallback(
     async (profiles: HostProfile[]) => {
-      queryClient.setQueryData<HostProfile[]>(DAEMON_REGISTRY_QUERY_KEY, profiles);
-      await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(profiles));
+      queryClient.setQueryData<HostProfile[]>(DAEMON_REGISTRY_QUERY_KEY, profiles)
+      await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(profiles))
     },
     [queryClient]
-  );
+  )
 
   const readDaemons = useCallback(() => {
-    return queryClient.getQueryData<HostProfile[]>(DAEMON_REGISTRY_QUERY_KEY) ?? daemons;
-  }, [queryClient, daemons]);
+    return queryClient.getQueryData<HostProfile[]>(DAEMON_REGISTRY_QUERY_KEY) ?? daemons
+  }, [queryClient, daemons])
+
+  const markDefaultLocalhostBootstrapHandled = useCallback(async () => {
+    await AsyncStorage.setItem(DEFAULT_LOCALHOST_BOOTSTRAP_KEY, '1')
+  }, [])
 
   const updateHost = useCallback(
     async (serverId: string, updates: UpdateHostInput) => {
@@ -103,68 +137,78 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
               updatedAt: new Date().toISOString(),
             }
           : daemon
-      );
-      await persist(next);
+      )
+      await persist(next)
     },
     [persist, readDaemons]
-  );
+  )
 
   const removeHost = useCallback(
     async (serverId: string) => {
-      const remaining = readDaemons().filter((daemon) => daemon.serverId !== serverId);
-      await persist(remaining);
+      const existing = readDaemons()
+      const removedHost = existing.find((daemon) => daemon.serverId === serverId) ?? null
+      const remaining = existing.filter((daemon) => daemon.serverId !== serverId)
+      await persist(remaining)
+      if (removedHost && hostHasDirectEndpoint(removedHost, DEFAULT_LOCALHOST_ENDPOINT)) {
+        await markDefaultLocalhostBootstrapHandled()
+      }
     },
-    [persist, readDaemons]
-  );
+    [markDefaultLocalhostBootstrapHandled, persist, readDaemons]
+  )
 
   const removeConnection = useCallback(
     async (serverId: string, connectionId: string) => {
-      const now = new Date().toISOString();
-      const next = readDaemons()
+      const existing = readDaemons()
+      const removedConnection =
+        existing
+          .find((daemon) => daemon.serverId === serverId)
+          ?.connections.find((connection) => connection.id === connectionId) ?? null
+      const now = new Date().toISOString()
+      const next = existing
         .map((daemon) => {
-        if (daemon.serverId !== serverId) return daemon;
-        const remaining = daemon.connections.filter((conn) => conn.id !== connectionId);
-        if (remaining.length === 0) {
-          return null;
-        }
-        const preferred =
-          daemon.preferredConnectionId === connectionId
-            ? remaining[0]?.id ?? null
-            : daemon.preferredConnectionId;
-        return {
-          ...daemon,
-          connections: remaining,
-          preferredConnectionId: preferred,
-          updatedAt: now,
-        } satisfies HostProfile;
-      })
-        .filter((entry): entry is HostProfile => entry !== null);
-      await persist(next);
+          if (daemon.serverId !== serverId) return daemon
+          const remaining = daemon.connections.filter((conn) => conn.id !== connectionId)
+          if (remaining.length === 0) {
+            return null
+          }
+          const preferred =
+            daemon.preferredConnectionId === connectionId
+              ? (remaining[0]?.id ?? null)
+              : daemon.preferredConnectionId
+          return {
+            ...daemon,
+            connections: remaining,
+            preferredConnectionId: preferred,
+            updatedAt: now,
+          } satisfies HostProfile
+        })
+        .filter((entry): entry is HostProfile => entry !== null)
+      await persist(next)
+      if (removedConnection && isDefaultLocalhostConnection(removedConnection)) {
+        await markDefaultLocalhostBootstrapHandled()
+      }
     },
-    [persist, readDaemons]
-  );
+    [markDefaultLocalhostBootstrapHandled, persist, readDaemons]
+  )
 
   const upsertHostConnection = useCallback(
     async (
       input: {
-        serverId: string;
-        label?: string;
-      } & (
-        | { connection: DirectHostConnection }
-        | { connection: RelayHostConnection }
-      )
+        serverId: string
+        label?: string
+      } & ({ connection: DirectHostConnection } | { connection: RelayHostConnection })
     ) => {
-      const existing = readDaemons();
-      const now = new Date().toISOString();
-      const serverId = input.serverId.trim();
+      const existing = readDaemons()
+      const now = new Date().toISOString()
+      const serverId = input.serverId.trim()
       if (!serverId) {
-        throw new Error("serverId is required");
+        throw new Error('serverId is required')
       }
 
-      const labelTrimmed = input.label?.trim() ?? "";
-      const derivedLabel = labelTrimmed || serverId;
+      const labelTrimmed = input.label?.trim() ?? ''
+      const derivedLabel = labelTrimmed || serverId
 
-      const idx = existing.findIndex((d) => d.serverId === serverId);
+      const idx = existing.findIndex((d) => d.serverId === serverId)
       if (idx === -1) {
         const profile: HostProfile = {
           serverId,
@@ -173,18 +217,18 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
           preferredConnectionId: input.connection.id,
           createdAt: now,
           updatedAt: now,
-        };
-        const next = [...existing, profile];
-        await persist(next);
-        return profile;
+        }
+        const next = [...existing, profile]
+        await persist(next)
+        return profile
       }
 
-      const prev = existing[idx]!;
-      const connectionIdx = prev.connections.findIndex((c) => c.id === input.connection.id);
+      const prev = existing[idx]!
+      const connectionIdx = prev.connections.findIndex((c) => c.id === input.connection.id)
       const nextConnections =
         connectionIdx === -1
           ? [...prev.connections, input.connection]
-          : prev.connections.map((c, i) => (i === connectionIdx ? input.connection : c));
+          : prev.connections.map((c, i) => (i === connectionIdx ? input.connection : c))
 
       const nextProfile: HostProfile = {
         ...prev,
@@ -192,54 +236,118 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
         connections: nextConnections,
         preferredConnectionId: prev.preferredConnectionId ?? input.connection.id,
         updatedAt: now,
-      };
+      }
 
-      const next = [...existing];
-      next[idx] = nextProfile;
-      await persist(next);
-      return nextProfile;
+      const next = [...existing]
+      next[idx] = nextProfile
+      await persist(next)
+      return nextProfile
     },
     [persist, readDaemons]
-  );
+  )
 
   const upsertDirectConnection = useCallback(
     async (input: { serverId: string; endpoint: string; label?: string }) => {
-      const endpoint = normalizeHostPort(input.endpoint);
+      const endpoint = normalizeHostPort(input.endpoint)
       const connection: DirectHostConnection = {
         id: `direct:${endpoint}`,
-        type: "direct",
+        type: 'direct',
         endpoint,
-      };
+      }
       return upsertHostConnection({
         serverId: input.serverId,
         label: input.label,
         connection,
-      });
+      })
     },
     [upsertHostConnection]
-  );
+  )
+
+  useEffect(() => {
+    if (isPending) return
+    if (localhostBootstrapAttemptedRef.current) return
+    localhostBootstrapAttemptedRef.current = true
+
+    let cancelled = false
+
+    const bootstrapDefaultLocalhost = async () => {
+      try {
+        const [isE2E, alreadyHandled] = await Promise.all([
+          AsyncStorage.getItem(E2E_STORAGE_KEY),
+          AsyncStorage.getItem(DEFAULT_LOCALHOST_BOOTSTRAP_KEY),
+        ])
+        if (cancelled || isE2E || alreadyHandled) {
+          return
+        }
+
+        const existing = readDaemons()
+        if (registryHasDirectEndpoint(existing, DEFAULT_LOCALHOST_ENDPOINT)) {
+          await markDefaultLocalhostBootstrapHandled()
+          return
+        }
+
+        try {
+          const { serverId, hostname } = await probeConnection(
+            {
+              id: `bootstrap:${DEFAULT_LOCALHOST_ENDPOINT}`,
+              type: 'direct',
+              endpoint: DEFAULT_LOCALHOST_ENDPOINT,
+            },
+            { timeoutMs: DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS }
+          )
+          if (cancelled) return
+
+          await upsertDirectConnection({
+            serverId,
+            endpoint: DEFAULT_LOCALHOST_ENDPOINT,
+            label: hostname ?? undefined,
+          })
+          await markDefaultLocalhostBootstrapHandled()
+        } catch {
+          // Best-effort bootstrap only; keep startup resilient if localhost isn't reachable.
+        }
+      } catch (bootstrapError) {
+        if (cancelled) return
+        console.warn(
+          '[DaemonRegistry] Failed to bootstrap default localhost connection',
+          bootstrapError
+        )
+      }
+    }
+
+    void bootstrapDefaultLocalhost()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isPending, markDefaultLocalhostBootstrapHandled, readDaemons, upsertDirectConnection])
 
   const upsertRelayConnection = useCallback(
-    async (input: { serverId: string; relayEndpoint: string; daemonPublicKeyB64: string; label?: string }) => {
-      const relayEndpoint = normalizeHostPort(input.relayEndpoint);
-      const daemonPublicKeyB64 = input.daemonPublicKeyB64.trim();
+    async (input: {
+      serverId: string
+      relayEndpoint: string
+      daemonPublicKeyB64: string
+      label?: string
+    }) => {
+      const relayEndpoint = normalizeHostPort(input.relayEndpoint)
+      const daemonPublicKeyB64 = input.daemonPublicKeyB64.trim()
       if (!daemonPublicKeyB64) {
-        throw new Error("daemonPublicKeyB64 is required");
+        throw new Error('daemonPublicKeyB64 is required')
       }
       const connection: RelayHostConnection = {
         id: `relay:${relayEndpoint}`,
-        type: "relay",
+        type: 'relay',
         relayEndpoint,
         daemonPublicKeyB64,
-      };
+      }
       return upsertHostConnection({
         serverId: input.serverId,
         label: input.label,
         connection,
-      });
+      })
     },
     [upsertHostConnection]
-  );
+  )
 
   const upsertDaemonFromOffer = useCallback(
     async (offer: ConnectionOffer) => {
@@ -247,28 +355,28 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
         serverId: offer.serverId,
         relayEndpoint: offer.relay.endpoint,
         daemonPublicKeyB64: offer.daemonPublicKeyB64,
-      });
+      })
     },
     [upsertRelayConnection]
-  );
+  )
 
   const upsertDaemonFromOfferUrl = useCallback(
     async (offerUrlOrFragment: string) => {
-      const marker = "#offer=";
-      const idx = offerUrlOrFragment.indexOf(marker);
+      const marker = '#offer='
+      const idx = offerUrlOrFragment.indexOf(marker)
       if (idx === -1) {
-        throw new Error("Missing #offer= fragment");
+        throw new Error('Missing #offer= fragment')
       }
-      const encoded = offerUrlOrFragment.slice(idx + marker.length).trim();
+      const encoded = offerUrlOrFragment.slice(idx + marker.length).trim()
       if (!encoded) {
-        throw new Error("Offer payload is empty");
+        throw new Error('Offer payload is empty')
       }
-      const payload = decodeOfferFragmentPayload(encoded);
-      const offer = ConnectionOfferSchema.parse(payload);
-      return upsertDaemonFromOffer(offer);
+      const payload = decodeOfferFragmentPayload(encoded)
+      const offer = ConnectionOfferSchema.parse(payload)
+      return upsertDaemonFromOffer(offer)
     },
     [upsertDaemonFromOffer]
-  );
+  )
 
   const value: DaemonRegistryContextValue = {
     daemons,
@@ -281,69 +389,65 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
     removeConnection,
     upsertDaemonFromOffer,
     upsertDaemonFromOfferUrl,
-  };
+  }
 
-  return (
-    <DaemonRegistryContext.Provider value={value}>
-      {children}
-    </DaemonRegistryContext.Provider>
-  );
+  return <DaemonRegistryContext.Provider value={value}>{children}</DaemonRegistryContext.Provider>
 }
 
 type LegacyHostProfileV1 = {
-  id: string;
-  label: string;
-  endpoints?: unknown;
-  daemonPublicKeyB64?: unknown;
-  relay?: unknown;
-  createdAt: string;
-  updatedAt: string;
-};
+  id: string
+  label: string
+  endpoints?: unknown
+  daemonPublicKeyB64?: unknown
+  relay?: unknown
+  createdAt: string
+  updatedAt: string
+}
 
 function isHostProfileV2(value: unknown): value is HostProfile {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
+  if (!value || typeof value !== 'object') return false
+  const obj = value as Record<string, unknown>
   return (
-    typeof obj.serverId === "string" &&
-    typeof obj.label === "string" &&
+    typeof obj.serverId === 'string' &&
+    typeof obj.label === 'string' &&
     Array.isArray(obj.connections) &&
-    typeof obj.createdAt === "string" &&
-    typeof obj.updatedAt === "string"
-  );
+    typeof obj.createdAt === 'string' &&
+    typeof obj.updatedAt === 'string'
+  )
 }
 
 async function loadDaemonRegistryFromStorage(): Promise<HostProfile[]> {
   try {
-    const stored = await AsyncStorage.getItem(REGISTRY_STORAGE_KEY);
+    const stored = await AsyncStorage.getItem(REGISTRY_STORAGE_KEY)
     if (stored) {
-      const parsed = JSON.parse(stored) as unknown;
+      const parsed = JSON.parse(stored) as unknown
       if (Array.isArray(parsed)) {
-        const v2 = parsed.filter((entry) => isHostProfileV2(entry)) as HostProfile[];
+        const v2 = parsed.filter((entry) => isHostProfileV2(entry)) as HostProfile[]
         if (v2.length === parsed.length) {
-          return v2;
+          return v2
         }
 
         // Hard migration from the previous in-repo schema (v1 HostProfile with `id/endpoints/relay`).
         const migrated: HostProfile[] = parsed
           .map((entry): HostProfile | null => {
-            if (!entry || typeof entry !== "object") return null;
-            const obj = entry as LegacyHostProfileV1;
-            if (typeof obj.id !== "string" || typeof obj.label !== "string") return null;
+            if (!entry || typeof entry !== 'object') return null
+            const obj = entry as LegacyHostProfileV1
+            if (typeof obj.id !== 'string' || typeof obj.label !== 'string') return null
 
             // Only keep stable daemon ids; discard transient entries to avoid confusing host selection.
-            if (!obj.id.startsWith("srv_")) return null;
+            if (!obj.id.startsWith('srv_')) return null
 
-            const now = new Date().toISOString();
-            const createdAt = typeof obj.createdAt === "string" ? obj.createdAt : now;
-            const updatedAt = typeof obj.updatedAt === "string" ? obj.updatedAt : now;
+            const now = new Date().toISOString()
+            const createdAt = typeof obj.createdAt === 'string' ? obj.createdAt : now
+            const updatedAt = typeof obj.updatedAt === 'string' ? obj.updatedAt : now
 
-            const connections: HostConnection[] = [];
+            const connections: HostConnection[] = []
 
             if (Array.isArray(obj.endpoints)) {
               for (const endpointRaw of obj.endpoints) {
                 try {
-                  const endpoint = normalizeHostPort(String(endpointRaw));
-                  connections.push({ id: `direct:${endpoint}`, type: "direct", endpoint });
+                  const endpoint = normalizeHostPort(String(endpointRaw))
+                  connections.push({ id: `direct:${endpoint}`, type: 'direct', endpoint })
                 } catch {
                   // ignore invalid endpoint
                 }
@@ -351,29 +455,29 @@ async function loadDaemonRegistryFromStorage(): Promise<HostProfile[]> {
             }
 
             const relayEndpointRaw =
-              obj.relay && typeof (obj.relay as any)?.endpoint === "string"
+              obj.relay && typeof (obj.relay as any)?.endpoint === 'string'
                 ? String((obj.relay as any).endpoint)
-                : null;
+                : null
             const daemonPublicKeyB64 =
-              typeof obj.daemonPublicKeyB64 === "string" ? obj.daemonPublicKeyB64.trim() : "";
+              typeof obj.daemonPublicKeyB64 === 'string' ? obj.daemonPublicKeyB64.trim() : ''
 
             if (relayEndpointRaw && daemonPublicKeyB64) {
               try {
-                const relayEndpoint = normalizeHostPort(relayEndpointRaw);
+                const relayEndpoint = normalizeHostPort(relayEndpointRaw)
                 connections.push({
                   id: `relay:${relayEndpoint}`,
-                  type: "relay",
+                  type: 'relay',
                   relayEndpoint,
                   daemonPublicKeyB64,
-                });
+                })
               } catch {
                 // ignore invalid relay endpoint
               }
             }
 
-            if (connections.length === 0) return null;
+            if (connections.length === 0) return null
 
-            const preferredConnectionId: string | null = connections[0]?.id ?? null;
+            const preferredConnectionId: string | null = connections[0]?.id ?? null
 
             return {
               serverId: obj.id,
@@ -382,18 +486,18 @@ async function loadDaemonRegistryFromStorage(): Promise<HostProfile[]> {
               preferredConnectionId,
               createdAt,
               updatedAt,
-            };
+            }
           })
-          .filter((entry): entry is HostProfile => entry !== null);
+          .filter((entry): entry is HostProfile => entry !== null)
 
-        await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(migrated));
-        return migrated;
+        await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(migrated))
+        return migrated
       }
     }
 
-    return [];
+    return []
   } catch (error) {
-    console.error("[DaemonRegistry] Failed to load daemon registry", error);
-    throw error;
+    console.error('[DaemonRegistry] Failed to load daemon registry', error)
+    throw error
   }
 }
