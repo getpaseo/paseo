@@ -233,6 +233,25 @@ describe("opencode tool-call mapper", () => {
     });
   });
 
+  it("does not apply cross-provider speak normalization in opencode mapper", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "paseo_voice.speak",
+        callId: "opencode-call-voice-1",
+        status: "completed",
+        input: { text: "Voice response from OpenCode." },
+        output: { ok: true },
+      })
+    );
+
+    expect(item.name).toBe("paseo_voice.speak");
+    expect(item.detail).toEqual({
+      type: "unknown",
+      input: { text: "Voice response from OpenCode." },
+      output: { ok: true },
+    });
+  });
+
   it("drops tool calls when callId is missing", () => {
     const item = mapOpencodeToolCall({
       toolName: "read_file",
