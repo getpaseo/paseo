@@ -263,25 +263,33 @@ function SidebarContent({
   const { status } = useCheckoutStatusQuery({ serverId, cwd });
   const isGit = status?.isGit ?? false;
 
+  // Switch to Files tab if Changes tab is hidden and user was on it
+  useEffect(() => {
+    if (!isGit && activeTab === "changes") {
+      onTabPress("files");
+    }
+  }, [isGit, activeTab, onTabPress]);
+
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
       {/* Header with tabs and close button */}
       <View style={styles.header} testID="explorer-header">
         <View style={styles.tabsContainer}>
-          <Pressable
-            style={[styles.tab, activeTab === "changes" && styles.tabActive]}
-            onPress={() => onTabPress("changes")}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                activeTab === "changes" && styles.tabTextActive,
-                !isGit && styles.tabTextMuted,
-              ]}
+          {isGit && (
+            <Pressable
+              style={[styles.tab, activeTab === "changes" && styles.tabActive]}
+              onPress={() => onTabPress("changes")}
             >
-              Changes
-            </Text>
-          </Pressable>
+              <Text
+                style={[
+                  styles.tabText,
+                  activeTab === "changes" && styles.tabTextActive,
+                ]}
+              >
+                Changes
+              </Text>
+            </Pressable>
+          )}
           <Pressable
             style={[styles.tab, activeTab === "files" && styles.tabActive]}
             onPress={() => onTabPress("files")}

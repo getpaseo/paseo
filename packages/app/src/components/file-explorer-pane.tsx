@@ -33,6 +33,7 @@ import {
   FolderOpen,
   Image as ImageIcon,
   MoreVertical,
+  RotateCw,
   X,
 } from "lucide-react-native";
 import type {
@@ -262,6 +263,26 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     const nextIndex = (currentIndex + 1) % SORT_OPTIONS.length;
     setSortOption(SORT_OPTIONS[nextIndex].value);
   }, [sortOption, setSortOption]);
+
+  const handleRefresh = useCallback(() => {
+    if (!agentId || !requestDirectoryListing) {
+      return;
+    }
+    // Refresh the root directory
+    requestDirectoryListing(agentId, ".", { recordHistory: false, setCurrentPath: false });
+
+    // Also refresh any expanded directories
+    expandedPaths.forEach((path) => {
+      if (path !== ".") {
+        requestDirectoryListing(agentId, path, { recordHistory: false, setCurrentPath: false });
+      }
+    });
+
+    // Refresh the preview if a file is selected
+    if (selectedEntryPath && requestFilePreview) {
+      requestFilePreview(agentId, selectedEntryPath);
+    }
+  }, [agentId, expandedPaths, requestDirectoryListing, requestFilePreview, selectedEntryPath]);
 
   const currentSortLabel = SORT_OPTIONS.find((opt) => opt.value === sortOption)?.label ?? "Name";
 
@@ -603,9 +624,23 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
               </GestureDetector>
               <View style={styles.paneHeader} testID="files-pane-header">
                 <View style={styles.paneHeaderLeft} />
-                <Pressable style={styles.sortButton} onPress={handleSortCycle}>
-                  <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
-                </Pressable>
+                <View style={styles.paneHeaderRight}>
+                  <Pressable
+                    onPress={handleRefresh}
+                    hitSlop={8}
+                    style={({ hovered, pressed }) => [
+                      styles.iconButton,
+                      (hovered || pressed) && styles.iconButtonHovered,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Refresh files"
+                  >
+                    <RotateCw size={16} color={theme.colors.foregroundMuted} />
+                  </Pressable>
+                  <Pressable style={styles.sortButton} onPress={handleSortCycle}>
+                    <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
+                  </Pressable>
+                </View>
               </View>
               <FlatList
                 style={styles.treeList}
@@ -622,9 +657,23 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
             <View style={[styles.treePane, styles.treePaneFill]}>
               <View style={styles.paneHeader} testID="files-pane-header">
                 <View style={styles.paneHeaderLeft} />
-                <Pressable style={styles.sortButton} onPress={handleSortCycle}>
-                  <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
-                </Pressable>
+                <View style={styles.paneHeaderRight}>
+                  <Pressable
+                    onPress={handleRefresh}
+                    hitSlop={8}
+                    style={({ hovered, pressed }) => [
+                      styles.iconButton,
+                      (hovered || pressed) && styles.iconButtonHovered,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Refresh files"
+                  >
+                    <RotateCw size={16} color={theme.colors.foregroundMuted} />
+                  </Pressable>
+                  <Pressable style={styles.sortButton} onPress={handleSortCycle}>
+                    <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
+                  </Pressable>
+                </View>
               </View>
               <FlatList
                 style={styles.treeList}
@@ -1022,6 +1071,12 @@ const styles = StyleSheet.create((theme) => ({
   paneHeaderLeft: {
     flex: 1,
     minWidth: 0,
+  },
+  paneHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flexShrink: 0,
   },
   previewHeaderRight: {
     flexDirection: "row",
