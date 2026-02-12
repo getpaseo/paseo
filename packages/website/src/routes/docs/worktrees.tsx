@@ -138,6 +138,9 @@ function Worktrees() {
           <li>
             <code className="font-mono">$PASEO_BRANCH_NAME</code> — the branch name created
           </li>
+          <li>
+            <code className="font-mono">$PASEO_WORKTREE_PORT</code> — an available local port for setup scripts
+          </li>
         </ul>
         <p className="text-white/60 leading-relaxed">
           Use <code className="font-mono">$PASEO_ROOT_PATH</code> to copy files that shouldn't

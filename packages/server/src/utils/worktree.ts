@@ -2,6 +2,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "fs";
 import { join, basename, dirname, resolve, sep } from "path";
+import net from "node:net";
 import { createNameId } from "mnemonic-id";
 import { normalizeBaseRefName, writePaseoWorktreeMetadata } from "./worktree-metadata.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
@@ -136,6 +137,27 @@ async function execSetupCommand(
   }
 }
 
+async function getAvailablePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to acquire available port")));
+        return;
+      }
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(address.port);
+      });
+    });
+  });
+}
+
 async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<string> {
   try {
     const commonDir = await getGitCommonDir(worktreePath);
@@ -178,6 +200,7 @@ export async function runWorktreeSetupCommands(options: {
 
   const repoRootPath =
     options.repoRootPath ?? (await inferRepoRootPathFromWorktreePath(options.worktreePath));
+  const worktreePort = await getAvailablePort();
 
   const setupEnv = {
     ...process.env,
@@ -186,6 +209,7 @@ export async function runWorktreeSetupCommands(options: {
     PASEO_ROOT_PATH: repoRootPath,
     PASEO_WORKTREE_PATH: options.worktreePath,
     PASEO_BRANCH_NAME: options.branchName,
+    PASEO_WORKTREE_PORT: String(worktreePort),
   };
 
   const results: WorktreeSetupCommandResult[] = [];

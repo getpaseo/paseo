@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ToolCallTimelineItem } from "../../agent-sdk-types.js";
+import { isSpeakToolName } from "../../tool-name-normalization.js";
 import { deriveClaudeToolDetail } from "./tool-call-detail-parser.js";
 
 type MapperParams = {
@@ -43,6 +44,53 @@ const ClaudeToolCallPass1Schema = ClaudeRawToolCallSchema.transform((raw) => ({
   status: raw.status,
 }));
 
+const ClaudeShellToolNameSchema = z.union([
+  z.literal("Bash"),
+  z.literal("bash"),
+  z.literal("shell"),
+  z.literal("exec_command"),
+]);
+const ClaudeReadToolNameSchema = z.union([
+  z.literal("Read"),
+  z.literal("read"),
+  z.literal("read_file"),
+  z.literal("view_file"),
+]);
+const ClaudeWriteToolNameSchema = z.union([
+  z.literal("Write"),
+  z.literal("write"),
+  z.literal("write_file"),
+  z.literal("create_file"),
+]);
+const ClaudeEditToolNameSchema = z.union([
+  z.literal("Edit"),
+  z.literal("MultiEdit"),
+  z.literal("multi_edit"),
+  z.literal("edit"),
+  z.literal("apply_patch"),
+  z.literal("apply_diff"),
+  z.literal("str_replace_editor"),
+]);
+const ClaudeSearchToolNameSchema = z.union([
+  z.literal("WebSearch"),
+  z.literal("web_search"),
+  z.literal("search"),
+]);
+const ClaudeSpeakToolNameSchema = z
+  .string()
+  .min(1)
+  .refine((name) => isSpeakToolName(name.trim()));
+
+const ClaudeToolKindSchema = z.enum([
+  "shell",
+  "read",
+  "write",
+  "edit",
+  "search",
+  "speak",
+  "unknown",
+]);
+
 const ClaudeToolCallPass2BaseSchema = z.object({
   callId: z.string().min(1),
   name: z.string().min(1),
@@ -51,7 +99,7 @@ const ClaudeToolCallPass2BaseSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
   error: z.unknown().nullable(),
   status: ClaudeToolCallStatusSchema,
-  toolKind: z.enum(["speak", "other"]),
+  toolKind: ClaudeToolKindSchema,
 });
 
 const ClaudeToolCallPass2InputSchema = ClaudeToolCallPass2BaseSchema.omit({
@@ -60,26 +108,81 @@ const ClaudeToolCallPass2InputSchema = ClaudeToolCallPass2BaseSchema.omit({
 
 const ClaudeToolCallPass2EnvelopeSchema = z.union([
   ClaudeToolCallPass2InputSchema.extend({
-    name: z.literal("mcp__paseo__speak"),
+    name: ClaudeShellToolNameSchema,
   }).transform((normalized) => ({
     ...normalized,
     name: normalized.name.trim(),
+    toolKind: "shell" as const,
+  })),
+  ClaudeToolCallPass2InputSchema.extend({
+    name: ClaudeReadToolNameSchema,
+  }).transform((normalized) => ({
+    ...normalized,
+    name: normalized.name.trim(),
+    toolKind: "read" as const,
+  })),
+  ClaudeToolCallPass2InputSchema.extend({
+    name: ClaudeWriteToolNameSchema,
+  }).transform((normalized) => ({
+    ...normalized,
+    name: normalized.name.trim(),
+    toolKind: "write" as const,
+  })),
+  ClaudeToolCallPass2InputSchema.extend({
+    name: ClaudeEditToolNameSchema,
+  }).transform((normalized) => ({
+    ...normalized,
+    name: normalized.name.trim(),
+    toolKind: "edit" as const,
+  })),
+  ClaudeToolCallPass2InputSchema.extend({
+    name: ClaudeSearchToolNameSchema,
+  }).transform((normalized) => ({
+    ...normalized,
+    name: normalized.name.trim(),
+    toolKind: "search" as const,
+  })),
+  ClaudeToolCallPass2InputSchema.extend({
+    name: ClaudeSpeakToolNameSchema,
+  }).transform((normalized) => ({
+    ...normalized,
+    name: "speak" as const,
     toolKind: "speak" as const,
   })),
   ClaudeToolCallPass2InputSchema.transform((normalized) => ({
     ...normalized,
     name: normalized.name.trim(),
-    toolKind: "other" as const,
+    toolKind: "unknown" as const,
   })),
 ]);
 
 const ClaudeToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   ClaudeToolCallPass2BaseSchema.extend({
-    toolKind: z.literal("speak"),
-    name: z.literal("mcp__paseo__speak"),
+    toolKind: z.literal("shell"),
+    name: ClaudeShellToolNameSchema,
   }),
   ClaudeToolCallPass2BaseSchema.extend({
-    toolKind: z.literal("other"),
+    toolKind: z.literal("read"),
+    name: ClaudeReadToolNameSchema,
+  }),
+  ClaudeToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("write"),
+    name: ClaudeWriteToolNameSchema,
+  }),
+  ClaudeToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("edit"),
+    name: ClaudeEditToolNameSchema,
+  }),
+  ClaudeToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("search"),
+    name: ClaudeSearchToolNameSchema,
+  }),
+  ClaudeToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("speak"),
+    name: z.literal("speak"),
+  }),
+  ClaudeToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("unknown"),
   }),
 ]);
 
@@ -87,7 +190,21 @@ type ClaudeToolCallPass2 = z.infer<typeof ClaudeToolCallPass2Schema>;
 
 function toToolCallTimelineItem(normalized: ClaudeToolCallPass2): ToolCallTimelineItem {
   const name = normalized.toolKind === "speak" ? ("speak" as const) : normalized.name;
-  const detail = deriveClaudeToolDetail(name, normalized.input, normalized.output);
+  const detailName =
+    normalized.toolKind === "shell"
+      ? "shell"
+      : normalized.toolKind === "read"
+        ? "read_file"
+        : normalized.toolKind === "write"
+          ? "write_file"
+          : normalized.toolKind === "edit"
+            ? "apply_patch"
+            : normalized.toolKind === "search"
+              ? "search"
+              : normalized.toolKind === "speak"
+                ? "speak"
+                : normalized.name;
+  const detail = deriveClaudeToolDetail(detailName, normalized.input, normalized.output);
   if (normalized.status === "failed") {
     return {
       type: "tool_call",

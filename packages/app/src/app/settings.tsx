@@ -429,8 +429,9 @@ export default function SettingsScreen() {
   const isMountedRef = useRef(true);
   const lastHandledEditHostRef = useRef<string | null>(null);
   const appVersion = Constants.expoConfig?.version ?? (Constants as any).manifest?.version ?? "0.1.0";
-  const editingDaemonLive = editingDaemon
-    ? daemons.find((daemon) => daemon.serverId === editingDaemon.serverId) ?? null
+  const editingServerId = editingDaemon?.serverId ?? null;
+  const editingDaemonLive = editingServerId
+    ? daemons.find((daemon) => daemon.serverId === editingServerId) ?? null
     : null;
   const pendingNameHostname = useSessionStore(
     useCallback(
@@ -447,6 +448,13 @@ export default function SettingsScreen() {
       isMountedRef.current = false;
     };
   }, []);
+
+  // Keep the edit modal bound to live registry state.
+  useEffect(() => {
+    if (!editingServerId) return;
+    if (editingDaemonLive) return;
+    setEditingDaemon(null);
+  }, [editingDaemonLive, editingServerId]);
 
   const waitForCondition = useCallback(
     async (predicate: () => boolean, timeoutMs: number, intervalMs = 250) => {
@@ -516,7 +524,7 @@ export default function SettingsScreen() {
   ]);
 
   const handleSaveEditDaemon = useCallback(async (nextLabelRaw: string) => {
-    if (!editingDaemon) return;
+    if (!editingServerId) return;
     if (isSavingEdit) return;
 
     const nextLabel = nextLabelRaw.trim();
@@ -527,7 +535,7 @@ export default function SettingsScreen() {
 
     try {
       setIsSavingEdit(true);
-      await updateHost(editingDaemon.serverId, { label: nextLabel });
+      await updateHost(editingServerId, { label: nextLabel });
       handleCloseEditDaemon();
     } catch (error) {
       console.error("[Settings] Failed to rename host", error);
@@ -535,7 +543,7 @@ export default function SettingsScreen() {
     } finally {
       setIsSavingEdit(false);
     }
-  }, [editingDaemon, handleCloseEditDaemon, isSavingEdit, updateHost]);
+  }, [editingServerId, handleCloseEditDaemon, isSavingEdit, updateHost]);
 
   const handleRemoveConnection = useCallback(
     async (serverId: string, connectionId: string) => {
@@ -550,13 +558,13 @@ export default function SettingsScreen() {
   }, []);
 
   const handleAddConnectionFromModal = useCallback(() => {
-    if (!editingDaemon) return;
-    const serverId = editingDaemon.serverId;
+    if (!editingServerId) return;
+    const serverId = editingServerId;
     setEditingDaemon(null);
     setAddConnectionTargetServerId(serverId);
     setPendingEditReopenServerId(serverId);
     setIsAddHostMethodVisible(true);
-  }, [editingDaemon]);
+  }, [editingServerId]);
 
   const handleThemeChange = useCallback(
     (newTheme: AppSettings["theme"]) => {
@@ -763,11 +771,11 @@ export default function SettingsScreen() {
           ) : null}
 
           <HostDetailModal
-            visible={Boolean(editingDaemon)}
-            host={editingDaemonLive ?? editingDaemon}
-            connectionStatus={editingDaemon ? (connectionStates.get(editingDaemon.serverId)?.status ?? "idle") : "idle"}
-            activeConnection={editingDaemon ? (connectionStates.get(editingDaemon.serverId)?.activeConnection ?? null) : null}
-            lastError={editingDaemon ? (connectionStates.get(editingDaemon.serverId)?.lastError ?? null) : null}
+            visible={Boolean(editingDaemonLive)}
+            host={editingDaemonLive}
+            connectionStatus={editingServerId ? (connectionStates.get(editingServerId)?.status ?? "idle") : "idle"}
+            activeConnection={editingServerId ? (connectionStates.get(editingServerId)?.activeConnection ?? null) : null}
+            lastError={editingServerId ? (connectionStates.get(editingServerId)?.lastError ?? null) : null}
             isSaving={isSavingEdit}
             onClose={handleCloseEditDaemon}
             onSave={(label) => void handleSaveEditDaemon(label)}
@@ -873,6 +881,7 @@ function HostDetailModal({
 }: HostDetailModalProps) {
   const { theme } = useUnistyles();
   const [draftLabel, setDraftLabel] = useState("");
+  const [isDraftLabelDirty, setIsDraftLabelDirty] = useState(false);
   const activeServerIdRef = useRef<string | null>(null);
   const [pendingRemoveConnection, setPendingRemoveConnection] = useState<{ serverId: string; connectionId: string; title: string } | null>(null);
   const [isRemovingConnection, setIsRemovingConnection] = useState(false);
@@ -1018,22 +1027,30 @@ function HostDetailModal({
   })();
   const connectionError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
 
+  const handleDraftLabelChange = useCallback((nextValue: string) => {
+    setDraftLabel(nextValue);
+    setIsDraftLabelDirty(true);
+  }, []);
+
   useEffect(() => {
     if (!visible || !host) return;
-    if (activeServerIdRef.current !== host.serverId) {
+    const hostChanged = activeServerIdRef.current !== host.serverId;
+    if (hostChanged) {
       setDraftLabel(host.label ?? "");
+      setIsDraftLabelDirty(false);
       activeServerIdRef.current = host.serverId;
       return;
     }
-    if (!draftLabel.trim()) {
+    if (!isDraftLabelDirty) {
       setDraftLabel(host.label ?? "");
     }
-  }, [visible, host, draftLabel]);
+  }, [visible, host?.serverId, host?.label, isDraftLabelDirty]);
 
   useEffect(() => {
     if (!visible) {
       activeServerIdRef.current = null;
       setIsRestarting(false);
+      setIsDraftLabelDirty(false);
     }
   }, [visible]);
 
@@ -1072,7 +1089,7 @@ function HostDetailModal({
           <AdaptiveTextInput
             style={styles.input}
             value={draftLabel}
-            onChangeText={setDraftLabel}
+            onChangeText={handleDraftLabelChange}
             placeholder="My Host"
             placeholderTextColor={defaultTheme.colors.mutedForeground}
           />

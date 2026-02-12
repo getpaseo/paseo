@@ -91,6 +91,92 @@ function normalizeClaudeModelLabel(model: ModelInfo): string {
   return fallback;
 }
 
+type NormalizeClaudeRuntimeModelIdOptions = {
+  runtimeModelId: string;
+  supportedModelIds: ReadonlySet<string> | null;
+  configuredModelId?: string | null;
+  currentModelId?: string | null;
+};
+
+function normalizeModelIdCandidate(modelId: string | null | undefined): string | null {
+  if (typeof modelId !== "string") {
+    return null;
+  }
+  const trimmed = modelId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function pickSupportedModelId(
+  supportedModelIds: ReadonlySet<string>,
+  candidate: string | null | undefined
+): string | null {
+  const normalizedCandidate = normalizeModelIdCandidate(candidate);
+  if (!normalizedCandidate) {
+    return null;
+  }
+  return supportedModelIds.has(normalizedCandidate) ? normalizedCandidate : null;
+}
+
+export function normalizeClaudeRuntimeModelId(
+  options: NormalizeClaudeRuntimeModelIdOptions
+): string {
+  const runtimeModel = options.runtimeModelId.trim();
+  if (!runtimeModel) {
+    return runtimeModel;
+  }
+
+  const supportedModelIds = options.supportedModelIds;
+  if (!supportedModelIds || supportedModelIds.size === 0) {
+    return runtimeModel;
+  }
+
+  const lowerRuntimeModel = runtimeModel.toLowerCase();
+  if (lowerRuntimeModel.includes("sonnet")) {
+    const explicitSonnet = pickSupportedModelId(supportedModelIds, "sonnet");
+    if (explicitSonnet) {
+      return explicitSonnet;
+    }
+    const defaultAlias = pickSupportedModelId(supportedModelIds, "default");
+    if (defaultAlias) {
+      return defaultAlias;
+    }
+  }
+  if (lowerRuntimeModel.includes("opus")) {
+    const alias = pickSupportedModelId(supportedModelIds, "opus");
+    if (alias) {
+      return alias;
+    }
+  }
+  if (lowerRuntimeModel.includes("haiku")) {
+    const alias = pickSupportedModelId(supportedModelIds, "haiku");
+    if (alias) {
+      return alias;
+    }
+  }
+
+  if (supportedModelIds.has(runtimeModel)) {
+    return runtimeModel;
+  }
+
+  const configuredModelId = pickSupportedModelId(
+    supportedModelIds,
+    options.configuredModelId
+  );
+  if (configuredModelId) {
+    return configuredModelId;
+  }
+
+  const currentModelId = pickSupportedModelId(
+    supportedModelIds,
+    options.currentModelId
+  );
+  if (currentModelId) {
+    return currentModelId;
+  }
+
+  return runtimeModel;
+}
+
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -583,6 +669,7 @@ class ClaudeAgentSession implements AgentSession {
   private activeTurnPromise: Promise<void> | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
+  private selectableModelIds: Set<string> | null = null;
   private activeSidechains = new Map<string, string>();
   private compacting = false;
   private queryRestartNeeded = false;
@@ -726,13 +813,6 @@ class ClaudeAgentSession implements AgentSession {
       queue.end();
     };
     this.cancelCurrentTurn = requestCancel;
-    if (this.historyPending && this.persistedHistory.length > 0) {
-      for (const item of this.persistedHistory) {
-        queue.push({ type: "timeline", item, provider: "claude" });
-      }
-      this.historyPending = false;
-      this.persistedHistory = [];
-    }
 
     // Start forwarding events and track the promise so future turns can wait for completion
     const forwardPromise = this.forwardPromptEvents(sdkMessage, queue, turnId);
@@ -974,6 +1054,20 @@ class ClaudeAgentSession implements AgentSession {
     };
   }
 
+  private async primeSelectableModelIds(query: Query): Promise<void> {
+    try {
+      const models = await query.supportedModels();
+      const ids = models
+        .map((model) => model.value?.trim())
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
+      this.selectableModelIds = new Set(ids);
+      this.logger.debug({ modelIds: ids }, "Primed Claude selectable model IDs");
+    } catch (error) {
+      this.selectableModelIds = null;
+      this.logger.warn({ err: error }, "Failed to prime Claude selectable model IDs");
+    }
+  }
+
   private async ensureQuery(): Promise<Query> {
     if (this.query && !this.queryRestartNeeded) {
       return this.query;
@@ -992,6 +1086,7 @@ class ClaudeAgentSession implements AgentSession {
     this.logger.debug({ options }, "claude query");
     this.input = input;
     this.query = query({ prompt: input, options });
+    await this.primeSelectableModelIds(this.query);
     await this.query.setPermissionMode(this.currentMode);
     return this.query;
   }
@@ -1469,8 +1564,17 @@ class ClaudeAgentSession implements AgentSession {
     this.persistence = null;
     // Capture actual model from SDK init message (not just the configured model)
     if (message.model) {
-      this.logger.debug({ model: message.model }, "Captured model from SDK init");
-      this.lastOptionsModel = message.model;
+      const normalizedModel = normalizeClaudeRuntimeModelId({
+        runtimeModelId: message.model,
+        supportedModelIds: this.selectableModelIds,
+        configuredModelId: this.config.model ?? null,
+        currentModelId: this.lastOptionsModel,
+      });
+      this.logger.debug(
+        { model: message.model, normalizedModel },
+        "Captured model from SDK init"
+      );
+      this.lastOptionsModel = normalizedModel;
       // Invalidate cached runtime info so it picks up the new model
       this.cachedRuntimeInfo = null;
     }

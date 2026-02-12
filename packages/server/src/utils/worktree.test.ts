@@ -174,6 +174,7 @@ describe("createWorktree", () => {
           'echo "root=$PASEO_ROOT_PATH" > setup.log',
           'echo "worktree=$PASEO_WORKTREE_PATH" >> setup.log',
           'echo "branch=$PASEO_BRANCH_NAME" >> setup.log',
+          'echo "port=$PASEO_WORKTREE_PORT" >> setup.log',
         ],
       },
     };
@@ -195,6 +196,13 @@ describe("createWorktree", () => {
     expect(setupLog).toContain(`root=${repoDir}`);
     expect(setupLog).toContain(`worktree=${result.worktreePath}`);
     expect(setupLog).toContain("branch=setup-test");
+    const portLine = setupLog
+      .split("\n")
+      .find((line) => line.startsWith("port="));
+    expect(portLine).toBeDefined();
+    const portValue = Number(portLine?.slice("port=".length));
+    expect(Number.isInteger(portValue)).toBe(true);
+    expect(portValue).toBeGreaterThan(0);
   });
 
   it("does not run setup commands when runSetup=false", async () => {
