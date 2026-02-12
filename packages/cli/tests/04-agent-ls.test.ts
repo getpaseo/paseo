@@ -16,6 +16,7 @@
  * - paseo ls --json returns valid JSON (or error)
  * - paseo ls -a flag is accepted
  * - paseo ls -g flag is accepted
+ * - paseo ls does not support --ui
  */
 
 import assert from 'node:assert'
@@ -52,6 +53,7 @@ try {
     assert(result.stdout.includes('-g'), 'help should mention -g flag')
     assert(result.stdout.includes('--global'), 'help should mention --global flag')
     assert(result.stdout.includes('--host'), 'help should mention --host option')
+    assert(!result.stdout.includes('--ui'), 'help should not mention --ui')
     console.log('✓ paseo ls --help shows options\n')
   }
 
@@ -137,6 +139,17 @@ try {
     assert(!output.includes('unknown option'), 'should accept -q flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
     console.log('✓ -q (quiet) flag is accepted\n')
+  }
+
+  // Test 9: paseo ls --ui is rejected (flag removed)
+  {
+    console.log('Test 9: paseo ls --ui is rejected')
+    const result =
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo ls --ui`.nothrow()
+    assert.notStrictEqual(result.exitCode, 0, 'should fail for removed --ui flag')
+    const output = result.stdout + result.stderr
+    assert(output.includes('unknown option'), 'should report unknown option for --ui')
+    console.log('✓ paseo ls --ui is rejected\n')
   }
 } finally {
   // Clean up temp directory

@@ -74,26 +74,22 @@ function toListItem(agent: AgentSnapshotPayload): AgentListItem {
 export type AgentLsResult = ListResult<AgentListItem>
 
 export interface AgentLsOptions extends CommandOptions {
-  /** -a: Include all statuses (not just running/idle) */
+  /** -a: Include archived agents */
   all?: boolean
-  /** -g: Show agents globally (not just current directory) */
+  /** Legacy flag retained for CLI compatibility */
   global?: boolean
   /** Filter by specific status */
   status?: string
-  /** Filter by specific cwd (overrides default cwd filtering) */
+  /** Filter by specific cwd */
   cwd?: string
   /** Filter by labels (key=value format) */
   label?: string[]
-  /** Filter to UI agents only (equivalent to --label ui=true) */
-  ui?: boolean
 }
 
 /**
- * Agent ls command with correct semantics from design doc:
- * - `paseo agent ls`     → running/idle agents in current directory
- * - `paseo agent ls -a`  → all statuses in current directory
- * - `paseo agent ls -g`  → running/idle agents globally
- * - `paseo agent ls -ag` → everything everywhere
+ * Agent ls command semantics:
+ * - `paseo agent ls`    → all non-archived agents
+ * - `paseo agent ls -a` → include archived agents
  */
 export async function runLsCommand(
   options: AgentLsOptions,
@@ -117,39 +113,26 @@ export async function runLsCommand(
   try {
     let agents = await client.fetchAgents()
 
-    // Status filtering:
-    // By default, only show running/idle agents (not error, archived, etc.)
-    // With -a flag, show all statuses
+    // By default, exclude archived agents. `-a` includes them.
     if (!options.all) {
-      agents = agents.filter((a) => {
-        // Show running and idle agents, exclude archived
-        return (a.status === 'running' || a.status === 'idle') && !a.archivedAt
-      })
+      agents = agents.filter((a) => !a.archivedAt)
     }
 
-    // If explicit status filter is provided, use it
+    // If explicit status filter is provided, apply it.
     if (options.status) {
       agents = agents.filter((a) => a.status === options.status)
     }
 
-    // Directory filtering:
-    // By default, only show agents in current working directory
-    // With -g flag, show agents globally (all directories)
-    if (!options.global) {
-      const currentCwd = options.cwd ?? process.cwd()
+    // Optional cwd filter.
+    if (options.cwd) {
+      const targetCwd = options.cwd.replace(/\/$/, '')
       agents = agents.filter((a) => {
-        // Normalize paths for comparison
         const agentCwd = a.cwd.replace(/\/$/, '')
-        const targetCwd = currentCwd.replace(/\/$/, '')
-        // Match exact cwd or subdirectories
         return agentCwd === targetCwd || agentCwd.startsWith(targetCwd + '/')
       })
     }
 
-    // Label filtering:
-    // Parse --label flags and --ui flag
-    // --ui is equivalent to --label ui=true
-    // By default (no --ui flag), show background agents (those WITHOUT ui=true)
+    // Parse --label filters (key=value).
     const labelFilters: Record<string, string> = {}
     if (options.label) {
       for (const labelStr of options.label) {
@@ -161,14 +144,9 @@ export async function runLsCommand(
         }
       }
     }
-    // Add ui=true filter if --ui flag is set
-    if (options.ui) {
-      labelFilters['ui'] = 'true'
-    }
 
-    // Apply label filtering
+    // Apply label filtering only when explicitly requested.
     if (Object.keys(labelFilters).length > 0) {
-      // Filter to agents that have ALL specified labels (AND semantics)
       agents = agents.filter((a) => {
         const agentLabels = a.labels
         for (const [key, value] of Object.entries(labelFilters)) {
@@ -177,11 +155,6 @@ export async function runLsCommand(
           }
         }
         return true
-      })
-    } else {
-      // Default: show background agents only (those without ui=true)
-      agents = agents.filter((a) => {
-        return a.labels['ui'] !== 'true'
       })
     }
 
