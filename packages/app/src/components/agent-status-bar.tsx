@@ -17,6 +17,14 @@ interface AgentStatusBarProps {
   serverId: string;
 }
 
+function normalizeModelId(modelId: string | null | undefined): string | null {
+  const normalized = typeof modelId === "string" ? modelId.trim() : "";
+  if (!normalized || normalized.toLowerCase() === "default") {
+    return null;
+  }
+  return normalized;
+}
+
 export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   const { theme } = useUnistyles();
   const IS_WEB = Platform.OS === "web";
@@ -61,14 +69,16 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
     });
   }
 
+  const normalizedRuntimeModelId = normalizeModelId(agent.runtimeInfo?.model);
+  const normalizedConfiguredModelId = normalizeModelId(agent.model);
+  const preferredModelId = normalizedRuntimeModelId ?? normalizedConfiguredModelId;
   const selectedModel = useMemo(() => {
-    if (!models || !agent.model) return null;
-    return models.find((m) => m.id === agent.model) ?? null;
-  }, [models, agent.model]);
+    if (!models || !preferredModelId) return null;
+    return models.find((m) => m.id === preferredModelId) ?? null;
+  }, [models, preferredModelId]);
 
-  const displayModel = selectedModel
-    ? selectedModel.label
-    : agent.model ?? "default";
+  const activeModelId = selectedModel?.id ?? preferredModelId ?? null;
+  const displayModel = selectedModel ? selectedModel.label : preferredModelId ?? "Auto";
 
   const thinkingOptions = selectedModel?.thinkingOptions ?? null;
   const explicitThinkingId =
@@ -156,7 +166,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
               testID="agent-model-menu"
             >
               {models?.map((model) => {
-                const isActive = model.id === agent.model;
+                const isActive = model.id === activeModelId;
                 return (
                   <DropdownMenuItem
                     key={model.id}
@@ -297,7 +307,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="start">
                   {models?.map((model) => {
-                    const isActive = model.id === agent.model;
+                    const isActive = model.id === activeModelId;
                     return (
                       <DropdownMenuItem
                         key={model.id}

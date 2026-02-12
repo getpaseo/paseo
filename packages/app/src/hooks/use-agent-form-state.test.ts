@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { __private__ } from "./use-agent-form-state";
-import type { AgentModelDefinition } from "@server/server/agent/agent-sdk-types";
+import {
+  AGENT_PROVIDER_DEFINITIONS,
+  type AgentProviderDefinition,
+} from "@server/server/agent/provider-manifest";
+import type {
+  AgentModelDefinition,
+  AgentProvider,
+} from "@server/server/agent/agent-sdk-types";
 
 describe("useAgentFormState", () => {
   describe("__private__.combineInitialValues", () => {
@@ -145,6 +152,128 @@ describe("useAgentFormState", () => {
       );
 
       expect(resolved.thinkingOptionId).toBe("xhigh");
+    });
+
+    it("normalizes legacy model id 'default' from initial values to auto", () => {
+      const resolved = __private__.resolveFormState(
+        { model: "default" },
+        { provider: "codex" },
+        codexModels,
+        {
+          serverId: false,
+          provider: false,
+          modeId: false,
+          model: false,
+          thinkingOptionId: false,
+          workingDir: false,
+        },
+        {
+          serverId: null,
+          provider: "codex",
+          modeId: "",
+          model: "",
+          thinkingOptionId: "",
+          workingDir: "",
+        },
+        new Set<string>()
+      );
+
+      expect(resolved.model).toBe("");
+    });
+
+    it("normalizes legacy model id 'default' from provider preferences to auto", () => {
+      const resolved = __private__.resolveFormState(
+        undefined,
+        {
+          provider: "codex",
+          providerPreferences: {
+            codex: {
+              model: "default",
+            },
+          },
+        },
+        codexModels,
+        {
+          serverId: false,
+          provider: false,
+          modeId: false,
+          model: false,
+          thinkingOptionId: false,
+          workingDir: false,
+        },
+        {
+          serverId: null,
+          provider: "codex",
+          modeId: "",
+          model: "",
+          thinkingOptionId: "",
+          workingDir: "",
+        },
+        new Set<string>()
+      );
+
+      expect(resolved.model).toBe("");
+    });
+
+    it("resolves provider only from allowed provider map", () => {
+      const allowedProviderMap = new Map<AgentProvider, AgentProviderDefinition>(
+        AGENT_PROVIDER_DEFINITIONS
+          .filter((definition) => definition.id === "claude")
+          .map((definition) => [definition.id as AgentProvider, definition])
+      );
+      const resolved = __private__.resolveFormState(
+        undefined,
+        { provider: "codex" },
+        null,
+        {
+          serverId: false,
+          provider: false,
+          modeId: false,
+          model: false,
+          thinkingOptionId: false,
+          workingDir: false,
+        },
+        {
+          serverId: null,
+          provider: "codex",
+          modeId: "",
+          model: "",
+          thinkingOptionId: "",
+          workingDir: "",
+        },
+        new Set<string>(),
+        allowedProviderMap
+      );
+
+      expect(resolved.provider).toBe("claude");
+    });
+
+    it("does not force fallback provider when allowed provider map is empty", () => {
+      const resolved = __private__.resolveFormState(
+        undefined,
+        { provider: "codex" },
+        null,
+        {
+          serverId: false,
+          provider: false,
+          modeId: false,
+          model: false,
+          thinkingOptionId: false,
+          workingDir: false,
+        },
+        {
+          serverId: null,
+          provider: "codex",
+          modeId: "",
+          model: "",
+          thinkingOptionId: "",
+          workingDir: "",
+        },
+        new Set<string>(),
+        new Map<AgentProvider, AgentProviderDefinition>()
+      );
+
+      expect(resolved.provider).toBe("codex");
     });
   });
 });

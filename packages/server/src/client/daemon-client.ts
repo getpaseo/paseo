@@ -30,6 +30,7 @@ import type {
   ListCommandsResponse,
   ExecuteCommandResponse,
   ListProviderModelsResponseMessage,
+  ListAvailableProvidersResponse,
   SpeechModelsListResponse,
   SpeechModelsDownloadResponse,
   ListTerminalsResponse,
@@ -194,6 +195,7 @@ type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
 type FileExplorerPayload = FileExplorerResponse["payload"];
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
 type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
+type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type SpeechModelsListPayload = SpeechModelsListResponse["payload"];
 type SpeechModelsDownloadPayload = SpeechModelsDownloadResponse["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
@@ -2044,6 +2046,31 @@ export class DaemonClient {
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "list_provider_models_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async listAvailableProviders(options?: {
+    requestId?: string;
+  }): Promise<ListAvailableProvidersPayload> {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "list_available_providers_request",
+      requestId: resolvedRequestId,
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 30000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "list_available_providers_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {

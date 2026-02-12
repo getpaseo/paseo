@@ -29,6 +29,7 @@ import type {
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import type { AgentStorage } from "./agent-storage.js";
+import { AGENT_PROVIDER_IDS } from "./provider-manifest.js";
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 
@@ -52,6 +53,12 @@ export type AgentAttentionCallback = (params: {
   provider: AgentProvider;
   reason: "finished" | "error" | "permission";
 }) => void;
+
+export type ProviderAvailability = {
+  provider: AgentProvider;
+  available: boolean;
+  error: string | null;
+};
 
 export type AgentManagerOptions = {
   clients?: Partial<Record<AgentProvider, AgentClient>>;
@@ -331,6 +338,42 @@ export class AgentManager {
           b.lastActivityAt.getTime() - a.lastActivityAt.getTime()
       )
       .slice(0, limit);
+  }
+
+  async listProviderAvailability(): Promise<ProviderAvailability[]> {
+    const checks = AGENT_PROVIDER_IDS.map(async (providerId) => {
+      const provider = providerId as AgentProvider;
+      const client = this.clients.get(provider);
+      if (!client) {
+        return {
+          provider,
+          available: false,
+          error: `No client registered for provider '${provider}'`,
+        } satisfies ProviderAvailability;
+      }
+
+      try {
+        const available = await client.isAvailable();
+        return {
+          provider,
+          available,
+          error: null,
+        } satisfies ProviderAvailability;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          { err: error, provider },
+          "Failed to check provider availability"
+        );
+        return {
+          provider,
+          available: false,
+          error: message,
+        } satisfies ProviderAvailability;
+      }
+    });
+
+    return Promise.all(checks);
   }
 
   getAgent(id: string): ManagedAgent | null {
@@ -1460,7 +1503,9 @@ export class AgentManager {
 
     if (typeof normalized.model === "string") {
       const trimmed = normalized.model.trim();
-      normalized.model = trimmed.length > 0 ? trimmed : undefined;
+      const normalizedId = trimmed.toLowerCase();
+      normalized.model =
+        trimmed.length > 0 && normalizedId !== "default" ? trimmed : undefined;
     }
 
     return normalized;

@@ -343,7 +343,8 @@ export function ComboSelect({
   const anchorRef = useRef<View>(null);
 
   const selectedOption = options.find((opt) => opt.id === value);
-  const displayValue = selectedOption?.label ?? (value || "");
+  const displayValue = selectedOption?.label ?? "";
+  const isEmpty = options.length === 0;
 
   const handleOpen = useCallback(() => setIsOpen(true), []);
   const handleOpenChange = useCallback((open: boolean) => setIsOpen(open), []);
@@ -355,7 +356,7 @@ export function ComboSelect({
         value={displayValue}
         placeholder={placeholder}
         onPress={handleOpen}
-        disabled={disabled}
+        disabled={disabled || isEmpty}
         isLoading={isLoading}
         controlRef={anchorRef}
         icon={icon}
@@ -567,8 +568,8 @@ export function AgentConfigRow({
           title="Select provider"
           value={selectedProvider}
           options={providerOptions}
-          placeholder="Select..."
-          disabled={disabled}
+          placeholder={providerOptions.length > 0 ? "Select..." : "No providers available"}
+          disabled={disabled || providerOptions.length === 0}
           onSelect={onSelectProvider}
           icon={<Bot size={16} color={defaultTheme.colors.foregroundMuted} />}
           showLabel={false}

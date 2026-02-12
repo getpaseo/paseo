@@ -785,6 +785,13 @@ export function DraftAgentScreen({
         dispatch({ type: "DRAFT_SET_ERROR", message: "No host selected" });
         throw new Error("No host selected");
       }
+      if (providerDefinitions.length === 0) {
+        dispatch({
+          type: "DRAFT_SET_ERROR",
+          message: "No available providers on the selected host",
+        });
+        throw new Error("No available providers on the selected host");
+      }
       if (gitBlockingError) {
         dispatch({ type: "DRAFT_SET_ERROR", message: gitBlockingError });
         throw new Error(gitBlockingError);
@@ -894,6 +901,7 @@ export function DraftAgentScreen({
       isDirectoryNotExists,
       isNonGitDirectory,
       modeOptions,
+      providerDefinitions,
       persistFormPreferences,
       router,
       selectedMode,

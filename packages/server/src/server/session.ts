@@ -1286,6 +1286,10 @@ export class Session {
           await this.handleListProviderModelsRequest(msg);
           break;
 
+        case "list_available_providers_request":
+          await this.handleListAvailableProvidersRequest(msg);
+          break;
+
         case "speech_models_list_request":
           await this.handleSpeechModelsListRequest(msg);
           break;
@@ -2586,6 +2590,38 @@ export class Session {
         type: "list_provider_models_response",
         payload: {
           provider: msg.provider,
+          error: (error as Error)?.message ?? String(error),
+          fetchedAt,
+          requestId: msg.requestId,
+        },
+      });
+    }
+  }
+
+  private async handleListAvailableProvidersRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_available_providers_request" }>
+  ): Promise<void> {
+    const fetchedAt = new Date().toISOString();
+    try {
+      const providers = await this.agentManager.listProviderAvailability();
+      this.emit({
+        type: "list_available_providers_response",
+        payload: {
+          providers,
+          error: null,
+          fetchedAt,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error },
+        "Failed to list provider availability"
+      );
+      this.emit({
+        type: "list_available_providers_response",
+        payload: {
+          providers: [],
           error: (error as Error)?.message ?? String(error),
           fetchedAt,
           requestId: msg.requestId,

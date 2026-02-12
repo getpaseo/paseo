@@ -89,14 +89,24 @@ type UseAgentFormStateResult = {
   persistFormPreferences: () => Promise<void>;
 };
 
-const providerDefinitions = AGENT_PROVIDER_DEFINITIONS;
-const providerDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
-  providerDefinitions.map((definition) => [definition.id, definition])
+const allProviderDefinitions = AGENT_PROVIDER_DEFINITIONS;
+const allProviderDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
+  allProviderDefinitions.map((definition) => [definition.id, definition])
 );
-const fallbackDefinition = providerDefinitions[0];
+const fallbackDefinition = allProviderDefinitions[0];
 const DEFAULT_PROVIDER: AgentProvider = fallbackDefinition?.id ?? "claude";
 const DEFAULT_MODE_FOR_DEFAULT_PROVIDER =
   fallbackDefinition?.defaultModeId ?? "";
+
+function normalizeSelectedModelId(
+  modelId: string | null | undefined
+): string {
+  const normalized = typeof modelId === "string" ? modelId.trim() : "";
+  if (!normalized || normalized.toLowerCase() === "default") {
+    return "";
+  }
+  return normalized;
+}
 
 function resolveDefaultModel(
   availableModels: AgentModelDefinition[] | null
@@ -136,25 +146,33 @@ function resolveFormState(
   availableModels: AgentModelDefinition[] | null,
   userModified: UserModifiedFields,
   currentState: FormState,
-  validServerIds: Set<string>
+  validServerIds: Set<string>,
+  allowedProviderMap: Map<AgentProvider, AgentProviderDefinition> = allProviderDefinitionMap
 ): FormState {
   // Start with current state - we only update non-user-modified fields
   const result = { ...currentState };
+  const fallbackProvider = allowedProviderMap.keys().next().value as
+    | AgentProvider
+    | undefined;
 
   // 1. Resolve provider first (other fields depend on it)
   if (!userModified.provider) {
-    if (initialValues?.provider && providerDefinitionMap.has(initialValues.provider)) {
+    if (initialValues?.provider && allowedProviderMap.has(initialValues.provider)) {
       result.provider = initialValues.provider;
     } else if (
       preferences?.provider &&
-      providerDefinitionMap.has(preferences.provider as AgentProvider)
+      allowedProviderMap.has(preferences.provider as AgentProvider)
     ) {
       result.provider = preferences.provider as AgentProvider;
+    } else if (!allowedProviderMap.has(result.provider) && fallbackProvider) {
+      result.provider = fallbackProvider;
     }
     // else keep current (initialized to DEFAULT_PROVIDER)
+  } else if (!allowedProviderMap.has(result.provider) && fallbackProvider) {
+    result.provider = fallbackProvider;
   }
 
-  const providerDef = providerDefinitionMap.get(result.provider);
+  const providerDef = allowedProviderMap.get(result.provider);
   const providerPrefs = preferences?.providerPreferences?.[result.provider];
 
   // 2. Resolve modeId (depends on provider)
@@ -181,25 +199,24 @@ function resolveFormState(
   if (!userModified.model) {
     const isValidModel = (m: string) =>
       availableModels?.some((am) => am.id === m) ?? false;
+    const initialModel = normalizeSelectedModelId(initialValues?.model);
+    const preferredModel = normalizeSelectedModelId(providerPrefs?.model);
 
-    if (
-      typeof initialValues?.model === "string" &&
-      initialValues.model.length > 0
-    ) {
+    if (initialModel) {
       // If models aren't loaded yet, trust the initial value
       // It will be validated once models load
-      if (!availableModels || isValidModel(initialValues.model)) {
-        result.model = initialValues.model;
-      } else if (providerPrefs?.model && isValidModel(providerPrefs.model)) {
-        result.model = providerPrefs.model;
+      if (!availableModels || isValidModel(initialModel)) {
+        result.model = initialModel;
+      } else if (preferredModel && isValidModel(preferredModel)) {
+        result.model = preferredModel;
       } else {
         result.model = "";
       }
-    } else if (typeof providerPrefs?.model === "string" && providerPrefs.model.length > 0) {
+    } else if (preferredModel) {
       // If models haven't loaded yet, optimistically apply the stored preference.
       // We'll validate once models load and clear it if it isn't available.
-      if (!availableModels || isValidModel(providerPrefs.model)) {
-        result.model = providerPrefs.model;
+      if (!availableModels || isValidModel(preferredModel)) {
+        result.model = preferredModel;
       } else {
         result.model = "";
       }
@@ -353,6 +370,45 @@ export function useAgentFormState(
   const client = sessionState?.client ?? null;
   const isConnected = sessionState?.connection?.isConnected ?? false;
 
+  const availableProvidersQuery = useQuery({
+    queryKey: ["availableProviders", formState.serverId],
+    enabled: Boolean(
+      isVisible && isTargetDaemonReady && formState.serverId && client && isConnected
+    ),
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("Host is not connected");
+      }
+      const payload = await client.listAvailableProviders();
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload.providers
+        .filter((entry) => entry.available)
+        .map((entry) => entry.provider);
+    },
+  });
+
+  const providerDefinitions = useMemo(() => {
+    const availableProviders = availableProvidersQuery.data;
+    if (!availableProviders) {
+      return [];
+    }
+    const available = new Set(availableProviders);
+    return allProviderDefinitions.filter((definition) =>
+      available.has(definition.id as AgentProvider)
+    );
+  }, [availableProvidersQuery.data]);
+
+  const providerDefinitionMap = useMemo(
+    () =>
+      new Map<AgentProvider, AgentProviderDefinition>(
+        providerDefinitions.map((definition) => [definition.id as AgentProvider, definition])
+      ),
+    [providerDefinitions]
+  );
+
   const [debouncedCwd, setDebouncedCwd] = useState<string | undefined>(undefined);
   useEffect(() => {
     const trimmed = formState.workingDir.trim();
@@ -363,7 +419,14 @@ export function useAgentFormState(
 
   const providerModelsQuery = useQuery({
     queryKey: ["providerModels", formState.serverId, formState.provider, debouncedCwd],
-    enabled: Boolean(isVisible && isTargetDaemonReady && formState.serverId && client && isConnected),
+    enabled: Boolean(
+      isVisible &&
+        isTargetDaemonReady &&
+        formState.serverId &&
+        client &&
+        isConnected &&
+        providerDefinitionMap.has(formState.provider)
+    ),
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       if (!client) {
@@ -403,7 +466,8 @@ export function useAgentFormState(
       availableModels,
       userModified,
       formStateRef.current,
-      validServerIds
+      validServerIds,
+      providerDefinitionMap
     );
 
     // Only update if something changed
@@ -428,6 +492,7 @@ export function useAgentFormState(
     availableModels,
     userModified,
     validServerIds,
+    providerDefinitionMap,
   ]);
 
   // Auto-select the first online host when:
@@ -500,11 +565,11 @@ export function useAgentFormState(
         ...prev,
         provider,
         modeId: providerPrefs?.mode ?? providerDef?.defaultModeId ?? "",
-        model: providerPrefs?.model ?? "",
+        model: normalizeSelectedModelId(providerPrefs?.model),
         thinkingOptionId: providerPrefs?.thinkingOptionId ?? "",
       }));
     },
-    [preferences?.providerPreferences, updatePreferences]
+    [preferences?.providerPreferences, providerDefinitionMap, updatePreferences]
   );
 
   const setModeFromUser = useCallback(
@@ -518,9 +583,10 @@ export function useAgentFormState(
 
   const setModelFromUser = useCallback(
     (modelId: string) => {
-      setFormState((prev) => ({ ...prev, model: modelId }));
+      const normalizedModelId = normalizeSelectedModelId(modelId);
+      setFormState((prev) => ({ ...prev, model: normalizedModelId }));
       setUserModified((prev) => ({ ...prev, model: true }));
-      void updateProviderPreferences(formState.provider, { model: modelId });
+      void updateProviderPreferences(formState.provider, { model: normalizedModelId });
     },
     [formState.provider, updateProviderPreferences]
   );
@@ -639,6 +705,8 @@ export function useAgentFormState(
       setThinkingOptionFromUser,
       setWorkingDir,
       setWorkingDirFromUser,
+      providerDefinitions,
+      providerDefinitionMap,
       agentDefinition,
       modeOptions,
       availableModels,

@@ -19,4 +19,13 @@ describe("extractAgentModel", () => {
 
     expect(extractAgentModel(agent)).toBe("gpt-5.1-codex");
   });
+
+  it("treats legacy 'default' model ids as unset", () => {
+    const agent = {
+      model: "default",
+      runtimeInfo: { model: "default" },
+    } as Partial<Agent> as Agent;
+
+    expect(extractAgentModel(agent)).toBeNull();
+  });
 });

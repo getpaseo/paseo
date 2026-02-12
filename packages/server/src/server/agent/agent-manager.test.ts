@@ -130,6 +130,28 @@ describe("AgentManager", () => {
     expect(snapshot.model).toBeUndefined();
   });
 
+  test("normalizeConfig strips legacy 'default' model id", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000102",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      model: "default",
+    });
+
+    expect(snapshot.model).toBeUndefined();
+  });
+
   test("createAgent fails when cwd does not exist", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");

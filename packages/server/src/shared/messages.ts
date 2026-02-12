@@ -564,6 +564,11 @@ export const ListProviderModelsRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ListAvailableProvidersRequestMessageSchema = z.object({
+  type: z.literal("list_available_providers_request"),
+  requestId: z.string(),
+});
+
 export const SpeechModelsListRequestSchema = z.object({
   type: z.literal("speech_models_list_request"),
   requestId: z.string(),
@@ -987,6 +992,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DictationStreamCancelMessageSchema,
   CreateAgentRequestMessageSchema,
   ListProviderModelsRequestMessageSchema,
+  ListAvailableProvidersRequestMessageSchema,
   SpeechModelsListRequestSchema,
   SpeechModelsDownloadRequestSchema,
   ResumeAgentRequestMessageSchema,
@@ -1635,6 +1641,22 @@ export const ListProviderModelsResponseMessageSchema = z.object({
   }),
 });
 
+const ProviderAvailabilitySchema = z.object({
+  provider: AgentProviderSchema,
+  available: z.boolean(),
+  error: z.string().nullable().optional(),
+});
+
+export const ListAvailableProvidersResponseSchema = z.object({
+  type: z.literal("list_available_providers_response"),
+  payload: z.object({
+    providers: z.array(ProviderAvailabilitySchema),
+    error: z.string().nullable().optional(),
+    fetchedAt: z.string(),
+    requestId: z.string(),
+  }),
+});
+
 export const SpeechModelsListResponseSchema = z.object({
   type: z.literal("speech_models_list_response"),
   payload: z.object({
@@ -1817,6 +1839,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectIconResponseSchema,
   FileDownloadTokenResponseSchema,
   ListProviderModelsResponseMessageSchema,
+  ListAvailableProvidersResponseSchema,
   SpeechModelsListResponseSchema,
   SpeechModelsDownloadResponseSchema,
   ListCommandsResponseSchema,
@@ -1873,6 +1896,9 @@ export type AgentDeletedMessage = z.infer<typeof AgentDeletedMessageSchema>;
 export type ListProviderModelsResponseMessage = z.infer<
   typeof ListProviderModelsResponseMessageSchema
 >;
+export type ListAvailableProvidersResponse = z.infer<
+  typeof ListAvailableProvidersResponseSchema
+>;
 export type SpeechModelsListResponse = z.infer<typeof SpeechModelsListResponseSchema>;
 export type SpeechModelsDownloadResponse = z.infer<typeof SpeechModelsDownloadResponseSchema>;
 export type InitializeAgentResponseMessage = z.infer<typeof InitializeAgentResponseMessageSchema>;
@@ -1896,6 +1922,9 @@ export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelM
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type ListProviderModelsRequestMessage = z.infer<
   typeof ListProviderModelsRequestMessageSchema
+>;
+export type ListAvailableProvidersRequestMessage = z.infer<
+  typeof ListAvailableProvidersRequestMessageSchema
 >;
 export type SpeechModelsListRequestMessage = z.infer<typeof SpeechModelsListRequestSchema>;
 export type SpeechModelsDownloadRequestMessage = z.infer<

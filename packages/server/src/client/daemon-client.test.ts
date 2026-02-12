@@ -418,6 +418,60 @@ describe("DaemonClient", () => {
     vi.useRealTimers();
   });
 
+  test("lists available providers via RPC", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.listAvailableProviders();
+    expect(mock.sent).toHaveLength(1);
+
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: { type: "list_available_providers_request"; requestId: string };
+    };
+    expect(request.message.type).toBe("list_available_providers_request");
+
+    mock.triggerMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "list_available_providers_response",
+          payload: {
+            providers: [
+              { provider: "claude", available: true, error: null },
+              { provider: "codex", available: false, error: "Missing binary" },
+            ],
+            error: null,
+            fetchedAt: "2026-02-12T00:00:00.000Z",
+            requestId: request.message.requestId,
+          },
+        },
+      })
+    );
+
+    await expect(promise).resolves.toEqual({
+      providers: [
+        { provider: "claude", available: true, error: null },
+        { provider: "codex", available: false, error: "Missing binary" },
+      ],
+      error: null,
+      fetchedAt: "2026-02-12T00:00:00.000Z",
+      requestId: request.message.requestId,
+    });
+  });
+
   test("parses canonical agent_stream tool_call payloads without crashing", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();
