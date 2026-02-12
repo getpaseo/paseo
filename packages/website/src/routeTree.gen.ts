@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DocsIndexRouteImport } from './routes/docs/index'
@@ -19,6 +20,11 @@ import { Route as DocsConfigurationRouteImport } from './routes/docs/configurati
 import { Route as DocsCliRouteImport } from './routes/docs/cli'
 import { Route as DocsBestPracticesRouteImport } from './routes/docs/best-practices'
 
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DocsRoute = DocsRouteImport.update({
   id: '/docs',
   path: '/docs',
@@ -68,6 +74,7 @@ const DocsBestPracticesRoute = DocsBestPracticesRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/docs': typeof DocsRouteWithChildren
+  '/privacy': typeof PrivacyRoute
   '/docs/best-practices': typeof DocsBestPracticesRoute
   '/docs/cli': typeof DocsCliRoute
   '/docs/configuration': typeof DocsConfigurationRoute
@@ -78,6 +85,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
   '/docs/best-practices': typeof DocsBestPracticesRoute
   '/docs/cli': typeof DocsCliRoute
   '/docs/configuration': typeof DocsConfigurationRoute
@@ -90,6 +98,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/docs': typeof DocsRouteWithChildren
+  '/privacy': typeof PrivacyRoute
   '/docs/best-practices': typeof DocsBestPracticesRoute
   '/docs/cli': typeof DocsCliRoute
   '/docs/configuration': typeof DocsConfigurationRoute
@@ -103,6 +112,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/docs'
+    | '/privacy'
     | '/docs/best-practices'
     | '/docs/cli'
     | '/docs/configuration'
@@ -113,6 +123,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/privacy'
     | '/docs/best-practices'
     | '/docs/cli'
     | '/docs/configuration'
@@ -124,6 +135,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/docs'
+    | '/privacy'
     | '/docs/best-practices'
     | '/docs/cli'
     | '/docs/configuration'
@@ -136,10 +148,18 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DocsRoute: typeof DocsRouteWithChildren
+  PrivacyRoute: typeof PrivacyRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/docs': {
       id: '/docs'
       path: '/docs'
@@ -231,6 +251,7 @@ const DocsRouteWithChildren = DocsRoute._addFileChildren(DocsRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DocsRoute: DocsRouteWithChildren,
+  PrivacyRoute: PrivacyRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

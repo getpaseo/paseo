@@ -53,6 +53,16 @@ function Home() {
           <Story />
           <FAQ />
         </main>
+        <footer className="p-6 md:p-20 md:pt-0 max-w-3xl mx-auto">
+          <div className="border-t border-white/10 pt-6">
+            <a
+              href="/privacy"
+              className="text-xs text-white/40 hover:text-white/60 transition-colors"
+            >
+              Privacy
+            </a>
+          </div>
+        </footer>
       </div>
     </CursorFieldProvider>
   )
