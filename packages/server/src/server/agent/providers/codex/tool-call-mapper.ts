@@ -37,10 +37,10 @@ const CodexRolloutToolCallParamsSchema = z
 type CodexNormalizedToolCallEnvelope = {
   callId: string;
   name: string;
-  input: unknown | null;
-  output: unknown | null;
-  status: ToolCallTimelineItem["status"];
-  error: unknown | null;
+  input?: unknown | null;
+  output?: unknown | null;
+  status?: ToolCallTimelineItem["status"];
+  error?: unknown | null;
   metadata?: Record<string, unknown>;
   cwd?: string | null;
 };
@@ -116,243 +116,76 @@ const CodexNormalizedToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("shell"),
     name: CodexShellToolNameSchema,
-  }).transform((envelope): ToolCallTimelineItem => {
-    const detail = deriveCodexToolDetail({
-      name: envelope.name,
-      input: envelope.input,
-      output: envelope.output,
-      cwd: envelope.cwd ?? null,
-    });
-
-    if (envelope.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: envelope.callId,
-        name: envelope.name,
-        status: "failed",
-        error: envelope.error ?? { message: "Tool call failed" },
-        detail,
-        ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-      };
-    }
-
-    return {
-      type: "tool_call",
-      callId: envelope.callId,
-      name: envelope.name,
-      status: envelope.status,
-      error: null,
-      detail,
-      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-    };
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("read"),
     name: CodexReadToolNameSchema,
-  }).transform((envelope): ToolCallTimelineItem => {
-    const detail = deriveCodexToolDetail({
-      name: envelope.name,
-      input: envelope.input,
-      output: envelope.output,
-      cwd: envelope.cwd ?? null,
-    });
-
-    if (envelope.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: envelope.callId,
-        name: envelope.name,
-        status: "failed",
-        error: envelope.error ?? { message: "Tool call failed" },
-        detail,
-        ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-      };
-    }
-
-    return {
-      type: "tool_call",
-      callId: envelope.callId,
-      name: envelope.name,
-      status: envelope.status,
-      error: null,
-      detail,
-      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-    };
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("write"),
     name: CodexWriteToolNameSchema,
-  }).transform((envelope): ToolCallTimelineItem => {
-    const detail = deriveCodexToolDetail({
-      name: envelope.name,
-      input: envelope.input,
-      output: envelope.output,
-      cwd: envelope.cwd ?? null,
-    });
-
-    if (envelope.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: envelope.callId,
-        name: envelope.name,
-        status: "failed",
-        error: envelope.error ?? { message: "Tool call failed" },
-        detail,
-        ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-      };
-    }
-
-    return {
-      type: "tool_call",
-      callId: envelope.callId,
-      name: envelope.name,
-      status: envelope.status,
-      error: null,
-      detail,
-      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-    };
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("edit"),
     name: CodexEditToolNameSchema,
-  }).transform((envelope): ToolCallTimelineItem => {
-    const parsedDetail = deriveCodexToolDetail({
-      name: envelope.name,
-      input: envelope.input,
-      output: envelope.output,
-      cwd: envelope.cwd ?? null,
-    });
-    const detail: ToolCallTimelineItem["detail"] =
-      envelope.status === "running" || hasRenderableEditDetail(parsedDetail)
-        ? parsedDetail
-        : {
-            type: "unknown",
-            input: envelope.input,
-            output: envelope.output,
-          };
-
-    if (envelope.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: envelope.callId,
-        name: envelope.name,
-        status: "failed",
-        error: envelope.error ?? { message: "Tool call failed" },
-        detail,
-        ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-      };
-    }
-
-    return {
-      type: "tool_call",
-      callId: envelope.callId,
-      name: envelope.name,
-      status: envelope.status,
-      error: null,
-      detail,
-      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-    };
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("search"),
     name: CodexSearchToolNameSchema,
-  }).transform((envelope): ToolCallTimelineItem => {
-    const detail = deriveCodexToolDetail({
-      name: envelope.name,
-      input: envelope.input,
-      output: envelope.output,
-      cwd: envelope.cwd ?? null,
-    });
-
-    if (envelope.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: envelope.callId,
-        name: envelope.name,
-        status: "failed",
-        error: envelope.error ?? { message: "Tool call failed" },
-        detail,
-        ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-      };
-    }
-
-    return {
-      type: "tool_call",
-      callId: envelope.callId,
-      name: envelope.name,
-      status: envelope.status,
-      error: null,
-      detail,
-      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-    };
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("speak"),
     name: CodexSpeakToolNameSchema,
-  }).transform((envelope): ToolCallTimelineItem => {
-    const canonicalName = "speak";
-    const detail = deriveCodexToolDetail({
-      name: canonicalName,
-      input: envelope.input,
-      output: envelope.output,
-      cwd: envelope.cwd ?? null,
-    });
-
-    if (envelope.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: envelope.callId,
-        name: canonicalName,
-        status: "failed",
-        error: envelope.error ?? { message: "Tool call failed" },
-        detail,
-        ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-      };
-    }
-
-    return {
-      type: "tool_call",
-      callId: envelope.callId,
-      name: canonicalName,
-      status: envelope.status,
-      error: null,
-      detail,
-      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-    };
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("unknown"),
-  }).transform((envelope): ToolCallTimelineItem => {
-    const detail = deriveCodexToolDetail({
-      name: envelope.name,
-      input: envelope.input,
-      output: envelope.output,
-      cwd: envelope.cwd ?? null,
-    });
+  }),
+]);
 
-    if (envelope.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: envelope.callId,
-        name: envelope.name,
-        status: "failed",
-        error: envelope.error ?? { message: "Tool call failed" },
-        detail,
-        ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
-      };
-    }
+type CodexNormalizedToolCallPass2 = z.infer<typeof CodexNormalizedToolCallPass2Schema>;
 
+function toToolCallTimelineItem(envelope: CodexNormalizedToolCallPass2): ToolCallTimelineItem {
+  const name = envelope.toolKind === "speak" ? ("speak" as const) : envelope.name;
+  const parsedDetail = deriveCodexToolDetail({
+    name,
+    input: envelope.input,
+    output: envelope.output,
+    cwd: envelope.cwd ?? null,
+  });
+
+  const detail: ToolCallTimelineItem["detail"] =
+    envelope.toolKind === "edit" &&
+    envelope.status !== "running" &&
+    !hasRenderableEditDetail(parsedDetail)
+      ? {
+          type: "unknown",
+          input: envelope.input,
+          output: envelope.output,
+        }
+      : parsedDetail;
+
+  if (envelope.status === "failed") {
     return {
       type: "tool_call",
       callId: envelope.callId,
-      name: envelope.name,
-      status: envelope.status,
-      error: null,
+      name,
+      status: "failed",
+      error: envelope.error ?? { message: "Tool call failed" },
       detail,
       ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
     };
-  }),
-]);
+  }
+
+  return {
+    type: "tool_call",
+    callId: envelope.callId,
+    name,
+    status: envelope.status,
+    error: null,
+    detail,
+    ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Thread-item parsing
@@ -758,7 +591,7 @@ function toToolCallFromNormalizedEnvelope(
   if (!parsed.success) {
     return null;
   }
-  return parsed.data;
+  return toToolCallTimelineItem(parsed.data);
 }
 
 function mapCommandExecutionItem(

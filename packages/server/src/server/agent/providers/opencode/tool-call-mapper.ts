@@ -124,55 +124,37 @@ const OpencodeToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   OpencodeToolCallPass2BaseSchema.extend({
     toolKind: z.literal("known"),
     name: OpencodeKnownToolNameSchema,
-  }).transform((normalized): ToolCallTimelineItem => {
-    const detail = deriveOpencodeToolDetail(normalized.name, normalized.input, normalized.output);
-    if (normalized.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: normalized.callId,
-        name: normalized.name,
-        status: "failed",
-        detail,
-        error: normalized.error ?? { message: "Tool call failed" },
-        ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
-      };
-    }
-    return {
-      type: "tool_call",
-      callId: normalized.callId,
-      name: normalized.name,
-      status: normalized.status,
-      detail,
-      error: null,
-      ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
-    };
   }),
   OpencodeToolCallPass2BaseSchema.extend({
     toolKind: z.literal("other"),
-  }).transform((normalized): ToolCallTimelineItem => {
-    const detail = deriveOpencodeToolDetail(normalized.name, normalized.input, normalized.output);
-    if (normalized.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: normalized.callId,
-        name: normalized.name,
-        status: "failed",
-        detail,
-        error: normalized.error ?? { message: "Tool call failed" },
-        ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
-      };
-    }
+  }),
+]);
+
+type OpencodeToolCallPass2 = z.infer<typeof OpencodeToolCallPass2Schema>;
+
+function toToolCallTimelineItem(normalized: OpencodeToolCallPass2): ToolCallTimelineItem {
+  const detail = deriveOpencodeToolDetail(normalized.name, normalized.input, normalized.output);
+  if (normalized.status === "failed") {
     return {
       type: "tool_call",
       callId: normalized.callId,
       name: normalized.name,
-      status: normalized.status,
+      status: "failed",
       detail,
-      error: null,
+      error: normalized.error ?? { message: "Tool call failed" },
       ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
     };
-  }),
-]);
+  }
+  return {
+    type: "tool_call",
+    callId: normalized.callId,
+    name: normalized.name,
+    status: normalized.status,
+    detail,
+    error: null,
+    ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
+  };
+}
 
 export function mapOpencodeToolCall(params: OpencodeToolCallParams): ToolCallTimelineItem | null {
   const pass1 = OpencodeNormalizedToolCallPass1Schema.safeParse(params);
@@ -190,5 +172,5 @@ export function mapOpencodeToolCall(params: OpencodeToolCallParams): ToolCallTim
     return null;
   }
 
-  return pass2.data;
+  return toToolCallTimelineItem(pass2.data);
 }

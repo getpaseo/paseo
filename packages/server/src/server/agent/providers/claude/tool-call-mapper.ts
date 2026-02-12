@@ -77,56 +77,38 @@ const ClaudeToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   ClaudeToolCallPass2BaseSchema.extend({
     toolKind: z.literal("speak"),
     name: z.literal("mcp__paseo__speak"),
-  }).transform((normalized): ToolCallTimelineItem => {
-    const name = "speak" as const;
-    const detail = deriveClaudeToolDetail(name, normalized.input, normalized.output);
-    if (normalized.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: normalized.callId,
-        name,
-        detail,
-        status: "failed",
-        error: normalized.error ?? { message: "Tool call failed" },
-        ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
-      };
-    }
+  }),
+  ClaudeToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("other"),
+  }),
+]);
+
+type ClaudeToolCallPass2 = z.infer<typeof ClaudeToolCallPass2Schema>;
+
+function toToolCallTimelineItem(normalized: ClaudeToolCallPass2): ToolCallTimelineItem {
+  const name = normalized.toolKind === "speak" ? ("speak" as const) : normalized.name;
+  const detail = deriveClaudeToolDetail(name, normalized.input, normalized.output);
+  if (normalized.status === "failed") {
     return {
       type: "tool_call",
       callId: normalized.callId,
       name,
       detail,
-      status: normalized.status,
-      error: null,
+      status: "failed",
+      error: normalized.error ?? { message: "Tool call failed" },
       ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
     };
-  }),
-  ClaudeToolCallPass2BaseSchema.extend({
-    toolKind: z.literal("other"),
-  }).transform((normalized): ToolCallTimelineItem => {
-    const detail = deriveClaudeToolDetail(normalized.name, normalized.input, normalized.output);
-    if (normalized.status === "failed") {
-      return {
-        type: "tool_call",
-        callId: normalized.callId,
-        name: normalized.name,
-        detail,
-        status: "failed",
-        error: normalized.error ?? { message: "Tool call failed" },
-        ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
-      };
-    }
-    return {
-      type: "tool_call",
-      callId: normalized.callId,
-      name: normalized.name,
-      detail,
-      status: normalized.status,
-      error: null,
-      ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
-    };
-  }),
-]);
+  }
+  return {
+    type: "tool_call",
+    callId: normalized.callId,
+    name,
+    detail,
+    status: normalized.status,
+    error: null,
+    ...(normalized.metadata ? { metadata: normalized.metadata } : {}),
+  };
+}
 
 function mapClaudeToolCall(
   params: MapperParams,
@@ -152,7 +134,7 @@ function mapClaudeToolCall(
     return null;
   }
 
-  return pass2.data;
+  return toToolCallTimelineItem(pass2.data);
 }
 
 export function mapClaudeRunningToolCall(

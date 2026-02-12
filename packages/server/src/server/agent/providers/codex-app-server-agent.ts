@@ -1835,7 +1835,7 @@ class CodexAppServerAgentSession implements AgentSession {
         developer_instructions: entry.developer_instructions ?? null,
       }));
     } catch (error) {
-      this.logger.debug({ error }, "Failed to load collaboration modes");
+      this.logger.trace({ error }, "Failed to load collaboration modes");
       this.collaborationModes = [];
     }
     this.resolvedCollaborationMode = this.resolveCollaborationMode(this.currentMode);
@@ -1862,7 +1862,7 @@ class CodexAppServerAgentSession implements AgentSession {
       }
       this.cachedSkills = skills;
     } catch (error) {
-      this.logger.debug({ error }, "Failed to load skills list");
+      this.logger.trace({ error }, "Failed to load skills list");
       this.cachedSkills = [];
     }
   }
@@ -2685,7 +2685,7 @@ class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.warnedUnknownNotificationMethods.add(method);
-    this.logger.warn({ method, params }, "Unhandled Codex app-server notification method");
+    this.logger.trace({ method, params }, "Unhandled Codex app-server notification method");
   }
 
   private warnInvalidNotificationPayload(method: string, params: unknown): void {

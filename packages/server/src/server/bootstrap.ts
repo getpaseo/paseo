@@ -57,7 +57,6 @@ import {
   encodeOfferToFragmentUrl,
 } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
-import { printPairingQrIfEnabled } from "./pairing-qr.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
 import { getOrCreateServerId } from "./server-id.js";
 import type {
@@ -548,7 +547,6 @@ export async function createPaseoDaemon(
 
               const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
               logger.info({ url }, "pairing_offer");
-              void printPairingQrIfEnabled({ url, logger }).catch(() => undefined);
             } else {
               logger.info("relay_disabled");
             }
