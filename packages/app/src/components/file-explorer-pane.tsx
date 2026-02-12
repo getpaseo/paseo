@@ -14,9 +14,13 @@ import {
 import { ScrollView, Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import Animated, {
+  cancelAnimation,
+  Easing,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  withRepeat,
+  withTiming,
 } from "react-native-reanimated";
 import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -294,6 +298,48 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
   const handleRefresh = useCallback(() => {
     void refetchExplorer();
   }, [refetchExplorer]);
+  const refreshIconRotation = useSharedValue(0);
+
+  useEffect(() => {
+    if (isRefreshFetching) {
+      refreshIconRotation.value = 0;
+      refreshIconRotation.value = withRepeat(
+        withTiming(360, {
+          duration: 700,
+          easing: Easing.linear,
+        }),
+        -1,
+        false
+      );
+      return;
+    }
+
+    cancelAnimation(refreshIconRotation);
+    const remainder = refreshIconRotation.value % 360;
+    if (Math.abs(remainder) < 0.001) {
+      refreshIconRotation.value = 0;
+      return;
+    }
+
+    const remaining = 360 - remainder;
+    const duration = Math.max(80, Math.round((remaining / 360) * 700));
+    refreshIconRotation.value = withTiming(
+      360,
+      {
+        duration,
+        easing: Easing.linear,
+      },
+      (finished) => {
+        if (finished) {
+          refreshIconRotation.value = 0;
+        }
+      }
+    );
+  }, [isRefreshFetching, refreshIconRotation]);
+
+  const refreshIconAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${refreshIconRotation.value}deg` }],
+  }));
 
   const currentSortLabel = SORT_OPTIONS.find((opt) => opt.value === sortOption)?.label ?? "Name";
 
@@ -644,14 +690,13 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
                       styles.iconButton,
                       (hovered || pressed) && styles.iconButtonHovered,
                       pressed && styles.iconButtonPressed,
-                      isRefreshFetching && styles.iconButtonLoading,
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel="Refresh files"
                   >
-                    <View style={isRefreshFetching ? styles.refreshIconLoading : undefined}>
+                    <Animated.View style={[styles.refreshIcon, refreshIconAnimatedStyle]}>
                       <RotateCw size={16} color={theme.colors.foregroundMuted} />
-                    </View>
+                    </Animated.View>
                   </Pressable>
                   <Pressable style={styles.sortButton} onPress={handleSortCycle}>
                     <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
@@ -682,14 +727,13 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
                       styles.iconButton,
                       (hovered || pressed) && styles.iconButtonHovered,
                       pressed && styles.iconButtonPressed,
-                      isRefreshFetching && styles.iconButtonLoading,
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel="Refresh files"
                   >
-                    <View style={isRefreshFetching ? styles.refreshIconLoading : undefined}>
+                    <Animated.View style={[styles.refreshIcon, refreshIconAnimatedStyle]}>
                       <RotateCw size={16} color={theme.colors.foregroundMuted} />
-                    </View>
+                    </Animated.View>
                   </Pressable>
                   <Pressable style={styles.sortButton} onPress={handleSortCycle}>
                     <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
@@ -1246,11 +1290,11 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.8,
     transform: [{ scale: 0.96 }],
   },
-  iconButtonLoading: {
-    opacity: 0.8,
-  },
-  refreshIconLoading: {
-    opacity: 0.55,
+  refreshIcon: {
+    width: 16,
+    height: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
   previewContent: {
     flex: 1,
