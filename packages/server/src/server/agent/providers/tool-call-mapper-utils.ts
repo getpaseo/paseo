@@ -8,19 +8,6 @@ export function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-export function commandFromValue(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    return nonEmptyString(value);
-  }
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const tokens = value.filter(
-    (token): token is string => typeof token === "string" && token.length > 0
-  );
-  return tokens.length > 0 ? tokens.join(" ") : undefined;
-}
-
 const CODEX_SHELL_ENVELOPE_HEADER_LINES = new Set([
   "chunk id:",
   "wall time:",

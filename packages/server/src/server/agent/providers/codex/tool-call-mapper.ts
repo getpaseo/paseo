@@ -6,7 +6,6 @@ import {
   truncateDiffText,
 } from "../tool-call-mapper-utils.js";
 import {
-  CODEX_BUILTIN_TOOL_NAMES,
   deriveCodexToolDetail,
   normalizeCodexFilePath,
 } from "./tool-call-detail-parser.js";
@@ -54,63 +53,69 @@ const CodexNormalizedToolCallPass1Schema = z
     output: z.unknown().nullable(),
     status: CodexToolCallStatusSchema,
     error: z.unknown().nullable(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
     cwd: z.string().nullable().optional(),
   })
   .passthrough();
 
-const CODEX_SPEAK_TOOL_NAME = "paseo.speak";
-const CODEX_SHELL_TOOL_NAMES = ["Bash", "shell", "bash", "exec", "exec_command", "command"] as const;
-const CODEX_READ_TOOL_NAMES = ["read", "read_file"] as const;
-const CODEX_WRITE_TOOL_NAMES = ["write", "write_file", "create_file"] as const;
-const CODEX_EDIT_TOOL_NAMES = ["edit", "apply_patch", "apply_diff"] as const;
-const CODEX_SEARCH_TOOL_NAMES = ["search", "web_search"] as const;
-
-type CodexToolKind = "shell" | "read" | "write" | "edit" | "search" | "speak" | "unknown";
-
-const CodexToolKindByName: Record<string, Exclude<CodexToolKind, "unknown">> = {
-  Bash: "shell",
-  shell: "shell",
-  bash: "shell",
-  exec: "shell",
-  exec_command: "shell",
-  command: "shell",
-  read: "read",
-  read_file: "read",
-  write: "write",
-  write_file: "write",
-  create_file: "write",
-  edit: "edit",
-  apply_patch: "edit",
-  apply_diff: "edit",
-  search: "search",
-  web_search: "search",
-  [CODEX_SPEAK_TOOL_NAME]: "speak",
-};
+const CodexShellToolNameSchema = z.union([
+  z.literal("Bash"),
+  z.literal("shell"),
+  z.literal("bash"),
+  z.literal("exec"),
+  z.literal("exec_command"),
+  z.literal("command"),
+]);
+const CodexReadToolNameSchema = z.union([z.literal("read"), z.literal("read_file")]);
+const CodexWriteToolNameSchema = z.union([
+  z.literal("write"),
+  z.literal("write_file"),
+  z.literal("create_file"),
+]);
+const CodexEditToolNameSchema = z.union([
+  z.literal("edit"),
+  z.literal("apply_patch"),
+  z.literal("apply_diff"),
+]);
+const CodexSearchToolNameSchema = z.union([z.literal("search"), z.literal("web_search")]);
+const CodexSpeakToolNameSchema = z.literal("paseo.speak");
 
 const CodexToolKindSchema = z.enum(["shell", "read", "write", "edit", "search", "speak", "unknown"]);
-
-function resolveCodexToolKind(name: string): CodexToolKind {
-  return CodexToolKindByName[name] ?? "unknown";
-}
 
 const CodexToolCallPass2BaseSchema = CodexNormalizedToolCallPass1Schema.extend({
   toolKind: CodexToolKindSchema,
 });
 
-const CodexToolCallPass2InputSchema = CodexNormalizedToolCallPass1Schema.transform((envelope) => {
-  const name = envelope.name.trim();
-  return {
+const CodexToolCallPass2EnvelopeSchema = z.union([
+  CodexNormalizedToolCallPass1Schema.extend({
+    name: CodexShellToolNameSchema,
+  }).transform((envelope) => ({ ...envelope, toolKind: "shell" as const })),
+  CodexNormalizedToolCallPass1Schema.extend({
+    name: CodexReadToolNameSchema,
+  }).transform((envelope) => ({ ...envelope, toolKind: "read" as const })),
+  CodexNormalizedToolCallPass1Schema.extend({
+    name: CodexWriteToolNameSchema,
+  }).transform((envelope) => ({ ...envelope, toolKind: "write" as const })),
+  CodexNormalizedToolCallPass1Schema.extend({
+    name: CodexEditToolNameSchema,
+  }).transform((envelope) => ({ ...envelope, toolKind: "edit" as const })),
+  CodexNormalizedToolCallPass1Schema.extend({
+    name: CodexSearchToolNameSchema,
+  }).transform((envelope) => ({ ...envelope, toolKind: "search" as const })),
+  CodexNormalizedToolCallPass1Schema.extend({
+    name: CodexSpeakToolNameSchema,
+  }).transform((envelope) => ({ ...envelope, toolKind: "speak" as const })),
+  CodexNormalizedToolCallPass1Schema.transform((envelope) => ({
     ...envelope,
-    name,
-    toolKind: resolveCodexToolKind(name),
-  };
-});
+    name: envelope.name.trim(),
+    toolKind: "unknown" as const,
+  })),
+]);
 
 const CodexNormalizedToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("shell"),
-    name: z.enum(CODEX_SHELL_TOOL_NAMES),
+    name: CodexShellToolNameSchema,
   }).transform((envelope): ToolCallTimelineItem => {
     const detail = deriveCodexToolDetail({
       name: envelope.name,
@@ -143,7 +148,7 @@ const CodexNormalizedToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("read"),
-    name: z.enum(CODEX_READ_TOOL_NAMES),
+    name: CodexReadToolNameSchema,
   }).transform((envelope): ToolCallTimelineItem => {
     const detail = deriveCodexToolDetail({
       name: envelope.name,
@@ -176,7 +181,7 @@ const CodexNormalizedToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("write"),
-    name: z.enum(CODEX_WRITE_TOOL_NAMES),
+    name: CodexWriteToolNameSchema,
   }).transform((envelope): ToolCallTimelineItem => {
     const detail = deriveCodexToolDetail({
       name: envelope.name,
@@ -209,14 +214,22 @@ const CodexNormalizedToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("edit"),
-    name: z.enum(CODEX_EDIT_TOOL_NAMES),
+    name: CodexEditToolNameSchema,
   }).transform((envelope): ToolCallTimelineItem => {
-    const detail = deriveCodexToolDetail({
+    const parsedDetail = deriveCodexToolDetail({
       name: envelope.name,
       input: envelope.input,
       output: envelope.output,
       cwd: envelope.cwd ?? null,
     });
+    const detail: ToolCallTimelineItem["detail"] =
+      envelope.status === "running" || hasRenderableEditDetail(parsedDetail)
+        ? parsedDetail
+        : {
+            type: "unknown",
+            input: envelope.input,
+            output: envelope.output,
+          };
 
     if (envelope.status === "failed") {
       return {
@@ -242,7 +255,7 @@ const CodexNormalizedToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("search"),
-    name: z.enum(CODEX_SEARCH_TOOL_NAMES),
+    name: CodexSearchToolNameSchema,
   }).transform((envelope): ToolCallTimelineItem => {
     const detail = deriveCodexToolDetail({
       name: envelope.name,
@@ -275,7 +288,7 @@ const CodexNormalizedToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   }),
   CodexToolCallPass2BaseSchema.extend({
     toolKind: z.literal("speak"),
-    name: z.literal(CODEX_SPEAK_TOOL_NAME),
+    name: CodexSpeakToolNameSchema,
   }).transform((envelope): ToolCallTimelineItem => {
     const canonicalName = "speak";
     const detail = deriveCodexToolDetail({
@@ -472,6 +485,10 @@ type CodexApplyPatchDirective = {
   path: string;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function parseCodexApplyPatchDirective(line: string): CodexApplyPatchDirective | null {
   const trimmed = line.trim();
   if (trimmed.startsWith("*** Add File:")) {
@@ -484,6 +501,16 @@ function parseCodexApplyPatchDirective(line: string): CodexApplyPatchDirective |
     return { kind: "delete", path: trimmed.replace("*** Delete File:", "").trim() };
   }
   return null;
+}
+
+function extractPatchPrimaryFilePath(patch: string): string | undefined {
+  for (const line of patch.split(/\r?\n/)) {
+    const directive = parseCodexApplyPatchDirective(line);
+    if (directive && directive.path.length > 0) {
+      return directive.path;
+    }
+  }
+  return undefined;
 }
 
 function looksLikeCodexApplyPatch(text: string): boolean {
@@ -583,6 +610,64 @@ function asEditTextFields(
   return { newString: text };
 }
 
+function normalizeRolloutEditInput(input: unknown): unknown {
+  if (typeof input === "string") {
+    const textFields = asEditTextFields(input);
+    const path = extractPatchPrimaryFilePath(input);
+    return {
+      ...(path ? { path } : {}),
+      ...(textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
+      ...(textFields.newString ? { content: textFields.newString } : {}),
+    };
+  }
+  if (!isRecord(input)) {
+    return input;
+  }
+
+  const candidatePatchText =
+    (typeof input.patch === "string" && input.patch) ||
+    (typeof input.diff === "string" && input.diff) ||
+    (typeof input.unified_diff === "string" && input.unified_diff) ||
+    (typeof input.unifiedDiff === "string" && input.unifiedDiff) ||
+    (typeof input.content === "string" && input.content) ||
+    undefined;
+  if (!candidatePatchText) {
+    return input;
+  }
+
+  const textFields = asEditTextFields(candidatePatchText);
+  const rawPath =
+    (typeof input.path === "string" && input.path.trim().length > 0 ? input.path : undefined) ||
+    (typeof input.file_path === "string" && input.file_path.trim().length > 0
+      ? input.file_path
+      : undefined) ||
+    (typeof input.filePath === "string" && input.filePath.trim().length > 0
+      ? input.filePath
+      : undefined) ||
+    extractPatchPrimaryFilePath(candidatePatchText);
+
+  const {
+    patch: _patch,
+    diff: _diff,
+    unified_diff: _unifiedDiffSnake,
+    unifiedDiff: _unifiedDiffCamel,
+    ...rest
+  } = input;
+
+  const normalized: Record<string, unknown> = {
+    ...rest,
+    ...(rawPath ? { path: rawPath } : {}),
+    ...(textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
+    ...(textFields.newString ? { content: textFields.newString } : {}),
+  };
+
+  if (textFields.unifiedDiff && "content" in normalized) {
+    delete normalized.content;
+  }
+
+  return normalized;
+}
+
 function asEditFileOutputFields(
   text: string | undefined
 ): { patch?: string; content?: string } {
@@ -603,6 +688,17 @@ function pickFirstPatchLikeString(values: unknown[]): string | undefined {
     }
   }
   return undefined;
+}
+
+function hasRenderableEditDetail(detail: ToolCallTimelineItem["detail"]): boolean {
+  if (detail.type !== "edit") {
+    return true;
+  }
+  return (
+    (typeof detail.unifiedDiff === "string" && detail.unifiedDiff.trim().length > 0) ||
+    (typeof detail.newString === "string" && detail.newString.trim().length > 0) ||
+    (typeof detail.oldString === "string" && detail.oldString.trim().length > 0)
+  );
 }
 
 function resolveStatus(
@@ -639,10 +735,6 @@ function buildMcpToolName(server: string | undefined, tool: string): string {
     return "tool";
   }
 
-  if (CODEX_BUILTIN_TOOL_NAMES.has(trimmedTool)) {
-    return trimmedTool;
-  }
-
   const trimmedServer = typeof server === "string" ? server.trim() : "";
   if (trimmedServer.length > 0) {
     return `${trimmedServer}.${trimmedTool}`;
@@ -658,11 +750,11 @@ function toNullableObject(value: Record<string, unknown>): Record<string, unknow
 function toToolCallFromNormalizedEnvelope(
   envelope: CodexNormalizedToolCallEnvelope
 ): ToolCallTimelineItem | null {
-  const pass2Input = CodexToolCallPass2InputSchema.safeParse(envelope);
-  if (!pass2Input.success) {
+  const pass2Envelope = CodexToolCallPass2EnvelopeSchema.safeParse(envelope);
+  if (!pass2Envelope.success) {
     return null;
   }
-  const parsed = CodexNormalizedToolCallPass2Schema.safeParse(pass2Input.data);
+  const parsed = CodexNormalizedToolCallPass2Schema.safeParse(pass2Envelope.data);
   if (!parsed.success) {
     return null;
   }
@@ -876,11 +968,17 @@ export function mapCodexRolloutToolCall(params: {
     return null;
   }
 
+  const normalizedName = parsed.data.name.trim();
+  const normalizedInput =
+    normalizedName === "apply_patch" || normalizedName === "apply_diff"
+      ? normalizeRolloutEditInput(parsed.data.input ?? null)
+      : parsed.data.input ?? null;
+
   const pass1 = CodexNormalizedToolCallPass1Schema.safeParse({
     callId:
       typeof parsed.data.callId === "string" ? parsed.data.callId.trim() : "",
-    name: parsed.data.name.trim(),
-    input: parsed.data.input ?? null,
+    name: normalizedName,
+    input: normalizedInput,
     output: parsed.data.output ?? null,
     error: parsed.data.error ?? null,
     status: resolveStatus("completed", parsed.data.error ?? null, parsed.data.output ?? null),

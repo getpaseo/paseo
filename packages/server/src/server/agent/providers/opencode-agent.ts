@@ -2,6 +2,7 @@ import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import net from "node:net";
 import type { Logger } from "pino";
+import { z } from "zod";
 
 import type {
   AgentCapabilityFlags,
@@ -68,6 +69,84 @@ type OpenCodeMcpConfig =
     };
 
 const MCP_ALREADY_PRESENT_ERROR_TOKENS = ["already", "exists", "connected"] as const;
+
+const OpencodeToolStateSchema = z
+  .object({
+    status: z.string().optional(),
+    input: z.unknown().optional(),
+    output: z.unknown().optional(),
+    error: z.unknown().optional(),
+  })
+  .passthrough();
+
+const OpencodeToolPartBaseSchema = z
+  .object({
+    tool: z.string().trim().min(1),
+    state: OpencodeToolStateSchema.optional(),
+  })
+  .passthrough();
+
+const OpencodeToolPartWithCallIdSchema = OpencodeToolPartBaseSchema.extend({
+  callID: z.string().trim().min(1),
+  id: z.string().optional(),
+}).transform((part) => ({
+  toolName: part.tool,
+  callId: part.callID,
+  status: part.state?.status,
+  input: part.state?.input,
+  output: part.state?.output,
+  error: part.state?.error,
+}));
+
+const OpencodeToolPartWithIdSchema = OpencodeToolPartBaseSchema.extend({
+  id: z.string().trim().min(1),
+  callID: z.string().optional(),
+}).transform((part) => ({
+  toolName: part.tool,
+  callId: part.id,
+  status: part.state?.status,
+  input: part.state?.input,
+  output: part.state?.output,
+  error: part.state?.error,
+}));
+
+const OpencodeToolPartWithoutIdSchema = OpencodeToolPartBaseSchema.extend({
+  id: z.string().optional(),
+  callID: z.string().optional(),
+}).transform((part) => ({
+  toolName: part.tool,
+  callId: undefined,
+  status: part.state?.status,
+  input: part.state?.input,
+  output: part.state?.output,
+  error: part.state?.error,
+}));
+
+const OpencodeToolPartSchema = z.union([
+  OpencodeToolPartWithCallIdSchema,
+  OpencodeToolPartWithIdSchema,
+  OpencodeToolPartWithoutIdSchema,
+]);
+
+const OpencodeToolPartTimelineEnvelopeSchema = OpencodeToolPartSchema.transform((part) => ({
+  toolName: part.toolName,
+  callId: part.callId,
+  status: part.status,
+  input: part.input,
+  output: part.output,
+  error: part.error,
+}));
+
+const OpencodeToolPartToTimelineItemSchema = OpencodeToolPartTimelineEnvelopeSchema.transform((part) =>
+  mapOpencodeToolCall({
+    toolName: part.toolName,
+    callId: part.callId,
+    status: part.status,
+    input: part.input,
+    output: part.output,
+    error: part.error,
+  })
+);
 
 function resolveOpenCodeBinary(): string {
   try {
@@ -650,34 +729,13 @@ class OpenCodeAgentSession implements AgentSession {
               };
             }
           } else if (partType === "tool") {
-            const toolPart = part as {
-              id?: string;
-              tool?: string;
-              callID?: string;
-              state?: {
-                status?: string;
-                input?: AgentMetadata;
-                output?: string;
-                error?: string;
-              };
-            };
-            const toolName = toolPart.tool;
-            const state = toolPart.state;
-
-            if (toolName) {
-              const mappedToolCall = mapOpencodeToolCall({
-                toolName,
-                callId: toolPart.callID ?? toolPart.id,
-                status: state?.status,
-                input: state?.input,
-                output: state?.output,
-                error: state?.error,
-              });
-              if (mappedToolCall) {
+            const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
+            if (parsedToolPart.success) {
+              if (parsedToolPart.data) {
                 yield {
                   type: "timeline",
                   provider: "opencode",
-                  item: mappedToolCall,
+                  item: parsedToolPart.data,
                 };
               }
             }
@@ -934,27 +992,13 @@ class OpenCodeAgentSession implements AgentSession {
           }
         } else if (partType === "tool") {
           // Tool parts: { tool: string, state: { status, input, output?, error? } }
-          const toolName = part.tool as string | undefined;
-          const state = part.state as AgentMetadata | undefined;
-          const status = state?.status as string | undefined;
-          const input = state?.input as AgentMetadata | undefined;
-          const output = state?.output as string | undefined;
-          const error = state?.error as string | undefined;
-
-          if (toolName) {
-            const mappedToolCall = mapOpencodeToolCall({
-              toolName,
-              callId: (part.callID as string | undefined) ?? (part.id as string | undefined),
-              status,
-              input,
-              output,
-              error,
-            });
-            if (mappedToolCall) {
+          const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
+          if (parsedToolPart.success) {
+            if (parsedToolPart.data) {
               events.push({
                 type: "timeline",
                 provider: "opencode",
-                item: mappedToolCall,
+                item: parsedToolPart.data,
               });
             }
           }

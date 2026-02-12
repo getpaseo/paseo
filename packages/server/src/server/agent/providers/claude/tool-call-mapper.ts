@@ -24,7 +24,7 @@ const ClaudeRawToolCallSchema = z
     name: z.string().min(1),
     input: z.unknown().optional(),
     output: z.unknown().optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
     error: z.unknown().nullable().optional(),
     status: ClaudeToolCallStatusSchema,
   })
@@ -48,7 +48,7 @@ const ClaudeToolCallPass2BaseSchema = z.object({
   name: z.string().min(1),
   input: z.unknown().nullable(),
   output: z.unknown().nullable(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   error: z.unknown().nullable(),
   status: ClaudeToolCallStatusSchema,
   toolKind: z.enum(["speak", "other"]),
@@ -56,11 +56,22 @@ const ClaudeToolCallPass2BaseSchema = z.object({
 
 const ClaudeToolCallPass2InputSchema = ClaudeToolCallPass2BaseSchema.omit({
   toolKind: true,
-}).transform((normalized) => ({
-  ...normalized,
-  name: normalized.name.trim(),
-  toolKind: normalized.name.trim() === "mcp__paseo__speak" ? ("speak" as const) : ("other" as const),
-}));
+});
+
+const ClaudeToolCallPass2EnvelopeSchema = z.union([
+  ClaudeToolCallPass2InputSchema.extend({
+    name: z.literal("mcp__paseo__speak"),
+  }).transform((normalized) => ({
+    ...normalized,
+    name: normalized.name.trim(),
+    toolKind: "speak" as const,
+  })),
+  ClaudeToolCallPass2InputSchema.transform((normalized) => ({
+    ...normalized,
+    name: normalized.name.trim(),
+    toolKind: "other" as const,
+  })),
+]);
 
 const ClaudeToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   ClaudeToolCallPass2BaseSchema.extend({
@@ -131,12 +142,12 @@ function mapClaudeToolCall(
     return null;
   }
 
-  const pass2Input = ClaudeToolCallPass2InputSchema.safeParse(pass1.data);
-  if (!pass2Input.success) {
+  const pass2Envelope = ClaudeToolCallPass2EnvelopeSchema.safeParse(pass1.data);
+  if (!pass2Envelope.success) {
     return null;
   }
 
-  const pass2 = ClaudeToolCallPass2Schema.safeParse(pass2Input.data);
+  const pass2 = ClaudeToolCallPass2Schema.safeParse(pass2Envelope.data);
   if (!pass2.success) {
     return null;
   }

@@ -32,7 +32,7 @@ const OpencodeRawToolCallSchema = z
     input: z.unknown().optional(),
     output: z.unknown().optional(),
     error: z.unknown().optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -74,22 +74,21 @@ const OpencodeNormalizedToolCallPass1Schema = OpencodeRawToolCallSchema.transfor
   };
 });
 
-const OPENCODE_KNOWN_TOOL_NAMES = [
-  "shell",
-  "bash",
-  "exec_command",
-  "read",
-  "read_file",
-  "write",
-  "write_file",
-  "create_file",
-  "edit",
-  "apply_patch",
-  "apply_diff",
-  "search",
-  "web_search",
-] as const;
-const OpencodeKnownToolNameSchema = z.enum(OPENCODE_KNOWN_TOOL_NAMES);
+const OpencodeKnownToolNameSchema = z.union([
+  z.literal("shell"),
+  z.literal("bash"),
+  z.literal("exec_command"),
+  z.literal("read"),
+  z.literal("read_file"),
+  z.literal("write"),
+  z.literal("write_file"),
+  z.literal("create_file"),
+  z.literal("edit"),
+  z.literal("apply_patch"),
+  z.literal("apply_diff"),
+  z.literal("search"),
+  z.literal("web_search"),
+]);
 
 const OpencodeToolCallPass2BaseSchema = z.object({
   callId: z.string().min(1),
@@ -97,20 +96,29 @@ const OpencodeToolCallPass2BaseSchema = z.object({
   input: z.unknown().nullable(),
   output: z.unknown().nullable(),
   error: z.unknown().nullable(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   status: OpencodeToolCallStatusSchema,
   toolKind: z.enum(["known", "other"]),
 });
 
 const OpencodeToolCallPass2InputSchema = OpencodeToolCallPass2BaseSchema.omit({
   toolKind: true,
-}).transform((normalized) => ({
-  ...normalized,
-  name: normalized.name.trim(),
-  toolKind: OpencodeKnownToolNameSchema.safeParse(normalized.name).success
-    ? ("known" as const)
-    : ("other" as const),
-}));
+});
+
+const OpencodeToolCallPass2EnvelopeSchema = z.union([
+  OpencodeToolCallPass2InputSchema.extend({
+    name: OpencodeKnownToolNameSchema,
+  }).transform((normalized) => ({
+    ...normalized,
+    name: normalized.name.trim(),
+    toolKind: "known" as const,
+  })),
+  OpencodeToolCallPass2InputSchema.transform((normalized) => ({
+    ...normalized,
+    name: normalized.name.trim(),
+    toolKind: "other" as const,
+  })),
+]);
 
 const OpencodeToolCallPass2Schema = z.discriminatedUnion("toolKind", [
   OpencodeToolCallPass2BaseSchema.extend({
@@ -172,12 +180,12 @@ export function mapOpencodeToolCall(params: OpencodeToolCallParams): ToolCallTim
     return null;
   }
 
-  const pass2Input = OpencodeToolCallPass2InputSchema.safeParse(pass1.data);
-  if (!pass2Input.success) {
+  const pass2Envelope = OpencodeToolCallPass2EnvelopeSchema.safeParse(pass1.data);
+  if (!pass2Envelope.success) {
     return null;
   }
 
-  const pass2 = OpencodeToolCallPass2Schema.safeParse(pass2Input.data);
+  const pass2 = OpencodeToolCallPass2Schema.safeParse(pass2Envelope.data);
   if (!pass2.success) {
     return null;
   }

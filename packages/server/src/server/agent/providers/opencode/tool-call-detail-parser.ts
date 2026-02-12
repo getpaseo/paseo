@@ -23,8 +23,14 @@ const OpencodeKnownToolDetailSchema = z.union([
   toolDetailBranchByToolName("shell", ToolShellInputSchema, ToolShellOutputSchema, toShellToolDetail),
   toolDetailBranchByToolName("bash", ToolShellInputSchema, ToolShellOutputSchema, toShellToolDetail),
   toolDetailBranchByToolName("exec_command", ToolShellInputSchema, ToolShellOutputSchema, toShellToolDetail),
-  toolDetailBranchByToolName("read", ToolReadInputSchema, ToolReadOutputSchema, toReadToolDetail),
-  toolDetailBranchByToolName("read_file", ToolReadInputSchema, ToolReadOutputSchema, toReadToolDetail),
+  toolDetailBranchByToolName("read", ToolReadInputSchema, z.unknown(), (input, output) => {
+    const parsedOutput = ToolReadOutputSchema.safeParse(output);
+    return toReadToolDetail(input, parsedOutput.success ? parsedOutput.data : null);
+  }),
+  toolDetailBranchByToolName("read_file", ToolReadInputSchema, z.unknown(), (input, output) => {
+    const parsedOutput = ToolReadOutputSchema.safeParse(output);
+    return toReadToolDetail(input, parsedOutput.success ? parsedOutput.data : null);
+  }),
   toolDetailBranchByToolName("write", ToolWriteInputSchema, ToolWriteOutputSchema, toWriteToolDetail),
   toolDetailBranchByToolName("write_file", ToolWriteInputSchema, ToolWriteOutputSchema, toWriteToolDetail),
   toolDetailBranchByToolName("create_file", ToolWriteInputSchema, ToolWriteOutputSchema, toWriteToolDetail),

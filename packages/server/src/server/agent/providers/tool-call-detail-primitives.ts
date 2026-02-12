@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import type { ToolCallDetail } from "../agent-sdk-types.js";
 import {
-  commandFromValue,
   extractCodexShellOutput,
   flattenReadContent as flattenToolReadContent,
   nonEmptyString,
@@ -29,9 +28,19 @@ export const ToolShellInputSchema = z
       .passthrough(),
   ])
   .transform((value) => {
-    const commandValue = "command" in value ? value.command : value.cmd;
+    const parsedCommand = CommandValueSchema.safeParse(
+      "command" in value ? value.command : value.cmd
+    );
+    const command = parsedCommand.success
+      ? typeof parsedCommand.data === "string"
+        ? nonEmptyString(parsedCommand.data)
+        : parsedCommand.data
+            .map((token) => token.trim())
+            .filter((token) => token.length > 0)
+            .join(" ") || undefined
+      : undefined;
     return {
-      command: commandFromValue(commandValue),
+      command,
       cwd: nonEmptyString(value.cwd) ?? nonEmptyString(value.directory),
     };
   });
@@ -314,17 +323,12 @@ type ToolReadOutputValue = {
   content?: string;
 };
 
-export const ToolReadOutputSchema: z.ZodType<
-  ToolReadOutputValue,
-  z.ZodTypeDef,
-  unknown
-> = ToolReadOutputContentSchema;
+export const ToolReadOutputSchema = ToolReadOutputContentSchema;
 
-export const ToolReadOutputWithPathSchema: z.ZodType<
-  ToolReadOutputValue,
-  z.ZodTypeDef,
-  unknown
-> = z.union([ToolReadOutputContentSchema, ToolReadOutputPathSchema]);
+export const ToolReadOutputWithPathSchema = z.union([
+  ToolReadOutputContentSchema,
+  ToolReadOutputPathSchema,
+]);
 
 export const ToolWriteContentSchema = z
   .object({
@@ -508,8 +512,8 @@ export const ToolSearchInputSchema = z.union([
 export type ParsedToolShellInput = z.infer<typeof ToolShellInputSchema>;
 export type ParsedToolShellOutput = z.infer<typeof ToolShellOutputSchema>;
 export type ParsedToolReadInput = z.infer<typeof ToolReadInputSchema>;
-export type ParsedToolReadOutput = z.infer<typeof ToolReadOutputSchema>;
-export type ParsedToolReadOutputWithPath = z.infer<typeof ToolReadOutputWithPathSchema>;
+export type ParsedToolReadOutput = ToolReadOutputValue;
+export type ParsedToolReadOutputWithPath = ToolReadOutputValue;
 export type ParsedToolWriteInput = z.infer<typeof ToolWriteInputSchema>;
 export type ParsedToolWriteOutput = z.infer<typeof ToolWriteOutputSchema>;
 export type ParsedToolEditInput = z.infer<typeof ToolEditInputSchema>;
@@ -649,7 +653,13 @@ export function toolDetailBranchByName<
       input: inputSchema.nullable(),
       output: outputSchema.nullable(),
     })
-    .transform(({ input, output }) => mapper(input, output));
+    .transform((value) => {
+      const parsed = value as unknown as {
+        input: z.infer<InputSchema> | null;
+        output: z.infer<OutputSchema> | null;
+      };
+      return mapper(parsed.input, parsed.output);
+    });
 }
 
 export function toolDetailBranchByToolName<
@@ -671,7 +681,13 @@ export function toolDetailBranchByToolName<
       input: inputSchema.nullable(),
       output: outputSchema.nullable(),
     })
-    .transform(({ input, output }) => mapper(input, output));
+    .transform((value) => {
+      const parsed = value as unknown as {
+        input: z.infer<InputSchema> | null;
+        output: z.infer<OutputSchema> | null;
+      };
+      return mapper(parsed.input, parsed.output);
+    });
 }
 
 export function toolDetailBranchByNameWithCwd<
@@ -695,5 +711,12 @@ export function toolDetailBranchByNameWithCwd<
       output: outputSchema.nullable(),
       cwd: z.string().optional().nullable(),
     })
-    .transform(({ input, output, cwd }) => mapper(input, output, cwd ?? null));
+    .transform((value) => {
+      const parsed = value as unknown as {
+        input: z.infer<InputSchema> | null;
+        output: z.infer<OutputSchema> | null;
+        cwd?: string | null;
+      };
+      return mapper(parsed.input, parsed.output, parsed.cwd ?? null);
+    });
 }
