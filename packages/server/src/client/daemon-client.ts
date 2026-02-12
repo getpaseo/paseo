@@ -15,9 +15,7 @@ import type {
   CreateAgentRequestMessage,
   FileDownloadTokenResponse,
   FileExplorerResponse,
-  GitDiffResponse,
   GitSetupOptions,
-  HighlightedDiffResponse,
   CheckoutStatusResponse,
   CheckoutCommitResponse,
   CheckoutMergeResponse,
@@ -178,8 +176,6 @@ export type CreateAgentRequestOptions = {
   labels?: Record<string, string>;
 } & AgentConfigOverrides;
 
-type GitDiffPayload = GitDiffResponse["payload"];
-type HighlightedDiffPayload = HighlightedDiffResponse["payload"];
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 type SubscribeCheckoutDiffPayload = Extract<
   SessionOutboundMessage,
@@ -1897,60 +1893,6 @@ export class DaemonClient {
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "paseo_worktree_archive_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
-    });
-  }
-
-  async getGitDiff(
-    agentId: string,
-    requestId?: string
-  ): Promise<GitDiffPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "git_diff_request",
-      agentId,
-      requestId: resolvedRequestId,
-    });
-    return this.sendRequest({
-      requestId: resolvedRequestId,
-      message,
-      timeout: 10000,
-      options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "git_diff_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
-    });
-  }
-
-  async getHighlightedDiff(
-    agentId: string,
-    requestId?: string
-  ): Promise<HighlightedDiffPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "highlighted_diff_request",
-      agentId,
-      requestId: resolvedRequestId,
-    });
-    return this.sendRequest({
-      requestId: resolvedRequestId,
-      message,
-      timeout: 10000,
-      options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "highlighted_diff_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {

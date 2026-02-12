@@ -41,6 +41,7 @@ const SpeechProviderIdSchema = z
 
 const FeatureDictationSchema = z
   .object({
+    enabled: z.boolean().optional(),
     stt: z
       .object({
         provider: SpeechProviderIdSchema.optional(),
@@ -54,6 +55,7 @@ const FeatureDictationSchema = z
 
 const FeatureVoiceModeSchema = z
   .object({
+    enabled: z.boolean().optional(),
     llm: z
       .object({
         provider: z.enum(AGENT_PROVIDER_IDS as [string, ...string[]]).optional(),

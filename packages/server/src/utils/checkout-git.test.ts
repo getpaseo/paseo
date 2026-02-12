@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execSync } from "child_process";
-import { mkdtempSync, rmSync, writeFileSync, realpathSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync, realpathSync, mkdirSync, symlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
   commitAll,
   getCheckoutDiff,
+  getPullRequestStatus,
   getCheckoutStatus,
   getCheckoutStatusLite,
   mergeToBase,
@@ -139,6 +140,27 @@ describe("checkout git utilities", () => {
     expect(diff.structured?.some((f) => f.path === "file.txt" && f.status === "too_large")).toBe(
       true
     );
+  });
+
+  it("short-circuits tracked binary files", async () => {
+    const trackedBinaryPath = join(repoDir, "tracked-blob.bin");
+    writeFileSync(trackedBinaryPath, Buffer.from([0x00, 0xff, 0x10, 0x80, 0x00]));
+    execSync("git add tracked-blob.bin", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'add tracked binary'", {
+      cwd: repoDir,
+    });
+
+    writeFileSync(trackedBinaryPath, Buffer.from([0x00, 0xff, 0x11, 0x81, 0x00]));
+
+    const diff = await getCheckoutDiff(repoDir, {
+      mode: "uncommitted",
+      includeStructured: true,
+    });
+
+    const entry = diff.structured?.find((file) => file.path === "tracked-blob.bin");
+    expect(entry).toBeTruthy();
+    expect(entry?.status).toBe("binary");
+    expect(diff.diff).toContain("# tracked-blob.bin: binary diff omitted");
   });
 
   it("short-circuits untracked binary files", async () => {
@@ -378,6 +400,29 @@ describe("checkout git utilities", () => {
     await pushCurrentBranch(repoDir);
 
     execSync(`git --git-dir ${remoteDir} show-ref --verify refs/heads/feature`);
+  });
+
+  it("disables GitHub features when gh is unavailable", async () => {
+    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+
+    const fakeBinDir = join(tempDir, "fake-bin");
+    mkdirSync(fakeBinDir);
+    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
+    symlinkSync(gitPath, join(fakeBinDir, "git"));
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = fakeBinDir;
+    try {
+      const status = await getPullRequestStatus(repoDir);
+      expect(status.githubFeaturesEnabled).toBe(false);
+      expect(status.status).toBeNull();
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+    }
   });
 
   it("returns typed MergeConflictError on merge conflicts", async () => {

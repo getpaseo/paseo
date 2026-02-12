@@ -23,9 +23,9 @@ function resolveRequestedSpeechProviders(
   }
 
   return {
-    dictationStt: { provider: "local", explicit: false },
-    voiceStt: { provider: "local", explicit: false },
-    voiceTts: { provider: "local", explicit: false },
+    dictationStt: { provider: "local", explicit: false, enabled: true },
+    voiceStt: { provider: "local", explicit: false, enabled: true },
+    voiceTts: { provider: "local", explicit: false, enabled: true },
   };
 }
 
@@ -59,9 +59,18 @@ export async function initializeSpeechRuntime(params: {
   logger.info(
     {
       requestedProviders: {
-        dictationStt: providers.dictationStt.provider,
-        voiceStt: providers.voiceStt.provider,
-        voiceTts: providers.voiceTts.provider,
+        dictationStt: {
+          provider: providers.dictationStt.provider,
+          enabled: providers.dictationStt.enabled !== false,
+        },
+        voiceStt: {
+          provider: providers.voiceStt.provider,
+          enabled: providers.voiceStt.enabled !== false,
+        },
+        voiceTts: {
+          provider: providers.voiceTts.provider,
+          enabled: providers.voiceTts.enabled !== false,
+        },
       },
       availability: {
         openai: getOpenAiSpeechAvailability(openaiConfig),
@@ -99,9 +108,11 @@ export async function initializeSpeechRuntime(params: {
           : "openai",
   };
   const unavailableFeatures = [
-    !openAiSpeech.dictationSttService ? "dictation.stt" : null,
-    !openAiSpeech.sttService ? "voice.stt" : null,
-    !openAiSpeech.ttsService ? "voice.tts" : null,
+    providers.dictationStt.enabled !== false && !openAiSpeech.dictationSttService
+      ? "dictation.stt"
+      : null,
+    providers.voiceStt.enabled !== false && !openAiSpeech.sttService ? "voice.stt" : null,
+    providers.voiceTts.enabled !== false && !openAiSpeech.ttsService ? "voice.tts" : null,
   ].filter((feature): feature is string => feature !== null);
   const explicitlyConfiguredUnavailableFeatures = unavailableFeatures.filter((feature) => {
     if (feature === "dictation.stt") {
@@ -117,9 +128,18 @@ export async function initializeSpeechRuntime(params: {
     logger.error(
       {
         requestedProviders: {
-          dictationStt: providers.dictationStt.provider,
-          voiceStt: providers.voiceStt.provider,
-          voiceTts: providers.voiceTts.provider,
+          dictationStt: {
+            provider: providers.dictationStt.provider,
+            enabled: providers.dictationStt.enabled !== false,
+          },
+          voiceStt: {
+            provider: providers.voiceStt.provider,
+            enabled: providers.voiceStt.enabled !== false,
+          },
+          voiceTts: {
+            provider: providers.voiceTts.provider,
+            enabled: providers.voiceTts.enabled !== false,
+          },
         },
         explicitProviders: {
           dictationStt: providers.dictationStt.explicit,
@@ -140,9 +160,18 @@ export async function initializeSpeechRuntime(params: {
     logger.warn(
       {
         requestedProviders: {
-          dictationStt: providers.dictationStt.provider,
-          voiceStt: providers.voiceStt.provider,
-          voiceTts: providers.voiceTts.provider,
+          dictationStt: {
+            provider: providers.dictationStt.provider,
+            enabled: providers.dictationStt.enabled !== false,
+          },
+          voiceStt: {
+            provider: providers.voiceStt.provider,
+            enabled: providers.voiceStt.enabled !== false,
+          },
+          voiceTts: {
+            provider: providers.voiceTts.provider,
+            enabled: providers.voiceTts.enabled !== false,
+          },
         },
         explicitProviders: {
           dictationStt: providers.dictationStt.explicit,

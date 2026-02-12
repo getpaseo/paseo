@@ -696,12 +696,6 @@ export const AgentPermissionResponseMessageSchema = z.object({
   response: AgentPermissionResponseSchema,
 });
 
-export const GitDiffRequestSchema = z.object({
-  type: z.literal("git_diff_request"),
-  agentId: z.string(),
-  requestId: z.string(),
-});
-
 const CheckoutErrorCodeSchema = z.enum([
   "NOT_GIT_REPO",
   "NOT_ALLOWED",
@@ -835,12 +829,6 @@ const ParsedDiffFileSchema = z.object({
   deletions: z.number(),
   hunks: z.array(DiffHunkSchema),
   status: z.enum(["ok", "too_large", "binary"]).optional(),
-});
-
-export const HighlightedDiffRequestSchema = z.object({
-  type: z.literal("highlighted_diff_request"),
-  agentId: z.string(),
-  requestId: z.string(),
 });
 
 const FileExplorerEntrySchema = z.object({
@@ -1010,7 +998,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
-  GitDiffRequestSchema,
   CheckoutStatusRequestSchema,
   SubscribeCheckoutDiffRequestSchema,
   UnsubscribeCheckoutDiffRequestSchema,
@@ -1023,7 +1010,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ValidateBranchRequestSchema,
   PaseoWorktreeListRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
-  HighlightedDiffRequestSchema,
   FileExplorerRequestSchema,
   ProjectIconRequestSchema,
   FileDownloadTokenRequestSchema,
@@ -1411,16 +1397,6 @@ export const AgentArchivedMessageSchema = z.object({
   }),
 });
 
-export const GitDiffResponseSchema = z.object({
-  type: z.literal("git_diff_response"),
-  payload: z.object({
-    agentId: z.string(),
-    diff: z.string(),
-    error: z.string().nullable(),
-    requestId: z.string(),
-  }),
-});
-
 const AheadBehindSchema = z.object({
   ahead: z.number(),
   behind: z.number(),
@@ -1564,6 +1540,7 @@ export const CheckoutPrStatusResponseSchema = z.object({
   payload: z.object({
     cwd: z.string(),
     status: CheckoutPrStatusSchema.nullable(),
+    githubFeaturesEnabled: z.boolean(),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),
@@ -1601,16 +1578,6 @@ export const PaseoWorktreeArchiveResponseSchema = z.object({
     success: z.boolean(),
     removedAgents: z.array(z.string()).optional(),
     error: CheckoutErrorSchema.nullable(),
-    requestId: z.string(),
-  }),
-});
-
-export const HighlightedDiffResponseSchema = z.object({
-  type: z.literal("highlighted_diff_response"),
-  payload: z.object({
-    agentId: z.string(),
-    files: z.array(ParsedDiffFileSchema),
-    error: z.string().nullable(),
     requestId: z.string(),
   }),
 });
@@ -1834,7 +1801,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentPermissionResolvedMessageSchema,
   AgentDeletedMessageSchema,
   AgentArchivedMessageSchema,
-  GitDiffResponseSchema,
   CheckoutStatusResponseSchema,
   SubscribeCheckoutDiffResponseSchema,
   CheckoutDiffUpdateSchema,
@@ -1847,7 +1813,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ValidateBranchResponseSchema,
   PaseoWorktreeListResponseSchema,
   PaseoWorktreeArchiveResponseSchema,
-  HighlightedDiffResponseSchema,
   FileExplorerResponseSchema,
   ProjectIconResponseSchema,
   FileDownloadTokenResponseSchema,
@@ -1944,8 +1909,6 @@ export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessa
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
-export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
-export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
 export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
 export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;
 export type SubscribeCheckoutDiffRequest = z.infer<
@@ -1976,8 +1939,6 @@ export type PaseoWorktreeListRequest = z.infer<typeof PaseoWorktreeListRequestSc
 export type PaseoWorktreeListResponse = z.infer<typeof PaseoWorktreeListResponseSchema>;
 export type PaseoWorktreeArchiveRequest = z.infer<typeof PaseoWorktreeArchiveRequestSchema>;
 export type PaseoWorktreeArchiveResponse = z.infer<typeof PaseoWorktreeArchiveResponseSchema>;
-export type HighlightedDiffRequest = z.infer<typeof HighlightedDiffRequestSchema>;
-export type HighlightedDiffResponse = z.infer<typeof HighlightedDiffResponseSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
 export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>;

@@ -37,6 +37,10 @@ type ControlMessage =
   | { type: "ping" }
   | { type: "pong" };
 
+const CONTROL_PING_INTERVAL_MS = 10_000;
+const CONTROL_STALE_TIMEOUT_MS = 30_000;
+const CONTROL_READY_TIMEOUT_MS = 8_000;
+
 function tryParseControlMessage(raw: unknown): ControlMessage | null {
   try {
     const text =
@@ -76,7 +80,9 @@ export function startRelayTransport({
   let reconnectAttempt = 0;
   const dataSockets = new Map<string, WebSocket>(); // clientId -> ws
   let controlKeepaliveInterval: ReturnType<typeof setInterval> | null = null;
+  let controlReadyTimeout: ReturnType<typeof setTimeout> | null = null;
   let controlLastSeenAt = 0;
+  let controlConnectionSeq = 0;
 
   const stop = async (): Promise<void> => {
     stopped = true;
@@ -87,6 +93,10 @@ export function startRelayTransport({
     if (controlKeepaliveInterval) {
       clearInterval(controlKeepaliveInterval);
       controlKeepaliveInterval = null;
+    }
+    if (controlReadyTimeout) {
+      clearTimeout(controlReadyTimeout);
+      controlReadyTimeout = null;
     }
     if (controlWs) {
       try {
@@ -109,6 +119,7 @@ export function startRelayTransport({
   const connectControl = (): void => {
     if (stopped) return;
 
+    const connectionId = ++controlConnectionSeq;
     const url = buildRelayWebSocketUrl({
       endpoint: relayEndpoint,
       serverId,
@@ -116,14 +127,46 @@ export function startRelayTransport({
     });
     const socket = new WebSocket(url, { handshakeTimeout: 10_000, perMessageDeflate: false });
     controlWs = socket;
+    let controlConnected = false;
+
+    const markControlReady = () => {
+      if (controlWs !== socket) return;
+      if (controlConnected) return;
+      controlConnected = true;
+      reconnectAttempt = 0;
+      if (controlReadyTimeout) {
+        clearTimeout(controlReadyTimeout);
+        controlReadyTimeout = null;
+      }
+      relayLogger.info({ url, connectionId }, "relay_control_connected");
+    };
 
     socket.on("open", () => {
-      reconnectAttempt = 0;
+      if (controlWs !== socket) return;
+
       controlLastSeenAt = Date.now();
       if (controlKeepaliveInterval) {
         clearInterval(controlKeepaliveInterval);
         controlKeepaliveInterval = null;
       }
+      if (controlReadyTimeout) {
+        clearTimeout(controlReadyTimeout);
+        controlReadyTimeout = null;
+      }
+      controlReadyTimeout = setTimeout(() => {
+        if (stopped) return;
+        if (controlWs !== socket) return;
+        if (controlConnected) return;
+        relayLogger.warn(
+          { url, connectionId, waitedMs: CONTROL_READY_TIMEOUT_MS },
+          "relay_control_ready_timeout_terminating"
+        );
+        try {
+          socket.terminate();
+        } catch {
+          // ignore
+        }
+      }, CONTROL_READY_TIMEOUT_MS);
       controlKeepaliveInterval = setInterval(() => {
         if (stopped) return;
         if (controlWs !== socket) return;
@@ -133,8 +176,11 @@ export function startRelayTransport({
         const staleForMs = now - controlLastSeenAt;
         // If the control socket is half-open or silently dropped, ws may never emit "close".
         // Use app-level ping/pong to detect staleness and force a reconnect.
-        if (staleForMs > 90_000) {
-          relayLogger.warn({ url, staleForMs }, "relay_control_stale_terminating");
+        if (staleForMs > CONTROL_STALE_TIMEOUT_MS) {
+          relayLogger.warn(
+            { url, staleForMs, connectionId, staleTimeoutMs: CONTROL_STALE_TIMEOUT_MS },
+            "relay_control_stale_terminating"
+          );
           try {
             socket.terminate();
           } catch {
@@ -146,40 +192,58 @@ export function startRelayTransport({
         try {
           socket.send(JSON.stringify({ type: "ping", ts: now }));
         } catch (error) {
-          relayLogger.warn({ err: error, url }, "relay_control_ping_send_failed");
+          relayLogger.warn({ err: error, url, connectionId }, "relay_control_ping_send_failed");
           try {
             socket.terminate();
           } catch {
             // ignore
           }
         }
-      }, 20_000);
-      relayLogger.info({ url }, "relay_control_connected");
+      }, CONTROL_PING_INTERVAL_MS);
+      try {
+        socket.send(JSON.stringify({ type: "ping", ts: Date.now() }));
+      } catch (error) {
+        relayLogger.warn({ err: error, url, connectionId }, "relay_control_ping_send_failed");
+        try {
+          socket.terminate();
+        } catch {
+          // ignore
+        }
+      }
+      relayLogger.debug({ url, connectionId }, "relay_control_open_waiting_for_ready");
     });
 
     socket.on("close", (code, reason) => {
+      if (controlWs !== socket) return;
       relayLogger.warn(
-        { code, reason: reason?.toString?.(), url },
+        { code, reason: reason?.toString?.(), url, connectionId },
         "relay_control_disconnected"
       );
-      if (controlWs === socket) {
-        controlWs = null;
-      }
+      controlWs = null;
       if (controlKeepaliveInterval) {
         clearInterval(controlKeepaliveInterval);
         controlKeepaliveInterval = null;
+      }
+      if (controlReadyTimeout) {
+        clearTimeout(controlReadyTimeout);
+        controlReadyTimeout = null;
       }
       scheduleReconnect();
     });
 
     socket.on("error", (err) => {
-      relayLogger.warn({ err, url }, "relay_error");
+      if (controlWs !== socket) return;
+      relayLogger.warn({ err, url, connectionId }, "relay_error");
       // close event will schedule reconnect
     });
 
     socket.on("message", (data) => {
+      if (controlWs !== socket) return;
       controlLastSeenAt = Date.now();
       const msg = tryParseControlMessage(data);
+      if (msg) {
+        markControlReady();
+      }
       if (!msg) return;
       if (msg.type === "ping") {
         try {

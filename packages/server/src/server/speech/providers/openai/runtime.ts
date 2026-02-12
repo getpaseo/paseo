@@ -60,13 +60,22 @@ export function validateOpenAiCredentialRequirements(params: {
   const openAiCredentials = resolveOpenAiCredentials(openaiConfig);
 
   const missingOpenAiCredentialsFor: string[] = [];
-  if (providers.voiceStt.provider === "openai" && !openAiCredentials.openaiSttApiKey) {
+  if (
+    providers.voiceStt.enabled !== false &&
+    providers.voiceStt.provider === "openai" &&
+    !openAiCredentials.openaiSttApiKey
+  ) {
     missingOpenAiCredentialsFor.push("voice.stt");
   }
-  if (providers.voiceTts.provider === "openai" && !openAiCredentials.openaiTtsApiKey) {
+  if (
+    providers.voiceTts.enabled !== false &&
+    providers.voiceTts.provider === "openai" &&
+    !openAiCredentials.openaiTtsApiKey
+  ) {
     missingOpenAiCredentialsFor.push("voice.tts");
   }
   if (
+    providers.dictationStt.enabled !== false &&
     providers.dictationStt.provider === "openai" &&
     !openAiCredentials.openaiDictationApiKey
   ) {
@@ -104,10 +113,18 @@ export function initializeOpenAiSpeechServices(params: {
   let ttsService = existing.ttsService;
   let dictationSttService = existing.dictationSttService;
 
-  const needsOpenAiStt = !sttService && providers.voiceStt.provider === "openai";
-  const needsOpenAiTts = !ttsService && providers.voiceTts.provider === "openai";
+  const needsOpenAiStt =
+    !sttService &&
+    providers.voiceStt.enabled !== false &&
+    providers.voiceStt.provider === "openai";
+  const needsOpenAiTts =
+    !ttsService &&
+    providers.voiceTts.enabled !== false &&
+    providers.voiceTts.provider === "openai";
   const needsOpenAiDictation =
-    !dictationSttService && providers.dictationStt.provider === "openai";
+    !dictationSttService &&
+    providers.dictationStt.enabled !== false &&
+    providers.dictationStt.provider === "openai";
 
   if (
     (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation) &&

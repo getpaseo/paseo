@@ -18,6 +18,7 @@ import { runWaitCommand } from './commands/agent/wait.js'
 import { runAttachCommand } from './commands/agent/attach.js'
 import { runUpdateCommand } from './commands/agent/update.js'
 import { withOutput } from './output/index.js'
+import { onboardCommand } from './commands/onboard.js'
 
 const VERSION = '0.1.0'
 
@@ -142,6 +143,7 @@ export function createCli(): Command {
     .action(withOutput(runUpdateCommand))
 
   // Top-level local daemon shortcuts
+  program.addCommand(onboardCommand())
   program.addCommand(daemonStartCommand())
 
   program

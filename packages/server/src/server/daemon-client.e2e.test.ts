@@ -1012,63 +1012,11 @@ describe("daemon client E2E", () => {
       expect(checkoutStatus.isGit).toBe(true);
       expect(checkoutStatus.repoRoot).toContain(cwd);
 
-      const diffRequestId = `diff-${Date.now()}`;
-      const diffMessagePromise = waitForSignal(15000, (resolve) => {
-        const unsubscribeDiff = ctx.client.on("git_diff_response", (message) => {
-          if (message.type !== "git_diff_response") {
-            return;
-          }
-          if (message.payload.agentId !== agent.id) {
-            return;
-          }
-          if (message.payload.requestId !== diffRequestId) {
-            return;
-          }
-          resolve(message);
-        });
-        return unsubscribeDiff;
-      });
-
-      const diffResult = await ctx.client.getGitDiff(agent.id, diffRequestId);
-      const diffMessage = await diffMessagePromise;
+      const diffResult = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
       expect(diffResult.error).toBeNull();
-      expect(diffResult.diff).toContain("test.txt");
-      expect(diffResult.diff).toContain("-original content");
-      expect(diffResult.diff).toContain("+modified content");
-      expect(diffResult.requestId).toBe(diffRequestId);
-      expect(diffMessage.payload.agentId).toBe(agent.id);
-      expect(diffMessage.payload.requestId).toBe(diffRequestId);
-
-      const highlightRequestId = `highlight-${Date.now()}`;
-      const highlightMessagePromise = waitForSignal(15000, (resolve) => {
-        const unsubscribeHighlight = ctx.client.on(
-          "highlighted_diff_response",
-          (message) => {
-            if (message.type !== "highlighted_diff_response") {
-              return;
-            }
-            if (message.payload.agentId !== agent.id) {
-              return;
-            }
-            if (message.payload.requestId !== highlightRequestId) {
-              return;
-            }
-            resolve(message);
-          }
-        );
-        return unsubscribeHighlight;
-      });
-
-      const highlightResult = await ctx.client.getHighlightedDiff(
-        agent.id,
-        highlightRequestId
-      );
-      const highlightMessage = await highlightMessagePromise;
-      expect(highlightResult.error).toBeNull();
-      expect(Array.isArray(highlightResult.files)).toBe(true);
-      expect(highlightResult.requestId).toBe(highlightRequestId);
-      expect(highlightMessage.payload.agentId).toBe(agent.id);
-      expect(highlightMessage.payload.requestId).toBe(highlightRequestId);
+      expect(Array.isArray(diffResult.files)).toBe(true);
+      expect(diffResult.files.length).toBeGreaterThan(0);
+      expect(diffResult.files.some((file) => file.path === "test.txt")).toBe(true);
 
       const listRequestId = `list-${Date.now()}`;
       const listMessagePromise = waitForSignal(15000, (resolve) => {

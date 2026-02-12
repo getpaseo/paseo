@@ -26,7 +26,6 @@ import {
   type ProjectPlacementPayload,
 } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
-import { parseAndHighlightDiff, type ParsedDiffFile } from "./utils/diff-highlighter.js";
 import { TTSManager } from "./agent/tts-manager.js";
 import { STTManager } from "./agent/stt-manager.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
@@ -581,7 +580,7 @@ export class Session {
     void this.initializeAgentMcp();
     this.subscribeToAgentEvents();
 
-    this.sessionLogger.info("Session created");
+    this.sessionLogger.trace("Session created");
   }
 
   /**
@@ -750,7 +749,7 @@ export class Session {
 
       this.agentTools = (await this.agentMcpClient.tools()) as ToolSet;
       const agentToolCount = Object.keys(this.agentTools ?? {}).length;
-      this.sessionLogger.info(
+      this.sessionLogger.trace(
         { agentToolCount },
         `Agent MCP initialized with ${agentToolCount} tools`
       );
@@ -941,9 +940,17 @@ export class Session {
           agentId,
           extractTimestamps(record)
         );
+        this.sessionLogger.info(
+          { agentId, provider: record.provider },
+          "Agent resumed from persistence"
+        );
       } else {
         const config = buildSessionConfig(record);
         snapshot = await this.agentManager.createAgent(config, agentId, { labels: record.labels });
+        this.sessionLogger.info(
+          { agentId, provider: record.provider },
+          "Agent created from stored config"
+        );
       }
 
       await this.agentManager.hydrateTimelineFromProvider(agentId);
@@ -1215,10 +1222,6 @@ export class Session {
           );
           break;
 
-        case "git_diff_request":
-          await this.handleGitDiffRequest(msg.agentId, msg.requestId);
-          break;
-
         case "checkout_status_request":
           await this.handleCheckoutStatusRequest(msg);
           break;
@@ -1265,10 +1268,6 @@ export class Session {
 
         case "paseo_worktree_archive_request":
           await this.handlePaseoWorktreeArchiveRequest(msg);
-          break;
-
-        case "highlighted_diff_request":
-          await this.handleHighlightedDiffRequest(msg.agentId, msg.requestId);
           break;
 
         case "file_explorer_request":
@@ -2087,11 +2086,6 @@ export class Session {
     agentId: string,
     requestId: string
   ): Promise<void> {
-    this.sessionLogger.info(
-      { agentId },
-      `Initializing agent ${agentId} on demand`
-    );
-
     try {
       const snapshot = await this.ensureAgentLoaded(agentId);
       await this.forwardAgentUpdate(snapshot);
@@ -2108,11 +2102,6 @@ export class Session {
           requestId,
         },
       });
-
-      this.sessionLogger.info(
-        { agentId, timelineSize, status: snapshot.lifecycle },
-        `Agent ${agentId} initialized with ${timelineSize} timeline item(s); status=${snapshot.lifecycle}`
-      );
     } catch (error: any) {
       this.sessionLogger.error(
         { err: error, agentId },
@@ -3393,66 +3382,6 @@ export class Session {
     }
   }
 
-  /**
-   * Handle git diff request for an agent
-   */
-  private async handleGitDiffRequest(agentId: string, requestId: string): Promise<void> {
-    this.sessionLogger.debug(
-      { agentId },
-      `Handling git diff request for agent ${agentId}`
-    );
-
-    try {
-      const agents = this.agentManager.listAgents();
-      const agent = agents.find((a) => a.id === agentId);
-
-      if (!agent) {
-        this.emit({
-          type: "git_diff_response",
-          payload: {
-            agentId,
-            diff: "",
-            error: `Agent not found: ${agentId}`,
-            requestId,
-          },
-        });
-        return;
-      }
-
-      const diffResult = await getCheckoutDiff(agent.cwd, { mode: "uncommitted" }, { paseoHome: this.paseoHome });
-      const combinedDiff = diffResult.diff;
-
-      this.emit({
-        type: "git_diff_response",
-        payload: {
-          agentId,
-          diff: combinedDiff,
-          error: null,
-          requestId,
-        },
-      });
-
-      this.sessionLogger.debug(
-        { agentId, diffBytes: combinedDiff.length },
-        `Git diff for agent ${agentId} completed (${combinedDiff.length} bytes)`
-      );
-    } catch (error: any) {
-      this.sessionLogger.error(
-        { err: error, agentId },
-        `Failed to get git diff for agent ${agentId}`
-      );
-      this.emit({
-        type: "git_diff_response",
-        payload: {
-          agentId,
-          diff: "",
-          error: error.message,
-          requestId,
-        },
-      });
-    }
-  }
-
   private async handleCheckoutStatusRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_status_request" }>
   ): Promise<void> {
@@ -4190,12 +4119,13 @@ export class Session {
     const { cwd, requestId } = msg;
 
     try {
-      const status = await getPullRequestStatus(cwd);
+      const prStatus = await getPullRequestStatus(cwd);
       this.emit({
         type: "checkout_pr_status_response",
         payload: {
           cwd,
-          status,
+          status: prStatus.status,
+          githubFeaturesEnabled: prStatus.githubFeaturesEnabled,
           error: null,
           requestId,
         },
@@ -4206,6 +4136,7 @@ export class Session {
         payload: {
           cwd,
           status: null,
+          githubFeaturesEnabled: true,
           error: this.toCheckoutError(error),
           requestId,
         },
@@ -4367,237 +4298,6 @@ export class Session {
           success: false,
           removedAgents: [],
           error: this.toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  /**
-   * Handle highlighted diff request - returns parsed and syntax-highlighted diff
-   */
-  private async handleHighlightedDiffRequest(
-    agentId: string,
-    requestId: string
-  ): Promise<void> {
-    this.sessionLogger.debug(
-      { agentId },
-      `Handling highlighted diff request for agent ${agentId}`
-    );
-
-    // Maximum lines changed before we skip showing the diff content
-    const MAX_DIFF_LINES = 5000;
-
-    try {
-      const agents = this.agentManager.listAgents();
-      const agent = agents.find((a) => a.id === agentId);
-
-      if (!agent) {
-        this.emit({
-          type: "highlighted_diff_response",
-          payload: {
-            agentId,
-            files: [],
-            error: `Agent not found: ${agentId}`,
-            requestId,
-          },
-        });
-        return;
-      }
-
-      // Step 1: Get the list of changed files with their stats (numstat gives additions/deletions per file)
-      const { stdout: numstatOutput } = await execAsync(
-        "git diff --numstat HEAD",
-        { cwd: agent.cwd }
-      );
-
-      // Get file statuses (A=added, D=deleted, M=modified) to detect deleted files
-      const { stdout: nameStatusOutput } = await execAsync(
-        "git diff --name-status HEAD",
-        { cwd: agent.cwd }
-      );
-      const deletedFiles = new Set<string>();
-      const addedFiles = new Set<string>();
-      for (const line of nameStatusOutput.trim().split("\n").filter(Boolean)) {
-        const [status, ...pathParts] = line.split("\t");
-        const path = pathParts.join("\t");
-        if (status === "D") {
-          deletedFiles.add(path);
-        } else if (status === "A") {
-          addedFiles.add(path);
-        }
-      }
-
-      // Parse numstat output: "additions\tdeletions\tfilepath" or "-\t-\tfilepath" for binary
-      interface FileStats {
-        path: string;
-        additions: number;
-        deletions: number;
-        isBinary: boolean;
-        isTracked: boolean;
-        isDeleted: boolean;
-        isNew: boolean;
-      }
-      const fileStats: FileStats[] = [];
-
-      for (const line of numstatOutput.trim().split("\n").filter(Boolean)) {
-        const parts = line.split("\t");
-        if (parts.length >= 3) {
-          const [addStr, delStr, ...pathParts] = parts;
-          const path = pathParts.join("\t"); // Handle paths with tabs
-          const isBinary = addStr === "-" && delStr === "-";
-          fileStats.push({
-            path,
-            additions: isBinary ? 0 : parseInt(addStr, 10),
-            deletions: isBinary ? 0 : parseInt(delStr, 10),
-            isBinary,
-            isTracked: true,
-            isDeleted: deletedFiles.has(path),
-            isNew: addedFiles.has(path),
-          });
-        }
-      }
-
-      // Step 2: Get untracked files
-      try {
-        const { stdout: untrackedFiles } = await execAsync(
-          "git ls-files --others --exclude-standard",
-          { cwd: agent.cwd }
-        );
-        for (const filePath of untrackedFiles.trim().split("\n").filter(Boolean)) {
-          // Use git's numstat with --no-index to detect binary files (cross-platform)
-          // Binary files show as "-\t-\tfilepath", text files show line counts
-          try {
-            const { stdout: numstatLine } = await execAsync(
-              `git diff --numstat --no-index /dev/null "${filePath}" || true`,
-              { cwd: agent.cwd }
-            );
-            const parts = numstatLine.trim().split("\t");
-            const isBinary = parts[0] === "-" && parts[1] === "-";
-            const additions = isBinary ? 0 : (parseInt(parts[0], 10) || 0);
-
-            fileStats.push({
-              path: filePath,
-              additions,
-              deletions: 0,
-              isBinary,
-              isTracked: false,
-              isDeleted: false,
-              isNew: true,
-            });
-          } catch {
-            // If we can't determine, assume text and try to get it
-            fileStats.push({
-              path: filePath,
-              additions: 0,
-              deletions: 0,
-              isBinary: false,
-              isTracked: false,
-              isDeleted: false,
-              isNew: true,
-            });
-          }
-        }
-      } catch {
-        // Ignore errors getting untracked files
-      }
-
-      // Step 3: Fetch diffs per-file, respecting limits
-      const allFiles: ParsedDiffFile[] = [];
-
-      for (const stats of fileStats) {
-        const totalLines = stats.additions + stats.deletions;
-
-        // Handle binary files
-        if (stats.isBinary) {
-          allFiles.push({
-            path: stats.path,
-            isNew: stats.isNew,
-            isDeleted: stats.isDeleted,
-            additions: 0,
-            deletions: 0,
-            hunks: [],
-            status: "binary",
-          });
-          continue;
-        }
-
-        // Handle files that are too large
-        if (totalLines > MAX_DIFF_LINES) {
-          allFiles.push({
-            path: stats.path,
-            isNew: stats.isNew,
-            isDeleted: stats.isDeleted,
-            additions: stats.additions,
-            deletions: stats.deletions,
-            hunks: [],
-            status: "too_large",
-          });
-          continue;
-        }
-
-        // Fetch the actual diff for this file
-        try {
-          let fileDiff: string;
-          if (stats.isTracked) {
-            const { stdout } = await execAsync(
-              `git diff HEAD -- "${stats.path}"`,
-              { cwd: agent.cwd }
-            );
-            fileDiff = stdout;
-          } else {
-            const { stdout } = await execAsync(
-              `git diff --no-index /dev/null "${stats.path}" || true`,
-              { cwd: agent.cwd }
-            );
-            fileDiff = stdout;
-          }
-
-          if (fileDiff) {
-            const parsedFiles = await parseAndHighlightDiff(fileDiff, agent.cwd);
-            for (const file of parsedFiles) {
-              allFiles.push({ ...file, status: "ok" });
-            }
-          }
-        } catch {
-          // If diff fails for this file, add it with empty hunks
-          allFiles.push({
-            path: stats.path,
-            isNew: stats.isNew,
-            isDeleted: stats.isDeleted,
-            additions: stats.additions,
-            deletions: stats.deletions,
-            hunks: [],
-            status: "ok",
-          });
-        }
-      }
-
-      this.emit({
-        type: "highlighted_diff_response",
-        payload: {
-          agentId,
-          files: allFiles,
-          error: null,
-          requestId,
-        },
-      });
-
-      this.sessionLogger.debug(
-        { agentId, fileCount: allFiles.length },
-        `Highlighted diff for agent ${agentId} completed (${allFiles.length} files)`
-      );
-    } catch (error: any) {
-      this.sessionLogger.error(
-        { err: error, agentId },
-        `Failed to get highlighted diff for agent ${agentId}`
-      );
-      this.emit({
-        type: "highlighted_diff_response",
-        payload: {
-          agentId,
-          files: [],
-          error: error.message,
           requestId,
         },
       });
@@ -5871,7 +5571,7 @@ export class Session {
    * Clean up session resources
    */
   public async cleanup(): Promise<void> {
-    this.sessionLogger.info("Cleaning up");
+    this.sessionLogger.trace("Cleaning up");
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();

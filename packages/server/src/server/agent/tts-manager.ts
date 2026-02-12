@@ -229,17 +229,6 @@ export class TTSManager {
               isVoiceMode,
             },
           });
-          this.logger.info(
-            {
-              audioId,
-              chunkId,
-              chunkIndex,
-              isLastChunk: next.done,
-              bytes: chunkBuffer.length,
-              isVoiceMode,
-            },
-            "Emitted audio_output chunk to client"
-          );
 
           chunkIndex += 1;
 
@@ -298,15 +287,6 @@ export class TTSManager {
     }
 
     pending.pendingChunks = Math.max(0, pending.pendingChunks - 1);
-    this.logger.info(
-      {
-        chunkId,
-        audioId,
-        remainingPendingChunks: pending.pendingChunks,
-        streamEnded: pending.streamEnded,
-      },
-      "Received audio playback confirmation from client"
-    );
 
     if (pending.pendingChunks === 0 && pending.streamEnded) {
       pending.resolve();

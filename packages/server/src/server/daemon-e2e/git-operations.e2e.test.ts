@@ -110,7 +110,7 @@ describe("daemon E2E", () => {
     await ctx.cleanup();
   }, 60000);
 
-  describe("getGitDiff", () => {
+  describe("getCheckoutDiff", () => {
     test(
       "returns diff for modified file in git repo",
       async () => {
@@ -134,28 +134,12 @@ describe("daemon E2E", () => {
         // Modify the file (creates unstaged changes)
         writeFileSync(testFile, "modified content\n");
 
-        // Create agent in the git repo
-        const agent = await ctx.client.createAgent({
-          provider: "codex", model: CODEX_TEST_MODEL, thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd,
-          title: "Git Diff Test",
-        });
-
-        expect(agent.id).toBeTruthy();
-        expect(agent.status).toBe("idle");
-
-        // Get git diff
-        const result = await ctx.client.getGitDiff(agent.id);
-
-        // Verify diff returned without error
+        const result = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
         expect(result.error).toBeNull();
-        expect(result.diff).toBeTruthy();
-        expect(result.diff).toContain("test.txt");
-        expect(result.diff).toContain("-original content");
-        expect(result.diff).toContain("+modified content");
-
-        // Cleanup
-        await ctx.client.deleteAgent(agent.id);
+        expect(result.files.length).toBeGreaterThan(0);
+        const file = result.files.find((entry) => entry.path === "test.txt");
+        expect(file).toBeTruthy();
+        expect(file?.hunks.length).toBeGreaterThan(0);
         rmSync(cwd, { recursive: true, force: true });
       },
       60000 // 1 minute timeout
@@ -181,23 +165,11 @@ describe("daemon E2E", () => {
           stdio: "pipe",
         });
 
-        // Create agent in the git repo (no modifications)
-        const agent = await ctx.client.createAgent({
-          provider: "codex", model: CODEX_TEST_MODEL, thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd,
-          title: "Git Diff Clean Test",
-        });
-
-        expect(agent.id).toBeTruthy();
-
-        // Get git diff - should be empty
-        const result = await ctx.client.getGitDiff(agent.id);
+        const result = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
 
         expect(result.error).toBeNull();
-        expect(result.diff).toBe("");
+        expect(result.files).toEqual([]);
 
-        // Cleanup
-        await ctx.client.deleteAgent(agent.id);
         rmSync(cwd, { recursive: true, force: true });
       },
       60000 // 1 minute timeout
@@ -209,24 +181,12 @@ describe("daemon E2E", () => {
         const cwd = tmpCwd();
         // Don't initialize git - just a regular directory
 
-        // Create agent in a non-git directory
-        const agent = await ctx.client.createAgent({
-          provider: "codex", model: CODEX_TEST_MODEL, thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd,
-          title: "Git Diff Non-Git Test",
-        });
+        const result = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
 
-        expect(agent.id).toBeTruthy();
-
-        // Get git diff - should return error
-        const result = await ctx.client.getGitDiff(agent.id);
-
-        expect(result.diff).toBe("");
+        expect(result.files).toEqual([]);
         expect(result.error).toBeTruthy();
-        expect(result.error).toContain("git");
+        expect(result.error?.code).toBe("NOT_GIT_REPO");
 
-        // Cleanup
-        await ctx.client.deleteAgent(agent.id);
         rmSync(cwd, { recursive: true, force: true });
       },
       60000 // 1 minute timeout

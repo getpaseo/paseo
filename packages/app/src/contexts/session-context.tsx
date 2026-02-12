@@ -322,7 +322,6 @@ export function SessionProvider({
   const setPendingPermissions = useSessionStore(
     (state) => state.setPendingPermissions
   );
-  const setGitDiffs = useSessionStore((state) => state.setGitDiffs);
   const setFileExplorer = useSessionStore((state) => state.setFileExplorer);
   const clearDraftInput = useDraftStore((state) => state.clearDraftInput);
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
@@ -665,22 +664,6 @@ export function SessionProvider({
     },
     [serverId, setFileExplorer]
   );
-
-  const gitDiffMutation = useMutation({
-    mutationFn: async ({ agentId }: { agentId: string }) => {
-      if (!agentId) {
-        throw new Error("Agent id is required");
-      }
-      if (!client) {
-        throw new Error("Daemon client unavailable");
-      }
-      const payload = await client.getGitDiff(agentId);
-      if (payload.error) {
-        throw new Error(payload.error);
-      }
-      return { agentId: payload.agentId, diff: payload.diff ?? "" };
-    },
-  });
 
   const refreshAgentMutation = useMutation({
     mutationFn: async ({ agentId }: { agentId: string }) => {
@@ -1275,15 +1258,6 @@ export function SessionProvider({
         return next;
       });
 
-      setGitDiffs(serverId, (prev) => {
-        if (!prev.has(agentId)) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.delete(agentId);
-        return next;
-      });
-
       setFileExplorer(serverId, (prev) => {
         if (!prev.has(agentId)) {
           return prev;
@@ -1343,7 +1317,6 @@ export function SessionProvider({
     setAgents,
     setAgentLastActivity,
     setPendingPermissions,
-    setGitDiffs,
     setFileExplorer,
     setHasHydratedAgents,
     updateConnectionStatus,
@@ -1633,24 +1606,6 @@ export function SessionProvider({
       isSpeakingRef.current = isSpeaking;
     },
     []
-  );
-
-  const requestGitDiff = useCallback(
-    (agentId: string) => {
-      gitDiffMutation
-        .mutateAsync({ agentId })
-        .then((result) => {
-          setGitDiffs(serverId, (prev) =>
-            new Map(prev).set(result.agentId, result.diff)
-          );
-        })
-        .catch((error) => {
-          setGitDiffs(serverId, (prev) =>
-            new Map(prev).set(agentId, `Error: ${error.message}`)
-          );
-        });
-    },
-    [serverId, gitDiffMutation, setGitDiffs]
   );
 
   const requestDirectoryListing = useCallback(

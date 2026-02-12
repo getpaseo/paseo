@@ -88,13 +88,22 @@ function computeRequiredLocalModelIds(params: {
   models: ResolvedLocalModels;
 }): LocalSpeechModelId[] {
   const ids = new Set<LocalSpeechModelId>();
-  if (params.providers.dictationStt.provider === "local") {
+  if (
+    params.providers.dictationStt.enabled !== false &&
+    params.providers.dictationStt.provider === "local"
+  ) {
     ids.add(params.models.dictationLocalSttModel);
   }
-  if (params.providers.voiceStt.provider === "local") {
+  if (
+    params.providers.voiceStt.enabled !== false &&
+    params.providers.voiceStt.provider === "local"
+  ) {
     ids.add(params.models.voiceLocalSttModel);
   }
-  if (params.providers.voiceTts.provider === "local") {
+  if (
+    params.providers.voiceTts.enabled !== false &&
+    params.providers.voiceTts.provider === "local"
+  ) {
     ids.add(params.models.voiceLocalTtsModel);
   }
   return Array.from(ids);
@@ -258,7 +267,7 @@ export async function initializeLocalSpeechServices(params: {
     }
   };
 
-  if (providers.voiceStt.provider === "local") {
+  if (providers.voiceStt.enabled !== false && providers.voiceStt.provider === "local") {
     if (!localConfig) {
       logger.warn(
         { configured: false },
@@ -274,7 +283,7 @@ export async function initializeLocalSpeechServices(params: {
     }
   }
 
-  if (providers.dictationStt.provider === "local") {
+  if (providers.dictationStt.enabled !== false && providers.dictationStt.provider === "local") {
     if (!localConfig) {
       logger.warn(
         { configured: false },
@@ -297,7 +306,7 @@ export async function initializeLocalSpeechServices(params: {
     }
   }
 
-  if (providers.voiceTts.provider === "local") {
+  if (providers.voiceTts.enabled !== false && providers.voiceTts.provider === "local") {
     if (!localConfig) {
       logger.warn(
         { configured: false },

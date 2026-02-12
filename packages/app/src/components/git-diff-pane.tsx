@@ -506,6 +506,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   });
   const {
     status: prStatus,
+    githubFeaturesEnabled,
     payloadError: prPayloadError,
     refresh: refreshPrStatus,
   } = useCheckoutPrStatusQuery({
@@ -840,7 +841,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const diffErrorMessage =
     diffPayloadError?.message ??
     (isDiffError && diffError instanceof Error ? diffError.message : null);
-  const prErrorMessage = prPayloadError?.message ?? null;
+  const prErrorMessage = githubFeaturesEnabled ? prPayloadError?.message ?? null : null;
   const branchLabel =
     gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD"
       ? gitStatus.currentBranch
@@ -993,7 +994,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     }
 
     // View PR - when PR exists
-    if (hasPullRequest && prStatus?.url) {
+    if (githubFeaturesEnabled && hasPullRequest && prStatus?.url) {
       const prUrl = prStatus.url;
       allActions.set("view-pr", {
         id: "view-pr",
@@ -1008,7 +1009,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     }
 
     // Create PR - when ahead of base and no PR
-    if (aheadCount > 0 && !hasPullRequest) {
+    if (githubFeaturesEnabled && aheadCount > 0 && !hasPullRequest) {
       allActions.set("create-pr", {
         id: "create-pr",
         label: "Create PR",
@@ -1112,7 +1113,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
 
     return { primary, secondary, menu };
   }, [
-    isGit, hasRemote, hasPullRequest, prStatus?.url, aheadCount, isPaseoOwnedWorktree, isOnBaseBranch,
+    isGit, hasRemote, hasPullRequest, prStatus?.url, aheadCount, isPaseoOwnedWorktree, isOnBaseBranch, githubFeaturesEnabled,
     hasUncommittedChanges, aheadOfOrigin, shipDefault, baseRefLabel,
     commitDisabled, pushDisabled, prDisabled, mergeDisabled, mergeFromBaseDisabled, archiveDisabled,
     commitStatus, pushStatus, prCreateStatus, mergeStatus, mergeFromBaseStatus, archiveStatus,

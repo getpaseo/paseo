@@ -279,7 +279,7 @@ export class VoiceAssistantWebSocketServer {
       })
     );
 
-    connectionLogger.info(
+    connectionLogger.trace(
       { clientId, totalSessions: this.sessions.size },
       "Client connected"
     );
@@ -319,7 +319,7 @@ export class VoiceAssistantWebSocketServer {
     const session = this.sessions.get(ws);
     if (!session) return;
 
-    connectionLogger.info(
+    connectionLogger.trace(
       { clientId, totalSessions: this.sessions.size - 1 },
       "Client disconnected"
     );
@@ -386,28 +386,12 @@ export class VoiceAssistantWebSocketServer {
 
       const message = parsedMessage.data;
 
-      const messageSummary = {
-        type: message.type,
-        ...(message.type === "session" && message.message
-          ? { sessionMessageType: message.message.type }
-          : {}),
-      };
-      const isSessionNoise =
-        message.type === "session" &&
-        (message.message.type === "client_heartbeat" ||
-          message.message.type === "voice_audio_chunk" ||
-          message.message.type === "dictation_stream_chunk");
-      if (!isSessionNoise) {
-        this.logger.debug(messageSummary, "Received message");
-      }
-
       if (message.type === "ping") {
         this.sendToClient(ws, { type: "pong" });
         return;
       }
 
       if (message.type === "recording_state") {
-        this.logger.debug({ isRecording: message.isRecording }, "Recording state");
         return;
       }
 
@@ -418,17 +402,6 @@ export class VoiceAssistantWebSocketServer {
       }
 
       if (message.type === "session") {
-        if (message.message.type === "create_agent_request") {
-          this.logger.debug(
-            {
-              cwd: message.message.config.cwd,
-              initialMode: message.message.config.modeId,
-              worktreeName: message.message.worktreeName,
-              requestId: message.message.requestId,
-            },
-            "create_agent_request details"
-          );
-        }
         await session.handleMessage(message.message);
       }
     } catch (error) {
@@ -502,23 +475,11 @@ export class VoiceAssistantWebSocketServer {
   } {
     const activity = session.getClientActivity();
     if (!activity) {
-      this.logger.debug("getClientActivityState: no activity for session");
       return { deviceType: null, focusedAgentId: null, isStale: true, appVisible: false };
     }
     const now = Date.now();
     const ageMs = now - activity.lastActivityAt.getTime();
     const isStale = ageMs >= this.ACTIVITY_THRESHOLD_MS;
-    this.logger.debug(
-      {
-        deviceType: activity.deviceType,
-        focusedAgentId: activity.focusedAgentId,
-        lastActivityAt: activity.lastActivityAt.toISOString(),
-        ageMs,
-        isStale,
-        appVisible: activity.appVisible,
-      },
-      "getClientActivityState"
-    );
     return {
       deviceType: activity.deviceType,
       focusedAgentId: activity.focusedAgentId,
@@ -603,16 +564,6 @@ export class VoiceAssistantWebSocketServer {
 
     const allStates = clientEntries.map((e) => e.state);
 
-    this.logger.debug(
-      {
-        agentId: params.agentId,
-        reason: params.reason,
-        clientCount: clientEntries.length,
-        allStates,
-      },
-      "broadcastAgentAttention"
-    );
-
     const hasActiveWebClient = allStates.some(
       (state) => state.deviceType === "web" && !state.isStale
     );
@@ -626,11 +577,6 @@ export class VoiceAssistantWebSocketServer {
       params.reason !== "error" &&
       !hasActiveWebClient &&
       !hasActiveMobileForegroundClient;
-
-    this.logger.debug(
-      { hasActiveWebClient, hasActiveMobileForegroundClient, shouldSendPush },
-      "Push gating check"
-    );
 
     if (shouldSendPush) {
       const tokens = this.pushTokenStore.getAllTokens();

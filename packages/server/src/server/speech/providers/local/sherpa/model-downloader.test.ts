@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -52,5 +52,47 @@ describe("sherpa model downloader", () => {
         logger,
       })
     ).rejects.toThrow(/auto-download/i);
+  });
+
+  test("ensureSherpaOnnxModel logs artifact download progress", async () => {
+    const modelsDir = makeTmpDir();
+    const progressLogs: Array<Record<string, unknown>> = [];
+
+    const loggerWithSpy = {
+      child: () => loggerWithSpy,
+      info: (obj?: unknown, msg?: string) => {
+        if (msg === "Downloading model artifact" && obj && typeof obj === "object") {
+          progressLogs.push(obj as Record<string, unknown>);
+        }
+      },
+      error: () => undefined,
+    } as unknown as pino.Logger;
+
+    const originalFetch = globalThis.fetch;
+    const payload = Buffer.alloc(128 * 1024, 7);
+    const fetchMock = vi.fn(async () => {
+      return new Response(payload, {
+        status: 200,
+        headers: { "content-length": String(payload.length) },
+      });
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      await ensureSherpaOnnxModel({
+        modelsDir,
+        modelId: "pocket-tts-onnx-int8",
+        autoDownload: true,
+        logger: loggerWithSpy,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(progressLogs.length).toBeGreaterThan(0);
+    const final = progressLogs.at(-1);
+    expect(final?.modelId).toBe("pocket-tts-onnx-int8");
+    expect(final?.pct).toBe(100);
   });
 });

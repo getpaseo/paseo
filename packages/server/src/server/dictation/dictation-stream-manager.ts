@@ -315,7 +315,7 @@ export class DictationStreamManager {
         state.bytesSinceCommit += resampled.length;
         state.peakSinceCommit = Math.max(state.peakSinceCommit, pcm16lePeakAbs(resampled));
         try {
-          this.maybeAutoCommitDictationSegment(params.dictationId, state);
+          this.maybeAutoCommitDictationSegment(state);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           void this.failAndCleanupDictationStream(params.dictationId, message, true);
@@ -482,7 +482,7 @@ export class DictationStreamManager {
     this.streams.delete(dictationId);
   }
 
-  private maybeAutoCommitDictationSegment(dictationId: string, state: DictationStreamState): void {
+  private maybeAutoCommitDictationSegment(state: DictationStreamState): void {
     if (state.finishRequested) {
       return;
     }
@@ -490,29 +490,12 @@ export class DictationStreamManager {
       return;
     }
     if (state.peakSinceCommit < DICTATION_SILENCE_PEAK_THRESHOLD) {
-      this.logger.debug(
-        {
-          dictationId,
-          autoCommitBytes: state.autoCommitBytes,
-          bytesSinceCommit: state.bytesSinceCommit,
-          peakSinceCommit: state.peakSinceCommit,
-        },
-        "Dictation auto-segment: clearing silence-only segment"
-      );
       state.stt.clear();
       state.bytesSinceCommit = 0;
       state.peakSinceCommit = 0;
       return;
     }
 
-    this.logger.debug(
-      {
-        dictationId,
-        autoCommitBytes: state.autoCommitBytes,
-        bytesSinceCommit: state.bytesSinceCommit,
-      },
-      "Dictation auto-segment: committing buffered audio"
-    );
     state.bytesSinceCommit = 0;
     state.peakSinceCommit = 0;
     state.stt.commit();

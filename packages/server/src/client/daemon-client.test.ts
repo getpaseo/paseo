@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
 import { DaemonClient, type DaemonTransport } from "./daemon-client";
+
+expectTypeOf<"getGitDiff" extends keyof DaemonClient ? true : false>().toEqualTypeOf<false>();
+expectTypeOf<"getHighlightedDiff" extends keyof DaemonClient ? true : false>().toEqualTypeOf<false>();
 
 function createMockLogger() {
   return {

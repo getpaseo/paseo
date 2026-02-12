@@ -21,14 +21,17 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.providers.dictationStt).toEqual({
       provider: "local",
       explicit: false,
+      enabled: true,
     });
     expect(result.speech.providers.voiceStt).toEqual({
       provider: "local",
       explicit: false,
+      enabled: true,
     });
     expect(result.speech.providers.voiceTts).toEqual({
       provider: "local",
       explicit: false,
+      enabled: true,
     });
     expect(result.speech.local).toEqual({
       modelsDir: path.join(paseoHome, "models", "local-speech"),
@@ -91,14 +94,17 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.providers.dictationStt).toEqual({
       provider: "local",
       explicit: true,
+      enabled: true,
     });
     expect(result.speech.providers.voiceStt).toEqual({
       provider: "openai",
       explicit: true,
+      enabled: true,
     });
     expect(result.speech.providers.voiceTts).toEqual({
       provider: "local",
       explicit: true,
+      enabled: true,
     });
     expect(result.speech.local?.models.dictationStt).toBe("zipformer-bilingual-zh-en-2023-02-20");
     expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
@@ -126,5 +132,36 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v2-int8");
     expect(result.speech.local?.models.voiceTts).toBe("kokoro-en-v0_19");
     expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(0);
+  });
+
+  test("respects disabled dictation and voice mode feature flags", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: { enabled: false },
+        voiceMode: { enabled: false },
+      },
+    });
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {} as NodeJS.ProcessEnv,
+      persisted,
+    });
+
+    expect(result.speech.providers.dictationStt).toEqual({
+      provider: "local",
+      explicit: false,
+      enabled: false,
+    });
+    expect(result.speech.providers.voiceStt).toEqual({
+      provider: "local",
+      explicit: false,
+      enabled: false,
+    });
+    expect(result.speech.providers.voiceTts).toEqual({
+      provider: "local",
+      explicit: false,
+      enabled: false,
+    });
   });
 });

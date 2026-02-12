@@ -184,35 +184,81 @@ async function tryResolveMergeBase(cwd: string, baseRef: string): Promise<string
 
 type FileStat = { additions: number; deletions: number; isBinary: boolean } | null;
 
-async function tryGetNumstat(
-  cwd: string,
-  args: string[]
-): Promise<FileStat> {
-  try {
-    const { text } = await spawnLimitedText({
-      cmd: "git",
-      args,
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-      maxBytes: 64 * 1024,
-      acceptExitCodes: [0],
-    });
-    const line = text.trim().split("\n").map((l) => l.trim()).filter(Boolean)[0] ?? "";
-    if (!line) return null;
-    const [aRaw, dRaw] = line.split(/\s+/);
-    if (!aRaw || !dRaw) return null;
-    if (aRaw === "-" || dRaw === "-") {
-      return { additions: 0, deletions: 0, isBinary: true };
-    }
-    const additions = Number.parseInt(aRaw, 10);
-    const deletions = Number.parseInt(dRaw, 10);
-    if (Number.isNaN(additions) || Number.isNaN(deletions)) {
-      return null;
-    }
-    return { additions, deletions, isBinary: false };
-  } catch {
-    return null;
+function normalizeNumstatPath(pathField: string): string {
+  const braceRenameMatch = pathField.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
+  if (braceRenameMatch) {
+    const [, prefix, , renamed, suffix] = braceRenameMatch;
+    return `${prefix}${renamed}${suffix}`;
   }
+
+  const inlineRenameMatch = pathField.match(/^(.*) => (.*)$/);
+  if (inlineRenameMatch) {
+    return inlineRenameMatch[2] ?? pathField;
+  }
+
+  return pathField;
+}
+
+const TRACKED_DIFF_NUMSTAT_MAX_BYTES = 2 * 1024 * 1024; // 2MB
+const TRACKED_MAX_CHANGED_LINES = 40_000;
+
+async function getTrackedNumstatByPath(
+  cwd: string,
+  ref: string
+): Promise<Map<string, FileStat>> {
+  const result = await spawnLimitedText({
+    cmd: "git",
+    args: ["diff", "--numstat", ref],
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+    maxBytes: TRACKED_DIFF_NUMSTAT_MAX_BYTES,
+    acceptExitCodes: [0],
+  });
+
+  const stats = new Map<string, FileStat>();
+  const lines = result.text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const parts = line.split("\t");
+    if (parts.length < 3) {
+      continue;
+    }
+
+    const additionsField = parts[0] ?? "";
+    const deletionsField = parts[1] ?? "";
+    const rawPath = parts.slice(2).join("\t");
+    const path = normalizeNumstatPath(rawPath);
+
+    if (!path) {
+      continue;
+    }
+
+    if (additionsField === "-" || deletionsField === "-") {
+      stats.set(path, { additions: 0, deletions: 0, isBinary: true });
+      continue;
+    }
+
+    const additions = Number.parseInt(additionsField, 10);
+    const deletions = Number.parseInt(deletionsField, 10);
+    if (Number.isNaN(additions) || Number.isNaN(deletions)) {
+      stats.set(path, null);
+      continue;
+    }
+
+    stats.set(path, { additions, deletions, isBinary: false });
+  }
+
+  return stats;
+}
+
+function isTrackedDiffTooLarge(stat: FileStat): boolean {
+  if (!stat || stat.isBinary) {
+    return false;
+  }
+  return stat.additions + stat.deletions > TRACKED_MAX_CHANGED_LINES;
 }
 
 export class NotGitRepoError extends Error {
@@ -784,49 +830,32 @@ function buildPlaceholderParsedDiffFile(
   };
 }
 
-async function getPerFileDiffText(
+async function getUntrackedDiffText(
   cwd: string,
-  ref: string,
   change: CheckoutFileChange
 ): Promise<{ text: string; truncated: boolean; stat: FileStat }> {
-  if (change.isUntracked) {
-    try {
-      const inspected = await inspectUntrackedFile(cwd, change.path);
-      if (inspected.stat?.isBinary || inspected.truncated) {
-        return { text: "", truncated: inspected.truncated, stat: inspected.stat };
-      }
-    } catch {
-      // Fall through to git diff path if metadata probing fails.
+  try {
+    const inspected = await inspectUntrackedFile(cwd, change.path);
+    if (inspected.stat?.isBinary || inspected.truncated) {
+      return { text: "", truncated: inspected.truncated, stat: inspected.stat };
     }
-
-    const result = await spawnLimitedText({
-      cmd: "git",
-      args: ["diff", "--no-index", "/dev/null", "--", change.path],
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-      maxBytes: PER_FILE_DIFF_MAX_BYTES,
-      acceptExitCodes: [0, 1],
-    });
-    return {
-      text: result.text,
-      truncated: result.truncated,
-      stat: { additions: 0, deletions: 0, isBinary: false },
-    };
-  }
-
-  const stat = await tryGetNumstat(cwd, ["diff", "--numstat", ref, "--", change.path]);
-  if (stat?.isBinary) {
-    return { text: "", truncated: false, stat };
+  } catch {
+    // Fall through to git diff path if metadata probing fails.
   }
 
   const result = await spawnLimitedText({
     cmd: "git",
-    args: ["diff", ref, "--", change.path],
+    args: ["diff", "--no-index", "/dev/null", "--", change.path],
     cwd,
     env: READ_ONLY_GIT_ENV,
     maxBytes: PER_FILE_DIFF_MAX_BYTES,
+    acceptExitCodes: [0, 1],
   });
-  return { text: result.text, truncated: result.truncated, stat };
+  return {
+    text: result.text,
+    truncated: result.truncated,
+    stat: { additions: 0, deletions: 0, isBinary: false },
+  };
 }
 
 export async function getCheckoutStatus(
@@ -966,8 +995,111 @@ export async function getCheckoutDiff(
     }
   };
 
-  for (const change of changes) {
-    const { text, truncated, stat } = await getPerFileDiffText(cwd, refForDiff, change);
+  const trackedChanges = changes.filter((change) => !change.isUntracked);
+  const untrackedChanges = changes.filter((change) => change.isUntracked === true);
+
+  const trackedNumstatByPath =
+    trackedChanges.length > 0 ? await getTrackedNumstatByPath(cwd, refForDiff) : new Map<string, FileStat>();
+  const trackedDiffPaths: string[] = [];
+  const trackedPlaceholderByPath = new Map<
+    string,
+    { status: "binary" | "too_large"; stat: FileStat }
+  >();
+
+  for (const change of trackedChanges) {
+    const stat = trackedNumstatByPath.get(change.path) ?? null;
+    if (stat?.isBinary) {
+      trackedPlaceholderByPath.set(change.path, { status: "binary", stat });
+      continue;
+    }
+    if (isTrackedDiffTooLarge(stat)) {
+      trackedPlaceholderByPath.set(change.path, { status: "too_large", stat });
+      continue;
+    }
+    trackedDiffPaths.push(change.path);
+  }
+
+  let trackedDiffText = "";
+  let trackedDiffTruncated = false;
+  if (trackedDiffPaths.length > 0) {
+    const trackedDiffResult = await spawnLimitedText({
+      cmd: "git",
+      args: ["diff", refForDiff, "--", ...trackedDiffPaths],
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+      maxBytes: TOTAL_DIFF_MAX_BYTES,
+    });
+    trackedDiffText = trackedDiffResult.text;
+    trackedDiffTruncated = trackedDiffResult.truncated;
+    appendDiff(trackedDiffText);
+    if (trackedDiffTruncated) {
+      appendDiff("# tracked diff truncated\n");
+    }
+  }
+
+  const appendTrackedPlaceholderComment = (change: CheckoutFileChange, status: "binary" | "too_large") => {
+    if (status === "binary") {
+      appendDiff(`# ${change.path}: binary diff omitted\n`);
+      return;
+    }
+    appendDiff(`# ${change.path}: diff too large omitted\n`);
+  };
+
+  if (compare.includeStructured) {
+    const parsedTrackedFiles =
+      trackedDiffText.length > 0 ? await parseAndHighlightDiff(trackedDiffText, cwd) : [];
+    const parsedTrackedByPath = new Map(parsedTrackedFiles.map((file) => [file.path, file]));
+
+    for (const change of trackedChanges) {
+      const placeholder = trackedPlaceholderByPath.get(change.path);
+      if (placeholder) {
+        structured.push(
+          buildPlaceholderParsedDiffFile(change, {
+            status: placeholder.status,
+            stat: placeholder.stat,
+          })
+        );
+        appendTrackedPlaceholderComment(change, placeholder.status);
+        continue;
+      }
+
+      const stat = trackedNumstatByPath.get(change.path) ?? null;
+      const parsedFile = parsedTrackedByPath.get(change.path);
+      if (parsedFile) {
+        structured.push({
+          ...parsedFile,
+          path: change.path,
+          isNew: change.isNew,
+          isDeleted: change.isDeleted,
+          status: "ok",
+        });
+        continue;
+      }
+
+      structured.push({
+        path: change.path,
+        isNew: change.isNew,
+        isDeleted: change.isDeleted,
+        additions: stat?.additions ?? 0,
+        deletions: stat?.deletions ?? 0,
+        hunks: [],
+        status: trackedDiffTruncated ? "too_large" : "ok",
+      });
+    }
+  } else {
+    for (const change of trackedChanges) {
+      const placeholder = trackedPlaceholderByPath.get(change.path);
+      if (placeholder) {
+        appendTrackedPlaceholderComment(change, placeholder.status);
+      }
+    }
+  }
+
+  for (const change of untrackedChanges) {
+    if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
+      break;
+    }
+    const { text, truncated, stat } = await getUntrackedDiffText(cwd, change);
 
     if (!compare.includeStructured) {
       if (stat?.isBinary) {
@@ -976,9 +1108,6 @@ export async function getCheckoutDiff(
         appendDiff(`# ${change.path}: diff too large omitted\n`);
       } else {
         appendDiff(text);
-      }
-      if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
-        break;
       }
       continue;
     }
@@ -1268,12 +1397,38 @@ export interface PullRequestStatus {
   headRefName: string;
 }
 
+export interface PullRequestStatusResult {
+  status: PullRequestStatus | null;
+  githubFeaturesEnabled: boolean;
+}
+
 async function ensureGhAvailable(cwd: string): Promise<void> {
   try {
     await execAsync("gh --version", { cwd });
   } catch {
     throw new Error("GitHub CLI (gh) is not available or not authenticated");
   }
+}
+
+function getCommandErrorText(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  const stderr = typeof (error as any)?.stderr === "string" ? (error as any).stderr : "";
+  const stdout = typeof (error as any)?.stdout === "string" ? (error as any).stdout : "";
+  return `${error.message}\n${stderr}\n${stdout}`.toLowerCase();
+}
+
+function isGhAuthError(error: unknown): boolean {
+  const text = getCommandErrorText(error);
+  return (
+    text.includes("gh auth login") ||
+    text.includes("not logged into any github hosts") ||
+    text.includes("authentication failed") ||
+    text.includes("authentication required") ||
+    text.includes("bad credentials") ||
+    text.includes("http 401")
+  );
 }
 
 async function resolveGitHubRepo(cwd: string): Promise<string | null> {
@@ -1356,39 +1511,66 @@ export async function createPullRequest(
   return { url: parsed.url, number: parsed.number };
 }
 
-export async function getPullRequestStatus(cwd: string): Promise<PullRequestStatus | null> {
+export async function getPullRequestStatus(cwd: string): Promise<PullRequestStatusResult> {
   await requireGitRepo(cwd);
-  await ensureGhAvailable(cwd);
   const repo = await resolveGitHubRepo(cwd);
   const head = await getCurrentBranch(cwd);
   if (!repo || !head) {
-    return null;
+    return {
+      status: null,
+      githubFeaturesEnabled: false,
+    };
+  }
+  try {
+    await ensureGhAvailable(cwd);
+  } catch {
+    return {
+      status: null,
+      githubFeaturesEnabled: false,
+    };
   }
   const owner = repo.split("/")[0];
-  const { stdout } = await execFileAsync(
-    "gh",
-    [
-      "api",
-      `repos/${repo}/pulls`,
-      "-X",
-      "GET",
-      "-F",
-      `head=${owner}:${head}`,
-      "-F",
-      "state=open",
-    ],
-    { cwd }
-  );
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(
+      "gh",
+      [
+        "api",
+        `repos/${repo}/pulls`,
+        "-X",
+        "GET",
+        "-F",
+        `head=${owner}:${head}`,
+        "-F",
+        "state=open",
+      ],
+      { cwd }
+    ));
+  } catch (error) {
+    if (isGhAuthError(error)) {
+      return {
+        status: null,
+        githubFeaturesEnabled: false,
+      };
+    }
+    throw error;
+  }
   const parsed = JSON.parse(stdout.trim());
   const current = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : null;
   if (!current) {
-    return null;
+    return {
+      status: null,
+      githubFeaturesEnabled: true,
+    };
   }
   return {
-    url: current.html_url ?? current.url,
-    title: current.title,
-    state: current.state,
-    baseRefName: current.base?.ref ?? "",
-    headRefName: current.head?.ref ?? head,
+    status: {
+      url: current.html_url ?? current.url,
+      title: current.title,
+      state: current.state,
+      baseRefName: current.base?.ref ?? "",
+      headRefName: current.head?.ref ?? head,
+    },
+    githubFeaturesEnabled: true,
   };
 }

@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import {
   AgentStreamMessageSchema,
   AgentStreamSnapshotMessageSchema,
+  SessionInboundMessageSchema,
+  SessionOutboundMessageSchema,
   WSOutboundMessageSchema,
 } from "./messages.js";
 
@@ -63,5 +65,45 @@ describe("shared messages stream parsing", () => {
       message: fixture,
     });
     expect(wrapped.success).toBe(false);
+  });
+
+  it("rejects removed legacy git diff request messages", () => {
+    const gitDiffParsed = SessionInboundMessageSchema.safeParse({
+      type: "git_diff_request",
+      agentId: "agent-1",
+      requestId: "req-1",
+    });
+    expect(gitDiffParsed.success).toBe(false);
+
+    const highlightedParsed = SessionInboundMessageSchema.safeParse({
+      type: "highlighted_diff_request",
+      agentId: "agent-1",
+      requestId: "req-2",
+    });
+    expect(highlightedParsed.success).toBe(false);
+  });
+
+  it("rejects removed legacy git diff response messages", () => {
+    const gitDiffParsed = SessionOutboundMessageSchema.safeParse({
+      type: "git_diff_response",
+      payload: {
+        agentId: "agent-1",
+        diff: "",
+        error: null,
+        requestId: "req-1",
+      },
+    });
+    expect(gitDiffParsed.success).toBe(false);
+
+    const highlightedParsed = SessionOutboundMessageSchema.safeParse({
+      type: "highlighted_diff_response",
+      payload: {
+        agentId: "agent-1",
+        files: [],
+        error: null,
+        requestId: "req-2",
+      },
+    });
+    expect(highlightedParsed.success).toBe(false);
   });
 });

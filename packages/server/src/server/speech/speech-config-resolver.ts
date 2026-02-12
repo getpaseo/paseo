@@ -17,6 +17,25 @@ const OptionalSpeechProviderSchema = z
   .pipe(SpeechProviderIdSchema)
   .optional();
 
+const OptionalBooleanFlagSchema = z
+  .union([z.boolean(), z.string().trim().toLowerCase()])
+  .optional()
+  .transform((value) => {
+    if (typeof value === "boolean") {
+      return value;
+    }
+    if (value === undefined) {
+      return undefined;
+    }
+    if (["1", "true", "yes", "y", "on"].includes(value)) {
+      return true;
+    }
+    if (["0", "false", "no", "n", "off"].includes(value)) {
+      return false;
+    }
+    return undefined;
+  });
+
 const RequestedSpeechProvidersSchema = z.object({
   dictationStt: OptionalSpeechProviderSchema.default("local"),
   voiceStt: OptionalSpeechProviderSchema.default("local"),
@@ -29,10 +48,12 @@ function resolveRequestedSpeechProviders(params: {
 }): RequestedSpeechProviders {
   const resolveFeatureProvider = (
     configuredValue: string | undefined,
-    parsedValue: z.infer<typeof SpeechProviderIdSchema>
+    parsedValue: z.infer<typeof SpeechProviderIdSchema>,
+    enabled: boolean
   ): RequestedSpeechProvider => ({
     provider: parsedValue,
     explicit: configuredValue !== undefined,
+    enabled,
   });
 
   const dictationSttProviderFromConfig =
@@ -44,6 +65,14 @@ function resolveRequestedSpeechProviders(params: {
   const voiceTtsProviderFromConfig =
     params.env.PASEO_VOICE_TTS_PROVIDER ??
     params.persisted.features?.voiceMode?.tts?.provider;
+  const dictationEnabled =
+    OptionalBooleanFlagSchema.parse(
+      params.env.PASEO_DICTATION_ENABLED ?? params.persisted.features?.dictation?.enabled
+    ) ?? true;
+  const voiceModeEnabled =
+    OptionalBooleanFlagSchema.parse(
+      params.env.PASEO_VOICE_MODE_ENABLED ?? params.persisted.features?.voiceMode?.enabled
+    ) ?? true;
 
   const parsed = RequestedSpeechProvidersSchema.parse({
     dictationStt: dictationSttProviderFromConfig ?? "local",
@@ -54,15 +83,18 @@ function resolveRequestedSpeechProviders(params: {
   return {
     dictationStt: resolveFeatureProvider(
       dictationSttProviderFromConfig,
-      parsed.dictationStt
+      parsed.dictationStt,
+      dictationEnabled
     ),
     voiceStt: resolveFeatureProvider(
       voiceSttProviderFromConfig,
-      parsed.voiceStt
+      parsed.voiceStt,
+      voiceModeEnabled
     ),
     voiceTts: resolveFeatureProvider(
       voiceTtsProviderFromConfig,
-      parsed.voiceTts
+      parsed.voiceTts,
+      voiceModeEnabled
     ),
   };
 }

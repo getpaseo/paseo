@@ -201,9 +201,6 @@ export interface SessionState {
   // Permissions
   pendingPermissions: Map<string, PendingPermission>;
 
-  // Git diffs
-  gitDiffs: Map<string, string>;
-
   // File explorer
   fileExplorer: Map<string, AgentFileExplorerState>;
 
@@ -257,9 +254,6 @@ interface SessionStoreActions {
 
   // Permissions
   setPendingPermissions: (serverId: string, perms: Map<string, PendingPermission> | ((prev: Map<string, PendingPermission>) => Map<string, PendingPermission>)) => void;
-
-  // Git diffs
-  setGitDiffs: (serverId: string, diffs: Map<string, string> | ((prev: Map<string, string>) => Map<string, string>)) => void;
 
   // File explorer
   setFileExplorer: (serverId: string, state: Map<string, AgentFileExplorerState> | ((prev: Map<string, AgentFileExplorerState>) => Map<string, AgentFileExplorerState>)) => void;
@@ -332,7 +326,6 @@ function createInitialSessionState(serverId: string, client: DaemonClient, audio
     initializingAgents: new Map(),
     agents: new Map(),
     pendingPermissions: new Map(),
-    gitDiffs: new Map(),
     fileExplorer: new Map(),
     queuedMessages: new Map(),
   };
@@ -740,28 +733,6 @@ export const useSessionStore = create<SessionStore>()(
           sessions: {
             ...prev.sessions,
             [serverId]: { ...session, pendingPermissions: nextPerms },
-          },
-        };
-      });
-    },
-
-    // Git diffs
-    setGitDiffs: (serverId, diffs) => {
-      set((prev) => {
-        const session = prev.sessions[serverId];
-        if (!session) {
-          return prev;
-        }
-        const nextDiffs = typeof diffs === "function" ? diffs(session.gitDiffs) : diffs;
-        if (session.gitDiffs === nextDiffs) {
-          return prev;
-        }
-        logSessionStoreUpdate("setGitDiffs", serverId, { count: nextDiffs.size });
-        return {
-          ...prev,
-          sessions: {
-            ...prev.sessions,
-            [serverId]: { ...session, gitDiffs: nextDiffs },
           },
         };
       });

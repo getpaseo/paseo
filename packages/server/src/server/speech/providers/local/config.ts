@@ -73,9 +73,10 @@ const LocalSpeechResolutionSchema = z.object({
 
 function persistedLocalFeatureModel(
   provider: RequestedSpeechProviders[keyof RequestedSpeechProviders]["provider"],
+  enabled: boolean | undefined,
   model: string | undefined
 ): string | undefined {
-  if (provider !== "local") {
+  if (provider !== "local" || enabled === false) {
     return undefined;
   }
   return model;
@@ -87,9 +88,12 @@ function shouldIncludeLocalProviderConfig(params: {
   persisted: PersistedConfig;
 }): boolean {
   const localRequestedByFeature =
-    params.providers.dictationStt.provider === "local" ||
-    params.providers.voiceStt.provider === "local" ||
-    params.providers.voiceTts.provider === "local";
+    (params.providers.dictationStt.enabled !== false &&
+      params.providers.dictationStt.provider === "local") ||
+    (params.providers.voiceStt.enabled !== false &&
+      params.providers.voiceStt.provider === "local") ||
+    (params.providers.voiceTts.enabled !== false &&
+      params.providers.voiceTts.provider === "local");
 
   return (
     localRequestedByFeature ||
@@ -119,6 +123,7 @@ export function resolveLocalSpeechConfig(params: {
       params.env.PASEO_DICTATION_LOCAL_STT_MODEL ??
       persistedLocalFeatureModel(
         params.providers.dictationStt.provider,
+        params.providers.dictationStt.enabled,
         params.persisted.features?.dictation?.stt?.model
       ) ??
       DEFAULT_LOCAL_STT_MODEL,
@@ -126,6 +131,7 @@ export function resolveLocalSpeechConfig(params: {
       params.env.PASEO_VOICE_LOCAL_STT_MODEL ??
       persistedLocalFeatureModel(
         params.providers.voiceStt.provider,
+        params.providers.voiceStt.enabled,
         params.persisted.features?.voiceMode?.stt?.model
       ) ??
       DEFAULT_LOCAL_STT_MODEL,
@@ -133,6 +139,7 @@ export function resolveLocalSpeechConfig(params: {
       params.env.PASEO_VOICE_LOCAL_TTS_MODEL ??
       persistedLocalFeatureModel(
         params.providers.voiceTts.provider,
+        params.providers.voiceTts.enabled,
         params.persisted.features?.voiceMode?.tts?.model
       ) ??
       DEFAULT_LOCAL_TTS_MODEL,

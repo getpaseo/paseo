@@ -43,6 +43,7 @@ export function useCheckoutPrStatusQuery({
 
   return {
     status: query.data?.status ?? null,
+    githubFeaturesEnabled: query.data?.githubFeaturesEnabled ?? true,
     payloadError: query.data?.error ?? null,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
