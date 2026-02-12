@@ -43,24 +43,31 @@ const ClaudeToolCallPass1Schema = ClaudeRawToolCallSchema.transform((raw) => ({
   status: raw.status,
 }));
 
-const ClaudeNormalizedToolNameSchema = z.union([
-  z.literal("speak").transform(() => "speak" as const),
-  z.literal("mcp__paseo__speak").transform(() => "speak" as const),
-  z.string().min(1),
-]);
+const ClaudeToolCallPass2BaseSchema = z.object({
+  callId: z.string().min(1),
+  name: z.string().min(1),
+  input: z.unknown().nullable(),
+  output: z.unknown().nullable(),
+  metadata: z.record(z.unknown()).optional(),
+  error: z.unknown().nullable(),
+  status: ClaudeToolCallStatusSchema,
+  toolKind: z.enum(["speak", "other"]),
+});
 
-const ClaudeToolCallPass2Schema = z
-  .object({
-    callId: z.string().min(1),
-    name: z.string().min(1),
-    input: z.unknown().nullable(),
-    output: z.unknown().nullable(),
-    metadata: z.record(z.unknown()).optional(),
-    error: z.unknown().nullable(),
-    status: ClaudeToolCallStatusSchema,
-  })
-  .transform((normalized) => {
-    const name = ClaudeNormalizedToolNameSchema.parse(normalized.name);
+const ClaudeToolCallPass2InputSchema = ClaudeToolCallPass2BaseSchema.omit({
+  toolKind: true,
+}).transform((normalized) => ({
+  ...normalized,
+  name: normalized.name.trim(),
+  toolKind: normalized.name.trim() === "mcp__paseo__speak" ? ("speak" as const) : ("other" as const),
+}));
+
+const ClaudeToolCallPass2Schema = z.discriminatedUnion("toolKind", [
+  ClaudeToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("speak"),
+    name: z.literal("mcp__paseo__speak"),
+  }).transform((normalized) => {
+    const name = "speak" as const;
     return {
       callId: normalized.callId,
       name,
@@ -69,7 +76,18 @@ const ClaudeToolCallPass2Schema = z
       error: normalized.error,
       status: normalized.status,
     };
-  });
+  }),
+  ClaudeToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("other"),
+  }).transform((normalized) => ({
+    callId: normalized.callId,
+    name: normalized.name,
+    detail: deriveClaudeToolDetail(normalized.name, normalized.input, normalized.output),
+    metadata: normalized.metadata,
+    error: normalized.error,
+    status: normalized.status,
+  })),
+]);
 
 function mapClaudeToolCall(
   params: MapperParams,
@@ -85,7 +103,12 @@ function mapClaudeToolCall(
     return null;
   }
 
-  const pass2 = ClaudeToolCallPass2Schema.safeParse(pass1.data);
+  const pass2Input = ClaudeToolCallPass2InputSchema.safeParse(pass1.data);
+  if (!pass2Input.success) {
+    return null;
+  }
+
+  const pass2 = ClaudeToolCallPass2Schema.safeParse(pass2Input.data);
   if (!pass2.success) {
     return null;
   }

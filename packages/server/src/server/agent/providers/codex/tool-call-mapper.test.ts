@@ -426,58 +426,6 @@ describe("codex tool-call mapper", () => {
     }
   });
 
-  it("maps fileChange patch alias fields into edit unified diff detail", () => {
-    const item = mapCodexToolCallFromThreadItem(
-      {
-        type: "fileChange",
-        id: "codex-file-change-patch-alias",
-        status: "completed",
-        changes: [
-          {
-            path: "/tmp/repo/src/from-patch-alias.ts",
-            kind: "modify",
-            patch: "@@\n-oldAlias\n+newAlias\n",
-          },
-        ],
-      },
-      { cwd: "/tmp/repo" }
-    );
-
-    expect(item?.detail?.type).toBe("edit");
-    if (item?.detail?.type === "edit") {
-      expect(item.detail.filePath).toBe("src/from-patch-alias.ts");
-      expect(item.detail.unifiedDiff).toContain("-oldAlias");
-      expect(item.detail.unifiedDiff).toContain("+newAlias");
-      expect(item.detail.newString).toBeUndefined();
-    }
-  });
-
-  it("maps fileChange unifiedDiff alias fields into edit unified diff detail", () => {
-    const item = mapCodexToolCallFromThreadItem(
-      {
-        type: "fileChange",
-        id: "codex-file-change-unified-diff-alias",
-        status: "completed",
-        changes: [
-          {
-            path: "/tmp/repo/src/from-unified-diff-alias.ts",
-            kind: "modify",
-            unified_diff: "@@\n-beforeAlias\n+afterAlias\n",
-          },
-        ],
-      },
-      { cwd: "/tmp/repo" }
-    );
-
-    expect(item?.detail?.type).toBe("edit");
-    if (item?.detail?.type === "edit") {
-      expect(item.detail.filePath).toBe("src/from-unified-diff-alias.ts");
-      expect(item.detail.unifiedDiff).toContain("-beforeAlias");
-      expect(item.detail.unifiedDiff).toContain("+afterAlias");
-      expect(item.detail.newString).toBeUndefined();
-    }
-  });
-
   it("maps path-only fileChange payloads to unknown detail instead of empty edit detail", () => {
     const item = mapCodexToolCallFromThreadItem(
       {
@@ -514,12 +462,12 @@ describe("codex tool-call mapper", () => {
     }
   });
 
-  it("normalizes namespaced speak mcp calls and extracts spoken text", () => {
+  it("normalizes codex paseo speak mcp calls and extracts spoken text", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "mcpToolCall",
       id: "codex-speak-thread-1",
       status: "completed",
-      server: "paseo_voice",
+      server: "paseo",
       tool: "speak",
       arguments: { text: "Voice response from Codex." },
       result: { ok: true },
@@ -534,11 +482,11 @@ describe("codex tool-call mapper", () => {
     });
   });
 
-  it("normalizes exact codex speak rollout names and extracts spoken text", () => {
+  it("normalizes codex paseo speak rollout names and extracts spoken text", () => {
     const item = expectMapped(
       mapCodexRolloutToolCall({
         callId: "codex-speak-rollout-1",
-        name: "mcp__paseo_voice__speak",
+        name: "paseo.speak",
         input: { text: "Rollout speech text." },
         output: { ok: true },
       })

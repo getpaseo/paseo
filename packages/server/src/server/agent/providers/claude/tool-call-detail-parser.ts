@@ -66,16 +66,12 @@ function parseShellDetail(input: unknown, output: unknown): ToolCallDetail | und
   const parsedInput = z
     .object({
       command: StringOrStringArraySchema.optional(),
-      cmd: StringOrStringArraySchema.optional(),
       cwd: z.string().optional(),
-      directory: z.string().optional(),
     })
     .passthrough()
     .safeParse(input ?? {});
 
-  const command = commandFromValue(
-    parsedInput.success ? (parsedInput.data.command ?? parsedInput.data.cmd) : undefined
-  );
+  const command = commandFromValue(parsedInput.success ? parsedInput.data.command : undefined);
   if (!command) {
     return undefined;
   }
@@ -88,20 +84,15 @@ function parseShellDetail(input: unknown, output: unknown): ToolCallDetail | und
           output: z.string().optional(),
           text: z.string().optional(),
           content: z.string().optional(),
-          aggregatedOutput: z.string().optional(),
-          aggregated_output: z.string().optional(),
           exitCode: z.number().nullable().optional(),
-          exit_code: z.number().nullable().optional(),
         })
         .passthrough()
         .transform((value) => ({
           output:
             nonEmptyString(value.output) ??
             nonEmptyString(value.text) ??
-            nonEmptyString(value.content) ??
-            nonEmptyString(value.aggregatedOutput) ??
-            nonEmptyString(value.aggregated_output),
-          exitCode: value.exitCode ?? value.exit_code,
+            nonEmptyString(value.content),
+          exitCode: value.exitCode,
         })),
     ])
     .safeParse(output ?? null);
@@ -115,12 +106,7 @@ function parseShellDetail(input: unknown, output: unknown): ToolCallDetail | und
     type: "shell",
     command,
     ...(parsedInput.success
-      ? {
-          ...(nonEmptyString(parsedInput.data.cwd) ? { cwd: parsedInput.data.cwd } : {}),
-          ...(nonEmptyString(parsedInput.data.directory) && !nonEmptyString(parsedInput.data.cwd)
-            ? { cwd: parsedInput.data.directory }
-            : {}),
-        }
+      ? { ...(nonEmptyString(parsedInput.data.cwd) ? { cwd: parsedInput.data.cwd } : {}) }
       : {}),
     ...(shellOutput ? { output: shellOutput } : {}),
     ...(parsedOutput.success && parsedOutput.data.exitCode !== undefined
@@ -157,8 +143,6 @@ function parseWriteDetail(input: unknown, output: unknown): ToolCallDetail | und
     .object({
       file_path: z.string(),
       content: z.string().optional(),
-      new_content: z.string().optional(),
-      newContent: z.string().optional(),
     })
     .passthrough()
     .safeParse(input ?? {});
@@ -169,21 +153,13 @@ function parseWriteDetail(input: unknown, output: unknown): ToolCallDetail | und
   const outputContent = z
     .object({
       content: z.string().optional(),
-      new_content: z.string().optional(),
-      newContent: z.string().optional(),
     })
     .passthrough()
     .safeParse(output ?? {});
 
   const content =
     nonEmptyString(parsedInput.data.content) ??
-    nonEmptyString(parsedInput.data.new_content) ??
-    nonEmptyString(parsedInput.data.newContent) ??
-    (outputContent.success
-      ? nonEmptyString(outputContent.data.content) ??
-        nonEmptyString(outputContent.data.new_content) ??
-        nonEmptyString(outputContent.data.newContent)
-      : undefined);
+    (outputContent.success ? nonEmptyString(outputContent.data.content) : undefined);
 
   return {
     type: "write",
@@ -197,18 +173,10 @@ function parseEditDetail(input: unknown, output: unknown): ToolCallDetail | unde
     .object({
       file_path: z.string(),
       old_string: z.string().optional(),
-      old_str: z.string().optional(),
-      old_content: z.string().optional(),
-      oldContent: z.string().optional(),
       new_string: z.string().optional(),
-      new_str: z.string().optional(),
-      new_content: z.string().optional(),
-      newContent: z.string().optional(),
       content: z.string().optional(),
       patch: z.string().optional(),
       diff: z.string().optional(),
-      unified_diff: z.string().optional(),
-      unifiedDiff: z.string().optional(),
     })
     .passthrough()
     .safeParse(input ?? {});
@@ -221,41 +189,26 @@ function parseEditDetail(input: unknown, output: unknown): ToolCallDetail | unde
     .object({
       patch: z.string().optional(),
       diff: z.string().optional(),
-      unified_diff: z.string().optional(),
-      unifiedDiff: z.string().optional(),
       content: z.string().optional(),
-      new_content: z.string().optional(),
-      newContent: z.string().optional(),
+      new_string: z.string().optional(),
     })
     .passthrough()
     .safeParse(output ?? {});
 
-  const oldString =
-    nonEmptyString(parsedInput.data.old_string) ??
-    nonEmptyString(parsedInput.data.old_str) ??
-    nonEmptyString(parsedInput.data.old_content) ??
-    nonEmptyString(parsedInput.data.oldContent);
+  const oldString = nonEmptyString(parsedInput.data.old_string);
   const newString =
     nonEmptyString(parsedInput.data.new_string) ??
-    nonEmptyString(parsedInput.data.new_str) ??
-    nonEmptyString(parsedInput.data.new_content) ??
-    nonEmptyString(parsedInput.data.newContent) ??
     nonEmptyString(parsedInput.data.content) ??
     (parsedOutput.success
-      ? nonEmptyString(parsedOutput.data.new_content) ??
-        nonEmptyString(parsedOutput.data.newContent) ??
+      ? nonEmptyString(parsedOutput.data.new_string) ??
         nonEmptyString(parsedOutput.data.content)
       : undefined);
   const unifiedDiff = truncateDiffText(
     nonEmptyString(parsedInput.data.patch) ??
       nonEmptyString(parsedInput.data.diff) ??
-      nonEmptyString(parsedInput.data.unified_diff) ??
-      nonEmptyString(parsedInput.data.unifiedDiff) ??
       (parsedOutput.success
         ? nonEmptyString(parsedOutput.data.patch) ??
-          nonEmptyString(parsedOutput.data.diff) ??
-          nonEmptyString(parsedOutput.data.unified_diff) ??
-          nonEmptyString(parsedOutput.data.unifiedDiff)
+          nonEmptyString(parsedOutput.data.diff)
         : undefined)
   );
 
@@ -269,19 +222,11 @@ function parseEditDetail(input: unknown, output: unknown): ToolCallDetail | unde
 }
 
 function parseSearchDetail(input: unknown): ToolCallDetail | undefined {
-  const parsed = z
-    .union([
-      z.object({ query: z.string() }).passthrough(),
-      z.object({ q: z.string() }).passthrough(),
-    ])
-    .safeParse(input ?? {});
-  if (!parsed.success) {
+  const parsed = z.object({ query: z.string() }).passthrough().safeParse(input ?? {});
+  if (!parsed.success || !parsed.data.query) {
     return undefined;
   }
-
-  const query =
-    nonEmptyString((parsed.data as { query?: unknown }).query) ??
-    nonEmptyString((parsed.data as { q?: unknown }).q);
+  const query = nonEmptyString(parsed.data.query);
   return query ? { type: "search", query } : undefined;
 }
 

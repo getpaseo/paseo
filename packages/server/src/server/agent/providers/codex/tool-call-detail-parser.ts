@@ -128,16 +128,12 @@ function parseShellDetail(
   const parsedInput = z
     .object({
       command: StringOrStringArraySchema.optional(),
-      cmd: StringOrStringArraySchema.optional(),
       cwd: z.string().optional(),
-      directory: z.string().optional(),
     })
     .passthrough()
     .safeParse(input ?? {});
 
-  const command = commandFromValue(
-    parsedInput.success ? (parsedInput.data.command ?? parsedInput.data.cmd) : undefined
-  );
+  const command = commandFromValue(parsedInput.success ? parsedInput.data.command : undefined);
   if (!command) {
     return undefined;
   }
@@ -150,20 +146,15 @@ function parseShellDetail(
           output: z.string().optional(),
           text: z.string().optional(),
           content: z.string().optional(),
-          aggregatedOutput: z.string().optional(),
-          aggregated_output: z.string().optional(),
           exitCode: z.number().nullable().optional(),
-          exit_code: z.number().nullable().optional(),
         })
         .passthrough()
         .transform((value) => ({
           output:
             nonEmptyString(value.output) ??
             nonEmptyString(value.text) ??
-            nonEmptyString(value.content) ??
-            nonEmptyString(value.aggregatedOutput) ??
-            nonEmptyString(value.aggregated_output),
-          exitCode: value.exitCode ?? value.exit_code,
+            nonEmptyString(value.content),
+          exitCode: value.exitCode,
         })),
     ])
     .safeParse(output ?? null);
@@ -179,9 +170,6 @@ function parseShellDetail(
     ...(parsedInput.success
       ? {
           ...(nonEmptyString(parsedInput.data.cwd) ? { cwd: parsedInput.data.cwd } : {}),
-          ...(nonEmptyString(parsedInput.data.directory) && !nonEmptyString(parsedInput.data.cwd)
-            ? { cwd: parsedInput.data.directory }
-            : {}),
         }
       : {}),
     ...(shellOutput ? { output: shellOutput } : {}),
@@ -196,8 +184,22 @@ function parseReadDetail(
   output: unknown,
   cwd: string | null | undefined
 ): ToolCallDetail | undefined {
-  const parsedInput = z.record(z.unknown()).safeParse(input ?? {});
-  const parsedOutput = z.record(z.unknown()).safeParse(output ?? {});
+  const parsedInput = z
+    .object({
+      path: z.string().optional(),
+      file_path: z.string().optional(),
+      offset: z.number().finite().optional(),
+      limit: z.number().finite().optional(),
+    })
+    .passthrough()
+    .safeParse(input ?? {});
+  const parsedOutput = z
+    .object({
+      path: z.string().optional(),
+      file_path: z.string().optional(),
+    })
+    .passthrough()
+    .safeParse(output ?? {});
 
   const filePath = normalizeDetailPath(
     parsedInput.success ? parsePathFromInput(parsedInput.data) : undefined,
@@ -236,7 +238,14 @@ function parseWriteDetail(
   output: unknown,
   cwd: string | null | undefined
 ): ToolCallDetail | undefined {
-  const parsedInput = z.record(z.unknown()).safeParse(input ?? {});
+  const parsedInput = z
+    .object({
+      path: z.string().optional(),
+      file_path: z.string().optional(),
+      content: z.string().optional(),
+    })
+    .passthrough()
+    .safeParse(input ?? {});
   if (!parsedInput.success) {
     return undefined;
   }
@@ -246,16 +255,15 @@ function parseWriteDetail(
     return undefined;
   }
 
-  const parsedOutput = z.record(z.unknown()).safeParse(output ?? {});
+  const parsedOutput = z
+    .object({
+      content: z.string().optional(),
+    })
+    .passthrough()
+    .safeParse(output ?? {});
   const content =
     nonEmptyString(parsedInput.data.content) ??
-    nonEmptyString(parsedInput.data.new_content) ??
-    nonEmptyString(parsedInput.data.newContent) ??
-    (parsedOutput.success
-      ? nonEmptyString(parsedOutput.data.content) ??
-        nonEmptyString(parsedOutput.data.new_content) ??
-        nonEmptyString(parsedOutput.data.newContent)
-      : undefined);
+    (parsedOutput.success ? nonEmptyString(parsedOutput.data.content) : undefined);
 
   return {
     type: "write",
@@ -269,7 +277,18 @@ function parseEditDetail(
   output: unknown,
   cwd: string | null | undefined
 ): ToolCallDetail | undefined {
-  const parsedInput = z.record(z.unknown()).safeParse(input ?? {});
+  const parsedInput = z
+    .object({
+      path: z.string().optional(),
+      file_path: z.string().optional(),
+      old_string: z.string().optional(),
+      new_string: z.string().optional(),
+      content: z.string().optional(),
+      patch: z.string().optional(),
+      diff: z.string().optional(),
+    })
+    .passthrough()
+    .safeParse(input ?? {});
   if (!parsedInput.success) {
     return undefined;
   }
@@ -279,34 +298,30 @@ function parseEditDetail(
     return undefined;
   }
 
-  const parsedOutput = z.record(z.unknown()).safeParse(output ?? {});
+  const parsedOutput = z
+    .object({
+      patch: z.string().optional(),
+      diff: z.string().optional(),
+      content: z.string().optional(),
+      new_string: z.string().optional(),
+    })
+    .passthrough()
+    .safeParse(output ?? {});
 
-  const oldString =
-    nonEmptyString(parsedInput.data.old_string) ??
-    nonEmptyString(parsedInput.data.old_str) ??
-    nonEmptyString(parsedInput.data.old_content) ??
-    nonEmptyString(parsedInput.data.oldContent);
+  const oldString = nonEmptyString(parsedInput.data.old_string);
   const newString =
     nonEmptyString(parsedInput.data.new_string) ??
-    nonEmptyString(parsedInput.data.new_str) ??
-    nonEmptyString(parsedInput.data.new_content) ??
-    nonEmptyString(parsedInput.data.newContent) ??
     nonEmptyString(parsedInput.data.content) ??
     (parsedOutput.success
-      ? nonEmptyString(parsedOutput.data.new_content) ??
-        nonEmptyString(parsedOutput.data.newContent) ??
+      ? nonEmptyString(parsedOutput.data.new_string) ??
         nonEmptyString(parsedOutput.data.content)
       : undefined);
   const unifiedDiff = truncateDiffText(
     nonEmptyString(parsedInput.data.patch) ??
       nonEmptyString(parsedInput.data.diff) ??
-      nonEmptyString(parsedInput.data.unified_diff) ??
-      nonEmptyString(parsedInput.data.unifiedDiff) ??
       (parsedOutput.success
         ? nonEmptyString(parsedOutput.data.patch) ??
-          nonEmptyString(parsedOutput.data.diff) ??
-          nonEmptyString(parsedOutput.data.unified_diff) ??
-          nonEmptyString(parsedOutput.data.unifiedDiff)
+          nonEmptyString(parsedOutput.data.diff)
         : undefined)
   );
 

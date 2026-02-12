@@ -59,51 +59,216 @@ const CodexNormalizedToolCallPass1Schema = z
   })
   .passthrough();
 
-const CodexNormalizedToolNameSchema = z.union([
-  z.literal("speak").transform(() => "speak" as const),
-  z.literal("mcp__paseo_voice__speak").transform(() => "speak" as const),
-  z.literal("paseo_voice.speak").transform(() => "speak" as const),
-  z.string().min(1),
-]);
+const CODEX_SPEAK_TOOL_NAME = "paseo.speak";
+const CODEX_SHELL_TOOL_NAMES = ["Bash", "shell", "bash", "exec", "exec_command", "command"] as const;
+const CODEX_READ_TOOL_NAMES = ["read", "read_file"] as const;
+const CODEX_WRITE_TOOL_NAMES = ["write", "write_file", "create_file"] as const;
+const CODEX_EDIT_TOOL_NAMES = ["edit", "apply_patch", "apply_diff"] as const;
+const CODEX_SEARCH_TOOL_NAMES = ["search", "web_search"] as const;
 
-const CodexNormalizedToolCallPass2Schema = CodexNormalizedToolCallPass1Schema.transform(
-  (envelope): ToolCallTimelineItem => {
-    const rawName = envelope.name.trim();
-    const normalizedInputName = rawName.toLowerCase();
-    const name = CodexNormalizedToolNameSchema.parse(rawName);
-    const input =
-      normalizedInputName === "apply_patch" || normalizedInputName === "apply_diff"
-        ? normalizeApplyPatchInput(envelope.input)
-        : envelope.input;
-    const output = envelope.output;
+type CodexToolKind = "shell" | "read" | "write" | "edit" | "search" | "speak" | "unknown";
 
-    let detail = deriveCodexToolDetail({
-      name,
-      input,
-      output,
+const CodexToolKindByName: Record<string, Exclude<CodexToolKind, "unknown">> = {
+  Bash: "shell",
+  shell: "shell",
+  bash: "shell",
+  exec: "shell",
+  exec_command: "shell",
+  command: "shell",
+  read: "read",
+  read_file: "read",
+  write: "write",
+  write_file: "write",
+  create_file: "write",
+  edit: "edit",
+  apply_patch: "edit",
+  apply_diff: "edit",
+  search: "search",
+  web_search: "search",
+  [CODEX_SPEAK_TOOL_NAME]: "speak",
+};
+
+const CodexToolKindSchema = z.enum(["shell", "read", "write", "edit", "search", "speak", "unknown"]);
+
+function resolveCodexToolKind(name: string): CodexToolKind {
+  return CodexToolKindByName[name] ?? "unknown";
+}
+
+const CodexToolCallPass2BaseSchema = CodexNormalizedToolCallPass1Schema.extend({
+  toolKind: CodexToolKindSchema,
+});
+
+const CodexToolCallPass2InputSchema = CodexNormalizedToolCallPass1Schema.transform((envelope) => {
+  const name = envelope.name.trim();
+  return {
+    ...envelope,
+    name,
+    toolKind: resolveCodexToolKind(name),
+  };
+});
+
+const CodexNormalizedToolCallPass2Schema = z.discriminatedUnion("toolKind", [
+  CodexToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("shell"),
+    name: z.enum(CODEX_SHELL_TOOL_NAMES),
+  }).transform((envelope) => {
+    const detail = deriveCodexToolDetail({
+      name: envelope.name,
+      input: envelope.input,
+      output: envelope.output,
       cwd: envelope.cwd ?? null,
     });
 
-    if (
-      detail.type === "unknown" &&
-      (normalizedInputName === "apply_patch" || normalizedInputName === "apply_diff")
-    ) {
+    return buildToolCall({
+      callId: envelope.callId,
+      name: envelope.name,
+      status: envelope.status,
+      error: envelope.error,
+      detail,
+      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
+    });
+  }),
+  CodexToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("read"),
+    name: z.enum(CODEX_READ_TOOL_NAMES),
+  }).transform((envelope) => {
+    const detail = deriveCodexToolDetail({
+      name: envelope.name,
+      input: envelope.input,
+      output: envelope.output,
+      cwd: envelope.cwd ?? null,
+    });
+
+    return buildToolCall({
+      callId: envelope.callId,
+      name: envelope.name,
+      status: envelope.status,
+      error: envelope.error,
+      detail,
+      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
+    });
+  }),
+  CodexToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("write"),
+    name: z.enum(CODEX_WRITE_TOOL_NAMES),
+  }).transform((envelope) => {
+    const detail = deriveCodexToolDetail({
+      name: envelope.name,
+      input: envelope.input,
+      output: envelope.output,
+      cwd: envelope.cwd ?? null,
+    });
+
+    return buildToolCall({
+      callId: envelope.callId,
+      name: envelope.name,
+      status: envelope.status,
+      error: envelope.error,
+      detail,
+      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
+    });
+  }),
+  CodexToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("edit"),
+    name: z.enum(CODEX_EDIT_TOOL_NAMES),
+  }).transform((envelope) => {
+    const input = normalizeApplyPatchInput(envelope.input);
+    let detail = deriveCodexToolDetail({
+      name: envelope.name,
+      input,
+      output: envelope.output,
+      cwd: envelope.cwd ?? null,
+    });
+
+    if (detail.type === "unknown") {
       const fallbackDetail = deriveApplyPatchDetailFromInput(input, envelope.cwd ?? null);
       if (fallbackDetail) {
         detail = fallbackDetail;
       }
     }
 
+    if (
+      detail.type === "edit" &&
+      !hasRenderableEditContent(detail) &&
+      envelope.output !== null
+    ) {
+      detail = {
+        type: "unknown",
+        input,
+        output: envelope.output,
+      };
+    }
+
     return buildToolCall({
       callId: envelope.callId,
-      name,
+      name: envelope.name,
       status: envelope.status,
       error: envelope.error,
       detail,
       ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
     });
-  }
-);
+  }),
+  CodexToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("search"),
+    name: z.enum(CODEX_SEARCH_TOOL_NAMES),
+  }).transform((envelope) => {
+    const detail = deriveCodexToolDetail({
+      name: envelope.name,
+      input: envelope.input,
+      output: envelope.output,
+      cwd: envelope.cwd ?? null,
+    });
+
+    return buildToolCall({
+      callId: envelope.callId,
+      name: envelope.name,
+      status: envelope.status,
+      error: envelope.error,
+      detail,
+      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
+    });
+  }),
+  CodexToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("speak"),
+    name: z.literal(CODEX_SPEAK_TOOL_NAME),
+  }).transform((envelope) => {
+    const canonicalName = "speak";
+    const detail = deriveCodexToolDetail({
+      name: canonicalName,
+      input: envelope.input,
+      output: envelope.output,
+      cwd: envelope.cwd ?? null,
+    });
+
+    return buildToolCall({
+      callId: envelope.callId,
+      name: canonicalName,
+      status: envelope.status,
+      error: envelope.error,
+      detail,
+      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
+    });
+  }),
+  CodexToolCallPass2BaseSchema.extend({
+    toolKind: z.literal("unknown"),
+  }).transform((envelope) => {
+    const detail = deriveCodexToolDetail({
+      name: envelope.name,
+      input: envelope.input,
+      output: envelope.output,
+      cwd: envelope.cwd ?? null,
+    });
+
+    return buildToolCall({
+      callId: envelope.callId,
+      name: envelope.name,
+      status: envelope.status,
+      error: envelope.error,
+      detail,
+      ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
+    });
+  }),
+]);
 
 // ---------------------------------------------------------------------------
 // Thread-item parsing
@@ -136,10 +301,7 @@ const CodexFileChangeItemSchema = z
             kind: z.string().optional(),
             diff: z.string().optional(),
             patch: z.string().optional(),
-            unified_diff: z.string().optional(),
-            unifiedDiff: z.string().optional(),
             content: z.string().optional(),
-            newString: z.string().optional(),
           })
           .passthrough()
       )
@@ -395,13 +557,7 @@ function pickFirstPatchLikeString(values: unknown[]): string | undefined {
 }
 
 function removePatchLikeFields(input: Record<string, unknown>): Record<string, unknown> {
-  const {
-    patch: _patch,
-    diff: _diff,
-    unified_diff: _unifiedDiffSnake,
-    unifiedDiff: _unifiedDiffCamel,
-    ...rest
-  } = input;
+  const { patch: _patch, diff: _diff, ...rest } = input;
   return rest;
 }
 
@@ -519,17 +675,10 @@ function normalizeApplyPatchInput(input: unknown): unknown {
 
   const existingPath =
     (typeof input.path === "string" && input.path.trim().length > 0 && input.path.trim()) ||
-    (typeof input.file_path === "string" &&
-      input.file_path.trim().length > 0 &&
-      input.file_path.trim()) ||
-    (typeof input.filePath === "string" &&
-      input.filePath.trim().length > 0 &&
-      input.filePath.trim());
+    (typeof input.file_path === "string" && input.file_path.trim().length > 0 && input.file_path.trim());
   const patchText =
     (typeof input.patch === "string" && input.patch) ||
     (typeof input.diff === "string" && input.diff) ||
-    (typeof input.unified_diff === "string" && input.unified_diff) ||
-    (typeof input.unifiedDiff === "string" && input.unifiedDiff) ||
     undefined;
   const contentText = typeof input.content === "string" ? input.content : undefined;
   const inferredPatchFromContent = !patchText && typeof contentText === "string" ? contentText : undefined;
@@ -563,7 +712,6 @@ function deriveApplyPatchDetailFromInput(
   const pathValue =
     (typeof input.path === "string" && input.path.trim()) ||
     (typeof input.file_path === "string" && input.file_path.trim()) ||
-    (typeof input.filePath === "string" && input.filePath.trim()) ||
     "";
   if (!pathValue) {
     return null;
@@ -573,8 +721,6 @@ function deriveApplyPatchDetailFromInput(
   const diffText =
     (typeof input.patch === "string" && input.patch) ||
     (typeof input.diff === "string" && input.diff) ||
-    (typeof input.unified_diff === "string" && input.unified_diff) ||
-    (typeof input.unifiedDiff === "string" && input.unifiedDiff) ||
     (typeof input.content === "string" && input.content) ||
     undefined;
 
@@ -589,7 +735,11 @@ function deriveApplyPatchDetailFromInput(
 function toToolCallFromNormalizedEnvelope(
   envelope: CodexNormalizedToolCallEnvelope
 ): ToolCallTimelineItem | null {
-  const parsed = CodexNormalizedToolCallPass2Schema.safeParse(envelope);
+  const pass2Input = CodexToolCallPass2InputSchema.safeParse(envelope);
+  if (!pass2Input.success) {
+    return null;
+  }
+  const parsed = CodexNormalizedToolCallPass2Schema.safeParse(pass2Input.data);
   if (!parsed.success) {
     return null;
   }
@@ -649,10 +799,7 @@ function mapFileChangeItem(
         diff: pickFirstPatchLikeString([
           change.diff,
           change.patch,
-          change.unified_diff,
-          change.unifiedDiff,
           change.content,
-          change.newString,
         ]),
       };
     })
@@ -822,22 +969,6 @@ export function mapCodexRolloutToolCall(params: {
   });
   if (!mapped) {
     return null;
-  }
-
-  const normalizedName = parsed.data.name.trim().toLowerCase();
-  if (
-    mapped.detail.type === "edit" &&
-    (normalizedName === "apply_patch" || normalizedName === "apply_diff") &&
-    !hasRenderableEditContent(mapped.detail)
-  ) {
-    return {
-      ...mapped,
-      detail: {
-        type: "unknown",
-        input: parsed.data.input ?? null,
-        output: parsed.data.output ?? null,
-      },
-    };
   }
 
   return mapped;
