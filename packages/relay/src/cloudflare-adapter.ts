@@ -83,6 +83,14 @@ export class RelayDurableObject {
     }
   }
 
+  private hasClientSocket(clientId: string): boolean {
+    try {
+      return this.state.getWebSockets(`client:${clientId}`).length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   private nudgeOrResetControlForClient(clientId: string): void {
     // If the daemon's control WS becomes half-open, the DO can't reliably detect it via ws.send errors
     // (Cloudflare may accept writes even if the other side is no longer reading).
@@ -94,12 +102,14 @@ export class RelayDurableObject {
     const secondDelayMs = 5_000;
 
     setTimeout(() => {
+      if (!this.hasClientSocket(clientId)) return;
       if (this.hasServerDataSocket(clientId)) return;
 
       // First nudge: send a full sync list.
       this.notifyControls({ type: "sync", clientIds: this.listConnectedClientIds() });
 
       setTimeout(() => {
+        if (!this.hasClientSocket(clientId)) return;
         if (this.hasServerDataSocket(clientId)) return;
 
         // Still nothing: assume control is stuck and force a reconnect.
