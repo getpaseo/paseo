@@ -135,6 +135,8 @@ import {
   listLocalSpeechModels,
   type LocalSpeechModelId,
 } from "./speech/providers/local/models.js";
+import type { Resolvable } from "./speech/provider-resolver.js";
+import type { SpeechReadinessSnapshot, SpeechReadinessState } from "./speech/speech-runtime.js";
 import type pino from "pino";
 
 const execAsync = promisify(exec);
@@ -328,8 +330,8 @@ export type SessionOptions = {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   createAgentMcpTransport: AgentMcpTransportFactory;
-  stt: SpeechToTextProvider | null;
-  tts: TextToSpeechProvider | null;
+  stt: Resolvable<SpeechToTextProvider | null>;
+  tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   voice?: {
     voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
@@ -344,14 +346,42 @@ export type SessionOptions = {
   };
   dictation?: {
     finalTimeoutMs?: number;
-    stt?: SpeechToTextProvider | null;
+    stt?: Resolvable<SpeechToTextProvider | null>;
     localModels?: {
       modelsDir: string;
       defaultModelIds: LocalSpeechModelId[];
     };
+    getSpeechReadiness?: () => SpeechReadinessSnapshot;
   };
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
 };
+
+type VoiceFeatureUnavailableContext = {
+  reasonCode: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
+  message: string;
+  retryable: boolean;
+  missingModelIds: LocalSpeechModelId[];
+};
+
+type VoiceFeatureUnavailableResponseMetadata = {
+  reasonCode?: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
+  retryable?: boolean;
+  missingModelIds?: LocalSpeechModelId[];
+};
+
+class VoiceFeatureUnavailableError extends Error {
+  readonly reasonCode: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
+  readonly retryable: boolean;
+  readonly missingModelIds: LocalSpeechModelId[];
+
+  constructor(context: VoiceFeatureUnavailableContext) {
+    super(context.message);
+    this.name = "VoiceFeatureUnavailableError";
+    this.reasonCode = context.reasonCode;
+    this.retryable = context.retryable;
+    this.missingModelIds = [...context.missingModelIds];
+  }
+}
 
 function convertPCMToWavBuffer(
   pcmBuffer: Buffer,
@@ -538,6 +568,7 @@ export class Session {
   private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
   private readonly ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
   private readonly removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
+  private readonly getSpeechReadiness?: () => SpeechReadinessSnapshot;
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
@@ -589,6 +620,7 @@ export class Session {
     this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext;
     this.ensureVoiceMcpSocketForAgent = voiceBridge?.ensureVoiceMcpSocketForAgent;
     this.removeVoiceMcpSocketForAgent = voiceBridge?.removeVoiceMcpSocketForAgent;
+    this.getSpeechReadiness = dictation?.getSpeechReadiness;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.abortController = new AbortController();
     this.sessionLogger = logger.child({
@@ -1197,6 +1229,22 @@ export class Session {
           break;
 
         case "dictation_stream_start":
+          {
+            const unavailable = this.resolveVoiceFeatureUnavailableContext("dictation");
+            if (unavailable) {
+              this.emit({
+                type: "dictation_stream_error",
+                payload: {
+                  dictationId: msg.dictationId,
+                  error: unavailable.message,
+                  retryable: unavailable.retryable,
+                  reasonCode: unavailable.reasonCode,
+                  missingModelIds: unavailable.missingModelIds,
+                },
+              });
+              break;
+            }
+          }
           await this.dictationStreamManager.handleStart(msg.dictationId, msg.format);
           break;
 
@@ -1721,6 +1769,61 @@ export class Session {
     }
   }
 
+  private toVoiceFeatureUnavailableContext(
+    state: SpeechReadinessState
+  ): VoiceFeatureUnavailableContext {
+    return {
+      reasonCode: state.reasonCode,
+      message: state.message,
+      retryable: state.retryable,
+      missingModelIds: [...state.missingModelIds],
+    };
+  }
+
+  private resolveModeReadinessState(
+    readiness: SpeechReadinessSnapshot,
+    mode: "voice_mode" | "dictation"
+  ): SpeechReadinessState {
+    if (mode === "voice_mode") {
+      return readiness.realtimeVoice;
+    }
+    return readiness.dictation;
+  }
+
+  private getVoiceFeatureUnavailableResponseMetadata(
+    error: unknown
+  ): VoiceFeatureUnavailableResponseMetadata {
+    if (!(error instanceof VoiceFeatureUnavailableError)) {
+      return {};
+    }
+    return {
+      reasonCode: error.reasonCode,
+      retryable: error.retryable,
+      missingModelIds: error.missingModelIds,
+    };
+  }
+
+  private resolveVoiceFeatureUnavailableContext(
+    mode: "voice_mode" | "dictation"
+  ): VoiceFeatureUnavailableContext | null {
+    const readiness = this.getSpeechReadiness?.();
+    if (!readiness) {
+      return null;
+    }
+
+    const modeReadiness = this.resolveModeReadinessState(readiness, mode);
+    if (!modeReadiness.enabled) {
+      return this.toVoiceFeatureUnavailableContext(modeReadiness);
+    }
+    if (!readiness.voiceFeature.available) {
+      return this.toVoiceFeatureUnavailableContext(readiness.voiceFeature);
+    }
+    if (!modeReadiness.available) {
+      return this.toVoiceFeatureUnavailableContext(modeReadiness);
+    }
+    return null;
+  }
+
   /**
    * Handle voice mode toggle
    */
@@ -1731,6 +1834,11 @@ export class Session {
   ): Promise<void> {
     try {
       if (enabled) {
+        const unavailable = this.resolveVoiceFeatureUnavailableContext("voice_mode");
+        if (unavailable) {
+          throw new VoiceFeatureUnavailableError(unavailable);
+        }
+
         const normalizedAgentId = this.parseVoiceTargetAgentId(
           agentId ?? "",
           "set_voice_mode"
@@ -1789,6 +1897,7 @@ export class Session {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to set voice mode";
+      const unavailable = this.getVoiceFeatureUnavailableResponseMetadata(error);
       this.sessionLogger.error(
         {
           err: error,
@@ -1806,6 +1915,7 @@ export class Session {
             agentId: this.voiceModeAgentId,
             accepted: false,
             error: errorMessage,
+            ...unavailable,
           },
         });
         return;

@@ -1,5 +1,6 @@
 import type pino from "pino";
 import type { SpeechToTextProvider, TranscriptionResult } from "../speech/speech-provider.js";
+import { toResolver, type Resolvable } from "../speech/provider-resolver.js";
 import { maybePersistDebugAudio } from "./stt-debug.js";
 import { parsePcm16MonoWav, parsePcmRateFromFormat } from "../speech/audio.js";
 import { Pcm16MonoResampler } from "./pcm16-resampler.js";
@@ -39,12 +40,16 @@ export interface SessionTranscriptionResult extends TranscriptionResult {
 export class STTManager {
   private readonly sessionId: string;
   private readonly logger: pino.Logger;
-  private readonly stt: SpeechToTextProvider | null;
+  private readonly resolveStt: () => SpeechToTextProvider | null;
 
-  constructor(sessionId: string, logger: pino.Logger, stt: SpeechToTextProvider | null) {
+  constructor(
+    sessionId: string,
+    logger: pino.Logger,
+    stt: Resolvable<SpeechToTextProvider | null>
+  ) {
     this.sessionId = sessionId;
     this.logger = logger.child({ module: "agent", component: "stt-manager", sessionId });
-    this.stt = stt;
+    this.resolveStt = toResolver(stt);
   }
 
   /**
@@ -55,7 +60,8 @@ export class STTManager {
     format: string,
     metadata?: TranscriptionMetadata
   ): Promise<SessionTranscriptionResult> {
-    if (!this.stt) {
+    const stt = this.resolveStt();
+    if (!stt) {
       throw new Error("STT not configured");
     }
 
@@ -81,7 +87,7 @@ export class STTManager {
       this.logger.warn({ err: error }, "Failed to persist debug audio");
     }
 
-    const session = this.stt.createSession({
+    const session = stt.createSession({
       logger: this.logger.child({ component: "stt-session" }),
       language: "en",
     });

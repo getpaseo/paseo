@@ -4,6 +4,7 @@ import {
   Text,
   ActivityIndicator,
   Platform,
+  Alert,
 } from "react-native";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -469,6 +470,8 @@ export function AgentInputArea({
     }
     void voice.startVoice(serverId, agentId).catch((error) => {
       console.error("[AgentInputArea] Failed to start voice mode", error);
+      const message = error instanceof Error ? error.message : "Voice features are not available right now.";
+      Alert.alert("Voice unavailable", message);
     });
   }, [agentId, isConnected, serverId, voice]);
 

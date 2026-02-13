@@ -3,11 +3,9 @@ import { Command } from 'commander'
 import { writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
-  ensureLocalSpeechModels,
   generateLocalPairingOffer,
   loadConfig,
   loadPersistedConfig,
-  type LocalSpeechModelId,
   type CliConfigOverrides,
   type PersistedConfig,
 } from '@getpaseo/server'
@@ -154,7 +152,7 @@ async function resolveVoiceSelection(mode: OnboardOptions['voice']): Promise<boo
   }
 
   const answer = await confirm({
-    message: 'Enable voice features? (downloads local STT/TTS models now)',
+    message: 'Enable voice features? (downloads local STT/TTS models in background)',
     active: 'Yes',
     inactive: 'No',
     initialValue: false,
@@ -170,221 +168,6 @@ async function resolveVoiceSelection(mode: OnboardOptions['voice']): Promise<boo
 type DownloadProgress = {
   modelId: string | null
   pct: number | null
-}
-
-type LocalModelDownloadProgress = {
-  modelId: string | null
-  pct: number | null
-}
-
-type LocalSpeechDownloadLogger = {
-  child: (_bindings: Record<string, unknown>) => LocalSpeechDownloadLogger
-  info: (obj?: unknown, msg?: string) => void
-  error: (_obj?: unknown, _msg?: string) => void
-}
-
-type LocalSpeechDownloadEvent =
-  | {
-      type: 'progress'
-      progress: LocalModelDownloadProgress
-    }
-  | {
-      type: 'phase'
-      phase: 'extracting' | 'verifying' | 'finalizing' | 'completed'
-    }
-
-function resolveRequiredLocalModelIds(config: ReturnType<typeof loadConfig>): LocalSpeechModelId[] {
-  const providers = config.speech?.providers
-  const local = config.speech?.local
-
-  if (!providers || !local) {
-    return []
-  }
-
-  const ids = new Set<LocalSpeechModelId>()
-
-  if (providers.dictationStt.enabled !== false && providers.dictationStt.provider === 'local') {
-    ids.add(local.models.dictationStt)
-  }
-  if (providers.voiceStt.enabled !== false && providers.voiceStt.provider === 'local') {
-    ids.add(local.models.voiceStt)
-  }
-  if (providers.voiceTts.enabled !== false && providers.voiceTts.provider === 'local') {
-    ids.add(local.models.voiceTts)
-  }
-
-  return Array.from(ids)
-}
-
-function parseLocalModelDownloadProgress(payload: unknown): LocalModelDownloadProgress | null {
-  if (!payload || typeof payload !== 'object') {
-    return null
-  }
-
-  const value = payload as Record<string, unknown>
-  const modelId = typeof value.modelId === 'string' ? value.modelId : null
-  const pctRaw = value.pct
-  const pct = typeof pctRaw === 'number' && Number.isFinite(pctRaw) ? Math.max(0, Math.min(100, Math.floor(pctRaw))) : null
-
-  return {
-    modelId,
-    pct,
-  }
-}
-
-function renderLocalModelProgress(params: {
-  modelId: LocalSpeechModelId
-  modelIndex: number
-  modelCount: number
-  pct: number | null
-}): string {
-  const prefix = `Downloading speech model ${params.modelIndex}/${params.modelCount}: ${params.modelId}`
-  if (params.pct === null) {
-    return `${prefix}...`
-  }
-  return `${prefix} (${params.pct}%)`
-}
-
-function createLocalSpeechDownloadLogger(
-  onEvent: (event: LocalSpeechDownloadEvent) => void
-): LocalSpeechDownloadLogger {
-  const logger: LocalSpeechDownloadLogger = {
-    child: () => logger,
-    info: (obj?: unknown, msg?: string) => {
-      if (msg === 'Downloading model artifact') {
-        const progress = parseLocalModelDownloadProgress(obj)
-        if (!progress) {
-          return
-        }
-        onEvent({
-          type: 'progress',
-          progress,
-        })
-        return
-      }
-      if (msg === 'Extracting model archive') {
-        onEvent({ type: 'phase', phase: 'extracting' })
-        return
-      }
-      if (msg === 'Verifying downloaded model files') {
-        onEvent({ type: 'phase', phase: 'verifying' })
-        return
-      }
-      if (msg === 'Finalizing model artifacts') {
-        onEvent({ type: 'phase', phase: 'finalizing' })
-        return
-      }
-      if (msg === 'Model download completed') {
-        onEvent({ type: 'phase', phase: 'completed' })
-        return
-      }
-    },
-    error: () => {
-      // no-op: onboarding handles surfaced errors from ensureLocalSpeechModels.
-    },
-  }
-  return logger
-}
-
-async function prepareLocalSpeechModelsBeforeStart(args: {
-  config: ReturnType<typeof loadConfig>
-  richUi: boolean
-}): Promise<void> {
-  const local = args.config.speech?.local
-  const modelIds = resolveRequiredLocalModelIds(args.config)
-
-  if (!local || modelIds.length === 0) {
-    return
-  }
-
-  if (local.autoDownload === false) {
-    log.warn('Local speech model auto-download is disabled. Voice may be unavailable until models are installed.')
-    return
-  }
-
-  const modelList = modelIds.join(', ')
-  const modelCount = modelIds.length
-  const downloadSpinner = args.richUi ? spinner() : null
-  let lastPlainStatus = ''
-
-  const emitStatus = (status: string): void => {
-    if (downloadSpinner) {
-      downloadSpinner.message(status)
-      return
-    }
-    if (status === lastPlainStatus) {
-      return
-    }
-    console.log(status)
-    lastPlainStatus = status
-  }
-
-  if (downloadSpinner) {
-    downloadSpinner.start(`Preparing local speech models (${modelCount})...`)
-  } else {
-    log.message(`Preparing local speech models (${modelCount}): ${modelList}`)
-  }
-
-  try {
-    for (const [index, modelId] of modelIds.entries()) {
-      const modelIndex = index + 1
-      emitStatus(`Checking speech model ${modelIndex}/${modelCount}: ${modelId}`)
-
-      const perModelLogger = createLocalSpeechDownloadLogger((event) => {
-        if (event.type === 'progress') {
-          const progress = event.progress
-          if (progress.modelId && progress.modelId !== modelId) {
-            return
-          }
-          emitStatus(
-            renderLocalModelProgress({
-              modelId,
-              modelIndex,
-              modelCount,
-              pct: progress.pct,
-            })
-          )
-          return
-        }
-
-        if (event.phase === 'extracting') {
-          emitStatus(`Extracting speech model ${modelIndex}/${modelCount}: ${modelId}`)
-          return
-        }
-        if (event.phase === 'verifying') {
-          emitStatus(`Verifying speech model ${modelIndex}/${modelCount}: ${modelId}`)
-          return
-        }
-        if (event.phase === 'finalizing') {
-          emitStatus(`Finalizing speech model ${modelIndex}/${modelCount}: ${modelId}`)
-          return
-        }
-      })
-
-      await ensureLocalSpeechModels({
-        modelsDir: local.modelsDir,
-        modelIds: [modelId],
-        autoDownload: true,
-        logger: perModelLogger as any,
-      })
-
-      emitStatus(`Speech model ready ${modelIndex}/${modelCount}: ${modelId}`)
-    }
-
-    if (downloadSpinner) {
-      downloadSpinner.stop(`Local speech models ready (${modelCount})`)
-    } else {
-      log.message(`Local speech models ready (${modelCount}): ${modelList}`)
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (downloadSpinner) {
-      downloadSpinner.error(`Failed to prepare local speech models: ${message}`)
-    } else {
-      log.error(`Failed to prepare local speech models: ${message}`)
-    }
-    throw error
-  }
 }
 
 function parseDownloadProgress(logTail: string): DownloadProgress | null {
@@ -583,18 +366,9 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
   const config = loadConfig(paseoHome, { cli: toCliOverrides(options) })
 
   const voiceStatus = voiceEnabled
-    ? 'Voice features enabled. Local speech models will be downloaded if missing.'
-    : 'Voice features disabled. Local speech models will not be downloaded now.'
+    ? 'Voice features enabled. Local speech models will download in the background if missing.'
+    : 'Voice features disabled. Local speech models will not be downloaded.'
   log.message(voiceStatus)
-
-  try {
-    await prepareLocalSpeechModelsBeforeStart({
-      config,
-      richUi,
-    })
-  } catch {
-    process.exit(1)
-  }
 
   const stateBeforeStart = resolveLocalDaemonState({ home: options.home })
   const startSpinner = richUi ? spinner() : null

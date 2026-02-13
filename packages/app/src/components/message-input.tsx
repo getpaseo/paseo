@@ -10,6 +10,7 @@ import {
   Image,
   Platform,
   BackHandler,
+  Alert,
 } from "react-native";
 import {
   useState,
@@ -297,6 +298,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       }
       void voice.startVoice(voiceServerId, voiceAgentId).catch((error) => {
         console.error("[MessageInput] Failed to start realtime voice", error);
+        const message = error instanceof Error ? error.message : "Voice features are not available right now.";
+        Alert.alert("Voice unavailable", message);
       });
     };
 
@@ -461,6 +464,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }
     void voice.startVoice(voiceServerId, voiceAgentId).catch((error) => {
       console.error("[MessageInput] Failed to start realtime voice", error);
+      const message = error instanceof Error ? error.message : "Voice features are not available right now.";
+      Alert.alert("Voice unavailable", message);
     });
   }, [
     disabled,

@@ -11,6 +11,7 @@ import type {
   SpeechToTextProvider,
   StreamingTranscriptionSession,
 } from "../speech/speech-provider.js";
+import { toResolver, type Resolvable } from "../speech/provider-resolver.js";
 import { parsePcmRateFromFormat, pcm16lePeakAbs } from "../speech/audio.js";
 
 const PCM_CHANNELS = 1;
@@ -117,7 +118,7 @@ export class DictationStreamManager {
   private readonly logger: pino.Logger;
   private readonly emit: (msg: DictationStreamOutboundMessage) => void;
   private readonly sessionId: string;
-  private readonly stt: SpeechToTextProvider | null;
+  private readonly resolveStt: () => SpeechToTextProvider | null;
   private readonly finalTimeoutMs: number;
   private readonly autoCommitSeconds: number;
   private readonly streams = new Map<string, DictationStreamState>();
@@ -126,14 +127,14 @@ export class DictationStreamManager {
     logger: pino.Logger;
     emit: (msg: DictationStreamOutboundMessage) => void;
     sessionId: string;
-    stt: SpeechToTextProvider | null;
+    stt: Resolvable<SpeechToTextProvider | null>;
     finalTimeoutMs?: number;
     autoCommitSeconds?: number;
   }) {
     this.logger = params.logger.child({ component: "dictation-stream-manager" });
     this.emit = params.emit;
     this.sessionId = params.sessionId;
-    this.stt = params.stt;
+    this.resolveStt = toResolver(params.stt);
     this.finalTimeoutMs = params.finalTimeoutMs ?? DEFAULT_DICTATION_FINAL_TIMEOUT_MS;
     this.autoCommitSeconds =
       params.autoCommitSeconds ??
@@ -150,7 +151,8 @@ export class DictationStreamManager {
   public async handleStart(dictationId: string, format: string): Promise<void> {
     this.cleanupDictationStream(dictationId);
 
-    if (!this.stt) {
+    const sttProvider = this.resolveStt();
+    if (!sttProvider) {
       this.failDictationStream(dictationId, "Dictation STT not configured", false);
       return;
     }
@@ -159,11 +161,18 @@ export class DictationStreamManager {
       process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT ??
       "Transcribe only what the speaker says. Do not add words. Preserve punctuation and casing. If the audio is silence or non-speech noise, return an empty transcript.";
 
-    const stt = this.stt.createSession({
-      logger: this.logger.child({ dictationId }),
-      language: "en",
-      prompt: transcriptionPrompt,
-    });
+    let stt: ReturnType<SpeechToTextProvider["createSession"]>;
+    try {
+      stt = sttProvider.createSession({
+        logger: this.logger.child({ dictationId }),
+        language: "en",
+        prompt: transcriptionPrompt,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.failDictationStream(dictationId, message, false);
+      return;
+    }
 
     stt.on("committed", ({ segmentId }) => {
       const state = this.streams.get(dictationId);
@@ -221,7 +230,18 @@ export class DictationStreamManager {
       void this.failAndCleanupDictationStream(dictationId, message, true);
     });
 
-    await stt.connect();
+    try {
+      await stt.connect();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.failDictationStream(dictationId, message, true);
+      try {
+        stt.close();
+      } catch {
+        // no-op
+      }
+      return;
+    }
 
     const inputRate = parsePcmRateFromFormat(format, 16000) ?? 16000;
     if (!Number.isFinite(inputRate) || inputRate <= 0) {

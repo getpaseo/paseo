@@ -691,6 +691,9 @@ export const SetVoiceModeResponseMessageSchema = z.object({
     agentId: z.string().nullable(),
     accepted: z.boolean(),
     error: z.string().nullable(),
+    reasonCode: z.string().optional(),
+    retryable: z.boolean().optional(),
+    missingModelIds: z.array(z.string()).optional(),
   }),
 });
 
@@ -1159,6 +1162,8 @@ export const DictationStreamErrorMessageSchema = z.object({
     dictationId: z.string(),
     error: z.string(),
     retryable: z.boolean(),
+    reasonCode: z.string().optional(),
+    missingModelIds: z.array(z.string()).optional(),
     debugRecordingPath: z.string().optional(),
   }),
 });
