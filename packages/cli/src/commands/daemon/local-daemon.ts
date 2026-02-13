@@ -169,12 +169,20 @@ function sleep(ms: number): Promise<void> {
   })
 }
 
+function readNodeErrnoCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return undefined
+  }
+
+  return typeof error.code === 'string' ? error.code : undefined
+}
+
 function isProcessRunning(pid: number): boolean {
   try {
     process.kill(pid, 0)
     return true
   } catch (err) {
-    const code = typeof err === 'object' && err && 'code' in err ? (err as { code?: string }).code : undefined
+    const code = readNodeErrnoCode(err)
     if (code === 'EPERM') {
       return true
     }
@@ -187,7 +195,7 @@ function signalProcess(pid: number, signal: NodeJS.Signals): boolean {
     process.kill(pid, signal)
     return true
   } catch (err) {
-    const code = typeof err === 'object' && err && 'code' in err ? (err as { code?: string }).code : undefined
+    const code = readNodeErrnoCode(err)
     if (code === 'ESRCH') {
       return false
     }
