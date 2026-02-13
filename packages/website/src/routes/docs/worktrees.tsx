@@ -110,7 +110,7 @@ function Worktrees() {
   "worktree": {
     "setup": [
       "npm ci",
-      "cp \\"$PASEO_ROOT_PATH/.env\\" \\"$PASEO_WORKTREE_PATH/.env\\""
+      "cp \\"$PASEO_SOURCE_CHECKOUT_PATH/.env\\" \\"$PASEO_WORKTREE_PATH/.env\\""
     ]
   }
 }`}</pre>
@@ -120,6 +120,13 @@ function Worktrees() {
           after the worktree is created. Use it to install dependencies, copy local config
           files, or run any other initialization.
         </p>
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 text-white/80">
+          <strong>Important:</strong> Setup commands come from{' '}
+          <code className="font-mono">paseo.json</code> in the selected base branch. If you pick{' '}
+          <code className="font-mono">main</code>, Paseo reads the committed file on{' '}
+          <code className="font-mono">main</code>. Local or uncommitted changes in another branch
+          are not used for that worktree.
+        </div>
       </section>
 
       {/* Environment variables */}
@@ -130,7 +137,12 @@ function Worktrees() {
         </p>
         <ul className="text-white/60 space-y-2 list-disc list-inside">
           <li>
-            <code className="font-mono">$PASEO_ROOT_PATH</code> — your original repository root
+            <code className="font-mono">$PASEO_SOURCE_CHECKOUT_PATH</code> — your source checkout
+            path (original repository root)
+          </li>
+          <li>
+            <code className="font-mono">$PASEO_ROOT_PATH</code> — legacy alias of{' '}
+            <code className="font-mono">$PASEO_SOURCE_CHECKOUT_PATH</code>
           </li>
           <li>
             <code className="font-mono">$PASEO_WORKTREE_PATH</code> — the new worktree directory
@@ -143,9 +155,9 @@ function Worktrees() {
           </li>
         </ul>
         <p className="text-white/60 leading-relaxed">
-          Use <code className="font-mono">$PASEO_ROOT_PATH</code> to copy files that shouldn't
-          be in git (like <code className="font-mono">.env</code>) from your main checkout to
-          the worktree.
+          Use <code className="font-mono">$PASEO_SOURCE_CHECKOUT_PATH</code> to copy files that
+          shouldn't be in git (like <code className="font-mono">.env</code>) from your source
+          checkout to the worktree.
         </p>
       </section>
 
@@ -177,8 +189,8 @@ function Worktrees() {
   "worktree": {
     "setup": [
       "npm ci",
-      "cp \\"$PASEO_ROOT_PATH/.env\\" \\"$PASEO_WORKTREE_PATH/.env\\"",
-      "cp \\"$PASEO_ROOT_PATH/.env.local\\" \\"$PASEO_WORKTREE_PATH/.env.local\\""
+      "cp \\"$PASEO_SOURCE_CHECKOUT_PATH/.env\\" \\"$PASEO_WORKTREE_PATH/.env\\"",
+      "cp \\"$PASEO_SOURCE_CHECKOUT_PATH/.env.local\\" \\"$PASEO_WORKTREE_PATH/.env.local\\""
     ]
   }
 }`}</pre>
@@ -190,7 +202,7 @@ function Worktrees() {
   "worktree": {
     "setup": [
       "npm ci",
-      "cp \\"$PASEO_ROOT_PATH/.env\\" \\"$PASEO_WORKTREE_PATH/.env\\"",
+      "cp \\"$PASEO_SOURCE_CHECKOUT_PATH/.env\\" \\"$PASEO_WORKTREE_PATH/.env\\"",
       "npm run db:migrate"
     ]
   }

@@ -171,7 +171,8 @@ describe("createWorktree", () => {
     const paseoConfig = {
       worktree: {
         setup: [
-          'echo "root=$PASEO_ROOT_PATH" > setup.log',
+          'echo "source=$PASEO_SOURCE_CHECKOUT_PATH" > setup.log',
+          'echo "root_alias=$PASEO_ROOT_PATH" >> setup.log',
           'echo "worktree=$PASEO_WORKTREE_PATH" >> setup.log',
           'echo "branch=$PASEO_BRANCH_NAME" >> setup.log',
           'echo "port=$PASEO_WORKTREE_PORT" >> setup.log',
@@ -193,7 +194,8 @@ describe("createWorktree", () => {
 
     // Verify setup ran and env vars were available
     const setupLog = readFileSync(join(result.worktreePath, "setup.log"), "utf8");
-    expect(setupLog).toContain(`root=${repoDir}`);
+    expect(setupLog).toContain(`source=${repoDir}`);
+    expect(setupLog).toContain(`root_alias=${repoDir}`);
     expect(setupLog).toContain(`worktree=${result.worktreePath}`);
     expect(setupLog).toContain("branch=setup-test");
     const portLine = setupLog
@@ -335,9 +337,10 @@ describe("paseo worktree manager", () => {
     const paseoConfig = {
       worktree: {
         destroy: [
-          'echo "root=$PASEO_ROOT_PATH" > "$PASEO_ROOT_PATH/destroy.log"',
-          'echo "worktree=$PASEO_WORKTREE_PATH" >> "$PASEO_ROOT_PATH/destroy.log"',
-          'echo "branch=$PASEO_BRANCH_NAME" >> "$PASEO_ROOT_PATH/destroy.log"',
+          'echo "source=$PASEO_SOURCE_CHECKOUT_PATH" > "$PASEO_SOURCE_CHECKOUT_PATH/destroy.log"',
+          'echo "root_alias=$PASEO_ROOT_PATH" >> "$PASEO_SOURCE_CHECKOUT_PATH/destroy.log"',
+          'echo "worktree=$PASEO_WORKTREE_PATH" >> "$PASEO_SOURCE_CHECKOUT_PATH/destroy.log"',
+          'echo "branch=$PASEO_BRANCH_NAME" >> "$PASEO_SOURCE_CHECKOUT_PATH/destroy.log"',
         ],
       },
     };
@@ -359,7 +362,8 @@ describe("paseo worktree manager", () => {
     expect(existsSync(created.worktreePath)).toBe(false);
 
     const destroyLog = readFileSync(join(repoDir, "destroy.log"), "utf8");
-    expect(destroyLog).toContain(`root=${repoDir}`);
+    expect(destroyLog).toContain(`source=${repoDir}`);
+    expect(destroyLog).toContain(`root_alias=${repoDir}`);
     expect(destroyLog).toContain(`worktree=${created.worktreePath}`);
     expect(destroyLog).toContain("branch=destroy-branch");
   });
@@ -368,7 +372,7 @@ describe("paseo worktree manager", () => {
     const paseoConfig = {
       worktree: {
         destroy: [
-          'echo "started" > "$PASEO_ROOT_PATH/destroy-start.log"',
+          'echo "started" > "$PASEO_SOURCE_CHECKOUT_PATH/destroy-start.log"',
           "echo boom 1>&2; exit 9",
         ],
       },

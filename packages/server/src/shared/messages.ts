@@ -791,6 +791,14 @@ export const ValidateBranchRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const BranchSuggestionsRequestSchema = z.object({
+  type: z.literal("branch_suggestions_request"),
+  cwd: z.string(),
+  query: z.string().optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+  requestId: z.string(),
+});
+
 export const PaseoWorktreeListRequestSchema = z.object({
   type: z.literal("paseo_worktree_list_request"),
   cwd: z.string().optional(),
@@ -1015,6 +1023,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPrCreateRequestSchema,
   CheckoutPrStatusRequestSchema,
   ValidateBranchRequestSchema,
+  BranchSuggestionsRequestSchema,
   PaseoWorktreeListRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   FileExplorerRequestSchema,
@@ -1565,6 +1574,15 @@ export const ValidateBranchResponseSchema = z.object({
   }),
 });
 
+export const BranchSuggestionsResponseSchema = z.object({
+  type: z.literal("branch_suggestions_response"),
+  payload: z.object({
+    branches: z.array(z.string()),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 const PaseoWorktreeSchema = z.object({
   worktreePath: z.string(),
   branchName: z.string().nullable().optional(),
@@ -1835,6 +1853,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPrCreateResponseSchema,
   CheckoutPrStatusResponseSchema,
   ValidateBranchResponseSchema,
+  BranchSuggestionsResponseSchema,
   PaseoWorktreeListResponseSchema,
   PaseoWorktreeArchiveResponseSchema,
   FileExplorerResponseSchema,
@@ -1966,6 +1985,8 @@ export type CheckoutPrStatusRequest = z.infer<typeof CheckoutPrStatusRequestSche
 export type CheckoutPrStatusResponse = z.infer<typeof CheckoutPrStatusResponseSchema>;
 export type ValidateBranchRequest = z.infer<typeof ValidateBranchRequestSchema>;
 export type ValidateBranchResponse = z.infer<typeof ValidateBranchResponseSchema>;
+export type BranchSuggestionsRequest = z.infer<typeof BranchSuggestionsRequestSchema>;
+export type BranchSuggestionsResponse = z.infer<typeof BranchSuggestionsResponseSchema>;
 export type PaseoWorktreeListRequest = z.infer<typeof PaseoWorktreeListRequestSchema>;
 export type PaseoWorktreeListResponse = z.infer<typeof PaseoWorktreeListResponseSchema>;
 export type PaseoWorktreeArchiveRequest = z.infer<typeof PaseoWorktreeArchiveRequestSchema>;

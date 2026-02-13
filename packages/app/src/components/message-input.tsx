@@ -731,7 +731,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           scrollEnabled={IS_WEB ? inputHeight >= MAX_INPUT_HEIGHT : true}
           onContentSizeChange={handleContentSizeChange}
           editable={
-            !isDictating && !isRealtimeVoiceForCurrentAgent && isConnected && !disabled
+            !isDictating && !isRealtimeVoiceForCurrentAgent && !disabled
           }
           onKeyPress={
             shouldHandleDesktopSubmit ? handleDesktopKeyPress : undefined
@@ -836,24 +836,22 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             )}
             {shouldShowSendButton && (
               <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-                <TooltipTrigger
-                  onPress={handleSendMessage}
-                  disabled={
-                    !isConnected ||
+              <TooltipTrigger
+                onPress={handleSendMessage}
+                disabled={
                     isSubmitDisabled ||
                     isSubmitLoading ||
                     disabled
                   }
-                  accessibilityLabel={isAgentRunning ? "Send and interrupt" : "Send message"}
-                  accessibilityRole="button"
-                  style={[
-                    styles.sendButton,
-                    (!isConnected ||
-                      isSubmitDisabled ||
+                accessibilityLabel={isAgentRunning ? "Send and interrupt" : "Send message"}
+                accessibilityRole="button"
+                style={[
+                  styles.sendButton,
+                    (isSubmitDisabled ||
                       isSubmitLoading ||
                       disabled) &&
                       styles.buttonDisabled,
-                  ]}
+                ]}
                 >
                   {isSubmitLoading ? (
                     <ActivityIndicator size="small" color="white" />

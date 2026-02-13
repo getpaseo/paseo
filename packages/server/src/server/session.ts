@@ -103,6 +103,7 @@ import {
   getCheckoutDiff,
   getCheckoutStatus,
   getCheckoutStatusLite,
+  listBranchSuggestions,
   NotGitRepoError,
   MergeConflictError,
   MergeFromBaseConflictError,
@@ -1230,6 +1231,10 @@ export class Session {
 
         case "validate_branch_request":
           await this.handleValidateBranchRequest(msg);
+          break;
+
+        case "branch_suggestions_request":
+          await this.handleBranchSuggestionsRequest(msg);
           break;
 
         case "subscribe_checkout_diff_request":
@@ -3582,6 +3587,34 @@ export class Session {
           exists: false,
           resolvedRef: null,
           isRemote: false,
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleBranchSuggestionsRequest(
+    msg: Extract<SessionInboundMessage, { type: "branch_suggestions_request" }>
+  ): Promise<void> {
+    const { cwd, query, limit, requestId } = msg;
+
+    try {
+      const resolvedCwd = expandTilde(cwd);
+      const branches = await listBranchSuggestions(resolvedCwd, { query, limit });
+      this.emit({
+        type: "branch_suggestions_response",
+        payload: {
+          branches,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "branch_suggestions_response",
+        payload: {
+          branches: [],
           error: error instanceof Error ? error.message : String(error),
           requestId,
         },

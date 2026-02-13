@@ -538,11 +538,11 @@ export async function createPaseoDaemon(
               relayTransport?.stop().catch(() => undefined);
               relayTransport = startRelayTransport({
                 logger,
-                attachSocket: (ws) => {
+                attachSocket: (ws, metadata) => {
                   if (!wsServer) {
                     throw new Error("WebSocket server not initialized");
                   }
-                  return wsServer.attachExternalSocket(ws);
+                  return wsServer.attachExternalSocket(ws, metadata);
                 },
                 relayEndpoint,
                 serverId,

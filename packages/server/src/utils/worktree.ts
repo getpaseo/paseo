@@ -204,8 +204,11 @@ export async function runWorktreeSetupCommands(options: {
 
   const setupEnv = {
     ...process.env,
-    // Root is the original git repo root (shared across worktrees), not the worktree itself.
-    // This allows setup scripts to copy uncommitted local files (e.g. .env) from the main checkout.
+    // Source checkout path is the original git repo root (shared across worktrees), not the
+    // worktree itself. This allows setup scripts to copy local files (e.g. .env) from the
+    // source checkout.
+    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+    // Backward-compatible alias.
     PASEO_ROOT_PATH: repoRootPath,
     PASEO_WORKTREE_PATH: options.worktreePath,
     PASEO_BRANCH_NAME: options.branchName,
@@ -275,8 +278,11 @@ export async function runWorktreeDestroyCommands(options: {
 
   const destroyEnv = {
     ...process.env,
-    // Root is the original git repo root (shared across worktrees), not the worktree itself.
-    // This allows destroy scripts to clean resources using paths from the main checkout.
+    // Source checkout path is the original git repo root (shared across worktrees), not the
+    // worktree itself. This allows destroy scripts to clean resources using paths from the
+    // source checkout.
+    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+    // Backward-compatible alias.
     PASEO_ROOT_PATH: repoRootPath,
     PASEO_WORKTREE_PATH: options.worktreePath,
     PASEO_BRANCH_NAME: branchName,

@@ -45,7 +45,6 @@ import {
 import { usePanelStore } from "@/stores/panel-store";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
-import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/contexts/session-context";
@@ -74,6 +73,8 @@ import {
 
 const DROPDOWN_WIDTH = 220;
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
+const RECONNECT_NOTICE_DELAY_MS = 10_000;
+const CONNECTED_NOTICE_DURATION_MS = 2_500;
 
 export function AgentReadyScreen({
   serverId,
@@ -101,7 +102,6 @@ export function AgentReadyScreen({
   const isUnknownDaemon = Boolean(connectionServerId && !connection);
   const connectionStatus =
     connection?.status ?? (isUnknownDaemon ? "offline" : "idle");
-  const connectionStatusLabel = formatConnectionStatus(connectionStatus);
   const lastConnectionError = connection?.lastError ?? null;
 
   const handleBackToHome = useCallback(() => {
@@ -152,7 +152,6 @@ export function AgentReadyScreen({
         onBack={handleBackToHome}
         serverLabel={serverLabel}
         connectionStatus={connectionStatus}
-        connectionStatusLabel={connectionStatusLabel}
         lastError={lastConnectionError}
         isUnknownDaemon={isUnknownDaemon}
       />
@@ -164,6 +163,7 @@ export function AgentReadyScreen({
       <AgentScreenContent
         serverId={resolvedServerId}
         agentId={resolvedAgentId}
+        connectionStatus={connectionStatus}
       />
     </ExplorerSidebarAnimationProvider>
   );
@@ -172,6 +172,7 @@ export function AgentReadyScreen({
 type AgentScreenContentProps = {
   serverId: string;
   agentId?: string;
+  connectionStatus: ConnectionStatus;
 };
 
 type MissingAgentState =
@@ -194,6 +195,7 @@ function isNotFoundErrorMessage(message: string): boolean {
 function AgentScreenContent({
   serverId,
   agentId,
+  connectionStatus,
 }: AgentScreenContentProps) {
   const { theme } = useUnistyles();
   const toast = useToast();
@@ -383,6 +385,11 @@ function AgentScreenContent({
   const [missingAgentState, setMissingAgentState] = useState<MissingAgentState>({
     kind: "idle",
   });
+  const [showReconnectNotice, setShowReconnectNotice] = useState(false);
+  const [dismissedReconnectNotice, setDismissedReconnectNotice] = useState(false);
+  const [showConnectedNotice, setShowConnectedNotice] = useState(false);
+  const reconnectNoticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectedNoticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initAttemptTokenRef = useRef(0);
   const setFocusedAgentId = useCallback(
     (agentId: string | null) => {
@@ -409,6 +416,56 @@ function AgentScreenContent({
 
   const agentModel = extractAgentModel(agent);
   const modelDisplayValue = agentModel ?? "Unknown";
+
+  useEffect(() => {
+    if (reconnectNoticeTimeoutRef.current) {
+      clearTimeout(reconnectNoticeTimeoutRef.current);
+      reconnectNoticeTimeoutRef.current = null;
+    }
+
+    if (connectionStatus === "online") {
+      if (showReconnectNotice || dismissedReconnectNotice) {
+        setShowConnectedNotice(true);
+      }
+      setShowReconnectNotice(false);
+      setDismissedReconnectNotice(false);
+      return;
+    }
+
+    setShowConnectedNotice(false);
+    if (!showReconnectNotice && !dismissedReconnectNotice) {
+      reconnectNoticeTimeoutRef.current = setTimeout(() => {
+        setShowReconnectNotice(true);
+      }, RECONNECT_NOTICE_DELAY_MS);
+    }
+
+    return () => {
+      if (reconnectNoticeTimeoutRef.current) {
+        clearTimeout(reconnectNoticeTimeoutRef.current);
+        reconnectNoticeTimeoutRef.current = null;
+      }
+    };
+  }, [connectionStatus, dismissedReconnectNotice, showReconnectNotice]);
+
+  useEffect(() => {
+    if (!showConnectedNotice) {
+      if (connectedNoticeTimeoutRef.current) {
+        clearTimeout(connectedNoticeTimeoutRef.current);
+        connectedNoticeTimeoutRef.current = null;
+      }
+      return;
+    }
+    connectedNoticeTimeoutRef.current = setTimeout(() => {
+      setShowConnectedNotice(false);
+      connectedNoticeTimeoutRef.current = null;
+    }, CONNECTED_NOTICE_DURATION_MS);
+    return () => {
+      if (connectedNoticeTimeoutRef.current) {
+        clearTimeout(connectedNoticeTimeoutRef.current);
+        connectedNoticeTimeoutRef.current = null;
+      }
+    };
+  }, [showConnectedNotice]);
 
   // Checkout status for header subtitle
   const checkoutStatusQuery = useCheckoutStatusQuery({
@@ -902,6 +959,47 @@ function AgentScreenContent({
           }
         />
 
+          {(showReconnectNotice || showConnectedNotice) && (
+            <View
+              style={[
+                styles.connectionNotice,
+                showReconnectNotice
+                  ? styles.connectionNoticeReconnecting
+                  : styles.connectionNoticeConnected,
+              ]}
+            >
+              {showConnectedNotice ? (
+                <CheckCircle2
+                  size={14}
+                  color={theme.colors.palette.green[600]}
+                />
+              ) : null}
+              <Text
+                style={[
+                  styles.connectionNoticeText,
+                  showReconnectNotice
+                    ? styles.connectionNoticeTextReconnecting
+                    : styles.connectionNoticeTextConnected,
+                ]}
+              >
+                {showReconnectNotice ? "Reconnecting..." : "Connected"}
+              </Text>
+              {showReconnectNotice ? (
+                <Pressable
+                  onPress={() => {
+                    setShowReconnectNotice(false);
+                    setDismissedReconnectNotice(true);
+                  }}
+                  style={styles.connectionNoticeDismiss}
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss reconnecting notice"
+                >
+                  <Text style={styles.connectionNoticeDismissText}>Dismiss</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          )}
+
           {/* Content Area with Keyboard Animation */}
           <View style={styles.contentContainer}>
             {shouldBlockForHistorySync ? (
@@ -967,14 +1065,12 @@ function AgentSessionUnavailableState({
   onBack,
   serverLabel,
   connectionStatus,
-  connectionStatusLabel,
   lastError,
   isUnknownDaemon = false,
 }: {
   onBack: () => void;
   serverLabel: string;
   connectionStatus: ConnectionStatus;
-  connectionStatusLabel: string;
   lastError: string | null;
   isUnknownDaemon?: boolean;
 }) {
@@ -1015,11 +1111,10 @@ function AgentSessionUnavailableState({
         ) : (
           <>
             <Text style={styles.offlineTitle}>
-              {serverLabel} is currently {connectionStatusLabel.toLowerCase()}.
+              Reconnecting to {serverLabel}...
             </Text>
             <Text style={styles.offlineDescription}>
-              We'll reconnect automatically and show this agent as soon as the
-              host comes back online.
+              We will show this agent again as soon as the host is reachable.
             </Text>
             {lastError ? (
               <Text style={styles.offlineDetails}>{lastError}</Text>
@@ -1048,6 +1143,49 @@ const styles = StyleSheet.create((theme) => ({
   contentContainer: {
     flex: 1,
     overflow: "hidden",
+  },
+  connectionNotice: {
+    marginHorizontal: theme.spacing[4],
+    marginTop: theme.spacing[1],
+    marginBottom: theme.spacing[2],
+    minHeight: 32,
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: theme.spacing[3],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  connectionNoticeReconnecting: {
+    backgroundColor: `${theme.colors.palette.yellow[400]}22`,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.palette.yellow[400],
+  },
+  connectionNoticeConnected: {
+    backgroundColor: theme.colors.palette.green[100],
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.palette.green[400],
+  },
+  connectionNoticeText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  connectionNoticeTextReconnecting: {
+    color: theme.colors.foreground,
+  },
+  connectionNoticeTextConnected: {
+    color: theme.colors.palette.green[800],
+  },
+  connectionNoticeDismiss: {
+    marginLeft: "auto",
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface0,
+  },
+  connectionNoticeDismissText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foregroundMuted,
   },
   content: {
     flex: 1,

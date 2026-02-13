@@ -24,6 +24,7 @@ import type {
   CheckoutPrCreateResponse,
   CheckoutPrStatusResponse,
   ValidateBranchResponse,
+  BranchSuggestionsResponse,
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
@@ -191,6 +192,7 @@ type CheckoutPushPayload = CheckoutPushResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type ValidateBranchPayload = ValidateBranchResponse["payload"];
+type BranchSuggestionsPayload = BranchSuggestionsResponse["payload"];
 type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
 type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
 type FileExplorerPayload = FileExplorerResponse["payload"];
@@ -1926,6 +1928,35 @@ export class DaemonClient {
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "validate_branch_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async getBranchSuggestions(
+    options: { cwd: string; query?: string; limit?: number },
+    requestId?: string
+  ): Promise<BranchSuggestionsPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "branch_suggestions_request",
+      cwd: options.cwd,
+      query: options.query,
+      limit: options.limit,
+      requestId: resolvedRequestId,
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "branch_suggestions_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {

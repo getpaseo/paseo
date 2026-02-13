@@ -29,6 +29,10 @@ import type {
 } from "./voice-types.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
+export type ExternalSocketMetadata = {
+  transport: "relay";
+  externalSessionKey: string;
+};
 
 type WebSocketServerConfig = {
   allowedOrigins: Set<string>;
@@ -56,13 +60,25 @@ type WebSocketLike = {
   once: (event: "close" | "error", listener: (...args: any[]) => void) => void;
 };
 
+type SessionConnection = {
+  session: Session;
+  clientId: string;
+  connectionLogger: pino.Logger;
+  socketRef: { current: WebSocketLike };
+  externalSessionKey: string | null;
+  externalDisconnectCleanupTimeout: ReturnType<typeof setTimeout> | null;
+};
+
+const EXTERNAL_SESSION_DISCONNECT_GRACE_MS = 90_000;
+
 /**
  * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
  */
 export class VoiceAssistantWebSocketServer {
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
-  private readonly sessions: Map<WebSocketLike, Session> = new Map();
+  private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
+  private readonly externalSessionsByKey: Map<string, SessionConnection> = new Map();
   private clientIdCounter = 0;
   private readonly serverId: string;
   private readonly agentManager: AgentManager;
@@ -191,15 +207,27 @@ export class VoiceAssistantWebSocketServer {
   }
 
   public async attachExternalSocket(
-    ws: WebSocketLike
+    ws: WebSocketLike,
+    metadata?: ExternalSocketMetadata
   ): Promise<void> {
-    await this.attachSocket(ws);
+    await this.attachSocket(ws, undefined, metadata);
   }
 
   public async close(): Promise<void> {
+    const uniqueConnections = new Set<SessionConnection>([
+      ...this.sessions.values(),
+      ...this.externalSessionsByKey.values(),
+    ]);
+
     const cleanupPromises: Promise<void>[] = [];
-    for (const [ws, session] of this.sessions) {
-      cleanupPromises.push(session.cleanup());
+    for (const connection of uniqueConnections) {
+      if (connection.externalDisconnectCleanupTimeout) {
+        clearTimeout(connection.externalDisconnectCleanupTimeout);
+        connection.externalDisconnectCleanupTimeout = null;
+      }
+
+      const ws = connection.socketRef.current;
+      cleanupPromises.push(connection.session.cleanup());
       cleanupPromises.push(
         new Promise<void>((resolve) => {
           // WebSocket.CLOSED = 3
@@ -214,6 +242,7 @@ export class VoiceAssistantWebSocketServer {
     }
     await Promise.all(cleanupPromises);
     this.sessions.clear();
+    this.externalSessionsByKey.clear();
     this.wss.close();
   }
 
@@ -224,14 +253,53 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private async attachSocket(ws: WebSocketLike, _request?: unknown): Promise<void> {
+  private async attachSocket(
+    ws: WebSocketLike,
+    _request?: unknown,
+    metadata?: ExternalSocketMetadata
+  ): Promise<void> {
+    const externalSessionKey =
+      metadata?.transport === "relay" && metadata.externalSessionKey.trim().length > 0
+        ? metadata.externalSessionKey
+        : null;
+
+    if (externalSessionKey) {
+      const existing = this.externalSessionsByKey.get(externalSessionKey);
+      if (existing) {
+        if (existing.externalDisconnectCleanupTimeout) {
+          clearTimeout(existing.externalDisconnectCleanupTimeout);
+          existing.externalDisconnectCleanupTimeout = null;
+        }
+
+        const previousSocket = existing.socketRef.current;
+        if (previousSocket !== ws) {
+          this.sessions.delete(previousSocket);
+          existing.socketRef.current = ws;
+        }
+
+        this.sessions.set(ws, existing);
+        this.sendServerInfo(ws);
+        existing.connectionLogger.trace(
+          {
+            clientId: existing.clientId,
+            externalSessionKey,
+            totalSessions: this.sessions.size,
+          },
+          "Client reconnected"
+        );
+        this.bindSocketHandlers(ws, existing);
+        return;
+      }
+    }
+
     const clientId = `client-${++this.clientIdCounter}`;
     const connectionLogger = this.logger.child({ clientId });
+    const socketRef = { current: ws };
 
     const session = new Session({
       clientId,
       onMessage: (msg) => {
-        this.sendToClient(ws, wrapSessionMessage(msg));
+        this.sendToClient(socketRef.current, wrapSessionMessage(msg));
       },
       logger: connectionLogger.child({ module: "session" }),
       downloadTokenStore: this.downloadTokenStore,
@@ -264,8 +332,31 @@ export class VoiceAssistantWebSocketServer {
       agentProviderRuntimeSettings: this.agentProviderRuntimeSettings,
     });
 
-    this.sessions.set(ws, session);
+    const connection: SessionConnection = {
+      session,
+      clientId,
+      connectionLogger,
+      socketRef,
+      externalSessionKey,
+      externalDisconnectCleanupTimeout: null,
+    };
 
+    this.sessions.set(ws, connection);
+    if (externalSessionKey) {
+      this.externalSessionsByKey.set(externalSessionKey, connection);
+    }
+
+    this.sendServerInfo(ws);
+
+    connectionLogger.trace(
+      { clientId, externalSessionKey, totalSessions: this.sessions.size },
+      "Client connected"
+    );
+
+    this.bindSocketHandlers(ws, connection);
+  }
+
+  private sendServerInfo(ws: WebSocketLike): void {
     // Advertise stable server identity immediately on connect (used for URL/shareable IDs).
     this.sendToClient(
       ws,
@@ -278,24 +369,27 @@ export class VoiceAssistantWebSocketServer {
         },
       })
     );
+  }
 
-    connectionLogger.trace(
-      { clientId, totalSessions: this.sessions.size },
-      "Client connected"
-    );
-
+  private bindSocketHandlers(
+    ws: WebSocketLike,
+    connection: SessionConnection
+  ): void {
     ws.on("message", (data) => {
       void this.handleRawMessage(ws, data);
     });
 
-    ws.on("close", async () => {
-      await this.detachSocket(ws, connectionLogger, clientId);
+    ws.on("close", async (code: number, reason: unknown) => {
+      await this.detachSocket(ws, connection, {
+        code: typeof code === "number" ? code : undefined,
+        reason,
+      });
     });
 
     ws.on("error", async (error) => {
       const err = error instanceof Error ? error : new Error(String(error));
-      connectionLogger.error({ err }, "Client error");
-      await this.detachSocket(ws, connectionLogger, clientId);
+      connection.connectionLogger.error({ err }, "Client error");
+      await this.detachSocket(ws, connection, { error: err });
     });
   }
 
@@ -313,19 +407,72 @@ export class VoiceAssistantWebSocketServer {
 
   private async detachSocket(
     ws: WebSocketLike,
-    connectionLogger: pino.Logger,
-    clientId: string
+    connection: SessionConnection,
+    details: {
+      code?: number;
+      reason?: unknown;
+      error?: Error;
+    }
   ): Promise<void> {
-    const session = this.sessions.get(ws);
-    if (!session) return;
-
-    connectionLogger.trace(
-      { clientId, totalSessions: this.sessions.size - 1 },
-      "Client disconnected"
-    );
-
-    await session.cleanup();
+    const activeConnection = this.sessions.get(ws);
+    if (activeConnection !== connection) return;
     this.sessions.delete(ws);
+
+    if (
+      connection.externalSessionKey &&
+      connection.socketRef.current === ws
+    ) {
+      if (connection.externalDisconnectCleanupTimeout) {
+        clearTimeout(connection.externalDisconnectCleanupTimeout);
+      }
+      const timeout = setTimeout(() => {
+        if (connection.externalDisconnectCleanupTimeout !== timeout) {
+          return;
+        }
+        connection.externalDisconnectCleanupTimeout = null;
+        void this.cleanupConnection(connection, "Client disconnected (grace timeout)");
+      }, EXTERNAL_SESSION_DISCONNECT_GRACE_MS);
+      connection.externalDisconnectCleanupTimeout = timeout;
+
+      connection.connectionLogger.trace(
+        {
+          clientId: connection.clientId,
+          externalSessionKey: connection.externalSessionKey,
+          code: details.code,
+          reason: stringifyCloseReason(details.reason),
+          reconnectGraceMs: EXTERNAL_SESSION_DISCONNECT_GRACE_MS,
+        },
+        "Client disconnected; waiting for reconnect"
+      );
+      return;
+    }
+
+    await this.cleanupConnection(connection, "Client disconnected");
+  }
+
+  private async cleanupConnection(
+    connection: SessionConnection,
+    logMessage: string
+  ): Promise<void> {
+    if (connection.externalDisconnectCleanupTimeout) {
+      clearTimeout(connection.externalDisconnectCleanupTimeout);
+      connection.externalDisconnectCleanupTimeout = null;
+    }
+
+    const currentSocket = connection.socketRef.current;
+    this.sessions.delete(currentSocket);
+    if (connection.externalSessionKey) {
+      const existing = this.externalSessionsByKey.get(connection.externalSessionKey);
+      if (existing === connection) {
+        this.externalSessionsByKey.delete(connection.externalSessionKey);
+      }
+    }
+
+    connection.connectionLogger.trace(
+      { clientId: connection.clientId, totalSessions: this.sessions.size },
+      logMessage
+    );
+    await connection.session.cleanup();
   }
 
   private async handleRawMessage(
@@ -395,14 +542,14 @@ export class VoiceAssistantWebSocketServer {
         return;
       }
 
-      const session = this.sessions.get(ws);
-      if (!session) {
+      const connection = this.sessions.get(ws);
+      if (!connection) {
         this.logger.error("No session found for client");
         return;
       }
 
       if (message.type === "session") {
-        await session.handleMessage(message.message);
+        await connection.session.handleMessage(message.message);
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -555,10 +702,10 @@ export class VoiceAssistantWebSocketServer {
       };
     }> = [];
 
-    for (const [ws, session] of this.sessions) {
+    for (const [ws, connection] of this.sessions) {
       clientEntries.push({
         ws,
-        state: this.getClientActivityState(session),
+        state: this.getClientActivityState(connection.session),
       });
     }
 
@@ -624,6 +771,21 @@ export class VoiceAssistantWebSocketServer {
       this.sendToClient(ws, message);
     }
   }
+}
+
+function stringifyCloseReason(reason: unknown): string | null {
+  if (typeof reason === "string") {
+    return reason.length > 0 ? reason : null;
+  }
+  if (Buffer.isBuffer(reason)) {
+    const text = reason.toString();
+    return text.length > 0 ? text : null;
+  }
+  if (reason == null) {
+    return null;
+  }
+  const text = String(reason);
+  return text.length > 0 ? text : null;
 }
 
 function extractRequestInfoFromUnknownWsInbound(

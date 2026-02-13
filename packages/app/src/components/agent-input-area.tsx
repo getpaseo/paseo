@@ -276,13 +276,11 @@ export function AgentInputArea({
     imageAttachments?: ImageAttachment[],
     forceSend?: boolean
   ) {
-    const socketConnected = isConnected;
     const trimmedMessage = message.trim();
     if (!trimmedMessage) return;
     // When the parent controls submission (e.g. draft agent creation), let it
     // decide what to do even if the socket is currently disconnected (so we
     // don't no-op and lose deterministic error handling in the UI/tests).
-    if (!onSubmitMessageRef.current && !socketConnected) return;
     if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
 
     if (agent?.status === "running" && !forceSend) {
@@ -485,7 +483,7 @@ export function AgentInputArea({
 
   async function handleSendQueuedNow(id: string) {
     const item = queuedMessages.find((q) => q.id === id);
-    if (!item || !isConnected) return;
+    if (!item) return;
     if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
 
     updateQueue((current) => current.filter((q) => q.id !== id));

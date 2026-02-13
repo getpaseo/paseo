@@ -183,7 +183,7 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
 
   return (
     <SessionProvider
-      key={`${daemon.serverId}:${activeUrl}`}
+      key={daemon.serverId}
       serverUrl={activeUrl}
       serverId={daemon.serverId}
       activeConnection={active?.activeConnection ?? null}

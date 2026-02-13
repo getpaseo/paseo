@@ -2,7 +2,7 @@
   "worktree": {
     "setup": [
       "npm ci",
-      "cp \"$PASEO_ROOT_PATH/packages/server/.env\" \"$PASEO_WORKTREE_PATH/packages/server/.env\""
+      "cp \"$PASEO_SOURCE_CHECKOUT_PATH/packages/server/.env\" \"$PASEO_WORKTREE_PATH/packages/server/.env\""
     ]
   }
 }

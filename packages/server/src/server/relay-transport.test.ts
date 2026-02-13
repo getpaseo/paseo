@@ -188,4 +188,36 @@ describe("relay-transport control lifecycle", () => {
     expect(hasLogMessage(logger.warn, "relay_control_stale_terminating")).toBe(true);
     expect(control.terminateCalls).toBe(1);
   });
+
+  test("passes stable relay external session metadata when attaching data socket", async () => {
+    const logger = createMockLogger();
+    const attachSocket = vi.fn(async () => {});
+    const controller = startRelayTransport({
+      logger: logger as any,
+      attachSocket,
+      relayEndpoint: "relay.paseo.sh:443",
+      serverId: "srv_test",
+    });
+    controllers.push(controller);
+
+    const control = MockWebSocket.instances[0];
+    control.open();
+    control.message(JSON.stringify({ type: "pong", ts: Date.now() }));
+    control.message(JSON.stringify({ type: "client_connected", clientId: "clt_test" }));
+
+    const dataSocket = MockWebSocket.instances[1];
+    expect(dataSocket).toBeDefined();
+    dataSocket.open();
+
+    await Promise.resolve();
+
+    expect(attachSocket).toHaveBeenCalledTimes(1);
+    expect(attachSocket).toHaveBeenCalledWith(
+      dataSocket,
+      {
+        transport: "relay",
+        externalSessionKey: "relay:clt_test",
+      }
+    );
+  });
 });

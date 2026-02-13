@@ -9,6 +9,7 @@ import {
   getPullRequestStatus,
   getCheckoutStatus,
   getCheckoutStatusLite,
+  listBranchSuggestions,
   mergeToBase,
   mergeFromBase,
   MergeConflictError,
@@ -400,6 +401,51 @@ describe("checkout git utilities", () => {
     await pushCurrentBranch(repoDir);
 
     execSync(`git --git-dir ${remoteDir} show-ref --verify refs/heads/feature`);
+  });
+
+  it("lists merged local and remote branch suggestions without duplicates", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    execSync("git checkout -b local-only", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+
+    const otherClone = join(tempDir, "other-clone");
+    execSync(`git clone ${remoteDir} ${otherClone}`);
+    execSync("git config user.email 'test@test.com'", { cwd: otherClone });
+    execSync("git config user.name 'Test'", { cwd: otherClone });
+    execSync("git checkout -b remote-only", { cwd: otherClone });
+    writeFileSync(join(otherClone, "remote-only.txt"), "remote-only\n");
+    execSync("git add remote-only.txt", { cwd: otherClone });
+    execSync("git -c commit.gpgsign=false commit -m 'remote only branch'", { cwd: otherClone });
+    execSync("git push -u origin remote-only", { cwd: otherClone });
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const branches = await listBranchSuggestions(repoDir, { limit: 50 });
+    expect(branches).toContain("main");
+    expect(branches).toContain("local-only");
+    expect(branches).toContain("remote-only");
+    expect(branches.filter((name) => name === "main")).toHaveLength(1);
+    expect(branches).not.toContain("HEAD");
+    expect(branches.some((name) => name.startsWith("origin/"))).toBe(false);
+  });
+
+  it("filters branch suggestions by query and enforces result limit", async () => {
+    execSync("git checkout -b feature/alpha", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+    execSync("git checkout -b feature/beta", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+    execSync("git checkout -b chore/docs", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+
+    const branches = await listBranchSuggestions(repoDir, {
+      query: "FEATURE/",
+      limit: 1,
+    });
+    expect(branches).toHaveLength(1);
+    expect(branches[0]?.toLowerCase()).toContain("feature/");
   });
 
   it("disables GitHub features when gh is unavailable", async () => {

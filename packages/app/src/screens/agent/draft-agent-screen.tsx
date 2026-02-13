@@ -30,6 +30,7 @@ import {
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { formatConnectionStatus } from "@/utils/daemons";
+import { buildBranchComboOptions, normalizeBranchOptionName } from "@/utils/branch-suggestions";
 import { shortenPath } from "@/utils/shorten-path";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -249,6 +250,8 @@ export function DraftAgentScreen({
   const [isWorkingDirOpen, setIsWorkingDirOpen] = useState(false);
   const [isWorktreePickerOpen, setIsWorktreePickerOpen] = useState(false);
   const [isBranchOpen, setIsBranchOpen] = useState(false);
+  const [branchSearchQuery, setBranchSearchQuery] = useState("");
+  const [debouncedBranchSearchQuery, setDebouncedBranchSearchQuery] = useState("");
   const hostAnchorRef = useRef<View>(null);
   const workingDirAnchorRef = useRef<View>(null);
   const worktreeAnchorRef = useRef<View>(null);
@@ -257,6 +260,12 @@ export function DraftAgentScreen({
   const setPendingCreateAttempt = useCreateFlowStore((state) => state.setPending);
   const updatePendingAgentId = useCreateFlowStore((state) => state.updateAgentId);
   const clearPendingCreateAttempt = useCreateFlowStore((state) => state.clear);
+
+  useEffect(() => {
+    const trimmed = branchSearchQuery.trim();
+    const timer = setTimeout(() => setDebouncedBranchSearchQuery(trimmed), 180);
+    return () => clearTimeout(timer);
+  }, [branchSearchQuery]);
 
   type CreateAttempt = {
     messageId: string;
@@ -489,6 +498,40 @@ export function DraftAgentScreen({
       ? "Select a worktree to attach"
       : null;
 
+  const branchSuggestionsQuery = useQuery({
+    queryKey: [
+      "branchSuggestions",
+      selectedServerId,
+      trimmedWorkingDir,
+      debouncedBranchSearchQuery,
+    ],
+    queryFn: async () => {
+      const client = sessionClient;
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.getBranchSuggestions({
+        cwd: trimmedWorkingDir || ".",
+        query: debouncedBranchSearchQuery || undefined,
+        limit: 50,
+      });
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload.branches ?? [];
+    },
+    enabled:
+      isCreateWorktree &&
+      isGitDirectory &&
+      !isNonGitDirectory &&
+      Boolean(trimmedWorkingDir) &&
+      !repoAvailabilityError &&
+      Boolean(sessionClient) &&
+      isConnected,
+    retry: false,
+    staleTime: 15_000,
+  });
+
   const validateWorktreeName = useCallback(
     (name: string): { valid: boolean; error?: string } => {
       if (!name) {
@@ -658,21 +701,36 @@ export function DraftAgentScreen({
   );
 
   const branchComboOptions = useMemo(() => {
-    const branchSet = new Set<string>();
-    const currentBranch = checkout?.isGit ? checkout.currentBranch?.trim() : null;
-    if (currentBranch && currentBranch !== "HEAD") {
-      branchSet.add(currentBranch);
+    const options = buildBranchComboOptions({
+      suggestedBranches: branchSuggestionsQuery.data ?? [],
+      currentBranch: checkout?.isGit ? checkout.currentBranch : null,
+      baseRef: checkout?.isGit ? checkout.baseRef : null,
+      typedBaseBranch: baseBranch,
+      worktreeBranchLabels: worktreeOptions.map((option) => option.label),
+    });
+
+    const normalizedQuery = normalizeBranchOptionName(branchSearchQuery)?.toLowerCase() ?? "";
+    if (!normalizedQuery) {
+      return options;
     }
-    if (baseBranch.trim()) {
-      branchSet.add(baseBranch.trim());
-    }
-    for (const option of worktreeOptions) {
-      if (option.label) {
-        branchSet.add(option.label);
+
+    return options.sort((a, b) => {
+      const aLower = a.label.toLowerCase();
+      const bLower = b.label.toLowerCase();
+      const aPrefix = aLower.startsWith(normalizedQuery);
+      const bPrefix = bLower.startsWith(normalizedQuery);
+      if (aPrefix !== bPrefix) {
+        return aPrefix ? -1 : 1;
       }
-    }
-    return Array.from(branchSet).map((name) => ({ id: name, label: name }));
-  }, [baseBranch, checkout, worktreeOptions]);
+      return aLower.localeCompare(bLower);
+    });
+  }, [
+    baseBranch,
+    branchSearchQuery,
+    branchSuggestionsQuery.data,
+    checkout,
+    worktreeOptions,
+  ]);
 
   const createAgentClient = useSessionStore((state) =>
     selectedServerId ? state.sessions[selectedServerId]?.client ?? null : null
@@ -1130,13 +1188,19 @@ export function DraftAgentScreen({
             options={branchComboOptions}
             value={baseBranch}
             onSelect={handleBaseBranchChange}
+            onSearchQueryChange={setBranchSearchQuery}
             searchPlaceholder="Choose a base branch..."
             allowCustomValue
             customValuePrefix="Use"
             customValueDescription="Use this branch name"
             title="Select base branch"
             open={isBranchOpen}
-            onOpenChange={setIsBranchOpen}
+            onOpenChange={(nextOpen) => {
+              setIsBranchOpen(nextOpen);
+              if (!nextOpen) {
+                setBranchSearchQuery("");
+              }
+            }}
             anchorRef={branchAnchorRef}
           />
 

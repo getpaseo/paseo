@@ -287,6 +287,65 @@ describe("DaemonClient", () => {
     );
   });
 
+  test("requests branch suggestions via RPC", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.getBranchSuggestions(
+      { cwd: "/tmp/project", query: "mai", limit: 5 },
+      "req-branches"
+    );
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "branch_suggestions_request";
+        cwd: string;
+        query?: string;
+        limit?: number;
+        requestId: string;
+      };
+    };
+    expect(request.message.type).toBe("branch_suggestions_request");
+    expect(request.message.cwd).toBe("/tmp/project");
+    expect(request.message.query).toBe("mai");
+    expect(request.message.limit).toBe(5);
+    expect(request.message.requestId).toBe("req-branches");
+
+    mock.triggerMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "branch_suggestions_response",
+          payload: {
+            branches: ["main"],
+            error: null,
+            requestId: "req-branches",
+          },
+        },
+      })
+    );
+
+    await expect(promise).resolves.toEqual({
+      branches: ["main"],
+      error: null,
+      requestId: "req-branches",
+    });
+  });
+
   test("resubscribes checkout diff streams after reconnect", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();

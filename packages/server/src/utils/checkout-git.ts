@@ -104,6 +104,128 @@ type CheckoutFileChange = {
   isUntracked?: boolean;
 };
 
+type BranchSuggestionRefOrigin = "local" | "remote";
+
+function normalizeBranchSuggestionName(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let normalized = trimmed;
+  if (normalized.startsWith("refs/heads/")) {
+    normalized = normalized.slice("refs/heads/".length);
+  } else if (normalized.startsWith("refs/remotes/")) {
+    normalized = normalized.slice("refs/remotes/".length);
+  }
+
+  if (normalized.startsWith("origin/")) {
+    normalized = normalized.slice("origin/".length);
+  }
+
+  if (!normalized || normalized === "HEAD") {
+    return null;
+  }
+
+  return normalized;
+}
+
+async function listGitRefs(cwd: string, refPrefix: string): Promise<string[]> {
+  const { stdout } = await execGit(
+    `git for-each-ref --format="%(refname:short)" ${refPrefix}`,
+    {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    }
+  );
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function sortBranchSuggestions(
+  branchNames: string[],
+  localBranchNames: Set<string>,
+  query: string
+): string[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  const hasQuery = normalizedQuery.length > 0;
+  return branchNames.sort((a, b) => {
+    const aLower = a.toLowerCase();
+    const bLower = b.toLowerCase();
+
+    if (hasQuery) {
+      const aPrefix = aLower.startsWith(normalizedQuery);
+      const bPrefix = bLower.startsWith(normalizedQuery);
+      if (aPrefix !== bPrefix) {
+        return aPrefix ? -1 : 1;
+      }
+    }
+
+    const aIsLocal = localBranchNames.has(a);
+    const bIsLocal = localBranchNames.has(b);
+    if (aIsLocal !== bIsLocal) {
+      return aIsLocal ? -1 : 1;
+    }
+
+    return a.localeCompare(b);
+  });
+}
+
+export async function listBranchSuggestions(
+  cwd: string,
+  options?: { query?: string; limit?: number }
+): Promise<string[]> {
+  await requireGitRepo(cwd);
+
+  const requestedLimit = options?.limit ?? 50;
+  const limit = Math.max(1, Math.min(200, requestedLimit));
+  const query = options?.query?.trim().toLowerCase() ?? "";
+
+  const [localRefs, remoteRefs] = await Promise.all([
+    listGitRefs(cwd, "refs/heads"),
+    listGitRefs(cwd, "refs/remotes/origin"),
+  ]);
+
+  const merged = new Map<string, Set<BranchSuggestionRefOrigin>>();
+  for (const localRef of localRefs) {
+    const normalized = normalizeBranchSuggestionName(localRef);
+    if (!normalized) {
+      continue;
+    }
+    const origins = merged.get(normalized) ?? new Set<BranchSuggestionRefOrigin>();
+    origins.add("local");
+    merged.set(normalized, origins);
+  }
+  for (const remoteRef of remoteRefs) {
+    const normalized = normalizeBranchSuggestionName(remoteRef);
+    if (!normalized) {
+      continue;
+    }
+    const origins = merged.get(normalized) ?? new Set<BranchSuggestionRefOrigin>();
+    origins.add("remote");
+    merged.set(normalized, origins);
+  }
+
+  const filteredNames = Array.from(merged.keys()).filter((name) =>
+    query ? name.toLowerCase().includes(query) : true
+  );
+  if (filteredNames.length === 0) {
+    return [];
+  }
+
+  const localBranchNames = new Set<string>();
+  for (const [name, origins] of merged) {
+    if (origins.has("local")) {
+      localBranchNames.add(name);
+    }
+  }
+
+  const ordered = sortBranchSuggestions(filteredNames, localBranchNames, query);
+  return ordered.slice(0, limit);
+}
+
 async function listCheckoutFileChanges(cwd: string, ref: string): Promise<CheckoutFileChange[]> {
   const changes: CheckoutFileChange[] = [];
 

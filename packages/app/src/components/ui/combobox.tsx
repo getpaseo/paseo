@@ -35,6 +35,7 @@ export interface ComboboxProps {
   options: ComboboxOption[];
   value: string;
   onSelect: (id: string) => void;
+  onSearchQueryChange?: (query: string) => void;
   placeholder?: string;
   searchPlaceholder?: string;
   emptyText?: string;
@@ -156,6 +157,7 @@ export function Combobox({
   options,
   value,
   onSelect,
+  onSearchQueryChange,
   placeholder = "Search...",
   searchPlaceholder,
   emptyText = "No options match your search.",
@@ -191,16 +193,24 @@ export function Combobox({
     [isControlled, onOpenChange]
   );
 
+  const setSearchQueryWithCallback = useCallback(
+    (nextQuery: string) => {
+      setSearchQuery(nextQuery);
+      onSearchQueryChange?.(nextQuery);
+    },
+    [onSearchQueryChange]
+  );
+
   const handleClose = useCallback(() => {
     setOpen(false);
-    setSearchQuery("");
-  }, [setOpen]);
+    setSearchQueryWithCallback("");
+  }, [setOpen, setSearchQueryWithCallback]);
 
   useEffect(() => {
     if (isOpen) {
-      setSearchQuery("");
+      setSearchQueryWithCallback("");
     }
-  }, [isOpen]);
+  }, [isOpen, setSearchQueryWithCallback]);
 
   const collisionPadding = useMemo(() => {
     const basePadding = 16;
@@ -426,7 +436,7 @@ export function Combobox({
     <SearchInput
       placeholder={searchPlaceholder ?? placeholder}
       value={searchQuery}
-      onChangeText={setSearchQuery}
+      onChangeText={setSearchQueryWithCallback}
       onSubmitEditing={handleSubmitSearch}
       autoFocus={!isMobile}
     />

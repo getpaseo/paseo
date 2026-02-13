@@ -9,10 +9,11 @@ import {
   type KeyPair,
 } from "@getpaseo/relay/e2ee";
 import { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
+import type { ExternalSocketMetadata } from "./websocket-server.js";
 
 type RelayTransportOptions = {
   logger: pino.Logger;
-  attachSocket: (ws: RelaySocketLike) => Promise<void>;
+  attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>;
   relayEndpoint: string; // "host:port"
   serverId: string;
   daemonKeyPair?: KeyPair;
@@ -321,10 +322,20 @@ export function startRelayTransport({
       relayLogger.info({ url, clientId }, "relay_data_connected");
       if (attached) return;
       attached = true;
+      const externalMetadata: ExternalSocketMetadata = {
+        transport: "relay",
+        externalSessionKey: `relay:${clientId}`,
+      };
       if (daemonKeyPair) {
-        void attachEncryptedSocket(socket, daemonKeyPair, relayLogger.child({ clientId }), attachSocket);
+        void attachEncryptedSocket(
+          socket,
+          daemonKeyPair,
+          relayLogger.child({ clientId }),
+          attachSocket,
+          externalMetadata
+        );
       } else {
-        void attachSocket(socket);
+        void attachSocket(socket, externalMetadata);
       }
     });
 
@@ -353,7 +364,8 @@ async function attachEncryptedSocket(
   socket: WebSocket,
   daemonKeyPair: KeyPair,
   logger: pino.Logger,
-  attachSocket: (ws: RelaySocketLike) => Promise<void>
+  attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>,
+  metadata?: ExternalSocketMetadata
 ): Promise<void> {
   try {
     const relayTransport = createRelayTransportAdapter(socket);
@@ -367,7 +379,7 @@ async function attachEncryptedSocket(
       },
     });
     const encryptedSocket = createEncryptedSocket(channel, emitter);
-    await attachSocket(encryptedSocket);
+    await attachSocket(encryptedSocket, metadata);
   } catch (error) {
     logger.warn({ err: error }, "relay_e2ee_handshake_failed");
     try {
