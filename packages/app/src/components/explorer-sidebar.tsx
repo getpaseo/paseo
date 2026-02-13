@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { View, Text, Pressable, Platform, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
+  useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
   runOnJS,
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { X } from "lucide-react-native";
 import {
   usePanelStore,
@@ -20,8 +22,33 @@ import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { GitDiffPane } from "./git-diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
+import { TerminalPane } from "./terminal-pane";
 
 const MIN_CHAT_WIDTH = 400;
+
+function isTerminalDebugEnabled(): boolean {
+  const explicit = (
+    globalThis as {
+      __PASEO_TERMINAL_DEBUG?: unknown;
+    }
+  ).__PASEO_TERMINAL_DEBUG;
+  if (typeof explicit === "boolean") {
+    return explicit;
+  }
+  const devFlag = (globalThis as { __DEV__?: unknown }).__DEV__;
+  return devFlag === true;
+}
+
+function logTerminalDebug(message: string, payload?: Record<string, unknown>): void {
+  if (!isTerminalDebugEnabled()) {
+    return;
+  }
+  if (payload) {
+    console.log("[TerminalDebug][ExplorerSidebar] " + message, payload);
+    return;
+  }
+  console.log("[TerminalDebug][ExplorerSidebar] " + message);
+}
 
 interface ExplorerSidebarProps {
   serverId: string;
@@ -42,6 +69,14 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
   const setExplorerTab = usePanelStore((state) => state.setExplorerTab);
   const setExplorerWidth = usePanelStore((state) => state.setExplorerWidth);
   const { width: viewportWidth } = useWindowDimensions();
+  const terminalDebugEnabled = isTerminalDebugEnabled();
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const bottomInset = useSharedValue(insets.bottom);
+  const closeGestureLastLogX = useSharedValue(0);
+
+  useEffect(() => {
+    bottomInset.value = insets.bottom;
+  }, [bottomInset, insets.bottom]);
 
   useEffect(() => {
     if (isMobile) {
@@ -77,11 +112,68 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
     closeToAgent();
   }, [closeToAgent]);
 
+  const logCloseGesture = useCallback(
+    (phase: string, payload?: Record<string, unknown>) => {
+      logTerminalDebug("close gesture " + phase, {
+        isMobile,
+        isOpen,
+        explorerTab,
+        ...(payload ?? {}),
+      });
+    },
+    [explorerTab, isMobile, isOpen]
+  );
+
+  const logKeyboardInset = useCallback(
+    (rawHeight: number, shift: number, inset: number) => {
+      logTerminalDebug("keyboard inset", {
+        rawHeight: Math.round(rawHeight),
+        shift: Math.round(shift),
+        inset: Math.round(inset),
+        isMobile,
+        isOpen,
+        explorerTab,
+      });
+    },
+    [explorerTab, isMobile, isOpen]
+  );
+
+  useEffect(() => {
+    if (!terminalDebugEnabled) {
+      return;
+    }
+    logTerminalDebug("close gesture config", { isMobile, isOpen, explorerTab });
+  }, [explorerTab, isMobile, isOpen, terminalDebugEnabled]);
+
   const handleTabPress = useCallback(
     (tab: ExplorerTab) => {
       setExplorerTab(tab);
     },
     [setExplorerTab]
+  );
+
+  useAnimatedReaction(
+    () => {
+      const rawHeight = Math.abs(keyboardHeight.value);
+      return {
+        rawHeight,
+        shift: Math.max(0, rawHeight - bottomInset.value),
+        inset: bottomInset.value,
+      };
+    },
+    (next, previous) => {
+      if (!terminalDebugEnabled) {
+        return;
+      }
+      if (
+        previous &&
+        Math.abs(previous.shift - next.shift) < 4 &&
+        Math.abs(previous.rawHeight - next.rawHeight) < 4
+      ) {
+        return;
+      }
+      runOnJS(logKeyboardInset)(next.rawHeight, next.shift, next.inset);
+    }
   );
 
   // Swipe gesture to close (swipe right on mobile)
@@ -97,6 +189,10 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
         .failOffsetY([-10, 10])
         .onStart(() => {
           isGesturing.value = true;
+          if (terminalDebugEnabled) {
+            closeGestureLastLogX.value = 0;
+            runOnJS(logCloseGesture)("start", { windowWidth: Math.round(windowWidth) });
+          }
         })
         .onUpdate((event) => {
           // Right sidebar: swipe right to close (positive translationX)
@@ -104,11 +200,30 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
           translateX.value = newTranslateX;
           const progress = 1 - newTranslateX / windowWidth;
           backdropOpacity.value = Math.max(0, Math.min(1, progress));
+
+          if (
+            terminalDebugEnabled &&
+            Math.abs(newTranslateX - closeGestureLastLogX.value) >= 80
+          ) {
+            closeGestureLastLogX.value = newTranslateX;
+            runOnJS(logCloseGesture)("update", {
+              translationX: Math.round(event.translationX),
+              appliedTranslateX: Math.round(newTranslateX),
+              velocityX: Math.round(event.velocityX),
+            });
+          }
         })
         .onEnd((event) => {
           isGesturing.value = false;
           const shouldClose =
             event.translationX > windowWidth / 3 || event.velocityX > 500;
+          if (terminalDebugEnabled) {
+            runOnJS(logCloseGesture)("end", {
+              translationX: Math.round(event.translationX),
+              velocityX: Math.round(event.velocityX),
+              shouldClose,
+            });
+          }
           if (shouldClose) {
             animateToClose();
             runOnJS(handleClose)();
@@ -118,18 +233,25 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
         })
         .onFinalize(() => {
           isGesturing.value = false;
+          if (terminalDebugEnabled) {
+            runOnJS(logCloseGesture)("finalize");
+          }
         }),
     [
       isMobile,
       isOpen,
+      explorerTab,
       windowWidth,
       translateX,
       backdropOpacity,
       animateToOpen,
       animateToClose,
       handleClose,
+      logCloseGesture,
       isGesturing,
       closeGestureRef,
+      closeGestureLastLogX,
+      terminalDebugEnabled,
     ]
   );
 
@@ -171,6 +293,14 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
     pointerEvents: backdropOpacity.value > 0.01 ? "auto" : "none",
   }));
 
+  const mobileKeyboardInsetStyle = useAnimatedStyle(() => {
+    const absoluteHeight = Math.abs(keyboardHeight.value);
+    const shift = Math.max(0, absoluteHeight - bottomInset.value);
+    return {
+      paddingBottom: bottomInset.value + shift,
+    };
+  });
+
   const resizeAnimatedStyle = useAnimatedStyle(() => ({
     width: resizeWidth.value,
   }));
@@ -190,8 +320,9 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
           <Animated.View
             style={[
               styles.mobileSidebar,
-              { width: windowWidth, paddingTop: insets.top, paddingBottom: insets.bottom },
+              { width: windowWidth, paddingTop: insets.top },
               sidebarAnimatedStyle,
+              mobileKeyboardInsetStyle,
             ]}
             pointerEvents="auto"
           >
@@ -278,6 +409,7 @@ function SidebarContent({
         <View style={styles.tabsContainer}>
           {isGit && (
             <Pressable
+              testID="explorer-tab-changes"
               style={[styles.tab, activeTab === "changes" && styles.tabActive]}
               onPress={() => onTabPress("changes")}
             >
@@ -292,6 +424,7 @@ function SidebarContent({
             </Pressable>
           )}
           <Pressable
+            testID="explorer-tab-files"
             style={[styles.tab, activeTab === "files" && styles.tabActive]}
             onPress={() => onTabPress("files")}
           >
@@ -302,6 +435,20 @@ function SidebarContent({
               ]}
             >
               Files
+            </Text>
+          </Pressable>
+          <Pressable
+            testID="explorer-tab-terminals"
+            style={[styles.tab, activeTab === "terminals" && styles.tabActive]}
+            onPress={() => onTabPress("terminals")}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === "terminals" && styles.tabTextActive,
+              ]}
+            >
+              Terminals
             </Text>
           </Pressable>
         </View>
@@ -321,6 +468,9 @@ function SidebarContent({
         )}
         {activeTab === "files" && (
           <FileExplorerPane serverId={serverId} agentId={agentId} />
+        )}
+        {activeTab === "terminals" && (
+          <TerminalPane serverId={serverId} cwd={cwd} />
         )}
       </View>
     </View>

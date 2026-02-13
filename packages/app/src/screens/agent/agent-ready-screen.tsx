@@ -616,7 +616,7 @@ function AgentScreenContent({
       return;
     }
     // On native clients, daemon stream forwarding is focused-agent only, so switching
-    // agents can leave timeline gaps unless we explicitly request a snapshot.
+    // agents can leave timeline gaps unless we explicitly pull timeline catch-up.
     const shouldSyncOnEntry = needsAuthoritativeSync || Platform.OS !== "web";
     if (!shouldSyncOnEntry) {
       return;

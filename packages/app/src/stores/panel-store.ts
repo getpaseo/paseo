@@ -27,7 +27,7 @@ interface DesktopSidebarState {
   fileExplorerOpen: boolean;
 }
 
-export type ExplorerTab = "changes" | "files";
+export type ExplorerTab = "changes" | "files" | "terminals";
 export type SortOption = "name" | "modified" | "size";
 
 export const DEFAULT_EXPLORER_SIDEBAR_WIDTH = Platform.OS === "web" ? 640 : 400;

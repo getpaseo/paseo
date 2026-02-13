@@ -1018,6 +1018,7 @@ export function DraftAgentScreen({
                 icon={<Folder size={16} color={theme.colors.foregroundMuted} />}
                 showLabel={false}
                 valueEllipsizeMode="middle"
+                testID="working-directory-select"
               />
             </View>
             {isDirectoryNotExists && (

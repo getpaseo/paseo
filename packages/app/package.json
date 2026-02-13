@@ -49,6 +49,8 @@
     "@react-navigation/native": "^7.1.8",
     "@tanstack/react-query": "^5.90.11",
     "@tauri-apps/api": "^2.9.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "base64-js": "^1.5.1",
     "buffer": "^6.0.3",
     "expo": "^54.0.18",

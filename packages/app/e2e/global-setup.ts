@@ -153,6 +153,10 @@ export default async function globalSetup() {
       PASEO_LISTEN: `0.0.0.0:${port}`,
       PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
       PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
+      // Keep e2e bootstrap fast and deterministic; terminal/sidebar tests do not need speech.
+      PASEO_DICTATION_ENABLED: "0",
+      PASEO_VOICE_MODE_ENABLED: "0",
+      PASEO_LOCAL_AUTO_DOWNLOAD: "0",
       NODE_ENV: 'development',
     },
     stdio: ['ignore', 'pipe', 'pipe'],

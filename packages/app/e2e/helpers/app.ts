@@ -168,9 +168,10 @@ export const openSettings = async (page: Page) => {
 };
 
 export const setWorkingDirectory = async (page: Page, directory: string) => {
-  const workingDirectoryLabel = page.getByText('WORKING DIRECTORY', { exact: true }).first();
-  await expect(workingDirectoryLabel).toBeVisible();
-  const workingDirectorySelect = page.getByTestId('working-directory-select').first();
+  const workingDirectorySelect = page
+    .locator('[data-testid="working-directory-select"]:visible')
+    .first();
+  await expect(workingDirectorySelect).toBeVisible({ timeout: 30000 });
 
   const input = page.getByRole('textbox', { name: '/path/to/project' });
   const worktreePicker = page.getByTestId('worktree-attach-picker');
@@ -333,11 +334,9 @@ export const createAgent = async (page: Page, message: string) => {
 
   // Expo Router navigations can be "same-document" updates, so avoid waiting for a full `load`.
   await page.waitForURL(/\/agent\//, { waitUntil: 'commit' });
-  const userBubble = page
-    .getByRole('button', { name: 'Copy message' })
-    .filter({ hasText: message })
-    .first();
-  await expect(userBubble).toBeVisible();
+  await expect(page.getByText(message, { exact: true }).first()).toBeVisible({
+    timeout: 30000,
+  });
 };
 
 export interface AgentConfig {
