@@ -442,6 +442,94 @@ describe("DaemonClient", () => {
     });
   });
 
+  test("uses server-provided dictation finish timeout budget", async () => {
+    vi.useFakeTimers();
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const finishPromise = client.finishDictationStream("dict-1", 0);
+    const finishError = finishPromise.then(
+      () => null,
+      (error) => error
+    );
+
+    expect(mock.sent).toHaveLength(1);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "dictation_stream_finish_accepted",
+        payload: {
+          dictationId: "dict-1",
+          timeoutMs: 100,
+        },
+      })
+    );
+
+    await vi.advanceTimersByTimeAsync(5_101);
+    const error = await finishError;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "Timeout waiting for dictation finalization (5100ms)"
+    );
+
+    vi.useRealTimers();
+  });
+
+  test("resolves dictation finish when final arrives after finish accepted", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const finishPromise = client.finishDictationStream("dict-2", 1);
+    expect(mock.sent).toHaveLength(1);
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "dictation_stream_finish_accepted",
+        payload: {
+          dictationId: "dict-2",
+          timeoutMs: 1000,
+        },
+      })
+    );
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "dictation_stream_final",
+        payload: {
+          dictationId: "dict-2",
+          text: "hello",
+        },
+      })
+    );
+
+    await expect(finishPromise).resolves.toEqual({
+      dictationId: "dict-2",
+      text: "hello",
+    });
+  });
+
   test("cancels waiters when send fails (no leaked timeouts)", async () => {
     vi.useFakeTimers();
     const logger = createMockLogger();

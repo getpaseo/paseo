@@ -202,4 +202,35 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
       }
     }
   });
+
+  it("adapts finish timeout based on pending committed segments", async () => {
+    const session = new FakeRealtimeSession();
+    const emitted: Array<{ type: string; payload: any }> = [];
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: (msg) => emitted.push(msg),
+      sessionId: "s1",
+      stt: new FakeSttProvider(session),
+      finalTimeoutMs: 5000,
+    });
+
+    await manager.handleStart("d-timeout", "audio/pcm;rate=24000;bits=16");
+    await manager.handleChunk({
+      dictationId: "d-timeout",
+      seq: 0,
+      audioBase64: buildPcmBase64(2000, 2400),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+
+    // Simulate a committed segment whose final transcript is still pending.
+    session.emitCommitted("seg-pending");
+
+    await manager.handleFinish("d-timeout", 0);
+
+    const finishAccepted = emitted.find(
+      (msg) => msg.type === "dictation_stream_finish_accepted"
+    );
+    expect(finishAccepted).toBeDefined();
+    expect(finishAccepted?.payload.timeoutMs).toBeGreaterThan(5000);
+  });
 });

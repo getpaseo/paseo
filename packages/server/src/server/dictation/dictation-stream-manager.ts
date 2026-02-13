@@ -17,6 +17,10 @@ const PCM_CHANNELS = 1;
 const PCM_BITS_PER_SAMPLE = 16;
 const DEFAULT_DICTATION_FINAL_TIMEOUT_MS = 10000;
 const DEFAULT_DICTATION_AUTO_COMMIT_SECONDS = 15;
+const DICTATION_FINAL_TIMEOUT_MAX_MS = 5 * 60 * 1000;
+const DICTATION_FINAL_TIMEOUT_PER_PENDING_SEGMENT_MS = 15 * 1000;
+const DICTATION_FINAL_TIMEOUT_PER_PENDING_AUDIO_SECOND_MS = 1500;
+const DICTATION_FINAL_TIMEOUT_PER_MISSING_SEQ_MS = 250;
 const DICTATION_SILENCE_PEAK_THRESHOLD = Number.parseInt(
   process.env.PASEO_DICTATION_SILENCE_PEAK_THRESHOLD ?? "300",
   10
@@ -91,6 +95,10 @@ type DictationStreamState = {
 
 export type DictationStreamOutboundMessage =
   | { type: "dictation_stream_ack"; payload: { dictationId: string; ackSeq: number } }
+  | {
+      type: "dictation_stream_finish_accepted";
+      payload: { dictationId: string; timeoutMs: number };
+    }
   | { type: "dictation_stream_partial"; payload: { dictationId: string; text: string } }
   | { type: "dictation_stream_final"; payload: { dictationId: string; text: string; debugRecordingPath?: string } }
   | { type: "dictation_stream_error"; payload: { dictationId: string; error: string; retryable: boolean; debugRecordingPath?: string } }
@@ -369,19 +377,46 @@ export class DictationStreamManager {
       return;
     }
 
-    if (state.finalTimeout) {
-      clearTimeout(state.finalTimeout);
+    this.maybeSealDictationStreamFinish(dictationId);
+    this.maybeFinalizeDictationStream(dictationId);
+
+    const updatedState = this.streams.get(dictationId);
+    if (!updatedState) {
+      return;
     }
-    state.finalTimeout = setTimeout(() => {
+
+    const timeoutEstimate = this.estimateFinalizationTimeout(updatedState);
+    if (updatedState.finalTimeout) {
+      clearTimeout(updatedState.finalTimeout);
+    }
+    updatedState.finalTimeout = setTimeout(() => {
       void this.failAndCleanupDictationStream(
         dictationId,
         "Timed out waiting for final transcription",
         true
       );
-    }, this.finalTimeoutMs);
+    }, timeoutEstimate.timeoutMs);
 
-    this.maybeSealDictationStreamFinish(dictationId);
-    this.maybeFinalizeDictationStream(dictationId);
+    this.emit({
+      type: "dictation_stream_finish_accepted",
+      payload: {
+        dictationId,
+        timeoutMs: timeoutEstimate.timeoutMs,
+      },
+    });
+
+    this.logger.debug(
+      {
+        dictationId,
+        finalSeq,
+        ackSeq: updatedState.ackSeq,
+        pendingSegments: timeoutEstimate.pendingSegments,
+        pendingAudioSeconds: timeoutEstimate.pendingAudioSeconds,
+        missingSeqCount: timeoutEstimate.missingSeqCount,
+        timeoutMs: timeoutEstimate.timeoutMs,
+      },
+      "Accepted dictation finish request with adaptive timeout budget"
+    );
   }
 
   public handleCancel(dictationId: string): void {
@@ -480,6 +515,50 @@ export class DictationStreamManager {
       // no-op
     }
     this.streams.delete(dictationId);
+  }
+
+  private estimateFinalizationTimeout(
+    state: DictationStreamState
+  ): {
+    timeoutMs: number;
+    pendingSegments: number;
+    pendingAudioSeconds: number;
+    missingSeqCount: number;
+  } {
+    const bytesPerSecond = Math.max(
+      1,
+      state.outputRate * PCM_CHANNELS * (PCM_BITS_PER_SAMPLE / 8)
+    );
+    const pendingCommittedSegments = state.committedSegmentIds.reduce((count, segmentId) => {
+      return state.finalTranscriptSegmentIds.has(segmentId) ? count : count + 1;
+    }, 0);
+    const pendingSegments =
+      pendingCommittedSegments + (state.awaitingFinalCommit ? 1 : 0);
+    const pendingAudioSeconds = Math.ceil(
+      Math.max(0, state.bytesSinceCommit) / bytesPerSecond
+    );
+    const missingSeqCount =
+      state.finalSeq === null ? 0 : Math.max(0, state.finalSeq - state.ackSeq);
+
+    const extraMs =
+      pendingSegments * DICTATION_FINAL_TIMEOUT_PER_PENDING_SEGMENT_MS +
+      pendingAudioSeconds * DICTATION_FINAL_TIMEOUT_PER_PENDING_AUDIO_SECOND_MS +
+      missingSeqCount * DICTATION_FINAL_TIMEOUT_PER_MISSING_SEQ_MS;
+
+    const timeoutMs = Math.max(
+      this.finalTimeoutMs,
+      Math.min(
+        DICTATION_FINAL_TIMEOUT_MAX_MS,
+        this.finalTimeoutMs + extraMs
+      )
+    );
+
+    return {
+      timeoutMs,
+      pendingSegments,
+      pendingAudioSeconds,
+      missingSeqCount,
+    };
   }
 
   private maybeAutoCommitDictationSegment(state: DictationStreamState): void {

@@ -207,6 +207,10 @@ type SetVoiceModePayload = Extract<
   SessionOutboundMessage,
   { type: "set_voice_mode_response" }
 >["payload"];
+type DictationFinishAcceptedPayload = Extract<
+  SessionOutboundMessage,
+  { type: "dictation_stream_finish_accepted" }
+>["payload"];
 type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type CreateTerminalPayload = CreateTerminalResponse["payload"];
@@ -267,6 +271,15 @@ const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 
 /** Default timeout for waiting for connection before sending queued messages */
 const DEFAULT_SEND_QUEUE_TIMEOUT_MS = 10000;
+const DEFAULT_DICTATION_FINISH_ACCEPT_TIMEOUT_MS = 15000;
+const DEFAULT_DICTATION_FINISH_FALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_DICTATION_FINISH_TIMEOUT_GRACE_MS = 5000;
+
+function isWaiterTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message.startsWith("Timeout waiting for message")
+  );
+}
 
 interface PendingSend {
   message: SessionInboundMessage;
@@ -1416,7 +1429,7 @@ export class DaemonClient {
     this.sendSessionMessage({ type: "voice_audio_chunk", audio, format, isLast });
   }
 
-  startDictationStream(dictationId: string, format: string): Promise<void> {
+  async startDictationStream(dictationId: string, format: string): Promise<void> {
     const ack = this.waitForWithCancel(
       (msg) => {
         if (msg.type !== "dictation_stream_ack") {
@@ -1452,24 +1465,26 @@ export class DaemonClient {
       throw new Error(payload.error);
     });
 
+    const cleanupError = new Error("Cancelled dictation start waiter");
     try {
       this.sendSessionMessageStrict({ type: "dictation_stream_start", dictationId, format });
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      ack.cancel(err);
-      streamError.cancel(err);
+      await Promise.race([ackPromise, errorPromise]);
+    } finally {
+      ack.cancel(cleanupError);
+      streamError.cancel(cleanupError);
       void ackPromise.catch(() => undefined);
       void errorPromise.catch(() => undefined);
-      throw err;
     }
-    return Promise.race([ackPromise, errorPromise]);
   }
 
   sendDictationStreamChunk(dictationId: string, seq: number, audio: string, format: string): void {
     this.sendSessionMessageStrict({ type: "dictation_stream_chunk", dictationId, seq, audio, format });
   }
 
-  finishDictationStream(dictationId: string, finalSeq: number): Promise<{ dictationId: string; text: string }> {
+  async finishDictationStream(
+    dictationId: string,
+    finalSeq: number
+  ): Promise<{ dictationId: string; text: string }> {
     const final = this.waitForWithCancel(
       (msg) => {
         if (msg.type !== "dictation_stream_final") {
@@ -1480,7 +1495,7 @@ export class DaemonClient {
         }
         return msg.payload;
       },
-      30000,
+      0,
       { skipQueue: true }
     );
 
@@ -1494,7 +1509,21 @@ export class DaemonClient {
         }
         return msg.payload;
       },
-      30000,
+      0,
+      { skipQueue: true }
+    );
+
+    const finishAccepted = this.waitForWithCancel<DictationFinishAcceptedPayload>(
+      (msg) => {
+        if (msg.type !== "dictation_stream_finish_accepted") {
+          return null;
+        }
+        if (msg.payload.dictationId !== dictationId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      DEFAULT_DICTATION_FINISH_ACCEPT_TIMEOUT_MS,
       { skipQueue: true }
     );
 
@@ -1502,18 +1531,101 @@ export class DaemonClient {
     const errorPromise = streamError.promise.then((payload) => {
       throw new Error(payload.error);
     });
+    const finishAcceptedPromise = finishAccepted.promise;
 
+    const finalOutcomePromise = finalPromise.then((payload) => ({
+      kind: "final" as const,
+      payload,
+    }));
+    const errorOutcomePromise = errorPromise.then(
+      () => ({
+        kind: "error" as const,
+        error: new Error("Unexpected dictation stream error state"),
+      }),
+      (error) => ({
+        kind: "error" as const,
+        error: error instanceof Error ? error : new Error(String(error)),
+      })
+    );
+    const finishAcceptedOutcomePromise = finishAcceptedPromise.then(
+      (payload) => ({ kind: "accepted" as const, payload }),
+      (error) => {
+        if (isWaiterTimeoutError(error)) {
+          return { kind: "accepted_timeout" as const };
+        }
+        return {
+          kind: "accepted_error" as const,
+          error: error instanceof Error ? error : new Error(String(error)),
+        };
+      }
+    );
+
+    const waitForFinalResult = async (
+      timeoutMs: number
+    ): Promise<{ dictationId: string; text: string }> => {
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        const outcome = await Promise.race([finalOutcomePromise, errorOutcomePromise]);
+        if (outcome.kind === "error") {
+          throw outcome.error;
+        }
+        return outcome.payload;
+      }
+
+      let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+      const timeoutPromise = new Promise<{ kind: "timeout" }>((resolve) => {
+        timeoutHandle = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+      });
+
+      const outcome = await Promise.race([
+        finalOutcomePromise,
+        errorOutcomePromise,
+        timeoutPromise,
+      ]);
+
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+
+      if (outcome.kind === "timeout") {
+        throw new Error(`Timeout waiting for dictation finalization (${timeoutMs}ms)`);
+      }
+      if (outcome.kind === "error") {
+        throw outcome.error;
+      }
+      return outcome.payload;
+    };
+
+    const cleanupError = new Error("Cancelled dictation finish waiter");
     try {
       this.sendSessionMessageStrict({ type: "dictation_stream_finish", dictationId, finalSeq });
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      final.cancel(err);
-      streamError.cancel(err);
+      const firstOutcome = await Promise.race([
+        finalOutcomePromise,
+        errorOutcomePromise,
+        finishAcceptedOutcomePromise,
+      ]);
+
+      if (firstOutcome.kind === "final") {
+        return firstOutcome.payload;
+      }
+      if (firstOutcome.kind === "error") {
+        throw firstOutcome.error;
+      }
+
+      if (firstOutcome.kind === "accepted") {
+        return await waitForFinalResult(
+          firstOutcome.payload.timeoutMs + DEFAULT_DICTATION_FINISH_TIMEOUT_GRACE_MS
+        );
+      }
+
+      return await waitForFinalResult(DEFAULT_DICTATION_FINISH_FALLBACK_TIMEOUT_MS);
+    } finally {
+      final.cancel(cleanupError);
+      streamError.cancel(cleanupError);
+      finishAccepted.cancel(cleanupError);
       void finalPromise.catch(() => undefined);
       void errorPromise.catch(() => undefined);
-      throw err;
+      void finishAcceptedPromise.catch(() => undefined);
     }
-    return Promise.race([finalPromise, errorPromise]);
   }
 
   cancelDictationStream(dictationId: string): void {
