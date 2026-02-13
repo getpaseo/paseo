@@ -3934,17 +3934,17 @@ export class Session {
       latestFingerprint: null,
     };
 
-    const watchPaths = new Set<string>([cwd]);
-    if (watchRoot) {
-      watchPaths.add(watchRoot);
-    }
+    const repoWatchPath = watchRoot ?? cwd;
+    const watchPaths = new Set<string>([repoWatchPath]);
     const gitDir = await this.resolveCheckoutGitDir(cwd);
     if (gitDir) {
       watchPaths.add(gitDir);
     }
 
-    let hasWatchRootCoverage = false;
+    let hasRecursiveRepoCoverage = false;
+    const allowRecursiveRepoWatch = process.platform !== "linux";
     for (const watchPath of watchPaths) {
+      const shouldTryRecursive = watchPath === repoWatchPath && allowRecursiveRepoWatch;
       const createWatcher = (recursive: boolean): FSWatcher =>
         watch(
           watchPath,
@@ -3955,18 +3955,31 @@ export class Session {
         );
 
       let watcher: FSWatcher | null = null;
+      let watcherIsRecursive = false;
       try {
-        watcher = createWatcher(true);
-      } catch (error) {
-        try {
+        if (shouldTryRecursive) {
+          watcher = createWatcher(true);
+          watcherIsRecursive = true;
+        } else {
           watcher = createWatcher(false);
+        }
+      } catch (error) {
+        if (shouldTryRecursive) {
+          try {
+            watcher = createWatcher(false);
+            this.sessionLogger.warn(
+              { err: error, watchPath, cwd, compare },
+              "Checkout diff recursive watch unavailable; using non-recursive fallback"
+            );
+          } catch (fallbackError) {
+            this.sessionLogger.warn(
+              { err: fallbackError, watchPath, cwd, compare },
+              "Failed to start checkout diff watcher"
+            );
+          }
+        } else {
           this.sessionLogger.warn(
             { err: error, watchPath, cwd, compare },
-            "Checkout diff recursive watch unavailable; using non-recursive fallback"
-          );
-        } catch (fallbackError) {
-          this.sessionLogger.warn(
-            { err: fallbackError, watchPath, cwd, compare },
             "Failed to start checkout diff watcher"
           );
         }
@@ -3983,12 +3996,12 @@ export class Session {
         );
       });
       target.watchers.push(watcher);
-      if (watchRoot && watchPath === watchRoot) {
-        hasWatchRootCoverage = true;
+      if (watchPath === repoWatchPath && watcherIsRecursive) {
+        hasRecursiveRepoCoverage = true;
       }
     }
 
-    const missingRepoCoverage = Boolean(watchRoot) && !hasWatchRootCoverage;
+    const missingRepoCoverage = !hasRecursiveRepoCoverage;
     if (target.watchers.length === 0 || missingRepoCoverage) {
       target.fallbackRefreshInterval = setInterval(() => {
         this.scheduleCheckoutDiffTargetRefresh(target);
@@ -4001,7 +4014,7 @@ export class Session {
           reason:
             target.watchers.length === 0
               ? "no_watchers"
-              : "missing_repo_root_coverage",
+              : "missing_recursive_repo_root_coverage",
         },
         "Checkout diff watchers unavailable; using timed refresh fallback"
       );
