@@ -12,6 +12,7 @@ import {
   startLocalDaemonDetached,
   type DaemonStartOptions as StartOptions,
 } from './local-daemon.js'
+import { getErrorMessage } from '../../utils/errors.js'
 
 export type { DaemonStartOptions as StartOptions } from './local-daemon.js'
 
@@ -73,9 +74,7 @@ export async function runStart(options: StartOptions): Promise<void> {
       console.log(chalk.green(`Daemon starting in background (PID ${startup.pid ?? 'unknown'}).`))
       console.log(chalk.dim(`Logs: ${startup.logPath}`))
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error(chalk.red(message))
-      process.exit(1)
+      exitWithError(getErrorMessage(err))
     }
     return
   }
@@ -94,18 +93,15 @@ export async function runStart(options: StartOptions): Promise<void> {
     logger = createRootLogger(persistedConfig)
     config = loadConfig(paseoHome, { cli: toCliOverrides(options) })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error(chalk.red(message))
-    process.exit(1)
+    exitWithError(getErrorMessage(err))
   }
 
   let daemon: Awaited<ReturnType<typeof createPaseoDaemon>>
   try {
     daemon = await createPaseoDaemon(config, logger)
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error(chalk.red(`Failed to initialize daemon: ${message}`))
-    process.exit(1)
+    const message = getErrorMessage(err)
+    exitWithError(`Failed to initialize daemon: ${message}`)
   }
 
   let shuttingDown = false
@@ -140,8 +136,12 @@ export async function runStart(options: StartOptions): Promise<void> {
   try {
     await daemon.start()
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error(chalk.red(`Failed to start daemon: ${message}`))
-    process.exit(1)
+    const message = getErrorMessage(err)
+    exitWithError(`Failed to start daemon: ${message}`)
   }
+}
+
+function exitWithError(message: string): never {
+  console.error(chalk.red(message))
+  process.exit(1)
 }
