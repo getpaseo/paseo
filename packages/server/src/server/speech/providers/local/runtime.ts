@@ -186,10 +186,12 @@ export async function initializeLocalSpeechServices(params: {
   providers: RequestedSpeechProviders;
   speechConfig: PaseoSpeechConfig | null;
   logger: Logger;
+  modelEnsureAutoDownload?: boolean;
 }): Promise<InitializedLocalSpeech> {
   const { providers, logger, speechConfig } = params;
   const localConfig = speechConfig?.local ?? null;
   const localModels = resolveConfiguredLocalModels(speechConfig);
+  const modelEnsureAutoDownload = params.modelEnsureAutoDownload ?? (localConfig?.autoDownload ?? true);
 
   let sttService: SpeechToTextProvider | null = null;
   let ttsService: TextToSpeechProvider | null = null;
@@ -207,14 +209,14 @@ export async function initializeLocalSpeechServices(params: {
         {
           modelsDir: localConfig.modelsDir,
           modelIds: requiredLocalModelIds,
-          autoDownload: localConfig.autoDownload ?? true,
+          autoDownload: modelEnsureAutoDownload,
         },
         "Ensuring local speech models"
       );
       await ensureLocalSpeechModels({
         modelsDir: localConfig.modelsDir,
         modelIds: requiredLocalModelIds,
-        autoDownload: localConfig.autoDownload ?? true,
+        autoDownload: modelEnsureAutoDownload,
         logger,
       });
     } catch (err) {
@@ -223,7 +225,7 @@ export async function initializeLocalSpeechServices(params: {
           err,
           modelsDir: localConfig.modelsDir,
           modelIds: requiredLocalModelIds,
-          autoDownload: localConfig.autoDownload ?? true,
+          autoDownload: modelEnsureAutoDownload,
           hint:
             "Use `paseo speech models` to inspect status and " +
             "`paseo speech download --model <MODEL_ID>` to fetch missing models.",

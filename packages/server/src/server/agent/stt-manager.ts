@@ -39,12 +39,16 @@ export interface SessionTranscriptionResult extends TranscriptionResult {
 export class STTManager {
   private readonly sessionId: string;
   private readonly logger: pino.Logger;
-  private readonly stt: SpeechToTextProvider | null;
+  private readonly resolveStt: () => SpeechToTextProvider | null;
 
-  constructor(sessionId: string, logger: pino.Logger, stt: SpeechToTextProvider | null) {
+  constructor(
+    sessionId: string,
+    logger: pino.Logger,
+    stt: SpeechToTextProvider | null | (() => SpeechToTextProvider | null)
+  ) {
     this.sessionId = sessionId;
     this.logger = logger.child({ module: "agent", component: "stt-manager", sessionId });
-    this.stt = stt;
+    this.resolveStt = typeof stt === "function" ? stt : () => stt;
   }
 
   /**
@@ -55,7 +59,8 @@ export class STTManager {
     format: string,
     metadata?: TranscriptionMetadata
   ): Promise<SessionTranscriptionResult> {
-    if (!this.stt) {
+    const stt = this.resolveStt();
+    if (!stt) {
       throw new Error("STT not configured");
     }
 
@@ -81,7 +86,7 @@ export class STTManager {
       this.logger.warn({ err: error }, "Failed to persist debug audio");
     }
 
-    const session = this.stt.createSession({
+    const session = stt.createSession({
       logger: this.logger.child({ component: "stt-session" }),
       language: "en",
     });

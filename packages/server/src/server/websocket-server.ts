@@ -26,6 +26,7 @@ import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-co
 import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
+import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 import type { LocalSpeechModelId } from "./speech/providers/local/models.js";
 import type {
   VoiceCallerContext,
@@ -93,16 +94,23 @@ export class VoiceAssistantWebSocketServer {
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushService: PushService;
   private readonly createAgentMcpTransport: AgentMcpTransportFactory;
-  private readonly stt: SpeechToTextProvider | null;
-  private readonly tts: TextToSpeechProvider | null;
+  private readonly stt:
+    | SpeechToTextProvider
+    | null
+    | (() => SpeechToTextProvider | null);
+  private readonly tts:
+    | TextToSpeechProvider
+    | null
+    | (() => TextToSpeechProvider | null);
   private readonly terminalManager: TerminalManager | null;
   private readonly dictation: {
     finalTimeoutMs?: number;
-    stt?: SpeechToTextProvider | null;
+    stt?: SpeechToTextProvider | null | (() => SpeechToTextProvider | null);
     localModels?: {
       modelsDir: string;
       defaultModelIds: LocalSpeechModelId[];
     };
+    getSpeechReadiness?: () => SpeechReadinessSnapshot;
   } | null;
   private readonly voice: {
     voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
@@ -126,7 +134,10 @@ export class VoiceAssistantWebSocketServer {
     paseoHome: string,
     createAgentMcpTransport: AgentMcpTransportFactory,
     wsConfig: WebSocketServerConfig,
-    speech?: { stt: SpeechToTextProvider | null; tts: TextToSpeechProvider | null },
+    speech?: {
+      stt: SpeechToTextProvider | null | (() => SpeechToTextProvider | null);
+      tts: TextToSpeechProvider | null | (() => TextToSpeechProvider | null);
+    },
     terminalManager?: TerminalManager | null,
     voice?: {
       voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
@@ -135,11 +146,12 @@ export class VoiceAssistantWebSocketServer {
     },
     dictation?: {
       finalTimeoutMs?: number;
-      stt?: SpeechToTextProvider | null;
+      stt?: SpeechToTextProvider | null | (() => SpeechToTextProvider | null);
       localModels?: {
         modelsDir: string;
         defaultModelIds: LocalSpeechModelId[];
       };
+      getSpeechReadiness?: () => SpeechReadinessSnapshot;
     },
     agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap
   ) {

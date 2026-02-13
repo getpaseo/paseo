@@ -457,9 +457,10 @@ export async function createPaseoDaemon(
     },
   });
   const {
-    sttService,
-    ttsService,
-    dictationSttService,
+    resolveVoiceStt,
+    resolveVoiceTts,
+    resolveDictationStt,
+    getSpeechReadiness,
     cleanup: cleanupSpeechRuntime,
     localModelConfig,
   } = await initializeSpeechRuntime({
@@ -478,7 +479,7 @@ export async function createPaseoDaemon(
     config.paseoHome,
     createInMemoryAgentMcpTransport,
     { allowedOrigins, allowedHosts: config.allowedHosts },
-    { stt: sttService, tts: ttsService },
+    { stt: resolveVoiceStt, tts: resolveVoiceTts },
     terminalManager,
     {
       voiceAgentMcpStdio: {
@@ -496,8 +497,9 @@ export async function createPaseoDaemon(
     },
     {
       finalTimeoutMs: config.dictationFinalTimeoutMs,
-      stt: dictationSttService,
+      stt: resolveDictationStt,
       localModels: localModelConfig ?? undefined,
+      getSpeechReadiness,
     },
     config.agentProviderSettings
   );

@@ -95,11 +95,15 @@ function splitTextForTts(text: string, maxChars: number): string[] {
 export class TTSManager {
   private pendingPlaybacks: Map<string, PendingPlayback> = new Map();
   private readonly logger: pino.Logger;
-  private readonly tts: TextToSpeechProvider | null;
+  private readonly resolveTts: () => TextToSpeechProvider | null;
 
-  constructor(sessionId: string, logger: pino.Logger, tts: TextToSpeechProvider | null) {
+  constructor(
+    sessionId: string,
+    logger: pino.Logger,
+    tts: TextToSpeechProvider | null | (() => TextToSpeechProvider | null)
+  ) {
     this.logger = logger.child({ module: "agent", component: "tts-manager", sessionId });
-    this.tts = tts;
+    this.resolveTts = typeof tts === "function" ? tts : () => tts;
   }
 
   /**
@@ -143,7 +147,8 @@ export class TTSManager {
     abortSignal: AbortSignal,
     isVoiceMode: boolean
   ): Promise<void> {
-    if (!this.tts) {
+    const tts = this.resolveTts();
+    if (!tts) {
       throw new Error("TTS not configured");
     }
 
@@ -153,7 +158,7 @@ export class TTSManager {
     }
 
     // Generate TTS audio stream
-    const { stream, format } = await this.tts.synthesizeSpeech(text);
+    const { stream, format } = await tts.synthesizeSpeech(text);
 
     if (abortSignal.aborted) {
       this.logger.debug("Aborted after generating audio");

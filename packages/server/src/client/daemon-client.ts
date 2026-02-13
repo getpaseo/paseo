@@ -1465,7 +1465,7 @@ export class DaemonClient {
       ...(agentId ? { agentId } : {}),
       requestId,
     });
-    return this.sendRequest({
+    const response = await this.sendRequest({
       requestId,
       message,
       timeout: 10000,
@@ -1479,6 +1479,14 @@ export class DaemonClient {
         return msg.payload;
       },
     });
+    if (!response.accepted) {
+      const codeSuffix =
+        typeof response.reasonCode === "string" && response.reasonCode.trim().length > 0
+          ? ` (${response.reasonCode})`
+          : "";
+      throw new Error((response.error ?? "Failed to set voice mode") + codeSuffix);
+    }
+    return response;
   }
 
   async sendVoiceAudioChunk(
