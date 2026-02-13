@@ -7,6 +7,7 @@ import {
   Pressable,
   FlatList,
   Platform,
+  type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
 } from "react-native";
@@ -40,6 +41,7 @@ import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-contex
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { Fonts } from "@/constants/theme";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
+import { shouldAnchorHeaderBeforeCollapse } from "@/utils/git-diff-scroll";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -518,6 +520,8 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const [isManualRefresh, setIsManualRefresh] = useState(false);
   const [expandedByPath, setExpandedByPath] = useState<Record<string, boolean>>({});
   const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
+  const diffListScrollOffsetRef = useRef(0);
+  const diffListViewportHeightRef = useRef(0);
   const headerHeightByPathRef = useRef<Record<string, number>>({});
   const bodyHeightByPathRef = useRef<Record<string, number>>({});
   const defaultHeaderHeightRef = useRef<number>(44);
@@ -622,6 +626,18 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     bodyHeightByPathRef.current[path] = height;
   }, []);
 
+  const handleDiffListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+  }, []);
+
+  const handleDiffListLayout = useCallback((event: LayoutChangeEvent) => {
+    const height = event.nativeEvent.layout.height;
+    if (!Number.isFinite(height) || height <= 0) {
+      return;
+    }
+    diffListViewportHeightRef.current = height;
+  }, []);
+
   const computeHeaderOffset = useCallback(
     (path: string): number => {
       const defaultHeaderHeight = defaultHeaderHeightRef.current;
@@ -645,9 +661,19 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       const isCurrentlyExpanded = expandedByPath[path] ?? false;
       const nextExpanded = !isCurrentlyExpanded;
       const targetOffset = isCurrentlyExpanded ? computeHeaderOffset(path) : null;
+      const headerHeight = headerHeightByPathRef.current[path] ?? defaultHeaderHeightRef.current;
+      const shouldAnchor =
+        isCurrentlyExpanded &&
+        targetOffset !== null &&
+        shouldAnchorHeaderBeforeCollapse({
+          headerOffset: targetOffset,
+          headerHeight,
+          viewportOffset: diffListScrollOffsetRef.current,
+          viewportHeight: diffListViewportHeightRef.current,
+        });
 
       // Anchor to the clicked header before collapsing so visual context is preserved.
-      if (isCurrentlyExpanded && targetOffset !== null) {
+      if (shouldAnchor && targetOffset !== null) {
         diffListRef.current?.scrollToOffset({
           offset: targetOffset,
           animated: false,
@@ -931,6 +957,9 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         style={styles.scrollView}
         contentContainerStyle={styles.contentContainer}
         testID="git-diff-scroll"
+        onLayout={handleDiffListLayout}
+        onScroll={handleDiffListScroll}
+        scrollEventThrottle={16}
         onRefresh={handleRefresh}
         refreshing={isManualRefresh && isDiffFetching}
         // Mixed-height rows (header + potentially very large body) are prone to clipping artifacts.
