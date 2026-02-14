@@ -69,6 +69,10 @@ import {
   type TerminalKeyInput,
 } from "../shared/terminal-key-input.js";
 import {
+  TerminalStreamManager,
+  type TerminalStreamChunk,
+} from "./daemon-client-terminal-stream-manager.js";
+import {
   createRelayE2eeTransportFactory,
   createWebSocketTransportFactory,
   decodeMessageData,
@@ -102,6 +106,7 @@ export type {
   WebSocketFactory,
   WebSocketLike,
 } from "./daemon-client-transport.js";
+export type { TerminalStreamChunk } from "./daemon-client-terminal-stream-manager.js";
 
 export type ConnectionState =
   | { status: "idle" }
@@ -233,22 +238,6 @@ export type FetchAgentTimelineOptions = {
   requestId?: string;
 };
 
-export type TerminalStreamChunk = {
-  streamId: number;
-  offset: number;
-  endOffset: number;
-  replay: boolean;
-  data: Uint8Array;
-};
-
-type BufferedTerminalStreamQueue = {
-  chunks: TerminalStreamChunk[];
-  bytes: number;
-};
-
-const TERMINAL_STREAM_MAX_BUFFERED_CHUNKS = 2048;
-const TERMINAL_STREAM_MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
-
 type AgentRefreshedStatusPayload = z.infer<
   typeof AgentRefreshedStatusPayloadSchema
 >;
@@ -361,15 +350,21 @@ export class DaemonClient {
   private logger: Logger;
   private pendingSendQueue: PendingSend[] = [];
   private relayClientId: string | null = null;
-  private terminalStreamHandlers: Map<
-    number,
-    Set<(chunk: TerminalStreamChunk) => void>
-  > = new Map();
-  private bufferedTerminalStreamChunks: Map<number, BufferedTerminalStreamQueue> = new Map();
-  private terminalStreamAckOffsets: Map<number, number> = new Map();
+  private terminalStreams: TerminalStreamManager;
 
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
+    this.terminalStreams = new TerminalStreamManager({
+      sendAck: (ack) => {
+        this.sendBinaryFrame({
+          channel: BinaryMuxChannel.Terminal,
+          messageType: TerminalBinaryMessageType.Ack,
+          streamId: ack.streamId,
+          offset: ack.offset,
+          payload: new Uint8Array(0),
+        });
+      },
+    });
     // Relay requires a clientId so the daemon can create an independent
     // socket + E2EE channel per connected client. Generate one per DaemonClient
     // instance (stable across reconnects in this tab/app session).
@@ -584,9 +579,7 @@ export class DaemonClient {
     }
     this.disposeTransport(1000, "Client closed");
     this.clearWaiters(new Error("Daemon client closed"));
-    this.terminalStreamHandlers.clear();
-    this.bufferedTerminalStreamChunks.clear();
-    this.terminalStreamAckOffsets.clear();
+    this.terminalStreams.clearAll();
     this.updateConnectionState({
       status: "disconnected",
       reason: "client_closed",
@@ -2529,9 +2522,7 @@ export class DaemonClient {
       timeout: 10000,
       options: { skipQueue: true },
     });
-    this.terminalStreamHandlers.delete(streamId);
-    this.bufferedTerminalStreamChunks.delete(streamId);
-    this.terminalStreamAckOffsets.delete(streamId);
+    this.terminalStreams.clearStream({ streamId });
     return payload;
   }
 
@@ -2539,31 +2530,7 @@ export class DaemonClient {
     streamId: number,
     handler: (chunk: TerminalStreamChunk) => void
   ): () => void {
-    if (!this.terminalStreamHandlers.has(streamId)) {
-      this.terminalStreamHandlers.set(streamId, new Set());
-    }
-    const handlers = this.terminalStreamHandlers.get(streamId)!;
-    handlers.add(handler);
-
-    const buffered = this.bufferedTerminalStreamChunks.get(streamId);
-    if (buffered && buffered.chunks.length > 0) {
-      for (const chunk of buffered.chunks) {
-        try {
-          handler(chunk);
-          this.maybeAckTerminalStreamChunk(streamId, chunk.endOffset);
-        } catch {
-          // no-op
-        }
-      }
-      this.bufferedTerminalStreamChunks.delete(streamId);
-    }
-
-    return () => {
-      handlers.delete(handler);
-      if (handlers.size === 0) {
-        this.terminalStreamHandlers.delete(streamId);
-      }
-    };
+    return this.terminalStreams.subscribe({ streamId, handler });
   }
 
   async waitForTerminalStreamData(
@@ -2609,10 +2576,7 @@ export class DaemonClient {
 
   sendTerminalStreamAck(streamId: number, offset: number): void {
     const normalizedOffset = Math.max(0, Math.floor(offset));
-    const previousAck = this.terminalStreamAckOffsets.get(streamId) ?? -1;
-    if (normalizedOffset > previousAck) {
-      this.terminalStreamAckOffsets.set(streamId, normalizedOffset);
-    }
+    this.terminalStreams.noteAck({ streamId, offset: normalizedOffset });
     this.sendBinaryFrame({
       channel: BinaryMuxChannel.Terminal,
       messageType: TerminalBinaryMessageType.Ack,
@@ -2720,7 +2684,6 @@ export class DaemonClient {
       frame.channel === BinaryMuxChannel.Terminal &&
       frame.messageType === TerminalBinaryMessageType.OutputUtf8
     ) {
-      const handlers = this.terminalStreamHandlers.get(frame.streamId);
       const chunk: TerminalStreamChunk = {
         streamId: frame.streamId,
         offset: frame.offset,
@@ -2728,59 +2691,8 @@ export class DaemonClient {
         replay: Boolean((frame.flags ?? 0) & TerminalBinaryFlags.Replay),
         data: frame.payload ?? new Uint8Array(0),
       };
-      if (!handlers || handlers.size === 0) {
-        const queue = this.bufferedTerminalStreamChunks.get(frame.streamId) ?? {
-          chunks: [],
-          bytes: 0,
-        };
-        queue.chunks.push(chunk);
-        queue.bytes += chunk.data.byteLength;
-        while (
-          queue.chunks.length > TERMINAL_STREAM_MAX_BUFFERED_CHUNKS ||
-          queue.bytes > TERMINAL_STREAM_MAX_BUFFERED_BYTES
-        ) {
-          const removed = queue.chunks.shift();
-          if (!removed) {
-            break;
-          }
-          queue.bytes -= removed.data.byteLength;
-          if (queue.bytes < 0) {
-            queue.bytes = 0;
-          }
-        }
-        this.bufferedTerminalStreamChunks.set(frame.streamId, queue);
-        return;
-      }
-      let delivered = false;
-      for (const handler of handlers) {
-        try {
-          handler(chunk);
-          delivered = true;
-        } catch {
-          // no-op
-        }
-      }
-      if (delivered) {
-        this.maybeAckTerminalStreamChunk(frame.streamId, chunk.endOffset);
-      }
+      this.terminalStreams.receiveChunk({ chunk });
       return;
-    }
-  }
-
-  private maybeAckTerminalStreamChunk(streamId: number, endOffset: number): void {
-    if (!Number.isFinite(endOffset) || endOffset < 0) {
-      return;
-    }
-    const normalizedEndOffset = Math.floor(endOffset);
-    const previousAck = this.terminalStreamAckOffsets.get(streamId) ?? -1;
-    if (normalizedEndOffset <= previousAck) {
-      return;
-    }
-    this.terminalStreamAckOffsets.set(streamId, normalizedEndOffset);
-    try {
-      this.sendTerminalStreamAck(streamId, normalizedEndOffset);
-    } catch {
-      // no-op
     }
   }
 
@@ -2824,9 +2736,7 @@ export class DaemonClient {
     // and responses from the previous connection will never arrive.
     this.clearWaiters(new Error(reason ?? "Connection lost"));
     this.rejectPendingSendQueue(new Error(reason ?? "Connection lost"));
-    this.terminalStreamHandlers.clear();
-    this.bufferedTerminalStreamChunks.clear();
-    this.terminalStreamAckOffsets.clear();
+    this.terminalStreams.clearAll();
 
     this.updateConnectionState({
       status: "disconnected",
@@ -2843,9 +2753,7 @@ export class DaemonClient {
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
     if (msg.type === "terminal_stream_exit") {
-      this.terminalStreamHandlers.delete(msg.payload.streamId);
-      this.bufferedTerminalStreamChunks.delete(msg.payload.streamId);
-      this.terminalStreamAckOffsets.delete(msg.payload.streamId);
+      this.terminalStreams.clearStream({ streamId: msg.payload.streamId });
     }
 
     if (this.rawMessageListeners.size > 0) {
