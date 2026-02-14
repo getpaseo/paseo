@@ -302,6 +302,15 @@ type WaitHandle<T> = {
 type RpcWaitResult<T> =
   | { kind: "ok"; value: T }
   | { kind: "error"; error: DaemonRpcError };
+type CorrelatedResponseMessage = Extract<
+  SessionOutboundMessage,
+  { payload: { requestId: string } }
+>;
+type CorrelatedResponseType = CorrelatedResponseMessage["type"];
+type CorrelatedResponsePayload<TType extends CorrelatedResponseType> = Extract<
+  CorrelatedResponseMessage,
+  { type: TType }
+>["payload"];
 
 class DaemonRpcError extends Error {
   readonly requestId: string;
@@ -851,6 +860,42 @@ export class DaemonClient {
       throw result.error;
     }
     return result.value;
+  }
+
+  private async sendCorrelatedRequest<
+    TResponseType extends CorrelatedResponseType,
+    TResult = CorrelatedResponsePayload<TResponseType>,
+  >(
+    params: {
+      requestId: string;
+      message: SessionInboundMessage;
+      timeout: number;
+      responseType: TResponseType;
+      options?: { skipQueue?: boolean };
+      selectPayload?: (payload: CorrelatedResponsePayload<TResponseType>) => TResult | null;
+    }
+  ): Promise<TResult> {
+    return this.sendRequest({
+      requestId: params.requestId,
+      message: params.message,
+      timeout: params.timeout,
+      options: params.options,
+      select: (msg) => {
+        const correlated = msg as CorrelatedResponseMessage;
+        if (correlated.type !== params.responseType) {
+          return null;
+        }
+        const payload =
+          correlated.payload as unknown as CorrelatedResponsePayload<TResponseType>;
+        if (payload.requestId !== params.requestId) {
+          return null;
+        }
+        if (!params.selectPayload) {
+          return payload as TResult;
+        }
+        return params.selectPayload(payload);
+      },
+    });
   }
 
   private sendSessionMessageStrict(message: SessionInboundMessage): void {
@@ -1844,22 +1889,17 @@ export class DaemonClient {
     });
 
     try {
-      return await this.sendRequest({
+      return await this.sendCorrelatedRequest({
         requestId: resolvedRequestId,
         message,
+        responseType: "subscribe_checkout_diff_response",
         timeout: 60000,
         options: { skipQueue: true },
-        select: (msg) => {
-          if (msg.type !== "subscribe_checkout_diff_response") {
+        selectPayload: (payload) => {
+          if (payload.subscriptionId !== subscriptionId) {
             return null;
           }
-          if (msg.payload.requestId !== resolvedRequestId) {
-            return null;
-          }
-          if (msg.payload.subscriptionId !== subscriptionId) {
-            return null;
-          }
-          return msg.payload;
+          return payload;
         },
       });
     } catch (error) {
@@ -1893,20 +1933,12 @@ export class DaemonClient {
       addAll: input.addAll,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "checkout_commit_response",
       timeout: 60000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "checkout_commit_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -1924,20 +1956,12 @@ export class DaemonClient {
       requireCleanTarget: input.requireCleanTarget,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "checkout_merge_response",
       timeout: 60000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "checkout_merge_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -1954,20 +1978,12 @@ export class DaemonClient {
       requireCleanTarget: input.requireCleanTarget,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "checkout_merge_from_base_response",
       timeout: 60000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "checkout_merge_from_base_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -1978,20 +1994,12 @@ export class DaemonClient {
       cwd,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "checkout_push_response",
       timeout: 60000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "checkout_push_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2009,20 +2017,12 @@ export class DaemonClient {
       baseRef: input.baseRef,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "checkout_pr_create_response",
       timeout: 60000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "checkout_pr_create_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2036,20 +2036,12 @@ export class DaemonClient {
       cwd,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "checkout_pr_status_response",
       timeout: 60000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "checkout_pr_status_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2064,20 +2056,12 @@ export class DaemonClient {
       repoRoot: input.repoRoot,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "paseo_worktree_list_response",
       timeout: 60000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "paseo_worktree_list_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2093,20 +2077,12 @@ export class DaemonClient {
       branchName: input.branchName,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "paseo_worktree_archive_response",
       timeout: 20000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "paseo_worktree_archive_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2121,20 +2097,12 @@ export class DaemonClient {
       branchName: options.branchName,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "validate_branch_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "validate_branch_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2150,20 +2118,12 @@ export class DaemonClient {
       limit: options.limit,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "branch_suggestions_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "branch_suggestions_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2185,20 +2145,12 @@ export class DaemonClient {
       mode,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "file_explorer_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "file_explorer_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2214,20 +2166,12 @@ export class DaemonClient {
       path,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "file_download_token_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "file_download_token_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2241,20 +2185,12 @@ export class DaemonClient {
       cwd,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "project_icon_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "project_icon_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2273,20 +2209,12 @@ export class DaemonClient {
       cwd: options?.cwd,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "list_provider_models_response",
       timeout: 30000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "list_provider_models_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2298,20 +2226,12 @@ export class DaemonClient {
       type: "list_available_providers_request",
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "list_available_providers_response",
       timeout: 30000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "list_available_providers_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2321,20 +2241,12 @@ export class DaemonClient {
       type: "speech_models_list_request",
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "speech_models_list_response",
       timeout: 30000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "speech_models_list_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2347,20 +2259,12 @@ export class DaemonClient {
       modelIds: options?.modelIds,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "speech_models_download_response",
       timeout: 30 * 60 * 1000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "speech_models_download_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2374,20 +2278,12 @@ export class DaemonClient {
       agentId,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "list_commands_response",
       timeout: 30000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "list_commands_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2405,20 +2301,12 @@ export class DaemonClient {
       args,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "execute_command_response",
       timeout: 30000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "execute_command_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2502,20 +2390,12 @@ export class DaemonClient {
       agentId,
       timeoutMs: timeout,
     });
-    const payload = await this.sendRequest({
+    const payload = await this.sendCorrelatedRequest({
       requestId,
       message,
+      responseType: "wait_for_finish_response",
       timeout: timeout + 5000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "wait_for_finish_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== requestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
     return {
       status: payload.status,
@@ -2539,20 +2419,12 @@ export class DaemonClient {
       cwd,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "list_terminals_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "list_terminals_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2568,20 +2440,12 @@ export class DaemonClient {
       name,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "create_terminal_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "create_terminal_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2595,20 +2459,12 @@ export class DaemonClient {
       terminalId,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "subscribe_terminal_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "subscribe_terminal_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2640,20 +2496,12 @@ export class DaemonClient {
       terminalId,
       requestId: resolvedRequestId,
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "kill_terminal_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "kill_terminal_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2675,20 +2523,12 @@ export class DaemonClient {
       ...(options?.rows !== undefined ? { rows: options.rows } : {}),
       ...(options?.cols !== undefined ? { cols: options.cols } : {}),
     });
-    return this.sendRequest({
+    return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "attach_terminal_stream_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "attach_terminal_stream_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
   }
 
@@ -2702,20 +2542,12 @@ export class DaemonClient {
       streamId,
       requestId: resolvedRequestId,
     });
-    const payload = await this.sendRequest({
+    const payload = await this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message,
+      responseType: "detach_terminal_stream_response",
       timeout: 10000,
       options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "detach_terminal_stream_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
     });
     this.terminalStreamHandlers.delete(streamId);
     this.bufferedTerminalStreamChunks.delete(streamId);
