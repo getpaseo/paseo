@@ -190,6 +190,57 @@ describe("daemon client E2E", () => {
     await client.close();
   }, 15000);
 
+  test("emits disabled voice capability reasons on fresh daemon startup", async () => {
+    const isolatedCtx = await createDaemonTestContext({
+      speech: {
+        providers: {
+          dictationStt: { provider: "local", explicit: true, enabled: false },
+          voiceStt: { provider: "local", explicit: true, enabled: false },
+          voiceTts: { provider: "local", explicit: true, enabled: false },
+        },
+      },
+    });
+
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${isolatedCtx.daemon.port}/ws`,
+    });
+
+    try {
+      const infoPromise = waitForSignal<{
+        dictationEnabled: boolean;
+        dictationReason: string;
+        voiceEnabled: boolean;
+        voiceReason: string;
+      }>(5000, (resolve) => {
+        const unsubscribe = client.on("status", (message) => {
+          if (message.type !== "status") return;
+          const payload = parseServerInfoStatusPayload(message.payload);
+          if (!payload) return;
+          const voice = payload.capabilities?.voice;
+          if (!voice) return;
+          resolve({
+            dictationEnabled: voice.dictation.enabled,
+            dictationReason: voice.dictation.reason,
+            voiceEnabled: voice.voice.enabled,
+            voiceReason: voice.voice.reason,
+          });
+        });
+        return unsubscribe;
+      });
+
+      await client.connect();
+      const info = await infoPromise;
+
+      expect(info.dictationEnabled).toBe(false);
+      expect(info.dictationReason).toBe("Dictation is disabled in daemon config.");
+      expect(info.voiceEnabled).toBe(false);
+      expect(info.voiceReason).toBe("Realtime voice is disabled in daemon config.");
+    } finally {
+      await client.close().catch(() => undefined);
+      await isolatedCtx.cleanup();
+    }
+  }, 30000);
+
   test("handles concurrent filtered agent fetch requests", async () => {
     const firstRequestId = `fetch-${Date.now()}-a`;
     const secondRequestId = `fetch-${Date.now()}-b`;

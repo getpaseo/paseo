@@ -4,7 +4,6 @@ import {
   Text,
   ActivityIndicator,
   Platform,
-  Alert,
 } from "react-native";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -32,6 +31,7 @@ import { encodeImages } from "@/utils/encode-images";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 import { focusWithRetries } from "@/utils/web-focus";
 import { useVoiceOptional } from "@/contexts/voice-context";
+import { useToast } from "@/contexts/toast-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 
@@ -80,6 +80,7 @@ export function AgentInputArea({
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
   );
+  const toast = useToast();
   const voice = useVoiceOptional();
   const isConnected = client?.isConnected ?? false;
 
@@ -470,10 +471,17 @@ export function AgentInputArea({
     }
     void voice.startVoice(serverId, agentId).catch((error) => {
       console.error("[AgentInputArea] Failed to start voice mode", error);
-      const message = error instanceof Error ? error.message : "Voice features are not available right now.";
-      Alert.alert("Voice unavailable", message);
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : null;
+      if (message && message.trim().length > 0) {
+        toast.error(message);
+      }
     });
-  }, [agentId, isConnected, serverId, voice]);
+  }, [agentId, isConnected, serverId, toast, voice]);
 
   function handleEditQueuedMessage(id: string) {
     const item = queuedMessages.find((q) => q.id === id);

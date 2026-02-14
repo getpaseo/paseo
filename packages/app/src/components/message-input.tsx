@@ -10,7 +10,6 @@ import {
   Image,
   Platform,
   BackHandler,
-  Alert,
 } from "react-native";
 import {
   useState,
@@ -34,6 +33,7 @@ import type { DaemonClient } from "@server/client/daemon-client";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useVoiceOptional } from "@/contexts/voice-context";
+import { useToast } from "@/contexts/toast-context";
 import { resolveVoiceUnavailableMessage } from "@/utils/server-info-capabilities";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -136,6 +136,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     ref
   ) {
     const { theme } = useUnistyles();
+    const toast = useToast();
     const voice = useVoiceOptional();
     const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
     const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
@@ -288,11 +289,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
   const startDictationIfAvailable = useCallback(async () => {
     if (dictationUnavailableMessage) {
-      Alert.alert("Dictation unavailable", dictationUnavailableMessage);
+      toast.error(dictationUnavailableMessage);
       return;
     }
     await startDictation();
-  }, [dictationUnavailableMessage, startDictation]);
+  }, [dictationUnavailableMessage, startDictation, toast]);
 
   // Cmd+D to start/submit dictation, Cmd+Shift+D toggles realtime voice, Escape cancels dictation
   useEffect(() => {
@@ -324,8 +325,15 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       }
       void voice.startVoice(voiceServerId, voiceAgentId).catch((error) => {
         console.error("[MessageInput] Failed to start realtime voice", error);
-        const message = error instanceof Error ? error.message : String(error);
-        Alert.alert("Voice unavailable", message);
+        const message =
+          error instanceof Error
+            ? error.message
+            : typeof error === "string"
+              ? error
+              : null;
+        if (message && message.trim().length > 0) {
+          toast.error(message);
+        }
       });
     };
 
@@ -396,6 +404,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     isRealtimeVoiceForCurrentAgent,
     isScreenFocused,
     startDictationIfAvailable,
+    toast,
     voiceAgentId,
     voiceServerId,
     voice,
@@ -490,13 +499,21 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }
     void voice.startVoice(voiceServerId, voiceAgentId).catch((error) => {
       console.error("[MessageInput] Failed to start realtime voice", error);
-      const message = error instanceof Error ? error.message : String(error);
-      Alert.alert("Voice unavailable", message);
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : null;
+      if (message && message.trim().length > 0) {
+        toast.error(message);
+      }
     });
   }, [
     disabled,
     handleStopRealtimeVoice,
     isConnected,
+    toast,
     voice,
     voiceAgentId,
     voiceServerId,

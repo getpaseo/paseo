@@ -197,6 +197,47 @@ function createReadySpeechReadinessSnapshot(): SpeechReadinessSnapshot {
   };
 }
 
+function createDownloadInProgressSpeechReadinessSnapshot(): SpeechReadinessSnapshot {
+  return {
+    generatedAt: "2026-02-14T00:00:00.000Z",
+    requiredLocalModelIds: [
+      "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+    ],
+    missingLocalModelIds: [
+      "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+    ],
+    download: {
+      inProgress: true,
+      error: null,
+    },
+    dictation: {
+      enabled: true,
+      available: false,
+      reasonCode: "stt_unavailable",
+      message: "Dictation is unavailable: speech-to-text service is not ready.",
+      retryable: false,
+      missingModelIds: [],
+    },
+    realtimeVoice: {
+      enabled: true,
+      available: false,
+      reasonCode: "stt_unavailable",
+      message: "Realtime voice is unavailable: speech-to-text service is not ready.",
+      retryable: false,
+      missingModelIds: [],
+    },
+    voiceFeature: {
+      enabled: true,
+      available: false,
+      reasonCode: "model_download_in_progress",
+      message:
+        "Voice features are unavailable while models download in the background (sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20).",
+      retryable: true,
+      missingModelIds: ["sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"],
+    },
+  };
+}
+
 describe("relay external socket reconnect behavior", () => {
   beforeEach(() => {
     sessionMock.instances.length = 0;
@@ -314,6 +355,35 @@ describe("relay external socket reconnect behavior", () => {
     // Same readiness should not produce another server_info broadcast.
     server.publishSpeechReadiness(speechReadiness);
     expect(socket.sent).toHaveLength(2);
+
+    await server.close();
+  });
+
+  test("includes temporary retry guidance while models are downloading", async () => {
+    const server = createServer();
+    const metadata: ExternalSocketMetadata = {
+      transport: "relay",
+      externalSessionKey: "relay:client-server-info-download-guidance",
+    };
+    const socket = new MockSocket();
+    await server.attachExternalSocket(socket, metadata);
+    expect(socket.sent).toHaveLength(1);
+
+    server.publishSpeechReadiness(createDownloadInProgressSpeechReadinessSnapshot());
+    expect(socket.sent).toHaveLength(2);
+
+    const envelope = JSON.parse(socket.sent[1] as string) as {
+      message?: { payload?: unknown };
+    };
+    const payload = parseServerInfoStatusPayload(envelope.message?.payload);
+    expect(payload?.capabilities?.voice?.dictation.enabled).toBe(true);
+    expect(payload?.capabilities?.voice?.voice.enabled).toBe(true);
+    expect(payload?.capabilities?.voice?.dictation.reason).toContain(
+      "Try again in a few minutes."
+    );
+    expect(payload?.capabilities?.voice?.voice.reason).toContain(
+      "Try again in a few minutes."
+    );
 
     await server.close();
   });

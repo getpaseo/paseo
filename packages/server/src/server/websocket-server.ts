@@ -55,12 +55,36 @@ type WebSocketServerConfig = {
 };
 
 function toServerCapabilityState(
-  state: SpeechReadinessSnapshot["dictation"]
+  params: {
+    state: SpeechReadinessSnapshot["dictation"];
+    reason: string;
+  }
 ): ServerCapabilityState {
+  const { state, reason } = params;
   return {
     enabled: state.enabled,
-    reason: state.available ? "" : state.message,
+    reason,
   };
+}
+
+function resolveCapabilityReason(params: {
+  state: SpeechReadinessSnapshot["dictation"];
+  readiness: SpeechReadinessSnapshot;
+}): string {
+  const { state, readiness } = params;
+  if (state.available) {
+    return "";
+  }
+
+  if (readiness.voiceFeature.reasonCode === "model_download_in_progress") {
+    const baseMessage = readiness.voiceFeature.message.trim();
+    if (baseMessage.includes("Try again in a few minutes")) {
+      return baseMessage;
+    }
+    return `${baseMessage} Try again in a few minutes.`;
+  }
+
+  return state.message;
 }
 
 function buildServerCapabilities(params: {
@@ -72,8 +96,20 @@ function buildServerCapabilities(params: {
   }
   return {
     voice: {
-      dictation: toServerCapabilityState(readiness.dictation),
-      voice: toServerCapabilityState(readiness.realtimeVoice),
+      dictation: toServerCapabilityState({
+        state: readiness.dictation,
+        reason: resolveCapabilityReason({
+          state: readiness.dictation,
+          readiness,
+        }),
+      }),
+      voice: toServerCapabilityState({
+        state: readiness.realtimeVoice,
+        reason: resolveCapabilityReason({
+          state: readiness.realtimeVoice,
+          readiness,
+        }),
+      }),
     },
   };
 }
