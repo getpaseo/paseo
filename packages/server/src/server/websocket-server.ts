@@ -34,6 +34,11 @@ import type {
   VoiceMcpStdioConfig,
   VoiceSpeakHandler,
 } from "./voice-types.js";
+import {
+  computeShouldNotifyClient,
+  computeShouldSendPush,
+  type ClientAttentionState,
+} from "./agent-attention-policy.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 export type ExternalSocketMetadata = {
@@ -652,12 +657,7 @@ export class VoiceAssistantWebSocketServer {
 
   private readonly ACTIVITY_THRESHOLD_MS = 120_000;
 
-  private getClientActivityState(session: Session): {
-    deviceType: "web" | "mobile" | null;
-    focusedAgentId: string | null;
-    isStale: boolean;
-    appVisible: boolean;
-  } {
+  private getClientActivityState(session: Session): ClientAttentionState {
     const activity = session.getClientActivity();
     if (!activity) {
       return { deviceType: null, focusedAgentId: null, isStale: true, appVisible: false };
@@ -673,58 +673,6 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
-  private computeShouldNotifyForClient(
-    clientState: {
-      deviceType: "web" | "mobile" | null;
-      focusedAgentId: string | null;
-      isStale: boolean;
-      appVisible: boolean;
-    },
-    allClientStates: Array<{
-      deviceType: "web" | "mobile" | null;
-      focusedAgentId: string | null;
-      isStale: boolean;
-      appVisible: boolean;
-    }>,
-    agentId: string
-  ): boolean {
-    const isAnyoneActiveOnAgent = allClientStates.some(
-      (state) => state.focusedAgentId === agentId && state.appVisible && !state.isStale
-    );
-    if (isAnyoneActiveOnAgent) {
-      return false;
-    }
-
-    if (clientState.deviceType === null) {
-      return true;
-    }
-
-    if (!clientState.isStale && clientState.appVisible && clientState.focusedAgentId !== null) {
-      return true;
-    }
-
-    if (!clientState.isStale) {
-      return false;
-    }
-
-    const hasActiveWebClient = allClientStates.some(
-      (state) => state.deviceType === "web" && !state.isStale
-    );
-
-    if (clientState.deviceType === "mobile") {
-      return !hasActiveWebClient;
-    }
-
-    if (clientState.deviceType === "web") {
-      const hasOtherClient = allClientStates.some(
-        (state) => state !== clientState && (state.deviceType === "mobile" || state.deviceType === null)
-      );
-      return !hasOtherClient;
-    }
-
-    return true;
-  }
-
   private broadcastAgentAttention(params: {
     agentId: string;
     provider: AgentProvider;
@@ -732,12 +680,7 @@ export class VoiceAssistantWebSocketServer {
   }): void {
     const clientEntries: Array<{
       ws: WebSocketLike;
-      state: {
-        deviceType: "web" | "mobile" | null;
-        focusedAgentId: string | null;
-        isStale: boolean;
-        appVisible: boolean;
-      };
+      state: ClientAttentionState;
     }> = [];
 
     for (const [ws, connection] of this.sessions) {
@@ -749,19 +692,12 @@ export class VoiceAssistantWebSocketServer {
 
     const allStates = clientEntries.map((e) => e.state);
 
-    const hasActiveWebClient = allStates.some(
-      (state) => state.deviceType === "web" && !state.isStale
-    );
-    const hasActiveMobileForegroundClient = allStates.some(
-      (state) => state.deviceType === "mobile" && state.appVisible && !state.isStale
-    );
-
-    // Push is only a fallback when the user is away from their desktop/web.
+    // Push is only a fallback when the user is away from desktop/web.
     // Also suppress push if they're actively using the mobile app.
-    const shouldSendPush =
-      params.reason !== "error" &&
-      !hasActiveWebClient &&
-      !hasActiveMobileForegroundClient;
+    const shouldSendPush = computeShouldSendPush({
+      reason: params.reason,
+      allClientStates: allStates,
+    });
 
     if (shouldSendPush) {
       const tokens = this.pushTokenStore.getAllTokens();
@@ -789,7 +725,11 @@ export class VoiceAssistantWebSocketServer {
     }
 
     for (const { ws, state } of clientEntries) {
-      const shouldNotify = this.computeShouldNotifyForClient(state, allStates, params.agentId);
+      const shouldNotify = computeShouldNotifyClient({
+        clientState: state,
+        allClientStates: allStates,
+        agentId: params.agentId,
+      });
 
       const message = wrapSessionMessage({
         type: "agent_stream",
