@@ -83,11 +83,11 @@ describe("daemon E2E", () => {
     );
 
     test(
-      "reads file contents",
+      "reads file contents with syntax tokens for supported text",
       async () => {
         const cwd = tmpCwd();
-        const testContent = "This is test file content.\nLine 2.";
-        const testFile = path.join(cwd, "readme.txt");
+        const testContent = "const value = 1;\nconst next = value + 1;";
+        const testFile = path.join(cwd, "readme.ts");
         writeFileSync(testFile, testContent);
 
         // Create agent in the directory
@@ -107,10 +107,12 @@ describe("daemon E2E", () => {
         expect(result.mode).toBe("file");
         expect(result.file).toBeTruthy();
         // Server may return basename or full path
-        expect(result.file!.path).toContain("readme.txt");
+        expect(result.file!.path).toContain("readme.ts");
         expect(result.file!.kind).toBe("text");
         expect(result.file!.content).toBe(testContent);
         expect(result.file!.size).toBe(testContent.length);
+        expect(result.file!.tokens).toBeDefined();
+        expect(result.file!.tokens?.[0]?.length ?? 0).toBeGreaterThan(0);
 
         // Cleanup
         await ctx.client.deleteAgent(agent.id);

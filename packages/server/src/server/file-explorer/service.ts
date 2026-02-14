@@ -1,5 +1,11 @@
 import { promises as fs } from "fs";
 import path from "path";
+import {
+  highlightCode,
+  isLanguageSupported,
+  type HighlightToken,
+} from "../utils/syntax-highlighter.js";
+import { isKnownTextFilename } from "../utils/language-registry.js";
 
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
@@ -33,28 +39,15 @@ export interface FileExplorerFile {
   kind: ExplorerFileKind;
   encoding: ExplorerEncoding;
   content?: string;
+  tokens?: HighlightToken[][];
   mimeType?: string;
   size: number;
   modifiedAt: string;
 }
 
-const TEXT_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".json",
-  ".md",
-  ".txt",
-  ".yml",
-  ".yaml",
-  ".css",
-  ".scss",
-  ".html",
-  ".mjs",
-  ".cjs",
-  ".sh",
-]);
+const PREVIEW_HIGHLIGHT_MAX_BYTES = 200 * 1024;
+const BINARY_SNIFF_MAX_BYTES = 4096;
+const BINARY_CONTROL_CHAR_RATIO_THRESHOLD = 0.3;
 
 const TEXT_MIME_TYPES: Record<string, string> = {
   ".json": "application/json",
@@ -156,17 +149,6 @@ export async function readExplorerFile({
     modifiedAt: stats.mtime.toISOString(),
   };
 
-  if (TEXT_EXTENSIONS.has(ext)) {
-    const content = await fs.readFile(filePath, "utf-8");
-    return {
-      ...basePayload,
-      kind: "text",
-      encoding: "utf-8",
-      content,
-      mimeType: TEXT_MIME_TYPES[ext] ?? DEFAULT_TEXT_MIME_TYPE,
-    };
-  }
-
   if (ext in IMAGE_MIME_TYPES) {
     const buffer = await fs.readFile(filePath);
     return {
@@ -178,12 +160,23 @@ export async function readExplorerFile({
     };
   }
 
-  return {
-    ...basePayload,
-    kind: "binary",
-    encoding: "none",
-    mimeType: "application/octet-stream",
-  };
+  if (isKnownTextFilename(filePath)) {
+    const content = await fs.readFile(filePath, "utf-8");
+    return buildTextFilePayload({ ...basePayload, ext, content });
+  }
+
+  const sample = await readFileHead(filePath, BINARY_SNIFF_MAX_BYTES);
+  if (isLikelyBinary(sample)) {
+    return {
+      ...basePayload,
+      kind: "binary",
+      encoding: "none",
+      mimeType: "application/octet-stream",
+    };
+  }
+
+  const content = await fs.readFile(filePath, "utf-8");
+  return buildTextFilePayload({ ...basePayload, ext, content });
 }
 
 export async function getDownloadableFileInfo({
@@ -204,7 +197,7 @@ export async function getDownloadableFileInfo({
   }
 
   const ext = path.extname(filePath).toLowerCase();
-  const mimeType = TEXT_EXTENSIONS.has(ext)
+  const mimeType = isKnownTextFilename(filePath)
     ? TEXT_MIME_TYPES[ext] ?? DEFAULT_TEXT_MIME_TYPE
     : ext in IMAGE_MIME_TYPES
       ? IMAGE_MIME_TYPES[ext]
@@ -269,4 +262,65 @@ function normalizeRelativePath({
   const normalizedTarget = path.resolve(targetPath);
   const relative = path.relative(normalizedRoot, normalizedTarget);
   return relative === "" ? "." : relative.split(path.sep).join("/");
+}
+
+async function readFileHead(filePath: string, maxBytes: number): Promise<Buffer> {
+  const handle = await fs.open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(maxBytes);
+    const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+function isLikelyBinary(sample: Buffer): boolean {
+  if (sample.length === 0) {
+    return false;
+  }
+
+  let controlBytes = 0;
+  for (const value of sample.values()) {
+    if (value === 0) {
+      return true;
+    }
+
+    const isPrintableAscii = value >= 32 && value <= 126;
+    const isCommonWhitespace = value === 9 || value === 10 || value === 13;
+    const isExtendedUtf8Byte = value >= 128;
+    if (!isPrintableAscii && !isCommonWhitespace && !isExtendedUtf8Byte) {
+      controlBytes += 1;
+    }
+  }
+
+  return controlBytes / sample.length > BINARY_CONTROL_CHAR_RATIO_THRESHOLD;
+}
+
+function buildTextFilePayload({
+  path: filePath,
+  size,
+  modifiedAt,
+  ext,
+  content,
+}: {
+  path: string;
+  size: number;
+  modifiedAt: string;
+  ext: string;
+  content: string;
+}): FileExplorerFile {
+  const shouldTokenize =
+    size <= PREVIEW_HIGHLIGHT_MAX_BYTES && isLanguageSupported(filePath);
+
+  return {
+    path: filePath,
+    kind: "text",
+    encoding: "utf-8",
+    content,
+    tokens: shouldTokenize ? highlightCode(content, filePath) : undefined,
+    mimeType: TEXT_MIME_TYPES[ext] ?? DEFAULT_TEXT_MIME_TYPE,
+    size,
+    modifiedAt,
+  };
 }

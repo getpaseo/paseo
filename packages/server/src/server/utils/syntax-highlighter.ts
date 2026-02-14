@@ -1,35 +1,15 @@
-import { highlightTree, tagHighlighter, tags } from "@lezer/highlight";
-import { parser as jsParser } from "@lezer/javascript";
-import { parser as jsonParser } from "@lezer/json";
-import { parser as cssParser } from "@lezer/css";
-import { parser as htmlParser } from "@lezer/html";
-import { parser as pythonParser } from "@lezer/python";
-import { parser as markdownParser } from "@lezer/markdown";
-import type { Parser } from "@lezer/common";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import Parser from "tree-sitter";
+import {
+  getSupportedLanguageExtensions,
+  isGrammarBackedLanguage,
+  resolveLanguageEntry,
+  type LanguageRegistryEntry,
+} from "./language-registry.js";
 
-// Map file extensions to parsers
-const parsersByExtension: Record<string, Parser> = {
-  // JavaScript/TypeScript
-  js: jsParser,
-  jsx: jsParser.configure({ dialect: "jsx" }),
-  ts: jsParser.configure({ dialect: "ts" }),
-  tsx: jsParser.configure({ dialect: "ts jsx" }),
-  mjs: jsParser,
-  cjs: jsParser,
-  // JSON
-  json: jsonParser,
-  // CSS
-  css: cssParser,
-  scss: cssParser,
-  // HTML
-  html: htmlParser,
-  htm: htmlParser,
-  // Python
-  py: pythonParser,
-  // Markdown
-  md: markdownParser,
-  mdx: markdownParser,
-};
+const require = createRequire(import.meta.url);
 
 export type HighlightStyle =
   | "keyword"
@@ -54,132 +34,436 @@ export type HighlightStyle =
   | "link";
 
 export interface HighlightToken {
-  text: string;
-  style: HighlightStyle | null;
+  start: number;
+  end: number;
+  style: HighlightStyle;
 }
 
-// Create highlighter using tagHighlighter
-const highlighter = tagHighlighter([
-  { tag: tags.keyword, class: "keyword" },
-  { tag: tags.controlKeyword, class: "keyword" },
-  { tag: tags.operatorKeyword, class: "keyword" },
-  { tag: tags.definitionKeyword, class: "keyword" },
-  { tag: tags.moduleKeyword, class: "keyword" },
-  { tag: tags.comment, class: "comment" },
-  { tag: tags.lineComment, class: "comment" },
-  { tag: tags.blockComment, class: "comment" },
-  { tag: tags.docComment, class: "comment" },
-  { tag: tags.string, class: "string" },
-  { tag: tags.special(tags.string), class: "string" },
-  { tag: tags.number, class: "number" },
-  { tag: tags.integer, class: "number" },
-  { tag: tags.float, class: "number" },
-  { tag: tags.bool, class: "literal" },
-  { tag: tags.null, class: "literal" },
-  { tag: tags.function(tags.variableName), class: "function" },
-  { tag: tags.function(tags.propertyName), class: "function" },
-  { tag: tags.definition(tags.variableName), class: "definition" },
-  { tag: tags.definition(tags.propertyName), class: "definition" },
-  { tag: tags.definition(tags.function(tags.variableName)), class: "definition" },
-  { tag: tags.className, class: "class" },
-  { tag: tags.definition(tags.className), class: "class" },
-  { tag: tags.typeName, class: "type" },
-  { tag: tags.tagName, class: "tag" },
-  { tag: tags.attributeName, class: "attribute" },
-  { tag: tags.attributeValue, class: "string" },
-  { tag: tags.propertyName, class: "property" },
-  { tag: tags.variableName, class: "variable" },
-  { tag: tags.local(tags.variableName), class: "variable" },
-  { tag: tags.special(tags.variableName), class: "variable" },
-  { tag: tags.operator, class: "operator" },
-  { tag: tags.punctuation, class: "punctuation" },
-  { tag: tags.bracket, class: "punctuation" },
-  { tag: tags.separator, class: "punctuation" },
-  { tag: tags.regexp, class: "regexp" },
-  { tag: tags.escape, class: "escape" },
-  { tag: tags.meta, class: "meta" },
-  { tag: tags.heading, class: "heading" },
-  { tag: tags.link, class: "link" },
-  { tag: tags.url, class: "link" },
+type StyleMapLine = Array<HighlightStyle | null>;
+
+interface LoadedLanguageRuntime {
+  parser: Parser;
+  query: Parser.Query | null;
+}
+
+const CAPTURE_STYLE_EXACT = new Map<string, HighlightStyle>([
+  ["keyword", "keyword"],
+  ["comment", "comment"],
+  ["string", "string"],
+  ["number", "number"],
+  ["float", "number"],
+  ["integer", "number"],
+  ["constant", "literal"],
+  ["boolean", "literal"],
+  ["function", "function"],
+  ["method", "function"],
+  ["constructor", "class"],
+  ["function_definition", "definition"],
+  ["class", "class"],
+  ["type", "type"],
+  ["tag", "tag"],
+  ["attribute", "attribute"],
+  ["property", "property"],
+  ["variable", "variable"],
+  ["operator", "operator"],
+  ["punctuation", "punctuation"],
+  ["escape", "escape"],
+  ["regex", "regexp"],
+  ["regexp", "regexp"],
+  ["module", "meta"],
+  ["include", "meta"],
+  ["namespace", "meta"],
+  ["heading", "heading"],
+  ["title", "heading"],
+  ["link", "link"],
+  ["uri", "link"],
 ]);
 
-function getParserForFile(filename: string): Parser | null {
-  const ext = filename.split(".").pop()?.toLowerCase();
-  if (!ext) return null;
-  return parsersByExtension[ext] ?? null;
+const CAPTURE_STYLE_PREFIX: Array<[string, HighlightStyle]> = [
+  ["keyword", "keyword"],
+  ["comment", "comment"],
+  ["string", "string"],
+  ["number", "number"],
+  ["float", "number"],
+  ["integer", "number"],
+  ["constant", "literal"],
+  ["boolean", "literal"],
+  ["function", "function"],
+  ["method", "function"],
+  ["constructor", "class"],
+  ["class", "class"],
+  ["type", "type"],
+  ["tag", "tag"],
+  ["attribute", "attribute"],
+  ["property", "property"],
+  ["variable", "variable"],
+  ["parameter", "variable"],
+  ["operator", "operator"],
+  ["punctuation", "punctuation"],
+  ["escape", "escape"],
+  ["regex", "regexp"],
+  ["regexp", "regexp"],
+  ["module", "meta"],
+  ["namespace", "meta"],
+  ["include", "meta"],
+  ["heading", "heading"],
+  ["title", "heading"],
+  ["link", "link"],
+  ["uri", "link"],
+];
+
+const runtimeCache = new Map<string, LoadedLanguageRuntime | null>();
+
+function getParserRuntimeForFile(filename: string): LoadedLanguageRuntime | null {
+  const entry = resolveLanguageEntry(filename);
+  if (!entry?.grammarPackage) {
+    return null;
+  }
+
+  const existing = runtimeCache.get(entry.id);
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const loaded = loadLanguageRuntime(entry);
+  runtimeCache.set(entry.id, loaded);
+  return loaded;
 }
 
-export function highlightCode(code: string, filename: string): HighlightToken[][] {
-  const parser = getParserForFile(filename);
-
-  if (!parser) {
-    // No parser available, return unhighlighted lines
-    return code.split("\n").map((line) => [{ text: line, style: null }]);
+function loadLanguageRuntime(
+  entry: LanguageRegistryEntry
+): LoadedLanguageRuntime | null {
+  if (!entry.grammarPackage) {
+    return null;
   }
 
-  const tree = parser.parse(code);
-  const lines = code.split("\n");
-  const result: HighlightToken[][] = [];
-
-  // Initialize with unhighlighted content
-  for (let i = 0; i < lines.length; i++) {
-    result.push([]);
-  }
-
-  // Build a map of character positions to styles
-  const styleMap: Array<HighlightStyle | null> = new Array(code.length).fill(null);
-
-  // Use highlightTree to populate the style map
-  highlightTree(tree, highlighter, (from, to, classes) => {
-    for (let i = from; i < to && i < styleMap.length; i++) {
-      styleMap[i] = classes as HighlightStyle;
+  try {
+    const grammarModule = require(entry.grammarPackage) as unknown;
+    const language = resolveLanguageExport({
+      grammarModule,
+      grammarExport: entry.grammarExport,
+    });
+    if (!language) {
+      return null;
     }
-  });
 
-  // Convert style map to tokens per line
-  let pos = 0;
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
+    const parser = new Parser();
+    parser.setLanguage(language);
 
-    if (line.length === 0) {
-      result[lineIndex].push({ text: "", style: null });
-      pos++; // skip newline
+    const querySource = loadHighlightsQuerySource(entry);
+    const query = querySource ? new Parser.Query(language, querySource) : null;
+
+    return { parser, query };
+  } catch {
+    return null;
+  }
+}
+
+function resolveLanguageExport({
+  grammarModule,
+  grammarExport,
+}: {
+  grammarModule: unknown;
+  grammarExport?: string;
+}): unknown {
+  if (grammarExport) {
+    const named = (grammarModule as Record<string, unknown> | undefined)?.[
+      grammarExport
+    ];
+    if (named) {
+      return named;
+    }
+  }
+
+  const defaultExport = (grammarModule as { default?: unknown } | undefined)
+    ?.default;
+  if (defaultExport) {
+    return defaultExport;
+  }
+
+  if (grammarModule) {
+    return grammarModule;
+  }
+
+  return null;
+}
+
+function loadHighlightsQuerySource(entry: LanguageRegistryEntry): string | null {
+  if (!entry.grammarPackage) {
+    return null;
+  }
+
+  const packageJsonPath = require.resolve(
+    `${entry.grammarPackage}/package.json`
+  );
+  const packageDir = path.dirname(packageJsonPath);
+  const queryReferences = getHighlightQueryReferences(entry, packageDir);
+  const sources: string[] = [];
+
+  for (const reference of queryReferences) {
+    const queryPath = resolveQueryReferencePath(reference, packageDir);
+    if (!queryPath || !existsSync(queryPath)) {
       continue;
     }
 
-    let currentToken: HighlightToken = { text: "", style: styleMap[pos] };
-
-    for (let i = 0; i < line.length; i++) {
-      const charStyle = styleMap[pos + i];
-      if (charStyle === currentToken.style) {
-        currentToken.text += line[i];
-      } else {
-        if (currentToken.text) {
-          result[lineIndex].push(currentToken);
-        }
-        currentToken = { text: line[i], style: charStyle };
-      }
+    const source = readFileSync(queryPath, "utf-8");
+    if (source.trim().length > 0) {
+      sources.push(source);
     }
-
-    if (currentToken.text) {
-      result[lineIndex].push(currentToken);
-    }
-
-    pos += line.length + 1; // +1 for newline
   }
 
-  return result;
+  if (sources.length === 0) {
+    return null;
+  }
+
+  return sources.join("\n");
+}
+
+function getHighlightQueryReferences(
+  entry: LanguageRegistryEntry,
+  packageDir: string
+): string[] {
+  const fromTreeSitterJson = getHighlightQueriesFromTreeSitterJson(
+    entry,
+    packageDir
+  );
+  if (fromTreeSitterJson.length > 0) {
+    return fromTreeSitterJson;
+  }
+  return [entry.highlightsQueryPath ?? "queries/highlights.scm"];
+}
+
+function getHighlightQueriesFromTreeSitterJson(
+  entry: LanguageRegistryEntry,
+  packageDir: string
+): string[] {
+  const treeSitterMetadataPath = path.join(packageDir, "tree-sitter.json");
+  if (!existsSync(treeSitterMetadataPath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(treeSitterMetadataPath, "utf-8")) as {
+      grammars?: Array<{ name?: string; highlights?: string | string[] }>;
+    };
+    const grammars = Array.isArray(parsed.grammars) ? parsed.grammars : [];
+    if (grammars.length === 0) {
+      return [];
+    }
+
+    const targetGrammarName =
+      entry.grammarName ?? entry.grammarExport ?? entry.id;
+    const grammar =
+      grammars.find((candidate) => candidate.name === targetGrammarName) ??
+      grammars[0];
+
+    const highlights = grammar?.highlights;
+    if (typeof highlights === "string") {
+      return [highlights];
+    }
+    return Array.isArray(highlights) ? highlights : [];
+  } catch {
+    return [];
+  }
+}
+
+function resolveQueryReferencePath(
+  reference: string,
+  packageDir: string
+): string | null {
+  if (path.isAbsolute(reference)) {
+    return reference;
+  }
+
+  const localPath = path.join(packageDir, reference);
+  if (existsSync(localPath)) {
+    return localPath;
+  }
+
+  if (!reference.startsWith("node_modules/")) {
+    return null;
+  }
+
+  const withoutPrefix = reference.slice("node_modules/".length);
+  const segments = withoutPrefix.split("/");
+  if (segments.length === 0) {
+    return null;
+  }
+
+  const packageName =
+    segments[0].startsWith("@") && segments.length >= 2
+      ? `${segments[0]}/${segments[1]}`
+      : segments[0];
+  const packagePathStart = packageName.startsWith("@") ? 2 : 1;
+  const packageRelativePath = segments.slice(packagePathStart).join("/");
+
+  try {
+    const dependencyPackageJson = require.resolve(`${packageName}/package.json`);
+    const dependencyDir = path.dirname(dependencyPackageJson);
+    return path.join(dependencyDir, packageRelativePath);
+  } catch {
+    return null;
+  }
+}
+
+function mapCaptureNameToStyle(captureName: string): HighlightStyle | null {
+  let candidate = captureName;
+  while (candidate.length > 0) {
+    const exact = CAPTURE_STYLE_EXACT.get(candidate);
+    if (exact) {
+      return exact;
+    }
+    const separator = candidate.lastIndexOf(".");
+    if (separator === -1) {
+      break;
+    }
+    candidate = candidate.slice(0, separator);
+  }
+
+  for (const [prefix, style] of CAPTURE_STYLE_PREFIX) {
+    if (captureName === prefix || captureName.startsWith(`${prefix}.`)) {
+      return style;
+    }
+  }
+
+  return null;
+}
+
+function byteColumnToCodeUnitIndex(line: string, byteColumn: number): number {
+  if (byteColumn <= 0 || line.length === 0) {
+    return 0;
+  }
+
+  let currentBytes = 0;
+  let currentCodeUnits = 0;
+
+  for (const character of line) {
+    const characterBytes = Buffer.byteLength(character);
+    const nextBytes = currentBytes + characterBytes;
+    if (nextBytes > byteColumn) {
+      break;
+    }
+    currentBytes = nextBytes;
+    currentCodeUnits += character.length;
+  }
+
+  return Math.min(currentCodeUnits, line.length);
+}
+
+function applyCaptureToStyleMap({
+  lineStyles,
+  lines,
+  style,
+  start,
+  end,
+}: {
+  lineStyles: StyleMapLine[];
+  lines: string[];
+  style: HighlightStyle;
+  start: { row: number; column: number };
+  end: { row: number; column: number };
+}): void {
+  const maxLineIndex = lines.length - 1;
+  if (maxLineIndex < 0) {
+    return;
+  }
+
+  const startRow = Math.max(0, Math.min(start.row, maxLineIndex));
+  const endRow = Math.max(0, Math.min(end.row, maxLineIndex));
+  if (endRow < startRow) {
+    return;
+  }
+
+  for (let row = startRow; row <= endRow; row++) {
+    const line = lines[row] ?? "";
+    if (line.length === 0) {
+      continue;
+    }
+
+    const lineByteLength = Buffer.byteLength(line);
+    const startByte = row === startRow ? start.column : 0;
+    const endByte = row === endRow ? end.column : lineByteLength;
+    if (endByte <= startByte) {
+      continue;
+    }
+
+    const startIndex = byteColumnToCodeUnitIndex(line, startByte);
+    const endIndex = byteColumnToCodeUnitIndex(line, endByte);
+    if (endIndex <= startIndex) {
+      continue;
+    }
+
+    const rowStyles = lineStyles[row];
+    for (let i = startIndex; i < endIndex; i++) {
+      rowStyles[i] = style;
+    }
+  }
+}
+
+function buildLineTokens(styles: StyleMapLine): HighlightToken[] {
+  const tokens: HighlightToken[] = [];
+  let currentStyle: HighlightStyle | null = null;
+  let tokenStart = 0;
+
+  for (let i = 0; i <= styles.length; i++) {
+    const style = i < styles.length ? styles[i] : null;
+    if (style === currentStyle) {
+      continue;
+    }
+
+    if (currentStyle !== null && i > tokenStart) {
+      tokens.push({ start: tokenStart, end: i, style: currentStyle });
+    }
+
+    currentStyle = style;
+    tokenStart = i;
+  }
+
+  return tokens;
+}
+
+export function highlightCode(code: string, filename: string): HighlightToken[][] {
+  const lines = code.split("\n");
+  const runtime = getParserRuntimeForFile(filename);
+  if (!runtime?.query) {
+    return lines.map(() => []);
+  }
+
+  const tree = runtime.parser.parse(code);
+  const lineStyles: StyleMapLine[] = lines.map((line) =>
+    new Array<HighlightStyle | null>(line.length).fill(null)
+  );
+  const captures = runtime.query.captures(tree.rootNode);
+
+  for (const capture of captures) {
+    const style = mapCaptureNameToStyle(capture.name);
+    if (!style) {
+      continue;
+    }
+
+    applyCaptureToStyleMap({
+      lineStyles,
+      lines,
+      style,
+      start: capture.node.startPosition,
+      end: capture.node.endPosition,
+    });
+  }
+
+  return lineStyles.map(buildLineTokens);
 }
 
 export function highlightLine(line: string, filename: string): HighlightToken[] {
   const result = highlightCode(line, filename);
-  return result[0] ?? [{ text: line, style: null }];
+  return result[0] ?? [];
 }
 
 export function getSupportedExtensions(): string[] {
-  return Object.keys(parsersByExtension);
+  return getSupportedLanguageExtensions().map((extension) =>
+    extension.startsWith(".") ? extension.slice(1) : extension
+  );
 }
 
 export function isLanguageSupported(filename: string): boolean {
-  return getParserForFile(filename) !== null;
+  return isGrammarBackedLanguage(filename);
 }
