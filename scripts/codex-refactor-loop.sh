@@ -13,8 +13,11 @@ CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-medium}"
 read -r -d '' PROMPT <<'EOF' || true
 1. load the refactor skill and read its SKILL.md fully from top to bottom (do not skim or partially read)
 2. check previous commits to see what other agents have worked on
-3. identify and work on a single improvement based on the refactor skill (can be a file system reorg, file splitting, refactor, add a new test, harden a test, deflakify a test, fix a test, improve control flow, remove unused code)
+3. identify and work on a single large improvement based on the refactor skill (can be a file system reorg, file splitting, refactor, add a new test, harden a test, deflakify a test, fix a test, improve control flow, remove unused code)
 4. commit with a description of what was done, your reasoning, and document accomplishments or challenges for the next agent
+
+guidelines:
+- focus on the server and app code, it's the most hairy
 EOF
 
 iteration=1
