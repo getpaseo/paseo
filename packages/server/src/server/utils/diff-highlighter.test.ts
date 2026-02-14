@@ -4,6 +4,7 @@ import {
   reconstructNewFile,
   reconstructOldFile,
   highlightDiffFromHunks,
+  type DiffLine,
   type ParsedDiffFile,
 } from "./diff-highlighter.js";
 
@@ -56,6 +57,12 @@ index 1234567..0000000
 -const legacy = true;
 -export { legacy };
 `;
+
+function findTokenByText(line: DiffLine, tokenText: string) {
+  return line.tokens?.find(
+    (token) => line.content.slice(token.start, token.end) === tokenText
+  );
+}
 
 describe("parseDiff", () => {
   it("parses a simple diff with one hunk", () => {
@@ -189,12 +196,12 @@ describe("highlightDiffFromHunks", () => {
     expect(constLine.tokens!.length).toBeGreaterThan(0);
 
     // Should have a "keyword" token for "const"
-    const constToken = constLine.tokens!.find((t) => t.text === "const");
+    const constToken = findTokenByText(constLine, "const");
     expect(constToken).toBeDefined();
     expect(constToken!.style).toBe("keyword");
 
     // Should have a "number" token for "1"
-    const numberToken = constLine.tokens!.find((t) => t.text === "1");
+    const numberToken = findTokenByText(constLine, "1");
     expect(numberToken).toBeDefined();
     expect(numberToken!.style).toBe("number");
   });
@@ -209,7 +216,7 @@ describe("highlightDiffFromHunks", () => {
       (l) => l.type === "remove" && l.content.includes("bar")
     );
     expect(removedLine?.tokens).toBeDefined();
-    const removedNumber = removedLine!.tokens!.find((t) => t.text === "2");
+    const removedNumber = findTokenByText(removedLine!, "2");
     expect(removedNumber?.style).toBe("number");
 
     // Added line: "const bar = 3;"
@@ -217,7 +224,7 @@ describe("highlightDiffFromHunks", () => {
       (l) => l.type === "add" && l.content.includes("bar")
     );
     expect(addedLine?.tokens).toBeDefined();
-    const addedNumber = addedLine!.tokens!.find((t) => t.text === "3");
+    const addedNumber = findTokenByText(addedLine!, "3");
     expect(addedNumber?.style).toBe("number");
   });
 

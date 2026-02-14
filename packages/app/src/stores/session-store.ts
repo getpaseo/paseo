@@ -106,6 +106,11 @@ export interface Agent {
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
 export type ExplorerEncoding = "utf-8" | "base64" | "none";
+export interface HighlightTokenSpan {
+  start: number;
+  end: number;
+  style: string;
+}
 
 export interface ExplorerEntry {
   name: string;
@@ -120,6 +125,7 @@ export interface ExplorerFile {
   kind: ExplorerFileKind;
   encoding: ExplorerEncoding;
   content?: string;
+  tokens?: HighlightTokenSpan[][];
   mimeType?: string;
   size: number;
   modifiedAt: string;

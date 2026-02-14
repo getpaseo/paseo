@@ -100,9 +100,8 @@ const DIFF_FILE_LOG_TOKEN_THRESHOLD = 5000;
 type HighlightStyle = NonNullable<HighlightToken["style"]>;
 
 interface HighlightedTextProps {
+  content: string;
   tokens: HighlightToken[];
-  baseStyle: HighlightStyle | null;
-  lineType: "add" | "remove" | "context" | "header";
 }
 
 // GitHub syntax highlight colors for dark/light modes
@@ -152,7 +151,7 @@ const lightHighlightColors: Record<HighlightStyle, string> = {
   link: "#0a3069",
 };
 
-function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
+function HighlightedText({ content, tokens }: HighlightedTextProps) {
   const { theme } = useUnistyles();
   const isDark = theme.colors.surface0 === "#18181c";
 
@@ -164,11 +163,55 @@ function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
     return colors[style] ?? baseColor;
   };
 
+  const segments = useMemo(() => {
+    if (tokens.length === 0) {
+      return content.length > 0 ? [{ text: content, style: null }] : [];
+    }
+
+    const normalized = [...tokens]
+      .sort((a, b) => a.start - b.start || a.end - b.end)
+      .map((token) => ({
+        start: Math.max(0, Math.min(token.start, content.length)),
+        end: Math.max(0, Math.min(token.end, content.length)),
+        style: token.style,
+      }));
+
+    const resolved: Array<{ text: string; style: HighlightStyle | null }> = [];
+    let cursor = 0;
+
+    for (const token of normalized) {
+      const start = Math.max(cursor, token.start);
+      const end = Math.max(start, token.end);
+      if (start > cursor) {
+        resolved.push({
+          text: content.slice(cursor, start),
+          style: null,
+        });
+      }
+      if (end > start) {
+        resolved.push({
+          text: content.slice(start, end),
+          style: token.style,
+        });
+      }
+      cursor = Math.max(cursor, end);
+    }
+
+    if (cursor < content.length) {
+      resolved.push({
+        text: content.slice(cursor),
+        style: null,
+      });
+    }
+
+    return resolved.filter((segment) => segment.text.length > 0);
+  }, [content, tokens]);
+
   return (
     <Text style={styles.diffLineText}>
-      {tokens.map((token, index) => (
-        <Text key={index} style={{ color: getTokenColor(token.style) }}>
-          {token.text}
+      {(segments.length > 0 ? segments : [{ text: content || " ", style: null }]).map((segment, index) => (
+        <Text key={index} style={{ color: getTokenColor(segment.style) }}>
+          {segment.text}
         </Text>
       ))}
     </Text>
@@ -197,9 +240,8 @@ function DiffLineView({ line }: { line: DiffLine }) {
     >
       {line.tokens && line.type !== "header" ? (
         <HighlightedText
+          content={line.content}
           tokens={line.tokens}
-          baseStyle={null}
-          lineType={line.type}
         />
       ) : (
         <Text

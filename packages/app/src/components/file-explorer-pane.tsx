@@ -71,6 +71,53 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
 ];
 
 const INDENT_PER_LEVEL = 12;
+const PREVIEW_DARK_HIGHLIGHT_COLORS: Record<string, string> = {
+  keyword: "#ff7b72",
+  comment: "#8b949e",
+  string: "#a5d6ff",
+  number: "#79c0ff",
+  literal: "#79c0ff",
+  function: "#d2a8ff",
+  definition: "#d2a8ff",
+  class: "#ffa657",
+  type: "#ff7b72",
+  tag: "#7ee787",
+  attribute: "#79c0ff",
+  property: "#79c0ff",
+  variable: "#c9d1d9",
+  operator: "#79c0ff",
+  punctuation: "#c9d1d9",
+  regexp: "#a5d6ff",
+  escape: "#79c0ff",
+  meta: "#8b949e",
+  heading: "#79c0ff",
+  link: "#a5d6ff",
+};
+
+const PREVIEW_LIGHT_HIGHLIGHT_COLORS: Record<string, string> = {
+  keyword: "#cf222e",
+  comment: "#6e7781",
+  string: "#0a3069",
+  number: "#0550ae",
+  literal: "#0550ae",
+  function: "#8250df",
+  definition: "#8250df",
+  class: "#953800",
+  type: "#cf222e",
+  tag: "#116329",
+  attribute: "#0550ae",
+  property: "#0550ae",
+  variable: "#24292f",
+  operator: "#0550ae",
+  punctuation: "#24292f",
+  regexp: "#0a3069",
+  escape: "#0550ae",
+  meta: "#6e7781",
+  heading: "#0550ae",
+  link: "#0a3069",
+};
+
+type PreviewToken = NonNullable<NonNullable<ExplorerFile["tokens"]>[number]>[number];
 
 interface FileExplorerPaneProps {
   serverId: string;
@@ -818,7 +865,7 @@ function FilePreviewBody({
             showsHorizontalScrollIndicator
             contentContainerStyle={styles.previewCodeScrollContent}
           >
-            <Text style={styles.codeText}>{preview.content}</Text>
+            <PreviewCodeText content={preview.content ?? ""} tokens={preview.tokens} />
           </ScrollView>
         </BottomSheetScrollView>
       );
@@ -831,7 +878,7 @@ function FilePreviewBody({
           showsHorizontalScrollIndicator
           contentContainerStyle={styles.previewCodeScrollContent}
         >
-          <Text style={styles.codeText}>{preview.content}</Text>
+          <PreviewCodeText content={preview.content ?? ""} tokens={preview.tokens} />
         </RNScrollView>
       </RNScrollView>
     );
@@ -870,6 +917,107 @@ function FilePreviewBody({
       <Text style={styles.binaryMetaText}>{formatFileSize({ size: preview.size })}</Text>
     </View>
   );
+}
+
+function PreviewCodeText({
+  content,
+  tokens,
+}: {
+  content: string;
+  tokens?: ExplorerFile["tokens"];
+}) {
+  const { theme } = useUnistyles();
+  const isDark = theme.colors.surface0 === "#18181c";
+  const lines = useMemo(() => content.split("\n"), [content]);
+
+  const getTokenColor = useCallback(
+    (style: string | null): string => {
+      const baseColor = isDark ? "#c9d1d9" : "#24292f";
+      if (!style) {
+        return baseColor;
+      }
+      const palette = isDark
+        ? PREVIEW_DARK_HIGHLIGHT_COLORS
+        : PREVIEW_LIGHT_HIGHLIGHT_COLORS;
+      return palette[style] ?? baseColor;
+    },
+    [isDark]
+  );
+
+  return (
+    <Text style={styles.codeText}>
+      {lines.map((line, lineIndex) => {
+        const lineTokens = tokens?.[lineIndex] ?? [];
+        const segments = buildPreviewSegments(line, lineTokens);
+        const renderedSegments =
+          segments.length > 0 ? segments : [{ text: line, style: null }];
+
+        return (
+          <Text key={lineIndex}>
+            {renderedSegments.map((segment, segmentIndex) => (
+              <Text
+                key={`${lineIndex}-${segmentIndex}`}
+                style={{ color: getTokenColor(segment.style) }}
+              >
+                {segment.text}
+              </Text>
+            ))}
+            {lineIndex < lines.length - 1 ? "\n" : ""}
+          </Text>
+        );
+      })}
+    </Text>
+  );
+}
+
+function buildPreviewSegments(
+  line: string,
+  lineTokens: PreviewToken[]
+): Array<{ text: string; style: string | null }> {
+  if (lineTokens.length === 0) {
+    return line.length > 0 ? [{ text: line, style: null }] : [];
+  }
+
+  const normalized = [...lineTokens]
+    .sort((a, b) => a.start - b.start || a.end - b.end)
+    .map((token) => ({
+      start: Math.max(0, Math.min(token.start, line.length)),
+      end: Math.max(0, Math.min(token.end, line.length)),
+      style: token.style,
+    }));
+
+  const segments: Array<{ text: string; style: string | null }> = [];
+  let cursor = 0;
+
+  for (const token of normalized) {
+    const start = Math.max(cursor, token.start);
+    const end = Math.max(start, token.end);
+
+    if (start > cursor) {
+      segments.push({
+        text: line.slice(cursor, start),
+        style: null,
+      });
+    }
+
+    if (end > start) {
+      segments.push({
+        text: line.slice(start, end),
+        style: token.style,
+      });
+    }
+
+    cursor = Math.max(cursor, end);
+  }
+
+  if (cursor < line.length) {
+    segments.push({
+      text: line.slice(cursor),
+      style: null,
+    });
+  }
+
+  return segments.filter((segment) => segment.text.length > 0);
 }
 
 function formatFileSize({ size }: { size: number }): string {

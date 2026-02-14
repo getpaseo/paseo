@@ -816,11 +816,11 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   requestId: z.string(),
 });
 
-// Highlighted diff token schema
-// Note: style can be a compound class name (e.g., "heading meta") from the syntax highlighter
+// Highlighted diff token schema (compact spans)
 const HighlightTokenSchema = z.object({
-  text: z.string(),
-  style: z.string().nullable(),
+  start: z.number().int().nonnegative(),
+  end: z.number().int().nonnegative(),
+  style: z.string(),
 });
 
 const DiffLineSchema = z.object({
@@ -860,6 +860,7 @@ const FileExplorerFileSchema = z.object({
   kind: z.enum(["text", "image", "binary"]),
   encoding: z.enum(["utf-8", "base64", "none"]),
   content: z.string().optional(),
+  tokens: z.array(z.array(HighlightTokenSchema)).optional(),
   mimeType: z.string().optional(),
   size: z.number(),
   modifiedAt: z.string(),
