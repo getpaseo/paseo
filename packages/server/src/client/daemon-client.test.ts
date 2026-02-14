@@ -347,6 +347,68 @@ describe("DaemonClient", () => {
     });
   });
 
+  test("requests checkout merge from base via RPC", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.checkoutMergeFromBase(
+      "/tmp/project",
+      { baseRef: "main", requireCleanTarget: true },
+      "req-merge-from-base"
+    );
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "checkout_merge_from_base_request";
+        cwd: string;
+        baseRef?: string;
+        requireCleanTarget?: boolean;
+        requestId: string;
+      };
+    };
+    expect(request.message.type).toBe("checkout_merge_from_base_request");
+    expect(request.message.cwd).toBe("/tmp/project");
+    expect(request.message.baseRef).toBe("main");
+    expect(request.message.requireCleanTarget).toBe(true);
+    expect(request.message.requestId).toBe("req-merge-from-base");
+
+    mock.triggerMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "checkout_merge_from_base_response",
+          payload: {
+            cwd: "/tmp/project",
+            requestId: "req-merge-from-base",
+            success: true,
+            error: null,
+          },
+        },
+      })
+    );
+
+    await expect(promise).resolves.toEqual({
+      cwd: "/tmp/project",
+      requestId: "req-merge-from-base",
+      success: true,
+      error: null,
+    });
+  });
+
   test("resubscribes checkout diff streams after reconnect", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();

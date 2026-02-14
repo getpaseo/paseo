@@ -871,6 +871,33 @@ export class DaemonClient {
     });
   }
 
+  private sendCorrelatedSessionRequest<
+    TResponseType extends CorrelatedResponseType,
+    TResult = CorrelatedResponsePayload<TResponseType>,
+  >(
+    params: {
+      requestId?: string;
+      message: { type: SessionInboundMessage["type"] } & Record<string, unknown>;
+      responseType: TResponseType;
+      timeout: number;
+      selectPayload?: (payload: CorrelatedResponsePayload<TResponseType>) => TResult | null;
+    }
+  ): Promise<TResult> {
+    const resolvedRequestId = this.createRequestId(params.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      ...params.message,
+      requestId: resolvedRequestId,
+    });
+    return this.sendCorrelatedRequest({
+      requestId: resolvedRequestId,
+      message,
+      responseType: params.responseType,
+      timeout: params.timeout,
+      options: { skipQueue: true },
+      ...(params.selectPayload ? { selectPayload: params.selectPayload } : {}),
+    });
+  }
+
   private sendSessionMessageStrict(message: SessionInboundMessage): void {
     if (!this.transport || this.connectionState.status !== "connected") {
       throw new Error("Transport not connected");
@@ -1898,20 +1925,16 @@ export class DaemonClient {
     input: { message?: string; addAll?: boolean },
     requestId?: string
   ): Promise<CheckoutCommitPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "checkout_commit_request",
-      cwd,
-      message: input.message,
-      addAll: input.addAll,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout_commit_request",
+        cwd,
+        message: input.message,
+        addAll: input.addAll,
+      },
       responseType: "checkout_commit_response",
       timeout: 60000,
-      options: { skipQueue: true },
     });
   }
 
@@ -1920,21 +1943,17 @@ export class DaemonClient {
     input: { baseRef?: string; strategy?: "merge" | "squash"; requireCleanTarget?: boolean },
     requestId?: string
   ): Promise<CheckoutMergePayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "checkout_merge_request",
-      cwd,
-      baseRef: input.baseRef,
-      strategy: input.strategy,
-      requireCleanTarget: input.requireCleanTarget,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout_merge_request",
+        cwd,
+        baseRef: input.baseRef,
+        strategy: input.strategy,
+        requireCleanTarget: input.requireCleanTarget,
+      },
       responseType: "checkout_merge_response",
       timeout: 60000,
-      options: { skipQueue: true },
     });
   }
 
@@ -1943,36 +1962,28 @@ export class DaemonClient {
     input: { baseRef?: string; requireCleanTarget?: boolean },
     requestId?: string
   ): Promise<CheckoutMergeFromBasePayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "checkout_merge_from_base_request",
-      cwd,
-      baseRef: input.baseRef,
-      requireCleanTarget: input.requireCleanTarget,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout_merge_from_base_request",
+        cwd,
+        baseRef: input.baseRef,
+        requireCleanTarget: input.requireCleanTarget,
+      },
       responseType: "checkout_merge_from_base_response",
       timeout: 60000,
-      options: { skipQueue: true },
     });
   }
 
   async checkoutPush(cwd: string, requestId?: string): Promise<CheckoutPushPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "checkout_push_request",
-      cwd,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout_push_request",
+        cwd,
+      },
       responseType: "checkout_push_response",
       timeout: 60000,
-      options: { skipQueue: true },
     });
   }
 
@@ -1981,21 +1992,17 @@ export class DaemonClient {
     input: { title?: string; body?: string; baseRef?: string },
     requestId?: string
   ): Promise<CheckoutPrCreatePayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "checkout_pr_create_request",
-      cwd,
-      title: input.title,
-      body: input.body,
-      baseRef: input.baseRef,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout_pr_create_request",
+        cwd,
+        title: input.title,
+        body: input.body,
+        baseRef: input.baseRef,
+      },
       responseType: "checkout_pr_create_response",
       timeout: 60000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2003,18 +2010,14 @@ export class DaemonClient {
     cwd: string,
     requestId?: string
   ): Promise<CheckoutPrStatusPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "checkout_pr_status_request",
-      cwd,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout_pr_status_request",
+        cwd,
+      },
       responseType: "checkout_pr_status_response",
       timeout: 60000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2022,19 +2025,15 @@ export class DaemonClient {
     input: { cwd?: string; repoRoot?: string },
     requestId?: string
   ): Promise<PaseoWorktreeListPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "paseo_worktree_list_request",
-      cwd: input.cwd,
-      repoRoot: input.repoRoot,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "paseo_worktree_list_request",
+        cwd: input.cwd,
+        repoRoot: input.repoRoot,
+      },
       responseType: "paseo_worktree_list_response",
       timeout: 60000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2042,20 +2041,16 @@ export class DaemonClient {
     input: { worktreePath?: string; repoRoot?: string; branchName?: string },
     requestId?: string
   ): Promise<PaseoWorktreeArchivePayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "paseo_worktree_archive_request",
-      worktreePath: input.worktreePath,
-      repoRoot: input.repoRoot,
-      branchName: input.branchName,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "paseo_worktree_archive_request",
+        worktreePath: input.worktreePath,
+        repoRoot: input.repoRoot,
+        branchName: input.branchName,
+      },
       responseType: "paseo_worktree_archive_response",
       timeout: 20000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2063,19 +2058,15 @@ export class DaemonClient {
     options: { cwd: string; branchName: string },
     requestId?: string
   ): Promise<ValidateBranchPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "validate_branch_request",
-      cwd: options.cwd,
-      branchName: options.branchName,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "validate_branch_request",
+        cwd: options.cwd,
+        branchName: options.branchName,
+      },
       responseType: "validate_branch_response",
       timeout: 10000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2083,20 +2074,16 @@ export class DaemonClient {
     options: { cwd: string; query?: string; limit?: number },
     requestId?: string
   ): Promise<BranchSuggestionsPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "branch_suggestions_request",
-      cwd: options.cwd,
-      query: options.query,
-      limit: options.limit,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "branch_suggestions_request",
+        cwd: options.cwd,
+        query: options.query,
+        limit: options.limit,
+      },
       responseType: "branch_suggestions_response",
       timeout: 10000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2110,20 +2097,16 @@ export class DaemonClient {
     mode: "list" | "file" = "list",
     requestId?: string
   ): Promise<FileExplorerPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "file_explorer_request",
-      agentId,
-      path,
-      mode,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "file_explorer_request",
+        agentId,
+        path,
+        mode,
+      },
       responseType: "file_explorer_response",
       timeout: 10000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2132,19 +2115,15 @@ export class DaemonClient {
     path: string,
     requestId?: string
   ): Promise<FileDownloadTokenPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "file_download_token_request",
-      agentId,
-      path,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "file_download_token_request",
+        agentId,
+        path,
+      },
       responseType: "file_download_token_response",
       timeout: 10000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2152,18 +2131,14 @@ export class DaemonClient {
     cwd: string,
     requestId?: string
   ): Promise<ProjectIconResponse["payload"]> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "project_icon_request",
-      cwd,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "project_icon_request",
+        cwd,
+      },
       responseType: "project_icon_response",
       timeout: 10000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2175,69 +2150,53 @@ export class DaemonClient {
     provider: AgentProvider,
     options?: { cwd?: string; requestId?: string }
   ): Promise<ListProviderModelsPayload> {
-    const resolvedRequestId = this.createRequestId(options?.requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "list_provider_models_request",
-      provider,
-      cwd: options?.cwd,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "list_provider_models_request",
+        provider,
+        cwd: options?.cwd,
+      },
       responseType: "list_provider_models_response",
       timeout: 30000,
-      options: { skipQueue: true },
     });
   }
 
   async listAvailableProviders(options?: {
     requestId?: string;
   }): Promise<ListAvailableProvidersPayload> {
-    const resolvedRequestId = this.createRequestId(options?.requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "list_available_providers_request",
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "list_available_providers_request",
+      },
       responseType: "list_available_providers_response",
       timeout: 30000,
-      options: { skipQueue: true },
     });
   }
 
   async listSpeechModels(requestId?: string): Promise<SpeechModelsListPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "speech_models_list_request",
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "speech_models_list_request",
+      },
       responseType: "speech_models_list_response",
       timeout: 30000,
-      options: { skipQueue: true },
     });
   }
 
   async downloadSpeechModels(
     options?: { modelIds?: string[]; requestId?: string }
   ): Promise<SpeechModelsDownloadPayload> {
-    const resolvedRequestId = this.createRequestId(options?.requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "speech_models_download_request",
-      modelIds: options?.modelIds,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "speech_models_download_request",
+        modelIds: options?.modelIds,
+      },
       responseType: "speech_models_download_response",
       timeout: 30 * 60 * 1000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2245,18 +2204,14 @@ export class DaemonClient {
     agentId: string,
     requestId?: string
   ): Promise<ListCommandsPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "list_commands_request",
-      agentId,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "list_commands_request",
+        agentId,
+      },
       responseType: "list_commands_response",
       timeout: 30000,
-      options: { skipQueue: true },
     });
   }
 
@@ -2266,20 +2221,16 @@ export class DaemonClient {
     args?: string,
     requestId?: string
   ): Promise<ExecuteCommandPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "execute_command_request",
-      agentId,
-      commandName,
-      args,
-      requestId: resolvedRequestId,
-    });
-    return this.sendCorrelatedRequest({
-      requestId: resolvedRequestId,
-      message,
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "execute_command_request",
+        agentId,
+        commandName,
+        args,
+      },
       responseType: "execute_command_response",
       timeout: 30000,
-      options: { skipQueue: true },
     });
   }
 
