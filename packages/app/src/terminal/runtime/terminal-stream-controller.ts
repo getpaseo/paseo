@@ -451,18 +451,6 @@ export class TerminalStreamController {
           chunkOffset <= catchUpEndOffset;
 
         if (canSkipReplayGap) {
-          terminalDebugLog({
-            scope: "stream-controller",
-            event: "stream:replay-gap-skip",
-            details: {
-              terminalId: input.terminalId,
-              streamId: input.streamId,
-              expectedOffset,
-              observedOffset: chunkOffset,
-              catchUpEndOffset,
-              replay: Boolean(input.chunk.replay),
-            },
-          });
           activeStream.nextExpectedOffset = chunkOffset;
         } else {
           this.recoverFromStreamGap({
@@ -531,17 +519,6 @@ export class TerminalStreamController {
     if (this.selectedTerminalId !== input.terminalId) {
       return;
     }
-
-    terminalDebugLog({
-      scope: "stream-controller",
-      event: "stream:gap-reconnect",
-      details: {
-        terminalId: input.terminalId,
-        streamId: input.streamId,
-        expectedOffset: input.expectedOffset,
-        observedOffset: input.observedOffset,
-      },
-    });
 
     updateTerminalResumeOffset({
       terminalId: input.terminalId,

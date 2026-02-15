@@ -494,14 +494,6 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     }
 
     const pending = queue.splice(0, queue.length);
-    terminalDebugLog({
-      scope: "terminal-pane",
-      event: "input:queue:flush",
-      details: {
-        activeStreamId: currentStreamId,
-        count: pending.length,
-      },
-    });
 
     for (const entry of pending) {
       if (entry.type === "data") {
@@ -549,17 +541,6 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     ): boolean => {
       const currentStreamId = getCurrentActiveStreamId();
       if (!client || currentStreamId === null) {
-        terminalDebugLog({
-          scope: "terminal-pane",
-          event: "input:key:queue-no-stream",
-          details: {
-            key: input.key,
-            ctrl: input.ctrl,
-            shift: input.shift,
-            alt: input.alt,
-            activeStreamId: currentStreamId,
-          },
-        });
         enqueuePendingTerminalInput({
           type: "key",
           input: {
@@ -639,14 +620,6 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
       }
 
       if (!client || currentStreamId === null) {
-        terminalDebugLog({
-          scope: "terminal-pane",
-          event: "input:data:queue-no-stream",
-          details: {
-            length: data.length,
-            preview: summarizeTerminalText({ text: data, maxChars: 80 }),
-          },
-        });
         enqueuePendingTerminalInput({
           type: "data",
           data,

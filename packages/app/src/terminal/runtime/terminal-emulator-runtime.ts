@@ -458,14 +458,6 @@ export class TerminalEmulatorRuntime {
       },
     });
     this.inFlightOutputOperationTimeout = setTimeout(() => {
-      terminalDebugLog({
-        scope: "emulator-runtime",
-        event: "output:flush-timeout",
-        details: {
-          length: text.length,
-          preview: summarizeTerminalText({ text, maxChars: 96 }),
-        },
-      });
       finalizeOperation(operation);
     }, OUTPUT_OPERATION_TIMEOUT_MS);
 
