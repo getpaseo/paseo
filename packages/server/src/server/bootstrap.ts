@@ -306,6 +306,7 @@ export async function createPaseoDaemon(
     const agentMcpServer = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      terminalManager,
       paseoHome: config.paseoHome,
       enableVoiceTools: false,
       resolveSpeakHandler: (callerAgentId) => wsServer?.resolveVoiceSpeakHandler(callerAgentId) ?? null,
@@ -329,6 +330,7 @@ export async function createPaseoDaemon(
       const agentMcpServer = await createAgentMcpServer({
         agentManager,
         agentStorage,
+        terminalManager,
         paseoHome: config.paseoHome,
         callerAgentId,
         enableVoiceTools: false,
@@ -448,6 +450,7 @@ export async function createPaseoDaemon(
       return createAgentMcpServer({
         agentManager,
         agentStorage,
+        terminalManager,
         paseoHome: config.paseoHome,
         callerAgentId,
         voiceOnly: true,

@@ -95,6 +95,15 @@ async function openTerminalsPanel(page: Page): Promise<void> {
   });
 }
 
+async function openFilesPanel(page: Page): Promise<void> {
+  const filesTab = page.getByTestId("explorer-tab-files").first();
+  await expect(filesTab).toBeVisible({ timeout: 30000 });
+  await filesTab.click();
+  await expect(page.getByTestId("files-pane-header").first()).toBeVisible({
+    timeout: 30000,
+  });
+}
+
 async function getDesktopAgentSidebarOpen(page: Page): Promise<boolean | null> {
   return await page.evaluate(() => {
     const raw = localStorage.getItem("panel-state");
@@ -236,6 +245,40 @@ test("Terminals tab creates multiple terminals and streams command output", asyn
 
     const markerTwo = `terminal-smoke-two-${Date.now()}`;
     await runTerminalCommand(page, `echo ${markerTwo}`, markerTwo);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test("terminal reattaches cleanly after heavy output and tab switches", async ({ page }) => {
+  const repo = await createTempGitRepo("paseo-e2e-terminal-reattach-");
+
+  try {
+    await openNewAgentDraft(page);
+    await setWorkingDirectory(page, repo.path);
+    await ensureHostSelected(page);
+    await createAgent(page, "hello");
+
+    await openTerminalsPanel(page);
+    await runTerminalCommand(
+      page,
+      "for i in $(seq 1 12000); do echo reattach-$i; done",
+      "reattach-12000"
+    );
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await openFilesPanel(page);
+      await openTerminalsPanel(page);
+      await expect(page.getByText("Terminal stream ended. Reconnecting…")).toHaveCount(0, {
+        timeout: 30000,
+      });
+      await expect(page.getByTestId("terminal-attach-loading")).toHaveCount(0, {
+        timeout: 30000,
+      });
+    }
+
+    const marker = `reattach-health-${Date.now()}`;
+    await runTerminalCommand(page, `echo ${marker}`, marker);
   } finally {
     await repo.cleanup();
   }

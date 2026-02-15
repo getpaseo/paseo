@@ -79,6 +79,12 @@ export class TerminalStreamManager {
     const streamHandlers = this.handlers.get(chunk.streamId);
     if (!streamHandlers || streamHandlers.size === 0) {
       this.bufferChunk({ chunk });
+      // Ack buffered chunks immediately to keep the daemon-side stream window
+      // moving even before a UI subscriber is attached.
+      this.maybeAckChunk({
+        streamId: chunk.streamId,
+        endOffset: chunk.endOffset,
+      });
       return;
     }
 

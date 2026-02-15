@@ -103,7 +103,7 @@ export function AgentStreamView({
   const streamItemCountRef = useRef(0);
   const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(new Set());
   const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
-  const setExplorerTab = usePanelStore((state) => state.setExplorerTab);
+  const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
 
   // Get serverId (fallback to agent's serverId if not provided)
   const resolvedServerId = serverId ?? agent.serverId ?? "";
@@ -154,7 +154,12 @@ export function AgentStreamView({
         requestFilePreview(agentId, normalized.file);
       }
 
-      setExplorerTab("files");
+      setExplorerTabForCheckout({
+        serverId: resolvedServerId,
+        cwd: agent.cwd,
+        isGit: agent.projectPlacement?.checkout?.isGit ?? true,
+        tab: "files",
+      });
       openFileExplorer();
     },
     [
@@ -163,7 +168,7 @@ export function AgentStreamView({
       requestDirectoryListing,
       requestFilePreview,
       selectExplorerEntry,
-      setExplorerTab,
+      setExplorerTabForCheckout,
       openFileExplorer,
     ]
   );

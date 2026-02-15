@@ -157,3 +157,38 @@ export function mapTerminalDataToKey(data: string): string | null {
 
   return null;
 }
+
+export function resolvePendingModifierDataInput(args: {
+  data: string;
+  pendingModifiers: PendingTerminalModifiers;
+}):
+  | {
+      mode: "key";
+      key: string;
+      clearPendingModifiers: true;
+    }
+  | {
+      mode: "raw";
+      clearPendingModifiers: boolean;
+    } {
+  if (!hasPendingTerminalModifiers(args.pendingModifiers)) {
+    return {
+      mode: "raw",
+      clearPendingModifiers: false,
+    };
+  }
+
+  const mappedKey = mapTerminalDataToKey(args.data);
+  if (!mappedKey) {
+    return {
+      mode: "raw",
+      clearPendingModifiers: true,
+    };
+  }
+
+  return {
+    mode: "key",
+    key: mappedKey,
+    clearPendingModifiers: true,
+  };
+}

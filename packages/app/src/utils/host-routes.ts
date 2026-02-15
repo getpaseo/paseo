@@ -12,6 +12,14 @@ function encodeSegment(value: string): string {
   return encodeURIComponent(value);
 }
 
+function decodeSegment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function parseServerIdFromPathname(pathname: string): string | null {
   const match = pathname.match(/^\/h\/([^/]+)(?:\/|$)/);
   if (!match) {
@@ -21,11 +29,7 @@ export function parseServerIdFromPathname(pathname: string): string | null {
   if (!raw) {
     return null;
   }
-  try {
-    return trimNonEmpty(decodeURIComponent(raw));
-  } catch {
-    return trimNonEmpty(raw);
-  }
+  return trimNonEmpty(decodeSegment(raw));
 }
 
 export function parseHostAgentRouteFromPathname(
@@ -41,21 +45,31 @@ export function parseHostAgentRouteFromPathname(
     return null;
   }
 
-  const decode = (value: string) => {
-    try {
-      return decodeURIComponent(value);
-    } catch {
-      return value;
-    }
-  };
-
-  const serverId = trimNonEmpty(decode(encodedServerId));
-  const agentId = trimNonEmpty(decode(encodedAgentId));
+  const serverId = trimNonEmpty(decodeSegment(encodedServerId));
+  const agentId = trimNonEmpty(decodeSegment(encodedAgentId));
   if (!serverId || !agentId) {
     return null;
   }
 
   return { serverId, agentId };
+}
+
+export function parseHostAgentDraftRouteFromPathname(
+  pathname: string
+): { serverId: string } | null {
+  const match = pathname.match(/^\/h\/([^/]+)\/agent\/?$/);
+  if (!match) {
+    return null;
+  }
+  const encodedServerId = match[1];
+  if (!encodedServerId) {
+    return null;
+  }
+  const serverId = trimNonEmpty(decodeSegment(encodedServerId));
+  if (!serverId) {
+    return null;
+  }
+  return { serverId };
 }
 
 export function buildHostAgentDraftRoute(serverId: string): string {
@@ -115,4 +129,3 @@ export function mapPathnameToServer(
   }
   return `${base}/agent`;
 }
-

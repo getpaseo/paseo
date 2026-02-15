@@ -18,7 +18,6 @@ import {
 } from "@/stores/panel-store";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
-import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { GitDiffPane } from "./git-diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { TerminalPane } from "./terminal-pane";
@@ -40,9 +39,10 @@ interface ExplorerSidebarProps {
   serverId: string;
   agentId: string;
   cwd: string;
+  isGit: boolean;
 }
 
-export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps) {
+export function ExplorerSidebar({ serverId, agentId, cwd, isGit }: ExplorerSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile =
@@ -52,7 +52,7 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
   const closeToAgent = usePanelStore((state) => state.closeToAgent);
   const explorerTab = usePanelStore((state) => state.explorerTab);
   const explorerWidth = usePanelStore((state) => state.explorerWidth);
-  const setExplorerTab = usePanelStore((state) => state.setExplorerTab);
+  const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
   const setExplorerWidth = usePanelStore((state) => state.setExplorerWidth);
   const { width: viewportWidth } = useWindowDimensions();
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -102,9 +102,9 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
 
   const handleTabPress = useCallback(
     (tab: ExplorerTab) => {
-      setExplorerTab(tab);
+      setExplorerTabForCheckout({ serverId, cwd, isGit, tab });
     },
-    [setExplorerTab]
+    [cwd, isGit, serverId, setExplorerTabForCheckout]
   );
 
   // Swipe gesture to close (swipe right on mobile)
@@ -268,6 +268,7 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
               serverId={serverId}
               agentId={agentId}
               cwd={cwd}
+              isGit={isGit}
               isMobile={isMobile}
             />
           </Animated.View>
@@ -300,6 +301,7 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
         serverId={serverId}
         agentId={agentId}
         cwd={cwd}
+        isGit={isGit}
         isMobile={false}
       />
     </Animated.View>
@@ -313,6 +315,7 @@ interface SidebarContentProps {
   serverId: string;
   agentId: string;
   cwd: string;
+  isGit: boolean;
   isMobile: boolean;
 }
 
@@ -323,19 +326,12 @@ function SidebarContent({
   serverId,
   agentId,
   cwd,
+  isGit,
   isMobile,
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
-  const { status } = useCheckoutStatusQuery({ serverId, cwd });
-  const isGit = status?.isGit ?? false;
-  const hasResolvedCheckoutStatus = status !== null;
-
-  // Switch to Files tab if Changes tab is hidden and user was on it
-  useEffect(() => {
-    if (hasResolvedCheckoutStatus && !isGit && activeTab === "changes") {
-      onTabPress("files");
-    }
-  }, [hasResolvedCheckoutStatus, isGit, activeTab, onTabPress]);
+  const resolvedTab: ExplorerTab =
+    !isGit && activeTab === "changes" ? "files" : activeTab;
 
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
@@ -345,13 +341,13 @@ function SidebarContent({
           {isGit && (
             <Pressable
               testID="explorer-tab-changes"
-              style={[styles.tab, activeTab === "changes" && styles.tabActive]}
+              style={[styles.tab, resolvedTab === "changes" && styles.tabActive]}
               onPress={() => onTabPress("changes")}
             >
               <Text
                 style={[
                   styles.tabText,
-                  activeTab === "changes" && styles.tabTextActive,
+                  resolvedTab === "changes" && styles.tabTextActive,
                 ]}
               >
                 Changes
@@ -360,13 +356,13 @@ function SidebarContent({
           )}
           <Pressable
             testID="explorer-tab-files"
-            style={[styles.tab, activeTab === "files" && styles.tabActive]}
+            style={[styles.tab, resolvedTab === "files" && styles.tabActive]}
             onPress={() => onTabPress("files")}
           >
             <Text
               style={[
                 styles.tabText,
-                activeTab === "files" && styles.tabTextActive,
+                resolvedTab === "files" && styles.tabTextActive,
               ]}
             >
               Files
@@ -374,13 +370,13 @@ function SidebarContent({
           </Pressable>
           <Pressable
             testID="explorer-tab-terminals"
-            style={[styles.tab, activeTab === "terminals" && styles.tabActive]}
+            style={[styles.tab, resolvedTab === "terminals" && styles.tabActive]}
             onPress={() => onTabPress("terminals")}
           >
             <Text
               style={[
                 styles.tabText,
-                activeTab === "terminals" && styles.tabTextActive,
+                resolvedTab === "terminals" && styles.tabTextActive,
               ]}
             >
               Terminals
@@ -398,13 +394,13 @@ function SidebarContent({
 
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
-        {activeTab === "changes" && (
+        {resolvedTab === "changes" && (
           <GitDiffPane serverId={serverId} agentId={agentId} cwd={cwd} />
         )}
-        {activeTab === "files" && (
+        {resolvedTab === "files" && (
           <FileExplorerPane serverId={serverId} agentId={agentId} />
         )}
-        {activeTab === "terminals" && (
+        {resolvedTab === "terminals" && (
           <TerminalPane serverId={serverId} cwd={cwd} />
         )}
       </View>

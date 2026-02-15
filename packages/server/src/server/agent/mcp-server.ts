@@ -28,7 +28,8 @@ import { toAgentPayload } from "./agent-projections.js";
 import { curateAgentActivity } from "./activity-curator.js";
 import { AGENT_PROVIDER_DEFINITIONS } from "./provider-registry.js";
 import { AgentStorage } from "./agent-storage.js";
-import { createWorktree } from "../../utils/worktree.js";
+import { appendTimelineItemIfAgentKnown } from "./timeline-append.js";
+import { type WorktreeConfig } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
 import type {
@@ -36,10 +37,16 @@ import type {
   VoiceSpeakHandler,
 } from "../voice-types.js";
 import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
+import type { TerminalManager } from "../../terminal/terminal-manager.js";
+import {
+  createAgentWorktree,
+  runAsyncWorktreeBootstrap,
+} from "../worktree-bootstrap.js";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  terminalManager?: TerminalManager | null;
   paseoHome?: string;
   /**
    * ID of the agent that is connecting to this MCP server.
@@ -289,6 +296,7 @@ export async function createAgentMcpServer(
   const {
     agentManager,
     agentStorage,
+    terminalManager,
     callerAgentId,
     resolveSpeakHandler,
     resolveCallerContext,
@@ -469,6 +477,7 @@ export async function createAgentMcpServer(
 
       let resolvedCwd: string;
       let resolvedMode: string | undefined;
+      let worktreeConfig: WorktreeConfig | undefined;
 
       if (callerAgentId) {
         const callerArgs = agentToAgentCreateAgentArgsSchema.parse(args);
@@ -514,7 +523,7 @@ export async function createAgentMcpServer(
           if (!baseBranch) {
             throw new Error("baseBranch is required when creating a worktree");
           }
-          const worktree = await createWorktree({
+          const worktree = await createAgentWorktree({
             branchName: worktreeName,
             cwd: resolvedCwd,
             baseBranch,
@@ -522,6 +531,7 @@ export async function createAgentMcpServer(
             paseoHome: options.paseoHome,
           });
           resolvedCwd = worktree.worktreePath;
+          worktreeConfig = worktree;
         }
 
         resolvedMode = initialMode;
@@ -541,6 +551,21 @@ export async function createAgentMcpServer(
         undefined,
         childAgentDefaultLabels ? { labels: childAgentDefaultLabels } : undefined
       );
+
+      if (worktreeConfig) {
+        void runAsyncWorktreeBootstrap({
+          agentId: snapshot.id,
+          worktree: worktreeConfig,
+          terminalManager: terminalManager ?? null,
+          appendTimelineItem: (item) =>
+            appendTimelineItemIfAgentKnown({
+              agentManager,
+              agentId: snapshot.id,
+              item,
+            }),
+          logger: childLogger,
+        });
+      }
 
       const trimmedPrompt = initialPrompt.trim();
       scheduleAgentMetadataGeneration({

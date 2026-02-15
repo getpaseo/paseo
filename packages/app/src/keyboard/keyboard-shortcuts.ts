@@ -1,3 +1,4 @@
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import type {
   KeyboardActionId,
   KeyboardFocusScope,
@@ -20,6 +21,33 @@ export type KeyboardShortcutMatch = {
   stopPropagation: boolean;
 };
 
+export type KeyboardShortcutHelpRow = {
+  id: string;
+  label: string;
+  keys: ShortcutKey[];
+  note?: string;
+};
+
+export type KeyboardShortcutHelpSection = {
+  id: "global" | "agent-input";
+  title: string;
+  rows: KeyboardShortcutHelpRow[];
+};
+
+type KeyboardShortcutPlatformContext = {
+  isMac: boolean;
+  isTauri: boolean;
+};
+
+type KeyboardShortcutHelpEntry = {
+  id: string;
+  section: KeyboardShortcutHelpSection["id"];
+  label: string;
+  keys: ShortcutKey[];
+  note?: string;
+  when?: (context: KeyboardShortcutPlatformContext) => boolean;
+};
+
 type KeyboardShortcutBinding = {
   id: string;
   action: KeyboardActionId;
@@ -28,6 +56,15 @@ type KeyboardShortcutBinding = {
   payload?: (event: KeyboardEvent) => KeyboardShortcutPayload;
   preventDefault?: boolean;
   stopPropagation?: boolean;
+  help?: KeyboardShortcutHelpEntry;
+};
+
+const SHORTCUT_HELP_SECTION_TITLES: Record<
+  KeyboardShortcutHelpSection["id"],
+  string
+> = {
+  global: "Global",
+  "agent-input": "Agent Input",
 };
 
 function isMod(event: KeyboardEvent): boolean {
@@ -82,6 +119,13 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
       !event.shiftKey &&
       (event.code === "KeyN" || event.key.toLowerCase() === "n"),
     when: () => true,
+    help: {
+      id: "new-agent",
+      section: "global",
+      label: "Create new agent",
+      keys: ["mod", "alt", "N"],
+      when: (context) => !context.isTauri,
+    },
   },
   {
     id: "agent-new-tauri-mod-n",
@@ -92,6 +136,13 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
       !event.shiftKey &&
       (event.code === "KeyN" || event.key.toLowerCase() === "n"),
     when: (context) => context.isTauri,
+    help: {
+      id: "new-agent",
+      section: "global",
+      label: "Create new agent",
+      keys: ["mod", "N"],
+      when: (context) => context.isTauri,
+    },
   },
   {
     id: "command-center-toggle",
@@ -102,12 +153,25 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
       !event.shiftKey &&
       (event.code === "KeyK" || event.key.toLowerCase() === "k"),
     when: () => true,
+    help: {
+      id: "toggle-command-center",
+      section: "global",
+      label: "Toggle command center",
+      keys: ["mod", "K"],
+    },
   },
   {
     id: "shortcuts-dialog-toggle-question-mark",
     action: "shortcuts.dialog.toggle",
     matches: isQuestionMarkShortcut,
     when: (context) => context.focusScope === "other",
+    help: {
+      id: "show-shortcuts",
+      section: "global",
+      label: "Show keyboard shortcuts",
+      keys: ["?"],
+      note: "Available when focus is not in a text field or terminal.",
+    },
   },
   {
     id: "sidebar-toggle-left-mac-cmd-b",
@@ -119,6 +183,13 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
       !event.shiftKey &&
       (event.code === "KeyB" || event.key.toLowerCase() === "b"),
     when: (context) => context.isMac,
+    help: {
+      id: "toggle-left-sidebar",
+      section: "global",
+      label: "Toggle left sidebar",
+      keys: ["mod", "B"],
+      when: (context) => context.isMac,
+    },
   },
   {
     id: "sidebar-toggle-left-mod-period",
@@ -129,6 +200,13 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
       !event.shiftKey &&
       (event.code === "Period" || event.key === "."),
     when: (context) => !context.commandCenterOpen,
+    help: {
+      id: "toggle-left-sidebar",
+      section: "global",
+      label: "Toggle left sidebar",
+      keys: ["mod", "."],
+      when: (context) => !context.isMac,
+    },
   },
   {
     id: "sidebar-toggle-right-mod-e",
@@ -139,6 +217,12 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
       !event.shiftKey &&
       (event.code === "KeyE" || event.key.toLowerCase() === "e"),
     when: (context) => context.hasSelectedAgent && !context.commandCenterOpen,
+    help: {
+      id: "toggle-right-sidebar",
+      section: "global",
+      label: "Toggle right sidebar",
+      keys: ["mod", "E"],
+    },
   },
   {
     id: "sidebar-toggle-right-ctrl-backquote",
@@ -163,6 +247,12 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
     payload: withMessageInputAction("voice-toggle"),
     when: (context) =>
       !context.commandCenterOpen && context.focusScope !== "terminal",
+    help: {
+      id: "voice-toggle",
+      section: "agent-input",
+      label: "Toggle voice mode",
+      keys: ["mod", "shift", "D"],
+    },
   },
   {
     id: "message-input-dictation-toggle",
@@ -175,6 +265,12 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
     payload: withMessageInputAction("dictation-toggle"),
     when: (context) =>
       !context.commandCenterOpen && context.focusScope !== "terminal",
+    help: {
+      id: "dictation-toggle",
+      section: "agent-input",
+      label: "Start/stop dictation",
+      keys: ["mod", "D"],
+    },
   },
   {
     id: "message-input-dictation-cancel",
@@ -183,6 +279,14 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
     payload: withMessageInputAction("dictation-cancel"),
     when: (context) =>
       !context.commandCenterOpen && context.focusScope !== "terminal",
+    preventDefault: false,
+    stopPropagation: false,
+    help: {
+      id: "dictation-cancel",
+      section: "agent-input",
+      label: "Cancel dictation",
+      keys: ["Esc"],
+    },
   },
   {
     id: "message-input-voice-mute-toggle",
@@ -197,6 +301,12 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
     payload: withMessageInputAction("voice-mute-toggle"),
     when: (context) =>
       !context.commandCenterOpen && context.focusScope === "other",
+    help: {
+      id: "voice-mute-toggle",
+      section: "agent-input",
+      label: "Mute/unmute voice mode",
+      keys: ["Space"],
+    },
   },
   {
     id: "sidebar-shortcut-alt-digit",
@@ -207,6 +317,13 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
       return digit ? { digit } : null;
     },
     when: (context) => !context.commandCenterOpen,
+    help: {
+      id: "quick-open-agent",
+      section: "global",
+      label: "Open sidebar agent shortcut",
+      keys: ["alt", "1-9"],
+      when: (context) => !context.isTauri,
+    },
   },
   {
     id: "sidebar-shortcut-tauri-mod-digit",
@@ -217,6 +334,13 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
       return digit ? { digit } : null;
     },
     when: (context) => context.isTauri && !context.commandCenterOpen,
+    help: {
+      id: "quick-open-agent",
+      section: "global",
+      label: "Open sidebar agent shortcut",
+      keys: ["mod", "1-9"],
+      when: (context) => context.isTauri,
+    },
   },
 ];
 
@@ -241,4 +365,59 @@ export function resolveKeyboardShortcut(input: {
     };
   }
   return null;
+}
+
+export function buildKeyboardShortcutHelpSections(
+  input: KeyboardShortcutPlatformContext
+): KeyboardShortcutHelpSection[] {
+  const seenRows = new Set<string>();
+  const rowsBySection = new Map<KeyboardShortcutHelpSection["id"], KeyboardShortcutHelpRow[]>([
+    ["global", []],
+    ["agent-input", []],
+  ]);
+
+  for (const binding of SHORTCUT_BINDINGS) {
+    const help = binding.help;
+    if (!help) {
+      continue;
+    }
+    if (help.when && !help.when(input)) {
+      continue;
+    }
+    const rowKey = `${help.section}:${help.id}`;
+    if (seenRows.has(rowKey)) {
+      continue;
+    }
+    seenRows.add(rowKey);
+
+    const rows = rowsBySection.get(help.section);
+    if (!rows) {
+      continue;
+    }
+    rows.push({
+      id: help.id,
+      label: help.label,
+      keys: help.keys,
+      ...(help.note ? { note: help.note } : {}),
+    });
+  }
+
+  const sectionOrder: KeyboardShortcutHelpSection["id"][] = [
+    "global",
+    "agent-input",
+  ];
+
+  return sectionOrder.flatMap((sectionId) => {
+    const rows = rowsBySection.get(sectionId) ?? [];
+    if (rows.length === 0) {
+      return [];
+    }
+    return [
+      {
+        id: sectionId,
+        title: SHORTCUT_HELP_SECTION_TITLES[sectionId],
+        rows,
+      },
+    ];
+  });
 }

@@ -23,6 +23,39 @@ type McpClient = {
   close: () => Promise<void>;
 };
 
+async function withTimeout<T>(
+  options: { promise: Promise<T>; timeoutMs: number; label: string }
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(`Timed out after ${options.timeoutMs}ms (${options.label})`));
+    }, options.timeoutMs);
+  });
+  try {
+    return await Promise.race([options.promise, timeout]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
+async function waitForPathExists(
+  options: { targetPath: string; timeoutMs: number }
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < options.timeoutMs) {
+    if (existsSync(options.targetPath)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `Timed out after ${options.timeoutMs}ms waiting for path: ${options.targetPath}`
+  );
+}
+
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -53,10 +86,13 @@ function getStructuredContent(result: McpToolResult): StructuredContent | null {
   return null;
 }
 
-async function waitForAgentCompletion(client: McpClient, agentId: string): Promise<void> {
-  const waitResult = (await client.callTool({
+async function waitForAgentCompletion(options: {
+  client: McpClient;
+  agentId: string;
+}): Promise<void> {
+  const waitResult = (await options.client.callTool({
     name: "wait_for_agent",
-    args: { agentId },
+    args: { agentId: options.agentId },
   })) as McpToolResult;
   const payload = getStructuredContent(waitResult);
   if (!payload) {
@@ -127,7 +163,7 @@ describe("agent MCP end-to-end (offline)", () => {
         agentId = (payload?.agentId as string | undefined) ?? null;
         expect(agentId).toBeTruthy();
 
-        await waitForAgentCompletion(client, agentId!);
+        await waitForAgentCompletion({ client, agentId: agentId! });
 
         if (existsSync(filePath)) {
           const contents = await readFile(filePath, "utf8");
@@ -147,5 +183,116 @@ describe("agent MCP end-to-end (offline)", () => {
       }
     },
     30_000
+  );
+
+  test(
+    "create_agent with worktree is async and boots terminals only after setup success",
+    async () => {
+      const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+      const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+      const repoRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-worktree-repo-"));
+      const port = await getAvailablePort();
+
+      const daemonConfig: PaseoDaemonConfig = {
+        listen: `127.0.0.1:${port}`,
+        paseoHome,
+        corsAllowedOrigins: [],
+        allowedHosts: true,
+        mcpEnabled: true,
+        staticDir,
+        mcpDebug: false,
+        agentClients: createTestAgentClients(),
+        agentStoragePath: path.join(paseoHome, "agents"),
+      };
+
+      const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+      await daemon.start();
+
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${port}/mcp/agents`)
+      );
+      const client = (await experimental_createMCPClient({ transport })) as McpClient;
+
+      let agentId: string | null = null;
+      try {
+        const { execSync } = await import("node:child_process");
+        execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git config user.email 'test@test.com'", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+        await writeFile(path.join(repoRoot, "file.txt"), "hello\n", "utf8");
+        execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoRoot, stdio: "pipe" });
+
+        const setupCommand =
+          'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"';
+        await writeFile(
+          path.join(repoRoot, "paseo.json"),
+          JSON.stringify({
+            worktree: {
+              setup: [setupCommand],
+              terminals: [
+                {
+                  name: "Dev Server",
+                  command: 'echo "dev-server" > dev-terminal.txt; tail -f /dev/null',
+                },
+              ],
+            },
+          }),
+          "utf8"
+        );
+        execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'add worktree config'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+
+        const result = (await withTimeout({
+          promise: client.callTool({
+            name: "create_agent",
+            args: {
+              cwd: repoRoot,
+              title: "MCP worktree setup terminals",
+              agentType: "claude",
+              initialMode: "bypassPermissions",
+              initialPrompt: "say done and stop",
+              worktreeName: "mcp-worktree-setup-test",
+              baseBranch: "main",
+              background: true,
+            },
+          }),
+          timeoutMs: 2500,
+          label: "create_agent should not block on setup",
+        })) as McpToolResult;
+
+        const payload = getStructuredContent(result);
+        agentId = (payload?.agentId as string | undefined) ?? null;
+        expect(agentId).toBeTruthy();
+        const worktreePath = (payload?.cwd as string | undefined) ?? "";
+        expect(worktreePath).toContain(`${path.sep}worktrees${path.sep}`);
+        expect(existsSync(path.join(worktreePath, "setup-done.txt"))).toBe(false);
+        expect(existsSync(path.join(worktreePath, "dev-terminal.txt"))).toBe(false);
+
+        await writeFile(path.join(worktreePath, "allow-setup"), "ok\n", "utf8");
+
+        await waitForPathExists({
+          targetPath: path.join(worktreePath, "setup-done.txt"),
+          timeoutMs: 15000,
+        });
+        await waitForPathExists({
+          targetPath: path.join(worktreePath, "dev-terminal.txt"),
+          timeoutMs: 15000,
+        });
+      } finally {
+        if (agentId) {
+          await client.callTool({ name: "kill_agent", args: { agentId } });
+        }
+        await client.close();
+        await daemon.stop();
+        await rm(paseoHome, { recursive: true, force: true });
+        await rm(staticDir, { recursive: true, force: true });
+        await rm(repoRoot, { recursive: true, force: true });
+      }
+    },
+    60_000
   );
 });

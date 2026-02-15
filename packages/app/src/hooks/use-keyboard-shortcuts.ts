@@ -18,6 +18,7 @@ import {
 } from "@/utils/new-agent-routing";
 import {
   buildHostAgentDetailRoute,
+  parseHostAgentDraftRouteFromPathname,
   parseHostAgentRouteFromPathname,
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
@@ -33,12 +34,17 @@ function resolveSelectedOrRouteAgentKey(input: {
   selectedAgentId?: string;
   pathname: string;
 }): string | null {
+  const DRAFT_AGENT_ID = "__new_agent__";
   if (input.selectedAgentId) {
     return input.selectedAgentId;
   }
   const route = parseHostAgentRouteFromPathname(input.pathname);
   if (!route) {
-    return null;
+    const draftRoute = parseHostAgentDraftRouteFromPathname(input.pathname);
+    if (!draftRoute) {
+      return null;
+    }
+    return `${draftRoute.serverId}:${DRAFT_AGENT_ID}`;
   }
   return `${route.serverId}:${route.agentId}`;
 }

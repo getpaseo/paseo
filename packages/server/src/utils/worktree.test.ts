@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   createWorktree,
   deletePaseoWorktree,
+  getWorktreeTerminalSpecs,
   isPaseoOwnedWorktreeCwd,
   listPaseoWorktrees,
   slugify,
@@ -261,6 +262,43 @@ describe("createWorktree", () => {
 
     // Verify worktree was cleaned up
     expect(existsSync(expectedWorktreePath)).toBe(false);
+  });
+
+  it("reads worktree terminal specs from paseo.json with optional name", async () => {
+    const paseoConfig = {
+      worktree: {
+        terminals: [
+          { name: "Dev Server", command: "npm run dev" },
+          { command: "cd packages/app && npm run dev" },
+        ],
+      },
+    };
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+
+    expect(getWorktreeTerminalSpecs(repoDir)).toEqual([
+      { name: "Dev Server", command: "npm run dev" },
+      { command: "cd packages/app && npm run dev" },
+    ]);
+  });
+
+  it("filters invalid worktree terminal specs", async () => {
+    const paseoConfig = {
+      worktree: {
+        terminals: [
+          null,
+          {},
+          { name: "   ", command: "   " },
+          { name: " Watch ", command: "npm run watch", cwd: "packages/app" },
+          { name: 123, command: "npm run test" },
+        ],
+      },
+    };
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+
+    expect(getWorktreeTerminalSpecs(repoDir)).toEqual([
+      { name: "Watch", command: "npm run watch" },
+      { command: "npm run test" },
+    ]);
   });
 });
 

@@ -18,9 +18,17 @@ import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyl
 import { useSessionStore } from "@/stores/session-store";
 import {
   hasPendingTerminalModifiers,
-  mapTerminalDataToKey,
   normalizeTerminalTransportKey,
+  resolvePendingModifierDataInput,
 } from "@/utils/terminal-keys";
+import {
+  getTerminalResumeOffset,
+  getTerminalAttachRetryDelayMs,
+  isTerminalAttachRetryableError,
+  updateTerminalResumeOffset,
+  waitForDuration,
+  withPromiseTimeout,
+} from "@/utils/terminal-attach";
 import TerminalEmulator from "./terminal-emulator";
 
 interface TerminalPaneProps {
@@ -30,6 +38,8 @@ interface TerminalPaneProps {
 
 const MAX_OUTPUT_CHARS = 200_000;
 const TERMINAL_TAB_MAX_WIDTH = 220;
+const TERMINAL_ATTACH_MAX_ATTEMPTS = 4;
+const TERMINAL_ATTACH_TIMEOUT_MS = 12_000;
 
 const MODIFIER_LABELS = {
   ctrl: "Ctrl",
@@ -61,8 +71,8 @@ const EMPTY_MODIFIERS: ModifierState = {
   alt: false,
 };
 
-function terminalScopeKey(serverId: string, cwd: string): string {
-  return `${serverId}:${cwd}`;
+function terminalScopeKey(input: { serverId: string; cwd: string }): string {
+  return `${input.serverId}:${input.cwd}`;
 }
 
 function TerminalCloseGradient({ color, gradientId }: { color: string; gradientId: string }) {
@@ -99,9 +109,10 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     (state) => state.sessions[serverId]?.connection.isConnected ?? false
   );
 
-  const scopeKey = useMemo(() => terminalScopeKey(serverId, cwd), [serverId, cwd]);
+  const scopeKey = useMemo(() => terminalScopeKey({ serverId, cwd }), [serverId, cwd]);
   const selectedTerminalByScopeRef = useRef<Map<string, string>>(new Map());
   const lastReportedSizeRef = useRef<{ rows: number; cols: number } | null>(null);
+  const resumeOffsetByTerminalIdRef = useRef<Map<string, number>>(new Map());
 
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(null);
   const [outputByTerminalId, setOutputByTerminalId] = useState<Map<string, string>>(
@@ -111,6 +122,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     terminalId: string;
     streamId: number;
   } | null>(null);
+  const [attachGeneration, setAttachGeneration] = useState(0);
   const [isAttaching, setIsAttaching] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [modifiers, setModifiers] = useState<ModifierState>(EMPTY_MODIFIERS);
@@ -121,10 +133,18 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   );
   const hoverOutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedTerminalIdRef = useRef<string | null>(selectedTerminalId);
+  const activeStreamRef = useRef<{
+    terminalId: string;
+    streamId: number;
+  } | null>(activeStream);
 
   useEffect(() => {
     selectedTerminalIdRef.current = selectedTerminalId;
   }, [selectedTerminalId]);
+
+  useEffect(() => {
+    activeStreamRef.current = activeStream;
+  }, [activeStream]);
 
   const clearHoverOutTimeout = useCallback(() => {
     if (!hoverOutTimeoutRef.current) {
@@ -201,14 +221,18 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
         return;
       }
 
-      if (selectedTerminalIdRef.current === exitedTerminalId) {
-        setSelectedTerminalId((current) =>
-          current === exitedTerminalId ? null : current
-        );
+      const activeStreamForTerminal = activeStreamRef.current;
+      if (
+        selectedTerminalIdRef.current === exitedTerminalId &&
+        activeStreamForTerminal?.terminalId === exitedTerminalId &&
+        activeStreamForTerminal.streamId === message.payload.streamId
+      ) {
         setActiveStream((current) =>
           current?.terminalId === exitedTerminalId ? null : current
         );
-        setIsAttaching(false);
+        setStreamError("Terminal stream ended. Reconnecting…");
+        setIsAttaching(true);
+        setAttachGeneration((current) => current + 1);
         setModifiers({ ...EMPTY_MODIFIERS });
       }
 
@@ -253,6 +277,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     },
     onSuccess: (_, terminalId) => {
       setHoveredTerminalId((current) => (current === terminalId ? null : current));
+      resumeOffsetByTerminalIdRef.current.delete(terminalId);
       if (selectedTerminalIdRef.current === terminalId) {
         setSelectedTerminalId((current) =>
           current === terminalId ? null : current
@@ -310,6 +335,20 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     }
   }, [scopeKey, terminals, selectedTerminalId]);
 
+  useEffect(() => {
+    if (terminals.length === 0) {
+      resumeOffsetByTerminalIdRef.current.clear();
+      return;
+    }
+
+    const terminalIdSet = new Set(terminals.map((terminal) => terminal.id));
+    for (const terminalId of Array.from(resumeOffsetByTerminalIdRef.current.keys())) {
+      if (!terminalIdSet.has(terminalId)) {
+        resumeOffsetByTerminalIdRef.current.delete(terminalId);
+      }
+    }
+  }, [terminals]);
+
   const appendOutput = useCallback((terminalId: string, text: string) => {
     if (!text) {
       return;
@@ -343,40 +382,102 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
 
     setIsAttaching(true);
     setStreamError(null);
-    lastReportedSizeRef.current = null;
 
     const attach = async () => {
       try {
-        const attachPayload = await client.attachTerminalStream(terminalId);
-        if (isCancelled) {
-          if (typeof attachPayload.streamId === "number") {
-            void client.detachTerminalStream(attachPayload.streamId).catch(() => {});
-          }
-          return;
-        }
+        let lastErrorMessage = "Unable to attach terminal stream";
+        const totalAttempts = TERMINAL_ATTACH_MAX_ATTEMPTS;
+        for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
+          try {
+            const lastSize = lastReportedSizeRef.current;
+            const resumeOffset = getTerminalResumeOffset({
+              terminalId,
+              resumeOffsetByTerminalId: resumeOffsetByTerminalIdRef.current,
+            });
+            const attachPayload = await withPromiseTimeout({
+              promise: client.attachTerminalStream(terminalId, {
+                ...(resumeOffset !== undefined ? { resumeOffset } : {}),
+                ...(lastSize
+                  ? {
+                      rows: lastSize.rows,
+                      cols: lastSize.cols,
+                    }
+                  : {}),
+              }),
+              timeoutMs: TERMINAL_ATTACH_TIMEOUT_MS,
+              timeoutMessage: "Timed out attaching terminal stream",
+            });
+            if (isCancelled) {
+              if (typeof attachPayload.streamId === "number") {
+                void client.detachTerminalStream(attachPayload.streamId).catch(() => {});
+              }
+              return;
+            }
 
-        if (attachPayload.error || typeof attachPayload.streamId !== "number") {
-          setStreamError(attachPayload.error ?? "Unable to attach terminal stream");
-          setActiveStream(null);
-          return;
-        }
+            if (attachPayload.error || typeof attachPayload.streamId !== "number") {
+              lastErrorMessage = attachPayload.error ?? "Unable to attach terminal stream";
+              const hasRemainingAttempts = attempt < totalAttempts - 1;
+              if (
+                hasRemainingAttempts &&
+                isTerminalAttachRetryableError({ message: lastErrorMessage })
+              ) {
+                await waitForDuration({
+                  durationMs: getTerminalAttachRetryDelayMs({ attempt }),
+                });
+                continue;
+              }
+              setStreamError(lastErrorMessage);
+              setActiveStream(null);
+              return;
+            }
 
-        streamId = attachPayload.streamId;
-        decoder = new TextDecoder();
-        setActiveStream({ terminalId, streamId });
+            streamId = attachPayload.streamId;
+            updateTerminalResumeOffset({
+              terminalId,
+              offset: attachPayload.currentOffset,
+              resumeOffsetByTerminalId: resumeOffsetByTerminalIdRef.current,
+            });
+            decoder = new TextDecoder();
+            setActiveStream({ terminalId, streamId });
+            setStreamError(null);
 
-        unsubscribe = client.onTerminalStreamData(streamId, (chunk) => {
-          if (isCancelled) {
+            unsubscribe = client.onTerminalStreamData(streamId, (chunk) => {
+              if (isCancelled) {
+                return;
+              }
+              updateTerminalResumeOffset({
+                terminalId,
+                offset: chunk.endOffset,
+                resumeOffsetByTerminalId: resumeOffsetByTerminalIdRef.current,
+              });
+              const text = decoder?.decode(chunk.data, { stream: true }) ?? "";
+              appendOutput(terminalId, text);
+            });
+            return;
+          } catch (error) {
+            lastErrorMessage =
+              error instanceof Error ? error.message : "Unable to attach terminal stream";
+            const hasRemainingAttempts = attempt < totalAttempts - 1;
+            if (
+              hasRemainingAttempts &&
+              isTerminalAttachRetryableError({ message: lastErrorMessage })
+            ) {
+              await waitForDuration({
+                durationMs: getTerminalAttachRetryDelayMs({ attempt }),
+              });
+              continue;
+            }
+
+            if (!isCancelled) {
+              setStreamError(lastErrorMessage);
+              setActiveStream(null);
+            }
             return;
           }
-          const text = decoder?.decode(chunk.data, { stream: true }) ?? "";
-          appendOutput(terminalId, text);
-        });
-      } catch (error) {
+        }
+
         if (!isCancelled) {
-          setStreamError(
-            error instanceof Error ? error.message : "Unable to attach terminal stream"
-          );
+          setStreamError(lastErrorMessage);
           setActiveStream(null);
         }
       } finally {
@@ -401,8 +502,12 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
       if (streamId !== null) {
         void client.detachTerminalStream(streamId).catch(() => {});
       }
+      setActiveStream((current) =>
+        current?.terminalId === terminalId ? null : current
+      );
+      setIsAttaching(false);
     };
-  }, [appendOutput, client, isConnected, selectedTerminalId]);
+  }, [appendOutput, attachGeneration, client, isConnected, selectedTerminalId]);
 
   const activeStreamId =
     activeStream && activeStream.terminalId === selectedTerminalId
@@ -477,21 +582,27 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
       }
 
       if (hasPendingTerminalModifiers(modifiers)) {
-        const mappedKey = mapTerminalDataToKey(data);
-        if (
-          mappedKey &&
-          sendTerminalKey(
-            {
-              key: mappedKey,
+        const pendingResolution = resolvePendingModifierDataInput({
+          data,
+          pendingModifiers: modifiers,
+        });
+        if (pendingResolution.mode === "key") {
+          if (
+            sendTerminalKey({
+              key: pendingResolution.key,
               ctrl: modifiers.ctrl,
               shift: modifiers.shift,
               alt: modifiers.alt,
               meta: false,
-            }
-          )
-        ) {
+            })
+          ) {
+            clearPendingModifiers();
+            return;
+          }
+        }
+
+        if (pendingResolution.clearPendingModifiers) {
           clearPendingModifiers();
-          return;
         }
       }
 
@@ -744,9 +855,8 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
         )}
 
         {isAttaching ? (
-          <View style={styles.attachOverlay}>
+          <View style={styles.attachOverlay} testID="terminal-attach-loading">
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
-            <Text style={styles.attachOverlayText}>Attaching terminal…</Text>
           </View>
         ) : null}
       </View>
@@ -912,22 +1022,10 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   attachOverlay: {
-    position: "absolute",
-    top: theme.spacing[3],
-    right: theme.spacing[3],
-    flexDirection: "row",
+    ...StyleSheet.absoluteFillObject,
     alignItems: "center",
-    gap: theme.spacing[2],
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.surface0,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-  },
-  attachOverlayText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.16)",
   },
   errorRow: {
     paddingHorizontal: theme.spacing[3],

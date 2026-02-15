@@ -365,6 +365,7 @@ export default function TerminalEmulator({
       fitAndEmitResize();
     });
     resizeObserver.observe(root);
+    resizeObserver.observe(host);
 
     const windowResizeHandler = () => fitAndEmitResize();
     window.addEventListener("resize", windowResizeHandler);
@@ -377,6 +378,25 @@ export default function TerminalEmulator({
     const fitInterval = window.setInterval(() => {
       fitAndEmitResize();
     }, 250);
+
+    const fitTimeoutHandles = [0, 16, 48, 120, 250, 500, 1_000, 2_000].map((delay) =>
+      window.setTimeout(() => {
+        fitAndEmitResize(true);
+      }, delay)
+    );
+
+    const fontSet = document.fonts;
+    const fontReadyHandler = () => {
+      fitAndEmitResize(true);
+    };
+    fontSet?.addEventListener?.("loadingdone", fontReadyHandler);
+    void fontSet?.ready
+      .then(() => {
+        fitAndEmitResize(true);
+      })
+      .catch(() => {
+        // no-op
+      });
 
     window.setTimeout(() => fitAndEmitResize(true), 0);
 
@@ -391,6 +411,10 @@ export default function TerminalEmulator({
       window.removeEventListener("resize", windowResizeHandler);
       visualViewport?.removeEventListener("resize", visualViewportResizeHandler);
       window.clearInterval(fitInterval);
+      for (const handle of fitTimeoutHandles) {
+        window.clearTimeout(handle);
+      }
+      fontSet?.removeEventListener?.("loadingdone", fontReadyHandler);
       root.removeEventListener("touchstart", rootTouchStartHandler);
       root.removeEventListener("touchmove", rootTouchMoveHandler);
       root.removeEventListener("touchend", rootTouchEndHandler);
@@ -478,12 +502,10 @@ export default function TerminalEmulator({
       ref={rootRef}
       data-testid={testId}
       style={{
-        position: "absolute",
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
+        position: "relative",
         display: "flex",
+        width: "100%",
+        height: "100%",
         minHeight: 0,
         minWidth: 0,
         backgroundColor,

@@ -6,6 +6,7 @@ import {
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
   normalizeTerminalTransportKey,
+  resolvePendingModifierDataInput,
   shouldInterceptDomTerminalKey,
 } from "./terminal-keys";
 
@@ -95,5 +96,42 @@ describe("terminal key helpers", () => {
     expect(mapTerminalDataToKey("\x1b")).toBe("Escape");
     expect(mapTerminalDataToKey("\x03")).toBeNull();
     expect(mapTerminalDataToKey("")).toBeNull();
+  });
+
+  it("clears pending modifiers when fallback input cannot map to a key", () => {
+    expect(
+      resolvePendingModifierDataInput({
+        data: "hello",
+        pendingModifiers: { ctrl: true, shift: false, alt: false },
+      })
+    ).toEqual({
+      mode: "raw",
+      clearPendingModifiers: true,
+    });
+  });
+
+  it("maps pending modifier fallback to key transport when possible", () => {
+    expect(
+      resolvePendingModifierDataInput({
+        data: "c",
+        pendingModifiers: { ctrl: true, shift: false, alt: false },
+      })
+    ).toEqual({
+      mode: "key",
+      key: "c",
+      clearPendingModifiers: true,
+    });
+  });
+
+  it("keeps raw mode unchanged when no pending modifiers exist", () => {
+    expect(
+      resolvePendingModifierDataInput({
+        data: "c",
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+      })
+    ).toEqual({
+      mode: "raw",
+      clearPendingModifiers: false,
+    });
   });
 });

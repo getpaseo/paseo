@@ -28,7 +28,8 @@ describe("TerminalStreamManager", () => {
     manager.receiveChunk({
       chunk: createChunk({ streamId: 7, offset: 4, data: "hello" }),
     });
-    expect(sendAck).not.toHaveBeenCalled();
+    expect(sendAck).toHaveBeenCalledTimes(1);
+    expect(sendAck).toHaveBeenCalledWith({ streamId: 7, offset: 9 });
 
     manager.subscribe({
       streamId: 7,
@@ -77,6 +78,9 @@ describe("TerminalStreamManager", () => {
     manager.receiveChunk({
       chunk: createChunk({ streamId: 5, offset: 2, data: "C" }),
     });
+    expect(sendAck).toHaveBeenNthCalledWith(1, { streamId: 5, offset: 1 });
+    expect(sendAck).toHaveBeenNthCalledWith(2, { streamId: 5, offset: 2 });
+    expect(sendAck).toHaveBeenNthCalledWith(3, { streamId: 5, offset: 3 });
 
     const seen: string[] = [];
     manager.subscribe({
@@ -87,8 +91,7 @@ describe("TerminalStreamManager", () => {
     });
 
     expect(seen).toEqual(["B", "C"]);
-    expect(sendAck).toHaveBeenNthCalledWith(1, { streamId: 5, offset: 2 });
-    expect(sendAck).toHaveBeenNthCalledWith(2, { streamId: 5, offset: 3 });
+    expect(sendAck).toHaveBeenCalledTimes(3);
   });
 
   test("tracks explicit ack offsets and skips stale auto-acks", () => {

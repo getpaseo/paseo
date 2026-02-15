@@ -68,6 +68,7 @@ import type {
 } from "./agent/agent-manager.js";
 import { scheduleAgentMetadataGeneration } from "./agent/agent-metadata-generator.js";
 import { toAgentPayload } from "./agent/agent-projections.js";
+import { appendTimelineItemIfAgentKnown } from "./agent/timeline-append.js";
 import { projectTimelineRows, type TimelineProjectionMode } from "./agent/timeline-projection.js";
 import {
   StructuredAgentResponseError,
@@ -83,7 +84,6 @@ import type {
   AgentStreamEvent,
   AgentProvider,
   AgentPersistenceHandle,
-  AgentTimelineItem,
 } from "./agent/agent-sdk-types.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import { isValidAgentProvider, AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
@@ -101,18 +101,18 @@ import {
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import {
-  createWorktree,
-  runWorktreeSetupCommands,
-  WorktreeSetupError,
   type WorktreeConfig,
-  type WorktreeSetupCommandResult,
-	  slugify,
-	  validateBranchSlug,
-	  listPaseoWorktrees,
-	  deletePaseoWorktree,
-	  isPaseoOwnedWorktreeCwd,
-	  resolvePaseoWorktreeRootForCwd,
-	} from "../utils/worktree.js";
+  slugify,
+  validateBranchSlug,
+  listPaseoWorktrees,
+  deletePaseoWorktree,
+  isPaseoOwnedWorktreeCwd,
+  resolvePaseoWorktreeRootForCwd,
+} from "../utils/worktree.js";
+import {
+  createAgentWorktree,
+  runAsyncWorktreeBootstrap,
+} from "./worktree-bootstrap.js";
 import {
   getCheckoutDiff,
   getCheckoutStatus,
@@ -208,19 +208,22 @@ function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
   return `remote:${cleanedHost}/${cleanedPath}`;
 }
 
-function deriveProjectGroupingKey(cwd: string, remoteUrl: string | null): string {
-  const remoteKey = deriveRemoteProjectKey(remoteUrl);
+function deriveProjectGroupingKey(options: {
+  cwd: string;
+  remoteUrl: string | null;
+}): string {
+  const remoteKey = deriveRemoteProjectKey(options.remoteUrl);
   if (remoteKey) {
     return remoteKey;
   }
 
   const worktreeMarker = ".paseo/worktrees/";
-  const idx = cwd.indexOf(worktreeMarker);
+  const idx = options.cwd.indexOf(worktreeMarker);
   if (idx !== -1) {
-    return cwd.slice(0, idx).replace(/\/$/, "");
+    return options.cwd.slice(0, idx).replace(/\/$/, "");
   }
 
-  return cwd;
+  return options.cwd;
 }
 
 function deriveProjectGroupingName(projectKey: string): string {
@@ -1123,7 +1126,10 @@ export class Session {
     const checkout = await getCheckoutStatusLite(cwd, { paseoHome: this.paseoHome })
       .then((status) => this.toProjectCheckoutLite(cwd, status))
       .catch(() => this.buildFallbackProjectCheckout(cwd));
-    const projectKey = deriveProjectGroupingKey(cwd, checkout.remoteUrl);
+    const projectKey = deriveProjectGroupingKey({
+      cwd,
+      remoteUrl: checkout.remoteUrl,
+    });
     return {
       projectKey,
       projectName: deriveProjectGroupingName(projectKey),
@@ -2398,7 +2404,18 @@ export class Session {
       }
 
       if (worktreeConfig) {
-        void this.runAsyncWorktreeSetup(snapshot.id, worktreeConfig);
+        void runAsyncWorktreeBootstrap({
+          agentId: snapshot.id,
+          worktree: worktreeConfig,
+          terminalManager: this.terminalManager,
+          appendTimelineItem: (item) =>
+            appendTimelineItemIfAgentKnown({
+              agentManager: this.agentManager,
+              agentId: snapshot.id,
+              item,
+            }),
+          logger: this.sessionLogger,
+        });
       }
 
       this.sessionLogger.info(
@@ -2627,12 +2644,11 @@ export class Session {
         }' for branch ${targetBranch}`
       );
 
-      const createdWorktree = await createWorktree({
+      const createdWorktree = await createAgentWorktree({
         branchName: targetBranch,
         cwd,
         baseBranch: normalized.baseBranch!,
         worktreeSlug: normalized.worktreeSlug ?? targetBranch,
-        runSetup: false,
         paseoHome: this.paseoHome,
       });
       cwd = createdWorktree.worktreePath;
@@ -2654,108 +2670,6 @@ export class Session {
       },
       worktreeConfig,
     };
-  }
-
-  private async runAsyncWorktreeSetup(
-    agentId: string,
-    worktree: WorktreeConfig
-  ): Promise<void> {
-    const callId = uuidv4();
-    let results: WorktreeSetupCommandResult[] = [];
-    try {
-      const started = await this.safeAppendTimelineItem(agentId, {
-        type: "tool_call",
-        name: "paseo_worktree_setup",
-        callId,
-        status: "running",
-        detail: {
-          type: "unknown",
-          input: {
-            worktreePath: worktree.worktreePath,
-            branchName: worktree.branchName,
-          },
-          output: null,
-        },
-        error: null,
-      });
-      if (!started) {
-        return;
-      }
-
-      results = await runWorktreeSetupCommands({
-        worktreePath: worktree.worktreePath,
-        branchName: worktree.branchName,
-        cleanupOnFailure: false,
-      });
-
-      await this.safeAppendTimelineItem(agentId, {
-        type: "tool_call",
-        name: "paseo_worktree_setup",
-        callId,
-        status: "completed",
-        detail: {
-          type: "unknown",
-          input: {
-            worktreePath: worktree.worktreePath,
-            branchName: worktree.branchName,
-          },
-          output: {
-            worktreePath: worktree.worktreePath,
-            commands: results.map((result) => ({
-              command: result.command,
-              cwd: result.cwd,
-              exitCode: result.exitCode,
-              output: `${result.stdout ?? ""}${result.stderr ? `\n${result.stderr}` : ""}`.trim(),
-            })),
-          },
-        },
-        error: null,
-      });
-    } catch (error: any) {
-      if (error instanceof WorktreeSetupError) {
-        results = error.results;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      await this.safeAppendTimelineItem(agentId, {
-        type: "tool_call",
-        name: "paseo_worktree_setup",
-        callId,
-        status: "failed",
-        detail: {
-          type: "unknown",
-          input: {
-            worktreePath: worktree.worktreePath,
-            branchName: worktree.branchName,
-          },
-          output: {
-            worktreePath: worktree.worktreePath,
-            commands: results.map((result) => ({
-              command: result.command,
-              cwd: result.cwd,
-              exitCode: result.exitCode,
-              output: `${result.stdout ?? ""}${result.stderr ? `\n${result.stderr}` : ""}`.trim(),
-            })),
-          },
-        },
-        error: { message },
-      });
-    }
-  }
-
-  private async safeAppendTimelineItem(
-    agentId: string,
-    item: AgentTimelineItem
-  ): Promise<boolean> {
-    try {
-      await this.agentManager.appendTimelineItem(agentId, item);
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("Unknown agent")) {
-        return false;
-      }
-      throw error;
-    }
   }
 
   private async handleListProviderModelsRequest(

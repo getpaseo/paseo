@@ -11,6 +11,7 @@ interface PaseoConfig {
   worktree?: {
     setup?: string[];
     destroy?: string[];
+    terminals?: WorktreeTerminalConfig[];
   };
 }
 
@@ -32,6 +33,11 @@ export type WorktreeSetupCommandResult = {
   stderr: string;
   exitCode: number | null;
 };
+
+export interface WorktreeTerminalConfig {
+  name?: string;
+  command: string;
+}
 
 export class WorktreeSetupError extends Error {
   readonly results: WorktreeSetupCommandResult[];
@@ -105,6 +111,42 @@ export function getWorktreeDestroyCommands(repoRoot: string): string[] {
     return [];
   }
   return destroyCommands.filter((cmd) => typeof cmd === "string" && cmd.trim().length > 0);
+}
+
+export function getWorktreeTerminalSpecs(repoRoot: string): WorktreeTerminalConfig[] {
+  const config = readPaseoConfig(repoRoot);
+  const terminals = config?.worktree?.terminals;
+  if (!Array.isArray(terminals) || terminals.length === 0) {
+    return [];
+  }
+
+  const specs: WorktreeTerminalConfig[] = [];
+  for (const terminal of terminals) {
+    if (!terminal || typeof terminal !== "object") {
+      continue;
+    }
+
+    const rawCommand = terminal.command;
+    if (typeof rawCommand !== "string") {
+      continue;
+    }
+    const command = rawCommand.trim();
+    if (!command) {
+      continue;
+    }
+
+    const rawName = terminal.name;
+    const name = typeof rawName === "string" && rawName.trim().length > 0
+      ? rawName.trim()
+      : undefined;
+
+    specs.push({
+      ...(name ? { name } : {}),
+      command,
+    });
+  }
+
+  return specs;
 }
 
 async function execSetupCommand(

@@ -13,6 +13,7 @@ import * as Clipboard from "expo-clipboard";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import { useQueryClient } from "@tanstack/react-query";
 import ReanimatedAnimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -59,7 +60,11 @@ import { extractAgentModel } from "@/utils/extract-agent-model";
 import { startPerfMonitor } from "@/utils/perf-monitor";
 import { shortenPath } from "@/utils/shorten-path";
 import { deriveBranchLabel, deriveProjectPath } from "@/utils/agent-display-info";
-import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
+import {
+  checkoutStatusQueryKey,
+  type CheckoutStatusPayload,
+  useCheckoutStatusQuery,
+} from "@/hooks/use-checkout-status-query";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
 import { useToast } from "@/contexts/toast-context";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
@@ -67,6 +72,7 @@ import {
   derivePendingPermissionKey,
   normalizeAgentSnapshot,
 } from "@/utils/agent-snapshots";
+import type { FetchAgentsEntry } from "@server/client/daemon-client";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -75,6 +81,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { buildHostAgentDraftRoute } from "@/utils/host-routes";
+import type { ExplorerCheckoutContext } from "@/stores/panel-store";
 
 const DROPDOWN_WIDTH = 220;
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -210,6 +217,8 @@ function AgentScreenContent({
   const toast = useToast();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const resolvedAgentId = agentId;
 
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
 
@@ -229,22 +238,100 @@ function AgentScreenContent({
   const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
   const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
   const closeToAgent = usePanelStore((state) => state.closeToAgent);
-  const setExplorerTab = usePanelStore((state) => state.setExplorerTab);
+  const setActiveExplorerCheckout = usePanelStore((state) => state.setActiveExplorerCheckout);
+  const activateExplorerTabForCheckout = usePanelStore(
+    (state) => state.activateExplorerTabForCheckout
+  );
 
   // Derive isExplorerOpen from the unified panel state
   const isExplorerOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
-  const openExplorerWithDefaultTab = useCallback(() => {
-    // Generic explorer toggles should land on Changes by default.
-    setExplorerTab("changes");
+  // Select only the specific agent
+  const agent = useSessionStore((state) =>
+    resolvedAgentId
+      ? state.sessions[serverId]?.agents?.get(resolvedAgentId)
+      : undefined
+  );
+  // Checkout status for header subtitle + git fallback when cached project placement is absent
+  const checkoutStatusQuery = useCheckoutStatusQuery({
+    serverId,
+    cwd: agent?.cwd ?? "",
+  });
+  const checkout = checkoutStatusQuery.status;
+  const resolveCachedCheckoutIsGit = useCallback(
+    (params: {
+      agentId?: string | null;
+      cwd?: string | null;
+      projectPlacementIsGit?: boolean;
+      checkoutStatusIsGit?: boolean;
+    }): boolean | null => {
+      if (typeof params.projectPlacementIsGit === "boolean") {
+        return params.projectPlacementIsGit;
+      }
+
+      const agentId = params.agentId?.trim();
+      if (agentId) {
+        const sidebarAgents = queryClient.getQueryData<{
+          entries: FetchAgentsEntry[];
+        }>(["sidebarAgentsList", serverId]);
+        const sidebarIsGit = sidebarAgents?.entries.find(
+          (entry) => entry.agent.id === agentId
+        )?.project?.checkout?.isGit;
+        if (typeof sidebarIsGit === "boolean") {
+          return sidebarIsGit;
+        }
+      }
+
+      const cwd = params.cwd?.trim();
+      if (!cwd) {
+        return null;
+      }
+      const cachedCheckout = queryClient.getQueryData<CheckoutStatusPayload>(
+        checkoutStatusQueryKey(serverId, cwd)
+      );
+      if (typeof cachedCheckout?.isGit === "boolean") {
+        return cachedCheckout.isGit;
+      }
+      if (typeof params.checkoutStatusIsGit === "boolean") {
+        return params.checkoutStatusIsGit;
+      }
+      return null;
+    },
+    [queryClient, serverId]
+  );
+  const resolveCurrentExplorerCheckout = useCallback((): ExplorerCheckoutContext | null => {
+    if (!resolvedAgentId) {
+      return null;
+    }
+    const currentAgent = useSessionStore
+      .getState()
+      .sessions[serverId]
+      ?.agents?.get(resolvedAgentId);
+    const cwd = currentAgent?.cwd?.trim();
+    const isGit = resolveCachedCheckoutIsGit({
+      agentId: resolvedAgentId,
+      cwd,
+      projectPlacementIsGit: currentAgent?.projectPlacement?.checkout?.isGit,
+      checkoutStatusIsGit: checkout?.isGit,
+    });
+    if (!cwd || typeof isGit !== "boolean") {
+      return null;
+    }
+    return { serverId, cwd, isGit };
+  }, [resolveCachedCheckoutIsGit, resolvedAgentId, checkout?.isGit, serverId]);
+  const openExplorerForActiveCheckout = useCallback(() => {
+    const checkoutContext = resolveCurrentExplorerCheckout();
+    if (checkoutContext) {
+      activateExplorerTabForCheckout(checkoutContext);
+    }
     openFileExplorer();
-  }, [openFileExplorer, setExplorerTab]);
+  }, [activateExplorerTabForCheckout, openFileExplorer, resolveCurrentExplorerCheckout]);
   const handleToggleExplorer = useCallback(() => {
     if (isExplorerOpen) {
       toggleFileExplorer();
       return;
     }
-    openExplorerWithDefaultTab();
-  }, [isExplorerOpen, openExplorerWithDefaultTab, toggleFileExplorer]);
+    openExplorerForActiveCheckout();
+  }, [isExplorerOpen, openExplorerForActiveCheckout, toggleFileExplorer]);
 
   const {
     translateX: explorerTranslateX,
@@ -254,6 +341,10 @@ function AgentScreenContent({
     animateToClose: animateExplorerToClose,
     isGesturing: isExplorerGesturing,
   } = useExplorerSidebarAnimation();
+  const handleOpenExplorerFromGesture = useCallback(() => {
+    openExplorerForActiveCheckout();
+    animateExplorerToOpen();
+  }, [animateExplorerToOpen, openExplorerForActiveCheckout]);
 
   useEffect(() => {
     if (Platform.OS !== "web") {
@@ -293,8 +384,7 @@ function AgentScreenContent({
           // Open if dragged more than 1/3 of window or fast swipe left
           const shouldOpen = event.translationX < -explorerWindowWidth / 3 || event.velocityX < -500;
           if (shouldOpen) {
-            animateExplorerToOpen();
-            runOnJS(openExplorerWithDefaultTab)();
+            runOnJS(handleOpenExplorerFromGesture)();
           } else {
             animateExplorerToClose();
           }
@@ -308,9 +398,8 @@ function AgentScreenContent({
       explorerWindowWidth,
       explorerTranslateX,
       explorerBackdropOpacity,
-      animateExplorerToOpen,
       animateExplorerToClose,
-      openExplorerWithDefaultTab,
+      handleOpenExplorerFromGesture,
       isExplorerGesturing,
     ]
   );
@@ -330,14 +419,43 @@ function AgentScreenContent({
     return () => handler.remove();
   }, [isExplorerOpen, closeToAgent]);
 
-  const resolvedAgentId = agentId;
+  const activeExplorerCheckout = useMemo<ExplorerCheckoutContext | null>(() => {
+    const cwd = agent?.cwd?.trim();
+    const isGit = resolveCachedCheckoutIsGit({
+      agentId: resolvedAgentId,
+      cwd,
+      projectPlacementIsGit: agent?.projectPlacement?.checkout?.isGit,
+      checkoutStatusIsGit: checkout?.isGit,
+    });
+    if (!cwd || typeof isGit !== "boolean") {
+      return null;
+    }
+    return { serverId, cwd, isGit };
+  }, [
+    agent?.cwd,
+    agent?.projectPlacement?.checkout?.isGit,
+    resolveCachedCheckoutIsGit,
+    resolvedAgentId,
+    checkout?.isGit,
+    serverId,
+  ]);
 
-  // Select only the specific agent
-  const agent = useSessionStore((state) =>
-    resolvedAgentId
-      ? state.sessions[serverId]?.agents?.get(resolvedAgentId)
-      : undefined
-  );
+  useEffect(() => {
+    setActiveExplorerCheckout(activeExplorerCheckout);
+  }, [activeExplorerCheckout, setActiveExplorerCheckout]);
+
+  useEffect(() => {
+    if (!activeExplorerCheckout) {
+      return;
+    }
+    activateExplorerTabForCheckout(activeExplorerCheckout);
+  }, [activateExplorerTabForCheckout, activeExplorerCheckout]);
+
+  useEffect(() => {
+    return () => {
+      setActiveExplorerCheckout(null);
+    };
+  }, [setActiveExplorerCheckout]);
 
   // Select only the specific stream tail - use stable empty array to avoid infinite loop
   const streamItemsRaw = useSessionStore((state) =>
@@ -480,12 +598,7 @@ function AgentScreenContent({
     };
   }, [showConnectedNotice]);
 
-  // Checkout status for header subtitle
-  const checkoutStatusQuery = useCheckoutStatusQuery({
-    serverId,
-    cwd: agent?.cwd ?? "",
-  });
-  const checkout = checkoutStatusQuery.status;
+  const isGitCheckout = activeExplorerCheckout?.isGit ?? false;
 
   useEffect(() => {
     if (!resolvedAgentId) {
@@ -1105,7 +1218,12 @@ function AgentScreenContent({
 
         {/* Explorer Sidebar - Desktop: inline, Mobile: overlay */}
         {!isMobile && isExplorerOpen && resolvedAgentId && (
-          <ExplorerSidebar serverId={serverId} agentId={resolvedAgentId} cwd={effectiveAgent.cwd} />
+          <ExplorerSidebar
+            serverId={serverId}
+            agentId={resolvedAgentId}
+            cwd={effectiveAgent.cwd}
+            isGit={isGitCheckout}
+          />
         )}
       </View>
   );
@@ -1122,7 +1240,12 @@ function AgentScreenContent({
 
       {/* Mobile Explorer Sidebar Overlay */}
       {isMobile && resolvedAgentId && (
-        <ExplorerSidebar serverId={serverId} agentId={resolvedAgentId} cwd={effectiveAgent.cwd} />
+        <ExplorerSidebar
+          serverId={serverId}
+          agentId={resolvedAgentId}
+          cwd={effectiveAgent.cwd}
+          isGit={isGitCheckout}
+        />
       )}
     </>
   );

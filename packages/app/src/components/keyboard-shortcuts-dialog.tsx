@@ -5,92 +5,8 @@ import { getIsTauri } from "@/constants/layout";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import type { ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
-
-type ShortcutHelpRow = {
-  id: string;
-  label: string;
-  keys: ShortcutKey[];
-  note?: string;
-};
-
-type ShortcutHelpSection = {
-  title: string;
-  rows: ShortcutHelpRow[];
-};
-
-function buildShortcutHelpSections(input: {
-  isMac: boolean;
-  isTauri: boolean;
-}): ShortcutHelpSection[] {
-  const leftSidebarKeys: ShortcutKey[] = input.isMac ? ["mod", "B"] : ["mod", "."];
-  const newAgentKeys: ShortcutKey[] = input.isTauri
-    ? ["mod", "N"]
-    : ["mod", "alt", "N"];
-  const quickAgentKeys: ShortcutKey[] = input.isTauri
-    ? ["mod", "1-9"]
-    : ["alt", "1-9"];
-
-  return [
-    {
-      title: "Global",
-      rows: [
-        {
-          id: "show-shortcuts",
-          label: "Show keyboard shortcuts",
-          keys: ["?"],
-          note: "Available when focus is not in a text field or terminal.",
-        },
-        {
-          id: "toggle-left-sidebar",
-          label: "Toggle left sidebar",
-          keys: leftSidebarKeys,
-        },
-        {
-          id: "toggle-right-sidebar",
-          label: "Toggle right sidebar",
-          keys: ["mod", "E"],
-        },
-        {
-          id: "toggle-command-center",
-          label: "Toggle command center",
-          keys: ["mod", "K"],
-        },
-        {
-          id: "new-agent",
-          label: "Create new agent",
-          keys: newAgentKeys,
-        },
-        {
-          id: "quick-open-agent",
-          label: "Open sidebar agent shortcut",
-          keys: quickAgentKeys,
-        },
-      ],
-    },
-    {
-      title: "Agent Input",
-      rows: [
-        {
-          id: "dictation-toggle",
-          label: "Start/stop dictation",
-          keys: ["mod", "D"],
-        },
-        {
-          id: "voice-toggle",
-          label: "Toggle voice mode",
-          keys: ["mod", "shift", "D"],
-        },
-        {
-          id: "voice-mute-toggle",
-          label: "Mute/unmute voice mode",
-          keys: ["Space"],
-        },
-      ],
-    },
-  ];
-}
+import { buildKeyboardShortcutHelpSections } from "@/keyboard/keyboard-shortcuts";
 
 export function KeyboardShortcutsDialog() {
   const open = useKeyboardShortcutsStore((s) => s.shortcutsDialogOpen);
@@ -99,7 +15,7 @@ export function KeyboardShortcutsDialog() {
   const isMac = getShortcutOs() === "mac";
   const isTauri = getIsTauri();
   const sections = useMemo(
-    () => buildShortcutHelpSections({ isMac, isTauri }),
+    () => buildKeyboardShortcutHelpSections({ isMac, isTauri }),
     [isMac, isTauri]
   );
 

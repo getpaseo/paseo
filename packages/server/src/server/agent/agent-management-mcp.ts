@@ -46,14 +46,21 @@ import { toAgentPayload } from "./agent-projections.js";
 import { curateAgentActivity } from "./activity-curator.js";
 import { AGENT_PROVIDER_DEFINITIONS } from "./provider-registry.js";
 import { AgentStorage } from "./agent-storage.js";
-import { createWorktree } from "../../utils/worktree.js";
+import { appendTimelineItemIfAgentKnown } from "./timeline-append.js";
+import { type WorktreeConfig } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
 import { expandUserPath } from "../path-utils.js";
+import type { TerminalManager } from "../../terminal/terminal-manager.js";
+import {
+  createAgentWorktree,
+  runAsyncWorktreeBootstrap,
+} from "../worktree-bootstrap.js";
 
 export interface AgentManagementMcpOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  terminalManager?: TerminalManager | null;
   paseoHome?: string;
   logger: Logger;
 }
@@ -313,12 +320,13 @@ export async function createAgentManagementMcpServer(
       };
 
       let resolvedCwd = expandUserPath(cwd);
+      let worktreeConfig: WorktreeConfig | undefined;
 
       if (worktreeName) {
         if (!baseBranch) {
           throw new Error("baseBranch is required when creating a worktree");
         }
-        const worktree = await createWorktree({
+        const worktree = await createAgentWorktree({
           branchName: worktreeName,
           cwd: resolvedCwd,
           baseBranch,
@@ -326,6 +334,7 @@ export async function createAgentManagementMcpServer(
           paseoHome: options.paseoHome,
         });
         resolvedCwd = worktree.worktreePath;
+        worktreeConfig = worktree;
       }
 
       const provider: AgentProvider = agentType ?? "claude";
@@ -336,6 +345,21 @@ export async function createAgentManagementMcpServer(
         modeId: initialMode,
         title: normalizedTitle ?? undefined,
       });
+
+      if (worktreeConfig) {
+        void runAsyncWorktreeBootstrap({
+          agentId: snapshot.id,
+          worktree: worktreeConfig,
+          terminalManager: options.terminalManager ?? null,
+          appendTimelineItem: (item) =>
+            appendTimelineItemIfAgentKnown({
+              agentManager,
+              agentId: snapshot.id,
+              item,
+            }),
+          logger: childLogger,
+        });
+      }
 
       const trimmedPrompt = initialPrompt?.trim();
       if (trimmedPrompt) {

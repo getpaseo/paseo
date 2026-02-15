@@ -16,18 +16,16 @@ function tmpCwd(): string {
 }
 
 async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  label: string
+  options: { promise: Promise<T>; timeoutMs: number; label: string }
 ): Promise<T> {
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
-      reject(new Error(`Timed out after ${timeoutMs}ms (${label})`));
-    }, timeoutMs);
+      reject(new Error(`Timed out after ${options.timeoutMs}ms (${options.label})`));
+    }, options.timeoutMs);
   });
   try {
-    return await Promise.race([promise, timeout]);
+    return await Promise.race([options.promise, timeout]);
   } finally {
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
@@ -89,6 +87,21 @@ async function waitForTimelineToolCall(
     `Timed out waiting for timeline tool_call (${agentId}). Recent tool_calls: ${JSON.stringify(
       recentToolCalls
     )}`
+  );
+}
+
+async function waitForPathExists(
+  options: { targetPath: string; timeoutMs: number; label: string }
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < options.timeoutMs) {
+    if (existsSync(options.targetPath)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `Timed out after ${options.timeoutMs}ms waiting for ${options.label}: ${options.targetPath}`
   );
 }
 
@@ -352,8 +365,8 @@ describe("daemon E2E", () => {
           stdio: "pipe",
         });
 
-        const agent = await withTimeout(
-          ctx.client.createAgent({
+        const agent = await withTimeout({
+          promise: ctx.client.createAgent({
             provider: "codex",
             model: CODEX_TEST_MODEL,
             thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
@@ -367,9 +380,9 @@ describe("daemon E2E", () => {
               worktreeSlug: "async-setup-test",
             },
           }),
-          2500,
-          "createAgent should not block on setup"
-        );
+          timeoutMs: 2500,
+          label: "createAgent should not block on setup",
+        });
 
         expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
         expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(false);
@@ -389,6 +402,107 @@ describe("daemon E2E", () => {
           expect(completed.detail.output).toBeTruthy();
         }
         expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(true);
+
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(repoRoot, { recursive: true, force: true });
+      },
+      60000
+    );
+
+    test(
+      "bootstraps configured worktree terminals after setup succeeds",
+      async () => {
+        const repoRoot = tmpCwd();
+
+        const { execSync } = await import("child_process");
+        execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git config user.email 'test@test.com'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+        execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+
+        writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
+        execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'initial'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+        execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
+
+        const setupCommand =
+          'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"';
+        writeFileSync(
+          path.join(repoRoot, "paseo.json"),
+          JSON.stringify({
+            worktree: {
+              setup: [setupCommand],
+              terminals: [
+                {
+                  name: "Dev Server",
+                  command: 'echo "dev-server" > dev-terminal.txt; tail -f /dev/null',
+                },
+                {
+                  command: 'echo "lint-watch" > lint-terminal.txt; tail -f /dev/null',
+                },
+              ],
+            },
+          })
+        );
+        execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'add setup and terminals'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+
+        const agent = await withTimeout({
+          promise: ctx.client.createAgent({
+            provider: "codex",
+            model: CODEX_TEST_MODEL,
+            thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+            cwd: repoRoot,
+            title: "Async Worktree Setup + Terminals Test",
+            git: {
+              createWorktree: true,
+              createNewBranch: true,
+              baseBranch: "main",
+              newBranchName: "async-setup-terminals-test",
+              worktreeSlug: "async-setup-terminals-test",
+            },
+          }),
+          timeoutMs: 2500,
+          label: "createAgent should not block on setup",
+        });
+
+        expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
+        expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(false);
+        expect(existsSync(path.join(agent.cwd, "dev-terminal.txt"))).toBe(false);
+        expect(existsSync(path.join(agent.cwd, "lint-terminal.txt"))).toBe(false);
+
+        writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
+
+        await waitForTimelineToolCall(
+          collector.messages,
+          agent.id,
+          (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
+          20000
+        );
+
+        await waitForPathExists({
+          targetPath: path.join(agent.cwd, "dev-terminal.txt"),
+          timeoutMs: 15000,
+          label: "dev terminal marker",
+        });
+        await waitForPathExists({
+          targetPath: path.join(agent.cwd, "lint-terminal.txt"),
+          timeoutMs: 15000,
+          label: "lint terminal marker",
+        });
+
+        const list = await ctx.client.listTerminals(agent.cwd);
+        expect(list.error).toBeUndefined();
+        expect(list.terminals.some((terminal) => terminal.name === "Dev Server")).toBe(true);
+        expect(list.terminals.length).toBeGreaterThanOrEqual(2);
 
         await ctx.client.deleteAgent(agent.id);
         rmSync(repoRoot, { recursive: true, force: true });
@@ -421,7 +535,17 @@ describe("daemon E2E", () => {
           'echo "started" > "$PASEO_WORKTREE_PATH/setup-start.txt"; sleep 0.1; echo "boom" 1>&2; exit 7';
         writeFileSync(
           path.join(repoRoot, "paseo.json"),
-          JSON.stringify({ worktree: { setup: [setupCommand] } })
+          JSON.stringify({
+            worktree: {
+              setup: [setupCommand],
+              terminals: [
+                {
+                  name: "Should Not Start",
+                  command: 'echo "should-not-run" > should-not-run.txt; tail -f /dev/null',
+                },
+              ],
+            },
+          })
         );
         execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
         execSync("git -c commit.gpgsign=false commit -m 'add failing setup'", {
@@ -429,8 +553,8 @@ describe("daemon E2E", () => {
           stdio: "pipe",
         });
 
-        const agent = await withTimeout(
-          ctx.client.createAgent({
+        const agent = await withTimeout({
+          promise: ctx.client.createAgent({
             provider: "codex",
             model: CODEX_TEST_MODEL,
             thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
@@ -444,9 +568,9 @@ describe("daemon E2E", () => {
               worktreeSlug: "async-setup-failure-test",
             },
           }),
-          2500,
-          "createAgent should not block on failing setup"
-        );
+          timeoutMs: 2500,
+          label: "createAgent should not block on failing setup",
+        });
 
         expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
         expect(existsSync(agent.cwd)).toBe(true);
@@ -469,6 +593,7 @@ describe("daemon E2E", () => {
         );
 
         expect(existsSync(path.join(agent.cwd, "setup-start.txt"))).toBe(true);
+        expect(existsSync(path.join(agent.cwd, "should-not-run.txt"))).toBe(false);
 
         const output = failed.detail.type === "unknown" ? failed.detail.output as any : undefined;
         const commands = output?.commands as any[] | undefined;
