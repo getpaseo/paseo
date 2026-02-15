@@ -3,6 +3,12 @@
     "setup": [
       "npm ci",
       "cp \"$PASEO_SOURCE_CHECKOUT_PATH/packages/server/.env\" \"$PASEO_WORKTREE_PATH/packages/server/.env\""
+    ],
+    "terminals": [
+      {
+        "name": "anti-andran dev",
+        "command": "npm run dev"
+      }
     ]
   }
 }
