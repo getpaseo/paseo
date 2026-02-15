@@ -284,6 +284,84 @@ test("terminal reattaches cleanly after heavy output and tab switches", async ({
   }
 });
 
+test("terminal keeps prompt echo visible after enter and backspace churn", async ({ page }) => {
+  const repo = await createTempGitRepo("paseo-e2e-terminal-echo-churn-");
+
+  try {
+    await openNewAgentDraft(page);
+    await setWorkingDirectory(page, repo.path);
+    await ensureHostSelected(page);
+    await createAgent(page, "hello");
+
+    await openTerminalsPanel(page);
+
+    const surface = page.getByTestId("terminal-surface").first();
+    await expect(surface).toBeVisible({ timeout: 30000 });
+    await surface.click({ force: true });
+
+    for (let iteration = 0; iteration < 40; iteration += 1) {
+      await page.keyboard.press("Enter");
+    }
+
+    const markerAfterEnters = `echo-visible-${Date.now()}`;
+    await page.keyboard.type(`echo ${markerAfterEnters}`, { delay: 0 });
+    await expect(surface).toContainText(`echo ${markerAfterEnters}`, {
+      timeout: 30000,
+    });
+    await page.keyboard.press("Enter");
+    await expect(surface).toContainText(markerAfterEnters, {
+      timeout: 30000,
+    });
+
+    const longSuffix = "x".repeat(120);
+    await page.keyboard.type(`echo ${longSuffix}`, { delay: 0 });
+    for (let iteration = 0; iteration < longSuffix.length; iteration += 1) {
+      await page.keyboard.press("Backspace");
+    }
+
+    const markerAfterBackspace = `echo-backspace-${Date.now()}`;
+    await page.keyboard.type(markerAfterBackspace, { delay: 0 });
+    await page.keyboard.press("Enter");
+    await expect(surface).toContainText(markerAfterBackspace, {
+      timeout: 30000,
+    });
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test("terminal remains interactive after alternate-screen enter/exit", async ({ page }) => {
+  const repo = await createTempGitRepo("paseo-e2e-terminal-alt-screen-");
+
+  try {
+    await openNewAgentDraft(page);
+    await setWorkingDirectory(page, repo.path);
+    await ensureHostSelected(page);
+    await createAgent(page, "hello");
+
+    await openTerminalsPanel(page);
+
+    const surface = page.getByTestId("terminal-surface").first();
+    await expect(surface).toBeVisible({ timeout: 30000 });
+    await surface.click({ force: true });
+
+    await page.keyboard.type(
+      "printf '\\033[?1049h\\033[2J\\033[HALT\\033[?1049l\\n'",
+      { delay: 0 }
+    );
+    await page.keyboard.press("Enter");
+
+    const marker = `post-alt-screen-${Date.now()}`;
+    await page.keyboard.type(`echo ${marker}`, { delay: 0 });
+    await page.keyboard.press("Enter");
+    await expect(surface).toContainText(marker, {
+      timeout: 30000,
+    });
+  } finally {
+    await repo.cleanup();
+  }
+});
+
 test("terminal tab is removed when shell exits", async ({ page }) => {
   const repo = await createTempGitRepo("paseo-e2e-terminal-exit-");
 

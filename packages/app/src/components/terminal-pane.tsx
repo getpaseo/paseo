@@ -22,13 +22,13 @@ import {
   resolvePendingModifierDataInput,
 } from "@/utils/terminal-keys";
 import {
-  getTerminalResumeOffset,
-  getTerminalAttachRetryDelayMs,
-  isTerminalAttachRetryableError,
-  updateTerminalResumeOffset,
-  waitForDuration,
-  withPromiseTimeout,
-} from "@/utils/terminal-attach";
+  TerminalOutputPump,
+  type TerminalOutputChunk,
+} from "@/terminal/runtime/terminal-output-pump";
+import {
+  TerminalStreamController,
+  type TerminalStreamControllerStatus,
+} from "@/terminal/runtime/terminal-stream-controller";
 import TerminalEmulator from "./terminal-emulator";
 
 interface TerminalPaneProps {
@@ -38,8 +38,6 @@ interface TerminalPaneProps {
 
 const MAX_OUTPUT_CHARS = 200_000;
 const TERMINAL_TAB_MAX_WIDTH = 220;
-const TERMINAL_ATTACH_MAX_ATTEMPTS = 4;
-const TERMINAL_ATTACH_TIMEOUT_MS = 12_000;
 
 const MODIFIER_LABELS = {
   ctrl: "Ctrl",
@@ -63,6 +61,11 @@ type ModifierState = {
   ctrl: boolean;
   shift: boolean;
   alt: boolean;
+};
+
+type TerminalOutputChunkState = {
+  sequence: number;
+  text: string;
 };
 
 const EMPTY_MODIFIERS: ModifierState = {
@@ -112,17 +115,19 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   const scopeKey = useMemo(() => terminalScopeKey({ serverId, cwd }), [serverId, cwd]);
   const selectedTerminalByScopeRef = useRef<Map<string, string>>(new Map());
   const lastReportedSizeRef = useRef<{ rows: number; cols: number } | null>(null);
-  const resumeOffsetByTerminalIdRef = useRef<Map<string, number>>(new Map());
+  const streamControllerRef = useRef<TerminalStreamController | null>(null);
+  const outputPumpRef = useRef<TerminalOutputPump | null>(null);
 
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(null);
-  const [outputByTerminalId, setOutputByTerminalId] = useState<Map<string, string>>(
-    () => new Map()
-  );
+  const [selectedOutputChunk, setSelectedOutputChunk] = useState<TerminalOutputChunkState>({
+    sequence: 0,
+    text: "",
+  });
+  const [selectedOutputSnapshot, setSelectedOutputSnapshot] = useState("");
   const [activeStream, setActiveStream] = useState<{
     terminalId: string;
     streamId: number;
   } | null>(null);
-  const [attachGeneration, setAttachGeneration] = useState(0);
   const [isAttaching, setIsAttaching] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [modifiers, setModifiers] = useState<ModifierState>(EMPTY_MODIFIERS);
@@ -133,18 +138,27 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   );
   const hoverOutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedTerminalIdRef = useRef<string | null>(selectedTerminalId);
-  const activeStreamRef = useRef<{
-    terminalId: string;
-    streamId: number;
-  } | null>(activeStream);
 
   useEffect(() => {
     selectedTerminalIdRef.current = selectedTerminalId;
   }, [selectedTerminalId]);
 
   useEffect(() => {
-    activeStreamRef.current = activeStream;
-  }, [activeStream]);
+    const outputPump = new TerminalOutputPump({
+      maxOutputChars: MAX_OUTPUT_CHARS,
+      onSelectedOutputChunk: (chunk: TerminalOutputChunk) => {
+        setSelectedOutputChunk(chunk);
+      },
+    });
+    outputPumpRef.current = outputPump;
+
+    return () => {
+      if (outputPumpRef.current === outputPump) {
+        outputPumpRef.current = null;
+      }
+      outputPump.dispose();
+    };
+  }, []);
 
   const clearHoverOutTimeout = useCallback(() => {
     if (!hoverOutTimeoutRef.current) {
@@ -221,20 +235,11 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
         return;
       }
 
-      const activeStreamForTerminal = activeStreamRef.current;
-      if (
-        selectedTerminalIdRef.current === exitedTerminalId &&
-        activeStreamForTerminal?.terminalId === exitedTerminalId &&
-        activeStreamForTerminal.streamId === message.payload.streamId
-      ) {
-        setActiveStream((current) =>
-          current?.terminalId === exitedTerminalId ? null : current
-        );
-        setStreamError("Terminal stream ended. Reconnecting…");
-        setIsAttaching(true);
-        setAttachGeneration((current) => current + 1);
-        setModifiers({ ...EMPTY_MODIFIERS });
-      }
+      streamControllerRef.current?.handleStreamExit({
+        terminalId: exitedTerminalId,
+        streamId: message.payload.streamId,
+      });
+      setModifiers({ ...EMPTY_MODIFIERS });
 
       void queryClient.invalidateQueries({
         queryKey: ["terminals", serverId, cwd],
@@ -277,15 +282,11 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     },
     onSuccess: (_, terminalId) => {
       setHoveredTerminalId((current) => (current === terminalId ? null : current));
-      resumeOffsetByTerminalIdRef.current.delete(terminalId);
+      outputPumpRef.current?.clearTerminal({ terminalId });
       if (selectedTerminalIdRef.current === terminalId) {
         setSelectedTerminalId((current) =>
           current === terminalId ? null : current
         );
-        setActiveStream((current) =>
-          current?.terminalId === terminalId ? null : current
-        );
-        setIsAttaching(false);
         setModifiers({ ...EMPTY_MODIFIERS });
       }
       void queryClient.invalidateQueries({
@@ -336,178 +337,82 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   }, [scopeKey, terminals, selectedTerminalId]);
 
   useEffect(() => {
-    if (terminals.length === 0) {
-      resumeOffsetByTerminalIdRef.current.clear();
-      return;
-    }
-
-    const terminalIdSet = new Set(terminals.map((terminal) => terminal.id));
-    for (const terminalId of Array.from(resumeOffsetByTerminalIdRef.current.keys())) {
-      if (!terminalIdSet.has(terminalId)) {
-        resumeOffsetByTerminalIdRef.current.delete(terminalId);
-      }
-    }
+    const terminalIds = terminals.map((terminal) => terminal.id);
+    outputPumpRef.current?.prune({ terminalIds });
+    streamControllerRef.current?.pruneResumeOffsets({ terminalIds });
   }, [terminals]);
 
-  const appendOutput = useCallback((terminalId: string, text: string) => {
-    if (!text) {
-      return;
-    }
-    setOutputByTerminalId((previous) => {
-      const next = new Map(previous);
-      const existing = next.get(terminalId) ?? "";
-      const combined = `${existing}${text}`;
-      next.set(
-        terminalId,
-        combined.length > MAX_OUTPUT_CHARS
-          ? combined.slice(combined.length - MAX_OUTPUT_CHARS)
-          : combined
-      );
-      return next;
-    });
-  }, []);
+  const handleStreamControllerStatus = useCallback(
+    (status: TerminalStreamControllerStatus) => {
+      setIsAttaching(status.isAttaching);
+      setStreamError(status.error);
+      if (status.terminalId && typeof status.streamId === "number") {
+        setActiveStream({
+          terminalId: status.terminalId,
+          streamId: status.streamId,
+        });
+        return;
+      }
+      setActiveStream(null);
+    },
+    []
+  );
 
   useEffect(() => {
-    let isCancelled = false;
-    let streamId: number | null = null;
-    let unsubscribe: (() => void) | null = null;
-    let decoder: TextDecoder | null = null;
-    const terminalId = selectedTerminalId;
+    streamControllerRef.current?.dispose();
+    streamControllerRef.current = null;
+    setActiveStream(null);
+    setIsAttaching(false);
+    setStreamError(null);
 
-    if (!client || !isConnected || !terminalId) {
-      setActiveStream(null);
-      setIsAttaching(false);
+    if (!client || !isConnected) {
       return;
     }
 
-    setIsAttaching(true);
-    setStreamError(null);
+    const outputPump = outputPumpRef.current;
+    if (!outputPump) {
+      return;
+    }
 
-    const attach = async () => {
-      try {
-        let lastErrorMessage = "Unable to attach terminal stream";
-        const totalAttempts = TERMINAL_ATTACH_MAX_ATTEMPTS;
-        for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
-          try {
-            const lastSize = lastReportedSizeRef.current;
-            const resumeOffset = getTerminalResumeOffset({
-              terminalId,
-              resumeOffsetByTerminalId: resumeOffsetByTerminalIdRef.current,
-            });
-            const attachPayload = await withPromiseTimeout({
-              promise: client.attachTerminalStream(terminalId, {
-                ...(resumeOffset !== undefined ? { resumeOffset } : {}),
-                ...(lastSize
-                  ? {
-                      rows: lastSize.rows,
-                      cols: lastSize.cols,
-                    }
-                  : {}),
-              }),
-              timeoutMs: TERMINAL_ATTACH_TIMEOUT_MS,
-              timeoutMessage: "Timed out attaching terminal stream",
-            });
-            if (isCancelled) {
-              if (typeof attachPayload.streamId === "number") {
-                void client.detachTerminalStream(attachPayload.streamId).catch(() => {});
-              }
-              return;
-            }
-
-            if (attachPayload.error || typeof attachPayload.streamId !== "number") {
-              lastErrorMessage = attachPayload.error ?? "Unable to attach terminal stream";
-              const hasRemainingAttempts = attempt < totalAttempts - 1;
-              if (
-                hasRemainingAttempts &&
-                isTerminalAttachRetryableError({ message: lastErrorMessage })
-              ) {
-                await waitForDuration({
-                  durationMs: getTerminalAttachRetryDelayMs({ attempt }),
-                });
-                continue;
-              }
-              setStreamError(lastErrorMessage);
-              setActiveStream(null);
-              return;
-            }
-
-            streamId = attachPayload.streamId;
-            updateTerminalResumeOffset({
-              terminalId,
-              offset: attachPayload.currentOffset,
-              resumeOffsetByTerminalId: resumeOffsetByTerminalIdRef.current,
-            });
-            decoder = new TextDecoder();
-            setActiveStream({ terminalId, streamId });
-            setStreamError(null);
-
-            unsubscribe = client.onTerminalStreamData(streamId, (chunk) => {
-              if (isCancelled) {
-                return;
-              }
-              updateTerminalResumeOffset({
-                terminalId,
-                offset: chunk.endOffset,
-                resumeOffsetByTerminalId: resumeOffsetByTerminalIdRef.current,
-              });
-              const text = decoder?.decode(chunk.data, { stream: true }) ?? "";
-              appendOutput(terminalId, text);
-            });
-            return;
-          } catch (error) {
-            lastErrorMessage =
-              error instanceof Error ? error.message : "Unable to attach terminal stream";
-            const hasRemainingAttempts = attempt < totalAttempts - 1;
-            if (
-              hasRemainingAttempts &&
-              isTerminalAttachRetryableError({ message: lastErrorMessage })
-            ) {
-              await waitForDuration({
-                durationMs: getTerminalAttachRetryDelayMs({ attempt }),
-              });
-              continue;
-            }
-
-            if (!isCancelled) {
-              setStreamError(lastErrorMessage);
-              setActiveStream(null);
-            }
-            return;
-          }
+    const controller = new TerminalStreamController({
+      client,
+      getPreferredSize: () => lastReportedSizeRef.current,
+      onChunk: ({ terminalId, text }) => {
+        outputPump.append({ terminalId, text });
+      },
+      onReset: ({ terminalId }) => {
+        outputPump.clearTerminal({ terminalId });
+        if (selectedTerminalIdRef.current === terminalId) {
+          setSelectedOutputSnapshot("");
         }
+      },
+      onStatusChange: handleStreamControllerStatus,
+    });
 
-        if (!isCancelled) {
-          setStreamError(lastErrorMessage);
-          setActiveStream(null);
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsAttaching(false);
-        }
-      }
-    };
-
-    void attach();
+    streamControllerRef.current = controller;
+    controller.setTerminal({ terminalId: selectedTerminalIdRef.current });
 
     return () => {
-      isCancelled = true;
-      if (decoder) {
-        appendOutput(terminalId, decoder.decode());
-        decoder = null;
+      controller.dispose();
+      if (streamControllerRef.current === controller) {
+        streamControllerRef.current = null;
       }
-      if (unsubscribe) {
-        unsubscribe();
-        unsubscribe = null;
-      }
-      if (streamId !== null) {
-        void client.detachTerminalStream(streamId).catch(() => {});
-      }
-      setActiveStream((current) =>
-        current?.terminalId === terminalId ? null : current
-      );
-      setIsAttaching(false);
     };
-  }, [appendOutput, attachGeneration, client, isConnected, selectedTerminalId]);
+  }, [client, handleStreamControllerStatus, isConnected]);
+
+  useEffect(() => {
+    outputPumpRef.current?.setSelectedTerminal({
+      terminalId: selectedTerminalId,
+    });
+    streamControllerRef.current?.setTerminal({
+      terminalId: selectedTerminalId,
+    });
+    setSelectedOutputSnapshot(
+      outputPumpRef.current?.readSnapshot({
+        terminalId: selectedTerminalId,
+      }) ?? ""
+    );
+  }, [selectedTerminalId]);
 
   const activeStreamId =
     activeStream && activeStream.terminalId === selectedTerminalId
@@ -518,11 +423,6 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     () => terminals.find((terminal) => terminal.id === selectedTerminalId) ?? null,
     [terminals, selectedTerminalId]
   );
-
-  const currentOutput = selectedTerminalId
-    ? (outputByTerminalId.get(selectedTerminalId) ?? "")
-    : "";
-
   const handleCreateTerminal = useCallback(() => {
     createTerminalMutation.mutate();
   }, [createTerminalMutation]);
@@ -623,7 +523,8 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   );
 
   const handleTerminalResize = useCallback(
-    async (rows: number, cols: number) => {
+    async (input: { rows: number; cols: number }) => {
+      const { rows, cols } = input;
       if (!client || !selectedTerminalId || rows <= 0 || cols <= 0) {
         return;
       }
@@ -834,8 +735,10 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
                 automaticallyAdjustContentInsets: false,
                 contentInsetAdjustmentBehavior: "never",
               }}
-              streamKey={`${scopeKey}:${selectedTerminal.id}:${activeStreamId ?? "none"}`}
-              outputText={currentOutput}
+              streamKey={`${scopeKey}:${selectedTerminal.id}`}
+              initialOutputText={selectedOutputSnapshot}
+              outputChunkText={selectedOutputChunk.text}
+              outputChunkSequence={selectedOutputChunk.sequence}
               testId="terminal-surface"
               backgroundColor={theme.colors.background}
               foregroundColor={theme.colors.foreground}
