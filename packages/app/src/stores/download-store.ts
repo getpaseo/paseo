@@ -5,6 +5,7 @@ import * as LegacyFileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import type { HostProfile } from "@/contexts/daemon-registry-context";
 import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
+import { openExternalUrl } from "@/utils/open-external-url";
 
 interface DownloadProgress {
   percent: number;
@@ -303,7 +304,7 @@ function buildDownloadUrl(
 function triggerBrowserDownload(url: string, fileName: string) {
   if (typeof document === "undefined") {
     if (typeof window !== "undefined") {
-      window.open(url, "_blank", "noopener");
+      void openExternalUrl(url);
     }
     return;
   }

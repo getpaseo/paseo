@@ -168,6 +168,32 @@ describe("daemon client E2E", () => {
     rmSync(cwd, { recursive: true, force: true });
   }, 30000);
 
+  test("returns home-scoped directory suggestions", async () => {
+    const insideHomeDir = mkdtempSync(path.join(homedir(), "paseo-dir-suggestion-"));
+    const outsideHomeDir = mkdtempSync(path.join(tmpdir(), "paseo-dir-suggestion-outside-"));
+
+    try {
+      const insideQuery = path.basename(insideHomeDir);
+      const insideResult = await ctx.client.getDirectorySuggestions({
+        query: insideQuery,
+        limit: 25,
+      });
+      expect(insideResult.error).toBeNull();
+      expect(insideResult.directories).toContain(insideHomeDir);
+
+      const outsideQuery = path.basename(outsideHomeDir);
+      const outsideResult = await ctx.client.getDirectorySuggestions({
+        query: outsideQuery,
+        limit: 25,
+      });
+      expect(outsideResult.error).toBeNull();
+      expect(outsideResult.directories).not.toContain(outsideHomeDir);
+    } finally {
+      rmSync(insideHomeDir, { recursive: true, force: true });
+      rmSync(outsideHomeDir, { recursive: true, force: true });
+    }
+  }, 30000);
+
   test("emits server_info on websocket connect", async () => {
     const client = new DaemonClient({
       url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,

@@ -1,4 +1,5 @@
 import { createTerminal, type TerminalSession } from "./terminal.js";
+import { resolve, sep } from "node:path";
 
 export interface TerminalListItem {
   id: string;
@@ -15,7 +16,12 @@ export type TerminalsChangedListener = (input: TerminalsChangedEvent) => void;
 
 export interface TerminalManager {
   getTerminals(cwd: string): Promise<TerminalSession[]>;
-  createTerminal(options: { cwd: string; name?: string }): Promise<TerminalSession>;
+  createTerminal(options: {
+    cwd: string;
+    name?: string;
+    env?: Record<string, string>;
+  }): Promise<TerminalSession>;
+  registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   getTerminal(id: string): TerminalSession | undefined;
   killTerminal(id: string): void;
   listDirectories(): string[];
@@ -28,6 +34,7 @@ export function createTerminalManager(): TerminalManager {
   const terminalsById = new Map<string, TerminalSession>();
   const terminalExitUnsubscribeById = new Map<string, () => void>();
   const terminalsChangedListeners = new Set<TerminalsChangedListener>();
+  const defaultEnvByRootCwd = new Map<string, Record<string, string>>();
 
   function assertAbsolutePath(cwd: string): void {
     if (!cwd.startsWith("/")) {
@@ -65,6 +72,23 @@ export function createTerminalManager(): TerminalManager {
     }
 
     emitTerminalsChanged({ cwd: session.cwd });
+  }
+
+  function resolveDefaultEnvForCwd(cwd: string): Record<string, string> | undefined {
+    const normalizedCwd = resolve(cwd);
+    let bestMatchRoot: string | null = null;
+
+    for (const rootCwd of defaultEnvByRootCwd.keys()) {
+      const matches = normalizedCwd === rootCwd || normalizedCwd.startsWith(`${rootCwd}${sep}`);
+      if (!matches) {
+        continue;
+      }
+      if (!bestMatchRoot || rootCwd.length > bestMatchRoot.length) {
+        bestMatchRoot = rootCwd;
+      }
+    }
+
+    return bestMatchRoot ? defaultEnvByRootCwd.get(bestMatchRoot) : undefined;
   }
 
   function registerSession(session: TerminalSession): TerminalSession {
@@ -112,8 +136,13 @@ export function createTerminalManager(): TerminalManager {
 
       let terminals = terminalsByCwd.get(cwd);
       if (!terminals || terminals.length === 0) {
+        const inheritedEnv = resolveDefaultEnvForCwd(cwd);
         const session = registerSession(
-          await createTerminal({ cwd, name: "Terminal 1" })
+          await createTerminal({
+            cwd,
+            name: "Terminal 1",
+            ...(inheritedEnv ? { env: inheritedEnv } : {}),
+          })
         );
         terminals = [session];
         terminalsByCwd.set(cwd, terminals);
@@ -122,15 +151,25 @@ export function createTerminalManager(): TerminalManager {
       return terminals;
     },
 
-    async createTerminal(options: { cwd: string; name?: string }): Promise<TerminalSession> {
+    async createTerminal(options: {
+      cwd: string;
+      name?: string;
+      env?: Record<string, string>;
+    }): Promise<TerminalSession> {
       assertAbsolutePath(options.cwd);
 
       const terminals = terminalsByCwd.get(options.cwd) ?? [];
       const defaultName = `Terminal ${terminals.length + 1}`;
+      const inheritedEnv = resolveDefaultEnvForCwd(options.cwd);
+      const mergedEnv =
+        inheritedEnv || options.env
+          ? { ...(inheritedEnv ?? {}), ...(options.env ?? {}) }
+          : undefined;
       const session = registerSession(
         await createTerminal({
           cwd: options.cwd,
           name: options.name ?? defaultName,
+          ...(mergedEnv ? { env: mergedEnv } : {}),
         })
       );
 
@@ -139,6 +178,11 @@ export function createTerminalManager(): TerminalManager {
       emitTerminalsChanged({ cwd: options.cwd });
 
       return session;
+    },
+
+    registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void {
+      assertAbsolutePath(options.cwd);
+      defaultEnvByRootCwd.set(resolve(options.cwd), { ...options.env });
     },
 
     getTerminal(id: string): TerminalSession | undefined {

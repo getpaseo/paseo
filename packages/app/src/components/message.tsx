@@ -20,7 +20,6 @@ import {
 } from "react";
 import type { ReactNode, ComponentType } from "react";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
-import * as Linking from "expo-linking";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
   Circle,
@@ -71,6 +70,7 @@ import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import { parseInlinePathToken, type InlinePathTarget } from "@/utils/inline-path";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
+import { openExternalUrl } from "@/utils/open-external-url";
 export type { InlinePathTarget } from "@/utils/inline-path";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
@@ -540,11 +540,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 
   const handleLinkPress = useCallback((url: string) => {
-    if (Platform.OS === "web") {
-      window.open(url, "_blank", "noopener,noreferrer");
-    } else {
-      void Linking.openURL(url);
-    }
+    void openExternalUrl(url);
     // react-native-markdown-display opens the link itself when this returns true.
     // We already handled it above, so return false to avoid duplicate opens.
     return false;

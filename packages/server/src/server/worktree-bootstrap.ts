@@ -1,13 +1,16 @@
 import { v4 as uuidv4 } from "uuid";
 import type { Logger } from "pino";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
+import type { TerminalSession } from "../terminal/terminal.js";
 import {
   createWorktree,
   getWorktreeTerminalSpecs,
+  resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   WorktreeSetupError,
   type WorktreeConfig,
   type WorktreeSetupCommandResult,
+  type WorktreeRuntimeEnv,
 } from "../utils/worktree.js";
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
 
@@ -38,6 +41,7 @@ export interface CreateAgentWorktreeOptions {
 
 const MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES = 64 * 1024;
 const WORKTREE_SETUP_TRUNCATION_MARKER = "\n...<output truncated in the middle>...\n";
+const WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS = 1_500;
 
 type MiddleTruncationAccumulator = {
   totalBytes: number;
@@ -335,8 +339,51 @@ function buildTerminalTimelineItem(input: {
   };
 }
 
+async function waitForTerminalBootstrapReadiness(
+  terminal: Pick<TerminalSession, "getOutputOffset" | "subscribeRaw">
+): Promise<void> {
+  if (terminal.getOutputOffset() > 0) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribe: (() => void) | null = null;
+
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      if (unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+      }
+      resolve();
+    };
+
+    const rawSubscription = terminal.subscribeRaw(() => {
+      finish();
+    });
+    unsubscribe = rawSubscription.unsubscribe;
+
+    if (terminal.getOutputOffset() > 0) {
+      finish();
+      return;
+    }
+
+    timeout = setTimeout(finish, WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS);
+  });
+}
+
 async function runWorktreeTerminalBootstrap(
-  options: RunAsyncWorktreeBootstrapOptions
+  options: RunAsyncWorktreeBootstrapOptions,
+  runtimeEnv: WorktreeRuntimeEnv
 ): Promise<void> {
   const terminalSpecs = getWorktreeTerminalSpecs(options.worktree.worktreePath);
   if (terminalSpecs.length === 0) {
@@ -376,7 +423,9 @@ async function runWorktreeTerminalBootstrap(
       const terminal = await options.terminalManager.createTerminal({
         cwd: options.worktree.worktreePath,
         name: spec.name,
+        env: runtimeEnv,
       });
+      await waitForTerminalBootstrapReadiness(terminal);
       terminal.send({
         type: "input",
         data: `${spec.command}\r`,
@@ -420,6 +469,7 @@ export async function runAsyncWorktreeBootstrap(
 ): Promise<void> {
   const setupCallId = uuidv4();
   let setupResults: WorktreeSetupCommandResult[] = [];
+  let runtimeEnv: WorktreeRuntimeEnv | null = null;
   const emitLiveTimelineItem = options.emitLiveTimelineItem;
   const runningResultsByIndex = new Map<number, WorktreeSetupCommandResult>();
   const outputAccumulatorsByIndex = new Map<number, MiddleTruncationAccumulator>();
@@ -454,10 +504,20 @@ export async function runAsyncWorktreeBootstrap(
   };
 
   try {
+    runtimeEnv = await resolveWorktreeRuntimeEnv({
+      worktreePath: options.worktree.worktreePath,
+      branchName: options.worktree.branchName,
+    });
+    options.terminalManager?.registerCwdEnv({
+      cwd: options.worktree.worktreePath,
+      env: runtimeEnv,
+    });
+
     setupResults = await runWorktreeSetupCommands({
       worktreePath: options.worktree.worktreePath,
       branchName: options.worktree.branchName,
       cleanupOnFailure: false,
+      runtimeEnv,
       onEvent: (event) => {
         const existing = runningResultsByIndex.get(event.index);
         const baseResult: WorktreeSetupCommandResult = existing ?? {
@@ -533,5 +593,5 @@ export async function runAsyncWorktreeBootstrap(
     return;
   }
 
-  await runWorktreeTerminalBootstrap(options);
+  await runWorktreeTerminalBootstrap(options, runtimeEnv);
 }

@@ -15,12 +15,14 @@ import Svg, {
   Stop,
 } from "react-native-svg";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import type { ListTerminalsResponse } from "@server/shared/messages";
 import { useSessionStore } from "@/stores/session-store";
 import {
   hasPendingTerminalModifiers,
   normalizeTerminalTransportKey,
   resolvePendingModifierDataInput,
 } from "@/utils/terminal-keys";
+import { upsertTerminalListEntry } from "@/utils/terminal-list";
 import {
   TerminalOutputPump,
   type TerminalOutputChunk,
@@ -89,6 +91,8 @@ type PendingTerminalInput =
       };
     };
 
+type ListTerminalsPayload = ListTerminalsResponse["payload"];
+
 const EMPTY_MODIFIERS: ModifierState = {
   ctrl: false,
   shift: false,
@@ -134,6 +138,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   );
 
   const scopeKey = useMemo(() => terminalScopeKey({ serverId, cwd }), [serverId, cwd]);
+  const terminalsQueryKey = useMemo(() => ["terminals", serverId, cwd] as const, [cwd, serverId]);
   const selectedTerminalByScopeRef = useRef<Map<string, string>>(new Map());
   const lastReportedSizeRef = useRef<{ rows: number; cols: number } | null>(null);
   const streamControllerRef = useRef<TerminalStreamController | null>(null);
@@ -245,8 +250,12 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     return () => clearHoverOutTimeout();
   }, [clearHoverOutTimeout]);
 
+  const requestTerminalFocus = useCallback(() => {
+    setFocusRequestToken((current) => current + 1);
+  }, []);
+
   const terminalsQuery = useQuery({
-    queryKey: ["terminals", serverId, cwd] as const,
+    queryKey: terminalsQueryKey,
     enabled: Boolean(client && isConnected && cwd.startsWith("/")),
     queryFn: async () => {
       if (!client) {
@@ -281,14 +290,14 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
       setModifiers({ ...EMPTY_MODIFIERS });
 
       void queryClient.invalidateQueries({
-        queryKey: ["terminals", serverId, cwd],
+        queryKey: terminalsQueryKey,
       });
       void queryClient.refetchQueries({
-        queryKey: ["terminals", serverId, cwd],
+        queryKey: terminalsQueryKey,
         type: "active",
       });
     });
-  }, [client, cwd, isConnected, queryClient, serverId]);
+  }, [client, isConnected, queryClient, terminalsQueryKey]);
 
   useEffect(() => {
     if (!client || !isConnected || !cwd.startsWith("/")) {
@@ -303,10 +312,10 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
         return;
       }
       void queryClient.invalidateQueries({
-        queryKey: ["terminals", serverId, cwd],
+        queryKey: terminalsQueryKey,
       });
       void queryClient.refetchQueries({
-        queryKey: ["terminals", serverId, cwd],
+        queryKey: terminalsQueryKey,
         type: "active",
       });
     });
@@ -317,7 +326,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
       unsubscribe();
       client.unsubscribeTerminals({ cwd });
     };
-  }, [client, cwd, isConnected, queryClient, serverId]);
+  }, [client, cwd, isConnected, queryClient, terminalsQueryKey]);
 
   const createTerminalMutation = useMutation({
     mutationFn: async () => {
@@ -327,12 +336,26 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
       return await client.createTerminal(cwd);
     },
     onSuccess: (payload) => {
-      if (payload.terminal) {
-        selectedTerminalByScopeRef.current.set(scopeKey, payload.terminal.id);
-        setSelectedTerminalId(payload.terminal.id);
+      const createdTerminal = payload.terminal;
+      if (createdTerminal) {
+        queryClient.setQueryData<ListTerminalsPayload>(terminalsQueryKey, (current) => {
+          const nextTerminals = upsertTerminalListEntry({
+            terminals: current?.terminals ?? [],
+            terminal: createdTerminal,
+          });
+
+          return {
+            cwd: current?.cwd ?? cwd,
+            terminals: nextTerminals,
+            requestId: current?.requestId ?? `terminal-create-${createdTerminal.id}`,
+          };
+        });
+        selectedTerminalByScopeRef.current.set(scopeKey, createdTerminal.id);
+        setSelectedTerminalId(createdTerminal.id);
+        requestTerminalFocus();
       }
       void queryClient.invalidateQueries({
-        queryKey: ["terminals", serverId, cwd],
+        queryKey: terminalsQueryKey,
       });
     },
   });
@@ -358,10 +381,10 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
         setModifiers({ ...EMPTY_MODIFIERS });
       }
       void queryClient.invalidateQueries({
-        queryKey: ["terminals", serverId, cwd],
+        queryKey: terminalsQueryKey,
       });
       void queryClient.refetchQueries({
-        queryKey: ["terminals", serverId, cwd],
+        queryKey: terminalsQueryKey,
         type: "active",
       });
     },
@@ -549,10 +572,6 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     },
     [killTerminalMutation]
   );
-
-  const requestTerminalFocus = useCallback(() => {
-    setFocusRequestToken((current) => current + 1);
-  }, []);
 
   const clearPendingModifiers = useCallback(() => {
     setModifiers({ ...EMPTY_MODIFIERS });

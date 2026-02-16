@@ -4,6 +4,7 @@ import { stat } from "fs/promises";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { join, resolve, sep } from "path";
+import { homedir } from "node:os";
 import { z } from "zod";
 import type { ToolSet } from "ai";
 import {
@@ -26,6 +27,7 @@ import {
   type DetachTerminalStreamRequest,
   type SubscribeCheckoutDiffRequest,
   type UnsubscribeCheckoutDiffRequest,
+  type DirectorySuggestionsRequest,
   type ProjectCheckoutLitePayload,
   type ProjectPlacementPayload,
 } from "./messages.js";
@@ -138,6 +140,7 @@ import {
 } from "../utils/checkout-git.js";
 import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
+import { searchHomeDirectories } from "../utils/directory-suggestions.js";
 import {
   ensureLocalSpeechModels,
   getLocalSpeechModelDir,
@@ -1345,6 +1348,10 @@ export class Session {
 
         case "branch_suggestions_request":
           await this.handleBranchSuggestionsRequest(msg);
+          break;
+
+        case "directory_suggestions_request":
+          await this.handleDirectorySuggestionsRequest(msg);
           break;
 
         case "subscribe_checkout_diff_request":
@@ -3563,9 +3570,10 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "checkout_status_request" }>
   ): Promise<void> {
     const { cwd, requestId } = msg;
+    const resolvedCwd = expandTilde(cwd);
 
     try {
-      const status = await getCheckoutStatus(cwd, { paseoHome: this.paseoHome });
+      const status = await getCheckoutStatus(resolvedCwd, { paseoHome: this.paseoHome });
       if (!status.isGit) {
         this.emit({
           type: "checkout_status_response",
@@ -3747,6 +3755,37 @@ export class Session {
         type: "branch_suggestions_response",
         payload: {
           branches: [],
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleDirectorySuggestionsRequest(
+    msg: DirectorySuggestionsRequest
+  ): Promise<void> {
+    const { query, limit, requestId } = msg;
+
+    try {
+      const directories = await searchHomeDirectories({
+        homeDir: process.env.HOME ?? homedir(),
+        query,
+        limit,
+      });
+      this.emit({
+        type: "directory_suggestions_response",
+        payload: {
+          directories,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "directory_suggestions_response",
+        payload: {
+          directories: [],
           error: error instanceof Error ? error.message : String(error),
           requestId,
         },

@@ -19,7 +19,7 @@ import {
   BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { Check, Search } from "lucide-react-native";
+import { Check, Folder, Search } from "lucide-react-native";
 import { flip, offset as floatingOffset, shift, size as floatingSize, useFloating } from "@floating-ui/react-native";
 import { getNextActiveIndex } from "./combobox-keyboard";
 
@@ -29,6 +29,7 @@ export interface ComboboxOption {
   id: string;
   label: string;
   description?: string;
+  kind?: "directory";
 }
 
 export interface ComboboxProps {
@@ -43,6 +44,8 @@ export interface ComboboxProps {
   allowCustomValue?: boolean;
   customValuePrefix?: string;
   customValueDescription?: string;
+  customValueKind?: "directory";
+  optionsPosition?: "below-search" | "above-search";
   title?: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -129,6 +132,7 @@ function SearchInput({
 export interface ComboboxItemProps {
   label: string;
   description?: string;
+  kind?: "directory";
   selected?: boolean;
   active?: boolean;
   onPress: () => void;
@@ -138,6 +142,7 @@ export interface ComboboxItemProps {
 export function ComboboxItem({
   label,
   description,
+  kind,
   selected,
   active,
   onPress,
@@ -155,6 +160,11 @@ export function ComboboxItem({
         active && styles.comboboxItemActive,
       ]}
     >
+      {kind === "directory" ? (
+        <View style={styles.comboboxItemLeadingSlot}>
+          <Folder size={16} color={theme.colors.foregroundMuted} />
+        </View>
+      ) : null}
       <View style={styles.comboboxItemContent}>
         <Text numberOfLines={1} style={styles.comboboxItemLabel}>{label}</Text>
         {description ? (
@@ -186,6 +196,8 @@ export function Combobox({
   allowCustomValue = false,
   customValuePrefix = "Use",
   customValueDescription,
+  customValueKind,
+  optionsPosition = "below-search",
   title = "Select",
   open,
   onOpenChange,
@@ -196,6 +208,8 @@ export function Combobox({
 }: ComboboxProps): ReactElement {
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const effectiveOptionsPosition =
+    isMobile ? "below-search" : optionsPosition;
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ["60%", "90%"], []);
   const [availableSize, setAvailableSize] = useState<{ width?: number; height?: number } | null>(null);
@@ -375,13 +389,20 @@ export function Combobox({
       id: string;
       label: string;
       description?: string;
+      kind?: "directory";
     }> = [];
 
     if (showCustomOption) {
+      const trimmedPrefix = customValuePrefix.trim();
+      const customLabel =
+        trimmedPrefix.length > 0
+          ? `${trimmedPrefix} "${sanitizedSearchValue}"`
+          : sanitizedSearchValue;
       next.push({
         id: sanitizedSearchValue,
-        label: `${customValuePrefix} "${sanitizedSearchValue}"`,
+        label: customLabel,
         description: customValueDescription,
+        kind: customValueKind,
       });
     }
 
@@ -390,35 +411,54 @@ export function Combobox({
         id: opt.id,
         label: opt.label,
         description: opt.description,
+        kind: opt.kind,
       });
     }
 
     return next;
   }, [
     customValueDescription,
+    customValueKind,
     customValuePrefix,
     filteredOptions,
     sanitizedSearchValue,
     showCustomOption,
   ]);
 
+  const orderedVisibleOptions = useMemo(() => {
+    if (effectiveOptionsPosition !== "above-search") {
+      return visibleOptions;
+    }
+    return [...visibleOptions].reverse();
+  }, [effectiveOptionsPosition, visibleOptions]);
+
   useEffect(() => {
     if (!isOpen) return;
     if (!IS_WEB && isMobile) return;
 
-    if (visibleOptions.length === 0) {
+    if (orderedVisibleOptions.length === 0) {
       setActiveIndex(-1);
       return;
     }
 
+    const fallbackIndex =
+      effectiveOptionsPosition === "above-search" ? orderedVisibleOptions.length - 1 : 0;
+
     if (normalizedSearch) {
-      setActiveIndex(0);
+      setActiveIndex(fallbackIndex);
       return;
     }
 
-    const selectedIndex = visibleOptions.findIndex((opt) => opt.id === value);
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
-  }, [isMobile, isOpen, normalizedSearch, value, visibleOptions]);
+    const selectedIndex = orderedVisibleOptions.findIndex((opt) => opt.id === value);
+    setActiveIndex(selectedIndex >= 0 ? selectedIndex : fallbackIndex);
+  }, [
+    effectiveOptionsPosition,
+    isMobile,
+    isOpen,
+    normalizedSearch,
+    value,
+    orderedVisibleOptions,
+  ]);
 
   const handleSelect = useCallback(
     (id: string) => {
@@ -444,7 +484,7 @@ export function Combobox({
         setActiveIndex((currentIndex) =>
           getNextActiveIndex({
             currentIndex,
-            itemCount: visibleOptions.length,
+            itemCount: orderedVisibleOptions.length,
             key,
           })
         );
@@ -452,11 +492,11 @@ export function Combobox({
       }
 
       if (key === "Enter") {
-        if (visibleOptions.length === 0) return;
+        if (orderedVisibleOptions.length === 0) return;
         event?.preventDefault();
         const index =
-          activeIndex >= 0 && activeIndex < visibleOptions.length ? activeIndex : 0;
-        handleSelect(visibleOptions[index]!.id);
+          activeIndex >= 0 && activeIndex < orderedVisibleOptions.length ? activeIndex : 0;
+        handleSelect(orderedVisibleOptions[index]!.id);
         return;
       }
 
@@ -465,7 +505,7 @@ export function Combobox({
         handleClose();
       }
     },
-    [activeIndex, handleClose, handleSelect, isMobile, isOpen, visibleOptions]
+    [activeIndex, handleClose, handleSelect, isMobile, isOpen, orderedVisibleOptions]
   );
 
   useEffect(() => {
@@ -498,12 +538,13 @@ export function Combobox({
 
   const optionsList = (
     <>
-      {visibleOptions.length > 0 ? (
-        visibleOptions.map((opt, index) => (
+      {orderedVisibleOptions.length > 0 ? (
+        orderedVisibleOptions.map((opt, index) => (
           <ComboboxItem
             key={opt.id}
             label={opt.label}
             description={opt.description}
+            kind={opt.kind}
             selected={opt.id === value}
             active={index === activeIndex}
             onPress={() => handleSelect(opt.id)}
@@ -515,12 +556,15 @@ export function Combobox({
     </>
   );
 
-  const content = children ?? (
+  const defaultContent = (
     <>
+      {effectiveOptionsPosition === "above-search" ? optionsList : null}
       {searchable ? searchInput : null}
-      {optionsList}
+      {effectiveOptionsPosition === "below-search" ? optionsList : null}
     </>
   );
+
+  const content = children ?? defaultContent;
 
   if (isMobile) {
     return (
@@ -661,6 +705,11 @@ const styles = StyleSheet.create((theme) => ({
   comboboxItemContent: {
     flex: 1,
     flexShrink: 1,
+  },
+  comboboxItemLeadingSlot: {
+    width: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
   comboboxItemLabel: {
     fontSize: theme.fontSize.sm,

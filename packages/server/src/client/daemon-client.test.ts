@@ -347,6 +347,63 @@ describe("DaemonClient", () => {
     });
   });
 
+  test("requests directory suggestions via RPC", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.getDirectorySuggestions(
+      { query: "proj", limit: 10 },
+      "req-directories"
+    );
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "directory_suggestions_request";
+        query: string;
+        limit?: number;
+        requestId: string;
+      };
+    };
+    expect(request.message.type).toBe("directory_suggestions_request");
+    expect(request.message.query).toBe("proj");
+    expect(request.message.limit).toBe(10);
+    expect(request.message.requestId).toBe("req-directories");
+
+    mock.triggerMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "directory_suggestions_response",
+          payload: {
+            directories: ["/Users/test/projects/paseo"],
+            error: null,
+            requestId: "req-directories",
+          },
+        },
+      })
+    );
+
+    await expect(promise).resolves.toEqual({
+      directories: ["/Users/test/projects/paseo"],
+      error: null,
+      requestId: "req-directories",
+    });
+  });
+
   test("requests checkout merge from base via RPC", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();

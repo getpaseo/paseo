@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execSync } from "child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -14,6 +14,17 @@ describe("runAsyncWorktreeBootstrap", () => {
   let tempDir: string;
   let repoDir: string;
   let paseoHome: string;
+
+  async function waitForPathExists(targetPath: string, timeoutMs = 10000): Promise<void> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (existsSync(targetPath)) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`Timed out waiting for path: ${targetPath}`);
+  }
 
   beforeEach(() => {
     tempDir = realpathSync(mkdtempSync(join(tmpdir(), "worktree-bootstrap-test-")));
@@ -235,5 +246,217 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(persistedSetupItem.detail.log).toContain("prefix-");
     expect(persistedSetupItem.detail.log).toContain("-suffix");
     expect(persistedSetupItem.detail.log).toContain("...<output truncated in the middle>...");
+  });
+
+  it("waits for terminal output before sending bootstrap commands", async () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          terminals: [
+            {
+              name: "Ready Terminal",
+              command: "echo ready",
+            },
+          ],
+        },
+      })
+    );
+    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
+    execSync("git -c commit.gpgsign=false commit -m 'add terminal bootstrap config'", {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+
+    const worktree = await createAgentWorktree({
+      cwd: repoDir,
+      branchName: "feature-terminal-readiness",
+      baseBranch: "main",
+      worktreeSlug: "feature-terminal-readiness",
+      paseoHome,
+    });
+
+    let readyAt = 0;
+    let sendAt = 0;
+    let outputListener: ((chunk: { data: string }) => void) | null = null;
+
+    await runAsyncWorktreeBootstrap({
+      agentId: "agent-terminal-readiness",
+      worktree,
+      terminalManager: {
+        async getTerminals() {
+          return [];
+        },
+        async createTerminal(options) {
+          setTimeout(() => {
+            readyAt = Date.now();
+            outputListener?.({ data: "$ " });
+          }, 25);
+          return {
+            id: "term-ready",
+            name: options.name ?? "Terminal",
+            cwd: options.cwd,
+            send: () => {
+              sendAt = Date.now();
+            },
+            subscribe: () => () => {},
+            onExit: () => () => {},
+            subscribeRaw: (listener) => {
+              outputListener = (chunk) =>
+                listener({
+                  data: chunk.data,
+                  startOffset: 0,
+                  endOffset: chunk.data.length,
+                  replay: false,
+                });
+              return {
+                unsubscribe: () => {
+                  outputListener = null;
+                },
+                replayedFrom: 0,
+                currentOffset: 0,
+                earliestAvailableOffset: 0,
+                reset: false,
+              };
+            },
+            getOutputOffset: () => 0,
+            getState: () => ({
+              rows: 0,
+              cols: 0,
+              grid: [],
+              scrollback: [],
+              cursor: { row: 0, col: 0 },
+            }),
+            kill: () => {},
+          };
+        },
+        registerCwdEnv() {},
+        getTerminal() {
+          return undefined;
+        },
+        killTerminal() {},
+        listDirectories() {
+          return [];
+        },
+        killAll() {},
+        subscribeTerminalsChanged() {
+          return () => {};
+        },
+      },
+      appendTimelineItem: async () => true,
+      emitLiveTimelineItem: async () => true,
+    });
+
+    expect(readyAt).toBeGreaterThan(0);
+    expect(sendAt).toBeGreaterThan(0);
+    expect(sendAt).toBeGreaterThanOrEqual(readyAt);
+  });
+
+  it("shares the same worktree runtime port across setup and bootstrap terminals", async () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: ['echo "$PASEO_WORKTREE_PORT" > setup-port.txt'],
+          terminals: [
+            {
+              name: "Port Terminal",
+              command: "true",
+            },
+          ],
+        },
+      })
+    );
+    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
+    execSync("git -c commit.gpgsign=false commit -m 'add port setup and terminals'", {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+
+    const worktree = await createAgentWorktree({
+      cwd: repoDir,
+      branchName: "feature-shared-runtime-port",
+      baseBranch: "main",
+      worktreeSlug: "feature-shared-runtime-port",
+      paseoHome,
+    });
+
+    const registeredEnvs: Array<{ cwd: string; env: Record<string, string> }> = [];
+    const createTerminalEnvs: Record<string, string>[] = [];
+    const persisted: AgentTimelineItem[] = [];
+    await runAsyncWorktreeBootstrap({
+      agentId: "agent-shared-runtime-port",
+      worktree,
+      terminalManager: {
+        async getTerminals() {
+          return [];
+        },
+        async createTerminal(options) {
+          createTerminalEnvs.push(options.env ?? {});
+          return {
+            id: "term-1",
+            name: options.name ?? "Terminal",
+            cwd: options.cwd,
+            send: () => {},
+            subscribe: () => () => {},
+            onExit: () => () => {},
+            subscribeRaw: () => ({
+              unsubscribe: () => {},
+              replayedFrom: 0,
+              currentOffset: 0,
+              earliestAvailableOffset: 0,
+              reset: false,
+            }),
+            getOutputOffset: () => 1,
+            getState: () => ({
+              rows: 0,
+              cols: 0,
+              grid: [],
+              scrollback: [],
+              cursor: { row: 0, col: 0 },
+            }),
+            kill: () => {},
+          };
+        },
+        registerCwdEnv(options) {
+          registeredEnvs.push({ cwd: options.cwd, env: options.env });
+        },
+        getTerminal() {
+          return undefined;
+        },
+        killTerminal() {},
+        listDirectories() {
+          return [];
+        },
+        killAll() {},
+        subscribeTerminalsChanged() {
+          return () => {};
+        },
+      },
+      appendTimelineItem: async (item) => {
+        persisted.push(item);
+        return true;
+      },
+      emitLiveTimelineItem: async () => true,
+    });
+
+    const setupPortPath = join(worktree.worktreePath, "setup-port.txt");
+    await waitForPathExists(setupPortPath);
+
+    const setupPort = readFileSync(setupPortPath, "utf8").trim();
+    expect(setupPort.length).toBeGreaterThan(0);
+    expect(registeredEnvs).toHaveLength(1);
+    expect(registeredEnvs[0]?.cwd).toBe(worktree.worktreePath);
+    expect(registeredEnvs[0]?.env.PASEO_WORKTREE_PORT).toBe(setupPort);
+    expect(createTerminalEnvs.length).toBeGreaterThan(0);
+    expect(createTerminalEnvs[0]?.PASEO_WORKTREE_PORT).toBe(setupPort);
+
+    const terminalToolCall = persisted.find(
+      (item): item is Extract<AgentTimelineItem, { type: "tool_call" }> =>
+        item.type === "tool_call" &&
+        item.name === "paseo_worktree_terminals" &&
+        item.status === "completed"
+    );
+    expect(terminalToolCall?.status).toBe("completed");
   });
 });

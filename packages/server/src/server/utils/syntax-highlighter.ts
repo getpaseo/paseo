@@ -5,6 +5,7 @@ import { parser as cssParser } from "@lezer/css";
 import { parser as htmlParser } from "@lezer/html";
 import { parser as pythonParser } from "@lezer/python";
 import { parser as markdownParser } from "@lezer/markdown";
+import { parser as elixirParser } from "lezer-elixir";
 import type { Parser } from "@lezer/common";
 
 // Map file extensions to parsers
@@ -26,6 +27,9 @@ const parsersByExtension: Record<string, Parser> = {
   htm: htmlParser,
   // Python
   py: pythonParser,
+  // Elixir
+  ex: elixirParser,
+  exs: elixirParser,
   // Markdown
   md: markdownParser,
   mdx: markdownParser,

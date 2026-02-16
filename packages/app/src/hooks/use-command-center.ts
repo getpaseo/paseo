@@ -216,9 +216,6 @@ export function useCommandCenter() {
   const handleSelectAgent = useCallback(
     (agent: AggregatedAgent) => {
       didNavigateRef.current = true;
-      const session = useSessionStore.getState().sessions[agent.serverId];
-      session?.client?.clearAgentAttention(agent.id);
-
       const shouldReplace = Boolean(parseHostAgentRouteFromPathname(pathname));
       const navigate = shouldReplace ? router.replace : router.push;
 

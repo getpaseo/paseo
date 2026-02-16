@@ -73,6 +73,7 @@
     "dotenv": "^17.2.3",
     "express": "^4.18.2",
     "express-basic-auth": "^1.2.1",
+    "lezer-elixir": "^1.1.2",
     "mnemonic-id": "^3.2.7",
     "node-pty": "^1.0.0",
     "onnxruntime-node": "^1.23.0",

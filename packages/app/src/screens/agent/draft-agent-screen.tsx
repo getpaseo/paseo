@@ -27,10 +27,13 @@ import {
   CHECKOUT_STATUS_STALE_TIME,
   checkoutStatusQueryKey,
 } from "@/hooks/use-checkout-status-query";
+import { useAllAgentsList } from "@/hooks/use-all-agents-list";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { buildBranchComboOptions, normalizeBranchOptionName } from "@/utils/branch-suggestions";
 import { shortenPath } from "@/utils/shorten-path";
+import { collectAgentWorkingDirectorySuggestions } from "@/utils/agent-working-directory-suggestions";
+import { buildWorkingDirectorySuggestions } from "@/utils/working-directory-suggestions";
 import { useSessionStore } from "@/stores/session-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -232,6 +235,8 @@ export function DraftAgentScreen({
   const [isBranchOpen, setIsBranchOpen] = useState(false);
   const [branchSearchQuery, setBranchSearchQuery] = useState("");
   const [debouncedBranchSearchQuery, setDebouncedBranchSearchQuery] = useState("");
+  const [workingDirSearchQuery, setWorkingDirSearchQuery] = useState("");
+  const [debouncedWorkingDirSearchQuery, setDebouncedWorkingDirSearchQuery] = useState("");
   const workingDirAnchorRef = useRef<View>(null);
   const worktreeAnchorRef = useRef<View>(null);
   const branchAnchorRef = useRef<View>(null);
@@ -245,6 +250,12 @@ export function DraftAgentScreen({
     const timer = setTimeout(() => setDebouncedBranchSearchQuery(trimmed), 180);
     return () => clearTimeout(timer);
   }, [branchSearchQuery]);
+
+  useEffect(() => {
+    const trimmed = workingDirSearchQuery.trim();
+    const timer = setTimeout(() => setDebouncedWorkingDirSearchQuery(trimmed), 180);
+    return () => clearTimeout(timer);
+  }, [workingDirSearchQuery]);
 
   type CreateAttempt = {
     messageId: string;
@@ -307,6 +318,7 @@ export function DraftAgentScreen({
   const sessionAgents = useSessionStore((state) =>
     selectedServerId ? state.sessions[selectedServerId]?.agents : undefined
   );
+  const { agents: allAgents } = useAllAgentsList({ serverId: selectedServerId });
   const worktreePathLastCreatedAt = useMemo(() => {
     const map = new Map<string, number>();
     if (!sessionAgents) {
@@ -325,24 +337,23 @@ export function DraftAgentScreen({
     return map;
   }, [sessionAgents]);
   const agentWorkingDirSuggestions = useMemo(() => {
-    if (!selectedServerId || !sessionAgents) {
-      return [];
-    }
-    const pathLastCreated = new Map<string, Date>();
-    sessionAgents.forEach((agent) => {
-      if (agent.cwd && !agent.cwd.includes(".paseo/worktrees")) {
-        const existing = pathLastCreated.get(agent.cwd);
-        if (!existing || agent.createdAt > existing) {
-          pathLastCreated.set(agent.cwd, agent.createdAt);
-        }
-      }
-    });
-    return Array.from(pathLastCreated.keys()).sort((a, b) => {
-      const aTime = pathLastCreated.get(a)!.getTime();
-      const bTime = pathLastCreated.get(b)!.getTime();
-      return bTime - aTime;
-    });
-  }, [selectedServerId, sessionAgents]);
+    const liveSources = sessionAgents
+      ? Array.from(sessionAgents.values()).map((agent) => ({
+          cwd: agent.cwd,
+          createdAt: agent.createdAt,
+          lastActivityAt: agent.lastActivityAt,
+        }))
+      : [];
+    const fetchedSources = allAgents.map((agent) => ({
+      cwd: agent.cwd,
+      lastActivityAt: agent.lastActivityAt,
+    }));
+
+    return collectAgentWorkingDirectorySuggestions([
+      ...liveSources,
+      ...fetchedSources,
+    ]);
+  }, [allAgents, sessionAgents]);
 
   const sessionClient = useSessionStore((state) =>
     selectedServerId ? state.sessions[selectedServerId]?.client ?? null : null
@@ -511,6 +522,36 @@ export function DraftAgentScreen({
     staleTime: 15_000,
   });
 
+  const directorySuggestionsQuery = useQuery({
+    queryKey: [
+      "directorySuggestions",
+      selectedServerId,
+      debouncedWorkingDirSearchQuery,
+    ],
+    queryFn: async () => {
+      const client = sessionClient;
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.getDirectorySuggestions({
+        query: debouncedWorkingDirSearchQuery,
+        limit: 50,
+      });
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload.directories ?? [];
+    },
+    enabled:
+      Boolean(debouncedWorkingDirSearchQuery) &&
+      Boolean(selectedServerId) &&
+      !daemonAvailabilityError &&
+      Boolean(sessionClient) &&
+      isConnected,
+    retry: false,
+    staleTime: 15_000,
+  });
+
   const validateWorktreeName = useCallback(
     (name: string): { valid: boolean; error?: string } => {
       if (!name) {
@@ -644,6 +685,50 @@ export function DraftAgentScreen({
 
   const selectedWorktreeLabel =
     worktreeOptions.find((option) => option.path === selectedWorktreePath)?.label ?? "";
+  const hasWorkingDirectorySearch = debouncedWorkingDirSearchQuery.length > 0;
+  const workingDirSearchError =
+    directorySuggestionsQuery.error instanceof Error
+      ? directorySuggestionsQuery.error.message
+      : null;
+  const workingDirSuggestionPaths = useMemo(
+    () =>
+      buildWorkingDirectorySuggestions({
+        recommendedPaths: agentWorkingDirSuggestions,
+        serverPaths: hasWorkingDirectorySearch ? (directorySuggestionsQuery.data ?? []) : [],
+        query: workingDirSearchQuery,
+      }),
+    [
+      agentWorkingDirSuggestions,
+      directorySuggestionsQuery.data,
+      hasWorkingDirectorySearch,
+      workingDirSearchQuery,
+    ]
+  );
+  const workingDirComboOptions = useMemo(
+    () =>
+      workingDirSuggestionPaths.map((path) => ({
+        id: path,
+        label: shortenPath(path),
+        kind: "directory" as const,
+      })),
+    [workingDirSuggestionPaths]
+  );
+  const workingDirEmptyText = useMemo(() => {
+    if (hasWorkingDirectorySearch) {
+      if (workingDirSearchError) {
+        return "Failed to search directories on this host.";
+      }
+      return "No directories match your search.";
+    }
+
+    return agentWorkingDirSuggestions.length > 0
+      ? "No agent directories match your search."
+      : "We'll suggest directories from agents on this host once they exist.";
+  }, [
+    agentWorkingDirSuggestions.length,
+    hasWorkingDirectorySearch,
+    workingDirSearchError,
+  ]);
   const displayWorkingDir = shortenPath(workingDir);
   const worktreeTriggerValue =
     worktreeMode === "create"
@@ -1100,21 +1185,13 @@ export function DraftAgentScreen({
           />
 
           <Combobox
-            options={agentWorkingDirSuggestions.map((path) => ({
-              id: path,
-              label: shortenPath(path),
-            }))}
+            options={workingDirComboOptions}
             value={workingDir}
             onSelect={setWorkingDirFromUser}
-            searchPlaceholder="/path/to/project"
-            emptyText={
-              agentWorkingDirSuggestions.length > 0
-                ? "No agent directories match your search."
-                : "We'll suggest directories from agents on this host once they exist."
-            }
-            allowCustomValue
-            customValuePrefix="Use"
-            customValueDescription="Launch the agent in this directory"
+            onSearchQueryChange={setWorkingDirSearchQuery}
+            searchPlaceholder="Search directories..."
+            emptyText={workingDirEmptyText}
+            optionsPosition="above-search"
             title="Working directory"
             open={isWorkingDirOpen}
             onOpenChange={setIsWorkingDirOpen}

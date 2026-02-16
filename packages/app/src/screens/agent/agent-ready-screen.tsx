@@ -72,6 +72,7 @@ import {
   derivePendingPermissionKey,
   normalizeAgentSnapshot,
 } from "@/utils/agent-snapshots";
+import { shouldClearAgentAttentionOnView } from "@/utils/agent-attention";
 import type { FetchAgentsEntry } from "@server/client/daemon-client";
 import {
   DropdownMenu,
@@ -512,6 +513,9 @@ function AgentScreenContent({
   const isConnected = useSessionStore(
     (state) => state.sessions[serverId]?.connection.isConnected ?? false
   );
+  const focusedAgentId = useSessionStore(
+    (state) => state.sessions[serverId]?.focusedAgentId ?? null
+  );
   const { ensureAgentIsInitialized, refreshAgent } = useAgentInitialization(serverId);
   const [missingAgentState, setMissingAgentState] = useState<MissingAgentState>({
     kind: "idle",
@@ -860,25 +864,30 @@ function AgentScreenContent({
     document.title = title;
   }, [agent?.title]);
 
-  // Track previous agent status to detect completion while viewing
-  const previousStatusRef = useRef<string | null>(null);
-
-  // Clear attention when agent finishes while user is viewing this screen
+  // Clear attention as soon as the user is focused on this agent screen.
   useEffect(() => {
-    if (!resolvedAgentId || !agent || !client) {
+    const clearAgentId = resolvedAgentId?.trim();
+    if (!clearAgentId || !client) {
       return;
     }
-
-    const previousStatus = previousStatusRef.current;
-    const currentStatus = agent.status;
-    previousStatusRef.current = currentStatus;
-
-    // If agent transitioned from running to idle while we're viewing,
-    // immediately clear attention since user witnessed the completion
-    if (previousStatus === "running" && currentStatus === "idle") {
-      client.clearAgentAttention(resolvedAgentId);
+    if (
+      !shouldClearAgentAttentionOnView({
+        agentId: clearAgentId,
+        focusedAgentId,
+        isConnected,
+        requiresAttention: agent?.requiresAttention,
+      })
+    ) {
+      return;
     }
-  }, [resolvedAgentId, agent?.status, client]);
+    client.clearAgentAttention(clearAgentId);
+  }, [
+    agent?.requiresAttention,
+    client,
+    focusedAgentId,
+    isConnected,
+    resolvedAgentId,
+  ]);
 
   const handleRefreshAgent = useCallback(() => {
     if (!resolvedAgentId) {

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
+import { getIsTauriMac } from "@/constants/layout";
 import { useAggregatedAgents } from "./use-aggregated-agents";
 
 type FaviconStatus = "none" | "running" | "attention";
@@ -32,6 +33,21 @@ function deriveFaviconStatus(
     return "attention";
   }
   return "none";
+}
+
+function deriveMacDockBadgeCount(
+  agents: ReturnType<typeof useAggregatedAgents>["agents"]
+): number | undefined {
+  const attentionCount = agents.filter(
+    (agent) =>
+      agent.requiresAttention &&
+      (agent.attentionReason === "permission" || agent.attentionReason === "finished")
+  ).length;
+  if (attentionCount > 0) {
+    return attentionCount;
+  }
+
+  return undefined;
 }
 
 function getFaviconUri(status: FaviconStatus, colorScheme: ColorScheme): string {
@@ -73,9 +89,25 @@ function getSystemColorScheme(): ColorScheme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+async function updateMacDockBadge(count?: number) {
+  if (Platform.OS !== "web" || typeof window === "undefined" || !getIsTauriMac()) return;
+
+  const tauriWindow = (window as any).__TAURI__?.window?.getCurrentWindow?.();
+  if (!tauriWindow || typeof tauriWindow.setBadgeCount !== "function") {
+    return;
+  }
+
+  try {
+    await tauriWindow.setBadgeCount(count);
+  } catch (error) {
+    console.warn("[useFaviconStatus] Failed to update macOS dock badge", error);
+  }
+}
+
 export function useFaviconStatus() {
   const { agents } = useAggregatedAgents();
   const [colorScheme, setColorScheme] = useState<ColorScheme>(getSystemColorScheme);
+  const lastDockBadgeCountRef = useRef<number | undefined>(undefined);
 
   // Listen for system color scheme changes
   useEffect(() => {
@@ -96,5 +128,11 @@ export function useFaviconStatus() {
 
     const status = deriveFaviconStatus(agents);
     updateFavicon(status, colorScheme);
+
+    const dockBadgeCount = deriveMacDockBadgeCount(agents);
+    if (dockBadgeCount !== lastDockBadgeCountRef.current) {
+      lastDockBadgeCountRef.current = dockBadgeCount;
+      void updateMacDockBadge(dockBadgeCount);
+    }
   }, [agents, colorScheme]);
 }

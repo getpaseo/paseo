@@ -2,10 +2,25 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { isAbsolute, join, resolve } from "path";
 import { z } from "zod";
 
-const PaseoWorktreeMetadataSchema = z.object({
+const PaseoWorktreeMetadataV1Schema = z.object({
   version: z.literal(1),
   baseRefName: z.string().min(1),
 });
+
+const PaseoWorktreeMetadataV2Schema = z.object({
+  version: z.literal(2),
+  baseRefName: z.string().min(1),
+  runtime: z
+    .object({
+      worktreePort: z.number().int().positive(),
+    })
+    .optional(),
+});
+
+const PaseoWorktreeMetadataSchema = z.union([
+  PaseoWorktreeMetadataV1Schema,
+  PaseoWorktreeMetadataV2Schema,
+]);
 
 export type PaseoWorktreeMetadata = z.infer<typeof PaseoWorktreeMetadataSchema>;
 
@@ -68,6 +83,31 @@ export function writePaseoWorktreeMetadata(
   writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
 }
 
+export function writePaseoWorktreeRuntimeMetadata(
+  worktreeRoot: string,
+  options: { worktreePort: number }
+): void {
+  if (!Number.isInteger(options.worktreePort) || options.worktreePort <= 0) {
+    throw new Error(`Invalid worktree runtime port: ${options.worktreePort}`);
+  }
+
+  const current = readPaseoWorktreeMetadata(worktreeRoot);
+  if (!current) {
+    throw new Error("Cannot persist worktree runtime metadata: missing base metadata");
+  }
+
+  const metadataPath = getPaseoWorktreeMetadataPath(worktreeRoot);
+  mkdirSync(join(getGitDirForWorktreeRoot(worktreeRoot), "paseo"), { recursive: true });
+  const next: PaseoWorktreeMetadata = {
+    version: 2,
+    baseRefName: current.baseRefName,
+    runtime: {
+      worktreePort: options.worktreePort,
+    },
+  };
+  writeFileSync(metadataPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+}
+
 export function readPaseoWorktreeMetadata(worktreeRoot: string): PaseoWorktreeMetadata | null {
   const metadataPath = getPaseoWorktreeMetadataPath(worktreeRoot);
   if (!existsSync(metadataPath)) {
@@ -84,4 +124,15 @@ export function requirePaseoWorktreeBaseRefName(worktreeRoot: string): string {
     throw new Error(`Missing Paseo worktree base metadata: ${metadataPath}`);
   }
   return metadata.baseRefName;
+}
+
+export function readPaseoWorktreeRuntimePort(worktreeRoot: string): number | null {
+  const metadata = readPaseoWorktreeMetadata(worktreeRoot);
+  if (!metadata) {
+    return null;
+  }
+  if (metadata.version === 2 && metadata.runtime?.worktreePort) {
+    return metadata.runtime.worktreePort;
+  }
+  return null;
 }

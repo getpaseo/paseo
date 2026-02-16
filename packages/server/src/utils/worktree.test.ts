@@ -5,6 +5,7 @@ import {
   getWorktreeTerminalSpecs,
   isPaseoOwnedWorktreeCwd,
   listPaseoWorktrees,
+  resolveWorktreeRuntimeEnv,
   type WorktreeSetupCommandProgressEvent,
   runWorktreeSetupCommands,
   slugify,
@@ -14,6 +15,7 @@ import { execSync } from "child_process";
 import { mkdtempSync, rmSync, existsSync, realpathSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import net from "node:net";
 
 describe("createWorktree", () => {
   let tempDir: string;
@@ -263,6 +265,68 @@ describe("createWorktree", () => {
     expect(progressEvents.some((event) => event.type === "command_started")).toBe(true);
     expect(progressEvents.some((event) => event.type === "output")).toBe(true);
     expect(progressEvents.some((event) => event.type === "command_completed")).toBe(true);
+  });
+
+  it("reuses persisted worktree runtime port across resolutions", async () => {
+    const result = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "runtime-env-port-reuse",
+      runSetup: false,
+      paseoHome,
+    });
+
+    const first = await resolveWorktreeRuntimeEnv({
+      worktreePath: result.worktreePath,
+      branchName: result.branchName,
+    });
+    const second = await resolveWorktreeRuntimeEnv({
+      worktreePath: result.worktreePath,
+      branchName: result.branchName,
+    });
+
+    expect(second.PASEO_WORKTREE_PORT).toBe(first.PASEO_WORKTREE_PORT);
+  });
+
+  it("fails runtime env resolution when persisted port is in use", async () => {
+    const result = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "runtime-env-port-conflict",
+      runSetup: false,
+      paseoHome,
+    });
+
+    const env = await resolveWorktreeRuntimeEnv({
+      worktreePath: result.worktreePath,
+      branchName: result.branchName,
+    });
+    const port = Number(env.PASEO_WORKTREE_PORT);
+
+    const server = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, () => resolve());
+    });
+
+    await expect(
+      resolveWorktreeRuntimeEnv({
+        worktreePath: result.worktreePath,
+        branchName: result.branchName,
+      })
+    ).rejects.toThrow(`Persisted worktree port ${port} is already in use`);
+
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
   });
 
   it("cleans up worktree if setup command fails", async () => {

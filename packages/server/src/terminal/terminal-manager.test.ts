@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createTerminalManager, type TerminalManager } from "./terminal-manager.js";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 async function waitForCondition(
   predicate: () => boolean,
@@ -16,12 +19,33 @@ async function waitForCondition(
   throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
+async function withShell<T>(shell: string, run: () => Promise<T>): Promise<T> {
+  const originalShell = process.env.SHELL;
+  process.env.SHELL = shell;
+  try {
+    return await run();
+  } finally {
+    if (originalShell === undefined) {
+      delete process.env.SHELL;
+    } else {
+      process.env.SHELL = originalShell;
+    }
+  }
+}
+
 describe("TerminalManager", () => {
   let manager: TerminalManager;
+  const temporaryDirs: string[] = [];
 
   afterEach(() => {
     if (manager) {
       manager.killAll();
+    }
+    while (temporaryDirs.length > 0) {
+      const dir = temporaryDirs.pop();
+      if (dir) {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
   });
 
@@ -94,6 +118,58 @@ describe("TerminalManager", () => {
       manager = createTerminalManager();
       await expect(manager.createTerminal({ cwd: "tmp" })).rejects.toThrow("cwd must be absolute path");
     });
+
+    it("inherits registered env for the worktree root cwd", async () => {
+      await withShell("/bin/sh", async () => {
+        manager = createTerminalManager();
+        const cwd = mkdtempSync(join(tmpdir(), "terminal-manager-env-root-"));
+        temporaryDirs.push(cwd);
+        const markerPath = join(cwd, "root-port.txt");
+
+        manager.registerCwdEnv({
+          cwd,
+          env: { PASEO_WORKTREE_PORT: "45678" },
+        });
+        const session = await manager.createTerminal({ cwd });
+        for (let attempt = 0; attempt < 10 && !existsSync(markerPath); attempt++) {
+          session.send({
+            type: "input",
+            data: `printf '%s' \"$PASEO_WORKTREE_PORT\" > ${JSON.stringify(markerPath)}\r`,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        await waitForCondition(() => existsSync(markerPath), 10000);
+        expect(readFileSync(markerPath, "utf8")).toBe("45678");
+      });
+    });
+
+    it("inherits registered env for subdirectories within the worktree", async () => {
+      await withShell("/bin/sh", async () => {
+        manager = createTerminalManager();
+        const rootCwd = mkdtempSync(join(tmpdir(), "terminal-manager-env-subdir-"));
+        const subdirCwd = join(rootCwd, "packages", "app");
+        mkdirSync(subdirCwd, { recursive: true });
+        temporaryDirs.push(rootCwd);
+        const markerPath = join(subdirCwd, "subdir-port.txt");
+
+        manager.registerCwdEnv({
+          cwd: rootCwd,
+          env: { PASEO_WORKTREE_PORT: "45679" },
+        });
+        const session = await manager.createTerminal({ cwd: subdirCwd });
+        for (let attempt = 0; attempt < 10 && !existsSync(markerPath); attempt++) {
+          session.send({
+            type: "input",
+            data: `printf '%s' \"$PASEO_WORKTREE_PORT\" > ${JSON.stringify(markerPath)}\r`,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        await waitForCondition(() => existsSync(markerPath), 10000);
+        expect(readFileSync(markerPath, "utf8")).toBe("45679");
+      });
+    });
   });
 
   describe("getTerminal", () => {
@@ -156,7 +232,7 @@ describe("TerminalManager", () => {
       manager = createTerminalManager();
       const terminals = await manager.getTerminals("/tmp");
       const exitedId = terminals[0].id;
-      terminals[0].send({ type: "input", data: "\u0004" });
+      terminals[0].kill();
 
       await waitForCondition(() => manager.getTerminal(exitedId) === undefined, 10000);
 

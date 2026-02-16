@@ -26,6 +26,7 @@ import type {
   CheckoutPrStatusResponse,
   ValidateBranchResponse,
   BranchSuggestionsResponse,
+  DirectorySuggestionsResponse,
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
@@ -197,6 +198,7 @@ type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type ValidateBranchPayload = ValidateBranchResponse["payload"];
 type BranchSuggestionsPayload = BranchSuggestionsResponse["payload"];
+type DirectorySuggestionsPayload = DirectorySuggestionsResponse["payload"];
 type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
 type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
 type FileExplorerPayload = FileExplorerResponse["payload"];
@@ -2078,6 +2080,22 @@ export class DaemonClient {
         limit: options.limit,
       },
       responseType: "branch_suggestions_response",
+      timeout: 10000,
+    });
+  }
+
+  async getDirectorySuggestions(
+    options: { query: string; limit?: number },
+    requestId?: string
+  ): Promise<DirectorySuggestionsPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "directory_suggestions_request",
+        query: options.query,
+        limit: options.limit,
+      },
+      responseType: "directory_suggestions_response",
       timeout: 10000,
     });
   }

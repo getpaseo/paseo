@@ -100,6 +100,26 @@ describe("shared messages stream parsing", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("parses directory suggestions request and response payloads", () => {
+    const requestParsed = SessionInboundMessageSchema.safeParse({
+      type: "directory_suggestions_request",
+      query: "proj",
+      limit: 20,
+      requestId: "req-dir-1",
+    });
+    expect(requestParsed.success).toBe(true);
+
+    const responseParsed = SessionOutboundMessageSchema.safeParse({
+      type: "directory_suggestions_response",
+      payload: {
+        directories: ["/Users/test/projects/paseo"],
+        error: null,
+        requestId: "req-dir-1",
+      },
+    });
+    expect(responseParsed.success).toBe(true);
+  });
+
   it("rejects websocket envelope for removed agent_stream_snapshot message type", () => {
     const fixture = {
       type: "agent_stream_snapshot",

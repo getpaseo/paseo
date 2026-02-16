@@ -14,7 +14,6 @@ import {
 import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Linking from "expo-linking";
 import {
   Archive,
   ChevronDown,
@@ -52,6 +51,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { buildHostAgentDraftRoute } from "@/utils/host-routes";
+import { openExternalUrl } from "@/utils/open-external-url";
 
 // =============================================================================
 // Git Actions Data Structure
@@ -85,11 +85,7 @@ interface GitActions {
 }
 
 function openURLInNewTab(url: string): void {
-  if (Platform.OS === "web") {
-    window.open(url, "_blank", "noopener");
-  } else {
-    void Linking.openURL(url);
-  }
+  void openExternalUrl(url);
 }
 
 const DIFF_PANE_LOG_TAG = "[GitDiffPane]";

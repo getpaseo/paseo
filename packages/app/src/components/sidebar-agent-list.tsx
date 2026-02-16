@@ -592,11 +592,6 @@ export function SidebarAgentList({
         return;
       }
 
-      const session = useSessionStore.getState().sessions[entry.agent.serverId];
-      if (session?.client) {
-        session.client.clearAgentAttention(entry.agent.id);
-      }
-
       const navigationKey = buildAgentNavigationKey(entry.agent.serverId, entry.agent.id);
       startNavigationTiming(navigationKey, {
         from: "home",

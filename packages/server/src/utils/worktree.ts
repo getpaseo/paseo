@@ -4,7 +4,13 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "fs";
 import { join, basename, dirname, resolve, sep } from "path";
 import net from "node:net";
 import { createNameId } from "mnemonic-id";
-import { normalizeBaseRefName, writePaseoWorktreeMetadata } from "./worktree-metadata.js";
+import {
+  normalizeBaseRefName,
+  readPaseoWorktreeMetadata,
+  readPaseoWorktreeRuntimePort,
+  writePaseoWorktreeMetadata,
+  writePaseoWorktreeRuntimeMetadata,
+} from "./worktree-metadata.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 
 interface PaseoConfig {
@@ -25,6 +31,14 @@ export interface WorktreeConfig {
   branchName: string;
   worktreePath: string;
 }
+
+export type WorktreeRuntimeEnv = {
+  PASEO_SOURCE_CHECKOUT_PATH: string;
+  PASEO_ROOT_PATH: string;
+  PASEO_WORKTREE_PATH: string;
+  PASEO_BRANCH_NAME: string;
+  PASEO_WORKTREE_PORT: string;
+};
 
 export type WorktreeSetupCommandResult = {
   command: string;
@@ -327,6 +341,29 @@ async function getAvailablePort(): Promise<number> {
   });
 }
 
+async function assertPortAvailable(port: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      const message = error?.code === "EADDRINUSE"
+        ? `Persisted worktree port ${port} is already in use`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+      reject(new Error(message));
+    });
+    server.listen(port, () => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+}
+
 async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<string> {
   try {
     const commonDir = await getGitCommonDir(worktreePath);
@@ -360,6 +397,7 @@ export async function runWorktreeSetupCommands(options: {
   branchName: string;
   cleanupOnFailure: boolean;
   repoRootPath?: string;
+  runtimeEnv?: WorktreeRuntimeEnv;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult[]> {
   // Read paseo.json from the worktree (it will have the same content as the source repo)
@@ -368,21 +406,16 @@ export async function runWorktreeSetupCommands(options: {
     return [];
   }
 
-  const repoRootPath =
-    options.repoRootPath ?? (await inferRepoRootPathFromWorktreePath(options.worktreePath));
-  const worktreePort = await getAvailablePort();
-
+  const runtimeEnv =
+    options.runtimeEnv ??
+    (await resolveWorktreeRuntimeEnv({
+      worktreePath: options.worktreePath,
+      branchName: options.branchName,
+      ...(options.repoRootPath ? { repoRootPath: options.repoRootPath } : {}),
+    }));
   const setupEnv = {
     ...process.env,
-    // Source checkout path is the original git repo root (shared across worktrees), not the
-    // worktree itself. This allows setup scripts to copy local files (e.g. .env) from the
-    // source checkout.
-    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
-    // Backward-compatible alias.
-    PASEO_ROOT_PATH: repoRootPath,
-    PASEO_WORKTREE_PATH: options.worktreePath,
-    PASEO_BRANCH_NAME: options.branchName,
-    PASEO_WORKTREE_PORT: String(worktreePort),
+    ...runtimeEnv,
   };
 
   const results: WorktreeSetupCommandResult[] = [];
@@ -437,6 +470,40 @@ async function resolveBranchNameForWorktreePath(worktreePath: string): Promise<s
   }
 
   return basename(worktreePath);
+}
+
+export async function resolveWorktreeRuntimeEnv(options: {
+  worktreePath: string;
+  branchName?: string;
+  repoRootPath?: string;
+}): Promise<WorktreeRuntimeEnv> {
+  const repoRootPath =
+    options.repoRootPath ?? (await inferRepoRootPathFromWorktreePath(options.worktreePath));
+  const branchName =
+    options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
+
+  let worktreePort = readPaseoWorktreeRuntimePort(options.worktreePath);
+  if (worktreePort === null) {
+    worktreePort = await getAvailablePort();
+    const metadata = readPaseoWorktreeMetadata(options.worktreePath);
+    if (metadata) {
+      writePaseoWorktreeRuntimeMetadata(options.worktreePath, { worktreePort });
+    }
+  } else {
+    await assertPortAvailable(worktreePort);
+  }
+
+  return {
+    // Source checkout path is the original git repo root (shared across worktrees), not the
+    // worktree itself. This allows setup scripts to copy local files (e.g. .env) from the
+    // source checkout.
+    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+    // Backward-compatible alias.
+    PASEO_ROOT_PATH: repoRootPath,
+    PASEO_WORKTREE_PATH: options.worktreePath,
+    PASEO_BRANCH_NAME: branchName,
+    PASEO_WORKTREE_PORT: String(worktreePort),
+  };
 }
 
 export async function runWorktreeDestroyCommands(options: {
