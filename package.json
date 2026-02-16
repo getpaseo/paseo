@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "dev": "./scripts/dev.sh",
-    "dev:server": "NODE_ENV=development tsx packages/server/scripts/dev-runner.ts",
+    "dev:server": "NODE_ENV=development tsx packages/server/scripts/daemon-runner.ts --dev",
     "dev:app": "npm run start --workspace=@getpaseo/app",
     "dev:website": "npm run dev --workspace=@getpaseo/website",
     "postinstall": "node scripts/postinstall-patches.mjs",

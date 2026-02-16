@@ -1,9 +1,8 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { closeSync, existsSync, openSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { loadConfig, resolvePaseoHome } from '@getpaseo/server'
-import { applySherpaLoaderEnv } from './sherpa-env.js'
 
 export interface DaemonStartOptions {
   port?: string
@@ -98,6 +97,22 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   }
 
   return args
+}
+
+function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
+  const childEnv: NodeJS.ProcessEnv = { ...process.env }
+  if (options.home) {
+    childEnv.PASEO_HOME = options.home
+  }
+  if (options.listen) {
+    childEnv.PASEO_LISTEN = options.listen
+  } else if (options.port) {
+    childEnv.PASEO_LISTEN = `127.0.0.1:${options.port}`
+  }
+  if (options.allowedHosts) {
+    childEnv.PASEO_ALLOWED_HOSTS = options.allowedHosts
+  }
+  return childEnv
 }
 
 function resolveDaemonRunnerEntry(): string {
@@ -280,19 +295,7 @@ export async function startLocalDaemonDetached(
     throw new Error('Cannot use --listen and --port together')
   }
 
-  const childEnv: NodeJS.ProcessEnv = { ...process.env }
-  applySherpaLoaderEnv(childEnv)
-  if (options.home) {
-    childEnv.PASEO_HOME = options.home
-  }
-  if (options.listen) {
-    childEnv.PASEO_LISTEN = options.listen
-  } else if (options.port) {
-    childEnv.PASEO_LISTEN = `127.0.0.1:${options.port}`
-  }
-  if (options.allowedHosts) {
-    childEnv.PASEO_ALLOWED_HOSTS = options.allowedHosts
-  }
+  const childEnv = buildChildEnv(options)
 
   const paseoHome = resolvePaseoHome(childEnv)
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME)
@@ -356,6 +359,29 @@ export async function startLocalDaemonDetached(
   } finally {
     closeSync(logFd)
   }
+}
+
+export function startLocalDaemonForeground(options: DaemonStartOptions): number {
+  if (options.listen && options.port) {
+    throw new Error('Cannot use --listen and --port together')
+  }
+
+  const childEnv = buildChildEnv(options)
+  const daemonRunnerEntry = resolveDaemonRunnerEntry()
+  const result = spawnSync(
+    process.execPath,
+    [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
+    {
+      env: childEnv,
+      stdio: 'inherit',
+    }
+  )
+
+  if (result.error) {
+    throw result.error
+  }
+
+  return result.status ?? 1
 }
 
 export async function stopLocalDaemon(
