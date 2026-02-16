@@ -1,7 +1,11 @@
 import * as React from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { CursorFieldProvider } from '~/components/butterfly'
+import websitePackage from '../../package.json'
 import '~/styles.css'
+
+const desktopVersion = websitePackage.version
+const macDownloadHref = `https://github.com/getpaseo/paseo/releases/download/v${desktopVersion}/Paseo_${desktopVersion}_aarch64.dmg`
 
 export const Route = createFileRoute('/')({
   head: () => ({
@@ -194,7 +198,7 @@ function GetStarted() {
       <CodeBlock>npm install -g @getpaseo/cli && paseo</CodeBlock>
       <div className="flex flex-col sm:flex-row gap-3">
         <a
-          href="https://github.com/getpaseo/paseo/releases/download/v0.1.6/Paseo_0.1.6_aarch64.dmg"
+          href={macDownloadHref}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 transition-colors"

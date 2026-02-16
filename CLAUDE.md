@@ -191,7 +191,7 @@ Notes:
 - If `release:publish` fails after a successful publish of one workspace, re-run `npm run release:publish`; npm will skip already-published versions and continue where possible.
 - If a user asks to "release paseo" (without specifying major/minor), treat it as a patch release and run `npm run release:patch`.
 - All workspaces share one version by design. Keep versions synchronized and release together.
-- After each release, update the website Mac download CTA URL to the new version tag in `packages/website/src/routes/index.tsx`.
+- The website Mac download CTA URL is derived from `packages/website/package.json` version at build time, so no manual update is required after release.
 
 Release completion checklist:
 - `npm run release:patch` completes successfully.

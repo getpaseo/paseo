@@ -92,6 +92,8 @@ The tag triggers:
 - GitHub `Desktop Release` workflow (`.github/workflows/desktop-release.yml`)
 - Expo EAS mobile workflow (`packages/app/.eas/workflows/release-mobile.yml`) to build + submit Android/iOS
 
+The website Mac download CTA is generated from `packages/website/package.json` version at build time, so it tracks each release automatically.
+
 Useful monitoring commands after a release push:
 
 ```bash
