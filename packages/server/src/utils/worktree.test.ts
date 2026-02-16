@@ -93,6 +93,20 @@ describe("createWorktree", () => {
     rmSync(varTempDir, { recursive: true, force: true });
   });
 
+  it("reports repoRoot as the repository root for paseo-owned worktrees", async () => {
+    const result = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "repo-root-check",
+      paseoHome,
+    });
+
+    const ownership = await isPaseoOwnedWorktreeCwd(result.worktreePath, { paseoHome });
+    expect(ownership.allowed).toBe(true);
+    expect(ownership.repoRoot).toBe(repoDir);
+  });
+
   it("creates a worktree with a new branch", async () => {
     const result = await createWorktree({
       branchName: "feature-branch",

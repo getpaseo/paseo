@@ -667,11 +667,19 @@ function normalizePathForOwnership(input: string): string {
   }
 }
 
+function resolveRepoRootFromGitCommonDir(commonDir: string): string {
+  const normalizedCommonDir = normalizePathForOwnership(commonDir);
+  return basename(normalizedCommonDir) === ".git"
+    ? dirname(normalizedCommonDir)
+    : normalizedCommonDir;
+}
+
 export async function isPaseoOwnedWorktreeCwd(
   cwd: string,
   options?: { paseoHome?: string }
 ): Promise<PaseoWorktreeOwnership> {
   const gitCommonDir = await getGitCommonDir(cwd);
+  const repoRoot = resolveRepoRootFromGitCommonDir(gitCommonDir);
   const worktreesRoot = await getPaseoWorktreesRoot(cwd, options?.paseoHome);
   const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
   const resolvedCwd = normalizePathForOwnership(cwd);
@@ -679,7 +687,7 @@ export async function isPaseoOwnedWorktreeCwd(
   if (!resolvedCwd.startsWith(resolvedRoot)) {
     return {
       allowed: false,
-      repoRoot: gitCommonDir,
+      repoRoot,
       worktreeRoot: worktreesRoot,
       worktreePath: resolvedCwd,
     };
@@ -692,7 +700,7 @@ export async function isPaseoOwnedWorktreeCwd(
   });
   return {
     allowed,
-    repoRoot: gitCommonDir,
+    repoRoot,
     worktreeRoot: worktreesRoot,
     worktreePath: resolvedCwd,
   };

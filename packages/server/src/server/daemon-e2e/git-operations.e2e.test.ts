@@ -665,5 +665,98 @@ describe("daemon E2E", () => {
     );
   });
 
+  describe("archivePaseoWorktree", () => {
+    test(
+      "archives worktree by running destroy commands and shutting down worktree terminals",
+      async () => {
+        const repoRoot = tmpCwd();
+
+        const { execSync } = await import("child_process");
+        execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git config user.email 'test@test.com'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+        execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+
+        writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
+        execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'initial'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+        execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
+
+        const destroyMarkerPath = path.join(repoRoot, "destroy-marker.txt");
+        writeFileSync(
+          path.join(repoRoot, "paseo.json"),
+          JSON.stringify({
+            worktree: {
+              terminals: [
+                {
+                  name: "Dev Server",
+                  command: 'echo "dev-server" > dev-terminal.txt; tail -f /dev/null',
+                },
+              ],
+              destroy: [
+                `echo "$PASEO_WORKTREE_PATH" > "${destroyMarkerPath}"`,
+              ],
+            },
+          })
+        );
+        execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'add worktree terminal + destroy'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+
+        const agent = await withTimeout({
+          promise: ctx.client.createAgent({
+            provider: "codex",
+            model: CODEX_TEST_MODEL,
+            thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+            cwd: repoRoot,
+            title: "Worktree Archive Cleanup Test",
+            git: {
+              createWorktree: true,
+              createNewBranch: true,
+              baseBranch: "main",
+              newBranchName: "archive-cleanup-test",
+              worktreeSlug: "archive-cleanup-test",
+            },
+          }),
+          timeoutMs: 2500,
+          label: "createAgent should not block on setup",
+        });
+
+        await waitForPathExists({
+          targetPath: path.join(agent.cwd, "dev-terminal.txt"),
+          timeoutMs: 15000,
+          label: "worktree terminal marker",
+        });
+
+        const beforeArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
+        expect(beforeArchiveDirectories).toContain(agent.cwd);
+
+        const archive = await ctx.client.archivePaseoWorktree({
+          worktreePath: agent.cwd,
+        });
+        expect(archive.error).toBeNull();
+        expect(archive.success).toBe(true);
+        expect(archive.removedAgents).toContain(agent.id);
+
+        expect(existsSync(agent.cwd)).toBe(false);
+        expect(existsSync(destroyMarkerPath)).toBe(true);
+        expect(readFileSync(destroyMarkerPath, "utf8").trim()).toBe(agent.cwd);
+
+        const afterArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
+        expect(afterArchiveDirectories).not.toContain(agent.cwd);
+
+        rmSync(repoRoot, { recursive: true, force: true });
+      },
+      60000
+    );
+  });
+
 
 });
