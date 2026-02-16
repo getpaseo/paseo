@@ -47,8 +47,27 @@ export interface ComboboxProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   desktopPlacement?: "top-start" | "bottom-start";
+  /**
+   * Prevents an initial frame at 0,0 by hiding desktop content until floating
+   * coordinates resolve. This intentionally disables fade enter/exit animation
+   * for that combobox instance to avoid animation overriding hidden opacity.
+   */
+  desktopPreventInitialFlash?: boolean;
   anchorRef: React.RefObject<View | null>;
   children?: ReactNode;
+}
+
+function toNumericStyleValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
 }
 
 function ComboboxSheetBackground({ style }: BottomSheetBackgroundProps) {
@@ -171,6 +190,7 @@ export function Combobox({
   open,
   onOpenChange,
   desktopPlacement = "top-start",
+  desktopPreventInitialFlash = true,
   anchorRef,
   children,
 }: ComboboxProps): ReactElement {
@@ -180,6 +200,7 @@ export function Combobox({
   const snapPoints = useMemo(() => ["60%", "90%"], []);
   const [availableSize, setAvailableSize] = useState<{ width?: number; height?: number } | null>(null);
   const [referenceWidth, setReferenceWidth] = useState<number | null>(null);
+  const [referenceAtOrigin, setReferenceAtOrigin] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number>(-1);
 
@@ -263,9 +284,37 @@ export function Combobox({
       setReferenceWidth(null);
       return;
     }
-    const raf = requestAnimationFrame(() => update());
+    const raf = requestAnimationFrame(() => void update());
     return () => cancelAnimationFrame(raf);
   }, [desktopPlacement, isMobile, update, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || isMobile) {
+      setReferenceAtOrigin(false);
+      return;
+    }
+
+    const referenceEl = anchorRef.current;
+    if (!referenceEl) {
+      setReferenceAtOrigin(false);
+      return;
+    }
+
+    referenceEl.measureInWindow((x, y) => {
+      setReferenceAtOrigin(Math.abs(x) <= 1 && Math.abs(y) <= 1);
+    });
+  }, [anchorRef, isMobile, isOpen]);
+
+  const floatingTop = toNumericStyleValue(floatingStyles.top);
+  const floatingLeft = toNumericStyleValue(floatingStyles.left);
+  const hasResolvedDesktopPosition =
+    referenceWidth !== null &&
+    floatingTop !== null &&
+    floatingLeft !== null &&
+    (floatingTop !== 0 || floatingLeft !== 0 || referenceAtOrigin);
+  const shouldHideDesktopContent =
+    desktopPreventInitialFlash && !hasResolvedDesktopPosition;
+  const shouldUseDesktopFade = !desktopPreventInitialFlash;
 
   useEffect(() => {
     if (!isMobile) return;
@@ -514,8 +563,8 @@ export function Combobox({
       <View ref={refs.setOffsetParent} collapsable={false} style={styles.desktopOverlay}>
         <Pressable style={styles.desktopBackdrop} onPress={handleClose} />
         <Animated.View
-          entering={FadeIn.duration(100)}
-          exiting={FadeOut.duration(100)}
+          entering={shouldUseDesktopFade ? FadeIn.duration(100) : undefined}
+          exiting={shouldUseDesktopFade ? FadeOut.duration(100) : undefined}
           style={[
             styles.desktopContainer,
             {
@@ -524,7 +573,7 @@ export function Combobox({
               maxWidth: 400,
             },
             floatingStyles,
-            referenceWidth === null ? { opacity: 0 } : null,
+            shouldHideDesktopContent ? { opacity: 0 } : null,
             typeof availableSize?.height === "number" ? { maxHeight: Math.min(availableSize.height, 400) } : null,
           ]}
           ref={refs.setFloating}
