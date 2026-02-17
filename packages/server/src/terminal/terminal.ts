@@ -1,8 +1,13 @@
 import * as pty from "node-pty";
 import xterm, { type Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
+import { chmodSync, existsSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 
 const { Terminal } = xterm;
+const require = createRequire(import.meta.url);
+let nodePtySpawnHelperChecked = false;
 
 export interface Cell {
   char: string;
@@ -81,6 +86,73 @@ export interface CreateTerminalOptions {
   rows?: number;
   cols?: number;
   name?: string;
+}
+
+type EnsureNodePtySpawnHelperExecutableOptions = {
+  packageRoot?: string;
+  platform?: NodeJS.Platform;
+  arch?: string;
+  force?: boolean;
+};
+
+function resolveNodePtyPackageRoot(): string | null {
+  try {
+    const packageJsonPath = require.resolve("node-pty/package.json");
+    return dirname(packageJsonPath);
+  } catch {
+    return null;
+  }
+}
+
+function ensureExecutableBit(path: string): void {
+  if (!existsSync(path)) {
+    return;
+  }
+  const stat = statSync(path);
+  if (!stat.isFile()) {
+    return;
+  }
+  // node-pty 1.1.0 shipped darwin prebuild spawn-helper without execute bit.
+  if ((stat.mode & 0o111) === 0o111) {
+    return;
+  }
+  chmodSync(path, stat.mode | 0o111);
+}
+
+export function ensureNodePtySpawnHelperExecutableForCurrentPlatform(
+  options: EnsureNodePtySpawnHelperExecutableOptions = {}
+): void {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "darwin") {
+    return;
+  }
+  if (nodePtySpawnHelperChecked && !options.force) {
+    return;
+  }
+
+  const packageRoot = options.packageRoot ?? resolveNodePtyPackageRoot();
+  if (!packageRoot) {
+    return;
+  }
+  const arch = options.arch ?? process.arch;
+
+  const candidates = [
+    join(packageRoot, "build", "Release", "spawn-helper"),
+    join(packageRoot, "build", "Debug", "spawn-helper"),
+    join(packageRoot, "prebuilds", `darwin-${arch}`, "spawn-helper"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      ensureExecutableBit(candidate);
+    } catch {
+      // best-effort hardening only
+    }
+  }
+
+  if (!options.force) {
+    nodePtySpawnHelperChecked = true;
+  }
 }
 
 function extractCell(terminal: TerminalType, row: number, col: number): Cell {
@@ -211,6 +283,8 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     scrollback: 1000,
     allowProposedApi: true,
   });
+
+  ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
   // Create PTY
   const ptyProcess = pty.spawn(shell, [], {

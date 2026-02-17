@@ -1,5 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createTerminal, type TerminalSession } from "./terminal.js";
+import {
+  createTerminal,
+  ensureNodePtySpawnHelperExecutableForCurrentPlatform,
+  type TerminalSession,
+} from "./terminal.js";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // Extract text from a single row
 function getRowText(state: ReturnType<TerminalSession["getState"]>, rowIndex: number): string {
@@ -40,12 +47,19 @@ async function waitForLines(
 
 describe("Terminal", () => {
   const sessions: TerminalSession[] = [];
+  const temporaryDirs: string[] = [];
 
   afterEach(async () => {
     for (const session of sessions) {
       session.kill();
     }
     sessions.length = 0;
+    while (temporaryDirs.length > 0) {
+      const dir = temporaryDirs.pop();
+      if (dir) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
   });
 
   function trackSession(session: TerminalSession): TerminalSession {
@@ -54,6 +68,24 @@ describe("Terminal", () => {
   }
 
   describe("createTerminal", () => {
+    it("ensures darwin prebuild spawn-helper is executable", () => {
+      const packageRoot = mkdtempSync(join(tmpdir(), "terminal-node-pty-helper-"));
+      temporaryDirs.push(packageRoot);
+      const prebuildDir = join(packageRoot, "prebuilds", `darwin-${process.arch}`);
+      mkdirSync(prebuildDir, { recursive: true });
+      const helperPath = join(prebuildDir, "spawn-helper");
+      writeFileSync(helperPath, "#!/bin/sh\necho helper\n");
+      chmodSync(helperPath, 0o644);
+
+      ensureNodePtySpawnHelperExecutableForCurrentPlatform({
+        packageRoot,
+        platform: "darwin",
+        force: true,
+      });
+
+      expect(statSync(helperPath).mode & 0o111).toBe(0o111);
+    });
+
     it("creates a terminal session with an id, name, and cwd", async () => {
       const session = trackSession(
         await createTerminal({
