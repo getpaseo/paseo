@@ -48,7 +48,7 @@ async function main(): Promise<void> {
 
   try {
     await client.connect();
-    client.subscribeAgentUpdates({ subscriptionId: "voice-debug" });
+    await client.fetchAgents({ subscribe: { subscriptionId: "voice-debug" } });
 
     const voiceCwd = mkdtempSync(path.join(tmpdir(), "voice-roundtrip-debug-"));
     const voiceAgent = await client.createAgent({

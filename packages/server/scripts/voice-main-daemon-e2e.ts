@@ -49,7 +49,9 @@ async function runVoiceRoundTrip(params: {
 }): Promise<RoundTripResult> {
   const client = new DaemonClient({ url: `${params.daemonUrl}/ws` });
   await client.connect();
-  client.subscribeAgentUpdates({ subscriptionId: `voice-e2e-${randomUUID()}` });
+  await client.fetchAgents({
+    subscribe: { subscriptionId: `voice-e2e-${randomUUID()}` },
+  });
 
   const mode = await client.setVoiceMode(true, params.voiceAgentId);
   if (!mode.accepted) {

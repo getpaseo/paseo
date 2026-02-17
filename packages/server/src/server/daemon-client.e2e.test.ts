@@ -291,7 +291,9 @@ describe("daemon client E2E", () => {
     async () => {
       const cwd = tmpCwd();
 
-      ctx.client.subscribeAgentUpdates();
+      await ctx.client.fetchAgents({
+        subscribe: { subscriptionId: "daemon-client-lifecycle" },
+      });
 
       const agentUpdatePromise = waitForSignal(15000, (resolve) => {
         const unsubscribe = ctx.client.on("agent_update", (message) => {

@@ -405,26 +405,12 @@ export const AudioPlayedMessageSchema = z.object({
   id: z.string(),
 });
 
-export const RequestAgentListMessageSchema = z.object({
-  type: z.literal("request_agent_list"),
-  requestId: z.string(),
-  filter: z.object({
-    labels: z.record(z.string()).optional(),
-  }).optional(),
-});
-
-export const SubscribeAgentUpdatesMessageSchema = z.object({
-  type: z.literal("subscribe_agent_updates"),
-  subscriptionId: z.string(),
-  filter: z.object({
-    labels: z.record(z.string()).optional(),
-    agentId: z.string().optional(),
-  }).optional(),
-});
-
-export const UnsubscribeAgentUpdatesMessageSchema = z.object({
-  type: z.literal("unsubscribe_agent_updates"),
-  subscriptionId: z.string(),
+const AgentDirectoryFilterSchema = z.object({
+  labels: z.record(z.string()).optional(),
+  projectKeys: z.array(z.string()).optional(),
+  statuses: z.array(AgentStatusSchema).optional(),
+  includeArchived: z.boolean().optional(),
+  requiresAttention: z.boolean().optional(),
 });
 
 export const DeleteAgentRequestMessageSchema = z.object({
@@ -472,15 +458,7 @@ export const SendAgentMessageSchema = z.object({
 export const FetchAgentsRequestMessageSchema = z.object({
   type: z.literal("fetch_agents_request"),
   requestId: z.string(),
-  filter: z
-    .object({
-      labels: z.record(z.string()).optional(),
-      projectKeys: z.array(z.string()).optional(),
-      statuses: z.array(AgentStatusSchema).optional(),
-      includeArchived: z.boolean().optional(),
-      requiresAttention: z.boolean().optional(),
-    })
-    .optional(),
+  filter: AgentDirectoryFilterSchema.optional(),
   sort: z
     .array(
       z.object({
@@ -493,6 +471,11 @@ export const FetchAgentsRequestMessageSchema = z.object({
     .object({
       limit: z.number().int().positive().max(1000),
       cursor: z.string().min(1).optional(),
+    })
+    .optional(),
+  subscribe: z
+    .object({
+      subscriptionId: z.string().optional(),
     })
     .optional(),
 });
@@ -1045,8 +1028,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
   FetchAgentRequestMessageSchema,
-  SubscribeAgentUpdatesMessageSchema,
-  UnsubscribeAgentUpdatesMessageSchema,
   DeleteAgentRequestMessageSchema,
   ArchiveAgentRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
@@ -1443,6 +1424,7 @@ export const FetchAgentsResponseMessageSchema = z.object({
   type: z.literal("fetch_agents_response"),
   payload: z.object({
     requestId: z.string(),
+    subscriptionId: z.string().nullable().optional(),
     entries: z.array(
       z.object({
         agent: AgentSnapshotPayloadSchema,

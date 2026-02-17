@@ -73,7 +73,7 @@ describe("daemon E2E", () => {
     unsubscribe = ctx.client.subscribeRawMessages((message) => {
       messages.push(message);
     });
-    ctx.client.subscribeAgentUpdates();
+    await ctx.client.fetchAgents({ subscribe: { subscriptionId: "live-preferences" } });
   });
 
   afterEach(async () => {

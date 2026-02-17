@@ -27,6 +27,7 @@ import { useDaemonConnections } from "./daemon-connections-context";
 import type { ActiveConnection } from "./daemon-connections-context";
 import {
   useSessionStore,
+  type Agent,
   type SessionState,
   type DaemonConnectionSnapshot,
 } from "@/stores/session-store";
@@ -850,14 +851,7 @@ export function SessionProvider({
   useEffect(() => {
     if (!connectionSnapshot.isConnected) {
       hasBootstrappedAgentUpdatesRef.current = false;
-      const subscriptionId = agentUpdatesSubscriptionIdRef.current;
-      if (subscriptionId && client) {
-        try {
-          client.unsubscribeAgentUpdates(subscriptionId);
-        } catch {
-          // no-op
-        }
-      }
+      pendingAgentUpdatesRef.current.clear();
       agentUpdatesSubscriptionIdRef.current = null;
       return;
     }
@@ -866,26 +860,84 @@ export function SessionProvider({
     }
     hasBootstrappedAgentUpdatesRef.current = true;
 
-    try {
-      if (!agentUpdatesSubscriptionIdRef.current) {
-        agentUpdatesSubscriptionIdRef.current = client.subscribeAgentUpdates({
-          subscriptionId: `app:${serverId}`,
-          filter: { labels: { ui: "true" } },
-        });
-      }
-    } catch (err) {
-      console.error("[Session] subscribeAgentUpdates failed", { serverId, err });
-    }
+    let cancelled = false;
+    const requestedSubscriptionId = `app:${serverId}`;
 
-    // Session bootstrap is now fully event-driven for agent lists.
-    setInitializingAgents(serverId, new Map());
-    setHasHydratedAgents(serverId, true);
-    updateConnectionStatus(serverId, {
-      status: "online",
-      lastOnlineAt: new Date().toISOString(),
-      agentListReady: true,
-    });
-  }, [connectionSnapshot.isConnected, client, serverId, setHasHydratedAgents, updateConnectionStatus]);
+    const bootstrapAgentDirectory = async () => {
+      try {
+        const payload = await client.fetchAgents({
+          filter: { labels: { ui: "true" } },
+          subscribe: { subscriptionId: requestedSubscriptionId },
+        });
+        if (cancelled) {
+          return;
+        }
+
+        agentUpdatesSubscriptionIdRef.current =
+          payload.subscriptionId ?? requestedSubscriptionId;
+
+        const nextAgents = new Map<string, Agent>();
+        const nextPendingPermissions = new Map<
+          string,
+          { key: string; agentId: string; request: AgentPermissionRequest }
+        >();
+        const nextStatuses = new Map<string, AgentLifecycleStatus>();
+
+        for (const entry of payload.entries) {
+          const agent = {
+            ...normalizeAgentSnapshot(entry.agent, serverId),
+            projectPlacement: entry.project,
+          };
+          nextAgents.set(agent.id, agent);
+          nextStatuses.set(agent.id, agent.status);
+
+          for (const request of agent.pendingPermissions) {
+            const key = derivePendingPermissionKey(agent.id, request);
+            nextPendingPermissions.set(key, { key, agentId: agent.id, request });
+          }
+        }
+
+        previousAgentStatusRef.current = nextStatuses;
+        pendingAgentUpdatesRef.current.clear();
+        setAgents(serverId, nextAgents);
+        for (const agent of nextAgents.values()) {
+          setAgentLastActivity(agent.id, agent.lastActivityAt);
+        }
+        setPendingPermissions(serverId, nextPendingPermissions);
+        setInitializingAgents(serverId, new Map());
+        setHasHydratedAgents(serverId, true);
+        updateConnectionStatus(serverId, {
+          status: "online",
+          lastOnlineAt: new Date().toISOString(),
+          agentListReady: true,
+        });
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        hasBootstrappedAgentUpdatesRef.current = false;
+        pendingAgentUpdatesRef.current.clear();
+        agentUpdatesSubscriptionIdRef.current = null;
+        console.error("[Session] fetchAgents bootstrap failed", { serverId, err });
+      }
+    };
+
+    void bootstrapAgentDirectory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    connectionSnapshot.isConnected,
+    client,
+    serverId,
+    setAgentLastActivity,
+    setAgents,
+    setHasHydratedAgents,
+    setInitializingAgents,
+    setPendingPermissions,
+    updateConnectionStatus,
+  ]);
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {

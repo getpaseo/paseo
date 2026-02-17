@@ -535,6 +535,7 @@ describe("DaemonClient", () => {
         { key: "created_at", direction: "desc" },
       ],
       page: { limit: 25, cursor: "cursor-1" },
+      subscribe: { subscriptionId: "sub-1" },
     });
 
     expect(mock.sent).toHaveLength(1);
@@ -549,6 +550,7 @@ describe("DaemonClient", () => {
           direction: "asc" | "desc";
         }>;
         page?: { limit: number; cursor?: string };
+        subscribe?: { subscriptionId?: string };
       };
     };
     expect(request.message.type).toBe("fetch_agents_request");
@@ -557,6 +559,7 @@ describe("DaemonClient", () => {
       { key: "created_at", direction: "desc" },
     ]);
     expect(request.message.page).toEqual({ limit: 25, cursor: "cursor-1" });
+    expect(request.message.subscribe).toEqual({ subscriptionId: "sub-1" });
 
     mock.triggerMessage(
       JSON.stringify({
@@ -565,6 +568,7 @@ describe("DaemonClient", () => {
           type: "fetch_agents_response",
           payload: {
             requestId: request.message.requestId,
+            subscriptionId: "sub-1",
             entries: [],
             pageInfo: {
               nextCursor: null,
@@ -578,6 +582,7 @@ describe("DaemonClient", () => {
 
     await expect(promise).resolves.toEqual({
       requestId: request.message.requestId,
+      subscriptionId: "sub-1",
       entries: [],
       pageInfo: {
         nextCursor: null,

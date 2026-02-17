@@ -43,7 +43,7 @@ export async function createDaemonTestContext(
     url: `ws://127.0.0.1:${daemon.port}/ws`,
   });
   await client.connect();
-  client.subscribeAgentUpdates({ subscriptionId: "test" });
+  await client.fetchAgents({ subscribe: { subscriptionId: "test" } });
 
   return {
     daemon,

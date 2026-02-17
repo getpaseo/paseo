@@ -350,10 +350,6 @@ export class DaemonClient {
   private connectReject: ((error: Error) => void) | null = null;
   private lastErrorValue: string | null = null;
   private connectionState: ConnectionState = { status: "idle" };
-  private agentUpdateSubscriptions = new Map<
-    string,
-    { labels?: Record<string, string>; agentId?: string } | undefined
-  >();
   private checkoutDiffSubscriptions = new Map<
     string,
     { cwd: string; compare: { mode: "uncommitted" | "base"; baseRef?: string } }
@@ -475,7 +471,6 @@ export class DaemonClient {
           this.lastErrorValue = null;
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" });
-          this.resubscribeAgentUpdates();
           this.resubscribeCheckoutDiffSubscriptions();
           this.resubscribeTerminalDirectorySubscriptions();
           this.flushPendingSendQueue();
@@ -997,6 +992,7 @@ export class DaemonClient {
       ...(options?.filter ? { filter: options.filter } : {}),
       ...(options?.sort ? { sort: options.sort } : {}),
       ...(options?.page ? { page: options.page } : {}),
+      ...(options?.subscribe ? { subscribe: options.subscribe } : {}),
     });
     return this.sendRequest({
       requestId: resolvedRequestId,
@@ -1041,44 +1037,6 @@ export class DaemonClient {
       throw new Error(payload.error);
     }
     return payload.agent;
-  }
-
-  subscribeAgentUpdates(options?: {
-    subscriptionId?: string;
-    filter?: { labels?: Record<string, string>; agentId?: string };
-  }): string {
-    const subscriptionId = options?.subscriptionId ?? crypto.randomUUID();
-    this.agentUpdateSubscriptions.set(subscriptionId, options?.filter);
-    const message = SessionInboundMessageSchema.parse({
-      type: "subscribe_agent_updates",
-      subscriptionId,
-      ...(options?.filter ? { filter: options.filter } : {}),
-    });
-    this.sendSessionMessage(message);
-    return subscriptionId;
-  }
-
-  unsubscribeAgentUpdates(subscriptionId: string): void {
-    this.agentUpdateSubscriptions.delete(subscriptionId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "unsubscribe_agent_updates",
-      subscriptionId,
-    });
-    this.sendSessionMessage(message);
-  }
-
-  private resubscribeAgentUpdates(): void {
-    if (this.agentUpdateSubscriptions.size === 0) {
-      return;
-    }
-    for (const [subscriptionId, filter] of this.agentUpdateSubscriptions) {
-      const message = SessionInboundMessageSchema.parse({
-        type: "subscribe_agent_updates",
-        subscriptionId,
-        ...(filter ? { filter } : {}),
-      });
-      this.sendSessionMessage(message);
-    }
   }
 
   private resubscribeCheckoutDiffSubscriptions(): void {

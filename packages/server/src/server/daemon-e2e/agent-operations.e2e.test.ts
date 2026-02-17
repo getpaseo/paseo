@@ -143,7 +143,9 @@ describe("daemon E2E", () => {
       async () => {
         const cwd = tmpCwd();
 
-        ctx.client.subscribeAgentUpdates();
+        await ctx.client.fetchAgents({
+          subscribe: { subscriptionId: "agent-operations-cancel" },
+        });
 
         // Create Codex agent
         const agent = await ctx.client.createAgent({
@@ -217,7 +219,9 @@ describe("daemon E2E", () => {
       async () => {
         const cwd = tmpCwd();
 
-        ctx.client.subscribeAgentUpdates();
+        await ctx.client.fetchAgents({
+          subscribe: { subscriptionId: "agent-operations-mode" },
+        });
 
         // Create a Codex agent with default mode ("auto")
         const agent = await ctx.client.createAgent({

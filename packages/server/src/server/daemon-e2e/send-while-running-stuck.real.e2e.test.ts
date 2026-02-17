@@ -32,8 +32,8 @@ describe("daemon E2E (real codex) - send while running recovery", () => {
       try {
         await primary.connect();
         await secondary.connect();
-        primary.subscribeAgentUpdates({ subscriptionId: "primary" });
-        secondary.subscribeAgentUpdates({ subscriptionId: "secondary" });
+        await primary.fetchAgents({ subscribe: { subscriptionId: "primary" } });
+        await secondary.fetchAgents({ subscribe: { subscriptionId: "secondary" } });
 
         const agent = await primary.createAgent({
           cwd,
@@ -64,7 +64,9 @@ describe("daemon E2E (real codex) - send while running recovery", () => {
         const reconnected = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
         try {
           await reconnected.connect();
-          reconnected.subscribeAgentUpdates({ subscriptionId: "reconnected" });
+          await reconnected.fetchAgents({
+            subscribe: { subscriptionId: "reconnected" },
+          });
 
           reconnected.on("agent_update", (message) => {
             if (message.type !== "agent_update" || message.payload.kind !== "upsert") {

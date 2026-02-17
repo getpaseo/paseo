@@ -293,6 +293,7 @@ type FetchAgentsRequestMessage = Extract<
   SessionInboundMessage,
   { type: "fetch_agents_request" }
 >;
+type FetchAgentsRequestFilter = NonNullable<FetchAgentsRequestMessage["filter"]>;
 type FetchAgentsRequestSort = NonNullable<FetchAgentsRequestMessage["sort"]>[number];
 type FetchAgentsResponsePayload = Extract<
   SessionOutboundMessage,
@@ -300,6 +301,17 @@ type FetchAgentsResponsePayload = Extract<
 >["payload"];
 type FetchAgentsResponseEntry = FetchAgentsResponsePayload["entries"][number];
 type FetchAgentsResponsePageInfo = FetchAgentsResponsePayload["pageInfo"];
+type AgentUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent_update" }
+>["payload"];
+type AgentUpdatesFilter = FetchAgentsRequestFilter;
+type AgentUpdatesSubscriptionState = {
+  subscriptionId: string;
+  filter?: AgentUpdatesFilter;
+  isBootstrapping: boolean;
+  pendingUpdatesByAgentId: Map<string, AgentUpdatePayload>;
+};
 type FetchAgentsCursor = {
   sort: FetchAgentsRequestSort[];
   values: Record<string, string | number | null>;
@@ -551,12 +563,7 @@ export class Session {
   private readonly pushTokenStore: PushTokenStore;
   private readonly providerRegistry: ReturnType<typeof buildProviderRegistry>;
   private unsubscribeAgentEvents: (() => void) | null = null;
-  private agentUpdatesSubscription:
-    | {
-        subscriptionId: string;
-        filter?: { labels?: Record<string, string>; agentId?: string };
-      }
-    | null = null;
+  private agentUpdatesSubscription: AgentUpdatesSubscriptionState | null = null;
   private clientActivity: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
@@ -1081,19 +1088,105 @@ export class Session {
     }
   }
 
-  private matchesAgentFilter(
-    agent: AgentSnapshotPayload,
-    filter?: { labels?: Record<string, string>; agentId?: string }
-  ): boolean {
-    if (filter?.agentId && agent.id !== filter.agentId) {
+  private matchesAgentFilter(options: {
+    agent: AgentSnapshotPayload;
+    project: ProjectPlacementPayload;
+    filter?: AgentUpdatesFilter;
+  }): boolean {
+    const { agent, project, filter } = options;
+
+    if (filter?.labels) {
+      const matchesLabels = Object.entries(filter.labels).every(
+        ([key, value]) => agent.labels[key] === value
+      );
+      if (!matchesLabels) {
+        return false;
+      }
+    }
+
+    const includeArchived = filter?.includeArchived ?? false;
+    if (!includeArchived && agent.archivedAt) {
       return false;
     }
-    if (!filter?.labels) {
-      return true;
+
+    if (filter?.statuses && filter.statuses.length > 0) {
+      const statuses = new Set(filter.statuses);
+      if (!statuses.has(agent.status)) {
+        return false;
+      }
     }
-    return Object.entries(filter.labels).every(
-      ([key, value]) => agent.labels[key] === value
-    );
+
+    if (typeof filter?.requiresAttention === "boolean") {
+      const requiresAttention = agent.requiresAttention ?? false;
+      if (requiresAttention !== filter.requiresAttention) {
+        return false;
+      }
+    }
+
+    if (filter?.projectKeys && filter.projectKeys.length > 0) {
+      const projectKeys = new Set(
+        filter.projectKeys.filter((item) => item.trim().length > 0)
+      );
+      if (projectKeys.size > 0 && !projectKeys.has(project.projectKey)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private getAgentUpdateTargetId(update: AgentUpdatePayload): string {
+    return update.kind === "remove" ? update.agentId : update.agent.id;
+  }
+
+  private bufferOrEmitAgentUpdate(
+    subscription: AgentUpdatesSubscriptionState,
+    payload: AgentUpdatePayload
+  ): void {
+    if (subscription.isBootstrapping) {
+      subscription.pendingUpdatesByAgentId.set(
+        this.getAgentUpdateTargetId(payload),
+        payload
+      );
+      return;
+    }
+
+    this.emit({
+      type: "agent_update",
+      payload,
+    });
+  }
+
+  private flushBootstrappedAgentUpdates(options?: {
+    snapshotUpdatedAtByAgentId?: Map<string, number>;
+  }): void {
+    const subscription = this.agentUpdatesSubscription;
+    if (!subscription || !subscription.isBootstrapping) {
+      return;
+    }
+
+    subscription.isBootstrapping = false;
+    const pending = Array.from(subscription.pendingUpdatesByAgentId.values());
+    subscription.pendingUpdatesByAgentId.clear();
+
+    for (const payload of pending) {
+      if (payload.kind === "upsert") {
+        const snapshotUpdatedAt = options?.snapshotUpdatedAtByAgentId?.get(
+          payload.agent.id
+        );
+        if (typeof snapshotUpdatedAt === "number") {
+          const updateUpdatedAt = Date.parse(payload.agent.updatedAt);
+          if (!Number.isNaN(updateUpdatedAt) && updateUpdatedAt <= snapshotUpdatedAt) {
+            continue;
+          }
+        }
+      }
+
+      this.emit({
+        type: "agent_update",
+        payload,
+      });
+    }
   }
 
   private buildFallbackProjectCheckout(cwd: string): ProjectCheckoutLitePayload {
@@ -1159,48 +1252,28 @@ export class Session {
       }
 
       const payload = await this.buildAgentPayload(agent);
-      const matches = this.matchesAgentFilter(payload, subscription.filter);
+      const project = await this.buildProjectPlacement(payload.cwd);
+      const matches = this.matchesAgentFilter({
+        agent: payload,
+        project,
+        filter: subscription.filter,
+      });
 
       if (matches) {
-        const project = await this.buildProjectPlacement(payload.cwd);
-        this.emit({
-          type: "agent_update",
-          payload: { kind: "upsert", agent: payload, project },
+        this.bufferOrEmitAgentUpdate(subscription, {
+          kind: "upsert",
+          agent: payload,
+          project,
         });
         return;
       }
 
-      this.emit({
-        type: "agent_update",
-        payload: { kind: "remove", agentId: payload.id },
+      this.bufferOrEmitAgentUpdate(subscription, {
+        kind: "remove",
+        agentId: payload.id,
       });
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to emit agent update");
-    }
-  }
-
-  private async emitCurrentAgentUpdatesForSubscription(): Promise<void> {
-    const subscription = this.agentUpdatesSubscription;
-    if (!subscription) {
-      return;
-    }
-
-    try {
-      const agents = await this.listAgentPayloads({
-        labels: subscription.filter?.labels,
-      });
-      for (const agent of agents) {
-        const project = await this.buildProjectPlacement(agent.cwd);
-        this.emit({
-          type: "agent_update",
-          payload: { kind: "upsert", agent, project },
-        });
-      }
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error },
-        "Failed to emit current agent updates for subscription bootstrap"
-      );
     }
   }
 
@@ -1228,22 +1301,6 @@ export class Session {
 
         case "fetch_agent_request":
           await this.handleFetchAgent(msg.agentId, msg.requestId);
-          break;
-
-        case "subscribe_agent_updates":
-          this.agentUpdatesSubscription = {
-            subscriptionId: msg.subscriptionId,
-            filter: msg.filter,
-          };
-          await this.emitCurrentAgentUpdatesForSubscription();
-          break;
-
-        case "unsubscribe_agent_updates":
-          if (
-            this.agentUpdatesSubscription?.subscriptionId === msg.subscriptionId
-          ) {
-            this.agentUpdatesSubscription = null;
-          }
           break;
 
         case "delete_agent_request":
@@ -1702,9 +1759,9 @@ export class Session {
     });
 
     if (this.agentUpdatesSubscription) {
-      this.emit({
-        type: "agent_update",
-        payload: { kind: "remove", agentId },
+      this.bufferOrEmitAgentUpdate(this.agentUpdatesSubscription, {
+        kind: "remove",
+        agentId,
       });
     }
   }
@@ -5097,27 +5154,10 @@ export class Session {
   }> {
     const filter = request.filter;
     const sort = this.normalizeFetchAgentsSort(request.sort);
-    const includeArchived = filter?.includeArchived ?? false;
 
-    let agents = await this.listAgentPayloads({
+    const agents = await this.listAgentPayloads({
       labels: filter?.labels,
     });
-
-    if (!includeArchived) {
-      agents = agents.filter((agent) => !agent.archivedAt);
-    }
-
-    if (filter?.statuses && filter.statuses.length > 0) {
-      const statuses = new Set(filter.statuses);
-      agents = agents.filter((agent) => statuses.has(agent.status));
-    }
-
-    if (typeof filter?.requiresAttention === "boolean") {
-      agents = agents.filter(
-        (agent) =>
-          (agent.requiresAttention ?? false) === filter.requiresAttention
-      );
-    }
 
     const placementByCwd = new Map<string, Promise<ProjectPlacementPayload>>();
     const getPlacement = (cwd: string): Promise<ProjectPlacementPayload> => {
@@ -5136,11 +5176,13 @@ export class Session {
         project: await getPlacement(agent.cwd),
       }))
     );
-
-    if (filter?.projectKeys && filter.projectKeys.length > 0) {
-      const projectKeys = new Set(filter.projectKeys.filter((item) => item.trim().length > 0));
-      entries = entries.filter((entry) => projectKeys.has(entry.project.projectKey));
-    }
+    entries = entries.filter((entry) =>
+      this.matchesAgentFilter({
+        agent: entry.agent,
+        project: entry.project,
+        filter,
+      })
+    );
 
     entries.sort((left, right) =>
       this.compareFetchAgentsEntries(left, right, sort)
@@ -5178,16 +5220,55 @@ export class Session {
   private async handleFetchAgents(
     request: Extract<SessionInboundMessage, { type: "fetch_agents_request" }>
   ): Promise<void> {
+    const requestedSubscriptionId = request.subscribe?.subscriptionId?.trim();
+    const subscriptionId =
+      request.subscribe
+        ? requestedSubscriptionId && requestedSubscriptionId.length > 0
+          ? requestedSubscriptionId
+          : uuidv4()
+        : null;
+
     try {
+      if (subscriptionId) {
+        this.agentUpdatesSubscription = {
+          subscriptionId,
+          filter: request.filter,
+          isBootstrapping: true,
+          pendingUpdatesByAgentId: new Map(),
+        };
+      }
+
       const payload = await this.listFetchAgentsEntries(request);
+      const snapshotUpdatedAtByAgentId = new Map<string, number>();
+      for (const entry of payload.entries) {
+        const parsedUpdatedAt = Date.parse(entry.agent.updatedAt);
+        if (!Number.isNaN(parsedUpdatedAt)) {
+          snapshotUpdatedAtByAgentId.set(entry.agent.id, parsedUpdatedAt);
+        }
+      }
+
       this.emit({
         type: "fetch_agents_response",
         payload: {
           requestId: request.requestId,
+          ...(subscriptionId ? { subscriptionId } : {}),
           ...payload,
         },
       });
+
+      if (
+        subscriptionId &&
+        this.agentUpdatesSubscription?.subscriptionId === subscriptionId
+      ) {
+        this.flushBootstrappedAgentUpdates({ snapshotUpdatedAtByAgentId });
+      }
     } catch (error) {
+      if (
+        subscriptionId &&
+        this.agentUpdatesSubscription?.subscriptionId === subscriptionId
+      ) {
+        this.agentUpdatesSubscription = null;
+      }
       const code =
         error instanceof SessionRequestError ? error.code : "fetch_agents_failed";
       const message =

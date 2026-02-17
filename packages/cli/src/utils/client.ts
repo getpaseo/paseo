@@ -62,7 +62,6 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
     if (timeoutHandle) {
       clearTimeout(timeoutHandle)
     }
-    client.subscribeAgentUpdates({ subscriptionId: `cli:${process.pid}` })
     return client
   } catch (err) {
     // Clear the timeout on error too
