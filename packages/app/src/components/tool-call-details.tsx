@@ -393,6 +393,12 @@ const styles = StyleSheet.create((theme) => {
       fontSize: theme.fontSize.xs,
       color: theme.colors.foreground,
       lineHeight: 18,
+      ...(Platform.OS === "web"
+        ? {
+            whiteSpace: "pre",
+            overflowWrap: "normal",
+          }
+        : null),
     },
     shellPrompt: {
       color: theme.colors.foregroundMuted,

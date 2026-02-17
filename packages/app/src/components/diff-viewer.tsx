@@ -129,6 +129,12 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: Fonts.mono,
       fontSize: theme.fontSize.xs,
       color: theme.colors.foreground,
+      ...(Platform.OS === "web"
+        ? {
+            whiteSpace: "pre",
+            overflowWrap: "normal",
+          }
+        : null),
     },
     headerLine: {
       backgroundColor: theme.colors.surface1,
