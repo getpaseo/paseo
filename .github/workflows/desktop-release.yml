@@ -106,7 +106,7 @@ jobs:
         with:
           projectPath: packages/desktop
           tagName: ${{ env.RELEASE_TAG }}
-          releaseName: Paseo Desktop ${{ env.RELEASE_TAG }}
+          releaseName: Paseo ${{ env.RELEASE_TAG }}
           releaseBody: See the assets to download and install this version.
           releaseDraft: false
           prerelease: false
