@@ -1428,7 +1428,14 @@ class ClaudeAgentSession implements AgentSession {
     switch (message.type) {
       case "system":
         if (message.subtype === "init") {
-          this.handleSystemMessage(message);
+          const threadSessionId = this.handleSystemMessage(message);
+          if (threadSessionId) {
+            events.push({
+              type: "thread_started",
+              provider: "claude",
+              sessionId: threadSessionId,
+            });
+          }
         } else if (message.subtype === "status") {
           const status = (message as { status?: string }).status;
           if (status === "compacting") {
@@ -1513,9 +1520,9 @@ class ClaudeAgentSession implements AgentSession {
     return events;
   }
 
-  private handleSystemMessage(message: SDKSystemMessage): void {
+  private handleSystemMessage(message: SDKSystemMessage): string | null {
     if (message.subtype !== "init") {
-      return;
+      return null;
     }
 
     const msg = message as unknown as {
@@ -1533,13 +1540,15 @@ class ClaudeAgentSession implements AgentSession {
             : "";
     const newSessionId = newSessionIdRaw.trim();
     if (!newSessionId) {
-      return;
+      return null;
     }
     const existingSessionId = this.claudeSessionId;
+    let threadStartedSessionId: string | null = null;
 
     if (existingSessionId === null) {
       // First time setting session ID (empty → filled) - this is expected
       this.claudeSessionId = newSessionId;
+      threadStartedSessionId = newSessionId;
       this.logger.debug(
         { sessionId: newSessionId },
         "Claude session ID set for the first time"
@@ -1578,6 +1587,7 @@ class ClaudeAgentSession implements AgentSession {
       // Invalidate cached runtime info so it picks up the new model
       this.cachedRuntimeInfo = null;
     }
+    return threadStartedSessionId;
   }
 
   private convertUsage(message: SDKResultMessage): AgentUsage | undefined {

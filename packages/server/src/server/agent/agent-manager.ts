@@ -666,7 +666,11 @@ export class AgentManager {
     agentId: string,
     overrides?: Partial<AgentSessionConfig>
   ): Promise<ManagedAgent> {
-    const existing = this.requireAgent(agentId);
+    let existing = this.requireAgent(agentId);
+    if (existing.lifecycle === "running" || existing.pendingRun) {
+      await this.cancelAgentRun(agentId);
+      existing = this.requireAgent(agentId);
+    }
     const timelineState = this.ensureTimelineState(existing);
     const preservedTimeline = [...existing.timeline];
     const preservedTimelineRows = timelineState.rows.map((row) => ({ ...row }));
@@ -1561,9 +1565,13 @@ export class AgentManager {
         // Update persistence with the new session ID from the provider.
         // persistence.sessionId is the single source of truth for session identity.
         {
+          const previousSessionId = agent.persistence?.sessionId ?? null;
           const handle = agent.session.describePersistence();
           if (handle) {
             agent.persistence = attachPersistenceCwd(handle, agent.cwd);
+            if (agent.persistence?.sessionId !== previousSessionId) {
+              this.emitState(agent);
+            }
           }
         }
         break;

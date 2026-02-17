@@ -351,6 +351,150 @@ describe("AgentManager", () => {
     expect(afterHydrate).toEqual(beforeReload);
   });
 
+  test("reloadAgentSession cancels active run and resumes existing session once thread_started is observed", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-active-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class DelayedPersistenceSession extends TestAgentSession {
+      private persistenceReady = false;
+      private interrupted = false;
+      private releaseGate: (() => void) | null = null;
+      private readonly gate = new Promise<void>((resolve) => {
+        this.releaseGate = resolve;
+      });
+
+      constructor(
+        config: AgentSessionConfig,
+        private readonly stableSessionId: string,
+        initiallyReady = false
+      ) {
+        super(config);
+        this.persistenceReady = initiallyReady;
+      }
+
+      async *stream(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: "turn_started", provider: this.provider };
+        this.persistenceReady = true;
+        yield {
+          type: "thread_started",
+          provider: this.provider,
+          sessionId: this.stableSessionId,
+        };
+        await this.gate;
+        if (this.interrupted) {
+          yield { type: "turn_canceled", provider: this.provider, reason: "Interrupted" };
+          return;
+        }
+        yield { type: "turn_completed", provider: this.provider };
+      }
+
+      async getRuntimeInfo() {
+        return {
+          provider: this.provider,
+          sessionId: this.persistenceReady ? this.stableSessionId : null,
+          model: null,
+          modeId: null,
+        };
+      }
+
+      describePersistence() {
+        if (!this.persistenceReady) {
+          return null;
+        }
+        return {
+          provider: this.provider,
+          sessionId: this.stableSessionId,
+        };
+      }
+
+      async interrupt(): Promise<void> {
+        this.interrupted = true;
+        this.releaseGate?.();
+      }
+
+      async close(): Promise<void> {
+        this.interrupted = true;
+        this.releaseGate?.();
+      }
+    }
+
+    class DelayedPersistenceClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+      createSessionCalls = 0;
+      resumeSessionCalls = 0;
+      private nextSessionNumber = 1;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        const sessionId = `delayed-session-${this.nextSessionNumber++}`;
+        this.createSessionCalls += 1;
+        return new DelayedPersistenceSession(config, sessionId);
+      }
+
+      async resumeSession(
+        handle: AgentPersistenceHandle,
+        overrides?: Partial<AgentSessionConfig>
+      ): Promise<AgentSession> {
+        this.resumeSessionCalls += 1;
+        const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+        const merged: AgentSessionConfig = {
+          ...metadata,
+          ...overrides,
+          provider: "codex",
+          cwd: overrides?.cwd ?? metadata.cwd ?? process.cwd(),
+        };
+        return new DelayedPersistenceSession(merged, handle.sessionId, true);
+      }
+    }
+
+    const client = new DelayedPersistenceClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000114",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+    expect(snapshot.persistence).toBeNull();
+
+    const stream = manager.streamAgent(snapshot.id, "hello");
+    const first = await stream.next();
+    expect(first.done).toBe(false);
+    expect(first.value?.type).toBe("turn_started");
+    const second = await stream.next();
+    expect(second.done).toBe(false);
+    expect(second.value?.type).toBe("thread_started");
+
+    const active = manager.getAgent(snapshot.id);
+    expect(active?.lifecycle).toBe("running");
+    expect(active?.persistence?.sessionId).toBe("delayed-session-1");
+
+    const reloaded = await manager.reloadAgentSession(snapshot.id, {
+      systemPrompt: "voice mode on",
+    });
+
+    expect(client.createSessionCalls).toBe(1);
+    expect(client.resumeSessionCalls).toBe(1);
+    expect(reloaded.persistence?.sessionId).toBe("delayed-session-1");
+
+    // Drain stream after cancellation to ensure clean shutdown.
+    while (true) {
+      const next = await stream.next();
+      if (next.done) {
+        break;
+      }
+    }
+  });
+
   test("fetchTimeline returns full timeline with reset when cursor epoch is stale", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-stale-"));
     const storagePath = join(workdir, "agents");
