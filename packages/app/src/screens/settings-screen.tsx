@@ -19,6 +19,7 @@ import { useDaemonRegistry, type HostProfile, type HostConnection } from "@/cont
 import { useDaemonConnections, type ActiveConnection, type ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
 import { measureConnectionLatency } from "@/utils/test-daemon-connection";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import { theme as defaultTheme } from "@/styles/theme";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
@@ -982,29 +983,21 @@ function HostDetailModal({
       return;
     }
 
-    if (Platform.OS === "web") {
-      const hasBrowserConfirm =
-        typeof globalThis !== "undefined" &&
-        typeof (globalThis as any).confirm === "function";
-
-      const confirmed = hasBrowserConfirm
-        ? (globalThis as any).confirm(`Restart ${host.label}? ${restartConfirmationMessage}`)
-        : true;
-
-      if (confirmed) {
-        beginServerRestart();
+    void confirmDialog({
+      title: `Restart ${host.label}`,
+      message: restartConfirmationMessage,
+      confirmLabel: "Restart",
+      cancelLabel: "Cancel",
+      destructive: true,
+    }).then((confirmed) => {
+      if (!confirmed) {
+        return;
       }
-      return;
-    }
-
-    Alert.alert(`Restart ${host.label}`, restartConfirmationMessage, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Restart",
-        style: "destructive",
-        onPress: beginServerRestart,
-      },
-    ]);
+      beginServerRestart();
+    }).catch((error) => {
+      console.error(`[Settings] Failed to open restart confirmation for ${host.label}`, error);
+      Alert.alert("Error", "Unable to open the restart confirmation dialog.");
+    });
   }, [beginServerRestart, daemonClient, host, restartConfirmationMessage]);
 
   // Status display
