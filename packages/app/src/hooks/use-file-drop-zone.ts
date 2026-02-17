@@ -128,6 +128,21 @@ export function useFileDropZone({
 
     let disposed = false;
     let cleanup: (() => void) | undefined;
+    let didCleanup = false;
+
+    function runCleanup(unlisten?: () => void | Promise<void>) {
+      if (didCleanup) return;
+      const cleanupFn = unlisten ?? cleanup;
+      if (!cleanupFn) return;
+      didCleanup = true;
+      try {
+        void Promise.resolve(cleanupFn()).catch((error) => {
+          console.warn("[useFileDropZone] Failed to remove Tauri drag-drop listener:", error);
+        });
+      } catch (error) {
+        console.warn("[useFileDropZone] Failed to remove Tauri drag-drop listener:", error);
+      }
+    }
 
     async function setupTauriDragDrop(): Promise<boolean> {
       if (!isTauriEnvironment()) {
@@ -171,7 +186,7 @@ export function useFileDropZone({
         );
 
         if (disposed) {
-          unlisten();
+          runCleanup(unlisten);
           return true;
         }
 
@@ -271,7 +286,7 @@ export function useFileDropZone({
 
     return () => {
       disposed = true;
-      cleanup?.();
+      runCleanup();
     };
   }, [disabled]);
 

@@ -109,7 +109,21 @@ export function useTrafficLightPadding(): { left: number; top: number } {
   useEffect(() => {
     if (Platform.OS !== "web" || !getIsTauriMac()) return;
 
-    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    let cleanup: (() => void) | undefined;
+    let didCleanup = false;
+
+    function runCleanup() {
+      if (!cleanup || didCleanup) return;
+      didCleanup = true;
+      try {
+        void Promise.resolve(cleanup()).catch((error) => {
+          console.warn("[TauriWindow] Failed to remove resize listener", error);
+        });
+      } catch (error) {
+        console.warn("[TauriWindow] Failed to remove resize listener", error);
+      }
+    }
 
     async function setup() {
       const win = await getTauriWindow();
@@ -117,19 +131,28 @@ export function useTrafficLightPadding(): { left: number; top: number } {
 
       // Check initial fullscreen state
       const fullscreen = await win.isFullscreen();
+      if (disposed) return;
       setIsFullscreen(fullscreen);
 
       // Listen for resize events which include fullscreen changes
-      unlisten = await win.onResized(async () => {
+      const unlisten = await win.onResized(async () => {
+        if (disposed) return;
         const fs = await win.isFullscreen();
+        if (disposed) return;
         setIsFullscreen(fs);
       });
+
+      cleanup = unlisten;
+      if (disposed) {
+        runCleanup();
+      }
     }
 
-    setup();
+    void setup();
 
     return () => {
-      unlisten?.();
+      disposed = true;
+      runCleanup();
     };
   }, []);
 
