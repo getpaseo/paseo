@@ -9,6 +9,7 @@
   "types": "./dist/server/server/exports.d.ts",
   "files": [
     "dist/server",
+    "dist/src",
     "dist/scripts",
     "README.md",
     ".env.example",
