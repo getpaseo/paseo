@@ -23,6 +23,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { useQuery } from "@tanstack/react-query";
 import { useAgentFormState, type CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
+import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import {
   CHECKOUT_STATUS_STALE_TIME,
   checkoutStatusQueryKey,
@@ -788,6 +789,33 @@ export function DraftAgentScreen({
   const createAgentClient = useSessionStore((state) =>
     selectedServerId ? state.sessions[selectedServerId]?.client ?? null : null
   );
+  const draftCommandConfig = useMemo<DraftCommandConfig | undefined>(() => {
+    const cwd = (
+      isAttachWorktree && selectedWorktreePath ? selectedWorktreePath : workingDir
+    ).trim();
+    if (!cwd) {
+      return undefined;
+    }
+
+    return {
+      provider: selectedProvider,
+      cwd,
+      ...(modeOptions.length > 0 && selectedMode !== "" ? { modeId: selectedMode } : {}),
+      ...(selectedModel.trim() ? { model: selectedModel.trim() } : {}),
+      ...(selectedThinkingOptionId.trim()
+        ? { thinkingOptionId: selectedThinkingOptionId.trim() }
+        : {}),
+    };
+  }, [
+    isAttachWorktree,
+    modeOptions.length,
+    selectedMode,
+    selectedModel,
+    selectedProvider,
+    selectedThinkingOptionId,
+    selectedWorktreePath,
+    workingDir,
+  ]);
 
   const promptValue = machine.tag === "draft" ? machine.promptText : "";
   const formErrorMessage = machine.tag === "draft" ? machine.errorMessage : "";
@@ -1240,6 +1268,7 @@ export function DraftAgentScreen({
             onChangeText={(next) => dispatch({ type: "DRAFT_SET_PROMPT", text: next })}
             autoFocus={machine.tag === "draft"}
             onAddImages={handleAddImagesCallback}
+            commandDraftConfig={draftCommandConfig}
           />
         </View>
       </View>

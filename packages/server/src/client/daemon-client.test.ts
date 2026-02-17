@@ -769,6 +769,139 @@ describe("DaemonClient", () => {
     });
   });
 
+  test("lists commands with draft config via RPC", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.listCommands("__new_agent__", {
+      draftConfig: {
+        provider: "codex",
+        cwd: "/tmp/project",
+        modeId: "bypassPermissions",
+        model: "gpt-5",
+        thinkingOptionId: "off",
+      },
+    });
+    expect(mock.sent).toHaveLength(1);
+
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "list_commands_request";
+        agentId: string;
+        draftConfig?: {
+          provider: string;
+          cwd: string;
+          modeId?: string;
+          model?: string;
+          thinkingOptionId?: string;
+        };
+        requestId: string;
+      };
+    };
+    expect(request.message.type).toBe("list_commands_request");
+    expect(request.message.agentId).toBe("__new_agent__");
+    expect(request.message.draftConfig).toEqual({
+      provider: "codex",
+      cwd: "/tmp/project",
+      modeId: "bypassPermissions",
+      model: "gpt-5",
+      thinkingOptionId: "off",
+    });
+
+    mock.triggerMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "list_commands_response",
+          payload: {
+            agentId: "__new_agent__",
+            commands: [
+              { name: "help", description: "Show help", argumentHint: "" },
+            ],
+            error: null,
+            requestId: request.message.requestId,
+          },
+        },
+      })
+    );
+
+    await expect(promise).resolves.toEqual({
+      agentId: "__new_agent__",
+      commands: [{ name: "help", description: "Show help", argumentHint: "" }],
+      error: null,
+      requestId: request.message.requestId,
+    });
+  });
+
+  test("lists commands with legacy requestId signature via RPC", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.listCommands("agent-1", "req-legacy");
+    expect(mock.sent).toHaveLength(1);
+
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "list_commands_request";
+        agentId: string;
+        draftConfig?: unknown;
+        requestId: string;
+      };
+    };
+    expect(request.message.type).toBe("list_commands_request");
+    expect(request.message.agentId).toBe("agent-1");
+    expect(request.message.requestId).toBe("req-legacy");
+    expect(request.message.draftConfig).toBeUndefined();
+
+    mock.triggerMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "list_commands_response",
+          payload: {
+            agentId: "agent-1",
+            commands: [],
+            error: null,
+            requestId: "req-legacy",
+          },
+        },
+      })
+    );
+
+    await expect(promise).resolves.toEqual({
+      agentId: "agent-1",
+      commands: [],
+      error: null,
+      requestId: "req-legacy",
+    });
+  });
+
   test("auto-acks terminal stream chunks after delivery", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();
