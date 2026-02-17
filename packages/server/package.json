@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/server",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Paseo backend server",
   "type": "module",
   "publishConfig": {
@@ -54,7 +54,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.11",
-    "@getpaseo/relay": "0.1.9",
+    "@getpaseo/relay": "0.1.10",
     "@ai-sdk/openai": "2.0.52",
     "@deepgram/sdk": "^3.4.0",
     "@lezer/common": "^1.5.0",
