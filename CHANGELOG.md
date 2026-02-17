@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.8] - 2026-02-17
+### Added
+- Added a cross-platform confirm dialog flow for daemon restarts.
+
+### Improved
+- Simplified local speech bootstrap and daemon startup locking behavior.
+- Updated website hero copy to emphasize local execution.
+
+### Fixed
+- Fixed stuck "send while running" recovery across app and server session handling.
+- Fixed Claude session identity preservation when reloading existing agents.
+- Fixed combobox option behavior and related interactions.
+- Fixed Tauri file-drop listener cleanup to avoid uncaught unlisten errors.
+- Fixed web tool-detail wheel event routing at scroll edges.
+
 ## [0.1.7] - 2026-02-16
 ### Added
 - Improved agent workspace flows with better directory suggestions.
