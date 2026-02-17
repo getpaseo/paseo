@@ -157,4 +157,18 @@ describe("terminal-emulator-runtime", () => {
     expect(onCommittedA).toHaveBeenCalledTimes(1);
     expect(onCommittedB).toHaveBeenCalledTimes(1);
   });
+
+  it("forces a refit when resize is requested", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const fitAndEmitResize = vi.fn();
+
+    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
+      fitAndEmitResize;
+
+    runtime.resize();
+    runtime.resize({ force: true });
+
+    expect(fitAndEmitResize).toHaveBeenNthCalledWith(1, false);
+    expect(fitAndEmitResize).toHaveBeenNthCalledWith(2, true);
+  });
 });
