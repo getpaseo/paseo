@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Pressable,
@@ -45,6 +46,7 @@ interface TerminalPaneProps {
 
 const MAX_OUTPUT_CHARS = 200_000;
 const TERMINAL_TAB_MAX_WIDTH = 220;
+const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
 
 const MODIFIER_LABELS = {
   ctrl: "Ctrl",
@@ -159,6 +161,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   const [streamError, setStreamError] = useState<string | null>(null);
   const [modifiers, setModifiers] = useState<ModifierState>(EMPTY_MODIFIERS);
   const [focusRequestToken, setFocusRequestToken] = useState(0);
+  const [resizeRequestToken, setResizeRequestToken] = useState(0);
   const [hoveredTerminalId, setHoveredTerminalId] = useState<string | null>(null);
   const [hoveredCloseTerminalId, setHoveredCloseTerminalId] = useState<string | null>(
     null
@@ -253,6 +256,30 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   const requestTerminalFocus = useCallback(() => {
     setFocusRequestToken((current) => current + 1);
   }, []);
+  const requestTerminalReflow = useCallback(() => {
+    setResizeRequestToken((current) => current + 1);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!selectedTerminalId) {
+        return;
+      }
+      // Navigation transitions can temporarily report stale dimensions.
+      // Pulse forced refits so xterm fills the pane when returning to an agent.
+      const timeoutHandles = TERMINAL_REFIT_DELAYS_MS.map((delayMs) =>
+        setTimeout(() => {
+          requestTerminalReflow();
+        }, delayMs)
+      );
+
+      return () => {
+        for (const handle of timeoutHandles) {
+          clearTimeout(handle);
+        }
+      };
+    }, [requestTerminalReflow, selectedTerminalId])
+  );
 
   const terminalsQuery = useQuery({
     queryKey: terminalsQueryKey,
@@ -938,6 +965,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
               onOutputChunkConsumed={handleOutputChunkConsumed}
               pendingModifiers={modifiers}
               focusRequestToken={focusRequestToken}
+              resizeRequestToken={resizeRequestToken}
             />
           </View>
         ) : (

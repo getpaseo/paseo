@@ -29,6 +29,7 @@ interface TerminalEmulatorProps {
   onOutputChunkConsumed?: (sequence: number) => Promise<void> | void;
   pendingModifiers?: PendingTerminalModifiers;
   focusRequestToken?: number;
+  resizeRequestToken?: number;
 }
 
 declare global {
@@ -51,6 +52,7 @@ export default function TerminalEmulator({
   onOutputChunkConsumed,
   pendingModifiers = { ctrl: false, shift: false, alt: false },
   focusRequestToken = 0,
+  resizeRequestToken = 0,
 }: TerminalEmulatorProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -141,6 +143,13 @@ export default function TerminalEmulator({
     }
     runtimeRef.current?.focus();
   }, [focusRequestToken]);
+
+  useEffect(() => {
+    if (resizeRequestToken <= 0) {
+      return;
+    }
+    runtimeRef.current?.resize({ force: true });
+  }, [resizeRequestToken]);
 
   return (
     <div

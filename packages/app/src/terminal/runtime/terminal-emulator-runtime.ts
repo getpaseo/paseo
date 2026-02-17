@@ -76,6 +76,7 @@ export class TerminalEmulatorRuntime {
   };
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
+  private fitAndEmitResize: ((force: boolean) => void) | null = null;
   private lastSize: { rows: number; cols: number } | null = null;
   private cleanup: (() => void) | null = null;
   private outputOperations: TerminalOutputOperation[] = [];
@@ -168,6 +169,7 @@ export class TerminalEmulatorRuntime {
         cols: nextCols,
       });
     };
+    this.fitAndEmitResize = fitAndEmitResize;
 
     fitAndEmitResize(true);
 
@@ -383,6 +385,10 @@ export class TerminalEmulatorRuntime {
     this.processOutputQueue();
   }
 
+  resize(input?: { force?: boolean }): void {
+    this.fitAndEmitResize?.(input?.force ?? false);
+  }
+
   focus(): void {
     this.terminal?.focus();
   }
@@ -413,6 +419,7 @@ export class TerminalEmulatorRuntime {
     }
     this.terminal = null;
     this.fitAddon = null;
+    this.fitAndEmitResize = null;
     this.lastSize = null;
   }
 
