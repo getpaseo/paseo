@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/relay",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Paseo relay for bridging daemon and client connections",
   "type": "module",
   "publishConfig": {
