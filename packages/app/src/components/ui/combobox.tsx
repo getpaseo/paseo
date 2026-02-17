@@ -39,6 +39,7 @@ export interface ComboboxProps {
   options: ComboboxOption[];
   value: string;
   onSelect: (id: string) => void;
+  closeOnSelect?: boolean;
   onSearchQueryChange?: (query: string) => void;
   searchable?: boolean;
   placeholder?: string;
@@ -191,6 +192,7 @@ export function Combobox({
   options,
   value,
   onSelect,
+  closeOnSelect = true,
   onSearchQueryChange,
   searchable = true,
   placeholder = "Search...",
@@ -491,9 +493,11 @@ export function Combobox({
   const handleSelect = useCallback(
     (id: string) => {
       onSelect(id);
-      handleClose();
+      if (closeOnSelect) {
+        handleClose();
+      }
     },
-    [handleClose, onSelect]
+    [closeOnSelect, handleClose, onSelect]
   );
 
   const handleSubmitSearch = useCallback(() => {

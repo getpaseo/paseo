@@ -265,7 +265,13 @@ export const setWorkingDirectory = async (page: Page, directory: string) => {
     await activeInput.press('Enter');
   }
 
-  // Wait for picker to close.
+  // Wait for picker to close. Working-directory combobox selection can keep
+  // the picker open to allow continued search, so close it explicitly here.
+  if (await activeInput.isVisible().catch(() => false)) {
+    await page.keyboard.press('Escape').catch(() => undefined);
+    await closeBottomSheet();
+  }
+
   await expect(activeInput).not.toBeVisible({ timeout: 10000 });
 
   const directoryCandidates = new Set<string>([trimmedDirectory]);

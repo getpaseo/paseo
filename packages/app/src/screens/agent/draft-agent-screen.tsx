@@ -1188,6 +1188,7 @@ export function DraftAgentScreen({
             options={workingDirComboOptions}
             value={workingDir}
             onSelect={setWorkingDirFromUser}
+            closeOnSelect={false}
             onSearchQueryChange={setWorkingDirSearchQuery}
             searchPlaceholder="Search directories..."
             emptyText={workingDirEmptyText}

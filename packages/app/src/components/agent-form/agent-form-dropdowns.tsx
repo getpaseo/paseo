@@ -883,6 +883,7 @@ export function WorkingDirectoryDropdown({
         options={options}
         value={workingDir}
         onSelect={onSelectPath}
+        closeOnSelect={false}
         searchPlaceholder="Search directories..."
         emptyText={emptyText}
         allowCustomValue
