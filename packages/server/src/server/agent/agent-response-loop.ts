@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import Ajv, { type ErrorObject, type Options as AjvOptions } from "ajv";
-import type { AgentSessionConfig } from "./agent-sdk-types.js";
+import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 import type { AgentManager } from "./agent-manager.js";
 import { getAgentProviderDefinition } from "./provider-manifest.js";
 
@@ -18,6 +18,43 @@ export class StructuredAgentResponseError extends Error {
     this.name = "StructuredAgentResponseError";
     this.lastResponse = options.lastResponse;
     this.validationErrors = options.validationErrors;
+  }
+}
+
+export type StructuredGenerationProvider = {
+  provider: AgentProvider;
+  model?: string;
+  thinkingOptionId?: string;
+};
+
+export type StructuredGenerationAttempt = {
+  provider: AgentProvider;
+  model: string | null;
+  available: boolean;
+  error: string | null;
+};
+
+export class StructuredAgentFallbackError extends Error {
+  readonly attempts: StructuredGenerationAttempt[];
+
+  constructor(attempts: StructuredGenerationAttempt[]) {
+    const summary = attempts
+      .map((attempt) => {
+        const modelSuffix = attempt.model ? ` (${attempt.model})` : "";
+        if (!attempt.available) {
+          return `${attempt.provider}${modelSuffix}: unavailable${attempt.error ? ` (${attempt.error})` : ""}`;
+        }
+        return `${attempt.provider}${modelSuffix}: failed${attempt.error ? ` (${attempt.error})` : ""}`;
+      })
+      .join("; ");
+
+    super(
+      summary.length > 0
+        ? `Structured generation failed for all providers: ${summary}`
+        : "Structured generation failed for all providers"
+    );
+    this.name = "StructuredAgentFallbackError";
+    this.attempts = attempts;
   }
 }
 
@@ -38,6 +75,27 @@ export interface StructuredAgentGenerationOptions<T> {
   maxRetries?: number;
   schemaName?: string;
 }
+
+export interface StructuredAgentGenerationWithFallbackOptions<T> {
+  manager: AgentManager;
+  cwd: string;
+  prompt: string;
+  schema: z.ZodType<T> | JsonSchema;
+  providers: readonly StructuredGenerationProvider[];
+  agentConfigOverrides?: Omit<
+    AgentSessionConfig,
+    "provider" | "cwd" | "model" | "thinkingOptionId"
+  >;
+  maxRetries?: number;
+  schemaName?: string;
+  runner?: <TResult>(options: StructuredAgentGenerationOptions<TResult>) => Promise<TResult>;
+}
+
+export const DEFAULT_STRUCTURED_GENERATION_PROVIDERS: readonly StructuredGenerationProvider[] = [
+  { provider: "claude", model: "haiku" },
+  { provider: "codex", model: "gpt-5.1-codex-mini" },
+  { provider: "opencode", model: "opencode/kimi-k2.5-free" },
+] as const;
 
 interface SchemaValidator<T> {
   jsonSchema: JsonSchema;
@@ -292,4 +350,83 @@ export async function generateStructuredAgentResponse<T>(
       // ignore cleanup errors
     }
   }
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+export async function generateStructuredAgentResponseWithFallback<T>(
+  options: StructuredAgentGenerationWithFallbackOptions<T>
+): Promise<T> {
+  const {
+    manager,
+    cwd,
+    prompt,
+    schema,
+    providers,
+    agentConfigOverrides,
+    maxRetries,
+    schemaName,
+    runner,
+  } = options;
+
+  if (providers.length === 0) {
+    throw new StructuredAgentFallbackError([]);
+  }
+
+  const runStructured =
+    runner ??
+    ((input: StructuredAgentGenerationOptions<T>) =>
+      generateStructuredAgentResponse<T>(input));
+  const availability = await manager.listProviderAvailability();
+  const availabilityByProvider = new Map(
+    availability.map((entry) => [entry.provider, entry])
+  );
+  const attempts: StructuredGenerationAttempt[] = [];
+
+  for (const candidate of providers) {
+    const availabilityEntry = availabilityByProvider.get(candidate.provider);
+    if (availabilityEntry && !availabilityEntry.available) {
+      attempts.push({
+        provider: candidate.provider,
+        model: candidate.model ?? null,
+        available: false,
+        error: availabilityEntry.error ?? null,
+      });
+      continue;
+    }
+
+    try {
+      const result = await runStructured({
+        manager,
+        prompt,
+        schema,
+        maxRetries,
+        schemaName,
+        agentConfig: {
+          ...agentConfigOverrides,
+          provider: candidate.provider,
+          cwd,
+          ...(candidate.model ? { model: candidate.model } : {}),
+          ...(candidate.thinkingOptionId
+            ? { thinkingOptionId: candidate.thinkingOptionId }
+            : {}),
+        },
+      });
+      return result;
+    } catch (error) {
+      attempts.push({
+        provider: candidate.provider,
+        model: candidate.model ?? null,
+        available: true,
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  throw new StructuredAgentFallbackError(attempts);
 }

@@ -1,5 +1,9 @@
 import type { Command } from 'commander'
-import type { AgentSnapshotPayload } from '@getpaseo/server'
+import {
+  getStructuredAgentResponse,
+  StructuredAgentResponseError,
+  type AgentSnapshotPayload,
+} from '@getpaseo/server'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
 import { readFileSync } from 'node:fs'
@@ -105,96 +109,53 @@ function loadOutputSchema(value: string): Record<string, unknown> {
   return parsed as Record<string, unknown>
 }
 
-function extractFirstJsonObject(text: string): string | null {
-  const source = text.trim()
-  if (!source) {
-    return null
+class StructuredRunStatusError extends Error {
+  readonly kind: 'timeout' | 'permission' | 'error' | 'empty'
+
+  constructor(kind: 'timeout' | 'permission' | 'error' | 'empty', message: string) {
+    super(message)
+    this.name = 'StructuredRunStatusError'
+    this.kind = kind
+  }
+}
+
+type ConnectedDaemonClient = Awaited<ReturnType<typeof connectToDaemon>>
+
+export interface StructuredResponseTimelineClient {
+  fetchAgentTimeline: ConnectedDaemonClient['fetchAgentTimeline']
+}
+
+export async function resolveStructuredResponseMessage(options: {
+  client: StructuredResponseTimelineClient
+  agentId: string
+  lastMessage: string | null
+}): Promise<string | null> {
+  const direct = options.lastMessage?.trim()
+  if (direct) {
+    return direct
   }
 
-  const startIndexes: number[] = []
-  for (let i = 0; i < source.length; i += 1) {
-    if (source[i] === '{') {
-      startIndexes.push(i)
-    }
-  }
-
-  for (const start of startIndexes) {
-    let depth = 0
-    let inString = false
-    let escaped = false
-
-    for (let i = start; i < source.length; i += 1) {
-      const ch = source[i]!
-
-      if (inString) {
-        if (escaped) {
-          escaped = false
-          continue
-        }
-        if (ch === '\\') {
-          escaped = true
-          continue
-        }
-        if (ch === '"') {
-          inString = false
-        }
+  try {
+    const timeline = await options.client.fetchAgentTimeline(options.agentId, {
+      direction: 'tail',
+      projection: 'projected',
+      limit: 200,
+    })
+    for (let index = timeline.entries.length - 1; index >= 0; index -= 1) {
+      const entry = timeline.entries[index]
+      if (!entry || entry.item.type !== 'assistant_message') {
         continue
       }
-
-      if (ch === '"') {
-        inString = true
-        continue
-      }
-
-      if (ch === '{') {
-        depth += 1
-        continue
-      }
-      if (ch === '}') {
-        depth -= 1
-        if (depth === 0) {
-          const candidate = source.slice(start, i + 1).trim()
-          try {
-            JSON.parse(candidate)
-            return candidate
-          } catch {
-            // Keep scanning.
-          }
-        }
+      const text = entry.item.text.trim()
+      if (text.length > 0) {
+        return text
       }
     }
+  } catch {
+    // Leave empty; caller will surface a consistent structured-output failure message.
   }
 
   return null
-}
-
-function parseStructuredOutput(lastMessage: string): Record<string, unknown> {
-  const trimmed = lastMessage.trim()
-  const fenced = trimmed.match(/```(?:json)?\s*\n([\s\S]*?)\n```/)
-  const jsonText = fenced?.[1]?.trim() ?? extractFirstJsonObject(trimmed) ?? trimmed
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(jsonText)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    const error: CommandError = {
-      code: 'OUTPUT_SCHEMA_FAILED',
-      message: 'Agent response is not valid JSON',
-      details: message,
-    }
-    throw error
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    const error: CommandError = {
-      code: 'OUTPUT_SCHEMA_FAILED',
-      message: 'Agent response JSON must be an object',
-    }
-    throw error
-  }
-
-  return parsed as Record<string, unknown>
 }
 
 function structuredRunSchema(output: Record<string, unknown>): OutputSchema<AgentRunResult> {
@@ -318,6 +279,107 @@ export async function runRunCommand(
       labels['ui'] = 'true'
     }
 
+    if (outputSchema) {
+      let structuredAgent: AgentSnapshotPayload | null = null
+
+      const callStructuredTurn = async (structuredPrompt: string): Promise<string> => {
+        if (!structuredAgent) {
+          structuredAgent = await client.createAgent({
+            provider: (options.provider as 'claude' | 'codex' | 'opencode') ?? 'claude',
+            cwd,
+            title: options.name,
+            modeId: options.mode,
+            model: options.model,
+            initialPrompt: structuredPrompt,
+            images,
+            git,
+            worktreeName: options.worktree,
+            labels: Object.keys(labels).length > 0 ? labels : undefined,
+          })
+        } else {
+          await client.sendMessage(structuredAgent.id, structuredPrompt)
+        }
+
+        const state = await client.waitForFinish(structuredAgent.id, 10 * 60 * 1000)
+        if (state.status === 'timeout') {
+          throw new StructuredRunStatusError('timeout', 'Timed out waiting for structured output')
+        }
+        if (state.status === 'permission') {
+          throw new StructuredRunStatusError(
+            'permission',
+            'Agent is waiting for permission before producing structured output'
+          )
+        }
+        if (state.status === 'error') {
+          throw new StructuredRunStatusError(
+            'error',
+            state.error ?? 'Agent failed before producing structured output'
+          )
+        }
+
+        const lastMessage = await resolveStructuredResponseMessage({
+          client,
+          agentId: structuredAgent.id,
+          lastMessage: state.lastMessage,
+        })
+        if (!lastMessage) {
+          throw new StructuredRunStatusError(
+            'empty',
+            'Agent finished without a structured output message'
+          )
+        }
+
+        return lastMessage
+      }
+
+      let output: Record<string, unknown>
+      try {
+        output = await getStructuredAgentResponse<Record<string, unknown>>({
+          caller: callStructuredTurn,
+          prompt,
+          schema: outputSchema,
+          schemaName: 'RunOutput',
+          maxRetries: 2,
+        })
+      } catch (err) {
+        if (err instanceof StructuredRunStatusError) {
+          const error: CommandError = {
+            code: 'OUTPUT_SCHEMA_FAILED',
+            message: err.message,
+          }
+          throw error
+        }
+        if (err instanceof StructuredAgentResponseError) {
+          const error: CommandError = {
+            code: 'OUTPUT_SCHEMA_FAILED',
+            message: 'Agent response did not match the required output schema',
+            details:
+              err.validationErrors.length > 0
+                ? err.validationErrors.join('\n')
+                : err.lastResponse || 'No response',
+          }
+          throw error
+        }
+        throw err
+      }
+
+      if (!structuredAgent) {
+        const error: CommandError = {
+          code: 'OUTPUT_SCHEMA_FAILED',
+          message: 'Agent finished without a structured output message',
+        }
+        throw error
+      }
+
+      await client.close()
+
+      return {
+        type: 'single',
+        data: toRunResult(structuredAgent, 'completed'),
+        schema: structuredRunSchema(output),
+      }
+    }
+
     // Create the agent
     const agent = await client.createAgent({
       provider: (options.provider as 'claude' | 'codex' | 'opencode') ?? 'claude',
@@ -326,58 +388,11 @@ export async function runRunCommand(
       modeId: options.mode,
       model: options.model,
       initialPrompt: prompt,
-      outputSchema,
       images,
       git,
       worktreeName: options.worktree,
       labels: Object.keys(labels).length > 0 ? labels : undefined,
     })
-
-    if (outputSchema) {
-      const state = await client.waitForFinish(agent.id, 10 * 60 * 1000)
-
-      if (state.status === 'timeout') {
-        const error: CommandError = {
-          code: 'OUTPUT_SCHEMA_FAILED',
-          message: 'Timed out waiting for structured output',
-        }
-        throw error
-      }
-
-      if (state.status === 'permission') {
-        const error: CommandError = {
-          code: 'OUTPUT_SCHEMA_FAILED',
-          message: 'Agent is waiting for permission before producing structured output',
-        }
-        throw error
-      }
-
-      if (state.status === 'error') {
-        const error: CommandError = {
-          code: 'OUTPUT_SCHEMA_FAILED',
-          message: state.error ?? 'Agent failed before producing structured output',
-        }
-        throw error
-      }
-
-      const lastMessage = state.lastMessage?.trim()
-      if (!lastMessage) {
-        const error: CommandError = {
-          code: 'OUTPUT_SCHEMA_FAILED',
-          message: 'Agent finished without a structured output message',
-        }
-        throw error
-      }
-
-      const output = parseStructuredOutput(lastMessage)
-      await client.close()
-
-      return {
-        type: 'single',
-        data: toRunResult(agent, 'completed'),
-        schema: structuredRunSchema(output),
-      }
-    }
 
     // Default run behavior is foreground: wait for completion unless --detach is set.
     if (!options.detach) {

@@ -4,8 +4,10 @@ import type { Logger } from "pino";
 
 import type { AgentManager } from "./agent-manager.js";
 import {
+  DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
+  StructuredAgentFallbackError,
   StructuredAgentResponseError,
-  generateStructuredAgentResponse,
+  generateStructuredAgentResponseWithFallback,
 } from "./agent-response-loop.js";
 import { validateBranchSlug } from "../../utils/worktree.js";
 import {
@@ -14,12 +16,8 @@ import {
   type CheckoutStatusResult,
 } from "../../utils/checkout-git.js";
 
-const AUTO_GEN_PROVIDER = "codex" as const;
-const AUTO_GEN_MODEL = "gpt-5.1-codex-mini";
-const AUTO_GEN_REASONING_EFFORT = "low";
-
 export type AgentMetadataGeneratorDeps = {
-  generateStructuredAgentResponse?: typeof generateStructuredAgentResponse;
+  generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
   getCheckoutStatus?: typeof getCheckoutStatus;
   renameCurrentBranch?: typeof renameCurrentBranch;
 };
@@ -148,7 +146,9 @@ export async function generateAndApplyAgentMetadata(
     return;
   }
 
-  const generator = options.deps?.generateStructuredAgentResponse ?? generateStructuredAgentResponse;
+  const generator =
+    options.deps?.generateStructuredAgentResponseWithFallback ??
+    generateStructuredAgentResponseWithFallback;
   const getCheckoutStatusImpl = options.deps?.getCheckoutStatus ?? getCheckoutStatus;
   const renameCurrentBranchImpl = options.deps?.renameCurrentBranch ?? renameCurrentBranch;
 
@@ -157,21 +157,22 @@ export async function generateAndApplyAgentMetadata(
   try {
     result = await generator({
       manager: options.agentManager,
-      agentConfig: {
-        provider: AUTO_GEN_PROVIDER,
-        model: AUTO_GEN_MODEL,
-        thinkingOptionId: AUTO_GEN_REASONING_EFFORT,
-        cwd: options.cwd,
-        title: "Agent metadata generator",
-        internal: true,
-      },
+      cwd: options.cwd,
       prompt: buildPrompt(needs),
       schema,
       schemaName: "AgentMetadata",
       maxRetries: 2,
+      providers: DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
+      agentConfigOverrides: {
+        title: "Agent metadata generator",
+        internal: true,
+      },
     });
   } catch (error) {
-    if (error instanceof StructuredAgentResponseError) {
+    if (
+      error instanceof StructuredAgentResponseError ||
+      error instanceof StructuredAgentFallbackError
+    ) {
       options.logger.warn(
         { err: error, agentId: options.agentId },
         "Structured metadata generation failed"

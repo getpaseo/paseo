@@ -2,9 +2,12 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import {
   getStructuredAgentResponse,
+  generateStructuredAgentResponseWithFallback,
+  StructuredAgentFallbackError,
   StructuredAgentResponseError,
   type AgentCaller,
 } from "./agent-response-loop.js";
+import type { AgentManager } from "./agent-manager.js";
 
 function createScriptedCaller(responses: string[]) {
   const prompts: string[] = [];
@@ -140,5 +143,136 @@ describe("getStructuredAgentResponse", () => {
     });
 
     expect(result).toEqual({ value: 42 });
+  });
+});
+
+describe("generateStructuredAgentResponseWithFallback", () => {
+  const schema = z.object({ summary: z.string() });
+
+  function createManager(availability: Array<{ provider: string; available: boolean; error: string | null }>) {
+    return {
+      listProviderAvailability: async () => availability,
+    } as unknown as AgentManager;
+  }
+
+  it("uses the first available provider in the waterfall", async () => {
+    const calls: Array<{ provider: string; model?: string }> = [];
+    const manager = createManager([
+      { provider: "claude", available: true, error: null },
+      { provider: "codex", available: true, error: null },
+      { provider: "opencode", available: true, error: null },
+    ]);
+
+    const result = await generateStructuredAgentResponseWithFallback({
+      manager,
+      cwd: "/tmp/project",
+      prompt: "Return JSON",
+      schema,
+      providers: [
+        { provider: "claude", model: "haiku" },
+        { provider: "codex", model: "gpt-5.1-codex-mini" },
+      ],
+      runner: async (options) => {
+        calls.push({
+          provider: options.agentConfig.provider,
+          model: options.agentConfig.model ?? undefined,
+        });
+        return { summary: "ok" };
+      },
+    });
+
+    expect(result).toEqual({ summary: "ok" });
+    expect(calls).toEqual([{ provider: "claude", model: "haiku" }]);
+  });
+
+  it("skips unavailable providers and uses the next available one", async () => {
+    const calls: Array<{ provider: string; model?: string }> = [];
+    const manager = createManager([
+      { provider: "claude", available: false, error: "missing auth" },
+      { provider: "codex", available: true, error: null },
+      { provider: "opencode", available: true, error: null },
+    ]);
+
+    const result = await generateStructuredAgentResponseWithFallback({
+      manager,
+      cwd: "/tmp/project",
+      prompt: "Return JSON",
+      schema,
+      providers: [
+        { provider: "claude", model: "haiku" },
+        { provider: "codex", model: "gpt-5.1-codex-mini" },
+      ],
+      runner: async (options) => {
+        calls.push({
+          provider: options.agentConfig.provider,
+          model: options.agentConfig.model ?? undefined,
+        });
+        return { summary: "ok" };
+      },
+    });
+
+    expect(result).toEqual({ summary: "ok" });
+    expect(calls).toEqual([{ provider: "codex", model: "gpt-5.1-codex-mini" }]);
+  });
+
+  it("falls back when an available provider fails", async () => {
+    const calls: Array<{ provider: string; model?: string }> = [];
+    const manager = createManager([
+      { provider: "claude", available: true, error: null },
+      { provider: "codex", available: true, error: null },
+      { provider: "opencode", available: true, error: null },
+    ]);
+
+    const result = await generateStructuredAgentResponseWithFallback({
+      manager,
+      cwd: "/tmp/project",
+      prompt: "Return JSON",
+      schema,
+      providers: [
+        { provider: "claude", model: "haiku" },
+        { provider: "codex", model: "gpt-5.1-codex-mini" },
+      ],
+      runner: async (options) => {
+        calls.push({
+          provider: options.agentConfig.provider,
+          model: options.agentConfig.model ?? undefined,
+        });
+        if (options.agentConfig.provider === "claude") {
+          throw new Error("claude failed");
+        }
+        return { summary: "ok" };
+      },
+    });
+
+    expect(result).toEqual({ summary: "ok" });
+    expect(calls).toEqual([
+      { provider: "claude", model: "haiku" },
+      { provider: "codex", model: "gpt-5.1-codex-mini" },
+    ]);
+  });
+
+  it("throws a fallback error when all providers are unavailable or fail", async () => {
+    const manager = createManager([
+      { provider: "claude", available: false, error: "missing auth" },
+      { provider: "codex", available: true, error: null },
+      { provider: "opencode", available: false, error: "not installed" },
+    ]);
+
+    await expect(
+      generateStructuredAgentResponseWithFallback({
+        manager,
+        cwd: "/tmp/project",
+        prompt: "Return JSON",
+        schema,
+        providers: [
+          { provider: "claude", model: "haiku" },
+          { provider: "codex", model: "gpt-5.1-codex-mini" },
+          { provider: "opencode", model: "opencode/kimi-k2.5-free" },
+        ],
+        runner: async () => {
+          throw new Error("failed");
+        },
+      })
+    ).rejects.toBeInstanceOf(StructuredAgentFallbackError);
   });
 });

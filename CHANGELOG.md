@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.9] - 2026-02-17
+### Improved
+- Unified structured-output generation through a single shared schema-validation and retry pipeline.
+- Reused provider availability checks for structured generation fallback selection.
+- Added structured generation waterfall ordering for internal metadata and git text generation: Claude Haiku, then Codex, then OpenCode.
+
+### Fixed
+- Fixed CLI `run --output-schema` to use the shared structured-output path instead of ad-hoc JSON parsing.
+- Fixed `run --output-schema` failures where providers returned empty `lastMessage` by recovering from timeline assistant output.
+- Fixed internal commit message, pull request text, and agent metadata generation to follow one consistent structured pipeline.
+
 ## [0.1.8] - 2026-02-17
 ### Added
 - Added a cross-platform confirm dialog flow for daemon restarts.
