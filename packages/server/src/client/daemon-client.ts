@@ -209,6 +209,14 @@ type SpeechModelsListPayload = SpeechModelsListResponse["payload"];
 type SpeechModelsDownloadPayload = SpeechModelsDownloadResponse["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ExecuteCommandPayload = ExecuteCommandResponse["payload"];
+type ListCommandsDraftConfig = Pick<
+  AgentSessionConfig,
+  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId"
+>;
+type ListCommandsOptions = {
+  requestId?: string;
+  draftConfig?: ListCommandsDraftConfig;
+};
 type SetVoiceModePayload = Extract<
   SessionOutboundMessage,
   { type: "set_voice_mode_response" }
@@ -2171,15 +2179,30 @@ export class DaemonClient {
     });
   }
 
+  async listCommands(agentId: string, requestId?: string): Promise<ListCommandsPayload>;
   async listCommands(
     agentId: string,
-    requestId?: string
+    options?: ListCommandsOptions
+  ): Promise<ListCommandsPayload>;
+  async listCommands(
+    agentId: string,
+    requestIdOrOptions?: string | ListCommandsOptions
   ): Promise<ListCommandsPayload> {
+    const requestId =
+      typeof requestIdOrOptions === "string"
+        ? requestIdOrOptions
+        : requestIdOrOptions?.requestId;
+    const draftConfig =
+      typeof requestIdOrOptions === "string"
+        ? undefined
+        : requestIdOrOptions?.draftConfig;
+
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "list_commands_request",
         agentId,
+        ...(draftConfig ? { draftConfig } : {}),
       },
       responseType: "list_commands_response",
       timeout: 30000,
