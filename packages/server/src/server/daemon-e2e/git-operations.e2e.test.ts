@@ -7,7 +7,7 @@ import {
   type DaemonTestContext,
 } from "../test-utils/index.js";
 import { createMessageCollector, type MessageCollector } from "../test-utils/message-collector.js";
-import { slugify } from "../../utils/worktree.js";
+import { deriveWorktreeProjectHash } from "../../utils/worktree.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "../messages.js";
 
@@ -685,9 +685,10 @@ describe("daemon E2E", () => {
 
   describe("createAgent with worktree", () => {
     test(
-      "creates agent in ~/.paseo/worktrees/{project} when worktree is requested",
+      "creates agent in ~/.paseo/worktrees/{hash} when worktree is requested",
       async () => {
         const cwd = tmpCwd();
+        const projectHash = await deriveWorktreeProjectHash(cwd);
 
         const { execSync } = await import("child_process");
         execSync("git init -b main", { cwd, stdio: "pipe" });
@@ -724,7 +725,7 @@ describe("daemon E2E", () => {
             path.join(
               ctx.daemon.paseoHome,
               "worktrees",
-              slugify(path.basename(cwd)),
+              projectHash,
               "worktree-test"
             )
           )

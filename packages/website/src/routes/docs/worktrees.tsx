@@ -52,20 +52,20 @@ function Worktrees() {
         <h2 className="text-xl font-medium">Directory structure</h2>
         <p className="text-white/60 leading-relaxed">
           Paseo creates worktrees under <code className="font-mono">$PASEO_HOME/worktrees/</code>,
-          organized by project:
+          organized by a short hash of the source checkout path:
         </p>
         <Code>
           <pre className="text-white/80">{`~/.paseo/worktrees/
-├── my-project/
+├── 1vnnm9k3/
 │   ├── tidy-fox/            # random slug
 │   └── bold-owl/            # random slug
-└── another-repo/
+└── 4k8q2d1p/
     └── swift-hare/          # random slug`}</pre>
         </Code>
         <p className="text-white/60 leading-relaxed">
-          The project name is derived from your git remote URL or repository directory name.
-          Directory names are random slugs — the branch name is separate and chosen when
-          you first launch an agent in the worktree.
+          The hash avoids collisions between repositories that share the same directory or
+          remote name. Worktree directory names are random slugs — the branch name is
+          separate and chosen when you first launch an agent in the worktree.
         </p>
       </section>
 
