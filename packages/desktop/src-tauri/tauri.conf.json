@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Paseo",
-  "version": "0.1.0",
+  "version": "0.1.13",
   "identifier": "dev.paseo.desktop",
   "build": {
     "frontendDist": "../../app/dist",
@@ -20,7 +20,10 @@
         "fullscreen": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 16, "y": 22 }
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 22
+        }
       }
     ],
     "security": {
@@ -38,6 +41,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
+      "entitlements": "Entitlements.plist",
       "infoPlist": "Info.plist"
     }
   }

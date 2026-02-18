@@ -18,6 +18,7 @@ type GlobalSnapshot = {
   dispatchEvent: unknown;
   focus: unknown;
   location: unknown;
+  __TAURI__: unknown;
 };
 
 const originalGlobals: GlobalSnapshot = {
@@ -26,6 +27,7 @@ const originalGlobals: GlobalSnapshot = {
   dispatchEvent: (globalThis as { dispatchEvent?: unknown }).dispatchEvent,
   focus: (globalThis as { focus?: unknown }).focus,
   location: (globalThis as { location?: unknown }).location,
+  __TAURI__: (globalThis as { __TAURI__?: unknown }).__TAURI__,
 };
 
 async function loadModuleForPlatform(platform: "web" | "ios" | "android") {
@@ -40,6 +42,7 @@ function restoreGlobals(): void {
   (globalThis as { dispatchEvent?: unknown }).dispatchEvent = originalGlobals.dispatchEvent;
   (globalThis as { focus?: unknown }).focus = originalGlobals.focus;
   (globalThis as { location?: unknown }).location = originalGlobals.location;
+  (globalThis as { __TAURI__?: unknown }).__TAURI__ = originalGlobals.__TAURI__;
 }
 
 describe("sendOsNotification", () => {
@@ -162,5 +165,34 @@ describe("sendOsNotification", () => {
     clicked.onclick?.({} as Event);
 
     expect(assign).toHaveBeenCalledWith("/h/srv%20with%20space/agent/agent%2F1");
+  });
+
+  it("uses Tauri notification module when available", async () => {
+    const isPermissionGranted = vi.fn(async () => false);
+    const requestPermission = vi.fn(async () => "granted");
+    const sendNotification = vi.fn(async () => undefined);
+
+    (globalThis as { __TAURI__?: unknown }).__TAURI__ = {
+      notification: {
+        isPermissionGranted,
+        requestPermission,
+        sendNotification,
+      },
+    };
+
+    const { sendOsNotification } = await loadModuleForPlatform("web");
+    const sent = await sendOsNotification({
+      title: "Agent finished",
+      body: "Done",
+      data: { serverId: "srv-1", agentId: "agent-1" },
+    });
+
+    expect(sent).toBe(true);
+    expect(isPermissionGranted).toHaveBeenCalledTimes(1);
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledWith({
+      title: "Agent finished",
+      body: "Done",
+    });
   });
 });

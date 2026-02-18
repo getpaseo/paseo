@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Platform } from "react-native";
 import type { ImageAttachment } from "@/components/message-input";
+import { getCurrentTauriWindow, getTauri } from "@/utils/tauri";
 
 interface UseFileDropZoneOptions {
   onFilesDropped: (files: ImageAttachment[]) => void;
@@ -52,10 +53,6 @@ function isImageFile(file: File): boolean {
   return file.type.startsWith("image/");
 }
 
-function isTauriEnvironment(): boolean {
-  return typeof window !== "undefined" && (window as any).__TAURI__ !== undefined;
-}
-
 function getFileExtension(path: string): string {
   const normalizedPath = path.split("#", 1)[0]?.split("?", 1)[0] ?? path;
   const extensionIndex = normalizedPath.lastIndexOf(".");
@@ -72,7 +69,7 @@ function isImagePath(path: string): boolean {
 function filePathToImageAttachment(path: string): ImageAttachment {
   const extension = getFileExtension(path);
   const mimeType = IMAGE_MIME_BY_EXTENSION[extension] ?? "image/jpeg";
-  const convertFileSrc = (window as any).__TAURI__?.core?.convertFileSrc;
+  const convertFileSrc = getTauri()?.core?.convertFileSrc;
   const uri =
     typeof convertFileSrc === "function" ? convertFileSrc(path) : path;
 
@@ -145,11 +142,11 @@ export function useFileDropZone({
     }
 
     async function setupTauriDragDrop(): Promise<boolean> {
-      if (!isTauriEnvironment()) {
+      if (getTauri() === null) {
         return false;
       }
 
-      const tauriWindow = (window as any).__TAURI__?.window?.getCurrentWindow?.();
+      const tauriWindow = getCurrentTauriWindow();
       if (!tauriWindow || typeof tauriWindow.onDragDropEvent !== "function") {
         return false;
       }

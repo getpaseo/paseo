@@ -1,14 +1,9 @@
 import { Platform } from "react-native";
 import { useState, useEffect } from "react";
 import { getIsTauriMac, TAURI_TRAFFIC_LIGHT_WIDTH, TAURI_TRAFFIC_LIGHT_HEIGHT } from "@/constants/layout";
+import { getCurrentTauriWindow, getTauri, isTauriEnvironment } from "@/utils/tauri";
 
 let tauriWindow: any = null;
-
-// Runtime check for Tauri environment
-function isTauriEnvironment(): boolean {
-  return typeof window !== "undefined" &&
-    (window as any).__TAURI__ !== undefined;
-}
 
 async function getTauriWindow() {
   if (tauriWindow) return tauriWindow;
@@ -19,15 +14,18 @@ async function getTauriWindow() {
   }
 
   try {
-    // When `app.withGlobalTauri` is enabled, Tauri exposes its JS APIs on `window.__TAURI__`.
+    // When `app.withGlobalTauri` is enabled, Tauri exposes its JS APIs via getTauri().
     // We must use that here because importing `@tauri-apps/api/*` would be bundled into
     // the native (Hermes) builds and break parsing/runtime on mobile.
-    const tauri = (window as any).__TAURI__ as any;
+    const tauri = getTauri();
+    if (!tauri) {
+      return null;
+    }
 
     // Prefer the public global window module.
-    const windowModule = tauri?.window;
-    if (windowModule && typeof windowModule.getCurrentWindow === "function") {
-      tauriWindow = windowModule.getCurrentWindow();
+    const publicWindow = getCurrentTauriWindow();
+    if (publicWindow) {
+      tauriWindow = publicWindow;
       return tauriWindow;
     }
 

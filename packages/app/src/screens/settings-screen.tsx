@@ -13,7 +13,7 @@ import Constants from "expo-constants";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { useQueries } from "@tanstack/react-query";
-import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2 } from "lucide-react-native";
+import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2, Check } from "lucide-react-native";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import { useDaemonRegistry, type HostProfile, type HostConnection } from "@/contexts/daemon-registry-context";
 import { useDaemonConnections, type ActiveConnection, type ConnectionStatus } from "@/contexts/daemon-connections-context";
@@ -35,6 +35,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
+import {
+  getDesktopPermissionSnapshot,
+  requestDesktopPermission,
+  shouldShowDesktopPermissionSection,
+  type DesktopPermissionKind,
+  type DesktopPermissionSnapshot,
+  type DesktopPermissionStatus,
+} from "@/utils/desktop-permissions";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -76,7 +84,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    letterSpacing: 0.6,
     marginBottom: theme.spacing[3],
     marginLeft: theme.spacing[1],
   },
@@ -84,7 +91,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    letterSpacing: 0.4,
     marginBottom: theme.spacing[2],
   },
   input: {
@@ -301,39 +307,58 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
-  audioRowDescription: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    marginTop: 2,
-  },
-  // Footer
-  footer: {
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    paddingTop: theme.spacing[6],
-    paddingBottom: theme.spacing[4],
+  permissionSectionHeader: {
+    flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[3],
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[3],
   },
-  footerAppInfo: {
+  permissionRefreshButton: {
+    width: 34,
+    height: 34,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
     alignItems: "center",
+    justifyContent: "center",
+  },
+  permissionRefreshButtonDisabled: {
+    opacity: theme.opacity[50],
+  },
+  permissionRowActions: {
+    alignItems: "flex-end",
     gap: theme.spacing[1],
   },
-  footerText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+  permissionStatusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface3,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 4,
+    minWidth: 88,
+    justifyContent: "center",
   },
-  footerVersion: {
+  permissionStatusText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foregroundMuted,
+  },
+  permissionDetailText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+    maxWidth: 220,
+    textAlign: "right",
   },
-  resetButton: {
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-  },
-  resetButtonText: {
-    color: theme.colors.palette.red[500],
+  aboutValue: {
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
   },
   // Empty state
   emptyCard: {
@@ -352,26 +377,27 @@ const styles = StyleSheet.create((theme) => ({
   // Theme toggle
   themeToggleContainer: {
     flexDirection: "row",
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    padding: 4,
-    gap: 4,
+    backgroundColor: theme.colors.surface3,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 2,
+    gap: 2,
   },
   themeToggleButton: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
+    gap: theme.spacing[1],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.sm,
   },
   themeToggleButtonActive: {
-    backgroundColor: theme.colors.surface3,
+    backgroundColor: theme.colors.surface2,
   },
   themeToggleText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },
@@ -417,7 +443,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ editHost?: string; serverId?: string }>();
   const routeServerId = typeof params.serverId === "string" ? params.serverId.trim() : "";
-  const { settings, isLoading: settingsLoading, updateSettings, resetSettings } = useAppSettings();
+  const { settings, isLoading: settingsLoading, updateSettings } = useAppSettings();
   const {
     daemons,
     isLoading: daemonLoading,
@@ -436,7 +462,14 @@ export default function SettingsScreen() {
   const [isRemovingHost, setIsRemovingHost] = useState(false);
   const [editingDaemon, setEditingDaemon] = useState<HostProfile | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [desktopPermissionSnapshot, setDesktopPermissionSnapshot] =
+    useState<DesktopPermissionSnapshot | null>(null);
+  const [isRefreshingDesktopPermissions, setIsRefreshingDesktopPermissions] =
+    useState(false);
+  const [requestingDesktopPermission, setRequestingDesktopPermission] =
+    useState<DesktopPermissionKind | null>(null);
   const isLoading = settingsLoading || daemonLoading;
+  const showDesktopPermissionSection = shouldShowDesktopPermissionSection();
   const isMountedRef = useRef(true);
   const lastHandledEditHostRef = useRef<string | null>(null);
   const appVersion = Constants.expoConfig?.version ?? (Constants as any).manifest?.version ?? "0.1.0";
@@ -534,6 +567,73 @@ export default function SettingsScreen() {
     pendingEditReopenServerId,
   ]);
 
+  const refreshDesktopPermissions = useCallback(async () => {
+    if (!showDesktopPermissionSection) return;
+
+    setIsRefreshingDesktopPermissions(true);
+    try {
+      const snapshot = await getDesktopPermissionSnapshot();
+      if (!isMountedRef.current) return;
+      setDesktopPermissionSnapshot(snapshot);
+    } catch (error) {
+      console.error("[Settings] Failed to load desktop permission status", error);
+    } finally {
+      if (isMountedRef.current) {
+        setIsRefreshingDesktopPermissions(false);
+      }
+    }
+  }, [showDesktopPermissionSection]);
+
+  const handleRequestDesktopPermission = useCallback(
+    async (kind: DesktopPermissionKind) => {
+      if (!showDesktopPermissionSection) return;
+
+      setRequestingDesktopPermission(kind);
+      try {
+        const status = await requestDesktopPermission({ kind });
+        if (!isMountedRef.current) return;
+        setDesktopPermissionSnapshot((previous) => {
+          const base: DesktopPermissionSnapshot = previous ?? {
+            checkedAt: Date.now(),
+            notifications: {
+              state: "unknown",
+              detail: "Notification status has not been checked yet.",
+            },
+            microphone: {
+              state: "unknown",
+              detail: "Microphone status has not been checked yet.",
+            },
+          };
+
+          return kind === "notifications"
+            ? {
+                ...base,
+                checkedAt: Date.now(),
+                notifications: status,
+              }
+            : {
+                ...base,
+                checkedAt: Date.now(),
+                microphone: status,
+              };
+        });
+      } catch (error) {
+        console.error(`[Settings] Failed to request ${kind} permission`, error);
+      } finally {
+        if (isMountedRef.current) {
+          setRequestingDesktopPermission(null);
+        }
+        await refreshDesktopPermissions();
+      }
+    },
+    [refreshDesktopPermissions, showDesktopPermissionSection]
+  );
+
+  useEffect(() => {
+    if (!showDesktopPermissionSection) return;
+    void refreshDesktopPermissions();
+  }, [refreshDesktopPermissions, showDesktopPermissionSection]);
+
   const handleSaveEditDaemon = useCallback(async (nextLabelRaw: string) => {
     if (!editingServerId) return;
     if (isSavingEdit) return;
@@ -589,34 +689,6 @@ export default function SettingsScreen() {
     },
     [updateSettings]
   );
-
-  function handleReset() {
-    Alert.alert(
-      "Reset settings",
-      "Are you sure you want to reset all settings to defaults?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Reset",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await resetSettings();
-              Alert.alert(
-                "Settings reset",
-                "All settings have been reset to defaults."
-              );
-            } catch (error) {
-              Alert.alert(
-                "Error",
-                "Failed to reset settings. Please try again."
-              );
-            }
-          },
-        },
-      ]
-    );
-  }
 
   const restartConfirmationMessage =
     "This will immediately stop the Paseo daemon process. The app will disconnect until it restarts.";
@@ -804,55 +876,113 @@ export default function SettingsScreen() {
           {/* Appearance */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Appearance</Text>
-            <View style={styles.themeToggleContainer}>
-              <Pressable
-                style={[
-                  styles.themeToggleButton,
-                  settings.theme === "light" && styles.themeToggleButtonActive,
-                ]}
-                onPress={() => handleThemeChange("light")}
-              >
-                <Sun size={16} color={settings.theme === "light" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
-                <Text style={[styles.themeToggleText, settings.theme === "light" && styles.themeToggleTextActive]}>
-                  Light
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.themeToggleButton,
-                  settings.theme === "dark" && styles.themeToggleButtonActive,
-                ]}
-                onPress={() => handleThemeChange("dark")}
-              >
-                <Moon size={16} color={settings.theme === "dark" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
-                <Text style={[styles.themeToggleText, settings.theme === "dark" && styles.themeToggleTextActive]}>
-                  Dark
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.themeToggleButton,
-                  settings.theme === "auto" && styles.themeToggleButtonActive,
-                ]}
-                onPress={() => handleThemeChange("auto")}
-              >
-                <Monitor size={16} color={settings.theme === "auto" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
-                <Text style={[styles.themeToggleText, settings.theme === "auto" && styles.themeToggleTextActive]}>
-                  System
-                </Text>
-              </Pressable>
+            <View style={styles.audioCard}>
+              <View style={styles.audioRow}>
+                <View style={styles.audioRowContent}>
+                  <Text style={styles.audioRowTitle}>Theme</Text>
+                </View>
+                <View style={styles.themeToggleContainer}>
+                  <Pressable
+                    style={[
+                      styles.themeToggleButton,
+                      settings.theme === "light" && styles.themeToggleButtonActive,
+                    ]}
+                    onPress={() => handleThemeChange("light")}
+                  >
+                    <Sun size={14} color={settings.theme === "light" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
+                    <Text style={[styles.themeToggleText, settings.theme === "light" && styles.themeToggleTextActive]}>
+                      Light
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.themeToggleButton,
+                      settings.theme === "dark" && styles.themeToggleButtonActive,
+                    ]}
+                    onPress={() => handleThemeChange("dark")}
+                  >
+                    <Moon size={14} color={settings.theme === "dark" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
+                    <Text style={[styles.themeToggleText, settings.theme === "dark" && styles.themeToggleTextActive]}>
+                      Dark
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.themeToggleButton,
+                      settings.theme === "auto" && styles.themeToggleButtonActive,
+                    ]}
+                    onPress={() => handleThemeChange("auto")}
+                  >
+                    <Monitor size={14} color={settings.theme === "auto" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
+                    <Text style={[styles.themeToggleText, settings.theme === "auto" && styles.themeToggleTextActive]}>
+                      System
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
             </View>
           </View>
 
-          {/* Footer */}
-          <View style={styles.footer}>
-            <View style={styles.footerAppInfo}>
-              <Text style={styles.footerText}>Paseo</Text>
-              <Text style={styles.footerVersion}>Version {appVersion}</Text>
+          {showDesktopPermissionSection ? (
+            <View style={styles.section}>
+              <View style={styles.permissionSectionHeader}>
+                <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>
+                  Desktop permissions
+                </Text>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.permissionRefreshButton,
+                    (isRefreshingDesktopPermissions ||
+                      requestingDesktopPermission !== null) &&
+                      styles.permissionRefreshButtonDisabled,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={() => {
+                    void refreshDesktopPermissions();
+                  }}
+                  disabled={
+                    isRefreshingDesktopPermissions ||
+                    requestingDesktopPermission !== null
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel="Refresh desktop permissions"
+                >
+                  <RotateCw size={16} color={theme.colors.foregroundMuted} />
+                </Pressable>
+              </View>
+              <View style={styles.audioCard}>
+                <DesktopPermissionRow
+                  title="Notifications"
+                  status={desktopPermissionSnapshot?.notifications ?? null}
+                  isRequesting={requestingDesktopPermission === "notifications"}
+                  onRequest={() => {
+                    void handleRequestDesktopPermission("notifications");
+                  }}
+                />
+                <DesktopPermissionRow
+                  title="Microphone"
+                  showBorder
+                  status={desktopPermissionSnapshot?.microphone ?? null}
+                  isRequesting={requestingDesktopPermission === "microphone"}
+                  onRequest={() => {
+                    void handleRequestDesktopPermission("microphone");
+                  }}
+                />
+              </View>
             </View>
-            <Pressable style={styles.resetButton} onPress={handleReset}>
-              <Text style={styles.resetButtonText}>Reset to defaults</Text>
-            </Pressable>
+          ) : null}
+
+          {/* About */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>About</Text>
+            <View style={styles.audioCard}>
+              <View style={styles.audioRow}>
+                <View style={styles.audioRowContent}>
+                  <Text style={styles.audioRowTitle}>Version</Text>
+                </View>
+                <Text style={styles.aboutValue}>{appVersion}</Text>
+              </View>
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -1225,6 +1355,60 @@ function HostDetailModal({
         </AdaptiveModalSheet>
       ) : null}
     </>
+  );
+}
+
+interface DesktopPermissionRowProps {
+  title: string;
+  status: DesktopPermissionStatus | null;
+  isRequesting: boolean;
+  showBorder?: boolean;
+  onRequest: () => void;
+}
+
+function DesktopPermissionRow({
+  title,
+  status,
+  isRequesting,
+  showBorder,
+  onRequest,
+}: DesktopPermissionRowProps) {
+  const { theme } = useUnistyles();
+  const state = status?.state ?? "unknown";
+  const isGranted = state === "granted";
+  const shouldShowDetail =
+    status !== null &&
+    status.detail.trim().length > 0 &&
+    state !== "granted" &&
+    state !== "prompt" &&
+    state !== "not-granted";
+
+  return (
+    <View style={[styles.audioRow, showBorder && styles.audioRowBorder]}>
+      <View style={styles.audioRowContent}>
+        <Text style={styles.audioRowTitle}>{title}</Text>
+      </View>
+      <View style={styles.permissionRowActions}>
+        {isGranted ? (
+          <View style={styles.permissionStatusPill}>
+            <Check size={14} color={theme.colors.foregroundMuted} />
+            <Text style={styles.permissionStatusText}>Granted</Text>
+          </View>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            onPress={onRequest}
+            disabled={isRequesting}
+          >
+            {isRequesting ? "Requesting..." : "Request"}
+          </Button>
+        )}
+        {shouldShowDetail ? (
+          <Text style={styles.permissionDetailText}>{status?.detail}</Text>
+        ) : null}
+      </View>
+    </View>
   );
 }
 

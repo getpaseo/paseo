@@ -1,4 +1,5 @@
 import type { DaemonTransport, DaemonTransportFactory } from "@server/client/daemon-client";
+import { getTauri } from "@/utils/tauri";
 
 type TauriWebSocketMessage =
   | { type: "Text"; data: string }
@@ -29,15 +30,8 @@ function toTauriOutgoingMessage(
   return Array.from(data);
 }
 
-function isTauriEnvironment(): boolean {
-  return typeof window !== "undefined" && (window as any).__TAURI__ !== undefined;
-}
-
 function getTauriWebSocketModule(): TauriWebSocketModule | null {
-  if (!isTauriEnvironment()) {
-    return null;
-  }
-  const ws = (window as any).__TAURI__?.websocket;
+  const ws = getTauri()?.websocket;
   if (ws && typeof ws.connect === "function") {
     return ws as TauriWebSocketModule;
   }
@@ -45,7 +39,7 @@ function getTauriWebSocketModule(): TauriWebSocketModule | null {
 }
 
 export function createTauriWebSocketTransportFactory(): DaemonTransportFactory | null {
-  if (!isTauriEnvironment()) {
+  if (getTauri() === null) {
     return null;
   }
 
@@ -122,7 +116,7 @@ export function createTauriWebSocketTransportFactory(): DaemonTransportFactory |
         }
         if (!module) {
           throw new Error(
-            "Tauri WebSocket plugin is not available (expected window.__TAURI__.websocket). Did you enable tauri-plugin-websocket and websocket:default capability?"
+            "Tauri WebSocket plugin is not available (expected getTauri().websocket). Did you enable tauri-plugin-websocket and websocket:default capability?"
           );
         }
 

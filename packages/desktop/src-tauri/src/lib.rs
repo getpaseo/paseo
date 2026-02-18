@@ -1,5 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu};
+#[cfg(target_os = "macos")]
+use tauri::menu::AboutMetadata;
 use tauri::Manager;
 use tauri::WebviewWindow;
 
@@ -20,6 +22,7 @@ fn set_zoom_factor(webview: &WebviewWindow, factor: f64) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_websocket::init())
         .setup(|app| {
@@ -37,6 +40,30 @@ pub fn run() {
             // On macOS in particular, a custom menu that omits Edit items can break
             // responder-chain shortcuts across the whole app.
             let menu = Menu::default(app.handle())?;
+
+            #[cfg(target_os = "macos")]
+            {
+                let app_menu = menu.items()?.into_iter().find_map(|item| match item {
+                    MenuItemKind::Submenu(submenu) => Some(submenu),
+                    _ => None,
+                });
+
+                if let Some(submenu) = app_menu {
+                    // Tauri's default about item sets only `version`, which macOS renders as
+                    // "Version <plist short> (<version>)". Set only `short_version` instead.
+                    let about_metadata = AboutMetadata {
+                        name: Some(app.package_info().name.clone()),
+                        short_version: Some(app.package_info().version.to_string()),
+                        copyright: app.config().bundle.copyright.clone(),
+                        ..Default::default()
+                    };
+                    let about = PredefinedMenuItem::about(app.handle(), None, Some(about_metadata))?;
+
+                    if submenu.remove_at(0)?.is_some() {
+                        submenu.insert(&about, 0)?;
+                    }
+                }
+            }
 
             let zoom_in = MenuItemBuilder::with_id("zoom_in", "Zoom In")
                 .accelerator("CmdOrCtrl+=")

@@ -30,7 +30,7 @@
     "ios": "npm run ios --workspace=@getpaseo/app",
     "web": "npm run web --workspace=@getpaseo/app",
     "dev:desktop": "npm run dev --workspace=@getpaseo/desktop",
-    "build:desktop": "npm run build --workspace=@getpaseo/desktop",
+    "build:desktop": "npm run version:sync-internal && npm run build:web --workspace=@getpaseo/app && npm run build --workspace=@getpaseo/desktop",
     "cli": "npx tsx packages/cli/src/index.js",
     "version": "npm run version:sync-internal && npm run release:prepare && git add -A",
     "version:sync-internal": "node scripts/sync-workspace-versions.mjs",

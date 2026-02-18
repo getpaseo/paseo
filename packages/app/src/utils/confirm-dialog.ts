@@ -1,4 +1,5 @@
 import { Alert, Platform } from "react-native";
+import { getTauri, type TauriDialogAskOptions } from "@/utils/tauri";
 
 export interface ConfirmDialogInput {
   title: string;
@@ -6,26 +7,6 @@ export interface ConfirmDialogInput {
   confirmLabel?: string;
   cancelLabel?: string;
   destructive?: boolean;
-}
-
-interface TauriDialogAskOptions {
-  title?: string;
-  okLabel?: string;
-  cancelLabel?: string;
-  kind?: "info" | "warning" | "error";
-}
-
-interface TauriDialogApi {
-  ask?: (message: string, options?: TauriDialogAskOptions) => Promise<boolean>;
-}
-
-interface TauriCoreApi {
-  invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
-}
-
-interface TauriGlobalApi {
-  dialog?: TauriDialogApi;
-  core?: TauriCoreApi;
 }
 
 interface ConfirmButtonConfig {
@@ -67,13 +48,11 @@ async function showNativeConfirmDialog(input: ConfirmDialogInput): Promise<boole
   });
 }
 
-function getTauriApi(): TauriGlobalApi | null {
+function getTauriApi() {
   if (Platform.OS !== "web") {
     return null;
   }
-
-  const tauriApi = (globalThis as { __TAURI__?: TauriGlobalApi }).__TAURI__;
-  return tauriApi ?? null;
+  return getTauri();
 }
 
 function buildTauriAskOptions(input: ConfirmDialogInput): TauriDialogAskOptions {

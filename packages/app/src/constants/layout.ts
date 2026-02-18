@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { getTauri } from "@/utils/tauri";
 
 export const FOOTER_HEIGHT = 75;
 
@@ -19,21 +20,20 @@ export const TAURI_TRAFFIC_LIGHT_HEIGHT = 56;
 // Check if running in Tauri desktop app (any OS)
 function isTauri(): boolean {
   if (Platform.OS !== "web") return false;
-  if (typeof window === "undefined") return false;
-  return "__TAURI__" in window;
+  return getTauri() !== null;
 }
 
 // Check if running in Tauri desktop app on macOS
 function isTauriMac(): boolean {
   if (Platform.OS !== "web") return false;
   if (typeof window === "undefined") return false;
-  if (!("__TAURI__" in window)) return false;
+  if (getTauri() === null) return false;
   // Check for macOS via user agent
   const ua = navigator.userAgent;
   return ua.includes("Mac OS") || ua.includes("Macintosh");
 }
 
-// Cached result - only cache true, keep checking if false (in case __TAURI__ loads later)
+// Cached result - only cache true, keep checking if false (in case Tauri globals load later)
 let _isTauriMacCached: boolean | null = null;
 let _isTauriCached: boolean | null = null;
 

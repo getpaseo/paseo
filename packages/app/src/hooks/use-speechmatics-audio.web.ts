@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SpeechSegmenter } from "@/voice/speech-segmenter";
+import { getTauri } from "@/utils/tauri";
 
 export interface SpeechmaticsAudioConfig {
   onAudioSegment?: (segment: { audioData: string; isLast: boolean }) => void;
@@ -245,13 +246,29 @@ export function useSpeechmaticsAudio(config: SpeechmaticsAudioConfig): Speechmat
         ? window.isSecureContext
         : true;
     const currentOrigin = typeof window !== "undefined" && window.location ? window.location.origin : "unknown";
+    const isTauri = getTauri() !== null;
 
     try {
       if (missingNavigator) {
         throw new Error("Microphone capture is not supported in this environment");
       }
-      if (!secureContext) {
+      console.log("[Voice][Web] Microphone preflight", {
+        secureContext,
+        currentOrigin,
+        isTauri,
+        hasMediaDevices:
+          typeof navigator !== "undefined" &&
+          !!navigator.mediaDevices &&
+          typeof navigator.mediaDevices.getUserMedia === "function",
+      });
+      if (!secureContext && !isTauri) {
         throw new Error(`Microphone access requires HTTPS or localhost. Current origin: ${currentOrigin}`);
+      }
+      if (!secureContext && isTauri) {
+        console.warn(
+          "[Voice][Web] Insecure context reported under Tauri; attempting getUserMedia anyway",
+          { currentOrigin }
+        );
       }
 
       const AudioContextCtor = getAudioContextCtor();

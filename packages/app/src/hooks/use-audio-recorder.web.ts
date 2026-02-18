@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AttemptCancelledError, AttemptGuard } from "@/utils/attempt-guard";
+import { getTauri } from "@/utils/tauri";
 
 export interface AudioCaptureConfig {
   sampleRate?: number;
@@ -156,14 +157,31 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
         : true;
     const currentOrigin =
       typeof window !== "undefined" && window.location ? window.location.origin : "unknown";
+    const isTauri = getTauri() !== null;
 
     if (missingNavigator) {
       throw new Error("Microphone capture is not supported in this environment");
     }
 
-    if (!secureContext) {
+    console.log("[AudioRecorder][Web] Microphone preflight", {
+      secureContext,
+      currentOrigin,
+      isTauri,
+      hasMediaDevices:
+        typeof navigator !== "undefined" &&
+        !!navigator.mediaDevices &&
+        typeof navigator.mediaDevices.getUserMedia === "function",
+    });
+
+    if (!secureContext && !isTauri) {
       throw new Error(
         `Microphone access requires HTTPS or localhost. Current origin: ${currentOrigin}`
+      );
+    }
+    if (!secureContext && isTauri) {
+      console.warn(
+        "[AudioRecorder][Web] Insecure context reported under Tauri; attempting getUserMedia anyway",
+        { currentOrigin }
       );
     }
 

@@ -17,6 +17,7 @@
     "core:window:allow-set-badge-count",
     "core:window:allow-toggle-maximize",
     "dialog:default",
+    "notification:default",
     "opener:default",
     "websocket:default"
   ]
