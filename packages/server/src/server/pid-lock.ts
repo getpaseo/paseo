@@ -34,6 +34,17 @@ function getPidFilePath(paseoHome: string): string {
   return join(paseoHome, "paseo.pid");
 }
 
+function resolveLockOwnerPid(): number {
+  if (typeof process.send === "function") {
+    const ppid = process.ppid;
+    if (Number.isInteger(ppid) && ppid > 1) {
+      return ppid;
+    }
+  }
+
+  return process.pid;
+}
+
 export async function acquirePidLock(
   paseoHome: string,
   sockPath: string
@@ -55,8 +66,13 @@ export async function acquirePidLock(
   }
 
   // Check if existing lock is stale
+  const lockOwnerPid = resolveLockOwnerPid();
   if (existingLock) {
     if (isPidRunning(existingLock.pid)) {
+      if (existingLock.pid === lockOwnerPid) {
+        return;
+      }
+
       throw new PidLockError(
         `Another Paseo daemon is already running (PID ${existingLock.pid}, started ${existingLock.startedAt})`,
         existingLock
@@ -68,7 +84,7 @@ export async function acquirePidLock(
 
   // Create new lock with exclusive flag
   const lockInfo: PidLockInfo = {
-    pid: process.pid,
+    pid: lockOwnerPid,
     startedAt: new Date().toISOString(),
     hostname: hostname(),
     uid: process.getuid?.() ?? 0,
@@ -103,11 +119,12 @@ export async function acquirePidLock(
 
 export async function releasePidLock(paseoHome: string): Promise<void> {
   const pidPath = getPidFilePath(paseoHome);
+  const lockOwnerPid = resolveLockOwnerPid();
   try {
     // Only remove if it's our lock
     const content = await readFile(pidPath, "utf-8");
     const lock = JSON.parse(content) as PidLockInfo;
-    if (lock.pid === process.pid) {
+    if (lock.pid === lockOwnerPid) {
       await unlink(pidPath);
     }
   } catch {
