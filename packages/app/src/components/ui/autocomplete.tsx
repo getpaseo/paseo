@@ -2,26 +2,36 @@ import { useCallback, useEffect, useRef } from "react";
 import { ScrollView, Text, View, Pressable, type LayoutChangeEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Theme } from "@/styles/theme";
-import {
-  getCommandAutocompleteScrollOffset,
-  type AgentSlashCommand,
-} from "./command-autocomplete-utils";
+import { getAutocompleteScrollOffset } from "./autocomplete-utils";
 
-interface CommandAutocompleteProps {
-  commands: AgentSlashCommand[];
-  selectedIndex: number;
-  onSelect: (command: AgentSlashCommand) => void;
-  isLoading: boolean;
-  errorMessage?: string;
+export interface AutocompleteOption {
+  id: string;
+  label: string;
+  detail?: string;
+  description?: string;
 }
 
-export function CommandAutocomplete({
-  commands,
+interface AutocompleteProps {
+  options: readonly AutocompleteOption[];
+  selectedIndex: number;
+  onSelect: (option: AutocompleteOption) => void;
+  isLoading?: boolean;
+  errorMessage?: string;
+  loadingText?: string;
+  emptyText?: string;
+  maxHeight?: number;
+}
+
+export function Autocomplete({
+  options,
   selectedIndex,
   onSelect,
-  isLoading,
+  isLoading = false,
   errorMessage,
-}: CommandAutocompleteProps) {
+  loadingText = "Loading...",
+  emptyText = "No results found",
+  maxHeight = 220,
+}: AutocompleteProps) {
   const scrollRef = useRef<ScrollView>(null);
   const rowLayoutsRef = useRef<Map<number, { top: number; height: number }>>(new Map());
   const viewportHeightRef = useRef(0);
@@ -37,7 +47,7 @@ export function CommandAutocomplete({
       return;
     }
 
-    const nextOffset = getCommandAutocompleteScrollOffset({
+    const nextOffset = getAutocompleteScrollOffset({
       currentOffset: scrollOffsetRef.current,
       viewportHeight: viewportHeightRef.current,
       itemTop: layout.top,
@@ -62,21 +72,21 @@ export function CommandAutocomplete({
   useEffect(() => {
     rowLayoutsRef.current.clear();
     scrollOffsetRef.current = 0;
-  }, [commands]);
+  }, [options]);
 
   useEffect(() => {
-    if (commands.length === 0) {
+    if (options.length === 0) {
       return;
     }
     pinToBottom();
-  }, [commands, pinToBottom]);
+  }, [options, pinToBottom]);
 
   useEffect(() => {
     const raf = requestAnimationFrame(ensureActiveItemVisible);
     return () => {
       cancelAnimationFrame(raf);
     };
-  }, [ensureActiveItemVisible, commands.length]);
+  }, [ensureActiveItemVisible, options.length]);
 
   const handleScrollViewLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -99,9 +109,9 @@ export function CommandAutocomplete({
 
   if (isLoading) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { maxHeight }]}>
         <View style={styles.emptyItem}>
-          <Text style={styles.emptyText}>Loading commands...</Text>
+          <Text style={styles.emptyText}>{loadingText}</Text>
         </View>
       </View>
     );
@@ -109,7 +119,7 @@ export function CommandAutocomplete({
 
   if (errorMessage) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { maxHeight }]}>
         <View style={styles.emptyItem}>
           <Text style={styles.emptyText}>Error: {errorMessage}</Text>
         </View>
@@ -117,18 +127,18 @@ export function CommandAutocomplete({
     );
   }
 
-  if (commands.length === 0) {
+  if (options.length === 0) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { maxHeight }]}>
         <View style={styles.emptyItem}>
-          <Text style={styles.emptyText}>No commands found</Text>
+          <Text style={styles.emptyText}>{emptyText}</Text>
         </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { maxHeight }]}>
       <ScrollView
         ref={scrollRef}
         onLayout={handleScrollViewLayout}
@@ -141,28 +151,30 @@ export function CommandAutocomplete({
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="always"
       >
-        {commands.map((cmd, index) => {
+        {options.map((option, index) => {
           const isSelected = index === selectedIndex;
           return (
             <Pressable
-              key={cmd.name}
+              key={option.id}
               onLayout={(event) => handleRowLayout(index, event)}
-              onPress={() => onSelect(cmd)}
+              onPress={() => onSelect(option)}
               style={({ hovered = false, pressed }) => [
-                styles.commandItem,
-                (hovered || pressed || isSelected) && styles.commandItemActive,
+                styles.item,
+                (hovered || pressed || isSelected) && styles.itemActive,
               ]}
             >
-              <View style={styles.commandMain}>
-                <View style={styles.commandHeader}>
-                  <Text style={styles.commandName}>/{cmd.name}</Text>
-                  {cmd.argumentHint ? (
-                    <Text style={styles.commandArgs}>{cmd.argumentHint}</Text>
+              <View style={styles.itemMain}>
+                <View style={styles.itemHeader}>
+                  <Text style={styles.itemLabel}>{option.label}</Text>
+                  {option.detail ? (
+                    <Text style={styles.itemDetail}>{option.detail}</Text>
                   ) : null}
                 </View>
-                <Text style={styles.commandDescription} numberOfLines={1}>
-                  {cmd.description}
-                </Text>
+                {option.description ? (
+                  <Text style={styles.itemDescription} numberOfLines={1}>
+                    {option.description}
+                  </Text>
+                ) : null}
               </View>
             </Pressable>
           );
@@ -178,7 +190,6 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
-    maxHeight: 220,
     overflow: "hidden",
   },
   scrollView: {
@@ -188,35 +199,35 @@ const styles = StyleSheet.create(((theme: Theme) => ({
   scrollContent: {
     paddingVertical: theme.spacing[1],
   },
-  commandItem: {
+  item: {
     flexDirection: "row",
     alignItems: "center",
     minHeight: 36,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
   },
-  commandItemActive: {
+  itemActive: {
     backgroundColor: theme.colors.surface1,
   },
-  commandMain: {
+  itemMain: {
     flex: 1,
     minWidth: 0,
   },
-  commandHeader: {
+  itemHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  commandName: {
+  itemLabel: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
-  commandArgs: {
+  itemDetail: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
-  commandDescription: {
+  itemDescription: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginTop: 2,

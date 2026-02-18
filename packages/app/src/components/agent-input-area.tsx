@@ -5,7 +5,7 @@ import {
   ActivityIndicator,
   Platform,
 } from "react-native";
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ArrowUp, Square, Pencil, AudioLines } from "lucide-react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
@@ -25,18 +25,7 @@ import {
   type MessageInputRef,
 } from "./message-input";
 import { Theme } from "@/styles/theme";
-import { CommandAutocomplete } from "./command-autocomplete";
-import {
-  useAgentCommandsQuery,
-  type DraftCommandConfig,
-} from "@/hooks/use-agent-commands-query";
-import {
-  filterCommandAutocompleteOptions,
-  getCommandAutocompleteFallbackIndex,
-  getCommandAutocompleteNextIndex,
-  orderCommandAutocompleteOptions,
-  type AgentSlashCommand,
-} from "./command-autocomplete-utils";
+import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { focusWithRetries } from "@/utils/web-focus";
@@ -44,6 +33,8 @@ import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
+import { Autocomplete } from "@/components/ui/autocomplete";
+import { useCommandAutocomplete } from "@/hooks/use-command-autocomplete";
 
 type QueuedMessage = {
   id: string;
@@ -124,87 +115,19 @@ export function AgentInputArea({
   const [selectedImages, setSelectedImages] = useState<ImageAttachment[]>([]);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [commandSelectedIndex, setCommandSelectedIndex] = useState(-1);
   const lastHandledMessageInputActionRequestIdRef = useRef<number | null>(null);
-  const previousCommandFilterRef = useRef<string>("");
+  const messageInputRef = useRef<MessageInputRef>(null);
 
-  // Command autocomplete logic
-  const showCommandAutocomplete = userInput.startsWith("/") && !userInput.includes(" ");
-  const commandFilter = showCommandAutocomplete ? userInput.slice(1) : "";
-  const normalizedCommandDraftConfig = useMemo(() => {
-    if (!commandDraftConfig) {
-      return undefined;
-    }
-
-    const cwd = commandDraftConfig.cwd.trim();
-    if (!cwd) {
-      return undefined;
-    }
-
-    const modeId = commandDraftConfig.modeId?.trim() ?? "";
-    const model = commandDraftConfig.model?.trim() ?? "";
-    const thinkingOptionId = commandDraftConfig.thinkingOptionId?.trim() ?? "";
-    return {
-      provider: commandDraftConfig.provider,
-      cwd,
-      ...(modeId ? { modeId } : {}),
-      ...(model ? { model } : {}),
-      ...(thinkingOptionId ? { thinkingOptionId } : {}),
-    };
-  }, [commandDraftConfig]);
-
-  // Prefetch commands for real agents and for draft screens when context is available.
-  const isRealAgent = agentId && !agentId.startsWith("__");
-  const commandQueryDraftConfig = isRealAgent
-    ? undefined
-    : normalizedCommandDraftConfig;
-  const canLoadCommands = Boolean(serverId) && (isRealAgent || !!commandQueryDraftConfig);
-  const {
-    commands,
-    isLoading: isCommandLoading,
-    isError: isCommandError,
-    error: commandError,
-  } = useAgentCommandsQuery({
+  const commandAutocomplete = useCommandAutocomplete({
+    userInput,
+    setUserInput,
     serverId,
     agentId,
-    enabled: canLoadCommands,
-    draftConfig: commandQueryDraftConfig,
+    draftConfig: commandDraftConfig,
+    onCommandApplied: () => {
+      messageInputRef.current?.focus();
+    },
   });
-
-  // Filter commands for keyboard navigation
-  const filteredCommands = useMemo(() => {
-    if (!showCommandAutocomplete) {
-      return [];
-    }
-    return orderCommandAutocompleteOptions(
-      filterCommandAutocompleteOptions(commands, commandFilter)
-    );
-  }, [commands, commandFilter, showCommandAutocomplete]);
-
-  // Keep selection stable as the command list and filter text change.
-  useEffect(() => {
-    if (!showCommandAutocomplete) {
-      previousCommandFilterRef.current = commandFilter;
-      setCommandSelectedIndex(-1);
-      return;
-    }
-
-    const filterChanged = previousCommandFilterRef.current !== commandFilter;
-    previousCommandFilterRef.current = commandFilter;
-
-    setCommandSelectedIndex((current) => {
-      if (filteredCommands.length === 0) {
-        return -1;
-      }
-      if (filterChanged) {
-        return getCommandAutocompleteFallbackIndex(filteredCommands.length);
-      }
-      if (current < 0 || current >= filteredCommands.length) {
-        return getCommandAutocompleteFallbackIndex(filteredCommands.length);
-      }
-      return current;
-    });
-  }, [commandFilter, filteredCommands.length, showCommandAutocomplete]);
 
   // Clear send error when user edits the input
   useEffect(() => {
@@ -219,7 +142,6 @@ export function AgentInputArea({
     ((agentId: string, text: string, images?: ImageAttachment[]) => Promise<void>) | null
   >(null);
   const onSubmitMessageRef = useRef(onSubmitMessage);
-  const messageInputRef = useRef<MessageInputRef>(null);
 
   // Expose addImages function to parent for drag-and-drop support
   const addImages = useCallback((images: ImageAttachment[]) => {
@@ -626,17 +548,9 @@ export function AgentInputArea({
     queueMessage(payload.text, payload.images);
   }, []);
 
-  // Handle command selection from autocomplete
-  const handleCommandSelect = useCallback(
-    (cmd: AgentSlashCommand) => {
-      setUserInput(`/${cmd.name} `);
-      messageInputRef.current?.focus();
-    },
-    [setUserInput]
-  );
   const hasSendableContent = userInput.trim().length > 0 || selectedImages.length > 0;
 
-  // Handle keyboard navigation for command autocomplete
+  // Handle keyboard navigation for command autocomplete and stop action.
   const handleCommandKeyPress = useCallback(
     (event: { key: string; preventDefault: () => void }) => {
       if (
@@ -651,69 +565,15 @@ export function AgentInputArea({
         return true;
       }
 
-      if (!showCommandAutocomplete || filteredCommands.length === 0) {
-        return false;
-      }
-
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setCommandSelectedIndex((prev) =>
-          getCommandAutocompleteNextIndex({
-            currentIndex: prev,
-            itemCount: filteredCommands.length,
-            key: "ArrowUp",
-          })
-        );
-        return true;
-      }
-
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setCommandSelectedIndex((prev) =>
-          getCommandAutocompleteNextIndex({
-            currentIndex: prev,
-            itemCount: filteredCommands.length,
-            key: "ArrowDown",
-          })
-        );
-        return true;
-      }
-
-      if (event.key === "Tab" || event.key === "Enter") {
-        event.preventDefault();
-        const fallbackIndex = getCommandAutocompleteFallbackIndex(
-          filteredCommands.length
-        );
-        const selectedIndex =
-          commandSelectedIndex >= 0 &&
-          commandSelectedIndex < filteredCommands.length
-            ? commandSelectedIndex
-            : fallbackIndex;
-        const selected = filteredCommands[selectedIndex];
-        if (selected) {
-          handleCommandSelect(selected);
-        }
-        return true;
-      }
-
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setUserInput("");
-        return true;
-      }
-
-      return false;
+      return commandAutocomplete.onKeyPress(event);
     },
     [
-      showCommandAutocomplete,
-      filteredCommands,
-      commandSelectedIndex,
-      handleCommandSelect,
+      commandAutocomplete,
       hasSendableContent,
       isAgentRunning,
       isCancellingAgent,
       isConnected,
-      setUserInput,
+      handleCancelAgent,
     ]
   );
 
@@ -825,13 +685,15 @@ export function AgentInputArea({
           )}
 
           {/* Command autocomplete dropdown */}
-          {showCommandAutocomplete && canLoadCommands && (
-            <CommandAutocomplete
-              commands={filteredCommands}
-              selectedIndex={commandSelectedIndex}
-              isLoading={isCommandLoading}
-              errorMessage={isCommandError ? (commandError?.message ?? "Failed to load") : undefined}
-              onSelect={handleCommandSelect}
+          {commandAutocomplete.isVisible && (
+            <Autocomplete
+              options={commandAutocomplete.options}
+              selectedIndex={commandAutocomplete.selectedIndex}
+              isLoading={commandAutocomplete.isLoading}
+              errorMessage={commandAutocomplete.errorMessage}
+              loadingText="Loading commands..."
+              emptyText="No commands found"
+              onSelect={commandAutocomplete.onSelectOption}
             />
           )}
 
