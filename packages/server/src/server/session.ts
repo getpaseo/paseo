@@ -4620,11 +4620,13 @@ export class Session {
         }
       }
 
-	      await deletePaseoWorktree({
-	        cwd: repoRoot,
-	        worktreePath: targetPath,
-	        paseoHome: this.paseoHome,
-	      });
+      await this.killTerminalsUnderPath(targetPath);
+
+      await deletePaseoWorktree({
+        cwd: repoRoot,
+        worktreePath: targetPath,
+        paseoHome: this.paseoHome,
+      });
 
       for (const agentId of removedAgents) {
         this.emit({
@@ -6588,6 +6590,56 @@ export class Session {
     session.send(msg.message);
   }
 
+  private killTrackedTerminal(terminalId: string, options?: { emitExit: boolean }): void {
+    const unsubscribe = this.terminalSubscriptions.get(terminalId);
+    if (unsubscribe) {
+      unsubscribe();
+      this.terminalSubscriptions.delete(terminalId);
+    }
+
+    const streamId = this.terminalStreamByTerminalId.get(terminalId);
+    if (typeof streamId === "number") {
+      this.detachTerminalStream(streamId, { emitExit: options?.emitExit ?? true });
+    }
+
+    this.terminalManager?.killTerminal(terminalId);
+  }
+
+  private async killTerminalsUnderPath(rootPath: string): Promise<void> {
+    if (!this.terminalManager) {
+      return;
+    }
+
+    const cleanupErrors: Array<{ cwd: string; message: string }> = [];
+    const terminalDirectories = [...this.terminalManager.listDirectories()];
+    for (const terminalCwd of terminalDirectories) {
+      if (!this.isPathWithinRoot(rootPath, terminalCwd)) {
+        continue;
+      }
+
+      try {
+        const terminals = await this.terminalManager.getTerminals(terminalCwd);
+        for (const terminal of [...terminals]) {
+          this.killTrackedTerminal(terminal.id, { emitExit: true });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        cleanupErrors.push({ cwd: terminalCwd, message });
+        this.sessionLogger.warn(
+          { err: error, cwd: terminalCwd },
+          "Failed to clean up worktree terminals during archive"
+        );
+      }
+    }
+
+    if (cleanupErrors.length > 0) {
+      const details = cleanupErrors
+        .map((entry) => `${entry.cwd}: ${entry.message}`)
+        .join("; ");
+      throw new Error(`Failed to clean up worktree terminals during archive (${details})`);
+    }
+  }
+
   private async handleKillTerminalRequest(msg: KillTerminalRequest): Promise<void> {
     if (!this.terminalManager) {
       this.emit({
@@ -6601,19 +6653,7 @@ export class Session {
       return;
     }
 
-    // Unsubscribe first
-    const unsubscribe = this.terminalSubscriptions.get(msg.terminalId);
-    if (unsubscribe) {
-      unsubscribe();
-      this.terminalSubscriptions.delete(msg.terminalId);
-    }
-
-    const streamId = this.terminalStreamByTerminalId.get(msg.terminalId);
-    if (typeof streamId === "number") {
-      this.detachTerminalStream(streamId, { emitExit: true });
-    }
-
-    this.terminalManager.killTerminal(msg.terminalId);
+    this.killTrackedTerminal(msg.terminalId, { emitExit: true });
     this.emit({
       type: "kill_terminal_response",
       payload: {

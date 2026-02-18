@@ -2,12 +2,13 @@
   "worktree": {
     "setup": [
       "npm ci",
+      "npm run build --workspace=@getpaseo/relay",
       "cp \"$PASEO_SOURCE_CHECKOUT_PATH/packages/server/.env\" \"$PASEO_WORKTREE_PATH/packages/server/.env\""
     ],
     "terminals": [
       {
-        "name": "anti-andran dev",
-        "command": "npm run dev"
+        "name": "dev",
+        "command": "SESSION_NAME=\"${PWD##*/}\"; if ! tmux has-session -t \"$SESSION_NAME\" 2>/dev/null; then tmux new-session -d -s \"$SESSION_NAME\" -c \"$PWD\"; tmux send-keys -t \"$SESSION_NAME\":0.0 \"npm run dev\" Enter; fi"
       }
     ]
   }
