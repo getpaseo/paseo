@@ -106,6 +106,59 @@ describe("codex agent commands E2E", () => {
     rmSync(promptPath, { force: true });
   }, 30_000);
 
+  test("sendMessage routes known slash commands through executeCommand", async () => {
+    const prevCodexHome = process.env.CODEX_HOME;
+    const codexHome = tmpDir("codex-home-send-command-");
+    const promptsDir = path.join(codexHome, "prompts");
+    mkdirSync(promptsDir, { recursive: true });
+    writeFileSync(
+      path.join(promptsDir, "paseo-test-sayok.md"),
+      ["---", "description: Say OK", "---", "", "Output exactly: PASEO_OK", ""].join("\n"),
+      "utf8"
+    );
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      const agent = await ctx.client.createAgent({
+        ...getFullAccessConfig("codex"),
+        cwd: "/tmp",
+        title: "Codex Command Route Test",
+      });
+
+      await ctx.client.sendMessage(agent.id, "/prompts:paseo-test-sayok NAME=world");
+      const state = await ctx.client.waitForFinish(agent.id, 30_000);
+
+      expect(state.status).toBe("idle");
+      expect(state.lastMessage).toContain("PASEO_OK paseo-test-sayok");
+    } finally {
+      if (prevCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = prevCodexHome;
+      }
+      rmSync(codexHome, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("sendMessage keeps unknown slash input as plain prompt text", async () => {
+    const agent = await ctx.client.createAgent({
+      ...getFullAccessConfig("codex"),
+      cwd: "/tmp",
+      title: "Codex Slash Fallback",
+    });
+
+    const token = `RAW_PROMPT_TOKEN_${Date.now()}`;
+    await ctx.client.sendMessage(
+      agent.id,
+      `/not-a-real-command respond with exactly: ${token}`
+    );
+    const state = await ctx.client.waitForFinish(agent.id, 30_000);
+
+    expect(state.status).toBe("idle");
+    expect(state.lastMessage).toContain(token);
+    expect(state.lastMessage).not.toContain("PASEO_SKILL_OK");
+  }, 30_000);
+
   test("returns error for non-existent agent", async () => {
     const result = await ctx.client.listCommands("non-existent-agent-id");
 

@@ -515,43 +515,61 @@ describe("Codex app-server provider (integration)", () => {
     }
   }, 120000);
 
-  test.runIf(isCodexInstalled())("listCommands includes custom prompts and executeCommand runs them", async () => {
-    const cleanup = useTempCodexSessionDir();
-    const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
-    const promptsDir = path.join(codexHome, "prompts");
-    const promptPath = path.join(promptsDir, "test.md");
-    const cwd = tmpCwd("codex-cmd-");
+  test.runIf(isCodexInstalled())(
+    "listCommands includes custom prompts and executeCommand matches run('/prompts:*') expansion",
+    async () => {
+      const cleanup = useTempCodexSessionDir();
+      const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+      const promptsDir = path.join(codexHome, "prompts");
+      const promptPath = path.join(promptsDir, "test.md");
+      const cwd = tmpCwd("codex-cmd-");
+      const token = `PASEO_PROMPT_TOKEN_${Date.now()}`;
 
-    mkdirSync(promptsDir, { recursive: true });
-    writeFileSync(
-      promptPath,
-      "---\ndescription: Test Prompt\n---\nReply with exactly: OK-$ARGUMENTS.",
-      "utf8"
-    );
+      mkdirSync(promptsDir, { recursive: true });
+      writeFileSync(
+        promptPath,
+        [
+          "---",
+          "description: Test Prompt",
+          "argument-hint: NAME=<name> <extra>",
+          "---",
+          `Reply with exactly: ${token}::name=$NAME::pos1=$1::dollar=$$`,
+        ].join("\n"),
+        "utf8"
+      );
 
-    try {
-      const client = new CodexAppServerAgentClient(logger);
-      const session = await client.createSession({
-        provider: "codex",
-        cwd,
-        modeId: "auto",
-        model: CODEX_TEST_MODEL,
-        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-      });
+      try {
+        const client = new CodexAppServerAgentClient(logger);
+        const session = await client.createSession({
+          provider: "codex",
+          cwd,
+          modeId: "auto",
+          model: CODEX_TEST_MODEL,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        });
+        try {
+          const commands = await session.listCommands?.();
+          expect(commands?.some((cmd) => cmd.name === "prompts:test")).toBe(true);
 
-      const commands = await session.listCommands?.();
-      expect(commands?.some((cmd) => cmd.name === "prompts:test")).toBe(true);
+          const executeArgs = "NAME=world extra_value";
+          const expectedExpanded = `${token}::name=world::pos1=extra_value::dollar=$`;
+          const executeResult = await session.executeCommand?.("prompts:test", executeArgs);
+          expect(executeResult?.text).toContain(expectedExpanded);
 
-      const result = await session.executeCommand?.("prompts:test", "world");
-      await session.close();
-
-      expect(result?.text.trim()).toContain("OK-world");
-    } finally {
-      cleanup();
-      rmSync(cwd, { recursive: true, force: true });
-      rmSync(promptPath, { force: true });
-    }
-  }, 60000);
+          const rawSlashInput = "/prompts:test NAME=world extra_value";
+          const runResult = await session.run(rawSlashInput);
+          expect(runResult.finalText).toContain(expectedExpanded);
+        } finally {
+          await session.close();
+        }
+      } finally {
+        cleanup();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(promptPath, { force: true });
+      }
+    },
+    120000
+  );
 
   test.runIf(isCodexInstalled())("command approval flow requests permission and runs command", async () => {
     const cleanup = useTempCodexSessionDir();

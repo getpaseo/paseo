@@ -209,7 +209,59 @@ class FakeAgentSession implements AgentSession {
     await appendFile(this.historyPath, JSON.stringify(event) + "\n", "utf8");
   }
 
+  private parseSlashCommandInput(
+    text: string
+  ): { commandName: string; args?: string } | null {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("/") || trimmed.length <= 1) {
+      return null;
+    }
+    const withoutPrefix = trimmed.slice(1);
+    const firstWhitespaceIdx = withoutPrefix.search(/\s/);
+    const commandName =
+      firstWhitespaceIdx === -1
+        ? withoutPrefix
+        : withoutPrefix.slice(0, firstWhitespaceIdx);
+    if (!commandName || commandName.includes("/")) {
+      return null;
+    }
+    const rawArgs =
+      firstWhitespaceIdx === -1
+        ? ""
+        : withoutPrefix.slice(firstWhitespaceIdx + 1).trim();
+    return rawArgs ? { commandName, args: rawArgs } : { commandName };
+  }
+
+  private async resolveSlashCommandInput(
+    prompt: AgentPromptInput
+  ): Promise<{ commandName: string; args?: string } | null> {
+    if (this.providerName !== "codex" || typeof prompt !== "string") {
+      return null;
+    }
+    const parsed = this.parseSlashCommandInput(prompt);
+    if (!parsed) {
+      return null;
+    }
+    const commands = await this.listCommands();
+    return commands.some((command) => command.name === parsed.commandName)
+      ? parsed
+      : null;
+  }
+
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
+    const slashCommand = await this.resolveSlashCommandInput(prompt);
+    if (slashCommand) {
+      const result = await this.executeCommand(
+        slashCommand.commandName,
+        slashCommand.args
+      );
+      return {
+        sessionId: this.id,
+        finalText: result.text,
+        timeline: result.timeline,
+        usage: result.usage,
+      };
+    }
     const timeline: AgentRunResult["timeline"] = [];
     const textPrompt = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
     const resultText = this.buildAssistantText(textPrompt);
@@ -221,6 +273,47 @@ class FakeAgentSession implements AgentSession {
   async *stream(prompt: AgentPromptInput): AsyncGenerator<AgentStreamEvent> {
     // New run => reset interrupt gate.
     this.interruptSignal = createDeferred<void>();
+    const slashCommand = await this.resolveSlashCommandInput(prompt);
+    if (slashCommand) {
+      const threadStarted: AgentStreamEvent = {
+        type: "thread_started",
+        provider: this.providerName,
+        sessionId: this.id,
+      };
+      await this.appendHistoryEvent(threadStarted);
+      yield threadStarted;
+
+      const turnStarted: AgentStreamEvent = {
+        type: "turn_started",
+        provider: this.providerName,
+      };
+      await this.appendHistoryEvent(turnStarted);
+      yield turnStarted;
+
+      const result = await this.executeCommand(
+        slashCommand.commandName,
+        slashCommand.args
+      );
+      for (const item of result.timeline) {
+        const timelineEvent: AgentStreamEvent = {
+          type: "timeline",
+          provider: this.providerName,
+          item,
+        };
+        await this.appendHistoryEvent(timelineEvent);
+        yield timelineEvent;
+      }
+
+      const completed: AgentStreamEvent = {
+        type: "turn_completed",
+        provider: this.providerName,
+        usage: result.usage ?? { inputTokens: 1, outputTokens: 1 },
+      };
+      await this.appendHistoryEvent(completed);
+      yield completed;
+      return;
+    }
+
     const textPrompt = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
     const markerMatch = /remember (?:this )?(?:marker|string|project name)[^"]*"([^"]+)"/i.exec(textPrompt);
     if (markerMatch) {

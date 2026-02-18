@@ -1987,8 +1987,73 @@ class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  private parseSlashCommandInput(
+    text: string
+  ): { commandName: string; args?: string } | null {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("/") || trimmed.length <= 1) {
+      return null;
+    }
+    const withoutPrefix = trimmed.slice(1);
+    const firstWhitespaceIdx = withoutPrefix.search(/\s/);
+    const commandName =
+      firstWhitespaceIdx === -1
+        ? withoutPrefix
+        : withoutPrefix.slice(0, firstWhitespaceIdx);
+    if (!commandName || commandName.includes("/")) {
+      return null;
+    }
+    const rawArgs =
+      firstWhitespaceIdx === -1
+        ? ""
+        : withoutPrefix.slice(firstWhitespaceIdx + 1).trim();
+    return rawArgs.length > 0 ? { commandName, args: rawArgs } : { commandName };
+  }
+
+  private async resolveSlashCommandInvocation(
+    prompt: AgentPromptInput
+  ): Promise<{ commandName: string; args?: string } | null> {
+    if (typeof prompt !== "string") {
+      return null;
+    }
+    const parsed = this.parseSlashCommandInput(prompt);
+    if (!parsed) {
+      return null;
+    }
+    try {
+      const commands = await this.listCommands();
+      return commands.some((command) => command.name === parsed.commandName)
+        ? parsed
+        : null;
+    } catch (error) {
+      this.logger.warn(
+        { err: error, commandName: parsed.commandName },
+        "Failed to resolve slash command; falling back to plain prompt input"
+      );
+      return null;
+    }
+  }
+
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
-    const events = this.stream(prompt, options);
+    const slashCommand = await this.resolveSlashCommandInvocation(prompt);
+    if (slashCommand) {
+      const result = await this.executeCommand(slashCommand.commandName, slashCommand.args);
+      const info = await this.getRuntimeInfo();
+      return {
+        sessionId: info.sessionId ?? "",
+        finalText: result.text,
+        usage: result.usage,
+        timeline: result.timeline,
+      };
+    }
+    return this.runInternal(prompt, options);
+  }
+
+  private async runInternal(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions
+  ): Promise<AgentRunResult> {
+    const events = this.streamInternal(prompt, options);
     const timeline: AgentTimelineItem[] = [];
     let finalText = "";
     let usage: AgentUsage | undefined;
@@ -2016,6 +2081,26 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   async *stream(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions
+  ): AsyncGenerator<AgentStreamEvent> {
+    const slashCommand = await this.resolveSlashCommandInvocation(prompt);
+    if (slashCommand) {
+      const result = await this.executeCommand(slashCommand.commandName, slashCommand.args);
+      for (const item of result.timeline) {
+        yield { type: "timeline", provider: CODEX_PROVIDER, item };
+      }
+      yield {
+        type: "turn_completed",
+        provider: CODEX_PROVIDER,
+        usage: result.usage,
+      };
+      return;
+    }
+    yield* this.streamInternal(prompt, options);
+  }
+
+  private async *streamInternal(
     prompt: AgentPromptInput,
     options?: AgentRunOptions
   ): AsyncGenerator<AgentStreamEvent> {
@@ -2327,7 +2412,7 @@ class CodexAppServerAgentSession implements AgentSession {
       const raw = await fs.readFile(promptPath, "utf8");
       const parsed = parseFrontMatter(raw);
       const expanded = expandCodexCustomPrompt(parsed.body, args);
-      const result = await this.run(expanded);
+      const result = await this.runInternal(expanded);
       return { text: result.finalText, timeline: result.timeline, usage: result.usage };
     }
 
@@ -2346,12 +2431,12 @@ class CodexAppServerAgentSession implements AgentSession {
       } else {
         input.push({ type: "text", text: `$${skill.name}` });
       }
-      const result = await this.run(input);
+      const result = await this.runInternal(input);
       return { text: result.finalText, timeline: result.timeline, usage: result.usage };
     }
 
     const skillPrompt = args ? `$${commandName} ${args}` : `$${commandName}`;
-    const result = await this.run(skillPrompt);
+    const result = await this.runInternal(skillPrompt);
     return { text: result.finalText, timeline: result.timeline, usage: result.usage };
   }
 
