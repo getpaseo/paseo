@@ -395,6 +395,86 @@ test("terminal tab is removed when shell exits", async ({ page }) => {
   }
 });
 
+test("closing terminal with running command asks for confirmation", async ({ page }) => {
+  const repo = await createTempGitRepo("paseo-e2e-terminal-close-confirm-");
+
+  try {
+    await openNewAgentDraft(page);
+    await setWorkingDirectory(page, repo.path);
+    await ensureHostSelected(page);
+    await createAgent(page, "Terminal close confirmation");
+
+    await openTerminalsPanel(page);
+
+    const tabTestId = await getFirstTerminalTabTestId(page);
+    const terminalId = tabTestId.replace("terminal-tab-", "");
+    const tab = page.getByTestId(tabTestId).first();
+    await expect(tab).toBeVisible({ timeout: 30000 });
+
+    const runningMarker = `terminal-close-running-${Date.now()}`;
+    await runTerminalCommand(
+      page,
+      `echo ${runningMarker} && sleep 30`,
+      runningMarker
+    );
+
+    await tab.hover();
+    const dialogPromise = page.waitForEvent("dialog", { timeout: 30000 }).then(
+      async (dialog) => {
+        expect(dialog.type()).toBe("confirm");
+        await dialog.dismiss();
+      }
+    );
+    await page.getByTestId(`terminal-close-${terminalId}`).first().click();
+    await dialogPromise;
+
+    await expect(tab).toBeVisible({ timeout: 30000 });
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test("confirming terminal close with running command removes the tab", async ({ page }) => {
+  const repo = await createTempGitRepo("paseo-e2e-terminal-close-confirm-accept-");
+
+  try {
+    await openNewAgentDraft(page);
+    await setWorkingDirectory(page, repo.path);
+    await ensureHostSelected(page);
+    await createAgent(page, "Terminal close confirmation accept");
+
+    await openTerminalsPanel(page);
+
+    const tabTestId = await getFirstTerminalTabTestId(page);
+    const terminalId = tabTestId.replace("terminal-tab-", "");
+    const tab = page.getByTestId(tabTestId).first();
+    await expect(tab).toBeVisible({ timeout: 30000 });
+
+    const runningMarker = `terminal-close-running-accept-${Date.now()}`;
+    await runTerminalCommand(
+      page,
+      `echo ${runningMarker} && sleep 30`,
+      runningMarker
+    );
+
+    await tab.hover();
+    const dialogPromise = page.waitForEvent("dialog", { timeout: 30000 }).then(
+      async (dialog) => {
+        expect(dialog.type()).toBe("confirm");
+        await dialog.accept();
+      }
+    );
+    await page.getByTestId(`terminal-close-${terminalId}`).first().click();
+    await dialogPromise;
+
+    await expect(page.getByTestId(tabTestId)).toHaveCount(0, {
+      timeout: 30000,
+    });
+  } finally {
+    await repo.cleanup();
+  }
+});
+
 
 test("terminals are shared by agents on the same cwd", async ({ page }) => {
   const repo = await createTempGitRepo("paseo-e2e-terminal-share-");
