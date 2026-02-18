@@ -5,7 +5,7 @@ import {
   ActivityIndicator,
   Platform,
 } from "react-native";
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ArrowUp, Square, Pencil, AudioLines } from "lucide-react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
@@ -25,11 +25,7 @@ import {
   type MessageInputRef,
 } from "./message-input";
 import { Theme } from "@/styles/theme";
-import { CommandAutocomplete } from "./command-autocomplete";
-import {
-  useAgentCommandsQuery,
-  type DraftCommandConfig,
-} from "@/hooks/use-agent-commands-query";
+import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { focusWithRetries } from "@/utils/web-focus";
@@ -37,6 +33,8 @@ import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
+import { Autocomplete } from "@/components/ui/autocomplete";
+import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
 
 type QueuedMessage = {
   id: string;
@@ -117,60 +115,19 @@ export function AgentInputArea({
   const [selectedImages, setSelectedImages] = useState<ImageAttachment[]>([]);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
   const lastHandledMessageInputActionRequestIdRef = useRef<number | null>(null);
+  const messageInputRef = useRef<MessageInputRef>(null);
 
-  // Command autocomplete logic
-  const showCommandAutocomplete = userInput.startsWith("/") && !userInput.includes(" ");
-  const commandFilter = showCommandAutocomplete ? userInput.slice(1) : "";
-  const normalizedCommandDraftConfig = useMemo(() => {
-    if (!commandDraftConfig) {
-      return undefined;
-    }
-
-    const cwd = commandDraftConfig.cwd.trim();
-    if (!cwd) {
-      return undefined;
-    }
-
-    const modeId = commandDraftConfig.modeId?.trim() ?? "";
-    const model = commandDraftConfig.model?.trim() ?? "";
-    const thinkingOptionId = commandDraftConfig.thinkingOptionId?.trim() ?? "";
-    return {
-      provider: commandDraftConfig.provider,
-      cwd,
-      ...(modeId ? { modeId } : {}),
-      ...(model ? { model } : {}),
-      ...(thinkingOptionId ? { thinkingOptionId } : {}),
-    };
-  }, [commandDraftConfig]);
-
-  // Prefetch commands for real agents and for draft screens when context is available.
-  const isRealAgent = agentId && !agentId.startsWith("__");
-  const commandQueryDraftConfig = isRealAgent
-    ? undefined
-    : normalizedCommandDraftConfig;
-  const canLoadCommands = Boolean(serverId) && (isRealAgent || !!commandQueryDraftConfig);
-  const { commands } = useAgentCommandsQuery({
+  const autocomplete = useAgentAutocomplete({
+    userInput,
+    setUserInput,
     serverId,
     agentId,
-    enabled: canLoadCommands,
-    draftConfig: commandQueryDraftConfig,
+    draftConfig: commandDraftConfig,
+    onAutocompleteApplied: () => {
+      messageInputRef.current?.focus();
+    },
   });
-
-  // Filter commands for keyboard navigation
-  const filteredCommands = useMemo(() => {
-    if (!showCommandAutocomplete) return [];
-    const filterLower = commandFilter.toLowerCase();
-    return commands.filter((cmd) =>
-      cmd.name.toLowerCase().includes(filterLower)
-    );
-  }, [commands, commandFilter, showCommandAutocomplete]);
-
-  // Reset selection when filter changes
-  useEffect(() => {
-    setCommandSelectedIndex(0);
-  }, [commandFilter]);
 
   // Clear send error when user edits the input
   useEffect(() => {
@@ -185,7 +142,6 @@ export function AgentInputArea({
     ((agentId: string, text: string, images?: ImageAttachment[]) => Promise<void>) | null
   >(null);
   const onSubmitMessageRef = useRef(onSubmitMessage);
-  const messageInputRef = useRef<MessageInputRef>(null);
 
   // Expose addImages function to parent for drag-and-drop support
   const addImages = useCallback((images: ImageAttachment[]) => {
@@ -592,17 +548,9 @@ export function AgentInputArea({
     queueMessage(payload.text, payload.images);
   }, []);
 
-  // Handle command selection from autocomplete
-  const handleCommandSelect = useCallback(
-    (cmd: { name: string; description: string; argumentHint: string }) => {
-      setUserInput(`/${cmd.name} `);
-      messageInputRef.current?.focus();
-    },
-    [setUserInput]
-  );
   const hasSendableContent = userInput.trim().length > 0 || selectedImages.length > 0;
 
-  // Handle keyboard navigation for command autocomplete
+  // Handle keyboard navigation for command autocomplete and stop action.
   const handleCommandKeyPress = useCallback(
     (event: { key: string; preventDefault: () => void }) => {
       if (
@@ -617,53 +565,15 @@ export function AgentInputArea({
         return true;
       }
 
-      if (!showCommandAutocomplete || filteredCommands.length === 0) {
-        return false;
-      }
-
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setCommandSelectedIndex((prev) =>
-          prev > 0 ? prev - 1 : filteredCommands.length - 1
-        );
-        return true;
-      }
-
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setCommandSelectedIndex((prev) =>
-          prev < filteredCommands.length - 1 ? prev + 1 : 0
-        );
-        return true;
-      }
-
-      if (event.key === "Tab" || event.key === "Enter") {
-        event.preventDefault();
-        const selected = filteredCommands[commandSelectedIndex];
-        if (selected) {
-          handleCommandSelect(selected);
-        }
-        return true;
-      }
-
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setUserInput("");
-        return true;
-      }
-
-      return false;
+      return autocomplete.onKeyPress(event);
     },
     [
-      showCommandAutocomplete,
-      filteredCommands,
-      commandSelectedIndex,
-      handleCommandSelect,
+      autocomplete,
       hasSendableContent,
       isAgentRunning,
       isCancellingAgent,
       isConnected,
-      setUserInput,
+      handleCancelAgent,
     ]
   );
 
@@ -775,14 +685,15 @@ export function AgentInputArea({
           )}
 
           {/* Command autocomplete dropdown */}
-          {showCommandAutocomplete && canLoadCommands && (
-            <CommandAutocomplete
-              serverId={serverId}
-              agentId={agentId}
-              filter={commandFilter}
-              selectedIndex={commandSelectedIndex}
-              onSelect={handleCommandSelect}
-              draftConfig={commandQueryDraftConfig}
+          {autocomplete.isVisible && (
+            <Autocomplete
+              options={autocomplete.options}
+              selectedIndex={autocomplete.selectedIndex}
+              isLoading={autocomplete.isLoading}
+              errorMessage={autocomplete.errorMessage}
+              loadingText="Loading commands..."
+              emptyText="No commands found"
+              onSelect={autocomplete.onSelectOption}
             />
           )}
 
