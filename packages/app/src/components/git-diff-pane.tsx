@@ -50,7 +50,7 @@ import {
   type ActionStatus,
 } from "@/components/ui/dropdown-menu";
 import { GitHubIcon } from "@/components/icons/github-icon";
-import { buildHostAgentDraftRoute } from "@/utils/host-routes";
+import { buildNewAgentRoute, resolveNewAgentWorkingDir } from "@/utils/new-agent-routing";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 // =============================================================================
@@ -472,6 +472,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const router = useRouter();
   const [diffModeOverride, setDiffModeOverride] = useState<"uncommitted" | "base" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
   const { status, isLoading: isStatusLoading, isFetching: isStatusFetching, isError: isStatusError, error: statusError, refresh: refreshStatus } =
     useCheckoutStatusQuery({ serverId, cwd });
@@ -796,10 +797,14 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     }
     void persistShipDefault("merge");
     setActionError(null);
-    void runMergeBranch({ serverId, cwd, baseRef }).catch((err) => {
-      const message = err instanceof Error ? err.message : "Failed to merge";
-      setActionError(message);
-    });
+    void runMergeBranch({ serverId, cwd, baseRef })
+      .then(() => {
+        setPostShipArchiveSuggested(true);
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "Failed to merge";
+        setActionError(message);
+      });
   }, [baseRef, persistShipDefault, runMergeBranch, serverId, cwd]);
 
   const handleMergeFromBase = useCallback(() => {
@@ -821,15 +826,16 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       return;
     }
     setActionError(null);
+    const targetWorkingDir = resolveNewAgentWorkingDir(cwd, status ?? null);
     void runArchiveWorktree({ serverId, cwd, worktreePath })
       .then(() => {
-        router.replace(buildHostAgentDraftRoute(serverId) as any);
+        router.replace(buildNewAgentRoute(serverId, targetWorkingDir) as any);
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : "Failed to archive worktree";
         setActionError(message);
       });
-  }, [runArchiveWorktree, router, serverId, cwd, status?.cwd]);
+  }, [runArchiveWorktree, router, serverId, cwd, status]);
 
   const renderFlatItem = useCallback(
     ({ item }: { item: DiffFlatItem }) => {
@@ -887,12 +893,27 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       ? undefined
       : `${branchLabel} -> ${baseRefLabel}`;
   }, [baseRefLabel, branchLabel]);
+  const hasPullRequest = Boolean(prStatus?.url);
+  const hasRemote = gitStatus?.hasRemote ?? false;
+  const isPaseoOwnedWorktree = gitStatus?.isPaseoOwnedWorktree ?? false;
+  const isMergedPullRequest = Boolean(prStatus?.isMerged);
+  const currentBranch = gitStatus?.currentBranch;
+  const isOnBaseBranch = currentBranch === baseRefLabel;
+  const shouldPromoteArchive =
+    isPaseoOwnedWorktree &&
+    !hasUncommittedChanges &&
+    (postShipArchiveSuggested || isMergedPullRequest);
+
   const commitDisabled = actionsDisabled || commitStatus === "pending";
   const prDisabled = actionsDisabled || prCreateStatus === "pending";
   const mergeDisabled =
     actionsDisabled || mergeStatus === "pending" || hasUncommittedChanges || !baseRef;
   const mergeFromBaseDisabled =
-    actionsDisabled || mergeFromBaseStatus === "pending" || hasUncommittedChanges || !baseRef;
+    actionsDisabled ||
+    mergeFromBaseStatus === "pending" ||
+    hasUncommittedChanges ||
+    !baseRef ||
+    (isOnBaseBranch && !hasRemote);
   const pushDisabled =
     actionsDisabled || pushStatus === "pending" || !(gitStatus?.hasRemote ?? false);
   const archiveDisabled =
@@ -969,11 +990,9 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     );
   }
 
-  const hasPullRequest = Boolean(prStatus?.url);
-  const hasRemote = gitStatus?.hasRemote ?? false;
-  const isPaseoOwnedWorktree = gitStatus?.isPaseoOwnedWorktree ?? false;
-  const currentBranch = gitStatus?.currentBranch;
-  const isOnBaseBranch = currentBranch === baseRefLabel;
+  useEffect(() => {
+    setPostShipArchiveSuggested(false);
+  }, [cwd]);
 
   // ==========================================================================
   // Git Actions (Data-Oriented)
@@ -1063,16 +1082,21 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       });
     }
 
-    // Update from base - only when not on base branch
-    if (!isOnBaseBranch) {
+    // Update/sync from base
+    if (!isOnBaseBranch || hasRemote) {
       allActions.set("merge-from-base", {
         id: "merge-from-base",
-        label: `Update from ${baseRefLabel}`,
+        label: isOnBaseBranch ? `Sync ${baseRefLabel} from origin` : `Update from ${baseRefLabel}`,
         pendingLabel: "Updating...",
         successLabel: "Updated",
         disabled: mergeFromBaseDisabled,
         status: mergeFromBaseStatus,
-        description: hasUncommittedChanges ? "Requires clean working tree" : undefined,
+        description:
+          hasUncommittedChanges
+            ? "Requires clean working tree"
+            : isOnBaseBranch && !hasRemote
+              ? "No remote configured"
+              : undefined,
         icon: <RefreshCcw size={16} color={theme.colors.foregroundMuted} />,
         handler: handleMergeFromBase,
       });
@@ -1095,8 +1119,12 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     // Select primary action (priority rules)
     let primaryActionId: GitActionId | null = null;
 
+    // Rule 0: Post-ship in worktree -> Archive
+    if (shouldPromoteArchive && allActions.has("archive-worktree")) {
+      primaryActionId = "archive-worktree";
+    }
     // Rule 1: Uncommitted changes → Commit
-    if (hasUncommittedChanges) {
+    else if (hasUncommittedChanges) {
       primaryActionId = "commit";
     }
     // Rule 2: Ahead of origin → Push
@@ -1107,7 +1135,11 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     else if (hasPullRequest) {
       primaryActionId = "view-pr";
     }
-    // Rule 4: Ahead of base → Ship action based on preference
+    // Rule 4: On base branch -> surface sync explicitly
+    else if (isOnBaseBranch && allActions.has("merge-from-base")) {
+      primaryActionId = "merge-from-base";
+    }
+    // Rule 5: Ahead of base → Ship action based on preference
     else if (aheadCount > 0) {
       const preferred: GitActionId = shipDefault === "merge" ? "merge-branch" : "create-pr";
       const fallback: GitActionId = shipDefault === "merge" ? "create-pr" : "merge-branch";
@@ -1127,20 +1159,25 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     const primary = primaryActionId ? allActions.get(primaryActionId) ?? null : null;
 
     // Secondary actions: ship-related + merge from base + push (excluding primary)
-    const secondaryIds: GitActionId[] = ["merge-branch", "create-pr", "view-pr", "merge-from-base", "push"];
+    const secondaryIds: GitActionId[] = [
+      "merge-branch",
+      "create-pr",
+      "view-pr",
+      "merge-from-base",
+      "push",
+      "archive-worktree",
+    ];
     const secondary = secondaryIds
       .filter(id => id !== primaryActionId && allActions.has(id))
       .map(id => allActions.get(id)!);
 
-    // Menu actions: archive worktree only
-    const menu = allActions.has("archive-worktree")
-      ? [allActions.get("archive-worktree")!]
-      : [];
+    // Menu actions: none for now (all actionable items are in primary/secondary)
+    const menu: GitAction[] = [];
 
     return { primary, secondary, menu };
   }, [
     isGit, hasRemote, hasPullRequest, prStatus?.url, aheadCount, isPaseoOwnedWorktree, isOnBaseBranch, githubFeaturesEnabled,
-    hasUncommittedChanges, aheadOfOrigin, shipDefault, baseRefLabel,
+    hasUncommittedChanges, aheadOfOrigin, shipDefault, baseRefLabel, shouldPromoteArchive,
     commitDisabled, pushDisabled, prDisabled, mergeDisabled, mergeFromBaseDisabled, archiveDisabled,
     commitStatus, pushStatus, prCreateStatus, mergeStatus, mergeFromBaseStatus, archiveStatus,
     handleCommit, handlePush, handleCreatePr, handleMergeBranch, handleMergeFromBase, handleArchiveWorktree,

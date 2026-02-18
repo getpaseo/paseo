@@ -394,7 +394,7 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     await expect(page.getByTestId('changes-menu-archive-worktree')).toBeVisible();
     await page.getByTestId('changes-menu-archive-worktree').click();
     // Archiving a worktree deletes agents and redirects to home
-    await expect(page).toHaveURL(/\/agent\/?$/, { timeout: 30000 });
+    await expect(page).toHaveURL(/\/agent\/?(?:\?.*)?$/, { timeout: 30000 });
     await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
     // Repo inspection is async; wait until git options are interactive again.

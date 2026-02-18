@@ -1690,6 +1690,7 @@ const CheckoutPrStatusSchema = z.object({
   state: z.string(),
   baseRefName: z.string(),
   headRefName: z.string(),
+  isMerged: z.boolean(),
 });
 
 export const CheckoutPrStatusResponseSchema = z.object({

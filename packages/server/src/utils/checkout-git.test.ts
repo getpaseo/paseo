@@ -471,6 +471,109 @@ describe("checkout git utilities", () => {
     }
   });
 
+  it("returns merged PR status when no open PR exists for the current branch", async () => {
+    execSync("git checkout -b feature", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+
+    const fakeBinDir = join(tempDir, "fake-bin-gh-merged");
+    mkdirSync(fakeBinDir);
+    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
+    symlinkSync(gitPath, join(fakeBinDir, "git"));
+    writeFileSync(
+      join(fakeBinDir, "gh"),
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "if [[ \"${1-}\" == \"--version\" ]]; then",
+        "  echo \"gh version 2.0.0\"",
+        "  exit 0",
+        "fi",
+        "args=\"$*\"",
+        "if [[ \"$args\" == *\"state=open\"* ]]; then",
+        "  echo \"[]\"",
+        "  exit 0",
+        "fi",
+        "if [[ \"$args\" == *\"state=closed\"* ]]; then",
+        "  echo '[{\"html_url\":\"https://github.com/getpaseo/paseo/pull/123\",\"title\":\"Ship feature\",\"state\":\"closed\",\"merged_at\":\"2026-02-18T00:00:00Z\",\"base\":{\"ref\":\"main\"},\"head\":{\"ref\":\"feature\"}}]'",
+        "  exit 0",
+        "fi",
+        "echo \"unexpected gh args: $args\" >&2",
+        "exit 1",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${fakeBinDir}:${originalPath ?? ""}`;
+    try {
+      const status = await getPullRequestStatus(repoDir);
+      expect(status.githubFeaturesEnabled).toBe(true);
+      expect(status.status).not.toBeNull();
+      expect(status.status?.url).toContain("/pull/123");
+      expect(status.status?.baseRefName).toBe("main");
+      expect(status.status?.headRefName).toBe("feature");
+      expect(status.status?.isMerged).toBe(true);
+      expect(status.status?.state).toBe("merged");
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+    }
+  });
+
+  it("does not treat closed-unmerged PRs as shipped status", async () => {
+    execSync("git checkout -b feature", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+
+    const fakeBinDir = join(tempDir, "fake-bin-gh-closed");
+    mkdirSync(fakeBinDir);
+    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
+    symlinkSync(gitPath, join(fakeBinDir, "git"));
+    writeFileSync(
+      join(fakeBinDir, "gh"),
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "if [[ \"${1-}\" == \"--version\" ]]; then",
+        "  echo \"gh version 2.0.0\"",
+        "  exit 0",
+        "fi",
+        "args=\"$*\"",
+        "if [[ \"$args\" == *\"state=open\"* ]]; then",
+        "  echo \"[]\"",
+        "  exit 0",
+        "fi",
+        "if [[ \"$args\" == *\"state=closed\"* ]]; then",
+        "  echo '[{\"html_url\":\"https://github.com/getpaseo/paseo/pull/999\",\"title\":\"Closed without merge\",\"state\":\"closed\",\"merged_at\":null,\"base\":{\"ref\":\"main\"},\"head\":{\"ref\":\"feature\"}}]'",
+        "  exit 0",
+        "fi",
+        "echo \"unexpected gh args: $args\" >&2",
+        "exit 1",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${fakeBinDir}:${originalPath ?? ""}`;
+    try {
+      const status = await getPullRequestStatus(repoDir);
+      expect(status.githubFeaturesEnabled).toBe(true);
+      expect(status.status).toBeNull();
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+    }
+  });
+
   it("returns typed MergeConflictError on merge conflicts", async () => {
     const conflictFile = join(repoDir, "conflict.txt");
     writeFileSync(conflictFile, "base\n");
