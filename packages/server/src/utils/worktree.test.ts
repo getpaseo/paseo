@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   createWorktree,
+  deriveWorktreeProjectHash,
   deletePaseoWorktree,
   getWorktreeTerminalSpecs,
   isPaseoOwnedWorktreeCwd,
@@ -13,7 +14,7 @@ import {
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execSync } from "child_process";
 import { mkdtempSync, rmSync, existsSync, realpathSync, writeFileSync, readFileSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import { tmpdir } from "os";
 import net from "node:net";
 
@@ -43,6 +44,7 @@ describe("createWorktree", () => {
   });
 
   it("creates a worktree for the current branch (main)", async () => {
+    const projectHash = await deriveWorktreeProjectHash(repoDir);
     const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
@@ -52,7 +54,7 @@ describe("createWorktree", () => {
     });
 
     expect(result.worktreePath).toBe(
-      join(paseoHome, "worktrees", "test-repo", "hello-world")
+      join(paseoHome, "worktrees", projectHash, "hello-world")
     );
     expect(existsSync(result.worktreePath)).toBe(true);
     expect(existsSync(join(result.worktreePath, "file.txt"))).toBe(true);
@@ -86,7 +88,14 @@ describe("createWorktree", () => {
       paseoHome: varPaseoHome,
     });
 
-    const privateWorktreePath = join(privateTempDir, "paseo-home", "worktrees", "test-repo", "realpath-test");
+    const projectHash = await deriveWorktreeProjectHash(varRepoDir);
+    const privateWorktreePath = join(
+      privateTempDir,
+      "paseo-home",
+      "worktrees",
+      projectHash,
+      "realpath-test"
+    );
     expect(existsSync(privateWorktreePath)).toBe(true);
 
     const ownership = await isPaseoOwnedWorktreeCwd(privateWorktreePath, { paseoHome: varPaseoHome });
@@ -96,6 +105,7 @@ describe("createWorktree", () => {
   });
 
   it("creates a worktree with a new branch", async () => {
+    const projectHash = await deriveWorktreeProjectHash(repoDir);
     const result = await createWorktree({
       branchName: "feature-branch",
       cwd: repoDir,
@@ -105,7 +115,7 @@ describe("createWorktree", () => {
     });
 
     expect(result.worktreePath).toBe(
-      join(paseoHome, "worktrees", "test-repo", "my-feature")
+      join(paseoHome, "worktrees", projectHash, "my-feature")
     );
     expect(existsSync(result.worktreePath)).toBe(true);
 
@@ -131,6 +141,7 @@ describe("createWorktree", () => {
   });
 
   it("handles branch name collision by adding suffix", async () => {
+    const projectHash = await deriveWorktreeProjectHash(repoDir);
     // Create a branch named "hello" first
     execSync("git branch hello", { cwd: repoDir });
 
@@ -144,7 +155,7 @@ describe("createWorktree", () => {
 
     // Should create branch "hello-1" since "hello" exists
     expect(result.worktreePath).toBe(
-      join(paseoHome, "worktrees", "test-repo", "hello")
+      join(paseoHome, "worktrees", projectHash, "hello")
     );
     expect(existsSync(result.worktreePath)).toBe(true);
 
@@ -421,7 +432,47 @@ describe("paseo worktree manager", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("lists and deletes paseo worktrees under ~/.paseo/worktrees/{project}", async () => {
+  it("isolates worktree roots for repositories that share the same directory name", async () => {
+    const repoA = join(tempDir, "team-a", "test-repo");
+    const repoB = join(tempDir, "team-b", "test-repo");
+
+    for (const repo of [repoA, repoB]) {
+      execSync(`mkdir -p ${repo}`);
+      execSync("git init -b main", { cwd: repo });
+      execSync("git config user.email 'test@test.com'", { cwd: repo });
+      execSync("git config user.name 'Test'", { cwd: repo });
+      execSync("echo 'hello' > file.txt", { cwd: repo });
+      execSync("git add .", { cwd: repo });
+      execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repo });
+    }
+
+    const fromRepoA = await createWorktree({
+      branchName: "main",
+      cwd: repoA,
+      baseBranch: "main",
+      worktreeSlug: "alpha",
+      paseoHome,
+    });
+    const fromRepoB = await createWorktree({
+      branchName: "main",
+      cwd: repoB,
+      baseBranch: "main",
+      worktreeSlug: "alpha",
+      paseoHome,
+    });
+
+    expect(dirname(fromRepoA.worktreePath)).not.toBe(dirname(fromRepoB.worktreePath));
+    expect(fromRepoA.worktreePath.endsWith("alpha-1")).toBe(false);
+    expect(fromRepoB.worktreePath.endsWith("alpha-1")).toBe(false);
+
+    const repoAWorktrees = await listPaseoWorktrees({ cwd: repoA, paseoHome });
+    const repoBWorktrees = await listPaseoWorktrees({ cwd: repoB, paseoHome });
+
+    expect(repoAWorktrees.map((entry) => entry.path)).toEqual([fromRepoA.worktreePath]);
+    expect(repoBWorktrees.map((entry) => entry.path)).toEqual([fromRepoB.worktreePath]);
+  });
+
+  it("lists and deletes paseo worktrees under ~/.paseo/worktrees/{hash}", async () => {
     const first = await createWorktree({
       branchName: "main",
       cwd: repoDir,

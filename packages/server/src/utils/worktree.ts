@@ -3,6 +3,7 @@ import { promisify } from "util";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "fs";
 import { join, basename, dirname, resolve, sep } from "path";
 import net from "node:net";
+import { createHash } from "node:crypto";
 import { createNameId } from "mnemonic-id";
 import {
   normalizeBaseRefName,
@@ -639,91 +640,37 @@ function generateWorktreeSlug(): string {
   return createNameId();
 }
 
-function tryParseGitRemote(remoteUrl: string): { host?: string; path: string } | null {
-  const cleaned = remoteUrl.trim().replace(/\.git$/i, "");
-  if (!cleaned) {
-    return null;
-  }
+const WORKTREE_PROJECT_HASH_LENGTH = 8;
 
-  if (cleaned.includes("://")) {
-    try {
-      const url = new URL(cleaned);
-      return { host: url.hostname, path: url.pathname.replace(/^\/+/, "") };
-    } catch {
-      // fall through
-    }
+function deriveShortAlphanumericHash(value: string): string {
+  const digest = createHash("sha256").update(value).digest();
+  let hashValue = 0n;
+  for (let index = 0; index < 8; index += 1) {
+    hashValue = (hashValue << 8n) | BigInt(digest[index] ?? 0);
   }
-
-  // Support scp-like syntax: git@github.com:owner/repo
-  const scpMatch = cleaned.match(/^(?:.+@)?([^:]+):(.+)$/);
-  if (scpMatch?.[2]) {
-    return { host: scpMatch[1], path: scpMatch[2].replace(/^\/+/, "") };
-  }
-
-  return { path: cleaned.replace(/^\/+/, "") };
+  return hashValue
+    .toString(36)
+    .padStart(13, "0")
+    .slice(0, WORKTREE_PROJECT_HASH_LENGTH);
 }
 
-function inferProjectNameFromRemote(remoteUrl: string): string | null {
-  const parsed = tryParseGitRemote(remoteUrl);
-  if (!parsed?.path) {
-    return null;
-  }
-  const segments = parsed.path.split("/").filter((segment) => segment.length > 0);
-  if (segments.length === 0) {
-    return null;
-  }
-  return segments[segments.length - 1] ?? null;
-}
-
-async function detectWorktreeProject(cwd: string): Promise<string> {
-  // First try to get project name from remote URL (consistent across worktrees)
+export async function deriveWorktreeProjectHash(cwd: string): Promise<string> {
   try {
-    const { stdout } = await execAsync("git config --get remote.origin.url", {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
-    const remote = stdout.trim();
-    if (remote) {
-      const inferred = inferProjectNameFromRemote(remote);
-      if (inferred) {
-        const projected = slugify(inferred);
-        if (projected) {
-          return projected;
-        }
-      }
-    }
+    const commonDir = await getGitCommonDir(cwd);
+    const normalizedCommonDir = normalizePathForOwnership(commonDir);
+    const repoRoot = basename(normalizedCommonDir) === ".git"
+      ? dirname(normalizedCommonDir)
+      : normalizedCommonDir;
+    return deriveShortAlphanumericHash(repoRoot);
   } catch {
-    // ignore
-  }
-
-  // Fallback: derive from git common dir parent (works for both main checkout and worktrees)
-  // For normal repos: .git -> parent is repo root
-  // For bare repos: the bare repo dir itself
-  // For worktrees: common dir points to main repo's .git
-  try {
-    const { stdout } = await execAsync("git rev-parse --git-common-dir", {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
-    const commonDir = stdout.trim();
-    const normalized = realpathSync(commonDir);
-    // If common dir ends with .git, use its parent. Otherwise use its parent too (bare repo case).
-    const repoRoot = basename(normalized) === ".git" ? dirname(normalized) : dirname(normalized);
-    return slugify(basename(repoRoot));
-  } catch {
-    // Last resort: use cwd
-    try {
-      return slugify(basename(realpathSync(cwd)));
-    } catch {
-      return slugify(basename(cwd));
-    }
+    return deriveShortAlphanumericHash(normalizePathForOwnership(cwd));
   }
 }
 
 async function getPaseoWorktreesRoot(cwd: string, paseoHome?: string): Promise<string> {
   const home = paseoHome ? resolve(paseoHome) : resolvePaseoHome();
-  const project = await detectWorktreeProject(cwd);
-  return join(home, "worktrees", project);
+  const projectHash = await deriveWorktreeProjectHash(cwd);
+  return join(home, "worktrees", projectHash);
 }
 
 function normalizePathForOwnership(input: string): string {
