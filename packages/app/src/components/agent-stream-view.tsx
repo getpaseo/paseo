@@ -50,6 +50,10 @@ import type { DaemonClient } from "@server/client/daemon-client";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { QuestionFormCard } from "./question-form-card";
 import { ToolCallSheetProvider } from "./tool-call-sheet";
+import {
+  WebDesktopScrollbarOverlay,
+  useWebDesktopScrollbarMetrics,
+} from "./web-desktop-scrollbar";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
@@ -95,12 +99,16 @@ export function AgentStreamView({
 }: AgentStreamViewProps) {
   const flatListRef = useRef<FlatList<StreamItem>>(null);
   const { theme } = useUnistyles();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
   const insets = useSafeAreaInsets();
   const [isNearBottom, setIsNearBottom] = useState(true);
   const hasScrolledInitially = useRef(false);
   const hasAutoScrolledOnce = useRef(false);
   const isNearBottomRef = useRef(true);
   const streamItemCountRef = useRef(0);
+  const streamScrollbarMetrics = useWebDesktopScrollbarMetrics();
   const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(new Set());
   const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
   const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
@@ -184,8 +192,12 @@ export function AgentStreamView({
         isNearBottomRef.current = nearBottom;
         setIsNearBottom(nearBottom);
       }
+
+      if (showDesktopWebScrollbar) {
+        streamScrollbarMetrics.onScroll(event);
+      }
     },
-    [insets.bottom]
+    [insets.bottom, showDesktopWebScrollbar, streamScrollbarMetrics]
   );
 
   const scrollToBottomInternal = useCallback(
@@ -647,14 +659,25 @@ export function AgentStreamView({
               data={flatListData}
               renderItem={renderStreamItem}
               keyExtractor={(item) => item.id}
+              testID="agent-chat-scroll"
               ListHeaderComponentStyle={headerGapStyle}
               contentContainerStyle={{
                 paddingVertical: 0,
                 flexGrow: 1,
               }}
               style={stylesheet.list}
+              onLayout={
+                showDesktopWebScrollbar
+                  ? streamScrollbarMetrics.onLayout
+                  : undefined
+              }
               onScroll={handleScroll}
               scrollEventThrottle={16}
+              onContentSizeChange={
+                showDesktopWebScrollbar
+                  ? streamScrollbarMetrics.onContentSizeChange
+                  : undefined
+              }
               ListEmptyComponent={listEmptyComponent}
               ListHeaderComponent={listHeaderComponent}
               extraData={flatListExtraData}
@@ -667,9 +690,22 @@ export function AgentStreamView({
               initialNumToRender={12}
               windowSize={10}
               scrollEnabled={Platform.OS !== "web" || expandedInlineToolCallIds.size === 0}
+              showsVerticalScrollIndicator={!showDesktopWebScrollbar}
               inverted
             />
           </MessageOuterSpacingProvider>
+          <WebDesktopScrollbarOverlay
+            enabled={showDesktopWebScrollbar}
+            metrics={streamScrollbarMetrics}
+            inverted
+            onScrollToOffset={(nextOffset) => {
+              flatListRef.current?.scrollToOffset({
+                offset: nextOffset,
+                animated: false,
+              });
+              streamScrollbarMetrics.setOffset(nextOffset);
+            }}
+          />
 
           {/* Scroll to bottom button */}
           {!isNearBottom && (

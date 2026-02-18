@@ -16,10 +16,12 @@ export interface DraggableListProps<T> {
   onDragEnd: (data: T[]) => void;
   style?: StyleProp<ViewStyle>;
   contentContainerStyle?: StyleProp<ViewStyle>;
+  testID?: string;
   ListFooterComponent?: ReactElement | null;
   ListHeaderComponent?: ReactElement | null;
   ListEmptyComponent?: ReactElement | null;
   showsVerticalScrollIndicator?: boolean;
+  enableDesktopWebScrollbar?: boolean;
   refreshing?: boolean;
   onRefresh?: () => void;
   /** Fill remaining space when content is smaller than container */

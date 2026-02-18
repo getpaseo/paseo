@@ -18,10 +18,12 @@ export function DraggableList<T>({
   onDragEnd,
   style,
   contentContainerStyle,
+  testID,
   ListFooterComponent,
   ListHeaderComponent,
   ListEmptyComponent,
   showsVerticalScrollIndicator = true,
+  enableDesktopWebScrollbar: _enableDesktopWebScrollbar = false,
   refreshing,
   onRefresh,
   simultaneousGestureRef,
@@ -69,6 +71,7 @@ export function DraggableList<T>({
 
   return (
     <DraggableFlatList
+      testID={testID}
       data={data}
       keyExtractor={keyExtractor}
       renderItem={handleRenderItem}

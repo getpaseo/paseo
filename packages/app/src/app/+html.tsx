@@ -20,6 +20,22 @@ const webEcosystemStyles = /* css */ `
     -webkit-user-select: text;
     user-select: text;
   }
+
+  [data-testid="sidebar-agent-list-scroll"],
+  [data-testid="agent-chat-scroll"],
+  [data-testid="git-diff-scroll"],
+  [data-testid="file-explorer-tree-scroll"] {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  [data-testid="sidebar-agent-list-scroll"]::-webkit-scrollbar,
+  [data-testid="agent-chat-scroll"]::-webkit-scrollbar,
+  [data-testid="git-diff-scroll"]::-webkit-scrollbar,
+  [data-testid="file-explorer-tree-scroll"]::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
 `;
 
 function WebRespectfulStyleReset() {

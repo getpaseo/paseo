@@ -16,7 +16,11 @@ import {
   type MutableRefObject,
 } from "react";
 import { router, usePathname } from "expo-router";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import {
+  StyleSheet,
+  UnistylesRuntime,
+  useUnistyles,
+} from "react-native-unistyles";
 import { type GestureType } from "react-native-gesture-handler";
 import { Archive, Check, ChevronDown } from "lucide-react-native";
 import {
@@ -434,6 +438,9 @@ export function SidebarAgentList({
 }: SidebarAgentListProps) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
   const [isProjectFilterOpen, setIsProjectFilterOpen] = useState(false);
   const projectFilterAnchorRef = useRef<View>(null);
 
@@ -820,10 +827,12 @@ export function SidebarAgentList({
           styles.listContent,
           isSelectionMode ? styles.listContentSelectionMode : null,
         ]}
+        testID="sidebar-agent-list-scroll"
         keyExtractor={keyExtractor}
         renderItem={renderRow}
         onDragEnd={() => {}}
         showsVerticalScrollIndicator={false}
+        enableDesktopWebScrollbar={showDesktopWebScrollbar}
         ListFooterComponent={listFooterComponent}
         refreshing={isRefreshing}
         onRefresh={onRefresh}

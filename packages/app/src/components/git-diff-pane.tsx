@@ -12,7 +12,7 @@ import {
   type NativeScrollEvent,
 } from "react-native";
 import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gesture-handler";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Archive,
@@ -50,6 +50,10 @@ import {
   type ActionStatus,
 } from "@/components/ui/dropdown-menu";
 import { GitHubIcon } from "@/components/icons/github-icon";
+import {
+  WebDesktopScrollbarOverlay,
+  useWebDesktopScrollbarMetrics,
+} from "@/components/web-desktop-scrollbar";
 import { buildNewAgentRoute, resolveNewAgentWorkingDir } from "@/utils/new-agent-routing";
 import { openExternalUrl } from "@/utils/open-external-url";
 
@@ -469,6 +473,9 @@ type DiffFlatItem =
 
 export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
   const router = useRouter();
   const [diffModeOverride, setDiffModeOverride] = useState<"uncommitted" | "base" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -518,6 +525,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const [isManualRefresh, setIsManualRefresh] = useState(false);
   const [expandedByPath, setExpandedByPath] = useState<Record<string, boolean>>({});
   const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
+  const diffScrollbarMetrics = useWebDesktopScrollbarMetrics();
   const diffListScrollOffsetRef = useRef(0);
   const diffListViewportHeightRef = useRef(0);
   const headerHeightByPathRef = useRef<Record<string, number>>({});
@@ -624,17 +632,29 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     bodyHeightByPathRef.current[path] = height;
   }, []);
 
-  const handleDiffListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-  }, []);
+  const handleDiffListScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+      if (showDesktopWebScrollbar) {
+        diffScrollbarMetrics.onScroll(event);
+      }
+    },
+    [diffScrollbarMetrics, showDesktopWebScrollbar]
+  );
 
-  const handleDiffListLayout = useCallback((event: LayoutChangeEvent) => {
-    const height = event.nativeEvent.layout.height;
-    if (!Number.isFinite(height) || height <= 0) {
-      return;
-    }
-    diffListViewportHeightRef.current = height;
-  }, []);
+  const handleDiffListLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const height = event.nativeEvent.layout.height;
+      if (!Number.isFinite(height) || height <= 0) {
+        return;
+      }
+      diffListViewportHeightRef.current = height;
+      if (showDesktopWebScrollbar) {
+        diffScrollbarMetrics.onLayout(event);
+      }
+    },
+    [diffScrollbarMetrics, showDesktopWebScrollbar]
+  );
 
   const computeHeaderOffset = useCallback(
     (path: string): number => {
@@ -977,7 +997,13 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         testID="git-diff-scroll"
         onLayout={handleDiffListLayout}
         onScroll={handleDiffListScroll}
+        onContentSizeChange={
+          showDesktopWebScrollbar
+            ? diffScrollbarMetrics.onContentSizeChange
+            : undefined
+        }
         scrollEventThrottle={16}
+        showsVerticalScrollIndicator={!showDesktopWebScrollbar}
         onRefresh={handleRefresh}
         refreshing={isManualRefresh && isDiffFetching}
         // Mixed-height rows (header + potentially very large body) are prone to clipping artifacts.
@@ -1368,7 +1394,20 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         <Text style={styles.actionErrorText}>{prErrorMessage}</Text>
       ) : null}
 
-      <View style={styles.diffContainer}>{bodyContent}</View>
+      <View style={styles.diffContainer}>
+        {bodyContent}
+        <WebDesktopScrollbarOverlay
+          enabled={showDesktopWebScrollbar && hasChanges}
+          metrics={diffScrollbarMetrics}
+          onScrollToOffset={(nextOffset) => {
+            diffListRef.current?.scrollToOffset({
+              offset: nextOffset,
+              animated: false,
+            });
+            diffScrollbarMetrics.setOffset(nextOffset);
+          }}
+        />
+      </View>
     </View>
   );
 }
@@ -1568,6 +1607,7 @@ const styles = StyleSheet.create((theme) => ({
   diffContainer: {
     flex: 1,
     minHeight: 0,
+    position: "relative",
   },
   scrollView: {
     flex: 1,

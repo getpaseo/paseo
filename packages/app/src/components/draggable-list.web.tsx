@@ -1,5 +1,5 @@
-import { useCallback, useState, useRef, type ReactElement } from "react";
-import { View, ScrollView } from "react-native";
+import { useCallback, useRef, useState, type ReactElement } from "react";
+import { ScrollView, View } from "react-native";
 import {
   DndContext,
   closestCenter,
@@ -23,6 +23,10 @@ import type {
   DraggableListProps,
   DraggableRenderItemInfo,
 } from "./draggable-list.types";
+import {
+  WebDesktopScrollbarOverlay,
+  useWebDesktopScrollbarMetrics,
+} from "./web-desktop-scrollbar";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
@@ -99,14 +103,18 @@ export function DraggableList<T>({
   onDragEnd,
   style,
   contentContainerStyle,
+  testID,
   ListFooterComponent,
   ListHeaderComponent,
   ListEmptyComponent,
   showsVerticalScrollIndicator = true,
+  enableDesktopWebScrollbar = false,
   // simultaneousGestureRef is native-only, ignored on web
 }: DraggableListProps<T>) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [items, setItems] = useState(data);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollbarMetrics = useWebDesktopScrollbarMetrics();
 
   // Sync items with data prop
   if (data !== items && !activeId) {
@@ -151,39 +159,60 @@ export function DraggableList<T>({
   );
 
   const ids = items.map((item, index) => keyExtractor(item, index));
+  const showCustomScrollbar = enableDesktopWebScrollbar;
 
   return (
-    <ScrollView
-      style={style}
-      contentContainerStyle={contentContainerStyle}
-      showsVerticalScrollIndicator={showsVerticalScrollIndicator}
-    >
-      {ListHeaderComponent}
-      {items.length === 0 && ListEmptyComponent}
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        modifiers={[restrictToVerticalAxis]}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
+    <View style={{ flex: 1, minHeight: 0, position: "relative" }}>
+      <ScrollView
+        ref={scrollViewRef}
+        testID={testID}
+        style={style}
+        contentContainerStyle={contentContainerStyle}
+        showsVerticalScrollIndicator={
+          showCustomScrollbar ? false : showsVerticalScrollIndicator
+        }
+        onLayout={showCustomScrollbar ? scrollbarMetrics.onLayout : undefined}
+        onContentSizeChange={
+          showCustomScrollbar ? scrollbarMetrics.onContentSizeChange : undefined
+        }
+        onScroll={showCustomScrollbar ? scrollbarMetrics.onScroll : undefined}
+        scrollEventThrottle={showCustomScrollbar ? 16 : undefined}
       >
-        <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-          {items.map((item, index) => {
-            const id = keyExtractor(item, index);
-            return (
-              <SortableItem
-                key={id}
-                id={id}
-                item={item}
-                index={index}
-                renderItem={renderItem}
-                activeId={activeId}
-              />
-            );
-          })}
-        </SortableContext>
-      </DndContext>
-      {ListFooterComponent}
-    </ScrollView>
+        {ListHeaderComponent}
+        {items.length === 0 && ListEmptyComponent}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[restrictToVerticalAxis]}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+            {items.map((item, index) => {
+              const id = keyExtractor(item, index);
+              return (
+                <SortableItem
+                  key={id}
+                  id={id}
+                  item={item}
+                  index={index}
+                  renderItem={renderItem}
+                  activeId={activeId}
+                />
+              );
+            })}
+          </SortableContext>
+        </DndContext>
+        {ListFooterComponent}
+      </ScrollView>
+      <WebDesktopScrollbarOverlay
+        enabled={showCustomScrollbar}
+        metrics={scrollbarMetrics}
+        onScrollToOffset={(nextOffset) => {
+          scrollViewRef.current?.scrollTo({ y: nextOffset, animated: false });
+          scrollbarMetrics.setOffset(nextOffset);
+        }}
+      />
+    </View>
   );
 }

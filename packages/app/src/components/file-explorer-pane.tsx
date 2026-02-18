@@ -5,6 +5,9 @@ import {
   FlatList,
   Image as RNImage,
   ListRenderItemInfo,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView as RNScrollView,
   Text,
@@ -63,6 +66,10 @@ import {
   type SortOption,
 } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
+import {
+  WebDesktopScrollbarOverlay,
+  useWebDesktopScrollbarMetrics,
+} from "@/components/web-desktop-scrollbar";
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "name", label: "Name" },
@@ -86,6 +93,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
   const { theme } = useUnistyles();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
 
   const { connectionStates } = useDaemonConnections();
   const daemonProfile = connectionStates.get(serverId)?.daemon;
@@ -136,6 +144,8 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set(["."]));
   const [containerWidth, setContainerWidth] = useState(0);
   const wasInlinePreviewVisibleRef = useRef(false);
+  const treeListRef = useRef<FlatList<TreeRow>>(null);
+  const treeScrollbarMetrics = useWebDesktopScrollbarMetrics();
 
   // Bottom sheet for file preview (mobile)
   const previewSheetRef = useRef<BottomSheetModal>(null);
@@ -592,6 +602,24 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     );
   }
 
+  const handleTreeListScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (showDesktopWebScrollbar) {
+        treeScrollbarMetrics.onScroll(event);
+      }
+    },
+    [showDesktopWebScrollbar, treeScrollbarMetrics]
+  );
+
+  const handleTreeListLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      if (showDesktopWebScrollbar) {
+        treeScrollbarMetrics.onLayout(event);
+      }
+    },
+    [showDesktopWebScrollbar, treeScrollbarMetrics]
+  );
+
   return (
     <View
       style={styles.container}
@@ -704,14 +732,40 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
                 </View>
               </View>
               <FlatList
+                ref={treeListRef}
                 style={styles.treeList}
                 data={treeRows}
                 renderItem={renderTreeRow}
                 keyExtractor={(row) => row.entry.path}
+                testID="file-explorer-tree-scroll"
                 contentContainerStyle={styles.entriesContent}
+                onLayout={
+                  showDesktopWebScrollbar ? handleTreeListLayout : undefined
+                }
+                onScroll={
+                  showDesktopWebScrollbar ? handleTreeListScroll : undefined
+                }
+                onContentSizeChange={
+                  showDesktopWebScrollbar
+                    ? treeScrollbarMetrics.onContentSizeChange
+                    : undefined
+                }
+                scrollEventThrottle={showDesktopWebScrollbar ? 16 : undefined}
+                showsVerticalScrollIndicator={!showDesktopWebScrollbar}
                 initialNumToRender={24}
                 maxToRenderPerBatch={40}
                 windowSize={12}
+              />
+              <WebDesktopScrollbarOverlay
+                enabled={showDesktopWebScrollbar}
+                metrics={treeScrollbarMetrics}
+                onScrollToOffset={(nextOffset) => {
+                  treeListRef.current?.scrollToOffset({
+                    offset: nextOffset,
+                    animated: false,
+                  });
+                  treeScrollbarMetrics.setOffset(nextOffset);
+                }}
               />
             </Animated.View>
           ) : (
@@ -741,14 +795,40 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
                 </View>
               </View>
               <FlatList
+                ref={treeListRef}
                 style={styles.treeList}
                 data={treeRows}
                 renderItem={renderTreeRow}
                 keyExtractor={(row) => row.entry.path}
+                testID="file-explorer-tree-scroll"
                 contentContainerStyle={styles.entriesContent}
+                onLayout={
+                  showDesktopWebScrollbar ? handleTreeListLayout : undefined
+                }
+                onScroll={
+                  showDesktopWebScrollbar ? handleTreeListScroll : undefined
+                }
+                onContentSizeChange={
+                  showDesktopWebScrollbar
+                    ? treeScrollbarMetrics.onContentSizeChange
+                    : undefined
+                }
+                scrollEventThrottle={showDesktopWebScrollbar ? 16 : undefined}
+                showsVerticalScrollIndicator={!showDesktopWebScrollbar}
                 initialNumToRender={24}
                 maxToRenderPerBatch={40}
                 windowSize={12}
+              />
+              <WebDesktopScrollbarOverlay
+                enabled={showDesktopWebScrollbar}
+                metrics={treeScrollbarMetrics}
+                onScrollToOffset={(nextOffset) => {
+                  treeListRef.current?.scrollToOffset({
+                    offset: nextOffset,
+                    animated: false,
+                  });
+                  treeScrollbarMetrics.setOffset(nextOffset);
+                }}
               />
             </View>
           )}
