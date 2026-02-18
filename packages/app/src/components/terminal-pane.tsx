@@ -24,6 +24,7 @@ import {
   resolvePendingModifierDataInput,
 } from "@/utils/terminal-keys";
 import { upsertTerminalListEntry } from "@/utils/terminal-list";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   TerminalOutputPump,
   type TerminalOutputChunk,
@@ -588,13 +589,26 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   }, [activeStreamId, flushPendingTerminalInput]);
 
   const handleCloseTerminal = useCallback(
-    (terminalId: string) => {
+    async (terminalId: string) => {
       if (
         killTerminalMutation.isPending &&
         killTerminalMutation.variables === terminalId
       ) {
         return;
       }
+
+      const confirmed = await confirmDialog({
+        title: "Close terminal?",
+        message: "Any running process in this terminal will be stopped immediately.",
+        confirmLabel: "Close",
+        cancelLabel: "Cancel",
+        destructive: true,
+      });
+
+      if (!confirmed) {
+        return;
+      }
+
       killTerminalMutation.mutate(terminalId);
     },
     [killTerminalMutation]
@@ -882,7 +896,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
                   onHoverOut={() => handleTerminalCloseHoverOut(terminal.id)}
                   onPress={(event) => {
                     event.stopPropagation();
-                    handleCloseTerminal(terminal.id);
+                    void handleCloseTerminal(terminal.id);
                   }}
                   style={({ hovered, pressed }) => [
                     styles.terminalTabCloseButton,
