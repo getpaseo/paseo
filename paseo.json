@@ -8,7 +8,7 @@
     "terminals": [
       {
         "name": "dev",
-        "command": "SESSION_NAME=\"${PWD##*/}\"; if ! tmux has-session -t \"$SESSION_NAME\" 2>/dev/null; then tmux new-session -d -s \"$SESSION_NAME\" -c \"$PWD\"; tmux send-keys -t \"$SESSION_NAME\":0.0 \"npm run dev\" Enter; fi"
+        "command": "SESSION_NAME=\"${PWD##*/}\"; if ! tmux has-session -t \"$SESSION_NAME\" 2>/dev/null; then tmux new-session -d -s \"$SESSION_NAME\" -c \"$PWD\" \"npm run dev\"; fi"
       }
     ]
   }
