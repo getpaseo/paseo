@@ -1218,6 +1218,14 @@ const ServerInfoHostnameSchema = z.unknown().transform((value): string | null =>
   return trimmed.length > 0 ? trimmed : null
 })
 
+const ServerInfoVersionSchema = z.unknown().transform((value): string | null => {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+})
+
 const ServerCapabilitiesFromUnknownSchema = z
   .unknown()
   .optional()
@@ -1237,12 +1245,14 @@ export const ServerInfoStatusPayloadSchema = z
     status: z.literal('server_info'),
     serverId: z.string().trim().min(1),
     hostname: ServerInfoHostnameSchema.optional(),
+    version: ServerInfoVersionSchema.optional(),
     capabilities: ServerCapabilitiesFromUnknownSchema,
   })
   .passthrough()
   .transform((payload) => ({
     ...payload,
     hostname: payload.hostname ?? null,
+    version: payload.version ?? null,
   }))
 
 export const StatusMessageSchema = z.object({

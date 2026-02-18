@@ -233,4 +233,82 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     expect(finishAccepted).toBeDefined();
     expect(finishAccepted?.payload.timeoutMs).toBeGreaterThan(5000);
   });
+
+  it("adapts finish timeout when only uncommitted non-final transcripts are pending", async () => {
+    const session = new FakeRealtimeSession();
+    const emitted: Array<{ type: string; payload: any }> = [];
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: (msg) => emitted.push(msg),
+      sessionId: "s1",
+      stt: new FakeSttProvider(session),
+      finalTimeoutMs: 5000,
+    });
+
+    await manager.handleStart("d-uncommitted-timeout", "audio/pcm;rate=24000;bits=16");
+    await manager.handleChunk({
+      dictationId: "d-uncommitted-timeout",
+      seq: 0,
+      audioBase64: buildPcmBase64(2000, 2400),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+
+    session.emitCommitted("seg-1");
+    session.emitTranscript("seg-1", "hello", true);
+    session.emitTranscript("seg-dangling", "hel", false);
+
+    await manager.handleFinish("d-uncommitted-timeout", 0);
+
+    const finishAccepted = emitted.find(
+      (msg) => msg.type === "dictation_stream_finish_accepted"
+    );
+    expect(finishAccepted).toBeDefined();
+    expect(finishAccepted?.payload.timeoutMs).toBeGreaterThan(5000);
+  });
+
+  it("drops dangling uncommitted non-final transcripts when finishing after silence tail clear", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = new FakeRealtimeSession();
+      const emitted: Array<{ type: string; payload: any }> = [];
+      const manager = new DictationStreamManager({
+        logger: pino({ level: "silent" }),
+        emit: (msg) => emitted.push(msg),
+        sessionId: "s1",
+        stt: new FakeSttProvider(session),
+        finalTimeoutMs: 5000,
+      });
+
+      await manager.handleStart("d-clear-tail", "audio/pcm;rate=24000;bits=16");
+      await manager.handleChunk({
+        dictationId: "d-clear-tail",
+        seq: 0,
+        audioBase64: buildPcmBase64(2000, 2400),
+        format: "audio/pcm;rate=24000;bits=16",
+      });
+
+      session.emitCommitted("seg-1");
+      session.emitTranscript("seg-1", "hello", true);
+
+      await manager.handleChunk({
+        dictationId: "d-clear-tail",
+        seq: 1,
+        audioBase64: buildPcmBase64(0, 2400),
+        format: "audio/pcm;rate=24000;bits=16",
+      });
+      session.emitTranscript("seg-dangling", "", false);
+
+      await manager.handleFinish("d-clear-tail", 1);
+      await tick();
+      await vi.advanceTimersByTimeAsync(5_100);
+
+      const final = emitted.find((msg) => msg.type === "dictation_stream_final");
+      const error = emitted.find((msg) => msg.type === "dictation_stream_error");
+      expect(session.clearCalls).toBeGreaterThan(0);
+      expect(error).toBeUndefined();
+      expect(final?.payload.text).toBe("hello");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

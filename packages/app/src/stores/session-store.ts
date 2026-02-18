@@ -156,6 +156,7 @@ export interface DaemonConnectionSnapshot {
 export type DaemonServerInfo = {
   serverId: string;
   hostname: string | null;
+  version: string | null;
   capabilities?: ServerCapabilities;
 };
 
@@ -455,12 +456,15 @@ export const useSessionStore = create<SessionStore>()(
 
         const nextHostname = info.hostname?.trim() || null;
         const prevHostname = session.serverInfo?.hostname?.trim() || null;
+        const nextVersion = info.version?.trim() || null;
+        const prevVersion = session.serverInfo?.version?.trim() || null;
         const nextCapabilities = info.capabilities;
         const prevCapabilities = session.serverInfo?.capabilities;
 
         if (
           session.serverInfo?.serverId === info.serverId &&
           prevHostname === nextHostname &&
+          prevVersion === nextVersion &&
           areServerCapabilitiesEqual(prevCapabilities, nextCapabilities)
         ) {
           return prev;
@@ -469,6 +473,7 @@ export const useSessionStore = create<SessionStore>()(
         logSessionStoreUpdate("updateSessionServerInfo", serverId, {
           serverId: info.serverId,
           hostname: nextHostname,
+          version: nextVersion,
         });
 
         return {
@@ -480,6 +485,7 @@ export const useSessionStore = create<SessionStore>()(
               serverInfo: {
                 serverId: info.serverId,
                 hostname: nextHostname,
+                version: nextVersion,
                 ...(nextCapabilities ? { capabilities: nextCapabilities } : {}),
               },
             },

@@ -75,7 +75,13 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     {} as any,
     "/tmp/paseo-test",
     async () => ({} as any),
-    { allowedOrigins: new Set() }
+    { allowedOrigins: new Set() },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    "1.2.3-test"
   );
 
   return { server, agentManager };

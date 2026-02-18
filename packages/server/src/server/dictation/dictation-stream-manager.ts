@@ -552,8 +552,19 @@ export class DictationStreamManager {
     const pendingCommittedSegments = state.committedSegmentIds.reduce((count, segmentId) => {
       return state.finalTranscriptSegmentIds.has(segmentId) ? count : count + 1;
     }, 0);
+    const committedSet = new Set(state.committedSegmentIds);
+    const pendingUncommittedTranscriptSegments = Array.from(
+      state.transcriptsBySegmentId.keys()
+    ).reduce((count, segmentId) => {
+      if (committedSet.has(segmentId)) {
+        return count;
+      }
+      return state.finalTranscriptSegmentIds.has(segmentId) ? count : count + 1;
+    }, 0);
     const pendingSegments =
-      pendingCommittedSegments + (state.awaitingFinalCommit ? 1 : 0);
+      pendingCommittedSegments +
+      pendingUncommittedTranscriptSegments +
+      (state.awaitingFinalCommit ? 1 : 0);
     const pendingAudioSeconds = Math.ceil(
       Math.max(0, state.bytesSinceCommit) / bytesPerSecond
     );
@@ -629,6 +640,16 @@ export class DictationStreamManager {
         state.bytesSinceCommit = 0;
         state.peakSinceCommit = 0;
         state.awaitingFinalCommit = false;
+        const droppedSegments = this.dropUncommittedNonFinalTranscripts(state);
+        if (droppedSegments > 0) {
+          this.logger.debug(
+            {
+              dictationId,
+              droppedSegments,
+            },
+            "Dictation finish: dropped uncommitted non-final transcript segments after silence clear"
+          );
+        }
       } else {
         state.awaitingFinalCommit = true;
         try {
@@ -644,6 +665,22 @@ export class DictationStreamManager {
     }
 
     state.finishSealed = true;
+  }
+
+  private dropUncommittedNonFinalTranscripts(state: DictationStreamState): number {
+    const committedSet = new Set(state.committedSegmentIds);
+    let droppedCount = 0;
+    for (const segmentId of state.transcriptsBySegmentId.keys()) {
+      if (committedSet.has(segmentId)) {
+        continue;
+      }
+      if (state.finalTranscriptSegmentIds.has(segmentId)) {
+        continue;
+      }
+      state.transcriptsBySegmentId.delete(segmentId);
+      droppedCount += 1;
+    }
+    return droppedCount;
   }
 
   private maybeFinalizeDictationStream(dictationId: string): void {

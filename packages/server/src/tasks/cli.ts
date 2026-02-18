@@ -8,10 +8,15 @@ import {
   computeExecutionOrder,
   buildSortedChildrenMap,
 } from "./execution-order.js";
+import { resolvePackageVersion } from "../server/package-version.js";
 import type { AgentType, ModelName, Task } from "./types.js";
 
 const TASKS_DIR = resolve(process.cwd(), ".tasks");
 const store = new FileTaskStore(TASKS_DIR);
+const TASK_CLI_VERSION = resolvePackageVersion({
+  moduleUrl: import.meta.url,
+  packageName: "@getpaseo/server",
+});
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -24,7 +29,7 @@ async function readStdin(): Promise<string> {
 const program = new Command()
   .name("task")
   .description("Minimal task management with dependency tracking")
-  .version("0.1.0")
+  .version(TASK_CLI_VERSION)
   .addHelpText(
     "after",
     `

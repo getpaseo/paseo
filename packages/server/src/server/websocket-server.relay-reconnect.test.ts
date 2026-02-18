@@ -79,6 +79,8 @@ import {
 import { parseServerInfoStatusPayload } from "./messages.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 
+const TEST_DAEMON_VERSION = "1.2.3-test";
+
 class MockSocket {
   readyState = 1;
   sent: unknown[] = [];
@@ -157,7 +159,9 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
       ? {
           getSpeechReadiness: () => speechReadiness,
         }
-      : undefined
+      : undefined,
+    undefined,
+    TEST_DAEMON_VERSION
   );
 }
 
@@ -318,6 +322,7 @@ describe("relay external socket reconnect behavior", () => {
 
     const payload = parseServerInfoStatusPayload(envelope.message?.payload);
     expect(payload?.status).toBe("server_info");
+    expect(payload?.version).toBe(TEST_DAEMON_VERSION);
     expect(payload?.capabilities?.voice?.dictation.enabled).toBe(
       speechReadiness.dictation.enabled
     );

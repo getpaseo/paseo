@@ -11,6 +11,7 @@ function buildServerInfo(capabilities?: ServerCapabilities): DaemonServerInfo {
   return {
     serverId: "srv-1",
     hostname: "test-host",
+    version: "0.1.0",
     ...(capabilities ? { capabilities } : {}),
   };
 }

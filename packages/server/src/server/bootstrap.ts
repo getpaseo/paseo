@@ -58,6 +58,7 @@ import {
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
 import { getOrCreateServerId } from "./server-id.js";
+import { resolveDaemonVersion } from "./daemon-version.js";
 import type {
   AgentClient,
   AgentProvider,
@@ -136,6 +137,7 @@ export async function createPaseoDaemon(
   rootLogger: Logger
 ): Promise<PaseoDaemon> {
   const logger = rootLogger.child({ module: "bootstrap" });
+  const daemonVersion = resolveDaemonVersion(import.meta.url);
 
   // Acquire PID lock before expensive bootstrap work so duplicate starts fail immediately.
   await acquirePidLock(config.paseoHome, config.listen);
@@ -496,7 +498,8 @@ export async function createPaseoDaemon(
       localModels: localModelConfig ?? undefined,
       getSpeechReadiness,
     },
-    config.agentProviderSettings
+    config.agentProviderSettings,
+    daemonVersion
   );
   unsubscribeSpeechReadiness = subscribeSpeechReadiness((snapshot) => {
     wsServer?.publishSpeechReadiness(snapshot);

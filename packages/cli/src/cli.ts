@@ -22,8 +22,20 @@ import { withOutput } from './output/index.js'
 import { onboardCommand } from './commands/onboard.js'
 
 const require = createRequire(import.meta.url)
-const packageJson = require('../package.json') as { version?: string }
-const VERSION = typeof packageJson.version === 'string' ? packageJson.version : '0.0.0'
+
+type CliPackageJson = {
+  version?: unknown
+}
+
+function resolveCliVersion(): string {
+  const packageJson = require('../package.json') as CliPackageJson
+  if (typeof packageJson.version === 'string' && packageJson.version.trim().length > 0) {
+    return packageJson.version.trim()
+  }
+  throw new Error('Unable to resolve @getpaseo/cli version from package.json.')
+}
+
+const VERSION = resolveCliVersion()
 
 // Helper function to collect multiple option values into an array
 function collectMultiple(value: string, previous: string[]): string[] {

@@ -996,6 +996,7 @@ export function SessionProvider({
         updateSessionServerInfo(serverId, {
           serverId: serverInfo.serverId,
           hostname: serverInfo.hostname,
+          version: serverInfo.version,
           ...(serverInfo.capabilities
             ? { capabilities: serverInfo.capabilities }
             : {}),

@@ -185,6 +185,17 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
+  versionPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface3,
+    maxWidth: 200,
+  },
   hostSettingsButton: {
     width: 28,
     height: 28,
@@ -407,6 +418,41 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
+function resolveAppVersion(): string | null {
+  const expoVersion = Constants.expoConfig?.version;
+  if (typeof expoVersion === "string" && expoVersion.trim().length > 0) {
+    return expoVersion.trim();
+  }
+
+  const manifestVersion = (Constants as any).manifest?.version;
+  if (typeof manifestVersion === "string" && manifestVersion.trim().length > 0) {
+    return manifestVersion.trim();
+  }
+
+  return null;
+}
+
+function formatVersionBadgeText(params: { daemonVersion: string | null; appVersion: string | null }): string {
+  const appVersion = params.appVersion?.trim();
+  if (!appVersion) {
+    if (Platform.OS === "web") {
+      return "App version unavailable";
+    }
+    return "App unavailable";
+  }
+
+  const daemonVersion = params.daemonVersion?.trim();
+  if (!daemonVersion) {
+    if (Platform.OS === "web") {
+      return `Daemon unavailable | App ${appVersion}`;
+    }
+    return `D unavailable | A ${appVersion}`;
+  }
+  if (Platform.OS === "web") {
+    return `Daemon ${daemonVersion} | App ${appVersion}`;
+  }
+  return `D ${daemonVersion} | A ${appVersion}`;
+}
 
 export default function SettingsScreen() {
   const { theme } = useUnistyles();
@@ -442,7 +488,7 @@ export default function SettingsScreen() {
   const showDesktopPermissionSection = shouldShowDesktopPermissionSection();
   const isMountedRef = useRef(true);
   const lastHandledEditHostRef = useRef<string | null>(null);
-  const appVersion = Constants.expoConfig?.version ?? (Constants as any).manifest?.version ?? "0.1.0";
+  const appVersion = resolveAppVersion();
   const editingServerId = editingDaemon?.serverId ?? null;
   const editingDaemonLive = editingServerId
     ? daemons.find((daemon) => daemon.serverId === editingServerId) ?? null
@@ -695,6 +741,7 @@ export default function SettingsScreen() {
                   <DaemonCard
                     key={daemon.serverId}
                     daemon={daemon}
+                    appVersion={appVersion}
                     connectionStatus={connectionStatus}
                     activeConnection={activeConnection}
                     lastError={lastConnectionError}
@@ -829,6 +876,7 @@ export default function SettingsScreen() {
           <HostDetailModal
             visible={Boolean(editingDaemonLive)}
             host={editingDaemonLive}
+            appVersion={appVersion}
             connectionStatus={editingServerId ? (connectionStates.get(editingServerId)?.status ?? "idle") : "idle"}
             activeConnection={editingServerId ? (connectionStates.get(editingServerId)?.activeConnection ?? null) : null}
             lastError={editingServerId ? (connectionStates.get(editingServerId)?.lastError ?? null) : null}
@@ -934,7 +982,7 @@ export default function SettingsScreen() {
                 <View style={styles.audioRowContent}>
                   <Text style={styles.audioRowTitle}>Version</Text>
                 </View>
-                <Text style={styles.aboutValue}>{appVersion}</Text>
+                <Text style={styles.aboutValue}>{appVersion ?? "Unavailable"}</Text>
               </View>
             </View>
           </View>
@@ -947,6 +995,7 @@ export default function SettingsScreen() {
 interface HostDetailModalProps {
   visible: boolean;
   host: HostProfile | null;
+  appVersion: string | null;
   connectionStatus: ConnectionStatus;
   activeConnection: ActiveConnection | null;
   lastError: string | null;
@@ -964,6 +1013,7 @@ interface HostDetailModalProps {
 function HostDetailModal({
   visible,
   host,
+  appVersion,
   connectionStatus,
   activeConnection,
   lastError,
@@ -1002,6 +1052,7 @@ function HostDetailModal({
   // Restart logic (moved from DaemonCard)
   const daemonClient = useSessionStore((state) => host ? (state.sessions[host.serverId]?.client ?? null) : null);
   const daemonConnection = useSessionStore((state) => host ? (state.sessions[host.serverId]?.connection ?? null) : null);
+  const daemonVersion = useSessionStore((state) => host ? (state.sessions[host.serverId]?.serverInfo?.version ?? null) : null);
   const isConnected = daemonConnection?.isConnected ?? false;
   const isConnectedRef = useRef(isConnected);
   const [isRestarting, setIsRestarting] = useState(false);
@@ -1113,6 +1164,7 @@ function HostDetailModal({
       text: activeConnection.display,
     };
   })();
+  const versionBadgeText = formatVersionBadgeText({ daemonVersion, appVersion });
   const connectionError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
 
   const handleDraftLabelChange = useCallback((nextValue: string) => {
@@ -1154,6 +1206,11 @@ function HostDetailModal({
               </Text>
             </View>
           ) : null}
+          <View style={styles.versionPill}>
+            <Text style={styles.connectionText} numberOfLines={1}>
+              {versionBadgeText}
+            </Text>
+          </View>
         </View>
         {connectionError ? (
           <Text style={{ color: theme.colors.palette.red[300], fontSize: theme.fontSize.xs }}>
@@ -1429,6 +1486,7 @@ function ConnectionRow({
 
 interface DaemonCardProps {
   daemon: HostProfile;
+  appVersion: string | null;
   connectionStatus: ConnectionStatus;
   activeConnection: ActiveConnection | null;
   lastError: string | null;
@@ -1437,12 +1495,19 @@ interface DaemonCardProps {
 
 function DaemonCard({
   daemon,
+  appVersion,
   connectionStatus,
   activeConnection,
   lastError,
   onOpenSettings,
 }: DaemonCardProps) {
   const { theme } = useUnistyles();
+  const daemonVersion = useSessionStore(
+    useCallback(
+      (state) => state.sessions[daemon.serverId]?.serverInfo?.version ?? null,
+      [daemon.serverId]
+    )
+  );
   const statusLabel = formatConnectionStatus(connectionStatus);
   const statusTone = getConnectionStatusTone(connectionStatus);
   const statusColor =
@@ -1473,6 +1538,7 @@ function DaemonCard({
       text: activeConnection.display,
     };
   })();
+  const versionBadgeText = formatVersionBadgeText({ daemonVersion, appVersion });
 
   return (
     <View
@@ -1500,6 +1566,11 @@ function DaemonCard({
                 ) : null}
               </View>
             ) : null}
+            <View style={styles.versionPill}>
+              <Text style={styles.connectionText} numberOfLines={1}>
+                {versionBadgeText}
+              </Text>
+            </View>
 
             <Pressable
               style={({ pressed, hovered }) => [

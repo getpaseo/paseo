@@ -158,6 +158,13 @@ type SessionConnection = {
 
 const EXTERNAL_SESSION_DISCONNECT_GRACE_MS = 90_000;
 
+export class MissingDaemonVersionError extends Error {
+  constructor() {
+    super("VoiceAssistantWebSocketServer requires a non-empty daemonVersion.");
+    this.name = "MissingDaemonVersionError";
+  }
+}
+
 /**
  * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
  */
@@ -168,6 +175,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly externalSessionsByKey: Map<string, SessionConnection> = new Map();
   private clientIdCounter = 0;
   private readonly serverId: string;
+  private readonly daemonVersion: string;
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly downloadTokenStore: DownloadTokenStore;
@@ -229,10 +237,15 @@ export class VoiceAssistantWebSocketServer {
       };
       getSpeechReadiness?: () => SpeechReadinessSnapshot;
     },
-    agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap
+    agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap,
+    daemonVersion?: string
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
+    if (typeof daemonVersion !== "string" || daemonVersion.trim().length === 0) {
+      throw new MissingDaemonVersionError();
+    }
+    this.daemonVersion = daemonVersion.trim();
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.downloadTokenStore = downloadTokenStore;
@@ -509,6 +522,7 @@ export class VoiceAssistantWebSocketServer {
       status: "server_info",
       serverId: this.serverId,
       hostname: getHostname(),
+      version: this.daemonVersion,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
     };
   }
