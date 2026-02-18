@@ -19,8 +19,12 @@ import type {
   SessionOutboundMessage,
 } from "@server/shared/messages";
 import { parseServerInfoStatusPayload } from "@server/shared/messages";
+import {
+  buildAgentAttentionNotificationPayload,
+  type AgentAttentionNotificationPayload,
+  type NotificationPermissionRequest,
+} from "@server/shared/agent-attention-notification";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
-import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
 import type { DaemonClient, ConnectionState } from "@server/client/daemon-client";
 import { File } from "expo-file-system";
 import { useDaemonConnections } from "./daemon-connections-context";
@@ -52,7 +56,7 @@ export type {
 
 const derivePendingPermissionKey = (
   agentId: string,
-  request: AgentPermissionRequest
+  request: NotificationPermissionRequest
 ) => {
   const fallbackId =
     request.id ||
@@ -68,40 +72,7 @@ const derivePendingPermissionKey = (
   return `${agentId}:${fallbackId}`;
 };
 
-const NOTIFICATION_PREVIEW_LIMIT = 220;
 const HISTORY_STALE_AFTER_MS = 60_000;
-
-const normalizeNotificationText = (text: string): string =>
-  text.replace(/\s+/g, " ").trim();
-
-const truncateNotificationText = (text: string, limit: number): string => {
-  if (text.length <= limit) {
-    return text;
-  }
-  const trimmed = text.slice(0, Math.max(0, limit - 3)).trimEnd();
-  return trimmed.length > 0 ? `${trimmed}...` : text.slice(0, limit);
-};
-
-const buildNotificationPreview = (
-  text: string | null | undefined
-): string | null => {
-  if (!text) {
-    return null;
-  }
-  const normalized = normalizeNotificationText(text);
-  if (!normalized) {
-    return null;
-  }
-  return truncateNotificationText(normalized, NOTIFICATION_PREVIEW_LIMIT);
-};
-
-const safeStringify = (value: unknown): string | null => {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return null;
-  }
-};
 
 const findLatestAssistantMessageText = (items: StreamItem[]): string | null => {
   for (let i = items.length - 1; i >= 0; i -= 1) {
@@ -125,12 +96,12 @@ const mapConnectionState = (
 const getLatestPermissionRequest = (
   session: SessionState | undefined,
   agentId: string
-): AgentPermissionRequest | null => {
+): NotificationPermissionRequest | null => {
   if (!session) {
     return null;
   }
 
-  let latest: AgentPermissionRequest | null = null;
+  let latest: NotificationPermissionRequest | null = null;
   for (const pending of session.pendingPermissions.values()) {
     if (pending.agentId === agentId) {
       latest = pending.request;
@@ -142,44 +113,10 @@ const getLatestPermissionRequest = (
 
   const agentPending = session.agents.get(agentId)?.pendingPermissions;
   if (agentPending && agentPending.length > 0) {
-    return agentPending[agentPending.length - 1] as AgentPermissionRequest;
+    return agentPending[agentPending.length - 1] as NotificationPermissionRequest;
   }
 
   return null;
-};
-
-const buildPermissionDetails = (
-  request: AgentPermissionRequest | null
-): string | null => {
-  if (!request) {
-    return null;
-  }
-  const title = request.title?.trim();
-  const description = request.description?.trim();
-  const details: string[] = [];
-  if (title) {
-    details.push(title);
-  }
-  if (description && description !== title) {
-    details.push(description);
-  }
-  if (details.length > 0) {
-    return details.join(" - ");
-  }
-
-  const inputPreview = request.input ? safeStringify(request.input) : null;
-  if (inputPreview) {
-    return inputPreview;
-  }
-
-  const metadataPreview = request.metadata
-    ? safeStringify(request.metadata)
-    : null;
-  if (metadataPreview) {
-    return metadataPreview;
-  }
-
-  return request.name?.trim() || request.kind;
 };
 
 type FileExplorerPayload = Extract<
@@ -403,6 +340,7 @@ export function SessionProvider({
       agentId: string;
       reason: "finished" | "error" | "permission";
       timestamp: string;
+      notification?: AgentAttentionNotificationPayload;
     }) => {
       const appState = appStateRef.current;
       const session = useSessionStore.getState().sessions[serverId];
@@ -423,43 +361,33 @@ export function SessionProvider({
       }
       attentionNotifiedRef.current.set(params.agentId, timestampMs);
 
-      const title =
-        params.reason === "permission"
-          ? "Agent needs permission"
-          : "Agent finished";
-      let preview: string | null = null;
+      const head = session?.agentStreamHead.get(params.agentId) ?? [];
+      const tail = session?.agentStreamTail.get(params.agentId) ?? [];
+      const assistantMessage =
+        findLatestAssistantMessageText(head) ??
+        findLatestAssistantMessageText(tail);
+      const permissionRequest = getLatestPermissionRequest(
+        session,
+        params.agentId
+      );
 
-      if (params.reason === "finished") {
-        const head = session?.agentStreamHead.get(params.agentId) ?? [];
-        const tail = session?.agentStreamTail.get(params.agentId) ?? [];
-        const lastMessage =
-          findLatestAssistantMessageText(head) ??
-          findLatestAssistantMessageText(tail);
-        preview = buildNotificationPreview(lastMessage);
-      } else if (params.reason === "permission") {
-        const permissionRequest = getLatestPermissionRequest(
-          session,
-          params.agentId
-        );
-        preview = buildNotificationPreview(
-          buildPermissionDetails(permissionRequest)
-        );
-      }
-
-      const body =
-        preview ??
-        (params.reason === "permission"
-          ? "Permission requested."
-          : "Finished working.");
+      const notification =
+        params.notification ??
+        buildAgentAttentionNotificationPayload({
+          reason: params.reason,
+          serverId,
+          agentId: params.agentId,
+          assistantMessage: params.reason === "finished" ? assistantMessage : null,
+          permissionRequest:
+            params.reason === "permission"
+              ? permissionRequest
+              : null,
+        });
 
       void sendOsNotification({
-        title,
-        body,
-        data: {
-          agentId: params.agentId,
-          serverId,
-          reason: params.reason,
-        },
+        title: notification.title,
+        body: notification.body,
+        data: notification.data,
       });
     },
     [serverId]
@@ -879,7 +807,7 @@ export function SessionProvider({
         const nextAgents = new Map<string, Agent>();
         const nextPendingPermissions = new Map<
           string,
-          { key: string; agentId: string; request: AgentPermissionRequest }
+          { key: string; agentId: string; request: NotificationPermissionRequest }
         >();
         const nextStatuses = new Map<string, AgentLifecycleStatus>();
 
@@ -971,6 +899,7 @@ export function SessionProvider({
             agentId,
             reason: event.reason,
             timestamp: event.timestamp,
+            notification: event.notification,
           });
         }
       }

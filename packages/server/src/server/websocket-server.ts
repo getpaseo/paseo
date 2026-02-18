@@ -42,6 +42,11 @@ import {
   computeShouldSendPush,
   type ClientAttentionState,
 } from "./agent-attention-policy.js";
+import {
+  buildAgentAttentionNotificationPayload,
+  findLatestAssistantMessageFromTimeline,
+  findLatestPermissionRequest,
+} from "../shared/agent-attention-notification.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 export type ExternalSocketMetadata = {
@@ -819,6 +824,18 @@ export class VoiceAssistantWebSocketServer {
     }
 
     const allStates = clientEntries.map((e) => e.state);
+    const agent = this.agentManager.getAgent(params.agentId);
+    const notification = buildAgentAttentionNotificationPayload({
+      reason: params.reason,
+      serverId: this.serverId,
+      agentId: params.agentId,
+      assistantMessage: agent
+        ? findLatestAssistantMessageFromTimeline(agent.timeline)
+        : null,
+      permissionRequest: agent
+        ? findLatestPermissionRequest(agent.pendingPermissions)
+        : null,
+    });
 
     // Push is only a fallback when the user is away from desktop/web.
     // Also suppress push if they're actively using the mobile app.
@@ -831,24 +848,7 @@ export class VoiceAssistantWebSocketServer {
       const tokens = this.pushTokenStore.getAllTokens();
       this.logger.info({ tokenCount: tokens.length }, "Sending push notification");
       if (tokens.length > 0) {
-        const agent = this.agentManager.getAgent(params.agentId);
-        const agentTitle = agent?.config?.title ?? agent?.cwd ?? params.agentId;
-        const title =
-          params.reason === "permission" ? "Agent needs permission" : "Agent finished";
-        const body =
-          params.reason === "permission"
-            ? `Permission requested: ${agentTitle}`
-            : `Finished: ${agentTitle}`;
-
-        void this.pushService.sendPush(tokens, {
-          title,
-          body,
-          data: {
-            serverId: this.serverId,
-            agentId: params.agentId,
-            reason: params.reason,
-          },
-        });
+        void this.pushService.sendPush(tokens, notification);
       }
     }
 
@@ -869,6 +869,7 @@ export class VoiceAssistantWebSocketServer {
             reason: params.reason,
             timestamp: new Date().toISOString(),
             shouldNotify,
+            notification,
           },
           timestamp: new Date().toISOString(),
         },

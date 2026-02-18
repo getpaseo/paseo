@@ -332,6 +332,17 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
       reason: z.enum(["finished", "error", "permission"]),
       timestamp: z.string(),
       shouldNotify: z.boolean(),
+      notification: z
+        .object({
+          title: z.string(),
+          body: z.string(),
+          data: z.object({
+            serverId: z.string(),
+            agentId: z.string(),
+            reason: z.enum(["finished", "error", "permission"]),
+          }),
+        })
+        .optional(),
     }),
 ]);
 
