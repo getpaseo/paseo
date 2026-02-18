@@ -26,6 +26,18 @@ describe("resolveNewAgentWorkingDir", () => {
     expect(resolveNewAgentWorkingDir("/repo/path", null)).toBe("/repo/path");
   });
 
+  it("falls back to repo root when checkout metadata is unavailable", () => {
+    expect(resolveNewAgentWorkingDir("/repo/.paseo/worktrees/feature", null)).toBe(
+      "/repo"
+    );
+  });
+
+  it("supports windows-style paseo worktree paths without checkout metadata", () => {
+    expect(
+      resolveNewAgentWorkingDir("C:\\Users\\me\\repo\\.paseo\\worktrees\\feature", null)
+    ).toBe("C:\\Users\\me\\repo");
+  });
+
   it("returns the main repo root for paseo-owned worktrees", () => {
     const checkout = {
       isPaseoOwnedWorktree: true,

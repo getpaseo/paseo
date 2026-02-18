@@ -32,11 +32,34 @@ export function resolveSelectedAgentForNewAgent(input: {
   );
 }
 
+function inferMainRepoRootFromPaseoWorktreePath(cwd: string): string | null {
+  const normalizedPath = cwd.replace(/\\/g, "/");
+  const marker = "/.paseo/worktrees";
+  const markerIndex = normalizedPath.indexOf(marker);
+  if (markerIndex <= 0) {
+    return null;
+  }
+  const markerEnd = markerIndex + marker.length;
+  const nextChar = normalizedPath[markerEnd];
+  if (nextChar && nextChar !== "/") {
+    return null;
+  }
+  const inferred = cwd.slice(0, markerIndex).replace(/[\\/]+$/, "");
+  return inferred.trim() ? inferred : null;
+}
+
 export function resolveNewAgentWorkingDir(
   cwd: string,
   checkout: CheckoutStatusPayload | null
 ): string {
-  return (checkout?.isPaseoOwnedWorktree ? checkout.mainRepoRoot : null) ?? cwd;
+  const explicitMainRepoRoot = checkout?.isPaseoOwnedWorktree
+    ? checkout.mainRepoRoot?.trim() || null
+    : null;
+  if (explicitMainRepoRoot) {
+    return explicitMainRepoRoot;
+  }
+
+  return inferMainRepoRootFromPaseoWorktreePath(cwd) ?? cwd;
 }
 
 export function buildNewAgentRoute(
