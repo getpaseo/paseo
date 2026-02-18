@@ -1524,7 +1524,7 @@ export class Session {
         }
 
         case "list_commands_request":
-          await this.handleListCommandsRequest(msg.agentId, msg.requestId);
+          await this.handleListCommandsRequest(msg);
           break;
 
         case "execute_command_request":
@@ -3473,9 +3473,12 @@ export class Session {
   /**
    * Handle list commands request for an agent
    */
-  private async handleListCommandsRequest(agentId: string, requestId: string): Promise<void> {
+  private async handleListCommandsRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_commands_request" }>
+  ): Promise<void> {
+    const { agentId, requestId, draftConfig } = msg;
     this.sessionLogger.debug(
-      { agentId },
+      { agentId, draftConfig },
       `Handling list commands request for agent ${agentId}`
     );
 
@@ -3483,47 +3486,59 @@ export class Session {
       const agents = this.agentManager.listAgents();
       const agent = agents.find((a) => a.id === agentId);
 
-      if (!agent) {
+      if (agent?.session?.listCommands) {
+        const commands = await agent.session.listCommands();
         this.emit({
           type: "list_commands_response",
           payload: {
             agentId,
-            commands: [],
-            error: `Agent not found: ${agentId}`,
+            commands,
+            error: null,
             requestId,
           },
         });
         return;
       }
 
-      const session = agent.session;
-      if (!session || !session.listCommands) {
+      if (!agent && draftConfig) {
+        const sessionConfig: AgentSessionConfig = {
+          provider: draftConfig.provider,
+          cwd: expandTilde(draftConfig.cwd),
+          ...(draftConfig.modeId ? { modeId: draftConfig.modeId } : {}),
+          ...(draftConfig.model ? { model: draftConfig.model } : {}),
+          ...(draftConfig.thinkingOptionId
+            ? { thinkingOptionId: draftConfig.thinkingOptionId }
+            : {}),
+        };
+
+        const commands = await this.agentManager.listDraftCommands(sessionConfig);
         this.emit({
           type: "list_commands_response",
           payload: {
             agentId,
-            commands: [],
-            error: `Agent does not support listing commands`,
+            commands,
+            error: null,
             requestId,
           },
         });
         return;
       }
-
-      const commands = await session.listCommands();
 
       this.emit({
         type: "list_commands_response",
         payload: {
           agentId,
-          commands,
-          error: null,
+          commands: [],
+          error: agent
+            ? `Agent does not support listing commands`
+            : `Agent not found: ${agentId}`,
           requestId,
         },
       });
+
     } catch (error: any) {
       this.sessionLogger.error(
-        { err: error, agentId },
+        { err: error, agentId, draftConfig },
         "Failed to list commands"
       );
       this.emit({

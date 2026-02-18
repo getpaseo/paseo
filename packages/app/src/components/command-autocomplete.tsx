@@ -1,6 +1,9 @@
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { useAgentCommandsQuery } from "@/hooks/use-agent-commands-query";
+import {
+  useAgentCommandsQuery,
+  type DraftCommandConfig,
+} from "@/hooks/use-agent-commands-query";
 import { Fonts } from "@/constants/theme";
 import { Theme } from "@/styles/theme";
 
@@ -16,6 +19,7 @@ interface CommandAutocompleteProps {
   filter: string;
   selectedIndex: number;
   onSelect: (command: AgentSlashCommand) => void;
+  draftConfig?: DraftCommandConfig;
 }
 
 export function CommandAutocomplete({
@@ -24,12 +28,14 @@ export function CommandAutocomplete({
   filter,
   selectedIndex,
   onSelect,
+  draftConfig,
 }: CommandAutocompleteProps) {
   const { theme } = useUnistyles();
   const { commands, isLoading, isError, error } = useAgentCommandsQuery({
     serverId,
     agentId,
     enabled: true,
+    draftConfig,
   });
 
   // Filter commands based on input after /

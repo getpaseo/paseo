@@ -11,6 +11,7 @@ import { z } from "zod";
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentSlashCommand,
   AgentMode,
   AgentPermissionRequest,
   AgentPermissionResponse,
@@ -435,6 +436,36 @@ export class AgentManager {
     });
 
     return Promise.all(checks);
+  }
+
+  async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
+    const normalizedConfig = await this.normalizeConfig(config);
+    const client = this.requireClient(normalizedConfig.provider);
+    const available = await client.isAvailable();
+    if (!available) {
+      throw new Error(
+        `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`
+      );
+    }
+
+    const session = await client.createSession(normalizedConfig);
+    try {
+      if (!session.listCommands) {
+        throw new Error(
+          `Provider '${normalizedConfig.provider}' does not support listing commands`
+        );
+      }
+      return await session.listCommands();
+    } finally {
+      try {
+        await session.close();
+      } catch (error) {
+        this.logger.warn(
+          { err: error, provider: normalizedConfig.provider },
+          "Failed to close draft command listing session"
+        );
+      }
+    }
   }
 
   getAgent(id: string): ManagedAgent | null {

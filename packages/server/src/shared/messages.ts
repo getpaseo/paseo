@@ -926,9 +926,18 @@ export const PingMessageSchema = z.object({
   clientSentAt: z.number().int().optional(),
 });
 
+const ListCommandsDraftConfigSchema = z.object({
+  provider: AgentProviderSchema,
+  cwd: z.string(),
+  modeId: z.string().optional(),
+  model: z.string().optional(),
+  thinkingOptionId: z.string().optional(),
+});
+
 export const ListCommandsRequestSchema = z.object({
   type: z.literal("list_commands_request"),
   agentId: z.string(),
+  draftConfig: ListCommandsDraftConfigSchema.optional(),
   requestId: z.string(),
 });
 
