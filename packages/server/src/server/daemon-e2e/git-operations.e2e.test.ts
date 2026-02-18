@@ -105,6 +105,21 @@ async function waitForPathExists(
   );
 }
 
+async function waitForPathRemoved(
+  options: { targetPath: string; timeoutMs: number; label: string }
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < options.timeoutMs) {
+    if (!existsSync(options.targetPath)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `Timed out after ${options.timeoutMs}ms waiting for removal of ${options.label}: ${options.targetPath}`
+  );
+}
+
 async function withShell<T>(shell: string, run: () => Promise<T>): Promise<T> {
   const originalShell = process.env.SHELL;
   process.env.SHELL = shell;
@@ -825,6 +840,122 @@ describe("daemon E2E", () => {
 
         const afterArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
         expect(afterArchiveDirectories).not.toContain(agent.cwd);
+
+        rmSync(repoRoot, { recursive: true, force: true });
+      },
+      60000
+    );
+
+    test(
+      "archives the worktree when the last agent in it is archived",
+      async () => {
+        const repoRoot = tmpCwd();
+
+        const { execSync } = await import("child_process");
+        execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git config user.email 'test@test.com'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+        execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+
+        writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
+        execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'initial'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+        execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
+
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          model: CODEX_TEST_MODEL,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+          cwd: repoRoot,
+          title: "Archive Last Agent Cleanup Test",
+          git: {
+            createWorktree: true,
+            createNewBranch: true,
+            baseBranch: "main",
+            newBranchName: "archive-last-agent",
+            worktreeSlug: "archive-last-agent",
+          },
+        });
+
+        expect(existsSync(agent.cwd)).toBe(true);
+
+        const result = await ctx.client.archiveAgent(agent.id);
+        expect(result.archivedAt).toBeTruthy();
+
+        await waitForPathRemoved({
+          targetPath: agent.cwd,
+          timeoutMs: 10000,
+          label: "archived worktree",
+        });
+
+        rmSync(repoRoot, { recursive: true, force: true });
+      },
+      60000
+    );
+
+    test(
+      "does not archive the worktree until all agents in it are archived",
+      async () => {
+        const repoRoot = tmpCwd();
+
+        const { execSync } = await import("child_process");
+        execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git config user.email 'test@test.com'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+        execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+
+        writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
+        execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'initial'", {
+          cwd: repoRoot,
+          stdio: "pipe",
+        });
+        execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
+
+        const firstAgent = await ctx.client.createAgent({
+          provider: "codex",
+          model: CODEX_TEST_MODEL,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+          cwd: repoRoot,
+          title: "Archive Multi-Agent Test 1",
+          git: {
+            createWorktree: true,
+            createNewBranch: true,
+            baseBranch: "main",
+            newBranchName: "archive-multi-agent",
+            worktreeSlug: "archive-multi-agent",
+          },
+        });
+
+        const secondAgent = await ctx.client.createAgent({
+          provider: "codex",
+          model: CODEX_TEST_MODEL,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+          cwd: firstAgent.cwd,
+          title: "Archive Multi-Agent Test 2",
+        });
+
+        expect(existsSync(firstAgent.cwd)).toBe(true);
+
+        await ctx.client.archiveAgent(firstAgent.id);
+
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(existsSync(firstAgent.cwd)).toBe(true);
+
+        await ctx.client.archiveAgent(secondAgent.id);
+
+        await waitForPathRemoved({
+          targetPath: firstAgent.cwd,
+          timeoutMs: 10000,
+          label: "worktree after final agent archive",
+        });
 
         rmSync(repoRoot, { recursive: true, force: true });
       },

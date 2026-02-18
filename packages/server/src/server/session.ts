@@ -1767,14 +1767,16 @@ export class Session {
     );
 
     const archivedAt = new Date().toISOString();
+    let archivedRecord: StoredAgentRecord | null = null;
 
     try {
       const existing = await this.agentStorage.get(agentId);
       if (existing) {
-        await this.agentStorage.upsert({
+        archivedRecord = {
           ...existing,
           archivedAt,
-        });
+        };
+        await this.agentStorage.upsert(archivedRecord);
       }
       this.agentManager.notifyAgentState(agentId);
     } catch (error: any) {
@@ -1792,6 +1794,14 @@ export class Session {
         requestId,
       },
     });
+
+    if (archivedRecord) {
+      await this.maybeArchiveWorktreeAfterLastAgentArchived({
+        archivedAgentId: agentId,
+        archivedAgentCwd: archivedRecord.cwd,
+        requestId,
+      });
+    }
   }
 
   private async handleUpdateAgentRequest(
@@ -4459,12 +4469,144 @@ export class Session {
     }
   }
 
-	  private async handlePaseoWorktreeArchiveRequest(
-	    msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>
-	  ): Promise<void> {
-	    const { requestId } = msg;
-	    let targetPath = msg.worktreePath;
-	    let repoRoot = msg.repoRoot ?? null;
+  private async maybeArchiveWorktreeAfterLastAgentArchived(options: {
+    archivedAgentId: string;
+    archivedAgentCwd: string;
+    requestId: string;
+  }): Promise<void> {
+    try {
+      const ownership = await isPaseoOwnedWorktreeCwd(options.archivedAgentCwd, {
+        paseoHome: this.paseoHome,
+      });
+      if (!ownership.allowed) {
+        return;
+      }
+
+      const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(options.archivedAgentCwd, {
+        paseoHome: this.paseoHome,
+      });
+      if (!resolvedWorktree) {
+        return;
+      }
+
+      const records = await this.agentStorage.list();
+      const recordsById = new Map(records.map((record) => [record.id, record]));
+      const targetPath = resolvedWorktree.worktreePath;
+      const hasRemainingNonArchivedRecord = records.some((record) => {
+        if (record.id === options.archivedAgentId || record.archivedAt) {
+          return false;
+        }
+        return this.isPathWithinRoot(targetPath, record.cwd);
+      });
+      if (hasRemainingNonArchivedRecord) {
+        return;
+      }
+
+      const hasUnknownLiveAgent = this.agentManager.listAgents().some((agent) => {
+        if (agent.id === options.archivedAgentId) {
+          return false;
+        }
+        if (!this.isPathWithinRoot(targetPath, agent.cwd)) {
+          return false;
+        }
+        return !recordsById.has(agent.id);
+      });
+      if (hasUnknownLiveAgent) {
+        return;
+      }
+
+      const repoRoot = ownership.repoRoot;
+      if (!repoRoot) {
+        this.sessionLogger.warn(
+          { agentId: options.archivedAgentId, worktreePath: targetPath },
+          "Unable to resolve repo root for auto-archive after agent archive"
+        );
+        return;
+      }
+
+      await this.archivePaseoWorktree({
+        targetPath,
+        repoRoot,
+        requestId: options.requestId,
+      });
+    } catch (error: any) {
+      this.sessionLogger.warn(
+        { err: error, agentId: options.archivedAgentId, cwd: options.archivedAgentCwd },
+        "Failed to auto-archive worktree after agent archive"
+      );
+    }
+  }
+
+  private async archivePaseoWorktree(options: {
+    targetPath: string;
+    repoRoot: string;
+    requestId: string;
+  }): Promise<string[]> {
+    let targetPath = options.targetPath;
+    const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
+      paseoHome: this.paseoHome,
+    });
+    if (resolvedWorktree) {
+      targetPath = resolvedWorktree.worktreePath;
+    }
+
+    const removedAgents = new Set<string>();
+    const agents = this.agentManager.listAgents();
+    for (const agent of agents) {
+      if (this.isPathWithinRoot(targetPath, agent.cwd)) {
+        removedAgents.add(agent.id);
+        try {
+          await this.agentManager.closeAgent(agent.id);
+        } catch {
+          // ignore cleanup errors
+        }
+        try {
+          await this.agentStorage.remove(agent.id);
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+    }
+
+    const registryRecords = await this.agentStorage.list();
+    for (const record of registryRecords) {
+      if (this.isPathWithinRoot(targetPath, record.cwd)) {
+        removedAgents.add(record.id);
+        try {
+          await this.agentStorage.remove(record.id);
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+    }
+
+    await this.killTerminalsUnderPath(targetPath);
+
+    await deletePaseoWorktree({
+      cwd: options.repoRoot,
+      worktreePath: targetPath,
+      paseoHome: this.paseoHome,
+    });
+
+    for (const agentId of removedAgents) {
+      this.emit({
+        type: "agent_deleted",
+        payload: {
+          agentId,
+          requestId: options.requestId,
+        },
+      });
+    }
+
+    return Array.from(removedAgents);
+  }
+
+  private async handlePaseoWorktreeArchiveRequest(
+    msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>
+  ): Promise<void> {
+    const { requestId } = msg;
+    let targetPath = msg.worktreePath;
+    let repoRoot = msg.repoRoot ?? null;
 
     try {
       if (!targetPath) {
@@ -4479,7 +4621,9 @@ export class Session {
         targetPath = match.path;
       }
 
-      const ownership = await isPaseoOwnedWorktreeCwd(targetPath, { paseoHome: this.paseoHome });
+      const ownership = await isPaseoOwnedWorktreeCwd(targetPath, {
+        paseoHome: this.paseoHome,
+      });
       if (!ownership.allowed) {
         this.emit({
           type: "paseo_worktree_archive_response",
@@ -4496,71 +4640,22 @@ export class Session {
         return;
       }
 
-	      repoRoot = ownership.repoRoot ?? repoRoot ?? null;
-	      if (!repoRoot) {
-	        throw new Error("Unable to resolve repo root for worktree");
-	      }
-
-	      const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
-	        paseoHome: this.paseoHome,
-	      });
-	      if (resolvedWorktree) {
-	        targetPath = resolvedWorktree.worktreePath;
-	      }
-
-	      const removedAgents = new Set<string>();
-	      const agents = this.agentManager.listAgents();
-	      for (const agent of agents) {
-	        if (this.isPathWithinRoot(targetPath, agent.cwd)) {
-	          removedAgents.add(agent.id);
-          try {
-            await this.agentManager.closeAgent(agent.id);
-          } catch {
-            // ignore cleanup errors
-          }
-          try {
-            await this.agentStorage.remove(agent.id);
-          } catch {
-            // ignore cleanup errors
-          }
-        }
+      repoRoot = ownership.repoRoot ?? repoRoot ?? null;
+      if (!repoRoot) {
+        throw new Error("Unable to resolve repo root for worktree");
       }
 
-      const registryRecords = await this.agentStorage.list();
-      for (const record of registryRecords) {
-        if (this.isPathWithinRoot(targetPath, record.cwd)) {
-          removedAgents.add(record.id);
-          try {
-            await this.agentStorage.remove(record.id);
-          } catch {
-            // ignore cleanup errors
-          }
-        }
-      }
-
-      await this.killTerminalsUnderPath(targetPath);
-
-      await deletePaseoWorktree({
-        cwd: repoRoot,
-        worktreePath: targetPath,
-        paseoHome: this.paseoHome,
+      const removedAgents = await this.archivePaseoWorktree({
+        targetPath,
+        repoRoot,
+        requestId,
       });
-
-      for (const agentId of removedAgents) {
-        this.emit({
-          type: "agent_deleted",
-          payload: {
-            agentId,
-            requestId,
-          },
-        });
-      }
 
       this.emit({
         type: "paseo_worktree_archive_response",
         payload: {
           success: true,
-          removedAgents: Array.from(removedAgents),
+          removedAgents,
           error: null,
           requestId,
         },
