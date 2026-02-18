@@ -351,6 +351,15 @@ export function SessionProvider({
       const isActive = appState ? appState === "active" : true;
       const isAwayFromAgent = !isActive || focusedAgentId !== params.agentId;
       if (!isAwayFromAgent) {
+        console.log(
+          "[OSNotifications] Skipping attention notification: user already focused on agent",
+          {
+            agentId: params.agentId,
+            reason: params.reason,
+            appState,
+            focusedAgentId,
+          }
+        );
         return;
       }
 

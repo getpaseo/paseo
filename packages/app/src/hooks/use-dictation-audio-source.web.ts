@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getTauri } from "@/utils/tauri";
 
 import type { DictationAudioSource, DictationAudioSourceConfig } from "./use-dictation-audio-source.types";
 
@@ -148,12 +149,28 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
         : true;
     const currentOrigin =
       typeof window !== "undefined" && window.location ? window.location.origin : "unknown";
+    const isTauri = getTauri() !== null;
 
     if (missingNavigator) {
       throw new Error("Microphone capture is not supported in this environment");
     }
-    if (!secureContext) {
+    console.log("[DictationAudio][Web] Microphone preflight", {
+      secureContext,
+      currentOrigin,
+      isTauri,
+      hasMediaDevices:
+        typeof navigator !== "undefined" &&
+        !!navigator.mediaDevices &&
+        typeof navigator.mediaDevices.getUserMedia === "function",
+    });
+    if (!secureContext && !isTauri) {
       throw new Error(`Microphone access requires HTTPS or localhost. Current origin: ${currentOrigin}`);
+    }
+    if (!secureContext && isTauri) {
+      console.warn(
+        "[DictationAudio][Web] Insecure context reported under Tauri; attempting getUserMedia anyway",
+        { currentOrigin }
+      );
     }
 
     const AudioContextCtor = getAudioContextCtor();

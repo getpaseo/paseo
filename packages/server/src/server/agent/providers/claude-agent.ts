@@ -212,6 +212,21 @@ const VALID_CLAUDE_MODES = new Set(
   DEFAULT_MODES.map((mode) => mode.id)
 );
 
+const REWIND_COMMAND_NAME = "rewind";
+const REWIND_COMMAND: AgentSlashCommand = {
+  name: REWIND_COMMAND_NAME,
+  description: "Rewind tracked files to a previous user message",
+  argumentHint: "[user_message_uuid]",
+};
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type SlashCommandInvocation = {
+  commandName: string;
+  args?: string;
+  rawInput: string;
+};
+
 // Orchestrator instructions moved to shared module.
 type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
@@ -672,6 +687,7 @@ class ClaudeAgentSession implements AgentSession {
   private activeSidechains = new Map<string, string>();
   private compacting = false;
   private queryRestartNeeded = false;
+  private userMessageIds: string[] = [];
 
   constructor(
     config: ClaudeAgentConfig,
@@ -786,6 +802,12 @@ class ClaudeAgentSession implements AgentSession {
 
     // Reset cancel flag at the start of each turn to prevent stale state from previous turns
     this.turnCancelRequested = false;
+
+    const slashCommand = this.resolveSlashCommandInvocation(prompt);
+    if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
+      yield* this.streamRewindCommand(slashCommand);
+      return;
+    }
 
     const sdkMessage = this.toSdkUserMessage(prompt);
     const queue = new Pushable<AgentStreamEvent>();
@@ -1007,11 +1029,284 @@ class ClaudeAgentSession implements AgentSession {
   async listCommands(): Promise<AgentSlashCommand[]> {
     const q = await this.ensureQuery();
     const commands = await q.supportedCommands();
-    return commands.map((cmd) => ({
-      name: cmd.name,
-      description: cmd.description,
-      argumentHint: cmd.argumentHint,
-    }));
+    const commandMap = new Map<string, AgentSlashCommand>();
+    for (const cmd of commands) {
+      if (!commandMap.has(cmd.name)) {
+        commandMap.set(cmd.name, {
+          name: cmd.name,
+          description: cmd.description,
+          argumentHint: cmd.argumentHint,
+        });
+      }
+    }
+    if (!commandMap.has(REWIND_COMMAND_NAME)) {
+      commandMap.set(REWIND_COMMAND_NAME, REWIND_COMMAND);
+    }
+    return Array.from(commandMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }
+
+  private resolveSlashCommandInvocation(
+    prompt: AgentPromptInput
+  ): SlashCommandInvocation | null {
+    if (typeof prompt !== "string") {
+      return null;
+    }
+    const parsed = this.parseSlashCommandInput(prompt);
+    if (!parsed) {
+      return null;
+    }
+    return parsed.commandName === REWIND_COMMAND_NAME ? parsed : null;
+  }
+
+  private parseSlashCommandInput(text: string): SlashCommandInvocation | null {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("/") || trimmed.length <= 1) {
+      return null;
+    }
+    const withoutPrefix = trimmed.slice(1);
+    const firstWhitespaceIdx = withoutPrefix.search(/\s/);
+    const commandName =
+      firstWhitespaceIdx === -1
+        ? withoutPrefix
+        : withoutPrefix.slice(0, firstWhitespaceIdx);
+    if (!commandName || commandName.includes("/")) {
+      return null;
+    }
+    const rawArgs =
+      firstWhitespaceIdx === -1
+        ? ""
+        : withoutPrefix.slice(firstWhitespaceIdx + 1).trim();
+    return rawArgs.length > 0
+      ? { commandName, args: rawArgs, rawInput: trimmed }
+      : { commandName, rawInput: trimmed };
+  }
+
+  private async *streamRewindCommand(
+    invocation: SlashCommandInvocation
+  ): AsyncGenerator<AgentStreamEvent> {
+    yield { type: "turn_started", provider: "claude" };
+    yield {
+      type: "timeline",
+      provider: "claude",
+      item: { type: "user_message", text: invocation.rawInput },
+    };
+
+    try {
+      const rewindAttempt = await this.attemptRewind(invocation.args);
+      if (!rewindAttempt.messageId || !rewindAttempt.result) {
+        yield {
+          type: "turn_failed",
+          provider: "claude",
+          error:
+            rewindAttempt.error ??
+            "No prior user message available to rewind. Use /rewind <user_message_uuid>.",
+        };
+        return;
+      }
+      yield {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "assistant_message",
+          text: this.buildRewindSuccessMessage(
+            rewindAttempt.messageId,
+            rewindAttempt.result
+          ),
+        },
+      };
+      yield { type: "turn_completed", provider: "claude" };
+    } catch (error) {
+      yield {
+        type: "turn_failed",
+        provider: "claude",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to rewind tracked files",
+      };
+    }
+  }
+
+  private buildRewindSuccessMessage(
+    targetUserMessageId: string,
+    rewindResult: { filesChanged?: string[]; insertions?: number; deletions?: number }
+  ): string {
+    const fileCount = Array.isArray(rewindResult.filesChanged)
+      ? rewindResult.filesChanged.length
+      : undefined;
+    const stats: string[] = [];
+    if (typeof fileCount === "number") {
+      stats.push(`${fileCount} file${fileCount === 1 ? "" : "s"}`);
+    }
+    if (typeof rewindResult.insertions === "number") {
+      stats.push(`${rewindResult.insertions} insertions`);
+    }
+    if (typeof rewindResult.deletions === "number") {
+      stats.push(`${rewindResult.deletions} deletions`);
+    }
+    if (stats.length > 0) {
+      return `Rewound tracked files to message ${targetUserMessageId} (${stats.join(", ")}).`;
+    }
+    return `Rewound tracked files to message ${targetUserMessageId}.`;
+  }
+
+  private async attemptRewind(
+    args: string | undefined
+  ): Promise<{
+    messageId: string | null;
+    result?: { filesChanged?: string[]; insertions?: number; deletions?: number };
+    error?: string;
+  }> {
+    if (typeof args === "string" && args.trim().length > 0) {
+      const candidate = args.trim().split(/\s+/)[0] ?? "";
+      if (!UUID_PATTERN.test(candidate)) {
+        return {
+          messageId: null,
+          error:
+            "Invalid message UUID. Usage: /rewind <user_message_uuid> or /rewind",
+        };
+      }
+      const rewindResult = await this.rewindFilesOnce(candidate);
+      if (rewindResult.canRewind) {
+        return { messageId: candidate, result: rewindResult };
+      }
+      return {
+        messageId: null,
+        error:
+          rewindResult.error ??
+          `No file checkpoint found for message ${candidate}.`,
+      };
+    }
+
+    const candidates = this.getRewindCandidateUserMessageIds();
+    if (candidates.length === 0) {
+      return {
+        messageId: null,
+        error:
+          "No prior user message available to rewind. Use /rewind <user_message_uuid>.",
+      };
+    }
+
+    let lastError: string | undefined;
+    for (const candidate of candidates) {
+      try {
+        const rewindResult = await this.rewindFilesOnce(candidate);
+        if (rewindResult.canRewind) {
+          return { messageId: candidate, result: rewindResult };
+        }
+        if (rewindResult.error) {
+          lastError = rewindResult.error;
+        }
+      } catch (error) {
+        lastError =
+          error instanceof Error
+            ? error.message
+            : "Failed to rewind tracked files.";
+      }
+    }
+
+    return {
+      messageId: null,
+      error:
+        lastError ??
+        "No rewind checkpoints are currently available for this session.",
+    };
+  }
+
+  private async rewindFilesOnce(messageId: string): Promise<{
+    canRewind: boolean;
+    error?: string;
+    filesChanged?: string[];
+    insertions?: number;
+    deletions?: number;
+  }> {
+    try {
+      const query = await this.ensureFreshQuery();
+      return await query.rewindFiles(messageId, { dryRun: false });
+    } catch (error) {
+      // The Claude SDK transport can close after a rewind call.
+      // If that happens, mark the query stale so a follow-up attempt uses a fresh query.
+      this.queryRestartNeeded = true;
+      throw error;
+    }
+  }
+
+  private async ensureFreshQuery(): Promise<Query> {
+    if (this.query) {
+      this.queryRestartNeeded = true;
+    }
+    return this.ensureQuery();
+  }
+
+  private getRewindCandidateUserMessageIds(): string[] {
+    const candidates: string[] = [];
+    const pushUnique = (value: string | null | undefined) => {
+      if (
+        typeof value === "string" &&
+        value.length > 0 &&
+        !candidates.includes(value)
+      ) {
+        candidates.push(value);
+      }
+    };
+
+    const historyIds = this.readUserMessageIdsFromHistoryFile();
+    for (let idx = historyIds.length - 1; idx >= 0; idx -= 1) {
+      pushUnique(historyIds[idx]);
+    }
+    for (let idx = this.persistedHistory.length - 1; idx >= 0; idx -= 1) {
+      const item = this.persistedHistory[idx];
+      if (item?.type === "user_message") {
+        pushUnique(item.messageId);
+      }
+    }
+    for (let idx = this.userMessageIds.length - 1; idx >= 0; idx -= 1) {
+      pushUnique(this.userMessageIds[idx]);
+    }
+
+    return candidates;
+  }
+
+  private readUserMessageIdsFromHistoryFile(): string[] {
+    if (!this.claudeSessionId) {
+      return [];
+    }
+    const historyPath = this.resolveHistoryPath(this.claudeSessionId);
+    if (!historyPath || !fs.existsSync(historyPath)) {
+      return [];
+    }
+    try {
+      const ids: string[] = [];
+      const content = fs.readFileSync(historyPath, "utf8");
+      for (const line of content.split(/\n+/)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const entry = JSON.parse(trimmed);
+          if (entry?.type === "user" && typeof entry.uuid === "string") {
+            ids.push(entry.uuid);
+          }
+        } catch {
+          // ignore malformed lines
+        }
+      }
+      return ids;
+    } catch {
+      return [];
+    }
+  }
+
+  private rememberUserMessageId(messageId: string | null | undefined): void {
+    if (typeof messageId !== "string" || messageId.length === 0) {
+      return;
+    }
+    const last = this.userMessageIds[this.userMessageIds.length - 1];
+    if (last === messageId) {
+      return;
+    }
+    this.userMessageIds.push(messageId);
   }
 
   private async primeSelectableModelIds(query: Query): Promise<void> {
@@ -1095,6 +1390,8 @@ class ClaudeAgentSession implements AgentSession {
         MCP_TIMEOUT: "600000",
         MCP_TOOL_TIMEOUT: "600000",
       },
+      // Required for provider-level /rewind support.
+      enableFileCheckpointing: true,
       // If we have a session ID from a previous query (e.g., after interrupt),
       // resume that session to continue the conversation history.
       ...(this.claudeSessionId ? { resume: this.claudeSessionId } : {}),
@@ -1174,6 +1471,9 @@ class ClaudeAgentSession implements AgentSession {
       content.push({ type: "text", text: prompt });
     }
 
+    const messageId = randomUUID();
+    this.rememberUserMessageId(messageId);
+
     return {
       type: "user",
       message: {
@@ -1181,6 +1481,7 @@ class ClaudeAgentSession implements AgentSession {
         content,
       },
       parent_tool_use_id: null,
+      uuid: messageId,
       session_id: this.claudeSessionId ?? "",
     };
   }
@@ -1426,17 +1727,34 @@ class ClaudeAgentSession implements AgentSession {
           this.compacting = false;
           break;
         }
+        const messageId =
+          typeof message.uuid === "string" && message.uuid.length > 0
+            ? message.uuid
+            : undefined;
+        this.rememberUserMessageId(messageId);
         const content = message.message?.content;
         if (typeof content === "string" && content.length > 0) {
           // String content from user messages (e.g., local command output)
           events.push({
             type: "timeline",
-            item: { type: "user_message", text: content },
+            item: {
+              type: "user_message",
+              text: content,
+              ...(messageId ? { messageId } : {}),
+            },
             provider: "claude",
           });
         } else if (Array.isArray(content)) {
           const timelineItems = this.mapBlocksToTimeline(content, { turnContext });
           for (const item of timelineItems) {
+            if (item.type === "user_message" && messageId && !item.messageId) {
+              events.push({
+                type: "timeline",
+                item: { ...item, messageId },
+                provider: "claude",
+              });
+              continue;
+            }
             events.push({ type: "timeline", item, provider: "claude" });
           }
         }
@@ -1722,6 +2040,9 @@ class ClaudeAgentSession implements AgentSession {
           const entry = JSON.parse(trimmed);
           if (entry.isSidechain) {
             continue;
+          }
+          if (entry.type === "user" && typeof entry.uuid === "string") {
+            this.rememberUserMessageId(entry.uuid);
           }
           const items = this.convertHistoryEntry(entry);
           if (items.length > 0) {
@@ -2300,9 +2621,14 @@ export function convertClaudeHistoryEntry(
   if (entry.type === "user") {
     const text = extractUserMessageText(content);
     if (text) {
+      const messageId =
+        typeof entry.uuid === "string" && entry.uuid.length > 0
+          ? entry.uuid
+          : undefined;
       timeline.push({
         type: "user_message",
         text,
+        ...(messageId ? { messageId } : {}),
       });
     }
   }

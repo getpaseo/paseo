@@ -790,6 +790,63 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
   );
 
   test(
+    "supports /rewind by reverting the latest file changes",
+    async () => {
+      const cwd = tmpCwd();
+      const client = new ClaudeAgentClient({ logger });
+      const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
+      const session = await client.createSession(config);
+      const filePath = path.join(cwd, "rewind-target.txt");
+      const tokenA = `REWIND_A_${Date.now().toString(36)}`;
+      const tokenB = `REWIND_B_${Date.now().toString(36)}`;
+
+      const runPrompt = async (prompt: string): Promise<void> => {
+        for await (const event of session.stream(prompt)) {
+          await autoApprove(session, event);
+          if (event.type === "turn_failed") {
+            throw new Error(event.error);
+          }
+          if (event.type === "turn_completed") {
+            break;
+          }
+        }
+      };
+
+      try {
+        await runPrompt(
+          [
+            "Create a file named rewind-target.txt in the current directory.",
+            `Set the file content to exactly: ${tokenA}`,
+            "Do not add extra text or commentary.",
+          ].join(" ")
+        );
+        expect(existsSync(filePath)).toBe(true);
+        expect(readFileSync(filePath, "utf8")).toContain(tokenA);
+
+        await runPrompt(
+          [
+            "Edit rewind-target.txt in place.",
+            `Replace the entire file content with exactly: ${tokenB}`,
+            "Do not add extra text or commentary.",
+          ].join(" ")
+        );
+        expect(readFileSync(filePath, "utf8")).toContain(tokenB);
+
+        const rewind = await session.run("/rewind");
+        expect(rewind.finalText.toLowerCase()).toContain("rewound");
+
+        const contentAfterRewind = readFileSync(filePath, "utf8");
+        expect(contentAfterRewind).toContain(tokenA);
+        expect(contentAfterRewind).not.toContain(tokenB);
+      } finally {
+        await session.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    240_000
+  );
+
+  test(
     "resumes a persisted session with context preserved",
     async () => {
       const cwd = tmpCwd();

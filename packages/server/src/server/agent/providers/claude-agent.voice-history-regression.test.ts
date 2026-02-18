@@ -12,6 +12,7 @@ import type {
 
 const sdkMocks = vi.hoisted(() => ({
   query: vi.fn(),
+  lastQuery: null as ReturnType<typeof buildSdkQueryMock> | null,
 }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -65,6 +66,7 @@ function buildSdkQueryMock() {
     setModel: vi.fn(async () => undefined),
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
     supportedCommands: vi.fn(async () => []),
+    rewindFiles: vi.fn(async () => ({ canRewind: true })),
   };
 }
 
@@ -91,7 +93,11 @@ describe("ClaudeAgentSession history replay regression", () => {
   let previousClaudeConfigDir: string | undefined;
 
   beforeEach(() => {
-    sdkMocks.query.mockImplementation(() => buildSdkQueryMock());
+    sdkMocks.query.mockImplementation(() => {
+      const mock = buildSdkQueryMock();
+      sdkMocks.lastQuery = mock;
+      return mock;
+    });
 
     tempRoot = mkdtempSync(path.join(os.tmpdir(), "claude-history-regression-"));
     cwd = path.join(tempRoot, "repo");
@@ -107,6 +113,7 @@ describe("ClaudeAgentSession history replay regression", () => {
       [
         JSON.stringify({
           type: "user",
+          uuid: "history-user-uuid",
           sessionId: "history-session",
           cwd,
           message: {
@@ -133,6 +140,7 @@ describe("ClaudeAgentSession history replay regression", () => {
 
   afterEach(() => {
     sdkMocks.query.mockReset();
+    sdkMocks.lastQuery = null;
     if (previousClaudeConfigDir === undefined) {
       delete process.env.CLAUDE_CONFIG_DIR;
     } else {
@@ -205,5 +213,68 @@ describe("ClaudeAgentSession history replay regression", () => {
     const timelineText = collectTimelineText(historyEvents);
     expect(timelineText).toContain(HISTORY_USER_MARKER);
     expect(timelineText).toContain(HISTORY_ASSISTANT_MARKER);
+  });
+
+  test("listCommands includes rewind command", async () => {
+    const logger = createTestLogger();
+    const client = new ClaudeAgentClient({ logger });
+    const handle: AgentPersistenceHandle = {
+      provider: "claude",
+      sessionId: "history-session",
+      nativeHandle: "history-session",
+      metadata: {
+        provider: "claude",
+        cwd,
+      },
+    };
+
+    const session = await client.resumeSession(handle, { cwd });
+    try {
+      const commands = await session.listCommands?.();
+      expect(commands?.some((command) => command.name === "rewind")).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("slash /rewind uses latest user message id from persisted history", async () => {
+    const logger = createTestLogger();
+    const client = new ClaudeAgentClient({ logger });
+    const handle: AgentPersistenceHandle = {
+      provider: "claude",
+      sessionId: "history-session",
+      nativeHandle: "history-session",
+      metadata: {
+        provider: "claude",
+        cwd,
+      },
+    };
+
+    const session = await client.resumeSession(handle, { cwd });
+    const events: AgentStreamEvent[] = [];
+
+    try {
+      for await (const event of session.stream("/rewind")) {
+        events.push(event);
+        if (
+          event.type === "turn_completed" ||
+          event.type === "turn_failed" ||
+          event.type === "turn_canceled"
+        ) {
+          break;
+        }
+      }
+    } finally {
+      await session.close();
+    }
+
+    expect(events.some((event) => event.type === "turn_started")).toBe(true);
+    expect(events.some((event) => event.type === "turn_completed")).toBe(true);
+    expect(sdkMocks.lastQuery).toBeTruthy();
+    expect(sdkMocks.lastQuery?.rewindFiles).toHaveBeenCalledTimes(1);
+    expect(sdkMocks.lastQuery?.rewindFiles).toHaveBeenCalledWith(
+      "history-user-uuid",
+      { dryRun: false }
+    );
   });
 });

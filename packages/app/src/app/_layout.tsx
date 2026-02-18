@@ -42,12 +42,14 @@ import { queryClient } from "@/query/query-client";
 import {
   WEB_NOTIFICATION_CLICK_EVENT,
   type WebNotificationClickDetail,
+  ensureOsNotificationPermission,
 } from "@/utils/os-notifications";
 import { buildNotificationRoute } from "@/utils/notification-routing";
 import {
   buildHostAgentDraftRoute,
   parseHostAgentRouteFromPathname,
 } from "@/utils/host-routes";
+import { getTauri } from "@/utils/tauri";
 
 polyfillCrypto();
 
@@ -57,6 +59,15 @@ function PushNotificationRouter() {
 
   useEffect(() => {
     if (Platform.OS === "web") {
+      if (getTauri()) {
+        void ensureOsNotificationPermission().then((granted) => {
+          console.log(
+            "[OSNotifications][Tauri] Startup permission preflight result:",
+            granted ? "granted" : "not-granted"
+          );
+        });
+      }
+
       const target = globalThis as unknown as EventTarget;
       const openFromWebClick = (event: Event) => {
         const customEvent = event as CustomEvent<WebNotificationClickDetail>;

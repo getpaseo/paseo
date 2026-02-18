@@ -85,6 +85,7 @@ const hasClaudeCredentials =
       // Should have at least one command (skills are loaded from user/project settings)
       // The exact commands depend on what skills are configured
       expect(commands.length).toBeGreaterThan(0);
+      expect(commandNames).toContain("rewind");
 
       await session.close();
     }, 30000);

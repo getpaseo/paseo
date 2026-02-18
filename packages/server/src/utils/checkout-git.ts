@@ -1517,6 +1517,7 @@ export interface PullRequestStatus {
   state: string;
   baseRefName: string;
   headRefName: string;
+  isMerged: boolean;
 }
 
 export interface PullRequestStatusResult {
@@ -1592,6 +1593,62 @@ async function resolveGitHubRepo(cwd: string): Promise<string | null> {
   return null;
 }
 
+async function listPullRequestsForHead(options: {
+  cwd: string;
+  repo: string;
+  owner: string;
+  head: string;
+  state: "open" | "closed";
+}): Promise<any[]> {
+  const { stdout } = await execFileAsync(
+    "gh",
+    [
+      "api",
+      `repos/${options.repo}/pulls`,
+      "-X",
+      "GET",
+      "-F",
+      `head=${options.owner}:${options.head}`,
+      "-F",
+      `state=${options.state}`,
+    ],
+    { cwd: options.cwd }
+  );
+  const parsed = JSON.parse(stdout.trim());
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function buildPullRequestStatus(current: any, fallbackHead: string): PullRequestStatus | null {
+  if (!current || typeof current !== "object") {
+    return null;
+  }
+  const url = current.html_url ?? current.url;
+  const title = current.title;
+  if (typeof url !== "string" || typeof title !== "string" || !url || !title) {
+    return null;
+  }
+
+  const mergedAt =
+    typeof current.merged_at === "string" && current.merged_at.trim().length > 0
+      ? current.merged_at
+      : null;
+  const state =
+    mergedAt !== null
+      ? "merged"
+      : typeof current.state === "string" && current.state.trim().length > 0
+        ? current.state
+        : "";
+
+  return {
+    url,
+    title,
+    state,
+    baseRefName: current.base?.ref ?? "",
+    headRefName: current.head?.ref ?? fallbackHead,
+    isMerged: mergedAt !== null,
+  };
+}
+
 export async function createPullRequest(
   cwd: string,
   options: CreatePullRequestOptions
@@ -1652,22 +1709,15 @@ export async function getPullRequestStatus(cwd: string): Promise<PullRequestStat
     };
   }
   const owner = repo.split("/")[0];
-  let stdout: string;
+  let openPulls: any[];
   try {
-    ({ stdout } = await execFileAsync(
-      "gh",
-      [
-        "api",
-        `repos/${repo}/pulls`,
-        "-X",
-        "GET",
-        "-F",
-        `head=${owner}:${head}`,
-        "-F",
-        "state=open",
-      ],
-      { cwd }
-    ));
+    openPulls = await listPullRequestsForHead({
+      cwd,
+      repo,
+      owner,
+      head,
+      state: "open",
+    });
   } catch (error) {
     if (isGhAuthError(error)) {
       return {
@@ -1677,22 +1727,50 @@ export async function getPullRequestStatus(cwd: string): Promise<PullRequestStat
     }
     throw error;
   }
-  const parsed = JSON.parse(stdout.trim());
-  const current = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : null;
-  if (!current) {
+  const openPull = openPulls[0] ?? null;
+  const openStatus = buildPullRequestStatus(openPull, head);
+  if (openStatus) {
+    return {
+      status: openStatus,
+      githubFeaturesEnabled: true,
+    };
+  }
+
+  let closedPulls: any[];
+  try {
+    closedPulls = await listPullRequestsForHead({
+      cwd,
+      repo,
+      owner,
+      head,
+      state: "closed",
+    });
+  } catch (error) {
+    if (isGhAuthError(error)) {
+      return {
+        status: null,
+        githubFeaturesEnabled: false,
+      };
+    }
+    throw error;
+  }
+  const mergedClosedPull =
+    closedPulls.find(
+      (entry) =>
+        entry &&
+        typeof entry === "object" &&
+        typeof entry.merged_at === "string" &&
+        entry.merged_at.trim().length > 0
+    ) ?? null;
+  const mergedStatus = buildPullRequestStatus(mergedClosedPull, head);
+  if (!mergedStatus) {
     return {
       status: null,
       githubFeaturesEnabled: true,
     };
   }
   return {
-    status: {
-      url: current.html_url ?? current.url,
-      title: current.title,
-      state: current.state,
-      baseRefName: current.base?.ref ?? "",
-      headRefName: current.head?.ref ?? head,
-    },
+    status: mergedStatus,
     githubFeaturesEnabled: true,
   };
 }

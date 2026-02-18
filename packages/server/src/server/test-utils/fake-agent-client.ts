@@ -570,7 +570,19 @@ class FakeAgentSession implements AgentSession {
       return commands;
     }
 
-    // claude/opencode: keep stable/deterministic.
+    // Keep deterministic defaults for non-codex providers.
+    if (this.providerName === "claude") {
+      return [
+        { name: "help", description: "Help", argumentHint: "" },
+        { name: "context", description: "Context", argumentHint: "" },
+        {
+          name: "rewind",
+          description: "Rewind tracked files to a previous user message",
+          argumentHint: "[user_message_uuid]",
+        },
+      ];
+    }
+
     return [
       { name: "help", description: "Help", argumentHint: "" },
       { name: "context", description: "Context", argumentHint: "" },

@@ -51,6 +51,7 @@ describe("claude agent commands E2E", () => {
     // These are skills that come from CLAUDE.md configurations
     // At minimum we should have some commands available
     expect(commandNames.length).toBeGreaterThan(0);
+    expect(commandNames).toContain("rewind");
   }, 60000);
 
   test("returns error for non-existent agent", async () => {
