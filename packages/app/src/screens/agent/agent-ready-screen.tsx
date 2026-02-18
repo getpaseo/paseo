@@ -66,6 +66,7 @@ import {
   useCheckoutStatusQuery,
 } from "@/hooks/use-checkout-status-query";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
+import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useToast } from "@/contexts/toast-context";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import {
@@ -221,6 +222,7 @@ function AgentScreenContent({
   const router = useRouter();
   const queryClient = useQueryClient();
   const resolvedAgentId = agentId;
+  const { isArchivingAgent } = useArchiveAgent();
 
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
 
@@ -605,6 +607,10 @@ function AgentScreenContent({
   }, [showConnectedNotice]);
 
   const isGitCheckout = activeExplorerCheckout?.isGit ?? false;
+  const isArchivingCurrentAgent = Boolean(
+    resolvedAgentId &&
+      isArchivingAgent({ serverId, agentId: resolvedAgentId })
+  );
 
   useEffect(() => {
     if (!resolvedAgentId) {
@@ -985,7 +991,10 @@ function AgentScreenContent({
 
   const mainContent = (
     <View style={styles.outerContainer}>
-      <FileDropZone onFilesDropped={handleFilesDropped} disabled={isInitializing || shouldBlockForHistorySync}>
+      <FileDropZone
+        onFilesDropped={handleFilesDropped}
+        disabled={isInitializing || shouldBlockForHistorySync || isArchivingCurrentAgent}
+      >
       <View style={styles.container}>
         {/* Header */}
         <MenuHeader
@@ -1247,7 +1256,10 @@ function AgentScreenContent({
           </View>
 
           {/* Agent Input Area */}
-          {agent && resolvedAgentId && !shouldBlockForHistorySync && (
+          {agent &&
+            resolvedAgentId &&
+            !shouldBlockForHistorySync &&
+            !isArchivingCurrentAgent && (
             <AgentInputArea
               agentId={resolvedAgentId}
               serverId={serverId}
@@ -1268,6 +1280,16 @@ function AgentScreenContent({
             isGit={isGitCheckout}
           />
         )}
+
+        {isArchivingCurrentAgent ? (
+          <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
+            <ActivityIndicator size="large" color={theme.colors.foreground} />
+            <Text style={styles.archivingTitle}>Archiving agent...</Text>
+            <Text style={styles.archivingSubtitle}>
+              Please wait while we archive this agent.
+            </Text>
+          </View>
+        ) : null}
       </View>
   );
 
@@ -1428,6 +1450,30 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     gap: 16,
+  },
+  archivingOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: "rgba(8, 10, 14, 0.86)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing[8],
+    gap: theme.spacing[3],
+    zIndex: 50,
+  },
+  archivingTitle: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
+    textAlign: "center",
+  },
+  archivingSubtitle: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    textAlign: "center",
   },
   loadingText: {
     fontSize: theme.fontSize.base,

@@ -86,13 +86,15 @@ export function useAllAgentsList(options?: {
       const snapshot = entry.agent;
       const normalized = normalizeAgentSnapshot(snapshot, serverId);
       const live = liveAgents?.get(snapshot.id);
-      list.push(
-        toAggregatedAgent({
-          source: live ?? normalized,
-          serverId,
-          serverLabel,
-        })
-      );
+      const aggregated = toAggregatedAgent({
+        source: live ?? normalized,
+        serverId,
+        serverLabel,
+      });
+      if (aggregated.archivedAt) {
+        continue;
+      }
+      list.push(aggregated);
     }
 
     list.sort((left, right) => {

@@ -4,6 +4,7 @@ import {
   Pressable,
   Image,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import { useQueries } from "@tanstack/react-query";
 import {
@@ -49,6 +50,7 @@ import { parseSidebarAgentKey } from "@/utils/sidebar-shortcuts";
 import { parseRepoNameFromRemoteUrl } from "@/utils/agent-grouping";
 import { formatTimeAgo } from "@/utils/time";
 import { isSidebarActiveAgent } from "@/utils/sidebar-agent-state";
+import { useArchiveAgent } from "@/hooks/use-archive-agent";
 
 type EntryData = SidebarAgentListEntry;
 
@@ -127,10 +129,11 @@ interface SidebarAgentRowProps {
   isSelected: boolean;
   isInSelectionMode: boolean;
   isBatchSelected: boolean;
+  isArchiving: boolean;
   shortcutNumber: number | null;
   onPress: () => void;
   onLongPress: () => void;
-  onArchive: () => void;
+  onArchive: () => Promise<void>;
   onToggleBatch: () => void;
 }
 
@@ -153,6 +156,7 @@ function SidebarAgentRow({
   isSelected,
   isInSelectionMode,
   isBatchSelected,
+  isArchiving,
   shortcutNumber,
   onPress,
   onLongPress,
@@ -176,7 +180,7 @@ function SidebarAgentRow({
   const showArchive =
     !isInSelectionMode &&
     shortcutNumber === null &&
-    (isHovered || isArchiveHovered || isArchiveConfirmVisible);
+    (isHovered || isArchiveHovered || isArchiveConfirmVisible || isArchiving);
 
   const clearHoverOutTimeout = useCallback(() => {
     if (!hoverOutTimeoutRef.current) {
@@ -189,6 +193,12 @@ function SidebarAgentRow({
   useEffect(() => {
     return () => clearHoverOutTimeout();
   }, [clearHoverOutTimeout]);
+
+  useEffect(() => {
+    if (!isArchiving) {
+      setIsArchiveConfirmVisible(false);
+    }
+  }, [isArchiving]);
 
   const handleHoverIn = useCallback(() => {
     clearHoverOutTimeout();
@@ -270,22 +280,27 @@ function SidebarAgentRow({
             }}
             onPress={(event) => {
               event.stopPropagation();
+              if (isArchiving) {
+                return;
+              }
               if (!isArchiveConfirmVisible) {
                 setIsArchiveConfirmVisible(true);
                 return;
               }
-              onArchive();
-              setIsArchiveConfirmVisible(false);
+              void onArchive();
             }}
             style={styles.archiveButton}
+            disabled={isArchiving}
             testID={
-              isArchiveConfirmVisible
+              isArchiveConfirmVisible || isArchiving
                 ? `agent-archive-confirm-${entry.agent.serverId}-${entry.agent.id}`
                 : `agent-archive-${entry.agent.serverId}-${entry.agent.id}`
             }
           >
             {({ hovered: archiveHovered }) =>
-              isArchiveConfirmVisible ? (
+              isArchiving ? (
+                <ActivityIndicator size="small" color={theme.colors.foreground} />
+              ) : isArchiveConfirmVisible ? (
                 <Check size={12} color={theme.colors.foreground} />
               ) : (
                 <Archive
@@ -446,6 +461,7 @@ export function SidebarAgentList({
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedBatchKeys, setSelectedBatchKeys] = useState<Set<string>>(new Set());
+  const { archiveAgent, isArchivingAgent } = useArchiveAgent();
 
   const altDown = useKeyboardShortcutsStore((s) => s.altDown);
   const cmdOrCtrlDown = useKeyboardShortcutsStore((s) => s.cmdOrCtrlDown);
@@ -621,15 +637,17 @@ export function SidebarAgentList({
     setSelectedBatchKeys(new Set([key]));
   }, []);
 
-  const handleArchiveSingle = useCallback((entry: SidebarAgentListEntry) => {
-    const client = useSessionStore.getState().sessions[entry.agent.serverId]?.client ?? null;
-    if (!client) {
-      return;
-    }
-    void client.archiveAgent(entry.agent.id).catch((error) => {
-      console.warn("[archive_agent] failed", error);
-    });
-  }, []);
+  const handleArchiveSingle = useCallback(
+    async (entry: SidebarAgentListEntry): Promise<void> => {
+      await archiveAgent({
+        serverId: entry.agent.serverId,
+        agentId: entry.agent.id,
+      }).catch((error) => {
+        console.warn("[archive_agent] failed", error);
+      });
+    },
+    [archiveAgent]
+  );
 
   const handleArchiveBatch = useCallback(() => {
     if (selectedBatchKeys.size === 0) {
@@ -638,23 +656,18 @@ export function SidebarAgentList({
     }
 
     const requests: Promise<void>[] = [];
-    const store = useSessionStore.getState();
     for (const key of selectedBatchKeys) {
       const parsed = parseSidebarAgentKey(key);
       if (!parsed) {
         continue;
       }
-      const client = store.sessions[parsed.serverId]?.client ?? null;
-      if (!client) {
-        continue;
-      }
       requests.push(
-        client
-          .archiveAgent(parsed.agentId)
-          .then(() => undefined)
-          .catch((error) => {
-            console.warn("[archive_agent_batch] failed", { key, error });
-          })
+        archiveAgent({
+          serverId: parsed.serverId,
+          agentId: parsed.agentId,
+        }).catch((error) => {
+          console.warn("[archive_agent_batch] failed", { key, error });
+        })
       );
     }
 
@@ -662,7 +675,7 @@ export function SidebarAgentList({
       setSelectedBatchKeys(new Set());
       setIsSelectionMode(false);
     });
-  }, [selectedBatchKeys]);
+  }, [archiveAgent, selectedBatchKeys]);
 
   const handleSelectionBack = useCallback(() => {
     setSelectedBatchKeys(new Set());
@@ -687,6 +700,10 @@ export function SidebarAgentList({
           isSelected={selectedAgentId === key}
           isInSelectionMode={isSelectionMode}
           isBatchSelected={selectedBatchKeys.has(key)}
+          isArchiving={isArchivingAgent({
+            serverId: item.agent.serverId,
+            agentId: item.agent.id,
+          })}
           shortcutNumber={
             showShortcutBadges ? (shortcutIndexByAgentKey.get(key) ?? null) : null
           }
@@ -711,6 +728,7 @@ export function SidebarAgentList({
       handleAgentLongPress,
       handleAgentPress,
       handleArchiveSingle,
+      isArchivingAgent,
       isSelectionMode,
       selectedAgentId,
       selectedBatchKeys,
