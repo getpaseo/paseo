@@ -20,7 +20,6 @@ import { useDaemonConnections, type ActiveConnection, type ConnectionStatus } fr
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
 import { measureConnectionLatency } from "@/utils/test-daemon-connection";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { theme as defaultTheme } from "@/styles/theme";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
 import { AddHostMethodModal } from "@/components/add-host-method-modal";
@@ -28,6 +27,7 @@ import { AddHostModal } from "@/components/add-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
 import { NameHostModal } from "@/components/name-host-modal";
 import { Button } from "@/components/ui/button";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -373,36 +373,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
-  },
-  // Theme toggle
-  themeToggleContainer: {
-    flexDirection: "row",
-    backgroundColor: theme.colors.surface3,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: 2,
-    gap: 2,
-  },
-  themeToggleButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[1],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.sm,
-  },
-  themeToggleButtonActive: {
-    backgroundColor: theme.colors.surface2,
-  },
-  themeToggleText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.foregroundMuted,
-  },
-  themeToggleTextActive: {
-    color: theme.colors.foreground,
   },
   // Dev section
   devCard: {
@@ -881,44 +851,28 @@ export default function SettingsScreen() {
                 <View style={styles.audioRowContent}>
                   <Text style={styles.audioRowTitle}>Theme</Text>
                 </View>
-                <View style={styles.themeToggleContainer}>
-                  <Pressable
-                    style={[
-                      styles.themeToggleButton,
-                      settings.theme === "light" && styles.themeToggleButtonActive,
-                    ]}
-                    onPress={() => handleThemeChange("light")}
-                  >
-                    <Sun size={14} color={settings.theme === "light" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
-                    <Text style={[styles.themeToggleText, settings.theme === "light" && styles.themeToggleTextActive]}>
-                      Light
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[
-                      styles.themeToggleButton,
-                      settings.theme === "dark" && styles.themeToggleButtonActive,
-                    ]}
-                    onPress={() => handleThemeChange("dark")}
-                  >
-                    <Moon size={14} color={settings.theme === "dark" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
-                    <Text style={[styles.themeToggleText, settings.theme === "dark" && styles.themeToggleTextActive]}>
-                      Dark
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[
-                      styles.themeToggleButton,
-                      settings.theme === "auto" && styles.themeToggleButtonActive,
-                    ]}
-                    onPress={() => handleThemeChange("auto")}
-                  >
-                    <Monitor size={14} color={settings.theme === "auto" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
-                    <Text style={[styles.themeToggleText, settings.theme === "auto" && styles.themeToggleTextActive]}>
-                      System
-                    </Text>
-                  </Pressable>
-                </View>
+                <SegmentedControl
+                  size="sm"
+                  value={settings.theme}
+                  onValueChange={handleThemeChange}
+                  options={[
+                    {
+                      value: "light",
+                      label: "Light",
+                      icon: ({ color, size }) => <Sun size={size} color={color} />,
+                    },
+                    {
+                      value: "dark",
+                      label: "Dark",
+                      icon: ({ color, size }) => <Moon size={size} color={color} />,
+                    },
+                    {
+                      value: "auto",
+                      label: "System",
+                      icon: ({ color, size }) => <Monitor size={size} color={color} />,
+                    },
+                  ]}
+                />
               </View>
             </View>
           </View>
@@ -1215,7 +1169,7 @@ function HostDetailModal({
             value={draftLabel}
             onChangeText={handleDraftLabelChange}
             placeholder="My Host"
-            placeholderTextColor={defaultTheme.colors.mutedForeground}
+            placeholderTextColor={theme.colors.foregroundMuted}
           />
         </View>
 
