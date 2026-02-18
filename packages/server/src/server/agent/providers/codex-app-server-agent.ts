@@ -1,7 +1,6 @@
 import type {
   AgentCapabilityFlags,
   AgentClient,
-  AgentCommandResult,
   AgentMode,
   AgentModelDefinition,
   McpServerConfig,
@@ -2034,17 +2033,48 @@ class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  private async buildCommandPromptInput(
+    commandName: string,
+    args?: string
+  ): Promise<AgentPromptInput> {
+    if (commandName.startsWith("prompts:")) {
+      const promptName = commandName.slice("prompts:".length);
+      const codexHome = resolveCodexHomeDir();
+      const promptPath = path.join(codexHome, "prompts", `${promptName}.md`);
+      const raw = await fs.readFile(promptPath, "utf8");
+      const parsed = parseFrontMatter(raw);
+      return expandCodexCustomPrompt(parsed.body, args);
+    }
+
+    if (!this.connected) {
+      await this.connect();
+    } else {
+      await this.loadSkills();
+    }
+    const skill = this.cachedSkills.find((entry) => entry.name === commandName);
+    if (skill) {
+      const input = [
+        { type: "skill", name: skill.name, path: skill.path },
+      ] as unknown as AgentPromptContentBlock[];
+      if (args && args.trim().length > 0) {
+        input.push({ type: "text", text: args.trim() });
+      } else {
+        input.push({ type: "text", text: `$${skill.name}` });
+      }
+      return input;
+    }
+
+    return args ? `$${commandName} ${args}` : `$${commandName}`;
+  }
+
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
     if (slashCommand) {
-      const result = await this.executeCommand(slashCommand.commandName, slashCommand.args);
-      const info = await this.getRuntimeInfo();
-      return {
-        sessionId: info.sessionId ?? "",
-        finalText: result.text,
-        usage: result.usage,
-        timeline: result.timeline,
-      };
+      const commandInput = await this.buildCommandPromptInput(
+        slashCommand.commandName,
+        slashCommand.args
+      );
+      return this.runInternal(commandInput, options);
     }
     return this.runInternal(prompt, options);
   }
@@ -2086,15 +2116,11 @@ class CodexAppServerAgentSession implements AgentSession {
   ): AsyncGenerator<AgentStreamEvent> {
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
     if (slashCommand) {
-      const result = await this.executeCommand(slashCommand.commandName, slashCommand.args);
-      for (const item of result.timeline) {
-        yield { type: "timeline", provider: CODEX_PROVIDER, item };
-      }
-      yield {
-        type: "turn_completed",
-        provider: CODEX_PROVIDER,
-        usage: result.usage,
-      };
+      const commandInput = await this.buildCommandPromptInput(
+        slashCommand.commandName,
+        slashCommand.args
+      );
+      yield* this.streamInternal(commandInput, options);
       return;
     }
     yield* this.streamInternal(prompt, options);
@@ -2402,42 +2428,6 @@ class CodexAppServerAgentSession implements AgentSession {
     return [...appServerSkills, ...fallbackSkills, ...prompts].sort((a, b) =>
       a.name.localeCompare(b.name)
     );
-  }
-
-  async executeCommand(commandName: string, args?: string): Promise<AgentCommandResult> {
-    if (commandName.startsWith("prompts:")) {
-      const promptName = commandName.slice("prompts:".length);
-      const codexHome = resolveCodexHomeDir();
-      const promptPath = path.join(codexHome, "prompts", `${promptName}.md`);
-      const raw = await fs.readFile(promptPath, "utf8");
-      const parsed = parseFrontMatter(raw);
-      const expanded = expandCodexCustomPrompt(parsed.body, args);
-      const result = await this.runInternal(expanded);
-      return { text: result.finalText, timeline: result.timeline, usage: result.usage };
-    }
-
-    if (!this.connected) {
-      await this.connect();
-    } else {
-      await this.loadSkills();
-    }
-    const skill = this.cachedSkills.find((entry) => entry.name === commandName);
-    if (skill) {
-      const input = [
-        { type: "skill", name: skill.name, path: skill.path },
-      ] as unknown as AgentPromptContentBlock[];
-      if (args && args.trim().length > 0) {
-        input.push({ type: "text", text: args.trim() });
-      } else {
-        input.push({ type: "text", text: `$${skill.name}` });
-      }
-      const result = await this.runInternal(input);
-      return { text: result.finalText, timeline: result.timeline, usage: result.usage };
-    }
-
-    const skillPrompt = args ? `$${commandName} ${args}` : `$${commandName}`;
-    const result = await this.runInternal(skillPrompt);
-    return { text: result.finalText, timeline: result.timeline, usage: result.usage };
   }
 
   private async ensureThread(): Promise<void> {

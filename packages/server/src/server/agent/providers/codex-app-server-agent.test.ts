@@ -516,7 +516,7 @@ describe("Codex app-server provider (integration)", () => {
   }, 120000);
 
   test.runIf(isCodexInstalled())(
-    "listCommands includes custom prompts and executeCommand matches run('/prompts:*') expansion",
+    "listCommands includes custom prompts and run('/prompts:*') expands them",
     async () => {
       const cleanup = useTempCodexSessionDir();
       const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
@@ -553,12 +553,66 @@ describe("Codex app-server provider (integration)", () => {
 
           const executeArgs = "NAME=world extra_value";
           const expectedExpanded = `${token}::name=world::pos1=extra_value::dollar=$`;
-          const executeResult = await session.executeCommand?.("prompts:test", executeArgs);
-          expect(executeResult?.text).toContain(expectedExpanded);
-
           const rawSlashInput = "/prompts:test NAME=world extra_value";
           const runResult = await session.run(rawSlashInput);
           expect(runResult.finalText).toContain(expectedExpanded);
+        } finally {
+          await session.close();
+        }
+      } finally {
+        cleanup();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(promptPath, { force: true });
+      }
+    },
+    120000
+  );
+
+  test.runIf(isCodexInstalled())(
+    "slash prompt run streams live turn events (turn_started/turn_completed)",
+    async () => {
+      const cleanup = useTempCodexSessionDir();
+      const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+      const promptsDir = path.join(codexHome, "prompts");
+      const promptPath = path.join(promptsDir, "stream-test.md");
+      const cwd = tmpCwd("codex-cmd-stream-");
+      const token = `PASEO_STREAM_TOKEN_${Date.now()}`;
+
+      mkdirSync(promptsDir, { recursive: true });
+      writeFileSync(
+        promptPath,
+        [
+          "---",
+          "description: Stream Test Prompt",
+          "---",
+          `Reply with exactly: ${token}`,
+        ].join("\n"),
+        "utf8"
+      );
+
+      try {
+        const client = new CodexAppServerAgentClient(logger);
+        const session = await client.createSession({
+          provider: "codex",
+          cwd,
+          modeId: "auto",
+          model: CODEX_TEST_MODEL,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        });
+        try {
+          const events = session.stream("/prompts:stream-test");
+          const seenTypes = new Set<string>();
+          const assistantChunks: string[] = [];
+          for await (const event of events) {
+            seenTypes.add(event.type);
+            if (event.type === "timeline" && event.item.type === "assistant_message") {
+              assistantChunks.push(event.item.text);
+            }
+          }
+
+          expect(seenTypes.has("turn_started")).toBe(true);
+          expect(seenTypes.has("turn_completed")).toBe(true);
+          expect(assistantChunks.join("")).toContain(token);
         } finally {
           await session.close();
         }

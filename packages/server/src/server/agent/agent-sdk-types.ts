@@ -281,15 +281,6 @@ export type AgentSlashCommand = {
   argumentHint: string;
 };
 
-/**
- * Result from executing a slash command.
- */
-export type AgentCommandResult = {
-  text: string;
-  timeline: AgentTimelineItem[];
-  usage?: AgentUsage;
-};
-
 export type ListPersistedAgentsOptions = {
   limit?: number;
 };
@@ -353,13 +344,6 @@ export interface AgentSession {
    * Commands are provider-specific - Claude supports skills and built-in commands.
    */
   listCommands?(): Promise<AgentSlashCommand[]>;
-  /**
-   * Execute a slash command by name.
-   * The command name should NOT include the leading "/" - it will be added automatically.
-   * @param commandName The command name (e.g., "help", "context")
-   * @param args Optional arguments to pass to the command
-   */
-  executeCommand?(commandName: string, args?: string): Promise<AgentCommandResult>;
   /**
    * Update the model used for subsequent turns (if supported by provider).
    */

@@ -16,7 +16,6 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentSlashCommand,
-  AgentCommandResult,
   AgentUsage,
   ListModelsOptions,
 } from "../agent/agent-sdk-types.js";
@@ -251,7 +250,7 @@ class FakeAgentSession implements AgentSession {
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     const slashCommand = await this.resolveSlashCommandInput(prompt);
     if (slashCommand) {
-      const result = await this.executeCommand(
+      const result = await this.runSlashCommand(
         slashCommand.commandName,
         slashCommand.args
       );
@@ -290,7 +289,7 @@ class FakeAgentSession implements AgentSession {
       await this.appendHistoryEvent(turnStarted);
       yield turnStarted;
 
-      const result = await this.executeCommand(
+      const result = await this.runSlashCommand(
         slashCommand.commandName,
         slashCommand.args
       );
@@ -578,7 +577,14 @@ class FakeAgentSession implements AgentSession {
     ];
   }
 
-  async executeCommand(commandName: string, args?: string): Promise<AgentCommandResult> {
+  private async runSlashCommand(
+    commandName: string,
+    args?: string
+  ): Promise<{
+    text: string;
+    timeline: AgentRunResult["timeline"];
+    usage: AgentUsage;
+  }> {
     const fullName = commandName.trim();
     if (this.providerName === "codex" && fullName.startsWith("prompts:")) {
       const promptId = fullName.slice("prompts:".length);

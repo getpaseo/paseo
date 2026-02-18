@@ -33,7 +33,6 @@ import {
 import type {
   AgentCapabilityFlags,
   AgentClient,
-  AgentCommandResult,
   AgentMetadata,
   AgentMode,
   AgentModelDefinition,
@@ -1013,45 +1012,6 @@ class ClaudeAgentSession implements AgentSession {
       description: cmd.description,
       argumentHint: cmd.argumentHint,
     }));
-  }
-
-  async executeCommand(commandName: string, args?: string): Promise<AgentCommandResult> {
-    const commandPrompt = args ? `/${commandName} ${args}` : `/${commandName}`;
-
-    // Commands return their output in a user message with <local-command-stdout> tags,
-    // NOT as an assistant message. We need to extract that specifically.
-    const events = this.stream(commandPrompt);
-    const timeline: AgentTimelineItem[] = [];
-    let commandOutput = "";
-    let usage: AgentUsage | undefined;
-
-    for await (const event of events) {
-      if (event.type === "timeline") {
-        timeline.push(event.item);
-        // Check for command output in user messages
-        if (event.item.type === "user_message") {
-          const text = event.item.text;
-          const match = text.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
-          if (match) {
-            commandOutput = match[1].trim();
-          }
-        }
-        // Also capture assistant messages (some commands may produce both)
-        if (event.item.type === "assistant_message" && !commandOutput) {
-          commandOutput = event.item.text;
-        }
-      } else if (event.type === "turn_completed") {
-        usage = event.usage;
-      } else if (event.type === "turn_failed") {
-        throw new Error(event.error);
-      }
-    }
-
-    return {
-      text: commandOutput,
-      timeline,
-      usage,
-    };
   }
 
   private async primeSelectableModelIds(query: Query): Promise<void> {

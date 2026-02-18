@@ -77,7 +77,7 @@ describe("codex agent commands E2E", () => {
     rmSync(codexHome, { recursive: true, force: true });
   }, 30_000);
 
-  test("executes a custom prompt command (prompts:*)", async () => {
+  test("executes a custom prompt via normal sendMessage path (prompts:*)", async () => {
     const codexHome = process.env.CODEX_HOME ?? path.join(process.env.HOME ?? "/tmp", ".codex");
 
     const promptsDir = path.join(codexHome, "prompts");
@@ -95,18 +95,19 @@ describe("codex agent commands E2E", () => {
       title: "Codex Prompt Execute Test Agent",
     });
 
-    const result = await ctx.client.executeCommand(
+    await ctx.client.sendMessage(
       agent.id,
-      "prompts:paseo-test-sayok",
-      "NAME=world"
+      "/prompts:paseo-test-sayok NAME=world"
     );
-    expect(result.error).toBeNull();
-    expect(result.result?.text).toContain("PASEO_OK");
+    const state = await ctx.client.waitForFinish(agent.id, 30_000);
+
+    expect(state.status).toBe("idle");
+    expect(state.lastMessage).toContain("PASEO_OK");
 
     rmSync(promptPath, { force: true });
   }, 30_000);
 
-  test("sendMessage routes known slash commands through executeCommand", async () => {
+  test("sendMessage routes known slash commands through standard run/stream", async () => {
     const prevCodexHome = process.env.CODEX_HOME;
     const codexHome = tmpDir("codex-home-send-command-");
     const promptsDir = path.join(codexHome, "prompts");

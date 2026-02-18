@@ -31,7 +31,6 @@ import type {
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
   ListCommandsResponse,
-  ExecuteCommandResponse,
   ListProviderModelsResponseMessage,
   ListAvailableProvidersResponse,
   SpeechModelsListResponse,
@@ -208,7 +207,6 @@ type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type SpeechModelsListPayload = SpeechModelsListResponse["payload"];
 type SpeechModelsDownloadPayload = SpeechModelsDownloadResponse["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
-type ExecuteCommandPayload = ExecuteCommandResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
   "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId"
@@ -2205,25 +2203,6 @@ export class DaemonClient {
         ...(draftConfig ? { draftConfig } : {}),
       },
       responseType: "list_commands_response",
-      timeout: 30000,
-    });
-  }
-
-  async executeCommand(
-    agentId: string,
-    commandName: string,
-    args?: string,
-    requestId?: string
-  ): Promise<ExecuteCommandPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "execute_command_request",
-        agentId,
-        commandName,
-        args,
-      },
-      responseType: "execute_command_response",
       timeout: 30000,
     });
   }

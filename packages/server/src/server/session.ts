@@ -1527,15 +1527,6 @@ export class Session {
           await this.handleListCommandsRequest(msg);
           break;
 
-        case "execute_command_request":
-          await this.handleExecuteCommandRequest(
-            msg.agentId,
-            msg.commandName,
-            msg.args,
-            msg.requestId
-          );
-          break;
-
         case "register_push_token":
           this.handleRegisterPushToken(msg.token);
           break;
@@ -3546,79 +3537,6 @@ export class Session {
         payload: {
           agentId,
           commands: [],
-          error: error.message,
-          requestId,
-        },
-      });
-    }
-  }
-
-  /**
-   * Handle execute command request for an agent
-   */
-  private async handleExecuteCommandRequest(
-    agentId: string,
-    commandName: string,
-    args: string | undefined,
-    requestId: string
-  ): Promise<void> {
-    this.sessionLogger.debug(
-      { agentId, commandName },
-      `Handling execute command request for agent ${agentId}`
-    );
-
-    try {
-      const agents = this.agentManager.listAgents();
-      const agent = agents.find((a) => a.id === agentId);
-
-      if (!agent) {
-        this.emit({
-          type: "execute_command_response",
-          payload: {
-            agentId,
-            result: null,
-            error: `Agent not found: ${agentId}`,
-            requestId,
-          },
-        });
-        return;
-      }
-
-      const session = agent.session;
-      if (!session || !session.executeCommand) {
-        this.emit({
-          type: "execute_command_response",
-          payload: {
-            agentId,
-            result: null,
-            error: `Agent does not support executing commands`,
-            requestId,
-          },
-        });
-        return;
-      }
-
-      const result = await session.executeCommand(commandName, args);
-
-      this.emit({
-        type: "execute_command_response",
-        payload: {
-          agentId,
-          result,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error: any) {
-      this.sessionLogger.error(
-        { err: error, agentId, commandName },
-        "Failed to execute command"
-      );
-      this.emit({
-        type: "execute_command_response",
-        payload: {
-          agentId,
-          result: null,
           error: error.message,
           requestId,
         },
