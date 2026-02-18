@@ -69,6 +69,7 @@ interface PanelState {
   // Actions
   openAgentList: () => void;
   openFileExplorer: () => void;
+  closeFileExplorer: () => void;
   closeToAgent: () => void;
   toggleAgentList: () => void;
   toggleFileExplorer: () => void;
@@ -147,6 +148,14 @@ export const usePanelStore = create<PanelState>()(
             ...(resolvedTab ? { explorerTab: resolvedTab } : {}),
           };
         }),
+      closeFileExplorer: () =>
+        set((state) => ({
+          mobileView: state.mobileView === "file-explorer" ? "agent" : state.mobileView,
+          desktop: {
+            ...state.desktop,
+            fileExplorerOpen: false,
+          },
+        })),
 
       closeToAgent: () =>
         set((state) => ({

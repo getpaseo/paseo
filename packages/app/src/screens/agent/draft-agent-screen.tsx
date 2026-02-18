@@ -13,12 +13,15 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
-import { Folder, GitBranch } from "lucide-react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
+import { Folder, GitBranch, PanelRight } from "lucide-react-native";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
+import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentConfigRow, FormSelectTrigger } from "@/components/agent-form/agent-form-dropdowns";
+import { ExplorerSidebar } from "@/components/explorer-sidebar";
 import { Combobox } from "@/components/ui/combobox";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { useQuery } from "@tanstack/react-query";
@@ -37,6 +40,10 @@ import { collectAgentWorkingDirectorySuggestions } from "@/utils/agent-working-d
 import { buildWorkingDirectorySuggestions } from "@/utils/working-directory-suggestions";
 import { useSessionStore } from "@/stores/session-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
+import {
+  ExplorerSidebarAnimationProvider,
+} from "@/contexts/explorer-sidebar-animation-context";
+import { usePanelStore, type ExplorerCheckoutContext } from "@/stores/panel-store";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { WelcomeScreen } from "@/components/welcome-screen";
 import type { Agent } from "@/contexts/session-context";
@@ -122,6 +129,22 @@ type DraftAgentScreenProps = {
 };
 
 export function DraftAgentScreen({
+  isVisible = true,
+  onCreateFlowActiveChange,
+  forcedServerId,
+}: DraftAgentScreenProps = {}) {
+  return (
+    <ExplorerSidebarAnimationProvider>
+      <DraftAgentScreenContent
+        isVisible={isVisible}
+        onCreateFlowActiveChange={onCreateFlowActiveChange}
+        forcedServerId={forcedServerId}
+      />
+    </ExplorerSidebarAnimationProvider>
+  );
+}
+
+function DraftAgentScreenContent({
   isVisible = true,
   onCreateFlowActiveChange,
   forcedServerId,
@@ -229,6 +252,16 @@ export function DraftAgentScreen({
     : undefined;
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
+  const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
+  const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
+  const closeFileExplorer = usePanelStore((state) => state.closeFileExplorer);
+  const setActiveExplorerCheckout = usePanelStore((state) => state.setActiveExplorerCheckout);
+  const activateExplorerTabForCheckout = usePanelStore(
+    (state) => state.activateExplorerTabForCheckout
+  );
+  const isExplorerOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
 
   const [worktreeMode, setWorktreeMode] = useState<"none" | "create" | "attach">("none");
   const [baseBranch, setBaseBranch] = useState("");
@@ -690,6 +723,72 @@ export function DraftAgentScreen({
 
   const selectedWorktreeLabel =
     worktreeOptions.find((option) => option.path === selectedWorktreePath)?.label ?? "";
+  const explorerCwd = useMemo(
+    () =>
+      (
+        isAttachWorktree && selectedWorktreePath ? selectedWorktreePath : workingDir
+      ).trim(),
+    [isAttachWorktree, selectedWorktreePath, workingDir]
+  );
+  const draftExplorerCheckout = useMemo<ExplorerCheckoutContext | null>(() => {
+    if (!selectedServerId || !explorerCwd) {
+      return null;
+    }
+    return {
+      serverId: selectedServerId,
+      cwd: explorerCwd,
+      isGit: isAttachWorktree && selectedWorktreePath ? true : checkout?.isGit === true,
+    };
+  }, [
+    selectedServerId,
+    explorerCwd,
+    isAttachWorktree,
+    selectedWorktreePath,
+    checkout?.isGit,
+  ]);
+  const canOpenExplorer = draftExplorerCheckout !== null;
+  const openExplorerForDraftCheckout = useCallback(() => {
+    if (!draftExplorerCheckout) {
+      return;
+    }
+    activateExplorerTabForCheckout(draftExplorerCheckout);
+    openFileExplorer();
+  }, [activateExplorerTabForCheckout, draftExplorerCheckout, openFileExplorer]);
+  const handleToggleExplorer = useCallback(() => {
+    if (!canOpenExplorer) {
+      return;
+    }
+    if (isExplorerOpen) {
+      toggleFileExplorer();
+      return;
+    }
+    openExplorerForDraftCheckout();
+  }, [
+    canOpenExplorer,
+    isExplorerOpen,
+    openExplorerForDraftCheckout,
+    toggleFileExplorer,
+  ]);
+  const handleOpenExplorerFromGesture = useCallback(() => {
+    if (!canOpenExplorer) {
+      return;
+    }
+    openExplorerForDraftCheckout();
+  }, [canOpenExplorer, openExplorerForDraftCheckout]);
+  const explorerOpenGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(isMobile && !isExplorerOpen && canOpenExplorer)
+        .activeOffsetX(-15)
+        .failOffsetY([-10, 10])
+        .onEnd((event) => {
+          const shouldOpen = event.translationX < -80 || event.velocityX < -500;
+          if (shouldOpen) {
+            runOnJS(handleOpenExplorerFromGesture)();
+          }
+        }),
+    [canOpenExplorer, handleOpenExplorerFromGesture, isExplorerOpen, isMobile]
+  );
   const hasWorkingDirectorySearch = debouncedWorkingDirSearchQuery.length > 0;
   const workingDirSearchError =
     directorySuggestionsQuery.error instanceof Error
@@ -893,6 +992,26 @@ export function DraftAgentScreen({
     selectedWorktreePath,
     workingDir,
   ]);
+  useEffect(() => {
+    setActiveExplorerCheckout(draftExplorerCheckout);
+  }, [draftExplorerCheckout, setActiveExplorerCheckout]);
+  useEffect(() => {
+    if (!draftExplorerCheckout) {
+      return;
+    }
+    activateExplorerTabForCheckout(draftExplorerCheckout);
+  }, [activateExplorerTabForCheckout, draftExplorerCheckout]);
+  useEffect(() => {
+    if (canOpenExplorer || !isExplorerOpen) {
+      return;
+    }
+    closeFileExplorer();
+  }, [canOpenExplorer, closeFileExplorer, isExplorerOpen]);
+  useEffect(() => {
+    return () => {
+      setActiveExplorerCheckout(null);
+    };
+  }, [setActiveExplorerCheckout]);
 
   const handleCreateFromInput = useCallback(
     async ({
@@ -1082,9 +1201,11 @@ export function DraftAgentScreen({
     );
   }
 
-  return (
-    <FileDropZone onFilesDropped={handleFilesDropped}>
-      <View style={styles.container}>
+  const explorerServerId = draftExplorerCheckout?.serverId ?? null;
+  const explorerIsGit = draftExplorerCheckout?.isGit ?? false;
+  const mainContent = (
+    <View style={styles.container}>
+      <View style={styles.outerContainer}>
         <View style={styles.agentPanel}>
           <View
             style={[
@@ -1092,199 +1213,258 @@ export function DraftAgentScreen({
               isMobile ? { paddingTop: insets.top + theme.spacing[2] } : null,
             ]}
           >
-            <SidebarMenuToggle />
-          </View>
-
-        <Animated.View style={[styles.contentContainer, animatedKeyboardStyle]}>
-        {machine.tag === "creating" && draftAgent && selectedServerId ? (
-          <View style={styles.streamContainer}>
-            <AgentStreamView
-              agentId={DRAFT_AGENT_ID}
-              serverId={selectedServerId}
-              agent={draftAgent}
-              streamItems={optimisticStreamItems}
-              pendingPermissions={EMPTY_PENDING_PERMISSIONS}
-            />
-          </View>
-        ) : (
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.configScrollContent}>
-          <View style={styles.configSection}>
-            <View style={isMobile ? styles.stackedSelectorGroup : styles.topSelectorRow}>
-              <FormSelectTrigger
-                controlRef={workingDirAnchorRef}
-                containerStyle={styles.fullSelector}
-                label="Working directory"
-                value={displayWorkingDir}
-                placeholder="/path/to/project"
-                onPress={() => setIsWorkingDirOpen(true)}
-                icon={<Folder size={16} color={theme.colors.foregroundMuted} />}
-                showLabel={false}
-                valueEllipsizeMode="middle"
-                testID="working-directory-select"
-              />
-            </View>
-            {isDirectoryNotExists && (
-              <View style={styles.warningContainer}>
-                <Text style={styles.warningText}>
-                  Directory does not exist on the selected host
-                </Text>
-              </View>
-            )}
-            {isMobile ? <View style={styles.formSeparator} /> : null}
-            <AgentConfigRow
-              providerDefinitions={providerDefinitions}
-              selectedProvider={selectedProvider}
-              onSelectProvider={setProviderFromUser}
-              modeOptions={modeOptions}
-              selectedMode={selectedMode}
-              onSelectMode={setModeFromUser}
-              models={availableModels}
-              selectedModel={selectedModel}
-              isModelLoading={isModelLoading}
-              onSelectModel={setModelFromUser}
-              thinkingOptions={availableThinkingOptions}
-              selectedThinkingOptionId={selectedThinkingOptionId}
-              onSelectThinkingOption={setThinkingOptionFromUser}
-            />
-            {isMobile && trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
-              <View style={styles.formSeparator} />
-            ) : null}
-            {trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
-              <View style={isMobile ? styles.stackedSelectorGroup : styles.topSelectorRow}>
-                <FormSelectTrigger
-                  controlRef={worktreeAnchorRef}
-                  containerStyle={
-                    isMobile
-                      ? styles.fullSelector
-                      : worktreeMode === "create"
-                      ? styles.halfSelector
-                      : styles.topSelectorPrimary
-                  }
-                  label="Worktree"
-                  value={worktreeTriggerValue}
-                  placeholder="Select worktree"
-                  onPress={() => setIsWorktreePickerOpen(true)}
-                  icon={<GitBranch size={16} color={theme.colors.foregroundMuted} />}
-                  showLabel={false}
-                  valueEllipsizeMode="middle"
-                />
-                {worktreeMode === "create" ? (
-                  <FormSelectTrigger
-                    controlRef={branchAnchorRef}
-                    containerStyle={isMobile ? styles.fullSelector : styles.halfSelector}
-                    label="Base branch"
-                    value={baseBranch}
-                    placeholder="From branch"
-                    onPress={() => setIsBranchOpen(true)}
-                    disabled={repoInfoStatus === "loading"}
-                    icon={<GitBranch size={16} color={theme.colors.foregroundMuted} />}
-                    showLabel={false}
+            <View style={styles.menuToggleRow}>
+              <SidebarMenuToggle />
+              {!isMobile && canOpenExplorer ? (
+                <HeaderToggleButton
+                  onPress={handleToggleExplorer}
+                  tooltipLabel="Toggle explorer"
+                  tooltipKeys={["mod", "E"]}
+                  tooltipSide="left"
+                  style={styles.menuButton}
+                  accessible
+                  accessibilityRole="button"
+                  accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
+                  accessibilityState={{ expanded: isExplorerOpen }}
+                >
+                  <PanelRight
+                    size={16}
+                    color={
+                      isExplorerOpen
+                        ? theme.colors.foreground
+                        : theme.colors.foregroundMuted
+                    }
                   />
-                ) : null}
-              </View>
-            ) : null}
-            {baseBranchError ? <Text style={styles.errorInlineText}>{baseBranchError}</Text> : null}
-            {repoInfoError ? <Text style={styles.errorInlineText}>{repoInfoError}</Text> : null}
-            {gitBlockingError ? <Text style={styles.errorInlineText}>{gitBlockingError}</Text> : null}
-            {attachWorktreeError ? <Text style={styles.errorInlineText}>{attachWorktreeError}</Text> : null}
-            {worktreeOptionsError ? <Text style={styles.errorInlineText}>{worktreeOptionsError}</Text> : null}
-          </View>
-          <Combobox
-            options={worktreeComboOptions}
-            value={
-              worktreeMode === "create"
-                ? "__create_new__"
-                : worktreeMode === "attach"
-                ? selectedWorktreePath
-                : "__none__"
-            }
-            onSelect={(id) => {
-              if (id === "__create_new__") {
-                setWorktreeMode("create");
-                if (!worktreeSlug) {
-                  setWorktreeSlug(createNameId());
-                }
-                setSelectedWorktreePath("");
-                return;
-              }
-              if (id === "__none__") {
-                setWorktreeMode("none");
-                setSelectedWorktreePath("");
-                return;
-              }
-              handleSelectWorktreePath(id);
-              setWorktreeMode("attach");
-            }}
-            title="Select worktree"
-            searchPlaceholder="Search worktrees..."
-            open={isWorktreePickerOpen}
-            onOpenChange={setIsWorktreePickerOpen}
-            emptyText="No worktrees found"
-            anchorRef={worktreeAnchorRef}
-          />
-
-          <Combobox
-            options={workingDirComboOptions}
-            value={workingDir}
-            onSelect={setWorkingDirFromUser}
-            onSearchQueryChange={setWorkingDirSearchQuery}
-            searchPlaceholder="Search directories..."
-            emptyText={workingDirEmptyText}
-            allowCustomValue
-            customValuePrefix=""
-            customValueKind="directory"
-            optionsPosition="above-search"
-            title="Working directory"
-            open={isWorkingDirOpen}
-            onOpenChange={setIsWorkingDirOpen}
-            anchorRef={workingDirAnchorRef}
-          />
-
-          <Combobox
-            options={branchComboOptions}
-            value={baseBranch}
-            onSelect={handleBaseBranchChange}
-            onSearchQueryChange={setBranchSearchQuery}
-            searchPlaceholder="Choose a base branch..."
-            allowCustomValue
-            customValuePrefix="Use"
-            customValueDescription="Use this branch name"
-            title="Select base branch"
-            open={isBranchOpen}
-            onOpenChange={(nextOpen) => {
-              setIsBranchOpen(nextOpen);
-              if (!nextOpen) {
-                setBranchSearchQuery("");
-              }
-            }}
-            anchorRef={branchAnchorRef}
-          />
-
-          {formErrorMessage ? (
-            <View style={styles.errorContainer}>
-              <Text style={styles.errorText}>{formErrorMessage}</Text>
+                </HeaderToggleButton>
+              ) : null}
             </View>
-          ) : null}
-        </ScrollView>
-        )}
-        </Animated.View>
-        <View style={styles.inputAreaWrapper}>
-          <AgentInputArea
-            agentId={DRAFT_AGENT_ID}
-            serverId={selectedServerId ?? ""}
-            onSubmitMessage={handleCreateFromInput}
-            isSubmitLoading={isSubmitting}
-            blurOnSubmit={true}
-            value={promptValue}
-            onChangeText={(next) => dispatch({ type: "DRAFT_SET_PROMPT", text: next })}
-            autoFocus={machine.tag === "draft"}
-            onAddImages={handleAddImagesCallback}
-            commandDraftConfig={draftCommandConfig}
-          />
+          </View>
+
+          <Animated.View style={[styles.contentContainer, animatedKeyboardStyle]}>
+            {machine.tag === "creating" && draftAgent && selectedServerId ? (
+              <View style={styles.streamContainer}>
+                <AgentStreamView
+                  agentId={DRAFT_AGENT_ID}
+                  serverId={selectedServerId}
+                  agent={draftAgent}
+                  streamItems={optimisticStreamItems}
+                  pendingPermissions={EMPTY_PENDING_PERMISSIONS}
+                />
+              </View>
+            ) : (
+              <ScrollView
+                style={styles.scrollView}
+                contentContainerStyle={styles.configScrollContent}
+              >
+                <View style={styles.configSection}>
+                  <View style={isMobile ? styles.stackedSelectorGroup : styles.topSelectorRow}>
+                    <FormSelectTrigger
+                      controlRef={workingDirAnchorRef}
+                      containerStyle={styles.fullSelector}
+                      label="Working directory"
+                      value={displayWorkingDir}
+                      placeholder="/path/to/project"
+                      onPress={() => setIsWorkingDirOpen(true)}
+                      icon={<Folder size={16} color={theme.colors.foregroundMuted} />}
+                      showLabel={false}
+                      valueEllipsizeMode="middle"
+                      testID="working-directory-select"
+                    />
+                  </View>
+                  {isDirectoryNotExists && (
+                    <View style={styles.warningContainer}>
+                      <Text style={styles.warningText}>
+                        Directory does not exist on the selected host
+                      </Text>
+                    </View>
+                  )}
+                  {isMobile ? <View style={styles.formSeparator} /> : null}
+                  <AgentConfigRow
+                    providerDefinitions={providerDefinitions}
+                    selectedProvider={selectedProvider}
+                    onSelectProvider={setProviderFromUser}
+                    modeOptions={modeOptions}
+                    selectedMode={selectedMode}
+                    onSelectMode={setModeFromUser}
+                    models={availableModels}
+                    selectedModel={selectedModel}
+                    isModelLoading={isModelLoading}
+                    onSelectModel={setModelFromUser}
+                    thinkingOptions={availableThinkingOptions}
+                    selectedThinkingOptionId={selectedThinkingOptionId}
+                    onSelectThinkingOption={setThinkingOptionFromUser}
+                  />
+                  {isMobile && trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
+                    <View style={styles.formSeparator} />
+                  ) : null}
+                  {trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
+                    <View style={isMobile ? styles.stackedSelectorGroup : styles.topSelectorRow}>
+                      <FormSelectTrigger
+                        controlRef={worktreeAnchorRef}
+                        containerStyle={
+                          isMobile
+                            ? styles.fullSelector
+                            : worktreeMode === "create"
+                              ? styles.halfSelector
+                              : styles.topSelectorPrimary
+                        }
+                        label="Worktree"
+                        value={worktreeTriggerValue}
+                        placeholder="Select worktree"
+                        onPress={() => setIsWorktreePickerOpen(true)}
+                        icon={<GitBranch size={16} color={theme.colors.foregroundMuted} />}
+                        showLabel={false}
+                        valueEllipsizeMode="middle"
+                      />
+                      {worktreeMode === "create" ? (
+                        <FormSelectTrigger
+                          controlRef={branchAnchorRef}
+                          containerStyle={isMobile ? styles.fullSelector : styles.halfSelector}
+                          label="Base branch"
+                          value={baseBranch}
+                          placeholder="From branch"
+                          onPress={() => setIsBranchOpen(true)}
+                          disabled={repoInfoStatus === "loading"}
+                          icon={<GitBranch size={16} color={theme.colors.foregroundMuted} />}
+                          showLabel={false}
+                        />
+                      ) : null}
+                    </View>
+                  ) : null}
+                  {baseBranchError ? <Text style={styles.errorInlineText}>{baseBranchError}</Text> : null}
+                  {repoInfoError ? <Text style={styles.errorInlineText}>{repoInfoError}</Text> : null}
+                  {gitBlockingError ? <Text style={styles.errorInlineText}>{gitBlockingError}</Text> : null}
+                  {attachWorktreeError ? <Text style={styles.errorInlineText}>{attachWorktreeError}</Text> : null}
+                  {worktreeOptionsError ? <Text style={styles.errorInlineText}>{worktreeOptionsError}</Text> : null}
+                </View>
+                <Combobox
+                  options={worktreeComboOptions}
+                  value={
+                    worktreeMode === "create"
+                      ? "__create_new__"
+                      : worktreeMode === "attach"
+                        ? selectedWorktreePath
+                        : "__none__"
+                  }
+                  onSelect={(id) => {
+                    if (id === "__create_new__") {
+                      setWorktreeMode("create");
+                      if (!worktreeSlug) {
+                        setWorktreeSlug(createNameId());
+                      }
+                      setSelectedWorktreePath("");
+                      return;
+                    }
+                    if (id === "__none__") {
+                      setWorktreeMode("none");
+                      setSelectedWorktreePath("");
+                      return;
+                    }
+                    handleSelectWorktreePath(id);
+                    setWorktreeMode("attach");
+                  }}
+                  title="Select worktree"
+                  searchPlaceholder="Search worktrees..."
+                  open={isWorktreePickerOpen}
+                  onOpenChange={setIsWorktreePickerOpen}
+                  emptyText="No worktrees found"
+                  anchorRef={worktreeAnchorRef}
+                />
+
+                <Combobox
+                  options={workingDirComboOptions}
+                  value={workingDir}
+                  onSelect={setWorkingDirFromUser}
+                  onSearchQueryChange={setWorkingDirSearchQuery}
+                  searchPlaceholder="Search directories..."
+                  emptyText={workingDirEmptyText}
+                  allowCustomValue
+                  customValuePrefix=""
+                  customValueKind="directory"
+                  optionsPosition="above-search"
+                  title="Working directory"
+                  open={isWorkingDirOpen}
+                  onOpenChange={setIsWorkingDirOpen}
+                  anchorRef={workingDirAnchorRef}
+                />
+
+                <Combobox
+                  options={branchComboOptions}
+                  value={baseBranch}
+                  onSelect={handleBaseBranchChange}
+                  onSearchQueryChange={setBranchSearchQuery}
+                  searchPlaceholder="Choose a base branch..."
+                  allowCustomValue
+                  customValuePrefix="Use"
+                  customValueDescription="Use this branch name"
+                  title="Select base branch"
+                  open={isBranchOpen}
+                  onOpenChange={(nextOpen) => {
+                    setIsBranchOpen(nextOpen);
+                    if (!nextOpen) {
+                      setBranchSearchQuery("");
+                    }
+                  }}
+                  anchorRef={branchAnchorRef}
+                />
+
+                {formErrorMessage ? (
+                  <View style={styles.errorContainer}>
+                    <Text style={styles.errorText}>{formErrorMessage}</Text>
+                  </View>
+                ) : null}
+              </ScrollView>
+            )}
+          </Animated.View>
+          <View style={styles.inputAreaWrapper}>
+            <AgentInputArea
+              agentId={DRAFT_AGENT_ID}
+              serverId={selectedServerId ?? ""}
+              onSubmitMessage={handleCreateFromInput}
+              isSubmitLoading={isSubmitting}
+              blurOnSubmit={true}
+              value={promptValue}
+              onChangeText={(next) => dispatch({ type: "DRAFT_SET_PROMPT", text: next })}
+              autoFocus={machine.tag === "draft"}
+              onAddImages={handleAddImagesCallback}
+              commandDraftConfig={draftCommandConfig}
+            />
+          </View>
         </View>
+
+        {!isMobile && isExplorerOpen && explorerServerId && draftExplorerCheckout ? (
+          <ExplorerSidebar
+            serverId={explorerServerId}
+            agentId={DRAFT_AGENT_ID}
+            cwd={draftExplorerCheckout.cwd}
+            isGit={explorerIsGit}
+          />
+        ) : null}
       </View>
     </View>
-  </FileDropZone>
+  );
+
+  return (
+    <FileDropZone onFilesDropped={handleFilesDropped}>
+      <>
+        {isMobile ? (
+          <GestureDetector gesture={explorerOpenGesture} touchAction="pan-y">
+            {mainContent}
+          </GestureDetector>
+        ) : (
+          mainContent
+        )}
+
+        {isMobile && explorerServerId && draftExplorerCheckout ? (
+          <ExplorerSidebar
+            serverId={explorerServerId}
+            agentId={DRAFT_AGENT_ID}
+            cwd={draftExplorerCheckout.cwd}
+            isGit={explorerIsGit}
+          />
+        ) : null}
+      </>
+    </FileDropZone>
   );
 }
 
@@ -1293,13 +1473,25 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     backgroundColor: theme.colors.surface0,
   },
+  outerContainer: {
+    flex: 1,
+    flexDirection: "row",
+  },
   agentPanel: {
     flex: 1,
   },
   menuToggleContainer: {
     paddingHorizontal: theme.spacing[2],
     paddingTop: theme.spacing[2],
-    alignItems: "flex-start",
+  },
+  menuToggleRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  menuButton: {
+    marginLeft: theme.spacing[2],
   },
   contentContainer: {
     flex: 1,
