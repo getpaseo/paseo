@@ -34,7 +34,7 @@ import { useToast } from "@/contexts/toast-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Autocomplete } from "@/components/ui/autocomplete";
-import { useCommandAutocomplete } from "@/hooks/use-command-autocomplete";
+import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
 
 type QueuedMessage = {
   id: string;
@@ -118,13 +118,13 @@ export function AgentInputArea({
   const lastHandledMessageInputActionRequestIdRef = useRef<number | null>(null);
   const messageInputRef = useRef<MessageInputRef>(null);
 
-  const commandAutocomplete = useCommandAutocomplete({
+  const autocomplete = useAgentAutocomplete({
     userInput,
     setUserInput,
     serverId,
     agentId,
     draftConfig: commandDraftConfig,
-    onCommandApplied: () => {
+    onAutocompleteApplied: () => {
       messageInputRef.current?.focus();
     },
   });
@@ -565,10 +565,10 @@ export function AgentInputArea({
         return true;
       }
 
-      return commandAutocomplete.onKeyPress(event);
+      return autocomplete.onKeyPress(event);
     },
     [
-      commandAutocomplete,
+      autocomplete,
       hasSendableContent,
       isAgentRunning,
       isCancellingAgent,
@@ -685,15 +685,15 @@ export function AgentInputArea({
           )}
 
           {/* Command autocomplete dropdown */}
-          {commandAutocomplete.isVisible && (
+          {autocomplete.isVisible && (
             <Autocomplete
-              options={commandAutocomplete.options}
-              selectedIndex={commandAutocomplete.selectedIndex}
-              isLoading={commandAutocomplete.isLoading}
-              errorMessage={commandAutocomplete.errorMessage}
+              options={autocomplete.options}
+              selectedIndex={autocomplete.selectedIndex}
+              isLoading={autocomplete.isLoading}
+              errorMessage={autocomplete.errorMessage}
               loadingText="Loading commands..."
               emptyText="No commands found"
-              onSelect={commandAutocomplete.onSelectOption}
+              onSelect={autocomplete.onSelectOption}
             />
           )}
 
