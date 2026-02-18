@@ -1112,7 +1112,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     if (!isOnBaseBranch || hasRemote) {
       allActions.set("merge-from-base", {
         id: "merge-from-base",
-        label: isOnBaseBranch ? `Sync ${baseRefLabel} from origin` : `Update from ${baseRefLabel}`,
+        label: isOnBaseBranch ? "Sync" : `Update from ${baseRefLabel}`,
         pendingLabel: "Updating...",
         successLabel: "Updated",
         disabled: mergeFromBaseDisabled,
