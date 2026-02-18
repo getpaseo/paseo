@@ -101,6 +101,43 @@ describe("checkout git utilities", () => {
     }
   });
 
+  it("reports ahead/behind relative to origin on the base branch", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    const cloneDir = join(tempDir, "clone");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    execSync(`git clone ${remoteDir} ${cloneDir}`);
+    execSync("git config user.email 'test@test.com'", { cwd: cloneDir });
+    execSync("git config user.name 'Test'", { cwd: cloneDir });
+    writeFileSync(join(cloneDir, "file.txt"), "remote\n");
+    execSync("git add file.txt", { cwd: cloneDir });
+    execSync("git -c commit.gpgsign=false commit -m 'remote update'", { cwd: cloneDir });
+    execSync("git push", { cwd: cloneDir });
+
+    execSync("git fetch origin", { cwd: repoDir });
+    const behindStatus = await getCheckoutStatus(repoDir);
+    expect(behindStatus.isGit).toBe(true);
+    if (!behindStatus.isGit) {
+      return;
+    }
+    expect(behindStatus.aheadOfOrigin).toBe(0);
+    expect(behindStatus.behindOfOrigin).toBe(1);
+
+    writeFileSync(join(repoDir, "local.txt"), "local\n");
+    execSync("git add local.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'local update'", { cwd: repoDir });
+
+    const divergedStatus = await getCheckoutStatus(repoDir);
+    expect(divergedStatus.isGit).toBe(true);
+    if (!divergedStatus.isGit) {
+      return;
+    }
+    expect(divergedStatus.aheadOfOrigin).toBe(1);
+    expect(divergedStatus.behindOfOrigin).toBe(1);
+  });
+
   it("commits messages with quotes safely", async () => {
     const message = `He said "hello" and it's fine`;
     writeFileSync(join(repoDir, "file.txt"), "quoted\n");

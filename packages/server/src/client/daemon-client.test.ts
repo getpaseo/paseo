@@ -120,6 +120,7 @@ describe('DaemonClient', () => {
           baseRef: null,
           aheadBehind: null,
           aheadOfOrigin: null,
+          behindOfOrigin: null,
           hasRemote: false,
           remoteUrl: null,
         },

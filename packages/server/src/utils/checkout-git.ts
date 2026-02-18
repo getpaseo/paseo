@@ -441,6 +441,7 @@ export type CheckoutStatusGitNonPaseo = {
   baseRef: string | null;
   aheadBehind: AheadBehind | null;
   aheadOfOrigin: number | null;
+  behindOfOrigin: number | null;
   hasRemote: boolean;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: false;
@@ -455,6 +456,7 @@ export type CheckoutStatusGitPaseo = {
   baseRef: string;
   aheadBehind: AheadBehind | null;
   aheadOfOrigin: number | null;
+  behindOfOrigin: number | null;
   hasRemote: boolean;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: true;
@@ -838,6 +840,22 @@ async function getAheadOfOrigin(cwd: string, currentBranch: string): Promise<num
   }
 }
 
+async function getBehindOfOrigin(cwd: string, currentBranch: string): Promise<number | null> {
+  if (!currentBranch) {
+    return null;
+  }
+  try {
+    const { stdout } = await execAsync(
+      `git rev-list --count ${currentBranch}..origin/${currentBranch}`,
+      { cwd, env: READ_ONLY_GIT_ENV }
+    );
+    const count = Number.parseInt(stdout.trim(), 10);
+    return Number.isNaN(count) ? null : count;
+  } catch {
+    return null;
+  }
+}
+
 type CheckoutInspectionContext = {
   worktreeRoot: string;
   currentBranch: string | null;
@@ -996,10 +1014,11 @@ export async function getCheckoutStatus(
   const isDirty = await isWorkingTreeDirty(cwd);
   const hasRemote = remoteUrl !== null;
   const baseRef = configured.baseRef ?? (await resolveBaseRef(cwd));
-  const aheadBehind =
-    baseRef && currentBranch ? await getAheadBehind(cwd, baseRef, currentBranch) : null;
-  const aheadOfOrigin =
-    hasRemote && currentBranch ? await getAheadOfOrigin(cwd, currentBranch) : null;
+  const [aheadBehind, aheadOfOrigin, behindOfOrigin] = await Promise.all([
+    baseRef && currentBranch ? getAheadBehind(cwd, baseRef, currentBranch) : Promise.resolve(null),
+    hasRemote && currentBranch ? getAheadOfOrigin(cwd, currentBranch) : Promise.resolve(null),
+    hasRemote && currentBranch ? getBehindOfOrigin(cwd, currentBranch) : Promise.resolve(null),
+  ]);
 
   if (configured.isPaseoOwnedWorktree) {
     const mainRepoRoot = await getMainRepoRoot(cwd);
@@ -1012,6 +1031,7 @@ export async function getCheckoutStatus(
       baseRef: configured.baseRef,
       aheadBehind,
       aheadOfOrigin,
+      behindOfOrigin,
       hasRemote,
       remoteUrl,
       isPaseoOwnedWorktree: true,
@@ -1026,6 +1046,7 @@ export async function getCheckoutStatus(
     baseRef,
     aheadBehind,
     aheadOfOrigin,
+    behindOfOrigin,
     hasRemote,
     remoteUrl,
     isPaseoOwnedWorktree: false,

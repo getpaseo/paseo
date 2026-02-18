@@ -56,6 +56,7 @@ import {
 } from "@/components/web-desktop-scrollbar";
 import { buildNewAgentRoute, resolveNewAgentWorkingDir } from "@/utils/new-agent-routing";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { shouldShowMergeFromBaseAction } from "./git-action-visibility";
 
 // =============================================================================
 // Git Actions Data Structure
@@ -900,6 +901,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
   const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
   const aheadOfOrigin = gitStatus?.aheadOfOrigin ?? 0;
+  const behindOfOrigin = gitStatus?.behindOfOrigin ?? 0;
   const baseRefLabel = useMemo(() => {
     if (!baseRef) return "base";
     const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
@@ -1109,7 +1111,14 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     }
 
     // Update/sync from base
-    if (!isOnBaseBranch || hasRemote) {
+    if (
+      shouldShowMergeFromBaseAction({
+        isOnBaseBranch,
+        hasRemote,
+        aheadOfOrigin,
+        behindOfOrigin,
+      })
+    ) {
       allActions.set("merge-from-base", {
         id: "merge-from-base",
         label: isOnBaseBranch ? "Sync" : `Update from ${baseRefLabel}`,
@@ -1203,7 +1212,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     return { primary, secondary, menu };
   }, [
     isGit, hasRemote, hasPullRequest, prStatus?.url, aheadCount, isPaseoOwnedWorktree, isOnBaseBranch, githubFeaturesEnabled,
-    hasUncommittedChanges, aheadOfOrigin, shipDefault, baseRefLabel, shouldPromoteArchive,
+    hasUncommittedChanges, aheadOfOrigin, behindOfOrigin, shipDefault, baseRefLabel, shouldPromoteArchive,
     commitDisabled, pushDisabled, prDisabled, mergeDisabled, mergeFromBaseDisabled, archiveDisabled,
     commitStatus, pushStatus, prCreateStatus, mergeStatus, mergeFromBaseStatus, archiveStatus,
     handleCommit, handlePush, handleCreatePr, handleMergeBranch, handleMergeFromBase, handleArchiveWorktree,
