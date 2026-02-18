@@ -1,70 +1,123 @@
-import { View, Text, Pressable, ScrollView } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import {
-  useAgentCommandsQuery,
-  type DraftCommandConfig,
-} from "@/hooks/use-agent-commands-query";
-import { Fonts } from "@/constants/theme";
+import { useCallback, useEffect, useRef } from "react";
+import { ScrollView, Text, View, Pressable, type LayoutChangeEvent } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { Theme } from "@/styles/theme";
-
-interface AgentSlashCommand {
-  name: string;
-  description: string;
-  argumentHint: string;
-}
+import {
+  getCommandAutocompleteScrollOffset,
+  type AgentSlashCommand,
+} from "./command-autocomplete-utils";
 
 interface CommandAutocompleteProps {
-  serverId: string;
-  agentId: string;
-  filter: string;
+  commands: AgentSlashCommand[];
   selectedIndex: number;
   onSelect: (command: AgentSlashCommand) => void;
-  draftConfig?: DraftCommandConfig;
+  isLoading: boolean;
+  errorMessage?: string;
 }
 
 export function CommandAutocomplete({
-  serverId,
-  agentId,
-  filter,
+  commands,
   selectedIndex,
   onSelect,
-  draftConfig,
+  isLoading,
+  errorMessage,
 }: CommandAutocompleteProps) {
-  const { theme } = useUnistyles();
-  const { commands, isLoading, isError, error } = useAgentCommandsQuery({
-    serverId,
-    agentId,
-    enabled: true,
-    draftConfig,
-  });
+  const scrollRef = useRef<ScrollView>(null);
+  const rowLayoutsRef = useRef<Map<number, { top: number; height: number }>>(new Map());
+  const viewportHeightRef = useRef(0);
+  const scrollOffsetRef = useRef(0);
 
-  // Filter commands based on input after /
-  const filterLower = filter.toLowerCase();
-  const filteredCommands = commands.filter((cmd) =>
-    cmd.name.toLowerCase().includes(filterLower)
+  const ensureActiveItemVisible = useCallback(() => {
+    if (selectedIndex < 0) {
+      return;
+    }
+
+    const layout = rowLayoutsRef.current.get(selectedIndex);
+    if (!layout) {
+      return;
+    }
+
+    const nextOffset = getCommandAutocompleteScrollOffset({
+      currentOffset: scrollOffsetRef.current,
+      viewportHeight: viewportHeightRef.current,
+      itemTop: layout.top,
+      itemHeight: layout.height,
+    });
+
+    if (Math.abs(nextOffset - scrollOffsetRef.current) < 1) {
+      return;
+    }
+
+    scrollOffsetRef.current = nextOffset;
+    scrollRef.current?.scrollTo({ y: nextOffset, animated: false });
+  }, [selectedIndex]);
+
+  const pinToBottom = useCallback(() => {
+    scrollRef.current?.scrollToEnd({ animated: false });
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated: false });
+    });
+  }, []);
+
+  useEffect(() => {
+    rowLayoutsRef.current.clear();
+    scrollOffsetRef.current = 0;
+  }, [commands]);
+
+  useEffect(() => {
+    if (commands.length === 0) {
+      return;
+    }
+    pinToBottom();
+  }, [commands, pinToBottom]);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(ensureActiveItemVisible);
+    return () => {
+      cancelAnimationFrame(raf);
+    };
+  }, [ensureActiveItemVisible, commands.length]);
+
+  const handleScrollViewLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      viewportHeightRef.current = event.nativeEvent.layout.height;
+      ensureActiveItemVisible();
+    },
+    [ensureActiveItemVisible]
+  );
+
+  const handleRowLayout = useCallback(
+    (index: number, event: LayoutChangeEvent) => {
+      rowLayoutsRef.current.set(index, {
+        top: event.nativeEvent.layout.y,
+        height: event.nativeEvent.layout.height,
+      });
+      ensureActiveItemVisible();
+    },
+    [ensureActiveItemVisible]
   );
 
   if (isLoading) {
     return (
       <View style={styles.container}>
-        <View style={styles.loadingItem}>
-          <Text style={styles.loadingText}>Loading commands...</Text>
+        <View style={styles.emptyItem}>
+          <Text style={styles.emptyText}>Loading commands...</Text>
         </View>
       </View>
     );
   }
 
-  if (isError) {
+  if (errorMessage) {
     return (
       <View style={styles.container}>
         <View style={styles.emptyItem}>
-          <Text style={styles.emptyText}>Error: {error?.message ?? "Failed to load"}</Text>
+          <Text style={styles.emptyText}>Error: {errorMessage}</Text>
         </View>
       </View>
     );
   }
 
-  if (filteredCommands.length === 0) {
+  if (commands.length === 0) {
     return (
       <View style={styles.container}>
         <View style={styles.emptyItem}>
@@ -76,29 +129,41 @@ export function CommandAutocomplete({
 
   return (
     <View style={styles.container}>
-      <ScrollView style={styles.scrollView} keyboardShouldPersistTaps="always">
-        {filteredCommands.map((cmd, index) => {
+      <ScrollView
+        ref={scrollRef}
+        onLayout={handleScrollViewLayout}
+        onContentSizeChange={pinToBottom}
+        onScroll={(event) => {
+          scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="always"
+      >
+        {commands.map((cmd, index) => {
           const isSelected = index === selectedIndex;
           return (
             <Pressable
               key={cmd.name}
+              onLayout={(event) => handleRowLayout(index, event)}
               onPress={() => onSelect(cmd)}
-              style={[
+              style={({ hovered = false, pressed }) => [
                 styles.commandItem,
-                isSelected && {
-                  backgroundColor: theme.colors.accent,
-                },
+                (hovered || pressed || isSelected) && styles.commandItemActive,
               ]}
             >
-              <View style={styles.commandHeader}>
-                <Text style={styles.commandName}>/{cmd.name}</Text>
-                {cmd.argumentHint && (
-                  <Text style={styles.commandArgs}>{cmd.argumentHint}</Text>
-                )}
+              <View style={styles.commandMain}>
+                <View style={styles.commandHeader}>
+                  <Text style={styles.commandName}>/{cmd.name}</Text>
+                  {cmd.argumentHint ? (
+                    <Text style={styles.commandArgs}>{cmd.argumentHint}</Text>
+                  ) : null}
+                </View>
+                <Text style={styles.commandDescription} numberOfLines={1}>
+                  {cmd.description}
+                </Text>
               </View>
-              <Text style={styles.commandDescription} numberOfLines={1}>
-                {cmd.description}
-              </Text>
             </Pressable>
           );
         })}
@@ -107,28 +172,35 @@ export function CommandAutocomplete({
   );
 }
 
-export function useCommandAutocomplete(commands: AgentSlashCommand[], filter: string) {
-  const filterLower = filter.toLowerCase();
-  return commands.filter((cmd) => cmd.name.toLowerCase().includes(filterLower));
-}
-
 const styles = StyleSheet.create(((theme: Theme) => ({
   container: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surface0,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
-    maxHeight: 200,
+    maxHeight: 220,
+    overflow: "hidden",
   },
   scrollView: {
     flexGrow: 0,
     flexShrink: 1,
   },
+  scrollContent: {
+    paddingVertical: theme.spacing[1],
+  },
   commandItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 36,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
+  },
+  commandItemActive: {
+    backgroundColor: theme.colors.surface1,
+  },
+  commandMain: {
+    flex: 1,
+    minWidth: 0,
   },
   commandHeader: {
     flexDirection: "row",
@@ -139,25 +211,15 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
-    fontFamily: Fonts.mono,
   },
   commandArgs: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-    fontFamily: Fonts.mono,
   },
   commandDescription: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginTop: 2,
-  },
-  loadingItem: {
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-  },
-  loadingText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
   },
   emptyItem: {
     paddingHorizontal: theme.spacing[3],

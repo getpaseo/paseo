@@ -30,6 +30,13 @@ import {
   useAgentCommandsQuery,
   type DraftCommandConfig,
 } from "@/hooks/use-agent-commands-query";
+import {
+  filterCommandAutocompleteOptions,
+  getCommandAutocompleteFallbackIndex,
+  getCommandAutocompleteNextIndex,
+  orderCommandAutocompleteOptions,
+  type AgentSlashCommand,
+} from "./command-autocomplete-utils";
 import { encodeImages } from "@/utils/encode-images";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { focusWithRetries } from "@/utils/web-focus";
@@ -117,8 +124,9 @@ export function AgentInputArea({
   const [selectedImages, setSelectedImages] = useState<ImageAttachment[]>([]);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
+  const [commandSelectedIndex, setCommandSelectedIndex] = useState(-1);
   const lastHandledMessageInputActionRequestIdRef = useRef<number | null>(null);
+  const previousCommandFilterRef = useRef<string>("");
 
   // Command autocomplete logic
   const showCommandAutocomplete = userInput.startsWith("/") && !userInput.includes(" ");
@@ -151,7 +159,12 @@ export function AgentInputArea({
     ? undefined
     : normalizedCommandDraftConfig;
   const canLoadCommands = Boolean(serverId) && (isRealAgent || !!commandQueryDraftConfig);
-  const { commands } = useAgentCommandsQuery({
+  const {
+    commands,
+    isLoading: isCommandLoading,
+    isError: isCommandError,
+    error: commandError,
+  } = useAgentCommandsQuery({
     serverId,
     agentId,
     enabled: canLoadCommands,
@@ -160,17 +173,38 @@ export function AgentInputArea({
 
   // Filter commands for keyboard navigation
   const filteredCommands = useMemo(() => {
-    if (!showCommandAutocomplete) return [];
-    const filterLower = commandFilter.toLowerCase();
-    return commands.filter((cmd) =>
-      cmd.name.toLowerCase().includes(filterLower)
+    if (!showCommandAutocomplete) {
+      return [];
+    }
+    return orderCommandAutocompleteOptions(
+      filterCommandAutocompleteOptions(commands, commandFilter)
     );
   }, [commands, commandFilter, showCommandAutocomplete]);
 
-  // Reset selection when filter changes
+  // Keep selection stable as the command list and filter text change.
   useEffect(() => {
-    setCommandSelectedIndex(0);
-  }, [commandFilter]);
+    if (!showCommandAutocomplete) {
+      previousCommandFilterRef.current = commandFilter;
+      setCommandSelectedIndex(-1);
+      return;
+    }
+
+    const filterChanged = previousCommandFilterRef.current !== commandFilter;
+    previousCommandFilterRef.current = commandFilter;
+
+    setCommandSelectedIndex((current) => {
+      if (filteredCommands.length === 0) {
+        return -1;
+      }
+      if (filterChanged) {
+        return getCommandAutocompleteFallbackIndex(filteredCommands.length);
+      }
+      if (current < 0 || current >= filteredCommands.length) {
+        return getCommandAutocompleteFallbackIndex(filteredCommands.length);
+      }
+      return current;
+    });
+  }, [commandFilter, filteredCommands.length, showCommandAutocomplete]);
 
   // Clear send error when user edits the input
   useEffect(() => {
@@ -594,7 +628,7 @@ export function AgentInputArea({
 
   // Handle command selection from autocomplete
   const handleCommandSelect = useCallback(
-    (cmd: { name: string; description: string; argumentHint: string }) => {
+    (cmd: AgentSlashCommand) => {
       setUserInput(`/${cmd.name} `);
       messageInputRef.current?.focus();
     },
@@ -624,7 +658,11 @@ export function AgentInputArea({
       if (event.key === "ArrowUp") {
         event.preventDefault();
         setCommandSelectedIndex((prev) =>
-          prev > 0 ? prev - 1 : filteredCommands.length - 1
+          getCommandAutocompleteNextIndex({
+            currentIndex: prev,
+            itemCount: filteredCommands.length,
+            key: "ArrowUp",
+          })
         );
         return true;
       }
@@ -632,14 +670,26 @@ export function AgentInputArea({
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setCommandSelectedIndex((prev) =>
-          prev < filteredCommands.length - 1 ? prev + 1 : 0
+          getCommandAutocompleteNextIndex({
+            currentIndex: prev,
+            itemCount: filteredCommands.length,
+            key: "ArrowDown",
+          })
         );
         return true;
       }
 
       if (event.key === "Tab" || event.key === "Enter") {
         event.preventDefault();
-        const selected = filteredCommands[commandSelectedIndex];
+        const fallbackIndex = getCommandAutocompleteFallbackIndex(
+          filteredCommands.length
+        );
+        const selectedIndex =
+          commandSelectedIndex >= 0 &&
+          commandSelectedIndex < filteredCommands.length
+            ? commandSelectedIndex
+            : fallbackIndex;
+        const selected = filteredCommands[selectedIndex];
         if (selected) {
           handleCommandSelect(selected);
         }
@@ -777,12 +827,11 @@ export function AgentInputArea({
           {/* Command autocomplete dropdown */}
           {showCommandAutocomplete && canLoadCommands && (
             <CommandAutocomplete
-              serverId={serverId}
-              agentId={agentId}
-              filter={commandFilter}
+              commands={filteredCommands}
               selectedIndex={commandSelectedIndex}
+              isLoading={isCommandLoading}
+              errorMessage={isCommandError ? (commandError?.message ?? "Failed to load") : undefined}
               onSelect={handleCommandSelect}
-              draftConfig={commandQueryDraftConfig}
             />
           )}
 
