@@ -642,50 +642,54 @@ export function AgentInputArea({
             </View>
           )}
 
-          {/* Command autocomplete dropdown */}
-          {autocomplete.isVisible && (
-            <Autocomplete
-              options={autocomplete.options}
-              selectedIndex={autocomplete.selectedIndex}
-              isLoading={autocomplete.isLoading}
-              errorMessage={autocomplete.errorMessage}
-              loadingText={autocomplete.loadingText}
-              emptyText={autocomplete.emptyText}
-              onSelect={autocomplete.onSelectOption}
-            />
-          )}
-
           {sendError && <Text style={styles.sendErrorText}>{sendError}</Text>}
 
-          {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
-          <MessageInput
-            ref={messageInputRef}
-            value={userInput}
-            onChangeText={setUserInput}
-            onSubmit={handleSubmit}
-            isSubmitDisabled={isProcessing || isSubmitLoading}
-            isSubmitLoading={isProcessing || isSubmitLoading}
-            images={selectedImages}
-            onPickImages={handlePickImage}
-            onAddImages={addImages}
-            onRemoveImage={handleRemoveImage}
-            client={client}
-            placeholder="Message agent..."
-            autoFocus={autoFocus}
-            disabled={isSubmitLoading}
-            isScreenFocused={isScreenFocused}
-            leftContent={leftContent}
-            rightContent={rightContent}
-            voiceServerId={serverId}
-            voiceAgentId={agentId}
-            isAgentRunning={isAgentRunning}
-            onQueue={handleQueue}
-            onSubmitLoadingPress={isAgentRunning ? handleCancelAgent : undefined}
-            onKeyPress={handleCommandKeyPress}
-            onSelectionChange={(selection) => {
-              setCursorIndex(selection.start)
-            }}
-          />
+          <View style={styles.messageInputContainer}>
+            {/* Command + file mention autocomplete rendered as a true popover */}
+            {autocomplete.isVisible && (
+              <View style={styles.autocompletePopover} pointerEvents="box-none">
+                <Autocomplete
+                  options={autocomplete.options}
+                  selectedIndex={autocomplete.selectedIndex}
+                  isLoading={autocomplete.isLoading}
+                  errorMessage={autocomplete.errorMessage}
+                  loadingText={autocomplete.loadingText}
+                  emptyText={autocomplete.emptyText}
+                  onSelect={autocomplete.onSelectOption}
+                />
+              </View>
+            )}
+
+            {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
+            <MessageInput
+              ref={messageInputRef}
+              value={userInput}
+              onChangeText={setUserInput}
+              onSubmit={handleSubmit}
+              isSubmitDisabled={isProcessing || isSubmitLoading}
+              isSubmitLoading={isProcessing || isSubmitLoading}
+              images={selectedImages}
+              onPickImages={handlePickImage}
+              onAddImages={addImages}
+              onRemoveImage={handleRemoveImage}
+              client={client}
+              placeholder="Message agent..."
+              autoFocus={autoFocus}
+              disabled={isSubmitLoading}
+              isScreenFocused={isScreenFocused}
+              leftContent={leftContent}
+              rightContent={rightContent}
+              voiceServerId={serverId}
+              voiceAgentId={agentId}
+              isAgentRunning={isAgentRunning}
+              onQueue={handleQueue}
+              onSubmitLoadingPress={isAgentRunning ? handleCancelAgent : undefined}
+              onKeyPress={handleCommandKeyPress}
+              onSelectionChange={(selection) => {
+                setCursorIndex(selection.start)
+              }}
+            />
+          </View>
         </View>
       </View>
     </Animated.View>
@@ -709,13 +713,25 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     marginHorizontal: 'auto',
     alignItems: 'center',
     width: '100%',
-    overflow: 'hidden',
+    overflow: 'visible',
     padding: theme.spacing[4],
   },
   inputAreaContent: {
     width: '100%',
     maxWidth: MAX_CONTENT_WIDTH,
     gap: theme.spacing[3],
+  },
+  messageInputContainer: {
+    position: 'relative',
+    width: '100%',
+  },
+  autocompletePopover: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: '100%',
+    marginBottom: theme.spacing[3],
+    zIndex: 30,
   },
   cancelButton: {
     width: 34,

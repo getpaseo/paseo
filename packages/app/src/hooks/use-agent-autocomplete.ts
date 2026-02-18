@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import type { AutocompleteOption } from '@/components/ui/autocomplete'
 import { useAgentCommandsQuery, type DraftCommandConfig } from './use-agent-commands-query'
 import { orderAutocompleteOptions } from '@/components/ui/autocomplete-utils'
@@ -192,6 +192,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       isConnected,
     retry: false,
     staleTime: 15_000,
+    placeholderData: keepPreviousData,
   })
 
   const options = useMemo<AgentAutocompleteOption[]>(() => {
@@ -214,11 +215,11 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     }
 
     if (mode === 'file' && activeFileMention) {
-      return (fileSuggestionsQuery.data ?? []).map((entry) => ({
+      const orderedEntries = orderAutocompleteOptions(fileSuggestionsQuery.data ?? [])
+      return orderedEntries.map((entry) => ({
         type: 'workspace_entry' as const,
         id: `${entry.kind}:${entry.path}`,
         label: entry.path,
-        detail: entry.kind === 'directory' ? 'Directory' : 'File',
         kind: entry.kind,
         entryPath: entry.path,
         mention: activeFileMention,
@@ -260,7 +261,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     mode === 'command'
       ? isCommandsLoading
       : mode === 'file'
-        ? fileSuggestionsQuery.isPending || fileSuggestionsQuery.isLoading
+        ? fileSuggestionsQuery.isPending || (fileSuggestionsQuery.isLoading && options.length === 0)
         : false
   const errorMessage =
     mode === 'command'

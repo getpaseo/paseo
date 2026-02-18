@@ -234,4 +234,33 @@ describe('searchWorkspaceEntries', () => {
     })
     expect(escapedResults.some((entry) => entry.path.includes('escaped-link'))).toBe(false)
   })
+
+  it('ignores node_modules entries so deep workspace files still resolve under scan limits', async () => {
+    mkdirSync(path.join(workspaceDir, 'packages', 'app', 'src', 'app'), { recursive: true })
+    writeFileSync(path.join(workspaceDir, 'packages', 'app', 'src', 'app', '_layout.tsx'), '')
+
+    for (let index = 0; index < 120; index += 1) {
+      mkdirSync(path.join(workspaceDir, 'node_modules', `pkg-${index}`), { recursive: true })
+      writeFileSync(
+        path.join(workspaceDir, 'node_modules', `pkg-${index}`, 'index.js'),
+        'module.exports = {};\n'
+      )
+    }
+    writeFileSync(path.join(workspaceDir, 'node_modules', '_layout.tsx'), '')
+
+    const results = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: '_layout.tsx',
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: true,
+      maxEntriesScanned: 60,
+    })
+
+    expect(results).toContainEqual({
+      path: 'packages/app/src/app/_layout.tsx',
+      kind: 'file',
+    })
+    expect(results.some((entry) => entry.path.startsWith('node_modules/'))).toBe(false)
+  })
 })

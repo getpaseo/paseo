@@ -24,6 +24,16 @@ interface AutocompleteProps {
   maxHeight?: number
 }
 
+const BOLT_GLYPH_PATTERN = /[\u26A1\uFE0F]/g
+
+function removeBoltGlyphs(value?: string): string | undefined {
+  if (!value) {
+    return value
+  }
+  const cleaned = value.replace(BOLT_GLYPH_PATTERN, '').trim()
+  return cleaned.length > 0 ? cleaned : undefined
+}
+
 export function Autocomplete({
   options,
   selectedIndex,
@@ -156,6 +166,9 @@ export function Autocomplete({
       >
         {options.map((option, index) => {
           const isSelected = index === selectedIndex
+          const optionLabel = removeBoltGlyphs(option.label) ?? option.label
+          const optionDetail = removeBoltGlyphs(option.detail)
+          const optionDescription = removeBoltGlyphs(option.description)
           return (
             <Pressable
               key={option.id}
@@ -177,12 +190,12 @@ export function Autocomplete({
               ) : null}
               <View style={styles.itemMain}>
                 <View style={styles.itemHeader}>
-                  <Text style={styles.itemLabel}>{option.label}</Text>
-                  {option.detail ? <Text style={styles.itemDetail}>{option.detail}</Text> : null}
+                  <Text style={styles.itemLabel}>{optionLabel}</Text>
+                  {optionDetail ? <Text style={styles.itemDetail}>{optionDetail}</Text> : null}
                 </View>
-                {option.description ? (
+                {optionDescription ? (
                   <Text style={styles.itemDescription} numberOfLines={1}>
-                    {option.description}
+                    {optionDescription}
                   </Text>
                 ) : null}
               </View>
@@ -237,7 +250,7 @@ const styles = StyleSheet.create(((theme: Theme) => ({
   itemLabel: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
   },
   itemDetail: {
     color: theme.colors.foregroundMuted,

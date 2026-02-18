@@ -73,6 +73,7 @@ const directoryListCache = new Map<string, DirectoryListCacheEntry>()
 const workspaceEntryListCache = new Map<string, WorkspaceEntryListCacheEntry>()
 const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER
+const WORKSPACE_IGNORED_DIRECTORY_NAMES = new Set(['node_modules'])
 
 export async function searchHomeDirectories(
   options: SearchHomeDirectoriesOptions
@@ -750,6 +751,9 @@ async function listWorkspaceChildEntries(input: {
     if (isHiddenDirectoryName(dirent.name)) {
       continue
     }
+    if (isIgnoredWorkspaceDirectoryName(dirent.name)) {
+      continue
+    }
 
     const candidatePath = path.join(input.directory, dirent.name)
     const entry = await resolveWorkspaceCandidate({
@@ -837,6 +841,10 @@ async function resolveWorkspaceCandidate(input: {
 
 function isHiddenDirectoryName(name: string): boolean {
   return name.startsWith('.')
+}
+
+function isIgnoredWorkspaceDirectoryName(name: string): boolean {
+  return WORKSPACE_IGNORED_DIRECTORY_NAMES.has(name)
 }
 
 function setDirectoryListCache(cacheKey: string, entry: DirectoryListCacheEntry): void {
