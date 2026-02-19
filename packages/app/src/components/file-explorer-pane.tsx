@@ -685,7 +685,12 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
                 </View>
               </View>
 
-              <FilePreviewBody preview={preview} isLoading={isPreviewLoading} variant="inline" />
+              <FilePreviewBody
+                preview={preview}
+                isLoading={isPreviewLoading}
+                variant="inline"
+                showDesktopWebScrollbar={showDesktopWebScrollbar}
+              />
             </View>
           ) : null}
 
@@ -853,7 +858,12 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
               <X size={20} color={theme.colors.foregroundMuted} />
             </Pressable>
           </View>
-          <FilePreviewBody preview={preview} isLoading={isPreviewLoading} variant="sheet" />
+          <FilePreviewBody
+            preview={preview}
+            isLoading={isPreviewLoading}
+            variant="sheet"
+            showDesktopWebScrollbar={false}
+          />
         </BottomSheetModal>
       ) : null}
     </View>
@@ -864,11 +874,36 @@ function FilePreviewBody({
   preview,
   isLoading,
   variant,
+  showDesktopWebScrollbar,
 }: {
   preview: ExplorerFile | null;
   isLoading: boolean;
   variant: "inline" | "sheet";
+  showDesktopWebScrollbar: boolean;
 }) {
+  const enablePreviewDesktopScrollbar =
+    variant === "inline" && showDesktopWebScrollbar;
+  const previewScrollRef = useRef<RNScrollView>(null);
+  const previewScrollbarMetrics = useWebDesktopScrollbarMetrics();
+
+  const handlePreviewScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (enablePreviewDesktopScrollbar) {
+        previewScrollbarMetrics.onScroll(event);
+      }
+    },
+    [enablePreviewDesktopScrollbar, previewScrollbarMetrics]
+  );
+
+  const handlePreviewLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      if (enablePreviewDesktopScrollbar) {
+        previewScrollbarMetrics.onLayout(event);
+      }
+    },
+    [enablePreviewDesktopScrollbar, previewScrollbarMetrics]
+  );
+
   if (isLoading && !preview) {
     return (
       <View style={styles.sheetCenterState}>
@@ -902,16 +937,37 @@ function FilePreviewBody({
       );
     }
     return (
-      <RNScrollView style={styles.previewContent}>
+      <View style={styles.previewScrollContainer}>
         <RNScrollView
-          horizontal
-          nestedScrollEnabled
-          showsHorizontalScrollIndicator
-          contentContainerStyle={styles.previewCodeScrollContent}
+          ref={previewScrollRef}
+          style={styles.previewContent}
+          onLayout={enablePreviewDesktopScrollbar ? handlePreviewLayout : undefined}
+          onScroll={enablePreviewDesktopScrollbar ? handlePreviewScroll : undefined}
+          onContentSizeChange={
+            enablePreviewDesktopScrollbar
+              ? previewScrollbarMetrics.onContentSizeChange
+              : undefined
+          }
+          scrollEventThrottle={enablePreviewDesktopScrollbar ? 16 : undefined}
+          showsVerticalScrollIndicator={!enablePreviewDesktopScrollbar}
         >
-          <Text style={styles.codeText}>{preview.content}</Text>
+          <RNScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            contentContainerStyle={styles.previewCodeScrollContent}
+          >
+            <Text style={styles.codeText}>{preview.content}</Text>
+          </RNScrollView>
         </RNScrollView>
-      </RNScrollView>
+        <WebDesktopScrollbarOverlay
+          enabled={enablePreviewDesktopScrollbar}
+          metrics={previewScrollbarMetrics}
+          onScrollToOffset={(nextOffset) => {
+            previewScrollRef.current?.scrollTo({ y: nextOffset, animated: false });
+          }}
+        />
+      </View>
     );
   }
 
@@ -930,15 +986,37 @@ function FilePreviewBody({
       );
     }
     return (
-      <RNScrollView contentContainerStyle={styles.previewImageScrollContent}>
-        <RNImage
-          source={{
-            uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
+      <View style={styles.previewScrollContainer}>
+        <RNScrollView
+          ref={previewScrollRef}
+          style={styles.previewContent}
+          contentContainerStyle={styles.previewImageScrollContent}
+          onLayout={enablePreviewDesktopScrollbar ? handlePreviewLayout : undefined}
+          onScroll={enablePreviewDesktopScrollbar ? handlePreviewScroll : undefined}
+          onContentSizeChange={
+            enablePreviewDesktopScrollbar
+              ? previewScrollbarMetrics.onContentSizeChange
+              : undefined
+          }
+          scrollEventThrottle={enablePreviewDesktopScrollbar ? 16 : undefined}
+          showsVerticalScrollIndicator={!enablePreviewDesktopScrollbar}
+        >
+          <RNImage
+            source={{
+              uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
+            }}
+            style={styles.previewImage}
+            resizeMode="contain"
+          />
+        </RNScrollView>
+        <WebDesktopScrollbarOverlay
+          enabled={enablePreviewDesktopScrollbar}
+          metrics={previewScrollbarMetrics}
+          onScrollToOffset={(nextOffset) => {
+            previewScrollRef.current?.scrollTo({ y: nextOffset, animated: false });
           }}
-          style={styles.previewImage}
-          resizeMode="contain"
         />
-      </RNScrollView>
+      </View>
     );
   }
 
@@ -1376,6 +1454,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   previewContent: {
     flex: 1,
+  },
+  previewScrollContainer: {
+    flex: 1,
+    minHeight: 0,
+    position: "relative",
   },
   previewCodeScrollContent: {
     paddingTop: theme.spacing[3],
