@@ -569,6 +569,23 @@ function AgentScreenContent({
     resolvedAgentId &&
       isArchivingAgent({ serverId, agentId: resolvedAgentId })
   );
+  const hasRedirectedArchivedAgentRef = useRef(false);
+
+  useEffect(() => {
+    if (!resolvedAgentId) {
+      hasRedirectedArchivedAgentRef.current = false;
+      return;
+    }
+    if (!agent?.archivedAt) {
+      hasRedirectedArchivedAgentRef.current = false;
+      return;
+    }
+    if (hasRedirectedArchivedAgentRef.current) {
+      return;
+    }
+    hasRedirectedArchivedAgentRef.current = true;
+    router.replace(buildHostAgentDraftRoute(serverId) as any);
+  }, [agent?.archivedAt, resolvedAgentId, router, serverId]);
 
   useEffect(() => {
     if (!resolvedAgentId) {
