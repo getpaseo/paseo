@@ -341,8 +341,6 @@ type ToolUseCacheEntry = {
   input?: AgentMetadata | null;
 };
 
-const DEFAULT_PERMISSION_TIMEOUT_MS = 120_000;
-
 function isMetadata(value: unknown): value is AgentMetadata {
   return typeof value === "object" && value !== null;
 }
@@ -824,6 +822,7 @@ class ClaudeAgentSession implements AgentSession {
       this.pendingInterruptPromise = this.interruptActiveTurn().catch((error) => {
         this.logger.warn({ err: error }, "Failed to interrupt during cancel");
       });
+      this.rejectAllPendingPermissions(new Error("Permission request aborted"));
       this.flushPendingToolCalls();
       // Push turn_canceled before ending the queue so consumers get proper lifecycle signals
       queue.push({
@@ -1924,19 +1923,6 @@ class ClaudeAgentSession implements AgentSession {
           }
         }
       };
-      const timeout = setTimeout(() => {
-        this.pendingPermissions.delete(requestId);
-        cleanup();
-        const error = new Error("Permission request timed out");
-        this.pushEvent({
-          type: "permission_resolved",
-          provider: "claude",
-          requestId,
-          resolution: { behavior: "deny", message: "timeout" },
-        });
-        reject(error);
-      }, DEFAULT_PERMISSION_TIMEOUT_MS);
-      cleanupFns.push(() => clearTimeout(timeout));
 
       const abortHandler = () => {
         this.pendingPermissions.delete(requestId);

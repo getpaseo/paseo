@@ -1,17 +1,19 @@
 # Changelog
 
 ## 0.1.15 - 2026-02-19
+### Added
+- Added a public changelog page on the website so users can browse release notes.
+
 ### Improved
-- Improved app draft/new-agent UX by simplifying working directory placeholder and empty-state messaging and enabling drag interactions in previously unhandled draft areas on Tauri.
+- Redesigned the website get-started experience into a clearer two-step flow.
+- Simplified website GitHub navigation and changelog headings.
+- Improved app draft/new-agent UX with clearer working directory placeholder and empty-state messaging.
+- Enabled drag interactions in previously unhandled areas on the desktop (Tauri) draft screen.
+- Hid empty filter groups in the left sidebar.
 
 ### Fixed
 - Fixed archived-agent navigation by redirecting archived agent routes to draft.
 - Fixed duplicate `/rewind` user-message behavior.
-
-### CI / Docs
-- Updated release automation to sync GitHub release notes from `CHANGELOG.md`.
-- Updated app deployment workflow to run only on release tags.
-- Added an explicit changelog maintenance step to the release checklist.
 
 ## 0.1.14 - 2026-02-19
 ### Added
