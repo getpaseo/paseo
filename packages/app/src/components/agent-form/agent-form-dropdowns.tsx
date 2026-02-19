@@ -862,16 +862,14 @@ export function WorkingDirectoryDropdown({
   const handleOpen = useCallback(() => setIsOpen(true), []);
   const handleOpenChange = useCallback((open: boolean) => setIsOpen(open), []);
 
-  const emptyText = suggestedPaths.length > 0
-    ? "No agent directories match your search."
-    : "We'll suggest directories from agents on this host once they exist.";
+  const emptyText = "No agent directories match your search.";
 
   return (
     <>
       <SelectField
         label="WORKING DIRECTORY"
         value={workingDir}
-        placeholder="/path/to/project"
+        placeholder="Choose a working directory"
         onPress={handleOpen}
         disabled={disabled}
         errorMessage={errorMessage || undefined}

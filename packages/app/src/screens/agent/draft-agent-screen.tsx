@@ -758,7 +758,7 @@ function DraftAgentScreenContent({
 
     return agentWorkingDirSuggestions.length > 0
       ? 'No agent directories match your search.'
-      : "We'll suggest directories from agents on this host once they exist."
+      : 'No agent directories match your search.'
   }, [agentWorkingDirSuggestions.length, hasWorkingDirectorySearch, workingDirSearchError])
   const displayWorkingDir = shortenPath(workingDir)
   const worktreeTriggerValue =
@@ -1167,7 +1167,7 @@ function DraftAgentScreenContent({
                       containerStyle={styles.fullSelector}
                       label="Working directory"
                       value={displayWorkingDir}
-                      placeholder="/path/to/project"
+                      placeholder="Choose a working directory"
                       onPress={() => setIsWorkingDirOpen(true)}
                       icon={<Folder size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
                       showLabel={false}
