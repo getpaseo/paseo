@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.14] - 2026-02-19
+## 0.1.14 - 2026-02-19
 ### Added
 - Added Claude `/rewind` command support.
 - Added slash command access in the draft agent composer.
@@ -31,7 +31,7 @@
 - Fixed agent attention notification payload consistency across providers.
 - Fixed daemon version badge visibility in settings when daemon version data is unavailable.
 
-## [0.1.9] - 2026-02-17
+## 0.1.9 - 2026-02-17
 ### Improved
 - Unified structured-output generation through a single shared schema-validation and retry pipeline.
 - Reused provider availability checks for structured generation fallback selection.
@@ -42,7 +42,7 @@
 - Fixed `run --output-schema` failures where providers returned empty `lastMessage` by recovering from timeline assistant output.
 - Fixed internal commit message, pull request text, and agent metadata generation to follow one consistent structured pipeline.
 
-## [0.1.8] - 2026-02-17
+## 0.1.8 - 2026-02-17
 ### Added
 - Added a cross-platform confirm dialog flow for daemon restarts.
 
@@ -57,7 +57,7 @@
 - Fixed Tauri file-drop listener cleanup to avoid uncaught unlisten errors.
 - Fixed web tool-detail wheel event routing at scroll edges.
 
-## [0.1.7] - 2026-02-16
+## 0.1.7 - 2026-02-16
 ### Added
 - Improved agent workspace flows with better directory suggestions.
 - Added iOS TestFlight and Android app access request forms on the website.
@@ -71,11 +71,11 @@
 - Fixed CLI version output issues.
 - Hardened server runtime loading for local speech dependencies.
 
-## [0.1.6] - 2026-02-16
+## 0.1.6 - 2026-02-16
 ### Notes
 - No major visible product changes in this patch release.
 
-## [0.1.5] - 2026-02-16
+## 0.1.5 - 2026-02-16
 ### Added
 - Added terminal reattach support and better worktree terminal handling.
 - Added global keyboard shortcut help in the app.
@@ -86,7 +86,7 @@
 - Improved terminal streaming reliability and lifecycle handling.
 - Preserved explorer tab state so context survives navigation better.
 
-## [0.1.4] - 2026-02-14
+## 0.1.4 - 2026-02-14
 ### Added
 - Added voice capability status reporting in the client.
 - Added background local speech model downloads with runtime gating.
@@ -104,7 +104,7 @@
 - Fixed stale relay client timer behavior.
 - Fixed unnecessary git diff header auto-scroll on collapse.
 
-## [0.1.3] - 2026-02-12
+## 0.1.3 - 2026-02-12
 ### Added
 - Added CLI onboarding command.
 - Added CLI `--output-schema` support for structured agent output.
@@ -120,11 +120,11 @@
 ### Fixed
 - Fixed dev runner entry issues and sherpa TTS initialization behavior.
 
-## [0.1.2] - 2026-02-11
+## 0.1.2 - 2026-02-11
 ### Notes
 - No major visible product changes in this patch release.
 
-## [0.1.1] - 2026-02-11
+## 0.1.1 - 2026-02-11
 
 ### Added
 - Initial `0.1.x` release line.
