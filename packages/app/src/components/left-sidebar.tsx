@@ -43,11 +43,11 @@ import {
 
 const DESKTOP_SIDEBAR_WIDTH = 320;
 
-interface SlidingSidebarProps {
+interface LeftSidebarProps {
   selectedAgentId?: string;
 }
 
-export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
+export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile =

@@ -488,6 +488,7 @@ export function SidebarAgentList({
       projectOptions.find((option) => option.projectKey === selectedProjectKeys[0]) ?? null
     );
   }, [projectOptions, selectedProjectKeys]);
+  const showProjectFilters = projectOptions.length > 0;
 
   const sessions = useSessionStore((state) => state.sessions);
   const projectIconRequests = useMemo(() => {
@@ -745,98 +746,100 @@ export function SidebarAgentList({
 
   return (
     <View style={styles.container}>
-      <View style={styles.filtersRow}>
-        <Pressable
-          ref={projectFilterAnchorRef}
-          style={({ hovered = false, pressed }) => [
-            styles.filterTrigger,
-            (selectedProjectKeys.length > 0 || hovered || pressed) &&
-              styles.filterTriggerActive,
-          ]}
-          onPress={() => setIsProjectFilterOpen(true)}
-        >
-          {({ hovered = false, pressed }) => {
-            const isInteracting = hovered || pressed;
-            const showActiveForeground =
-              selectedProjectKeys.length > 0 || isInteracting;
-            return (
-              <>
-                {selectedProjectKeys.length === 1 && selectedProjectIconUri ? (
-                  <Image
-                    source={{
-                      uri: selectedProjectIconUri,
-                    }}
-                    style={styles.selectedProjectIcon}
+      {showProjectFilters ? (
+        <View style={styles.filtersRow}>
+          <Pressable
+            ref={projectFilterAnchorRef}
+            style={({ hovered = false, pressed }) => [
+              styles.filterTrigger,
+              (selectedProjectKeys.length > 0 || hovered || pressed) &&
+                styles.filterTriggerActive,
+            ]}
+            onPress={() => setIsProjectFilterOpen(true)}
+          >
+            {({ hovered = false, pressed }) => {
+              const isInteracting = hovered || pressed;
+              const showActiveForeground =
+                selectedProjectKeys.length > 0 || isInteracting;
+              return (
+                <>
+                  {selectedProjectKeys.length === 1 && selectedProjectIconUri ? (
+                    <Image
+                      source={{
+                        uri: selectedProjectIconUri,
+                      }}
+                      style={styles.selectedProjectIcon}
+                    />
+                  ) : selectedProjectKeys.length > 1 ? (
+                    <View style={styles.projectCountBadge}>
+                      <Text style={styles.projectCountBadgeText}>
+                        {selectedProjectKeys.length}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <Text
+                    style={[
+                      styles.filterTriggerText,
+                      !showActiveForeground && styles.filterTriggerTextMuted,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {selectedProjectLabel}
+                  </Text>
+                  <ChevronDown
+                    size={theme.iconSize.sm}
+                    color={
+                      showActiveForeground
+                        ? theme.colors.foreground
+                        : theme.colors.foregroundMuted
+                    }
                   />
-                ) : selectedProjectKeys.length > 1 ? (
-                  <View style={styles.projectCountBadge}>
-                    <Text style={styles.projectCountBadgeText}>
-                      {selectedProjectKeys.length}
-                    </Text>
-                  </View>
-                ) : null}
-                <Text
-                  style={[
-                    styles.filterTriggerText,
-                    !showActiveForeground && styles.filterTriggerTextMuted,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {selectedProjectLabel}
-                </Text>
-                <ChevronDown
-                  size={theme.iconSize.sm}
-                  color={
-                    showActiveForeground
-                      ? theme.colors.foreground
-                      : theme.colors.foregroundMuted
-                  }
-                />
-              </>
-            );
-          }}
-        </Pressable>
-
-        {selectedProjectKeys.length > 0 ? (
-          <Pressable style={styles.clearFilterButton} onPress={handleClearProjectFilter}>
-            <Text style={styles.clearFilterText}>Clear</Text>
+                </>
+              );
+            }}
           </Pressable>
-        ) : null}
 
-        <Combobox
-          options={[]}
-          value=""
-          onSelect={() => {}}
-          title="Filter by project"
-          placeholder="Search projects"
-          searchPlaceholder="Search projects"
-          desktopPlacement="bottom-start"
-          open={isProjectFilterOpen}
-          onOpenChange={setIsProjectFilterOpen}
-          anchorRef={projectFilterAnchorRef}
-        >
-          <View style={styles.filterOptionsList}>
-            {projectOptions.length === 0 ? (
-              <Text style={styles.filterEmptyText}>No projects</Text>
-            ) : (
-              projectOptions.map((option) => (
-                <ProjectFilterOptionRow
-                  key={option.projectKey}
-                  option={option}
-                  selected={selectedProjectKeys.includes(option.projectKey)}
-                  iconDataUri={projectIconByProjectKey.get(option.projectKey) ?? null}
-                  displayName={deriveProjectDisplayName({
-                    projectKey: option.projectKey,
-                    projectName: option.projectName,
-                    remoteUrl: null,
-                  })}
-                  onToggle={handleToggleProject}
-                />
-              ))
-            )}
-          </View>
-        </Combobox>
-      </View>
+          {selectedProjectKeys.length > 0 ? (
+            <Pressable style={styles.clearFilterButton} onPress={handleClearProjectFilter}>
+              <Text style={styles.clearFilterText}>Clear</Text>
+            </Pressable>
+          ) : null}
+
+          <Combobox
+            options={[]}
+            value=""
+            onSelect={() => {}}
+            title="Filter by project"
+            placeholder="Search projects"
+            searchPlaceholder="Search projects"
+            desktopPlacement="bottom-start"
+            open={isProjectFilterOpen}
+            onOpenChange={setIsProjectFilterOpen}
+            anchorRef={projectFilterAnchorRef}
+          >
+            <View style={styles.filterOptionsList}>
+              {projectOptions.length === 0 ? (
+                <Text style={styles.filterEmptyText}>No projects</Text>
+              ) : (
+                projectOptions.map((option) => (
+                  <ProjectFilterOptionRow
+                    key={option.projectKey}
+                    option={option}
+                    selected={selectedProjectKeys.includes(option.projectKey)}
+                    iconDataUri={projectIconByProjectKey.get(option.projectKey) ?? null}
+                    displayName={deriveProjectDisplayName({
+                      projectKey: option.projectKey,
+                      projectName: option.projectName,
+                      remoteUrl: null,
+                    })}
+                    onToggle={handleToggleProject}
+                  />
+                ))
+              )}
+            </View>
+          </Combobox>
+        </View>
+      ) : null}
 
       <DraggableList
         data={entries}

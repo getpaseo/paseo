@@ -20,7 +20,7 @@ import { useState, useEffect, type ReactNode, useMemo, useRef } from "react";
 import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
-import { SlidingSidebar } from "@/components/sliding-sidebar";
+import { LeftSidebar } from "@/components/left-sidebar";
 import { DownloadToast } from "@/components/download-toast";
 import { ToastProvider } from "@/contexts/toast-context";
 import { usePanelStore } from "@/stores/panel-store";
@@ -282,12 +282,12 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const content = (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
       <View style={{ flex: 1, flexDirection: "row" }}>
-        {!isMobile && chromeEnabled && <SlidingSidebar selectedAgentId={selectedAgentId} />}
+        {!isMobile && chromeEnabled && <LeftSidebar selectedAgentId={selectedAgentId} />}
         <View style={{ flex: 1, paddingLeft: needsTrafficLightPadding ? trafficLightPadding.left : 0 }}>
           {children}
         </View>
       </View>
-      {isMobile && chromeEnabled && <SlidingSidebar selectedAgentId={selectedAgentId} />}
+      {isMobile && chromeEnabled && <LeftSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />
       <CommandCenter />
       <KeyboardShortcutsDialog />
