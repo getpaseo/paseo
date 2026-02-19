@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Paseo",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "identifier": "dev.paseo.desktop",
   "build": {
     "frontendDist": "../../app/dist",
