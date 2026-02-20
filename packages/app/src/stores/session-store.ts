@@ -243,6 +243,11 @@ interface SessionStoreActions {
   // Stream state (head/tail model)
   setAgentStreamTail: (serverId: string, state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
   setAgentStreamHead: (serverId: string, state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
+  setAgentStreamState: (
+    serverId: string,
+    agentId: string,
+    state: { tail?: StreamItem[]; head?: StreamItem[] }
+  ) => void;
   clearAgentStreamHead: (serverId: string, agentId: string) => void;
   setAgentTimelineCursor: (
     serverId: string,
@@ -618,6 +623,67 @@ export const useSessionStore = create<SessionStore>()(
           sessions: {
             ...prev.sessions,
             [serverId]: { ...session, agentStreamHead: nextState },
+          },
+        };
+      });
+    },
+
+    setAgentStreamState: (serverId, agentId, state) => {
+      set((prev) => {
+        const session = prev.sessions[serverId];
+        if (!session) {
+          return prev;
+        }
+
+        let nextTail = session.agentStreamTail;
+        let nextHead = session.agentStreamHead;
+        let changedTail = false;
+        let changedHead = false;
+
+        if (state.tail !== undefined) {
+          const existingTail = session.agentStreamTail.get(agentId);
+          if (existingTail !== state.tail) {
+            nextTail = new Map(session.agentStreamTail);
+            nextTail.set(agentId, state.tail);
+            changedTail = true;
+          }
+        }
+
+        if (state.head !== undefined) {
+          const existingHead = session.agentStreamHead.get(agentId);
+          const shouldDeleteHead = state.head.length === 0;
+          if (shouldDeleteHead) {
+            if (session.agentStreamHead.has(agentId)) {
+              nextHead = new Map(session.agentStreamHead);
+              nextHead.delete(agentId);
+              changedHead = true;
+            }
+          } else if (existingHead !== state.head) {
+            nextHead = new Map(session.agentStreamHead);
+            nextHead.set(agentId, state.head);
+            changedHead = true;
+          }
+        }
+
+        if (!changedTail && !changedHead) {
+          return prev;
+        }
+
+        logSessionStoreUpdate("setAgentStreamState", serverId, {
+          agentId,
+          changedTail,
+          changedHead,
+        });
+
+        return {
+          ...prev,
+          sessions: {
+            ...prev.sessions,
+            [serverId]: {
+              ...session,
+              agentStreamTail: nextTail,
+              agentStreamHead: nextHead,
+            },
           },
         };
       });
