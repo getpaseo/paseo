@@ -188,6 +188,71 @@ const darkSemanticColors = {
   ring: "#d4d4d8",
 } as const;
 
+const colorblindSemanticColors = {
+  // GitHub dark colorblind-inspired surfaces
+  surface0: "#0d1117",       // App background
+  surface1: "#151b23",       // Subtle hover
+  surface2: "#212830",       // Elevated: badges, inputs, sheets
+  surface3: "#2f3742",       // Highest elevation
+
+  // Text
+  foreground: "#f0f6fc",
+  foregroundMuted: "#9198a1",
+
+  // Borders
+  border: "#3d444d",
+  borderAccent: "#656c76",
+
+  // Brand
+  accent: "#1f6feb",
+  accentForeground: "#ffffff",
+
+  // Semantic
+  destructive: "#bd561d",
+  destructiveForeground: "#ffffff",
+  success: "#1f6feb",
+  successForeground: "#ffffff",
+
+  // Legacy aliases (for gradual migration)
+  background: "#0d1117",
+  card: "#212830",
+  cardForeground: "#f0f6fc",
+  popover: "#212830",
+  popoverForeground: "#f0f6fc",
+  primary: "#f0f6fc",
+  primaryForeground: "#0d1117",
+  secondary: "#212830",
+  secondaryForeground: "#f0f6fc",
+  muted: "#212830",
+  mutedForeground: "#9198a1",
+  accentBorder: "#656c76",
+  input: "#212830",
+  ring: "#4493f8",
+} as const;
+
+const colorblindPalette = {
+  ...baseColors,
+  // Replace red/green ramps with blue/orange ramps from GitHub's colorblind theme.
+  green: {
+    100: "#cae8ff",
+    200: "#a5d6ff",
+    400: "#79c0ff",
+    500: "#58a6ff",
+    600: "#1f6feb",
+    800: "#1158c7",
+    900: "#0c2d6b",
+  },
+  red: {
+    100: "#ffdfb6",
+    200: "#ffd8b5",
+    300: "#ffc680",
+    500: "#f0883e",
+    600: "#bd561d",
+    800: "#9b4215",
+    900: "#762c00",
+  },
+} as const;
+
 const commonTheme = {
   spacing: {
     0: 0,
@@ -269,8 +334,16 @@ export const lightTheme = {
   ...commonTheme,
 } as const;
 
+export const colorblindTheme = {
+  colors: {
+    ...colorblindSemanticColors,
+    palette: colorblindPalette,
+  },
+  ...commonTheme,
+} as const;
+
 // Keep compatibility with existing code
 export const theme = darkTheme;
 
 // Export a union type that works for both themes
-export type Theme = typeof darkTheme | typeof lightTheme;
+export type Theme = typeof darkTheme | typeof lightTheme | typeof colorblindTheme;

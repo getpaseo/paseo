@@ -13,7 +13,7 @@ import Constants from "expo-constants";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { useQueries } from "@tanstack/react-query";
-import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2, Check } from "lucide-react-native";
+import { Sun, Moon, Monitor, Eye, Globe, Settings, RotateCw, Trash2, Check } from "lucide-react-native";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import { useDaemonRegistry, type HostProfile, type HostConnection } from "@/contexts/daemon-registry-context";
 import { useDaemonConnections, type ActiveConnection, type ConnectionStatus } from "@/contexts/daemon-connections-context";
@@ -905,6 +905,11 @@ export default function SettingsScreen() {
                       value: "auto",
                       label: "System",
                       icon: ({ color, size }) => <Monitor size={size} color={color} />,
+                    },
+                    {
+                      value: "colorblind",
+                      label: "Colorblind",
+                      icon: ({ color, size }) => <Eye size={size} color={color} />,
                     },
                   ]}
                 />
