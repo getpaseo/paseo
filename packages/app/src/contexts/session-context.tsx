@@ -185,6 +185,9 @@ function SessionProviderInternal({
   const setAgentStreamHead = useSessionStore(
     (state) => state.setAgentStreamHead
   );
+  const setAgentStreamState = useSessionStore(
+    (state) => state.setAgentStreamState
+  );
   const clearAgentStreamHead = useSessionStore(
     (state) => state.clearAgentStreamHead
   );
@@ -747,23 +750,10 @@ function SessionProviderInternal({
         timestamp: parsedTimestamp,
       });
 
-      if (changedTail) {
-        setAgentStreamTail(serverId, (prev) => {
-          const next = new Map(prev);
-          next.set(agentId, tail);
-          return next;
-        });
-      }
-
-      if (changedHead) {
-        setAgentStreamHead(serverId, (prev) => {
-          const next = new Map(prev);
-          if (head.length > 0) {
-            next.set(agentId, head);
-          } else {
-            next.delete(agentId);
-          }
-          return next;
+      if (changedTail || changedHead) {
+        setAgentStreamState(serverId, agentId, {
+          ...(changedTail ? { tail } : {}),
+          ...(changedHead ? { head } : {}),
         });
       }
 
@@ -1224,6 +1214,7 @@ function SessionProviderInternal({
     setCurrentAssistantMessage,
     setAgentStreamTail,
     setAgentStreamHead,
+    setAgentStreamState,
     clearAgentStreamHead,
     setAgentTimelineCursor,
     setInitializingAgents,
