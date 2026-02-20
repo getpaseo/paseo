@@ -216,7 +216,7 @@ describe("relay-transport control lifecycle", () => {
       dataSocket,
       {
         transport: "relay",
-        externalSessionKey: "relay:clt_test",
+        externalSessionKey: "session:clt_test",
       }
     );
   });

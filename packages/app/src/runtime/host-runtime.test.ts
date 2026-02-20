@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
-import type { DaemonClient, ConnectionState } from "@server/client/daemon-client";
+import { describe, expect, it, vi } from "vitest";
+import type {
+  DaemonClient,
+  ConnectionState,
+  FetchAgentsOptions,
+} from "@server/client/daemon-client";
 import type { HostConnection, HostProfile } from "@/contexts/daemon-registry-context";
 import {
   HostRuntimeController,
+  HostRuntimeStore,
   type HostRuntimeControllerDeps,
 } from "./host-runtime";
 
@@ -13,6 +18,7 @@ class FakeDaemonClient {
   public connectCalls = 0;
   public closeCalls = 0;
   public ensureConnectedCalls = 0;
+  public fetchAgentsCalls: FetchAgentsOptions[] = [];
 
   async connect(): Promise<void> {
     this.connectCalls += 1;
@@ -47,6 +53,31 @@ class FakeDaemonClient {
 
   get lastError(): string | null {
     return this.error;
+  }
+
+  async fetchAgents(
+    options?: FetchAgentsOptions
+  ): Promise<{
+    entries: [];
+    pageInfo: {
+      hasMoreBefore: false;
+      hasMoreAfter: false;
+      beforeCursor: null;
+      afterCursor: null;
+    };
+    subscriptionId: string | null;
+  }> {
+    this.fetchAgentsCalls.push(options ?? {});
+    return {
+      entries: [],
+      pageInfo: {
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        beforeCursor: null,
+        afterCursor: null,
+      },
+      subscriptionId: options?.subscribe?.subscriptionId ?? null,
+    };
   }
 
   setConnectionState(next: ConnectionState): void {
@@ -103,10 +134,90 @@ function makeDeps(
       }
       return value;
     },
+    getClientSessionKey: async () => "clsk_test_runtime",
+  };
+}
+
+function createDeferred<T>() {
+  let resolve: ((value: T | PromiseLike<T>) => void) | null = null;
+  let reject: ((reason?: unknown) => void) | null = null;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return {
+    promise,
+    resolve: (value: T | PromiseLike<T>) => resolve?.(value),
+    reject: (reason?: unknown) => reject?.(reason),
   };
 }
 
 describe("HostRuntimeController", () => {
+  it("keeps known hosts in connecting when client reports idle during connect", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "direct",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const idleClient = new FakeDaemonClient();
+    const deps: HostRuntimeControllerDeps = {
+      createClient: () => idleClient as unknown as DaemonClient,
+      measureLatency: async () => {
+        throw new Error("probe unavailable");
+      },
+      getClientSessionKey: async () => "clsk_test_runtime",
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps,
+    });
+
+    idleClient.connect = async () => {
+      idleClient.connectCalls += 1;
+      // Intentionally do not emit a connected state; stay in idle.
+    };
+
+    await controller.start({ autoProbe: false });
+
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    expect(controller.getSnapshot().connectionStatus).toBe("connecting");
+    expect(controller.getSnapshot().agentDirectoryStatus).toBe("initial_loading");
+  });
+
+  it("passes resolved client session key into created active clients", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "direct",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const seenSessionKeys: string[] = [];
+    const fakeClient = new FakeDaemonClient();
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: ({ clientSessionKey }) => {
+          seenSessionKeys.push(clientSessionKey);
+          return fakeClient as unknown as DaemonClient;
+        },
+        measureLatency: async () => 10,
+        getClientSessionKey: async () => "clsk_runtime_stable",
+      },
+    });
+
+    await controller.start({ autoProbe: false });
+
+    expect(seenSessionKeys).toEqual(["clsk_runtime_stable"]);
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+  });
+
   it("selects the lowest-latency connection on startup", async () => {
     const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
     const clients: FakeDaemonClient[] = [];
@@ -249,5 +360,431 @@ describe("HostRuntimeController", () => {
     expect(latest?.connectionStatus).toBe("error");
     expect(latest?.lastError).toBe("transport closed");
     unsubscribe();
+  });
+
+  it("logs typed reason codes for connection transitions", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      const host = makeHost({
+        connections: [
+          {
+            id: "direct:lan:6767",
+            type: "direct",
+            endpoint: "lan:6767",
+          },
+        ],
+      });
+      const clients: FakeDaemonClient[] = [];
+      const controller = new HostRuntimeController({
+        host,
+        deps: makeDeps(
+          {
+            "direct:lan:6767": 12,
+          },
+          clients
+        ),
+      });
+
+      await controller.start({ autoProbe: false });
+      clients[0]?.setConnectionState({
+        status: "disconnected",
+        reason: "transport closed",
+      });
+
+      const transitionPayloads = infoSpy.mock.calls
+        .filter((call) => call[0] === "[HostRuntimeTransition]")
+        .map((call) => call[1] as { reasonCode?: string | null });
+      const lastTransition =
+        transitionPayloads[transitionPayloads.length - 1] ?? null;
+
+      expect(lastTransition?.reasonCode).toBe("transport_error");
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it("marks directory loading on first connection before any directory sync succeeds", async () => {
+    const host = makeHost();
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 12,
+      "relay:relay.paseo.sh:443": 65,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.connectionStatus).toBe("online");
+    expect(snapshot.hasEverLoadedAgentDirectory).toBe(false);
+    expect(snapshot.agentDirectoryStatus).toBe("initial_loading");
+  });
+
+  it("keeps directory ready through reconnects after the first successful directory load", async () => {
+    const host = makeHost();
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 12,
+      "relay:relay.paseo.sh:443": 65,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    controller.markAgentDirectorySyncReady();
+    expect(controller.getSnapshot().agentDirectoryStatus).toBe("ready");
+    expect(controller.getSnapshot().hasEverLoadedAgentDirectory).toBe(true);
+
+    clients[0]?.setConnectionState({
+      status: "disconnected",
+      reason: "client_closed",
+    });
+    expect(controller.getSnapshot().connectionStatus).toBe("offline");
+    expect(controller.getSnapshot().agentDirectoryStatus).toBe("ready");
+
+    clients[0]?.setConnectionState({ status: "connected" });
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+    expect(controller.getSnapshot().agentDirectoryStatus).toBe("ready");
+  });
+
+  it("stores directory sync errors as non-blocking after a successful directory load", async () => {
+    const host = makeHost();
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 12,
+      "relay:relay.paseo.sh:443": 65,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    controller.markAgentDirectorySyncReady();
+    controller.markAgentDirectorySyncError("bootstrap failed");
+
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.agentDirectoryStatus).toBe("error_after_ready");
+    expect(snapshot.agentDirectoryError).toBe("bootstrap failed");
+    expect(snapshot.hasEverLoadedAgentDirectory).toBe(true);
+  });
+
+  it("keeps online snapshots coupled to a live client reference", async () => {
+    const host = makeHost();
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 12,
+      "relay:relay.paseo.sh:443": 65,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    const observed = new Array<ReturnType<typeof controller.getSnapshot>>();
+    const unsubscribe = controller.subscribe(() => {
+      observed.push(controller.getSnapshot());
+    });
+
+    await controller.start({ autoProbe: false });
+
+    for (const snapshot of observed) {
+      if (snapshot.connectionStatus === "online") {
+        expect(snapshot.client).toBeTruthy();
+      }
+    }
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+    expect(controller.getSnapshot().client).toBeTruthy();
+    unsubscribe();
+  });
+
+  it("ignores stale switch failures after a newer connection is already online", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "direct",
+          endpoint: "lan:6767",
+        },
+        {
+          id: "relay:relay.paseo.sh:443",
+          type: "relay",
+          relayEndpoint: "relay.paseo.sh:443",
+          daemonPublicKeyB64: "pk_test",
+        },
+      ],
+    });
+    const firstConnectGate = createDeferred<void>();
+    const createdClients: FakeDaemonClient[] = [];
+    const deps: HostRuntimeControllerDeps = {
+      createClient: ({ connection }) => {
+        const client = new FakeDaemonClient();
+        if (connection.id === "direct:lan:6767") {
+          client.connect = async () => {
+            client.connectCalls += 1;
+            await firstConnectGate.promise;
+            throw new Error("stale direct connect failed");
+          };
+        }
+        createdClients.push(client);
+        return client as unknown as DaemonClient;
+      },
+      measureLatency: async () => 10,
+      getClientSessionKey: async () => "clsk_test_runtime",
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps,
+    });
+
+    const waitUntil = async (
+      predicate: () => boolean,
+      timeoutMs = 200
+    ): Promise<void> => {
+      const timeoutAt = Date.now() + timeoutMs;
+      while (!predicate()) {
+        if (Date.now() >= timeoutAt) {
+          throw new Error("timed out waiting for predicate");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    };
+
+    const switchDirect = (
+      controller as unknown as {
+        switchToConnection: (input: { connectionId: string }) => Promise<void>;
+      }
+    ).switchToConnection({ connectionId: "direct:lan:6767" });
+    await waitUntil(() => {
+      const snapshot = controller.getSnapshot();
+      return (
+        createdClients.length === 1 &&
+        snapshot.activeConnectionId === "direct:lan:6767" &&
+        snapshot.connectionStatus === "connecting"
+      );
+    });
+
+    const switchRelay = (
+      controller as unknown as {
+        switchToConnection: (input: { connectionId: string }) => Promise<void>;
+      }
+    ).switchToConnection({ connectionId: "relay:relay.paseo.sh:443" });
+    await waitUntil(() => {
+      const snapshot = controller.getSnapshot();
+      return (
+        snapshot.activeConnectionId === "relay:relay.paseo.sh:443" &&
+        snapshot.connectionStatus === "online"
+      );
+    });
+
+    firstConnectGate.resolve();
+    await Promise.allSettled([switchDirect, switchRelay]);
+
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.activeConnectionId).toBe("relay:relay.paseo.sh:443");
+    expect(snapshot.connectionStatus).toBe("online");
+    expect(snapshot.lastError).toBeNull();
+    expect(createdClients).toHaveLength(2);
+    expect(createdClients[0]?.closeCalls).toBe(1);
+  });
+
+  it("ignores stale probe results when overlapping probe cycles finish out of order", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "direct",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const slowProbe = createDeferred<number>();
+    const fastProbe = createDeferred<number>();
+    let probeCalls = 0;
+
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        measureLatency: async () => {
+          probeCalls += 1;
+          if (probeCalls === 1) {
+            return await slowProbe.promise;
+          }
+          if (probeCalls === 2) {
+            return await fastProbe.promise;
+          }
+          throw new Error("unexpected probe call");
+        },
+        getClientSessionKey: async () => "clsk_test_runtime",
+      },
+    });
+
+    const first = controller.runProbeCycleNow();
+    const second = controller.runProbeCycleNow();
+
+    fastProbe.resolve(12);
+    await second;
+    const probeAfterSecond = controller
+      .getSnapshot()
+      .probeByConnectionId.get("direct:lan:6767");
+    expect(probeAfterSecond).toEqual({
+      status: "available",
+      latencyMs: 12,
+    });
+
+    slowProbe.resolve(900);
+    await first;
+    const probeAfterFirstSettles = controller
+      .getSnapshot()
+      .probeByConnectionId.get("direct:lan:6767");
+    expect(probeAfterFirstSettles).toEqual({
+      status: "available",
+      latencyMs: 12,
+    });
+  });
+
+  it("keeps active client generation stable while overlapping probes run", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "direct",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const slowProbe = createDeferred<number>();
+    const fastProbe = createDeferred<number>();
+    const createdClients: FakeDaemonClient[] = [];
+    let probeCalls = 0;
+
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => {
+          const client = new FakeDaemonClient();
+          createdClients.push(client);
+          return client as unknown as DaemonClient;
+        },
+        measureLatency: async () => {
+          probeCalls += 1;
+          if (probeCalls === 1) {
+            return 10;
+          }
+          if (probeCalls === 2) {
+            return await slowProbe.promise;
+          }
+          if (probeCalls === 3) {
+            return await fastProbe.promise;
+          }
+          return 10;
+        },
+        getClientSessionKey: async () => "clsk_test_runtime",
+      },
+    });
+
+    await controller.start({ autoProbe: false });
+    const activeClientBeforeProbes = controller.getSnapshot().client;
+    const generationBeforeProbes = controller.getSnapshot().clientGeneration;
+
+    const first = controller.runProbeCycleNow();
+    const second = controller.runProbeCycleNow();
+
+    fastProbe.resolve(12);
+    await second;
+    expect(controller.getSnapshot().client).toBe(activeClientBeforeProbes);
+    expect(controller.getSnapshot().clientGeneration).toBe(
+      generationBeforeProbes
+    );
+
+    slowProbe.resolve(999);
+    await first;
+    expect(controller.getSnapshot().client).toBe(activeClientBeforeProbes);
+    expect(controller.getSnapshot().clientGeneration).toBe(
+      generationBeforeProbes
+    );
+    expect(createdClients).toHaveLength(1);
+    expect(createdClients[0]?.closeCalls).toBe(0);
+  });
+});
+
+describe("HostRuntimeStore", () => {
+  it("bootstraps agent directory subscription when host transitions online", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "direct",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        measureLatency: async () => 5,
+        getClientSessionKey: async () => "clsk_test_runtime",
+      },
+    });
+
+    store.syncHosts([host]);
+
+    const timeoutAt = Date.now() + 200;
+    while (fakeClient.fetchAgentsCalls.length === 0 && Date.now() < timeoutAt) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(fakeClient.fetchAgentsCalls).toHaveLength(1);
+    expect(fakeClient.fetchAgentsCalls[0]).toEqual({
+      filter: { labels: { ui: "true" } },
+      subscribe: { subscriptionId: "app:srv_test" },
+    });
+
+    const snapshot = store.getSnapshot(host.serverId);
+    expect(snapshot?.agentDirectoryStatus).toBe("ready");
+    expect(snapshot?.hasEverLoadedAgentDirectory).toBe(true);
+
+    store.syncHosts([]);
+  });
+
+  it("surfaces startup failures as error instead of leaving host idle", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "direct",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => {
+          throw new Error("create client failed");
+        },
+        measureLatency: async () => {
+          throw new Error("probe unavailable");
+        },
+        getClientSessionKey: async () => "clsk_test_runtime",
+      },
+    });
+
+    store.syncHosts([host]);
+    let snapshot = store.getSnapshot(host.serverId);
+    const timeoutAt = Date.now() + 100;
+    while (snapshot?.connectionStatus !== "error" && Date.now() < timeoutAt) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      snapshot = store.getSnapshot(host.serverId);
+    }
+
+    expect(snapshot?.connectionStatus).toBe("error");
+    expect(snapshot?.lastError).toBe("create client failed");
   });
 });

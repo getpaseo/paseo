@@ -14,7 +14,7 @@ import { router, usePathname } from "expo-router";
 import { usePanelStore } from "@/stores/panel-store";
 import { SidebarAgentList } from "./sidebar-agent-list";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
-import { useSidebarAgentsGrouped } from "@/hooks/use-sidebar-agents-grouped";
+import { useSidebarAgentsList } from "@/hooks/use-sidebar-agents-list";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { useTauriDragHandlers, useTrafficLightPadding } from "@/utils/tauri-window";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -94,22 +94,24 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
 
   // Derive isOpen from the unified panel state
   const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
-  const [selectedProjectKeys, setSelectedProjectKeys] = useState<string[]>([]);
+  const [selectedProjectFilterKeys, setSelectedProjectFilterKeys] = useState<
+    string[]
+  >([]);
 
   const {
     entries,
-    projectOptions,
+    projectFilterOptions,
     hasMoreEntries,
     isInitialLoad,
     isRevalidating,
     refreshAll,
-  } = useSidebarAgentsGrouped({
+  } = useSidebarAgentsList({
     isOpen,
     serverId: activeServerId,
-    selectedProjectKeys,
+    selectedProjectFilterKeys,
   });
   useEffect(() => {
-    setSelectedProjectKeys([]);
+    setSelectedProjectFilterKeys([]);
   }, [activeServerId]);
   const {
     translateX,
@@ -373,9 +375,9 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
               ) : (
                 <SidebarAgentList
                   entries={entries}
-                  projectOptions={projectOptions}
-                  selectedProjectKeys={selectedProjectKeys}
-                  onSelectedProjectKeysChange={setSelectedProjectKeys}
+                  projectFilterOptions={projectFilterOptions}
+                  selectedProjectFilterKeys={selectedProjectFilterKeys}
+                  onSelectedProjectFilterKeysChange={setSelectedProjectFilterKeys}
                   isRefreshing={isManualRefresh && isRevalidating}
                   onRefresh={handleRefresh}
                   listFooterComponent={listFooterComponent}
@@ -499,9 +501,9 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
       ) : (
         <SidebarAgentList
           entries={entries}
-          projectOptions={projectOptions}
-          selectedProjectKeys={selectedProjectKeys}
-          onSelectedProjectKeysChange={setSelectedProjectKeys}
+          projectFilterOptions={projectFilterOptions}
+          selectedProjectFilterKeys={selectedProjectFilterKeys}
+          onSelectedProjectFilterKeysChange={setSelectedProjectFilterKeys}
           isRefreshing={isManualRefresh && isRevalidating}
           onRefresh={handleRefresh}
           listFooterComponent={listFooterComponent}

@@ -37,13 +37,13 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
       async () => {
         const serverId = `live-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const clientId = `clt_live_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-        const serverControlUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(serverId)}&role=server`;
+        const serverControlUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(serverId)}&role=server&v=2`;
         const serverDataUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(
           serverId
-        )}&role=server&clientId=${encodeURIComponent(clientId)}`;
+        )}&role=server&clientId=${encodeURIComponent(clientId)}&v=2`;
         const clientUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(
           serverId
-        )}&role=client&clientId=${encodeURIComponent(clientId)}`;
+        )}&role=client&clientId=${encodeURIComponent(clientId)}&v=2`;
 
         // === Key setup ===
         const daemonKeyPair = await generateKeyPair();

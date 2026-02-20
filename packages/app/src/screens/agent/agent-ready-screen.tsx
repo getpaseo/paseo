@@ -76,9 +76,10 @@ import {
   derivePendingPermissionKey,
   normalizeAgentSnapshot,
 } from "@/utils/agent-snapshots";
+import { resolveProjectPlacement } from "@/utils/project-placement";
 import { mergePendingCreateImages } from "@/utils/pending-create-images";
 import { shouldClearAgentAttentionOnView } from "@/utils/agent-attention";
-import type { DaemonClient, FetchAgentsEntry } from "@server/client/daemon-client";
+import type { DaemonClient } from "@server/client/daemon-client";
 import { useExplorerOpenGesture } from "@/hooks/use-explorer-open-gesture";
 import {
   DropdownMenu,
@@ -128,7 +129,7 @@ export function AgentReadyScreen({
   const isUnknownDaemon = Boolean(connectionServerId && !connection);
   const connectionStatus: HostRuntimeConnectionStatus =
     runtimeSnapshot?.connectionStatus ??
-    (isUnknownDaemon ? "offline" : "idle");
+    (isUnknownDaemon ? "offline" : "connecting");
   const lastConnectionError = runtimeSnapshot?.lastError ?? null;
   const isRuntimeSessionAvailable = Boolean(resolvedServerId && runtimeClient);
 
@@ -278,26 +279,12 @@ function AgentScreenContent({
   const checkout = checkoutStatusQuery.status;
   const resolveCachedCheckoutIsGit = useCallback(
     (params: {
-      agentId?: string | null;
       cwd?: string | null;
       projectPlacementIsGit?: boolean;
       checkoutStatusIsGit?: boolean;
     }): boolean | null => {
       if (typeof params.projectPlacementIsGit === "boolean") {
         return params.projectPlacementIsGit;
-      }
-
-      const agentId = params.agentId?.trim();
-      if (agentId) {
-        const sidebarAgents = queryClient.getQueryData<{
-          entries: FetchAgentsEntry[];
-        }>(["sidebarAgentsList", serverId]);
-        const sidebarIsGit = sidebarAgents?.entries.find(
-          (entry) => entry.agent.id === agentId
-        )?.project?.checkout?.isGit;
-        if (typeof sidebarIsGit === "boolean") {
-          return sidebarIsGit;
-        }
       }
 
       const cwd = params.cwd?.trim();
@@ -327,7 +314,6 @@ function AgentScreenContent({
       ?.agents?.get(resolvedAgentId);
     const cwd = currentAgent?.cwd?.trim();
     const isGit = resolveCachedCheckoutIsGit({
-      agentId: resolvedAgentId,
       cwd,
       projectPlacementIsGit: currentAgent?.projectPlacement?.checkout?.isGit,
       checkoutStatusIsGit: checkout?.isGit,
@@ -394,7 +380,6 @@ function AgentScreenContent({
   const activeExplorerCheckout = useMemo<ExplorerCheckoutContext | null>(() => {
     const cwd = agent?.cwd?.trim();
     const isGit = resolveCachedCheckoutIsGit({
-      agentId: resolvedAgentId,
       cwd,
       projectPlacementIsGit: agent?.projectPlacement?.checkout?.isGit,
       checkoutStatusIsGit: checkout?.isGit,
@@ -458,6 +443,7 @@ function AgentScreenContent({
       ? state.sessions[serverId]?.agentHistorySyncGeneration?.get(resolvedAgentId) ?? -1
       : -1
   );
+  const hasHydratedHistoryBefore = agentHistorySyncGeneration >= 0;
 
   // Select raw pending permissions - filter with useMemo to avoid new Map on every render
   const allPendingPermissions = useSessionStore(
@@ -517,6 +503,38 @@ function AgentScreenContent({
     };
   });
 
+  const handleHistorySyncFailure = useCallback(
+    ({ origin, error }: { origin: "focus" | "entry"; error: unknown }) => {
+      if (resolvedAgentId) {
+        console.warn("[AgentScreen] history sync failed", {
+          origin,
+          agentId: resolvedAgentId,
+          error,
+        });
+      }
+      const message = toErrorMessage(error);
+      setMissingAgentState((prev) => {
+        if (prev.kind === "error" && prev.message === message) {
+          return prev;
+        }
+        return { kind: "error", message };
+      });
+    },
+    [resolvedAgentId]
+  );
+
+  const ensureInitializedWithSyncErrorHandling = useCallback(
+    (origin: "focus" | "entry") => {
+      if (!resolvedAgentId) {
+        return;
+      }
+      ensureAgentIsInitialized(resolvedAgentId).catch((error) => {
+        handleHistorySyncFailure({ origin, error });
+      });
+    },
+    [ensureAgentIsInitialized, handleHistorySyncFailure, resolvedAgentId]
+  );
+
   useEffect(() => {
     if (connectionStatus === "online") {
       reconnectToastArmedRef.current = false;
@@ -534,25 +552,18 @@ function AgentScreenContent({
     }
   }, [connectionStatus, toast]);
 
-  useEffect(() => {
-    if (missingAgentState.kind !== "error") {
-      return;
-    }
-    toast.error("Failed to refresh agent. Retrying in background.");
-  }, [missingAgentState.kind, toast]);
-
   useFocusEffect(
     useCallback(() => {
       if (!resolvedAgentId || !isConnected || !hasSession) {
         return;
       }
-      ensureAgentIsInitialized(resolvedAgentId).catch((error) => {
-        console.warn("[AgentScreen] focus sync failed", {
-          agentId: resolvedAgentId,
-          error,
-        });
-      });
-    }, [ensureAgentIsInitialized, hasSession, isConnected, resolvedAgentId])
+      ensureInitializedWithSyncErrorHandling("focus");
+    }, [
+      ensureInitializedWithSyncErrorHandling,
+      hasSession,
+      isConnected,
+      resolvedAgentId,
+    ])
   );
 
   const isGitCheckout = activeExplorerCheckout?.isGit ?? false;
@@ -688,6 +699,7 @@ function AgentScreenContent({
       isHistorySyncing,
       needsAuthoritativeSync,
       shouldUseOptimisticStream,
+      hasHydratedHistoryBefore,
     },
   });
 
@@ -769,15 +781,10 @@ function AgentScreenContent({
       return;
     }
 
-    ensureAgentIsInitialized(resolvedAgentId).catch((error) => {
-      console.warn("[AgentScreen] Agent initialization failed", {
-        agentId: resolvedAgentId,
-        error,
-      });
-    });
+    ensureInitializedWithSyncErrorHandling("entry");
   }, [
     resolvedAgentId,
-    ensureAgentIsInitialized,
+    ensureInitializedWithSyncErrorHandling,
     hasSession,
     isConnected,
     needsAuthoritativeSync,
@@ -831,21 +838,28 @@ function AgentScreenContent({
             return;
           }
           const normalized = normalizeAgentSnapshot(snapshot, serverId);
+          const hydrated = {
+            ...normalized,
+            projectPlacement: resolveProjectPlacement({
+              projectPlacement: null,
+              cwd: normalized.cwd,
+            }),
+          };
           setAgents(serverId, (prev) => {
             const next = new Map(prev);
-            next.set(normalized.id, normalized);
+            next.set(hydrated.id, hydrated);
             return next;
           });
           setPendingPermissions(serverId, (prev) => {
             const next = new Map(prev);
             for (const [key, pending] of next.entries()) {
-              if (pending.agentId === normalized.id) {
+              if (pending.agentId === hydrated.id) {
                 next.delete(key);
               }
             }
-            for (const request of normalized.pendingPermissions) {
-              const key = derivePendingPermissionKey(normalized.id, request);
-              next.set(key, { key, agentId: normalized.id, request });
+            for (const request of hydrated.pendingPermissions) {
+              const key = derivePendingPermissionKey(hydrated.id, request);
+              next.set(key, { key, agentId: hydrated.id, request });
             }
             return next;
           });
@@ -940,14 +954,31 @@ function AgentScreenContent({
     [theme.colors.primary, toast]
   );
 
-  const syncBannerMessage =
-    viewState.tag !== "ready"
-      ? null
-      : viewState.syncStatus === "catching_up"
-        ? "Refreshing agent history..."
-        : viewState.syncStatus === "sync_error"
-          ? "Refresh delayed. Retrying in background."
-          : null;
+  const shouldEmitHistoryRefreshToast =
+    viewState.tag === "ready" &&
+    viewState.sync.status === "catching_up" &&
+    viewState.sync.shouldEmitHistoryRefreshToast;
+  const shouldEmitSyncErrorToast =
+    viewState.tag === "ready" &&
+    viewState.sync.status === "sync_error" &&
+    viewState.sync.shouldEmitSyncErrorToast;
+
+  useEffect(() => {
+    if (!shouldEmitHistoryRefreshToast) {
+      return;
+    }
+    toast.show("Refreshing agent history...", {
+      durationMs: 2200,
+      testID: "agent-history-refresh-toast",
+    });
+  }, [shouldEmitHistoryRefreshToast, toast]);
+
+  useEffect(() => {
+    if (!shouldEmitSyncErrorToast) {
+      return;
+    }
+    toast.error("Failed to refresh agent. Retrying in background.");
+  }, [shouldEmitSyncErrorToast, toast]);
 
   if (viewState.tag === "not_found") {
     return (
@@ -1188,12 +1219,6 @@ function AgentScreenContent({
           }
         />
 
-          {syncBannerMessage ? (
-            <View style={styles.syncBanner} testID="agent-sync-banner">
-              <Text style={styles.syncBannerText}>{syncBannerMessage}</Text>
-            </View>
-          ) : null}
-
           {/* Content Area with Keyboard Animation */}
           <View style={styles.contentContainer}>
             <ReanimatedAnimated.View
@@ -1220,6 +1245,14 @@ function AgentScreenContent({
               onAddImages={handleAddImagesCallback}
             />
           )}
+
+          {viewState.tag === "ready" &&
+          viewState.sync.status === "catching_up" &&
+          viewState.sync.ui === "overlay" ? (
+            <View style={styles.historySyncOverlay} testID="agent-history-overlay">
+              <ActivityIndicator size="large" color={theme.colors.foregroundMuted} />
+            </View>
+          ) : null}
 
         </View>
       </FileDropZone>
@@ -1357,23 +1390,19 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     overflow: "hidden",
   },
-  syncBanner: {
-    marginHorizontal: theme.spacing[4],
-    marginTop: theme.spacing[1],
-    marginBottom: theme.spacing[2],
-    borderRadius: theme.borderRadius.full,
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface1,
-  },
-  syncBannerText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-  },
   content: {
     flex: 1,
+  },
+  historySyncOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: theme.colors.surface0,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 40,
   },
   archivingOverlay: {
     position: "absolute",

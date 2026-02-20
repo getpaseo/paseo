@@ -5,6 +5,28 @@ export type HostPortParts = {
 };
 
 export type RelayRole = "server" | "client";
+export type RelayProtocolVersion = "1" | "2";
+
+export const CURRENT_RELAY_PROTOCOL_VERSION: RelayProtocolVersion = "2";
+
+export function normalizeRelayProtocolVersion(
+  value: unknown,
+  fallback: RelayProtocolVersion = CURRENT_RELAY_PROTOCOL_VERSION
+): RelayProtocolVersion {
+  if (value == null) {
+    return fallback;
+  }
+
+  const normalized =
+    typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "";
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === "1" || normalized === "2") {
+    return normalized;
+  }
+  throw new Error('Relay version must be "1" or "2"');
+}
 
 function parsePort(portStr: string, context: string): number {
   const port = Number(portStr);
@@ -60,11 +82,21 @@ function shouldUseSecureWebSocket(port: number): boolean {
   return port === 443;
 }
 
-export function buildDaemonWebSocketUrl(endpoint: string): string {
+export function buildDaemonWebSocketUrl(
+  endpoint: string,
+  params?: { clientSessionKey?: string }
+): string {
   const { host, port, isIpv6 } = parseHostPort(endpoint);
   const protocol = shouldUseSecureWebSocket(port) ? "wss" : "ws";
   const hostPart = isIpv6 ? `[${host}]` : host;
-  return `${protocol}://${hostPart}:${port}/ws`;
+  const url = new URL(`${protocol}://${hostPart}:${port}/ws`);
+  if (
+    typeof params?.clientSessionKey === "string" &&
+    params.clientSessionKey.trim().length > 0
+  ) {
+    url.searchParams.set("clientSessionKey", params.clientSessionKey.trim());
+  }
+  return url.toString();
 }
 
 export function buildRelayWebSocketUrl(params: {
@@ -72,6 +104,8 @@ export function buildRelayWebSocketUrl(params: {
   serverId: string;
   role: RelayRole;
   clientId?: string;
+  clientSessionKey?: string;
+  version?: RelayProtocolVersion | 1 | 2;
 }): string {
   const { host, port, isIpv6 } = parseHostPort(params.endpoint);
   const protocol = shouldUseSecureWebSocket(port) ? "wss" : "ws";
@@ -79,8 +113,17 @@ export function buildRelayWebSocketUrl(params: {
   const url = new URL(`${protocol}://${hostPart}:${port}/ws`);
   url.searchParams.set("serverId", params.serverId);
   url.searchParams.set("role", params.role);
-  if (params.clientId) {
-    url.searchParams.set("clientId", params.clientId);
+  url.searchParams.set("v", normalizeRelayProtocolVersion(params.version));
+  if (
+    params.clientId &&
+    params.clientSessionKey &&
+    params.clientId !== params.clientSessionKey
+  ) {
+    throw new Error("clientId and clientSessionKey must match when both are provided");
+  }
+  const resolvedClientId = params.clientId ?? params.clientSessionKey;
+  if (resolvedClientId) {
+    url.searchParams.set("clientId", resolvedClientId);
   }
   return url.toString();
 }

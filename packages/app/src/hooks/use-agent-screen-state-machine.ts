@@ -16,18 +16,35 @@ export interface AgentScreenMachineInput {
   isHistorySyncing: boolean;
   needsAuthoritativeSync: boolean;
   shouldUseOptimisticStream: boolean;
+  hasHydratedHistoryBefore: boolean;
 }
+
+export type AgentScreenToastLatch = "none" | "history_refresh" | "sync_error";
 
 export interface AgentScreenMachineMemory {
   hasRenderedReady: boolean;
   lastReadyAgent: Agent | null;
+  activeToastLatch: AgentScreenToastLatch;
+  hadInitialSyncFailure: boolean;
 }
 
-export type AgentScreenSyncStatus =
-  | "idle"
-  | "catching_up"
-  | "reconnecting"
-  | "sync_error";
+export type AgentScreenReadySyncState =
+  | { status: "idle" }
+  | { status: "reconnecting" }
+  | {
+      status: "catching_up";
+      ui: "overlay" | "silent";
+      shouldEmitHistoryRefreshToast: false;
+    }
+  | {
+      status: "catching_up";
+      ui: "toast";
+      shouldEmitHistoryRefreshToast: boolean;
+    }
+  | {
+      status: "sync_error";
+      shouldEmitSyncErrorToast: boolean;
+    };
 
 export type AgentScreenViewState =
   | {
@@ -47,7 +64,7 @@ export type AgentScreenViewState =
       tag: "ready";
       agent: Agent;
       source: "authoritative" | "optimistic" | "stale";
-      syncStatus: AgentScreenSyncStatus;
+      sync: AgentScreenReadySyncState;
       isArchiving: boolean;
     };
 
@@ -61,7 +78,20 @@ export function deriveAgentScreenViewState({
   const nextMemory: AgentScreenMachineMemory = {
     hasRenderedReady: memory.hasRenderedReady,
     lastReadyAgent: memory.lastReadyAgent,
+    activeToastLatch: memory.activeToastLatch,
+    hadInitialSyncFailure: memory.hadInitialSyncFailure,
   };
+
+  if (input.hasHydratedHistoryBefore) {
+    nextMemory.hadInitialSyncFailure = false;
+  }
+
+  if (
+    input.missingAgentState.kind === "error" &&
+    !input.hasHydratedHistoryBefore
+  ) {
+    nextMemory.hadInitialSyncFailure = true;
+  }
 
   const candidateAgent = input.agent ?? input.placeholderAgent;
   if (candidateAgent) {
@@ -108,13 +138,49 @@ export function deriveAgentScreenViewState({
       ? "optimistic"
       : "stale";
 
-  let syncStatus: AgentScreenSyncStatus = "idle";
+  let sync: AgentScreenReadySyncState;
   if (!input.isConnected) {
-    syncStatus = "reconnecting";
+    nextMemory.activeToastLatch = "none";
+    sync = { status: "reconnecting" };
   } else if (input.missingAgentState.kind === "error") {
-    syncStatus = "sync_error";
+    const shouldEmitSyncErrorToast = memory.activeToastLatch !== "sync_error";
+    nextMemory.activeToastLatch = "sync_error";
+    sync = {
+      status: "sync_error",
+      shouldEmitSyncErrorToast,
+    };
   } else if (input.needsAuthoritativeSync || input.isHistorySyncing) {
-    syncStatus = "catching_up";
+    let ui: "overlay" | "toast" | "silent";
+    if (input.shouldUseOptimisticStream) {
+      ui = "silent";
+    } else if (input.hasHydratedHistoryBefore) {
+      ui = "toast";
+    } else if (nextMemory.hadInitialSyncFailure) {
+      ui = "silent";
+    } else {
+      ui = "overlay";
+    }
+
+    if (ui === "toast") {
+      const shouldEmitHistoryRefreshToast =
+        memory.activeToastLatch !== "history_refresh";
+      nextMemory.activeToastLatch = "history_refresh";
+      sync = {
+        status: "catching_up",
+        ui,
+        shouldEmitHistoryRefreshToast,
+      };
+    } else {
+      nextMemory.activeToastLatch = "none";
+      sync = {
+        status: "catching_up",
+        ui,
+        shouldEmitHistoryRefreshToast: false,
+      };
+    }
+  } else {
+    nextMemory.activeToastLatch = "none";
+    sync = { status: "idle" };
   }
 
   return {
@@ -122,7 +188,7 @@ export function deriveAgentScreenViewState({
       tag: "ready",
       agent: displayAgent,
       source,
-      syncStatus,
+      sync,
       isArchiving: input.isArchivingCurrentAgent,
     },
     memory: nextMemory,
@@ -140,6 +206,8 @@ export function useAgentScreenStateMachine({
   const memoryRef = useRef<AgentScreenMachineMemory>({
     hasRenderedReady: false,
     lastReadyAgent: null,
+    activeToastLatch: "none",
+    hadInitialSyncFailure: false,
   });
 
   if (routeKeyRef.current !== routeKey) {
@@ -147,6 +215,8 @@ export function useAgentScreenStateMachine({
     memoryRef.current = {
       hasRenderedReady: false,
       lastReadyAgent: null,
+      activeToastLatch: "none",
+      hadInitialSyncFailure: false,
     };
   }
 

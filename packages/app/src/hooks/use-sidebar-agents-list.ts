@@ -1,21 +1,22 @@
 import { useCallback, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore, type Agent } from "@/stores/session-store";
-import { useHostRuntimeSession } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  isHostRuntimeDirectoryLoading,
+  useHostRuntimeSession,
+} from "@/runtime/host-runtime";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
-import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import {
   deriveSidebarStateBucket,
   isSidebarActiveAgent,
 } from "@/utils/sidebar-agent-state";
 import type { ProjectPlacementPayload } from "@server/shared/messages";
+import { resolveProjectPlacement } from "@/utils/project-placement";
 
-const SIDEBAR_AGENTS_STALE_TIME = 15_000;
-const SIDEBAR_AGENTS_REFETCH_INTERVAL = 10_000;
 const SIDEBAR_DONE_FILL_TARGET = 50;
 
-export interface SidebarProjectOption {
+export interface SidebarProjectFilterOption {
   projectKey: string;
   projectName: string;
   activeCount: number;
@@ -29,9 +30,9 @@ export interface SidebarAgentListEntry {
   project: ProjectPlacementPayload;
 }
 
-export interface SidebarAgentsGroupedResult {
+export interface SidebarAgentsListResult {
   entries: SidebarAgentListEntry[];
-  projectOptions: SidebarProjectOption[];
+  projectFilterOptions: SidebarProjectFilterOption[];
   hasMoreEntries: boolean;
   isLoading: boolean;
   isInitialLoad: boolean;
@@ -60,7 +61,6 @@ function compareByTitleAsc(
     return titleCmp;
   }
 
-  // Deterministic tie-breaker so running rows stay stable while status updates stream.
   return left.agent.id.localeCompare(right.agent.id, undefined, {
     numeric: true,
     sensitivity: "base",
@@ -121,7 +121,7 @@ function applySidebarDefaultOrdering(
 }
 
 function toAggregatedAgent(params: {
-  source: Agent | ReturnType<typeof normalizeAgentSnapshot>;
+  source: Agent;
   serverId: string;
   serverLabel: string;
 }): AggregatedAgent & { createdAt: Date } {
@@ -144,63 +144,41 @@ function toAggregatedAgent(params: {
   };
 }
 
-export function useSidebarAgentsGrouped(options?: {
+export function useSidebarAgentsList(options?: {
   isOpen?: boolean;
   serverId?: string | null;
-  selectedProjectKeys?: string[];
-}): SidebarAgentsGroupedResult {
+  selectedProjectFilterKeys?: string[];
+}): SidebarAgentsListResult {
   const { connectionStates } = useDaemonConnections();
-  const queryClient = useQueryClient();
-  const isOpen = options?.isOpen ?? true;
+  const runtime = getHostRuntimeStore();
   const serverId = useMemo(() => {
     const value = options?.serverId;
     return typeof value === "string" && value.trim().length > 0
       ? value.trim()
       : null;
   }, [options?.serverId]);
-  const selectedProjectKeys = useMemo(
+
+  const selectedProjectFilterKeys = useMemo(
     () =>
       new Set(
-        (options?.selectedProjectKeys ?? [])
+        (options?.selectedProjectFilterKeys ?? [])
           .map((item) => item.trim())
           .filter((item) => item.length > 0)
       ),
-    [options?.selectedProjectKeys]
+    [options?.selectedProjectFilterKeys]
   );
 
   const session = useSessionStore((state) =>
     serverId ? state.sessions[serverId] : undefined
   );
-  const { client, isConnected } = useHostRuntimeSession(serverId ?? "");
   const liveAgents = session?.agents ?? null;
-  const canFetch = Boolean(serverId && client && isConnected);
+  const { snapshot } = useHostRuntimeSession(serverId ?? "");
 
-  const agentsQuery = useQuery({
-    queryKey: ["sidebarAgentsList", serverId] as const,
-    queryFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client not available");
-      }
-      return await client.fetchAgents({
-        filter: { labels: { ui: "true" } },
-        sort: [
-          { key: "status_priority", direction: "asc" },
-          { key: "updated_at", direction: "desc" },
-        ],
-      });
-    },
-    enabled: canFetch,
-    staleTime: SIDEBAR_AGENTS_STALE_TIME,
-    refetchInterval: isOpen ? SIDEBAR_AGENTS_REFETCH_INTERVAL : false,
-    refetchIntervalInBackground: isOpen,
-    refetchOnMount: "always" as const,
-  });
-
-  const { entries, projectOptions, hasAnyData, hasMoreEntries } = useMemo(() => {
-    if (!serverId) {
+  const { entries, projectFilterOptions, hasAnyData, hasMoreEntries } = useMemo(() => {
+    if (!serverId || !liveAgents) {
       return {
         entries: [] as SidebarAgentListEntry[],
-        projectOptions: [] as SidebarProjectOption[],
+        projectFilterOptions: [] as SidebarProjectFilterOption[],
         hasAnyData: false,
         hasMoreEntries: false,
       };
@@ -208,7 +186,7 @@ export function useSidebarAgentsGrouped(options?: {
 
     const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
     const seenAgentIds = new Set<string>();
-    const byProject = new Map<string, SidebarProjectOption>();
+    const byProject = new Map<string, SidebarProjectFilterOption>();
     const mergedEntries: SidebarAgentListEntry[] = [];
 
     const pushEntry = (entry: SidebarAgentListEntry): void => {
@@ -246,43 +224,26 @@ export function useSidebarAgentsGrouped(options?: {
       });
     };
 
-    const fetchedEntries = agentsQuery.data?.entries ?? [];
-    for (const fetchedEntry of fetchedEntries) {
-      const normalized = normalizeAgentSnapshot(fetchedEntry.agent, serverId);
-      const live = liveAgents?.get(fetchedEntry.agent.id);
-      const project = live?.projectPlacement ?? fetchedEntry.project;
-      if (!project) {
+    for (const live of liveAgents.values()) {
+      if (live.archivedAt || live.labels.ui !== "true") {
         continue;
       }
+      const project = resolveProjectPlacement({
+        projectPlacement: live.projectPlacement ?? null,
+        cwd: live.cwd,
+      });
       const agent = toAggregatedAgent({
-        source: live ?? normalized,
+        source: live,
         serverId,
         serverLabel,
       });
       pushEntry({ agent, project });
     }
 
-    if (liveAgents) {
-      for (const live of liveAgents.values()) {
-        if (live.archivedAt || live.labels.ui !== "true") {
-          continue;
-        }
-        if (!live.projectPlacement) {
-          continue;
-        }
-        const agent = toAggregatedAgent({
-          source: live,
-          serverId,
-          serverLabel,
-        });
-        pushEntry({ agent, project: live.projectPlacement });
-      }
-    }
-
     const filteredEntries =
-      selectedProjectKeys.size > 0
+      selectedProjectFilterKeys.size > 0
         ? mergedEntries.filter((entry) =>
-            selectedProjectKeys.has(entry.project.projectKey)
+            selectedProjectFilterKeys.has(entry.project.projectKey)
           )
         : mergedEntries;
 
@@ -296,37 +257,28 @@ export function useSidebarAgentsGrouped(options?: {
 
     return {
       entries: ordered.entries,
-      projectOptions: options,
+      projectFilterOptions: options,
       hasAnyData: ordered.entries.length > 0,
       hasMoreEntries: ordered.hasMore,
     };
-  }, [
-    agentsQuery.data?.entries,
-    connectionStates,
-    liveAgents,
-    selectedProjectKeys,
-    serverId,
-  ]);
+  }, [connectionStates, liveAgents, selectedProjectFilterKeys, serverId]);
 
   const refreshAll = useCallback(() => {
-    if (!serverId) {
+    if (!serverId || snapshot?.connectionStatus !== "online") {
       return;
     }
-    void queryClient.invalidateQueries({
-      queryKey: ["sidebarAgentsList", serverId],
-    });
-  }, [queryClient, serverId]);
+    void runtime.refreshAgentDirectory({ serverId }).catch(() => undefined);
+  }, [runtime, serverId, snapshot?.connectionStatus]);
 
-  const isFetching =
-    canFetch && (agentsQuery.isPending || agentsQuery.isFetching);
-  const isInitialLoad = isFetching && !hasAnyData;
-  const isRevalidating = isFetching && hasAnyData;
+  const isDirectoryLoading = Boolean(serverId && isHostRuntimeDirectoryLoading(snapshot));
+  const isInitialLoad = isDirectoryLoading && !hasAnyData;
+  const isRevalidating = isDirectoryLoading && hasAnyData;
 
   return {
     entries,
-    projectOptions,
+    projectFilterOptions,
     hasMoreEntries,
-    isLoading: isFetching,
+    isLoading: isDirectoryLoading,
     isInitialLoad,
     isRevalidating,
     refreshAll,

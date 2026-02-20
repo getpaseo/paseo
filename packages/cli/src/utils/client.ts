@@ -1,5 +1,6 @@
 import { DaemonClient } from '@getpaseo/server'
 import WebSocket from 'ws'
+import { getOrCreateCliClientSessionKey } from './client-session-key.js'
 
 export interface ConnectOptions {
   host?: string
@@ -39,7 +40,9 @@ function createNodeWebSocketFactory() {
 export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonClient> {
   const host = getDaemonHost(options)
   const timeout = options?.timeout ?? DEFAULT_TIMEOUT
-  const url = `ws://${host}/ws`
+  const clientSessionKey = await getOrCreateCliClientSessionKey()
+  const encodedSessionKey = encodeURIComponent(clientSessionKey)
+  const url = `ws://${host}/ws?clientSessionKey=${encodedSessionKey}`
 
   const client = new DaemonClient({
     url,

@@ -12,17 +12,18 @@ import { router, useLocalSearchParams } from "expo-router";
 import Constants from "expo-constants";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { useQueries } from "@tanstack/react-query";
 import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2, Check } from "lucide-react-native";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import { useDaemonRegistry, type HostProfile, type HostConnection } from "@/contexts/daemon-registry-context";
-import { useDaemonConnections, type ActiveConnection, type ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
-import { measureConnectionLatency } from "@/utils/test-daemon-connection";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
-import { useHostRuntimeSession } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  isHostRuntimeConnected,
+  useHostRuntimeSession,
+} from "@/runtime/host-runtime";
 import { AddHostMethodModal } from "@/components/add-host-method-modal";
 import { AddHostModal } from "@/components/add-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
@@ -457,7 +458,6 @@ export default function SettingsScreen() {
     removeHost,
     removeConnection,
   } = useDaemonRegistry();
-  const { connectionStates } = useDaemonConnections();
   const [isAddHostMethodVisible, setIsAddHostMethodVisible] = useState(false);
   const [isDirectHostVisible, setIsDirectHostVisible] = useState(false);
   const [isPasteLinkVisible, setIsPasteLinkVisible] = useState(false);
@@ -723,17 +723,10 @@ export default function SettingsScreen() {
               </View>
             ) : (
               daemons.map((daemon) => {
-                const connection = connectionStates.get(daemon.serverId);
-                const connectionStatus = connection?.status ?? "idle";
-                const activeConnection = connection?.activeConnection ?? null;
-                const lastConnectionError = connection?.lastError ?? null;
                 return (
                   <DaemonCard
                     key={daemon.serverId}
                     daemon={daemon}
-                    connectionStatus={connectionStatus}
-                    activeConnection={activeConnection}
-                    lastError={lastConnectionError}
                     onOpenSettings={handleEditDaemon}
                   />
                 );
@@ -865,9 +858,6 @@ export default function SettingsScreen() {
           <HostDetailModal
             visible={Boolean(editingDaemonLive)}
             host={editingDaemonLive}
-            connectionStatus={editingServerId ? (connectionStates.get(editingServerId)?.status ?? "idle") : "idle"}
-            activeConnection={editingServerId ? (connectionStates.get(editingServerId)?.activeConnection ?? null) : null}
-            lastError={editingServerId ? (connectionStates.get(editingServerId)?.lastError ?? null) : null}
             isSaving={isSavingEdit}
             onClose={handleCloseEditDaemon}
             onSave={(label) => void handleSaveEditDaemon(label)}
@@ -983,9 +973,6 @@ export default function SettingsScreen() {
 interface HostDetailModalProps {
   visible: boolean;
   host: HostProfile | null;
-  connectionStatus: ConnectionStatus;
-  activeConnection: ActiveConnection | null;
-  lastError: string | null;
   isSaving: boolean;
   onClose: () => void;
   onSave: (label: string) => void;
@@ -1000,9 +987,6 @@ interface HostDetailModalProps {
 function HostDetailModal({
   visible,
   host,
-  connectionStatus,
-  activeConnection,
-  lastError,
   isSaving,
   onClose,
   onSave,
@@ -1018,45 +1002,37 @@ function HostDetailModal({
   const [pendingRemoveConnection, setPendingRemoveConnection] = useState<{ serverId: string; connectionId: string; title: string } | null>(null);
   const [isRemovingConnection, setIsRemovingConnection] = useState(false);
 
-  // Latency probes for each connection
+  // Read per-connection probes from host runtime snapshots.
   const connections = host?.connections ?? [];
-  const latencyQueries = useQueries({
-    queries: connections.map((conn) => ({
-      queryKey: ["connection-latency", conn.id],
-      queryFn: () => measureConnectionLatency(conn, { serverId: host?.serverId }),
-      enabled: visible,
-      refetchInterval: 5_000,
-      staleTime: 4_000,
-      gcTime: 60_000,
-      retry: 1,
-    })),
-  });
-  const latencyByConnectionId = new Map(
-    connections.map((conn, i) => [conn.id, latencyQueries[i]] as const)
-  );
 
   // Restart logic (moved from DaemonCard)
-  const { client: runtimeClient, isConnected } = useHostRuntimeSession(
+  const { snapshot: runtimeSnapshot, client: runtimeClient, isConnected } = useHostRuntimeSession(
     host?.serverId ?? ""
   );
+  const runtime = getHostRuntimeStore();
   const daemonClient = runtimeClient;
   const daemonVersion = useSessionStore((state) => host ? (state.sessions[host.serverId]?.serverInfo?.version ?? null) : null);
-  const isConnectedRef = useRef(isConnected);
+  const probeByConnectionId = runtimeSnapshot?.probeByConnectionId ?? new Map();
+  const connectionStatus = runtimeSnapshot?.connectionStatus ?? "connecting";
+  const activeConnection = runtimeSnapshot?.activeConnection ?? null;
+  const lastError = runtimeSnapshot?.lastError ?? null;
   const [isRestarting, setIsRestarting] = useState(false);
-
-  useEffect(() => {
-    isConnectedRef.current = isConnected;
-  }, [isConnected]);
+  const isHostConnected = useCallback(() => {
+    if (!host) {
+      return false;
+    }
+    return isHostRuntimeConnected(runtime.getSnapshot(host.serverId));
+  }, [host, runtime]);
 
   const waitForDaemonRestart = useCallback(async () => {
     const disconnectTimeoutMs = 7000;
     const reconnectTimeoutMs = 30000;
 
-    if (isConnectedRef.current) {
-      await waitForCondition(() => !isConnectedRef.current, disconnectTimeoutMs);
+    if (isHostConnected()) {
+      await waitForCondition(() => !isHostConnected(), disconnectTimeoutMs);
     }
 
-    const reconnected = await waitForCondition(() => isConnectedRef.current, reconnectTimeoutMs);
+    const reconnected = await waitForCondition(() => isHostConnected(), reconnectTimeoutMs);
 
     if (isScreenMountedRef.current) {
       setIsRestarting(false);
@@ -1067,12 +1043,12 @@ function HostDetailModal({
         );
       }
     }
-  }, [host, isScreenMountedRef, waitForCondition]);
+  }, [host, isHostConnected, isScreenMountedRef, waitForCondition]);
 
   const beginServerRestart = useCallback(() => {
     if (!daemonClient || !host) return;
 
-    if (!isConnectedRef.current) {
+    if (!isHostConnected()) {
       Alert.alert(
         "Host offline",
         "This host is offline. Paseo reconnects automatically—wait until it's back online before restarting."
@@ -1094,7 +1070,7 @@ function HostDetailModal({
       });
 
     void waitForDaemonRestart();
-  }, [daemonClient, host, isScreenMountedRef, waitForDaemonRestart]);
+  }, [daemonClient, host, isHostConnected, isScreenMountedRef, waitForDaemonRestart]);
 
   const handleRestartPress = useCallback(() => {
     if (!daemonClient || !host) {
@@ -1225,14 +1201,14 @@ function HostDetailModal({
             <Text style={styles.label}>Connections</Text>
             <View style={{ gap: 8 }}>
               {host.connections.map((conn) => {
-                const latency = latencyByConnectionId.get(conn.id);
+                const probe = probeByConnectionId.get(conn.id);
                 return (
                   <ConnectionRow
                     key={conn.id}
                     connection={conn}
-                    latencyMs={latency?.data ?? undefined}
-                    latencyLoading={latency?.isLoading ?? false}
-                    latencyError={latency?.isError ?? false}
+                    latencyMs={probe?.status === "available" ? probe.latencyMs : undefined}
+                    latencyLoading={!probe || probe.status === "pending"}
+                    latencyError={probe?.status === "unavailable"}
                     onRemove={() => {
                       const title =
                         conn.type === "relay"
@@ -1272,7 +1248,7 @@ function HostDetailModal({
                   leading={<RotateCw size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
                   status={isRestarting ? "pending" : "idle"}
                   pendingLabel="Restarting..."
-                  disabled={!daemonClient || !isConnectedRef.current}
+                  disabled={!daemonClient || !isConnected}
                 >
                   Restart daemon
                 </DropdownMenuItem>
@@ -1475,20 +1451,18 @@ function ConnectionRow({
 
 interface DaemonCardProps {
   daemon: HostProfile;
-  connectionStatus: ConnectionStatus;
-  activeConnection: ActiveConnection | null;
-  lastError: string | null;
   onOpenSettings: (daemon: HostProfile) => void;
 }
 
 function DaemonCard({
   daemon,
-  connectionStatus,
-  activeConnection,
-  lastError,
   onOpenSettings,
 }: DaemonCardProps) {
   const { theme } = useUnistyles();
+  const { snapshot } = useHostRuntimeSession(daemon.serverId);
+  const connectionStatus = snapshot?.connectionStatus ?? "connecting";
+  const activeConnection = snapshot?.activeConnection ?? null;
+  const lastError = snapshot?.lastError ?? null;
   const daemonVersion = useSessionStore(
     useCallback(
       (state) => state.sessions[daemon.serverId]?.serverInfo?.version ?? null,

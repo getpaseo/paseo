@@ -256,7 +256,7 @@ describe("relay external socket reconnect behavior", () => {
     const server = createServer();
     const metadata: ExternalSocketMetadata = {
       transport: "relay",
-      externalSessionKey: "relay:client-1",
+      externalSessionKey: "session:client-1",
     };
 
     const socket1 = new MockSocket();
@@ -278,11 +278,158 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("rejects direct socket attach when clientSessionKey is missing", async () => {
+    const server = createServer();
+    const request = {
+      headers: {
+        host: "localhost:6767",
+        origin: "http://localhost:6767",
+        "user-agent": "vitest",
+      },
+      socket: {
+        remoteAddress: "127.0.0.1",
+      },
+      url: "/ws",
+    };
+
+    const socket = new MockSocket();
+    let closeCode: number | null = null;
+    let closeReason = "";
+    socket.on("close", (code: unknown, reason: unknown) => {
+      closeCode = typeof code === "number" ? code : null;
+      closeReason = typeof reason === "string" ? reason : String(reason ?? "");
+    });
+
+    await (server as any).attachSocket(socket, request);
+
+    expect(closeCode).toBe(1008);
+    expect(closeReason).toBe("Missing clientSessionKey");
+    expect(sessionMock.instances).toHaveLength(0);
+
+    await server.close();
+  });
+
+  test("attaches multiple sockets to the same relay external session key", async () => {
+    const server = createServer();
+    const metadata: ExternalSocketMetadata = {
+      transport: "relay",
+      externalSessionKey: "session:client-multi",
+    };
+
+    const socket1 = new MockSocket();
+    await server.attachExternalSocket(socket1, metadata);
+    expect(sessionMock.instances).toHaveLength(1);
+    const session = sessionMock.instances[0]!;
+
+    const socket2 = new MockSocket();
+    await server.attachExternalSocket(socket2, metadata);
+    expect(sessionMock.instances).toHaveLength(1);
+
+    const onMessage = session.args.onMessage as
+      | ((msg: { type: "status"; payload: { status: string } }) => void)
+      | undefined;
+    expect(onMessage).toBeTypeOf("function");
+
+    onMessage?.({
+      type: "status",
+      payload: { status: "ok" },
+    });
+
+    expect(socket1.sent.length).toBeGreaterThan(1);
+    expect(socket2.sent.length).toBeGreaterThan(1);
+
+    await server.close();
+  });
+
+  test("reuses direct session when clientSessionKey reconnects within grace window", async () => {
+    const server = createServer();
+    const request = {
+      headers: {
+        host: "localhost:6767",
+        origin: "http://localhost:6767",
+        "user-agent": "vitest",
+      },
+      socket: {
+        remoteAddress: "127.0.0.1",
+      },
+      url: "/ws?clientSessionKey=clsk_direct_reconnect",
+    };
+
+    const socket1 = new MockSocket();
+    await (server as any).attachSocket(socket1, request);
+    expect(sessionMock.instances).toHaveLength(1);
+    const session = sessionMock.instances[0]!;
+
+    socket1.emit("close", 1006, "");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(session.cleanup).not.toHaveBeenCalled();
+
+    const socket2 = new MockSocket();
+    await (server as any).attachSocket(socket2, request);
+    expect(sessionMock.instances).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(session.cleanup).not.toHaveBeenCalled();
+
+    await server.close();
+  });
+
+  test("reuses one session when switching from direct to relay with the same session key", async () => {
+    const server = createServer();
+    const clientSessionKey = "clsk_switch_path";
+    const directRequest = {
+      headers: {
+        host: "localhost:6767",
+        origin: "http://localhost:6767",
+        "user-agent": "vitest",
+      },
+      socket: {
+        remoteAddress: "127.0.0.1",
+      },
+      url: `/ws?clientSessionKey=${clientSessionKey}`,
+    };
+    const relayMetadata: ExternalSocketMetadata = {
+      transport: "relay",
+      externalSessionKey: `session:${clientSessionKey}`,
+    };
+
+    const directSocket = new MockSocket();
+    await (server as any).attachSocket(directSocket, directRequest);
+    expect(sessionMock.instances).toHaveLength(1);
+    const session = sessionMock.instances[0]!;
+
+    const relaySocket = new MockSocket();
+    await server.attachExternalSocket(relaySocket, relayMetadata);
+    expect(sessionMock.instances).toHaveLength(1);
+
+    const onMessage = session.args.onMessage as
+      | ((msg: { type: "status"; payload: { status: string } }) => void)
+      | undefined;
+    expect(onMessage).toBeTypeOf("function");
+    onMessage?.({
+      type: "status",
+      payload: { status: "ok" },
+    });
+
+    expect(directSocket.sent.length).toBeGreaterThan(1);
+    expect(relaySocket.sent.length).toBeGreaterThan(1);
+
+    directSocket.emit("close", 1006, "");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(session.cleanup).not.toHaveBeenCalled();
+
+    relaySocket.emit("close", 1006, "");
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(session.cleanup).toHaveBeenCalledTimes(1);
+
+    await server.close();
+  });
+
   test("cleans up relay session when reconnect grace expires", async () => {
     const server = createServer();
     const metadata: ExternalSocketMetadata = {
       transport: "relay",
-      externalSessionKey: "relay:client-2",
+      externalSessionKey: "session:client-2",
     };
 
     const socket1 = new MockSocket();
@@ -302,7 +449,7 @@ describe("relay external socket reconnect behavior", () => {
     const server = createServer({ speechReadiness });
     const metadata: ExternalSocketMetadata = {
       transport: "relay",
-      externalSessionKey: "relay:client-server-info-capabilities",
+      externalSessionKey: "session:client-server-info-capabilities",
     };
 
     const socket = new MockSocket();
@@ -339,7 +486,7 @@ describe("relay external socket reconnect behavior", () => {
     const server = createServer();
     const metadata: ExternalSocketMetadata = {
       transport: "relay",
-      externalSessionKey: "relay:client-server-info-broadcast",
+      externalSessionKey: "session:client-server-info-broadcast",
     };
 
     const socket = new MockSocket();
@@ -368,7 +515,7 @@ describe("relay external socket reconnect behavior", () => {
     const server = createServer();
     const metadata: ExternalSocketMetadata = {
       transport: "relay",
-      externalSessionKey: "relay:client-server-info-download-guidance",
+      externalSessionKey: "session:client-server-info-download-guidance",
     };
     const socket = new MockSocket();
     await server.attachExternalSocket(socket, metadata);
@@ -397,7 +544,7 @@ describe("relay external socket reconnect behavior", () => {
     const server = createServer();
     const metadata: ExternalSocketMetadata = {
       transport: "relay",
-      externalSessionKey: "relay:client-binary-inbound",
+      externalSessionKey: "session:client-binary-inbound",
     };
 
     const socket = new MockSocket();
@@ -438,7 +585,7 @@ describe("relay external socket reconnect behavior", () => {
     const server = createServer();
     const metadata: ExternalSocketMetadata = {
       transport: "relay",
-      externalSessionKey: "relay:client-binary-outbound",
+      externalSessionKey: "session:client-binary-outbound",
     };
 
     const socket = new MockSocket();

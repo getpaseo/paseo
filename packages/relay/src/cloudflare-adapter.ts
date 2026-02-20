@@ -19,6 +19,21 @@
 
 import type { ConnectionRole, RelaySessionAttachment } from "./types.js";
 
+type RelayProtocolVersion = "1" | "2";
+
+const LEGACY_RELAY_VERSION: RelayProtocolVersion = "1";
+const CURRENT_RELAY_VERSION: RelayProtocolVersion = "2";
+
+function resolveRelayVersion(rawValue: string | null): RelayProtocolVersion | null {
+  if (rawValue == null) return LEGACY_RELAY_VERSION;
+  const value = rawValue.trim();
+  if (!value) return LEGACY_RELAY_VERSION;
+  if (value === LEGACY_RELAY_VERSION || value === CURRENT_RELAY_VERSION) {
+    return value;
+  }
+  return null;
+}
+
 type WebSocketPair = {
   0: WebSocket;
   1: WebSocket;
@@ -54,13 +69,14 @@ interface DurableObjectStub {
 /**
  * Durable Object that handles WebSocket relay for a single session.
  *
- * WebSockets connect to this DO in three shapes:
+ * v1 WebSockets connect in two shapes:
+ * - role=server: daemon socket
+ * - role=client: app/client socket
+ *
+ * v2 WebSockets connect in three shapes:
  * - role=server (no clientId): daemon control socket (one per serverId)
  * - role=server&clientId=...: daemon per-client data socket (one per clientId)
- * - role=client&clientId=...: app/client socket (one per clientId)
- *
- * Messages are forwarded between the per-client data sockets and their matching
- * client sockets. The DO hibernates when idle.
+ * - role=client&clientId=...: app/client socket (many per clientId)
  */
 interface CFResponseInit extends ResponseInit {
   webSocket?: WebSocket;
@@ -72,7 +88,26 @@ export class RelayDurableObject {
 
   constructor(state: DurableObjectState) {
     this.state = state;
+  }
 
+  private createWebSocketPair(): [WebSocket, WebSocket] {
+    const pair = new (globalThis as unknown as { WebSocketPair: new () => WebSocketPair }).WebSocketPair();
+    return [pair[0], pair[1]];
+  }
+
+  private requireWebSocketUpgrade(request: Request): Response | null {
+    const upgradeHeader = request.headers.get("Upgrade");
+    if (!upgradeHeader || upgradeHeader.toLowerCase() !== "websocket") {
+      return new Response("Expected WebSocket upgrade", { status: 426 });
+    }
+    return null;
+  }
+
+  private asSwitchingProtocolsResponse(client: WebSocket): Response {
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+    } as CFResponseInit);
   }
 
   private hasServerDataSocket(clientId: string): boolean {
@@ -180,39 +215,53 @@ export class RelayDurableObject {
     }
   }
 
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const role = url.searchParams.get("role") as ConnectionRole | null;
-    const serverId = url.searchParams.get("serverId");
-    const clientIdRaw = url.searchParams.get("clientId");
-    const clientId = typeof clientIdRaw === "string" ? clientIdRaw.trim() : "";
+  private fetchV1(request: Request, role: ConnectionRole, serverId: string): Response {
+    const upgradeError = this.requireWebSocketUpgrade(request);
+    if (upgradeError) return upgradeError;
 
-    if (!role || (role !== "server" && role !== "client")) {
-      return new Response("Missing or invalid role parameter", { status: 400 });
+    for (const ws of this.state.getWebSockets(role)) {
+      ws.close(1008, "Replaced by new connection");
     }
 
-    if (!serverId) {
-      return new Response("Missing serverId parameter", { status: 400 });
-    }
+    const [client, server] = this.createWebSocketPair();
+    this.state.acceptWebSocket(server, [role]);
 
+    const attachment: RelaySessionAttachment = {
+      serverId,
+      role,
+      version: LEGACY_RELAY_VERSION,
+      clientId: null,
+      createdAt: Date.now(),
+    };
+    (server as WebSocketWithAttachment).serializeAttachment(attachment);
+
+    console.log(`[Relay DO] v1:${role} connected to session ${serverId}`);
+
+    return this.asSwitchingProtocolsResponse(client);
+  }
+
+  private fetchV2(
+    request: Request,
+    role: ConnectionRole,
+    serverId: string,
+    clientId: string
+  ): Response {
     // Clients must provide a clientId so the daemon can create an independent
     // E2EE channel per client connection.
     if (role === "client" && !clientId) {
       return new Response("Missing clientId parameter", { status: 400 });
     }
 
-    const upgradeHeader = request.headers.get("Upgrade");
-    if (!upgradeHeader || upgradeHeader.toLowerCase() !== "websocket") {
-      return new Response("Expected WebSocket upgrade", { status: 426 });
-    }
+    const upgradeError = this.requireWebSocketUpgrade(request);
+    if (upgradeError) return upgradeError;
 
     const isServerControl = role === "server" && !clientId;
     const isServerData = role === "server" && !!clientId;
 
-    // Close any existing connection with the same identity.
+    // Close any existing server-side connection with the same identity.
     // - server-control: single per serverId
     // - server-data: single per clientId
-    // - client: single per clientId
+    // - client: many sockets per clientId are allowed
     if (isServerControl) {
       for (const ws of this.state.getWebSockets("server-control")) {
         ws.close(1008, "Replaced by new connection");
@@ -221,15 +270,9 @@ export class RelayDurableObject {
       for (const ws of this.state.getWebSockets(`server:${clientId}`)) {
         ws.close(1008, "Replaced by new connection");
       }
-    } else {
-      for (const ws of this.state.getWebSockets(`client:${clientId}`)) {
-        ws.close(1008, "Replaced by new connection");
-      }
     }
 
-    // Create WebSocket pair
-    const pair = new (globalThis as unknown as { WebSocketPair: new () => WebSocketPair }).WebSocketPair();
-    const [client, server] = [pair[0], pair[1]];
+    const [client, server] = this.createWebSocketPair();
 
     const tags: string[] = [];
     if (role === "client") {
@@ -240,20 +283,19 @@ export class RelayDurableObject {
       tags.push("server", `server:${clientId}`);
     }
 
-    // Accept with hibernation support, tagged for lookup.
     this.state.acceptWebSocket(server, tags);
 
-    // Store attachment for hibernation recovery
     const attachment: RelaySessionAttachment = {
       serverId,
       role,
+      version: CURRENT_RELAY_VERSION,
       clientId: clientId || null,
       createdAt: Date.now(),
     };
     (server as WebSocketWithAttachment).serializeAttachment(attachment);
 
     console.log(
-      `[Relay DO] ${role}${isServerControl ? "(control)" : ""}${isServerData ? `(data:${clientId})` : role === "client" ? `(${clientId})` : ""} connected to session ${serverId}`
+      `[Relay DO] v2:${role}${isServerControl ? "(control)" : ""}${isServerData ? `(data:${clientId})` : role === "client" ? `(${clientId})` : ""} connected to session ${serverId}`
     );
 
     if (role === "client") {
@@ -274,10 +316,34 @@ export class RelayDurableObject {
       this.flushClientFrames(clientId, server);
     }
 
-    return new Response(null, {
-      status: 101,
-      webSocket: client,
-    } as CFResponseInit);
+    return this.asSwitchingProtocolsResponse(client);
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const role = url.searchParams.get("role") as ConnectionRole | null;
+    const serverId = url.searchParams.get("serverId");
+    const clientIdRaw = url.searchParams.get("clientId");
+    const clientId = typeof clientIdRaw === "string" ? clientIdRaw.trim() : "";
+    const version = resolveRelayVersion(url.searchParams.get("v"));
+
+    if (!role || (role !== "server" && role !== "client")) {
+      return new Response("Missing or invalid role parameter", { status: 400 });
+    }
+
+    if (!serverId) {
+      return new Response("Missing serverId parameter", { status: 400 });
+    }
+
+    if (!version) {
+      return new Response("Invalid v parameter (expected 1 or 2)", { status: 400 });
+    }
+
+    if (version === LEGACY_RELAY_VERSION) {
+      return this.fetchV1(request, role, serverId);
+    }
+
+    return this.fetchV2(request, role, serverId, clientId);
   }
 
   /**
@@ -290,12 +356,27 @@ export class RelayDurableObject {
       return;
     }
 
+    const version = attachment.version ?? LEGACY_RELAY_VERSION;
+
+    if (version === LEGACY_RELAY_VERSION) {
+      const targetRole = attachment.role === "server" ? "client" : "server";
+      const targets = this.state.getWebSockets(targetRole);
+      for (const target of targets) {
+        try {
+          target.send(message);
+        } catch (error) {
+          console.error(`[Relay DO] Failed to forward to ${targetRole}:`, error);
+        }
+      }
+      return;
+    }
+
     const { role, clientId } = attachment;
     if (!clientId) {
       // Control channel: support simple app-level keepalive.
       if (typeof message === "string") {
         try {
-          const parsed = JSON.parse(message) as any;
+          const parsed = JSON.parse(message) as unknown as { type?: unknown };
           if (parsed?.type === "ping") {
             try {
               ws.send(JSON.stringify({ type: "pong", ts: Date.now() }));
@@ -349,13 +430,25 @@ export class RelayDurableObject {
     const attachment = (ws as WebSocketWithAttachment).deserializeAttachment() as RelaySessionAttachment | null;
     if (!attachment) return;
 
+    const version = attachment.version ?? LEGACY_RELAY_VERSION;
     console.log(
-      `[Relay DO] ${attachment.role}${attachment.clientId ? `(${attachment.clientId})` : ""} disconnected from session ${attachment.serverId} (${code}: ${reason})`
+      `[Relay DO] v${version}:${attachment.role}${attachment.clientId ? `(${attachment.clientId})` : ""} disconnected from session ${attachment.serverId} (${code}: ${reason})`
     );
 
+    if (version === LEGACY_RELAY_VERSION) {
+      return;
+    }
+
     if (attachment.role === "client" && attachment.clientId) {
+      const remainingClientSockets = this.state
+        .getWebSockets(`client:${attachment.clientId}`)
+        .some((socket) => socket !== ws);
+      if (remainingClientSockets) {
+        return;
+      }
+
       this.pendingClientFrames.delete(attachment.clientId);
-      // Close the matching server-data socket so the daemon can clean up quickly.
+      // Last socket for this session closed: now clean up matching server-data socket.
       for (const serverWs of this.state.getWebSockets(`server:${attachment.clientId}`)) {
         try {
           serverWs.close(1001, "Client disconnected");
@@ -412,10 +505,19 @@ export default {
         return new Response("Missing serverId parameter", { status: 400 });
       }
 
-      // Route to Durable Object instance for this session
-      const id = env.RELAY.idFromName(serverId);
+      const version = resolveRelayVersion(url.searchParams.get("v"));
+      if (!version) {
+        return new Response("Invalid v parameter (expected 1 or 2)", { status: 400 });
+      }
+
+      // Route to a version-isolated Durable Object instance.
+      const id = env.RELAY.idFromName(`relay-v${version}:${serverId}`);
       const stub = env.RELAY.get(id);
-      return stub.fetch(request);
+
+      const normalizedUrl = new URL(request.url);
+      normalizedUrl.searchParams.set("v", version);
+      const normalizedRequest = new Request(normalizedUrl.toString(), request);
+      return stub.fetch(normalizedRequest);
     }
 
     return new Response("Not found", { status: 404 });

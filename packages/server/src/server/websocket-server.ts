@@ -151,7 +151,7 @@ type SessionConnection = {
   session: Session;
   clientId: string;
   connectionLogger: pino.Logger;
-  socketRef: { current: WebSocketLike };
+  sockets: Set<WebSocketLike>;
   externalSessionKey: string | null;
   externalDisconnectCleanupTimeout: ReturnType<typeof setTimeout> | null;
 };
@@ -357,19 +357,20 @@ export class VoiceAssistantWebSocketServer {
         connection.externalDisconnectCleanupTimeout = null;
       }
 
-      const ws = connection.socketRef.current;
       cleanupPromises.push(connection.session.cleanup());
-      cleanupPromises.push(
-        new Promise<void>((resolve) => {
-          // WebSocket.CLOSED = 3
-          if (ws.readyState === 3) {
-            resolve();
-            return;
-          }
-          ws.once("close", () => resolve());
-          ws.close();
-        })
-      );
+      for (const ws of connection.sockets) {
+        cleanupPromises.push(
+          new Promise<void>((resolve) => {
+            // WebSocket.CLOSED = 3
+            if (ws.readyState === 3) {
+              resolve();
+              return;
+            }
+            ws.once("close", () => resolve());
+            ws.close();
+          })
+        );
+      }
     }
     await Promise.all(cleanupPromises);
     this.sessions.clear();
@@ -394,15 +395,54 @@ export class VoiceAssistantWebSocketServer {
     ws.send(encodeBinaryMuxFrame(frame));
   }
 
+  private sendToConnection(connection: SessionConnection, message: WSOutboundMessage): void {
+    for (const ws of connection.sockets) {
+      this.sendToClient(ws, message);
+    }
+  }
+
+  private sendBinaryToConnection(
+    connection: SessionConnection,
+    frame: Parameters<typeof encodeBinaryMuxFrame>[0]
+  ): void {
+    for (const ws of connection.sockets) {
+      this.sendBinaryToClient(ws, frame);
+    }
+  }
+
   private async attachSocket(
     ws: WebSocketLike,
     request?: unknown,
     metadata?: ExternalSocketMetadata
   ): Promise<void> {
-    const externalSessionKey =
+    const requestMetadata = extractSocketRequestMetadata(request);
+    const relayExternalSessionKey =
       metadata?.transport === "relay" && metadata.externalSessionKey.trim().length > 0
         ? metadata.externalSessionKey
         : null;
+    const directExternalSessionKey =
+      typeof requestMetadata.clientSessionKey === "string" &&
+      requestMetadata.clientSessionKey.trim().length > 0
+        ? `session:${requestMetadata.clientSessionKey.trim()}`
+        : null;
+    const externalSessionKey = relayExternalSessionKey ?? directExternalSessionKey;
+
+    if (metadata?.transport !== "relay" && !directExternalSessionKey) {
+      this.logger.warn(
+        {
+          host: requestMetadata.host,
+          origin: requestMetadata.origin,
+          remoteAddress: requestMetadata.remoteAddress,
+        },
+        "Rejected direct connection without clientSessionKey"
+      );
+      try {
+        ws.close(1008, "Missing clientSessionKey");
+      } catch {
+        // ignore close errors
+      }
+      return;
+    }
 
     if (externalSessionKey) {
       const existing = this.externalSessionsByKey.get(externalSessionKey);
@@ -412,12 +452,7 @@ export class VoiceAssistantWebSocketServer {
           existing.externalDisconnectCleanupTimeout = null;
         }
 
-        const previousSocket = existing.socketRef.current;
-        if (previousSocket !== ws) {
-          this.sessions.delete(previousSocket);
-          existing.socketRef.current = ws;
-        }
-
+        existing.sockets.add(ws);
         this.sessions.set(ws, existing);
         this.sendServerInfo(ws);
         existing.connectionLogger.trace(
@@ -434,10 +469,9 @@ export class VoiceAssistantWebSocketServer {
     }
 
     const clientId = `client-${++this.clientIdCounter}`;
-    const requestMetadata = extractSocketRequestMetadata(request);
     const connectionLoggerFields: Record<string, string> = {
       clientId,
-      transport: externalSessionKey ? "relay" : "direct",
+      transport: metadata?.transport === "relay" ? "relay" : "direct",
     };
     if (requestMetadata.host) {
       connectionLoggerFields.host = requestMetadata.host;
@@ -452,15 +486,21 @@ export class VoiceAssistantWebSocketServer {
       connectionLoggerFields.remoteAddress = requestMetadata.remoteAddress;
     }
     const connectionLogger = this.logger.child(connectionLoggerFields);
-    const socketRef = { current: ws };
+    let connection: SessionConnection | null = null;
 
     const session = new Session({
       clientId,
       onMessage: (msg) => {
-        this.sendToClient(socketRef.current, wrapSessionMessage(msg));
+        if (!connection) {
+          return;
+        }
+        this.sendToConnection(connection, wrapSessionMessage(msg));
       },
       onBinaryMessage: (frame) => {
-        this.sendBinaryToClient(socketRef.current, frame);
+        if (!connection) {
+          return;
+        }
+        this.sendBinaryToConnection(connection, frame);
       },
       logger: connectionLogger.child({ module: "session" }),
       downloadTokenStore: this.downloadTokenStore,
@@ -493,11 +533,11 @@ export class VoiceAssistantWebSocketServer {
       agentProviderRuntimeSettings: this.agentProviderRuntimeSettings,
     });
 
-    const connection: SessionConnection = {
+    connection = {
       session,
       clientId,
       connectionLogger,
-      socketRef,
+      sockets: new Set([ws]),
       externalSessionKey,
       externalDisconnectCleanupTimeout: null,
     };
@@ -593,11 +633,9 @@ export class VoiceAssistantWebSocketServer {
     const activeConnection = this.sessions.get(ws);
     if (activeConnection !== connection) return;
     this.sessions.delete(ws);
+    connection.sockets.delete(ws);
 
-    if (
-      connection.externalSessionKey &&
-      connection.socketRef.current === ws
-    ) {
+    if (connection.externalSessionKey && connection.sockets.size === 0) {
       if (connection.externalDisconnectCleanupTimeout) {
         clearTimeout(connection.externalDisconnectCleanupTimeout);
       }
@@ -623,6 +661,19 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
+    if (connection.sockets.size > 0) {
+      connection.connectionLogger.trace(
+        {
+          clientId: connection.clientId,
+          remainingSockets: connection.sockets.size,
+          code: details.code,
+          reason: stringifyCloseReason(details.reason),
+        },
+        "Client socket disconnected; session remains attached"
+      );
+      return;
+    }
+
     await this.cleanupConnection(connection, "Client disconnected");
   }
 
@@ -635,8 +686,10 @@ export class VoiceAssistantWebSocketServer {
       connection.externalDisconnectCleanupTimeout = null;
     }
 
-    const currentSocket = connection.socketRef.current;
-    this.sessions.delete(currentSocket);
+    for (const socket of connection.sockets) {
+      this.sessions.delete(socket);
+    }
+    connection.sockets.clear();
     if (connection.externalSessionKey) {
       const existing = this.externalSessionsByKey.get(connection.externalSessionKey);
       if (existing === connection) {
@@ -899,6 +952,7 @@ type SocketRequestMetadata = {
   origin?: string;
   userAgent?: string;
   remoteAddress?: string;
+  clientSessionKey?: string;
 };
 
 function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
@@ -912,6 +966,7 @@ function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
       origin?: unknown;
       "user-agent"?: unknown;
     };
+    url?: unknown;
     socket?: {
       remoteAddress?: unknown;
     };
@@ -928,12 +983,30 @@ function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
     typeof record.socket?.remoteAddress === "string"
       ? record.socket.remoteAddress
       : undefined;
+  const rawUrl = typeof record.url === "string" ? record.url : null;
+  const clientSessionKey = (() => {
+    if (!rawUrl) {
+      return undefined;
+    }
+    try {
+      const parsed = new URL(rawUrl, "http://localhost");
+      const value = parsed.searchParams.get("clientSessionKey");
+      if (!value) {
+        return undefined;
+      }
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
 
   return {
     ...(host ? { host } : {}),
     ...(origin ? { origin } : {}),
     ...(userAgent ? { userAgent } : {}),
     ...(remoteAddress ? { remoteAddress } : {}),
+    ...(clientSessionKey ? { clientSessionKey } : {}),
   };
 }
 

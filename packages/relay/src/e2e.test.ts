@@ -53,7 +53,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
   const start = Date.now();
   while (Date.now() - start < timeout) {
     const serverId = `probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    const probeUrl = `ws://127.0.0.1:${port}/ws?serverId=${serverId}&role=server`;
+    const probeUrl = `ws://127.0.0.1:${port}/ws?serverId=${serverId}&role=server&v=2`;
     const opened = await new Promise<boolean>((resolve) => {
       const ws = new WebSocket(probeUrl);
       const timer = setTimeout(() => {
@@ -144,7 +144,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
 
     // Daemon connects to relay as "server" control role
     const daemonControlWs = new WebSocket(
-      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server`
+      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&v=2`
     );
 
     await new Promise<void>((resolve, reject) => {
@@ -199,7 +199,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
 
     // Client connects to relay as "client" role (must include clientId)
     const clientWs = new WebSocket(
-      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=client&clientId=${clientId}`
+      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=client&clientId=${clientId}&v=2`
     );
 
     await new Promise<void>((resolve, reject) => {
@@ -210,7 +210,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
     await waitForClientSeen;
 
     const daemonWs = new WebSocket(
-      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&clientId=${clientId}`
+      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&clientId=${clientId}&v=2`
     );
     await new Promise<void>((resolve, reject) => {
       daemonWs.on("open", resolve);
@@ -322,7 +322,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
     );
 
     const daemonControlWs = new WebSocket(
-      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server`
+      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&v=2`
     );
     await new Promise<void>((r) => daemonControlWs.on("open", r));
 
@@ -359,13 +359,13 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
     });
 
     const clientWs = new WebSocket(
-      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=client&clientId=${clientId}`
+      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=client&clientId=${clientId}&v=2`
     );
     await new Promise<void>((r) => clientWs.on("open", r));
     await waitForClientSeen;
 
     const daemonWs = new WebSocket(
-      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&clientId=${clientId}`
+      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&clientId=${clientId}&v=2`
     );
     await new Promise<void>((r) => daemonWs.on("open", r));
 

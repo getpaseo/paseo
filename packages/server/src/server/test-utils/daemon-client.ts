@@ -16,10 +16,19 @@ export type DaemonClientConfig = Omit<
 export type CreateAgentOptions = CreateAgentRequestOptions;
 export { type SendMessageOptions, type DaemonEvent, type DaemonEventHandler };
 
+let testClientCounter = 0;
+
+function nextTestClientSessionKey(): string {
+  testClientCounter += 1;
+  return `clsk_test_client_${testClientCounter}`;
+}
+
 export class DaemonClient extends SharedDaemonClient {
   constructor(config: DaemonClientConfig) {
+    const clientSessionKey = config.clientSessionKey ?? nextTestClientSessionKey();
     super({
       ...config,
+      clientSessionKey,
       webSocketFactory: (url, options) =>
         new WebSocket(url, { headers: options?.headers }) as unknown as WebSocketLike,
     });

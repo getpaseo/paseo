@@ -4,6 +4,16 @@ import { parseServerInfoStatusPayload } from "@server/shared/messages";
 import type { HostConnection } from "@/contexts/daemon-registry-context";
 import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "./daemon-endpoints";
 import { createTauriWebSocketTransportFactory } from "./tauri-daemon-transport";
+function createProbeClientSessionKey(): string {
+  const randomUuid = (() => {
+    const cryptoObj = globalThis.crypto as { randomUUID?: () => string } | undefined;
+    if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
+      return cryptoObj.randomUUID().replace(/-/g, "");
+    }
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  })();
+  return `clsk_probe_${randomUuid}`;
+}
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -41,15 +51,23 @@ export class DaemonConnectionTestError extends Error {
   }
 }
 
-function buildClientConfig(connection: HostConnection, serverId?: string): DaemonClientConfig {
+async function buildClientConfig(
+  connection: HostConnection,
+  serverId?: string
+): Promise<DaemonClientConfig> {
+  const clientSessionKey = createProbeClientSessionKey();
   const tauriTransportFactory = createTauriWebSocketTransportFactory();
   const base = {
+    clientSessionKey,
     suppressSendErrors: true,
     ...(tauriTransportFactory ? { transportFactory: tauriTransportFactory } : {}),
   };
 
   if (connection.type === "direct") {
-    return { ...base, url: buildDaemonWebSocketUrl(connection.endpoint) };
+    return {
+      ...base,
+      url: buildDaemonWebSocketUrl(connection.endpoint, { clientSessionKey }),
+    };
   }
 
   if (!serverId) {
@@ -58,7 +76,11 @@ function buildClientConfig(connection: HostConnection, serverId?: string): Daemo
 
   return {
     ...base,
-    url: buildRelayWebSocketUrl({ endpoint: connection.relayEndpoint, serverId }),
+    url: buildRelayWebSocketUrl({
+      endpoint: connection.relayEndpoint,
+      serverId,
+      clientSessionKey,
+    }),
     e2ee: { enabled: true, daemonPublicKeyB64: connection.daemonPublicKeyB64 },
   };
 }
@@ -142,7 +164,7 @@ export async function probeConnection(
   connection: HostConnection,
   options?: ProbeOptions,
 ): Promise<{ serverId: string; hostname: string | null }> {
-  const config = buildClientConfig(connection, options?.serverId);
+  const config = await buildClientConfig(connection, options?.serverId);
   const { client, serverId, hostname } = await connectAndProbe(config, resolveTimeout(connection, options));
   await client.close().catch(() => undefined);
   return { serverId, hostname };
@@ -152,7 +174,7 @@ export async function measureConnectionLatency(
   connection: HostConnection,
   options?: ProbeOptions,
 ): Promise<number> {
-  const config = buildClientConfig(connection, options?.serverId);
+  const config = await buildClientConfig(connection, options?.serverId);
   const { client } = await connectAndProbe(config, resolveTimeout(connection, options));
   try {
     const { rttMs } = await client.ping({ timeoutMs: 5000 });

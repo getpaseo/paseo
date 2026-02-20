@@ -1607,6 +1607,9 @@ class ClaudeAgentSession implements AgentSession {
       this.queryRestartNeeded = false;
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to interrupt active turn");
+      // If interrupt fails, the SDK iterator may remain in an indeterminate state.
+      // Force a teardown/recreate path so the next turn cannot reuse stale query state.
+      this.queryRestartNeeded = true;
     }
   }
 

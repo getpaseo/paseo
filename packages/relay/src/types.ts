@@ -14,6 +14,12 @@ export interface RelaySessionAttachment {
   serverId: string;
   role: ConnectionRole;
   /**
+   * Relay protocol version carried by this socket.
+   * v1: single server/client socket pair
+   * v2: control + per-client data sockets
+   */
+  version?: "1" | "2";
+  /**
    * Unique id for the client connection. Allows the daemon to create an
    * independent socket + E2EE channel per connected client.
    */

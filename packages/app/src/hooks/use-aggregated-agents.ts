@@ -4,7 +4,7 @@ import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { Agent } from "@/stores/session-store";
-import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
 export interface AggregatedAgent extends AgentDirectoryEntry {
   serverId: string;
@@ -21,6 +21,7 @@ export interface AggregatedAgentsResult {
 
 export function useAggregatedAgents(): AggregatedAgentsResult {
   const { connectionStates } = useDaemonConnections();
+  const runtime = getHostRuntimeStore();
 
   const sessionAgents = useSessionStore(
     useShallow((state) => {
@@ -32,53 +33,9 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
     })
   );
 
-  const sessionClients = useSessionStore(
-    useShallow((state) => {
-      const result: Record<string, NonNullable<typeof state.sessions[string]["client"]> | null> = {};
-      for (const [serverId, session] of Object.entries(state.sessions)) {
-        result[serverId] = session.client ?? null;
-      }
-      return result;
-    })
-  );
-
   const refreshAll = useCallback(() => {
-    for (const [serverId, client] of Object.entries(sessionClients)) {
-      if (!client) {
-        continue;
-      }
-      void (async () => {
-        try {
-          const agentsList = await client.fetchAgents({
-            filter: { labels: { ui: "true" } },
-          });
-
-          const agents = new Map();
-          const pendingPermissions = new Map();
-          const agentLastActivity = new Map();
-
-          for (const { agent: snapshot } of agentsList.entries) {
-            const agent = normalizeAgentSnapshot(snapshot, serverId);
-            agents.set(agent.id, agent);
-            agentLastActivity.set(agent.id, agent.lastActivityAt);
-            for (const request of agent.pendingPermissions) {
-              const key = derivePendingPermissionKey(agent.id, request);
-              pendingPermissions.set(key, { key, agentId: agent.id, request });
-            }
-          }
-
-          const store = useSessionStore.getState();
-          store.setAgents(serverId, agents);
-          for (const [agentId, timestamp] of agentLastActivity.entries()) {
-            store.setAgentLastActivity(agentId, timestamp);
-          }
-          store.setPendingPermissions(serverId, pendingPermissions);
-        } catch (error) {
-          console.warn("[useAggregatedAgents] Failed to refresh session", { serverId, error });
-        }
-      })();
-    }
-  }, [sessionClients]);
+    runtime.refreshAllAgentDirectories();
+  }, [runtime]);
 
   const result = useMemo(() => {
     const allAgents: AggregatedAgent[] = [];
@@ -127,35 +84,14 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
     // Check if we have any cached data
     const hasAnyData = allAgents.length > 0;
 
-    // Check if any connection is currently loading
-    const isConnecting = Array.from(connectionStates.entries()).some(([, c]) => {
-      // First-time connection (never received agent list)
-      if (c.status === 'connecting' && !c.hasEverReceivedAgentList) {
-        return true;
-      }
-      if (c.status === 'online' && !c.hasEverReceivedAgentList) {
-        return true;
-      }
-
-      // Reconnecting (have received agent list before)
-      if (c.status === 'connecting' && c.hasEverReceivedAgentList) {
-        return true;
-      }
-      if (c.status === 'online' && !c.agentListReady && c.hasEverReceivedAgentList) {
-        return true;
-      }
-
-      return false;
-    });
-
-    // isInitialLoad: Loading for the first time (no cached data)
-    const isInitialLoad = isConnecting && !hasAnyData;
-
-    // isRevalidating: Loading but we have cached data (reconnecting)
-    const isRevalidating = isConnecting && hasAnyData;
-
-    // isLoading: Generic loading flag (either initial or revalidating)
-    const isLoading = isConnecting;
+    // Align list loading with the runtime directory-sync machine.
+    const isLoading = Array.from(connectionStates.values()).some(
+      (connection) =>
+        connection.agentDirectoryStatus === "initial_loading" ||
+        connection.agentDirectoryStatus === "revalidating"
+    );
+    const isInitialLoad = isLoading && !hasAnyData;
+    const isRevalidating = isLoading && hasAnyData;
 
     return {
       agents: allAgents,
