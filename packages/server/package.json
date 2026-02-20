@@ -66,7 +66,7 @@
     "@lezer/markdown": "^1.6.2",
     "@lezer/python": "^1.1.18",
     "@modelcontextprotocol/sdk": "^1.20.1",
-    "@opencode-ai/sdk": "^1.1.12",
+    "@opencode-ai/sdk": "1.2.6",
     "@sctg/sentencepiece-js": "^1.1.0",
     "@xterm/headless": "^6.0.0",
     "ai": "5.0.78",
