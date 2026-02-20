@@ -1,6 +1,6 @@
 import { StyleSheet } from "react-native-unistyles";
 // import { UnistylesRuntime } from "react-native-unistyles";
-import { lightTheme, darkTheme } from "./theme";
+import { lightTheme, darkTheme, colorblindTheme } from "./theme";
 
 console.log("[Unistyles] Configuring...");
 
@@ -9,6 +9,7 @@ StyleSheet.configure({
   themes: {
     light: lightTheme,
     dark: darkTheme,
+    colorblind: colorblindTheme,
   },
   breakpoints: {
     xs: 0,
@@ -28,6 +29,7 @@ console.log("[Unistyles] Configuration complete!");
 type AppThemes = {
   light: typeof lightTheme;
   dark: typeof darkTheme;
+  colorblind: typeof colorblindTheme;
 };
 
 type AppBreakpoints = {
