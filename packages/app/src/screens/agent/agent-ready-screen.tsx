@@ -71,6 +71,7 @@ import {
   type AgentScreenMissingState,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useToast } from "@/contexts/toast-context";
+import { useDelayedHistoryRefreshToast } from "@/hooks/use-delayed-history-refresh-toast";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import {
   derivePendingPermissionKey,
@@ -954,24 +955,19 @@ function AgentScreenContent({
     [theme.colors.primary, toast]
   );
 
-  const shouldEmitHistoryRefreshToast =
+  const isHistoryRefreshCatchingUp =
     viewState.tag === "ready" &&
     viewState.sync.status === "catching_up" &&
-    viewState.sync.shouldEmitHistoryRefreshToast;
+    viewState.sync.ui === "toast";
   const shouldEmitSyncErrorToast =
     viewState.tag === "ready" &&
     viewState.sync.status === "sync_error" &&
     viewState.sync.shouldEmitSyncErrorToast;
 
-  useEffect(() => {
-    if (!shouldEmitHistoryRefreshToast) {
-      return;
-    }
-    toast.show("Refreshing agent history...", {
-      durationMs: 2200,
-      testID: "agent-history-refresh-toast",
-    });
-  }, [shouldEmitHistoryRefreshToast, toast]);
+  useDelayedHistoryRefreshToast({
+    isCatchingUp: isHistoryRefreshCatchingUp,
+    indicatorColor: theme.colors.primary,
+  });
 
   useEffect(() => {
     if (!shouldEmitSyncErrorToast) {
