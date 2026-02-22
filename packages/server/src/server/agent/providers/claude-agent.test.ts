@@ -1394,6 +1394,56 @@ describe("convertClaudeHistoryEntry", () => {
     ]);
   });
 
+  test("supports compact boundary metadata shape variants", () => {
+    const fixtures = [
+      {
+        entry: {
+          type: "system",
+          subtype: "compact_boundary",
+          compactMetadata: { trigger: "manual", preTokens: 12 },
+        },
+        expected: {
+          trigger: "manual",
+          preTokens: 12,
+        },
+      },
+      {
+        entry: {
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "manual", pre_tokens: 34 },
+        },
+        expected: {
+          trigger: "manual",
+          preTokens: 34,
+        },
+      },
+      {
+        entry: {
+          type: "system",
+          subtype: "compact_boundary",
+          compactionMetadata: { trigger: "auto", preTokens: 56 },
+        },
+        expected: {
+          trigger: "auto",
+          preTokens: 56,
+        },
+      },
+    ] as const;
+
+    for (const fixture of fixtures) {
+      const result = convertClaudeHistoryEntry(fixture.entry, () => []);
+      expect(result).toEqual([
+        {
+          type: "compaction",
+          status: "completed",
+          trigger: fixture.expected.trigger,
+          preTokens: fixture.expected.preTokens,
+        },
+      ]);
+    }
+  });
+
   test("skips isCompactSummary user entries", () => {
     const entry = {
       type: "user",

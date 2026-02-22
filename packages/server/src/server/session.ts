@@ -5468,19 +5468,6 @@ export class Session {
       let status: 'permission' | 'error' | 'idle' =
         result.permission ? 'permission' : result.status === 'error' ? 'error' : 'idle'
 
-      // Keep wait_for_finish coherent: never return idle while the final snapshot is running.
-      // This can happen if a new run starts between wait resolution and final snapshot fetch.
-      while (status === 'idle' && final.status === 'running') {
-        result = await this.agentManager.waitForAgentEvent(agentId, {
-          signal: abortController.signal,
-        })
-        final = await this.getAgentPayloadById(agentId)
-        if (!final) {
-          throw new Error(`Agent ${agentId} disappeared while waiting`)
-        }
-        status = result.permission ? 'permission' : result.status === 'error' ? 'error' : 'idle'
-      }
-
       this.emit({
         type: 'wait_for_finish_response',
         payload: { requestId, status, final, error: null, lastMessage: result.lastMessage },

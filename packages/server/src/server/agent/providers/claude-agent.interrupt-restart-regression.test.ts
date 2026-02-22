@@ -260,7 +260,9 @@ describe("ClaudeAgentSession interrupt restart regression", () => {
           return mock;
         }
         const mock = buildSecondQueryMock(prompt);
-        sdkMocks.secondQuery = mock;
+        if (queryCreateCount === 2) {
+          sdkMocks.secondQuery = mock;
+        }
         return mock;
       }
     );
@@ -292,7 +294,11 @@ describe("ClaudeAgentSession interrupt restart regression", () => {
     const secondTurnEvents = await secondTurnPromise;
     const secondAssistantText = collectAssistantText(secondTurnEvents);
 
-    expect(sdkMocks.query.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(sdkMocks.firstQuery).toBeTruthy();
+    expect(sdkMocks.secondQuery).toBeTruthy();
+    expect(sdkMocks.firstQuery).not.toBe(sdkMocks.secondQuery);
+    expect(sdkMocks.firstQuery?.interrupt).toHaveBeenCalledTimes(2);
+    expect(sdkMocks.secondQuery?.next).toHaveBeenCalled();
     expect(secondAssistantText).toContain("NEW_TURN_RESPONSE");
     expect(secondAssistantText).not.toContain("OLD_TURN_RESPONSE");
 

@@ -1195,8 +1195,10 @@ describe("AgentManager", () => {
     releaseForeground.resolve();
     await consumeForeground;
 
-    const updated = manager.getAgent(snapshot.id);
-    expect(updated?.lifecycle).toBe("idle");
+    const replaying = manager.getAgent(snapshot.id);
+    expect(replaying?.lifecycle).toBe("running");
+    const settled = await manager.waitForAgentEvent(snapshot.id);
+    expect(settled.status).toBe("idle");
     expect(manager.getTimeline(snapshot.id)).toContainEqual({
       type: "assistant_message",
       text: "AUTONOMOUS_DURING_FOREGROUND",

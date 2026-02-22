@@ -244,6 +244,7 @@ type LiveEventStreamingSession = AgentSession & {
 
 const DEFAULT_MAX_TIMELINE_ITEMS = 2000;
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
+const LIVE_BACKLOG_TERMINAL_REPLAY_DELAY_MS = 300;
 const BUSY_STATUSES: AgentLifecycleStatus[] = [
   "initializing",
   "running",
@@ -252,6 +253,14 @@ const AgentIdSchema = z.string().uuid();
 
 function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.includes(status);
+}
+
+function isTurnTerminalEvent(event: AgentStreamEvent): boolean {
+  return (
+    event.type === "turn_completed" ||
+    event.type === "turn_failed" ||
+    event.type === "turn_canceled"
+  );
 }
 
 function createAbortError(
@@ -297,6 +306,10 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly liveEventPumps = new Map<string, Promise<void>>();
   private readonly liveEventBacklog = new Map<string, AgentStreamEvent[]>();
+  private readonly liveEventBacklogFlushTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
 
@@ -745,6 +758,7 @@ export class AgentManager {
     this.agents.delete(agentId);
     this.liveEventPumps.delete(agentId);
     this.liveEventBacklog.delete(agentId);
+    this.clearLiveEventBacklogFlushTimer(agentId);
     try {
       await existing.session.close();
     } catch (error) {
@@ -776,6 +790,7 @@ export class AgentManager {
     this.agents.delete(agentId);
     this.liveEventPumps.delete(agentId);
     this.liveEventBacklog.delete(agentId);
+    this.clearLiveEventBacklogFlushTimer(agentId);
     // Clean up previousStatus to prevent memory leak
     this.previousStatuses.delete(agentId);
     const session = agent.session;
@@ -2005,6 +2020,39 @@ export class AgentManager {
     this.liveEventBacklog.set(agentId, [event]);
   }
 
+  private clearLiveEventBacklogFlushTimer(agentId: string): void {
+    const timer = this.liveEventBacklogFlushTimers.get(agentId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    this.liveEventBacklogFlushTimers.delete(agentId);
+  }
+
+  private scheduleLiveEventBacklogFlush(agentId: string, delayMs: number): void {
+    if (this.liveEventBacklogFlushTimers.has(agentId)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.liveEventBacklogFlushTimers.delete(agentId);
+      const latest = this.agents.get(agentId);
+      if (!latest) {
+        return;
+      }
+      if (latest.pendingRun) {
+        this.scheduleLiveEventBacklogFlush(
+          agentId,
+          LIVE_BACKLOG_TERMINAL_REPLAY_DELAY_MS
+        );
+        return;
+      }
+      this.flushLiveEventBacklog(latest);
+    }, delayMs);
+
+    this.liveEventBacklogFlushTimers.set(agentId, timer);
+  }
+
   private flushLiveEventBacklog(agent: ActiveManagedAgent): void {
     if (agent.pendingRun) {
       return;
@@ -2013,9 +2061,45 @@ export class AgentManager {
     if (!pending || pending.length === 0) {
       return;
     }
+    this.clearLiveEventBacklogFlushTimer(agent.id);
     this.liveEventBacklog.delete(agent.id);
+
+    const immediate: AgentStreamEvent[] = [];
+    const deferred: AgentStreamEvent[] = [];
+    let sawTurnStarted = false;
+    let deferRemainder = false;
+
     for (const event of pending) {
+      if (!deferRemainder && sawTurnStarted && isTurnTerminalEvent(event)) {
+        deferRemainder = true;
+      }
+      if (deferRemainder) {
+        deferred.push(event);
+        continue;
+      }
+      immediate.push(event);
+      if (event.type === "turn_started") {
+        sawTurnStarted = true;
+      }
+    }
+
+    for (const event of immediate) {
       this.handleStreamEvent(agent, event);
     }
+
+    if (deferred.length === 0) {
+      return;
+    }
+
+    const existing = this.liveEventBacklog.get(agent.id);
+    if (existing && existing.length > 0) {
+      this.liveEventBacklog.set(agent.id, [...deferred, ...existing]);
+    } else {
+      this.liveEventBacklog.set(agent.id, deferred);
+    }
+    this.scheduleLiveEventBacklogFlush(
+      agent.id,
+      LIVE_BACKLOG_TERMINAL_REPLAY_DELAY_MS
+    );
   }
 }

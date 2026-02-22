@@ -84,8 +84,10 @@ type SessionLifecycleState = "running" | "permission" | "error" | "idle";
 type RoutingReason =
   | "foreground"
   | "task_id"
+  | "task_id_new"
   | "parent_message_id"
   | "message_id"
+  | "unbound_autonomous"
   | "fallback"
   | "metadata";
 
@@ -259,6 +261,7 @@ const REWIND_COMMAND: AgentSlashCommand = {
   description: "Rewind tracked files to a previous user message",
   argumentHint: "[user_message_uuid]",
 };
+const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -326,6 +329,201 @@ function resolveClaudeSpawnCommand(
     command: commandConfig.argv[0]!,
     args: [...commandConfig.argv.slice(1), ...spawnOptions.args],
   };
+}
+
+function applyRuntimeSettingsToClaudeOptions(
+  options: ClaudeOptions,
+  runtimeSettings?: ProviderRuntimeSettings
+): ClaudeOptions {
+  const hasEnvOverrides = Object.keys(runtimeSettings?.env ?? {}).length > 0;
+  const commandMode = runtimeSettings?.command?.mode;
+  const needsCustomSpawn =
+    hasEnvOverrides || commandMode === "append" || commandMode === "replace";
+
+  if (!needsCustomSpawn) {
+    return options;
+  }
+
+  return {
+    ...options,
+    spawnClaudeCodeProcess: (spawnOptions) => {
+      const resolved = resolveClaudeSpawnCommand(
+        spawnOptions,
+        runtimeSettings
+      );
+      return spawn(resolved.command, resolved.args, {
+        cwd: spawnOptions.cwd,
+        env: applyProviderEnv(spawnOptions.env, runtimeSettings),
+        signal: spawnOptions.signal,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    },
+  };
+}
+
+type ClaudeOptionsLogSummary = {
+  cwd: string | null;
+  permissionMode: string | null;
+  model: string | null;
+  includePartialMessages: boolean;
+  settingSources: string[];
+  enableFileCheckpointing: boolean;
+  hasResume: boolean;
+  maxThinkingTokens: number | null;
+  hasEnv: boolean;
+  envKeyCount: number;
+  hasMcpServers: boolean;
+  mcpServerNames: string[];
+  systemPromptMode: "none" | "string" | "preset" | "custom";
+  systemPromptPreset: string | null;
+  hasCanUseTool: boolean;
+  hasSpawnOverride: boolean;
+  hasStderrHandler: boolean;
+};
+
+function summarizeClaudeOptionsForLog(options: ClaudeOptions): ClaudeOptionsLogSummary {
+  const systemPromptRaw = options.systemPrompt;
+  const systemPromptSummary = (() => {
+    if (!systemPromptRaw) {
+      return { mode: "none" as const, preset: null };
+    }
+    if (typeof systemPromptRaw === "string") {
+      return { mode: "string" as const, preset: null };
+    }
+    const prompt = systemPromptRaw as Record<string, unknown>;
+    const promptType =
+      typeof prompt.type === "string" ? prompt.type : "custom";
+    return {
+      mode:
+        promptType === "preset"
+          ? ("preset" as const)
+          : ("custom" as const),
+      preset:
+        typeof prompt.preset === "string" && prompt.preset.length > 0
+          ? prompt.preset
+          : null,
+    };
+  })();
+  const mcpServerNames = options.mcpServers
+    ? Object.keys(options.mcpServers).sort()
+    : [];
+
+  return {
+    cwd: typeof options.cwd === "string" ? options.cwd : null,
+    permissionMode:
+      typeof options.permissionMode === "string"
+        ? options.permissionMode
+        : null,
+    model: typeof options.model === "string" ? options.model : null,
+    includePartialMessages: options.includePartialMessages === true,
+    settingSources: Array.isArray(options.settingSources)
+      ? options.settingSources
+      : [],
+    enableFileCheckpointing: options.enableFileCheckpointing === true,
+    hasResume: typeof options.resume === "string" && options.resume.length > 0,
+    maxThinkingTokens:
+      typeof options.maxThinkingTokens === "number"
+        ? options.maxThinkingTokens
+        : null,
+    hasEnv: !!options.env,
+    envKeyCount: Object.keys(options.env ?? {}).length,
+    hasMcpServers: mcpServerNames.length > 0,
+    mcpServerNames,
+    systemPromptMode: systemPromptSummary.mode,
+    systemPromptPreset: systemPromptSummary.preset,
+    hasCanUseTool: typeof options.canUseTool === "function",
+    hasSpawnOverride: typeof options.spawnClaudeCodeProcess === "function",
+    hasStderrHandler: typeof options.stderr === "function",
+  };
+}
+
+function isToolResultTextBlock(
+  value: unknown
+): value is { type: "text"; text: string } {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { type?: unknown }).type === "text" &&
+    typeof (value as { text?: unknown }).text === "string"
+  );
+}
+
+function normalizeForDeterministicString(
+  value: unknown,
+  seen: WeakSet<object>
+): unknown {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "function") {
+    return "[function]";
+  }
+  if (typeof value === "symbol") {
+    return value.toString();
+  }
+  if (typeof value === "undefined") {
+    return "[undefined]";
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) =>
+      normalizeForDeterministicString(entry, seen)
+    );
+  }
+  if (typeof value === "object") {
+    const objectValue = value as object;
+    if (seen.has(objectValue)) {
+      return "[circular]";
+    }
+    seen.add(objectValue);
+    const record = value as Record<string, unknown>;
+    const normalized: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+      normalized[key] = normalizeForDeterministicString(record[key], seen);
+    }
+    seen.delete(objectValue);
+    return normalized;
+  }
+  return String(value);
+}
+
+function deterministicStringify(value: unknown): string {
+  if (typeof value === "undefined") {
+    return "";
+  }
+  try {
+    const normalized = normalizeForDeterministicString(
+      value,
+      new WeakSet<object>()
+    );
+    if (typeof normalized === "string") {
+      return normalized;
+    }
+    return JSON.stringify(normalized);
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return "[unserializable]";
+    }
+  }
+}
+
+function coerceToolResultContentToString(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content) && content.every((block) => isToolResultTextBlock(block))) {
+    return content.map((block) => block.text).join("");
+  }
+  return deterministicStringify(content);
 }
 
 
@@ -636,6 +834,27 @@ class RunTracker {
     return false;
   }
 
+  getLatestActiveRun(owner?: RunOwner): RunRecord | null {
+    let latest: RunRecord | null = null;
+    for (const run of this.runs.values()) {
+      if (!this.isActive(run.state)) {
+        continue;
+      }
+      if (owner && run.owner !== owner) {
+        continue;
+      }
+      latest = run;
+    }
+    return latest;
+  }
+
+  isRunActive(run: RunRecord | null): boolean {
+    if (!run) {
+      return false;
+    }
+    return this.isActive(run.state);
+  }
+
   resolveByIdentifiers(identifiers: EventIdentifiers): RunRoute {
     if (identifiers.taskId) {
       const run = this.resolveMappedRun(this.runByTaskId, identifiers.taskId);
@@ -933,7 +1152,7 @@ class TimelineAssembler {
     const nextAssistantText = state.assistantText.slice(state.emittedAssistantLength);
     if (
       nextAssistantText.length > 0 &&
-      nextAssistantText !== "[Request interrupted by user for tool use]"
+      nextAssistantText !== INTERRUPT_TOOL_USE_PLACEHOLDER
     ) {
       state.emittedAssistantLength = state.assistantText.length;
       items.push({ type: "assistant_message", text: nextAssistantText });
@@ -1076,17 +1295,22 @@ function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
     taskId:
       readTrimmedString(root.task_id) ??
       readTrimmedString(streamEvent?.task_id) ??
+      readTrimmedString(streamEventMessage?.task_id) ??
       readTrimmedString(messageContainer?.task_id) ??
       null,
     parentMessageId:
       readTrimmedString(root.parent_message_id) ??
       readTrimmedString(streamEvent?.parent_message_id) ??
+      readTrimmedString(streamEventMessage?.parent_message_id) ??
+      readTrimmedString(messageContainer?.parent_message_id) ??
       null,
     messageId:
       readTrimmedString(root.message_id) ??
       readTrimmedString(streamEvent?.message_id) ??
       readTrimmedString(streamEventMessage?.id) ??
+      readTrimmedString(streamEventMessage?.message_id) ??
       readTrimmedString(messageContainer?.id) ??
+      readTrimmedString(messageContainer?.message_id) ??
       (messageType === "user" ? readTrimmedString(root.uuid) : null) ??
       null,
   };
@@ -1133,30 +1357,10 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
-    const hasEnvOverrides = Object.keys(this.runtimeSettings?.env ?? {}).length > 0;
-    const commandMode = this.runtimeSettings?.command?.mode;
-    const needsCustomSpawn =
-      hasEnvOverrides || commandMode === "append" || commandMode === "replace";
-
-    if (!needsCustomSpawn) {
-      return options;
-    }
-
-    return {
-      ...options,
-      spawnClaudeCodeProcess: (spawnOptions) => {
-        const resolved = resolveClaudeSpawnCommand(
-          spawnOptions,
-          this.runtimeSettings
-        );
-        return spawn(resolved.command, resolved.args, {
-          cwd: spawnOptions.cwd,
-          env: applyProviderEnv(spawnOptions.env, this.runtimeSettings),
-          signal: spawnOptions.signal,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      },
-    };
+    return applyRuntimeSettingsToClaudeOptions(
+      options,
+      this.runtimeSettings
+    );
   }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
@@ -1294,6 +1498,8 @@ class ClaudeAgentSession implements AgentSession {
   private persistedHistory: AgentTimelineItem[] = [];
   private historyPending = false;
   private turnState: TurnState = "idle";
+  private preReplayMetadataSeen = false;
+  private pendingAutonomousWakeReservations = 0;
   private nextRunOrdinal = 1;
   private cancelCurrentTurn: (() => void) | null = null;
   private pendingInterruptPromise: Promise<void> | null = null;
@@ -1415,6 +1621,7 @@ class ClaudeAgentSession implements AgentSession {
       this.cancelCurrentTurn();
     }
     this.suppressLocalReplayActivity = false;
+    this.pendingAutonomousWakeReservations = 0;
 
     const slashCommand = this.resolveSlashCommandInvocation(prompt);
     if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
@@ -1443,6 +1650,7 @@ class ClaudeAgentSession implements AgentSession {
       queue,
     };
     this.activeForegroundTurn = foregroundTurn;
+    this.preReplayMetadataSeen = false;
     this.transitionTurnState("foreground", "foreground stream started");
 
     let finishedNaturally = false;
@@ -1490,13 +1698,15 @@ class ClaudeAgentSession implements AgentSession {
 
     try {
       for await (const event of queue) {
-        yield event;
-        if (
+        const isTerminalEvent =
           event.type === "turn_completed" ||
           event.type === "turn_failed" ||
-          event.type === "turn_canceled"
-        ) {
+          event.type === "turn_canceled";
+        if (isTerminalEvent) {
           finishedNaturally = true;
+        }
+        yield event;
+        if (isTerminalEvent) {
           break;
         }
       }
@@ -1701,6 +1911,7 @@ class ClaudeAgentSession implements AgentSession {
     this.cancelCurrentTurn = null;
     this.turnState = "idle";
     this.suppressLocalReplayActivity = false;
+    this.pendingAutonomousWakeReservations = 0;
     this.liveEventQueue.end();
     this.activeTurnPromise = null;
     this.input?.end();
@@ -2017,11 +2228,18 @@ class ClaudeAgentSession implements AgentSession {
 
     const input = new Pushable<SDKUserMessage>();
     const options = this.buildOptions();
-    this.logger.debug({ options }, "claude query");
+    this.logger.debug(
+      { options: summarizeClaudeOptionsForLog(options) },
+      "claude query"
+    );
     this.input = input;
     this.query = query({ prompt: input, options });
-    await this.primeSelectableModelIds(this.query);
-    await this.query.setPermissionMode(this.currentMode);
+    // Do not block query readiness on control-plane calls. We need `next()` to
+    // start immediately so autonomous wake events are not missed between turns.
+    void this.awaitWithTimeout(
+      this.primeSelectableModelIds(this.query),
+      "prime selectable model ids"
+    );
     return this.query;
   }
 
@@ -2112,30 +2330,10 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
-    const hasEnvOverrides = Object.keys(this.runtimeSettings?.env ?? {}).length > 0;
-    const commandMode = this.runtimeSettings?.command?.mode;
-    const needsCustomSpawn =
-      hasEnvOverrides || commandMode === "append" || commandMode === "replace";
-
-    if (!needsCustomSpawn) {
-      return options;
-    }
-
-    return {
-      ...options,
-      spawnClaudeCodeProcess: (spawnOptions) => {
-        const resolved = resolveClaudeSpawnCommand(
-          spawnOptions,
-          this.runtimeSettings
-        );
-        return spawn(resolved.command, resolved.args, {
-          cwd: spawnOptions.cwd,
-          env: applyProviderEnv(spawnOptions.env, this.runtimeSettings),
-          signal: spawnOptions.signal,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      },
-    };
+    return applyRuntimeSettingsToClaudeOptions(
+      options,
+      this.runtimeSettings
+    );
   }
 
   private normalizeMcpServers(
@@ -2280,6 +2478,7 @@ class ClaudeAgentSession implements AgentSession {
 
     if (this.activeForegroundTurn?.runId === run.id) {
       this.activeForegroundTurn = null;
+      this.preReplayMetadataSeen = false;
     }
     this.transitionTurnStateFromActiveRuns(`run ${run.id} terminal`);
     this.logDerivedSessionLifecycle("terminal_event");
@@ -2326,18 +2525,65 @@ class ClaudeAgentSession implements AgentSession {
       metadataOnly: boolean;
     }
   ): RunRoute {
+    if (normalized.metadataOnly) {
+      if (
+        normalized.message.type === "user" &&
+        isTaskNotificationUserContent(normalized.message.message?.content)
+      ) {
+        this.reserveAutonomousWake("task_notification");
+      }
+      this.notePreReplayMetadata(normalized.message);
+      return { run: null, reason: "metadata" };
+    }
+
+    const hasIdentifiers = Boolean(
+      normalized.identifiers.taskId ||
+        normalized.identifiers.parentMessageId ||
+        normalized.identifiers.messageId
+    );
+
     const byIdentifiers = this.runTracker.resolveByIdentifiers(normalized.identifiers);
     if (byIdentifiers.run) {
       return byIdentifiers;
     }
 
+    if (this.turnState === "autonomous") {
+      const activeAutonomousRun = this.runTracker.getLatestActiveRun("autonomous");
+      if (activeAutonomousRun) {
+        return { run: activeAutonomousRun, reason: "unbound_autonomous" };
+      }
+    }
+
     const foregroundRun = this.activeForegroundTurn
       ? this.runTracker.getRun(this.activeForegroundTurn.runId)
       : null;
+
+    // A previously unseen task_id during foreground ownership is deterministic
+    // evidence of a distinct autonomous wake/run, not foreground response text.
     if (
       this.turnState === "foreground" &&
       foregroundRun &&
-      !normalized.metadataOnly &&
+      normalized.identifiers.taskId
+    ) {
+      const incomingTaskId = normalized.identifiers.taskId;
+      // Foreground must claim its first task_id; otherwise early foreground
+      // result events can be misrouted to autonomous fallback runs.
+      if (foregroundRun.taskIds.size === 0) {
+        if (foregroundRun.state !== "finalizing") {
+          return { run: foregroundRun, reason: "foreground" };
+        }
+      } else if (foregroundRun.taskIds.has(incomingTaskId)) {
+        return { run: foregroundRun, reason: "foreground" };
+      }
+
+      const autonomousRun = this.createRun("autonomous", null);
+      this.emitRunEvent(autonomousRun, { type: "turn_started", provider: "claude" });
+      return { run: autonomousRun, reason: "task_id_new" };
+    }
+
+    if (
+      this.turnState === "foreground" &&
+      foregroundRun &&
       this.shouldPreferForegroundRun({
         run: foregroundRun,
         message: normalized.message,
@@ -2346,8 +2592,27 @@ class ClaudeAgentSession implements AgentSession {
       return { run: foregroundRun, reason: "foreground" };
     }
 
-    if (normalized.metadataOnly) {
-      return { run: null, reason: "metadata" };
+    if (!hasIdentifiers) {
+      if (this.pendingAutonomousWakeReservations > 0) {
+        const reservedAutonomousRun = this.claimOrCreateAutonomousRun(
+          "reservation_unbound"
+        );
+        return {
+          run: reservedAutonomousRun,
+          reason: "unbound_autonomous",
+        };
+      }
+      const activeAutonomousRun = this.runTracker.getLatestActiveRun("autonomous");
+      if (activeAutonomousRun) {
+        return { run: activeAutonomousRun, reason: "unbound_autonomous" };
+      }
+    }
+
+    if (this.pendingAutonomousWakeReservations > 0) {
+      const reservedAutonomousRun = this.claimOrCreateAutonomousRun(
+        "reservation_fallback"
+      );
+      return { run: reservedAutonomousRun, reason: "fallback" };
     }
 
     const autonomousRun = this.createRun("autonomous", null);
@@ -2368,8 +2633,23 @@ class ClaudeAgentSession implements AgentSession {
       return false;
     }
 
+    // Before prompt replay is observed, prefer foreground by default so the
+    // first turn cannot be stranded in autonomous fallback. If metadata churn
+    // was observed pre-replay, stay conservative and wait for replay.
     if (!run.promptReplaySeen) {
-      return false;
+      // Keep pre-replay result events with the foreground run so stale result
+      // bursts cannot consume autonomous wake reservations.
+      if (message.type === "result") {
+        return true;
+      }
+      if (
+        message.type === "assistant" ||
+        message.type === "stream_event" ||
+        message.type === "tool_progress"
+      ) {
+        return !this.preReplayMetadataSeen;
+      }
+      return true;
     }
 
     if (
@@ -2380,6 +2660,66 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return true;
+  }
+
+  private notePreReplayMetadata(message: SDKMessage): void {
+    if (this.turnState !== "foreground") {
+      return;
+    }
+    const foregroundRun = this.activeForegroundTurn
+      ? this.runTracker.getRun(this.activeForegroundTurn.runId)
+      : null;
+    if (!foregroundRun || foregroundRun.promptReplaySeen) {
+      return;
+    }
+    if (message.type === "system" && message.subtype === "init") {
+      return;
+    }
+    this.preReplayMetadataSeen = true;
+  }
+
+  private reserveAutonomousWake(reason: string): void {
+    this.pendingAutonomousWakeReservations += 1;
+    this.logger.debug(
+      {
+        reason,
+        pendingAutonomousWakeReservations: this.pendingAutonomousWakeReservations,
+      },
+      "Reserved autonomous wake"
+    );
+  }
+
+  private claimOrCreateAutonomousRun(reason: string): RunRecord {
+    const existing = this.runTracker.getLatestActiveRun("autonomous");
+    if (existing) {
+      if (this.pendingAutonomousWakeReservations > 0) {
+        this.pendingAutonomousWakeReservations -= 1;
+      }
+      this.logger.debug(
+        {
+          reason,
+          runId: existing.id,
+          pendingAutonomousWakeReservations: this.pendingAutonomousWakeReservations,
+        },
+        "Claimed autonomous wake reservation on existing run"
+      );
+      return existing;
+    }
+
+    const run = this.createRun("autonomous", null);
+    this.emitRunEvent(run, { type: "turn_started", provider: "claude" });
+    if (this.pendingAutonomousWakeReservations > 0) {
+      this.pendingAutonomousWakeReservations -= 1;
+    }
+    this.logger.debug(
+      {
+        reason,
+        runId: run.id,
+        pendingAutonomousWakeReservations: this.pendingAutonomousWakeReservations,
+      },
+      "Claimed autonomous wake reservation with new run"
+    );
+    return run;
   }
 
   private startQueryPump(): void {
@@ -2478,10 +2818,16 @@ class ClaudeAgentSession implements AgentSession {
       identifiers,
       metadataOnly,
     });
+    const suppressTerminalEvents = this.shouldSuppressReplayResultTerminal({
+      run: route.run,
+      message,
+    });
     if (route.run) {
       this.transitionTurnStateFromActiveRuns(`routed via ${route.reason}`);
       this.runTracker.bindIdentifiers(route.run, identifiers);
-      this.updateRunLifecycleForMessage(route.run, message, identifiers);
+      if (!suppressTerminalEvents) {
+        this.updateRunLifecycleForMessage(route.run, message, identifiers);
+      }
     }
 
     this.logger.debug(
@@ -2498,6 +2844,7 @@ class ClaudeAgentSession implements AgentSession {
     const messageEvents = this.translateMessageToEvents(message, {
       suppressAssistantText: true,
       suppressReasoning: true,
+      suppressTerminalEvents,
     });
     const assistantTimelineItems = this.timelineAssembler.consume({
       message,
@@ -2527,6 +2874,37 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
+  private shouldSuppressReplayResultTerminal(input: {
+    run: RunRecord | null;
+    message: SDKMessage;
+  }): boolean {
+    const { run, message } = input;
+    if (!run || run.owner !== "foreground" || message.type !== "result") {
+      return false;
+    }
+    if (run.promptReplaySeen) {
+      return false;
+    }
+    if (run.state === "streaming" || run.state === "finalizing") {
+      return false;
+    }
+
+    const resultSubtype =
+      "subtype" in message && typeof message.subtype === "string"
+        ? message.subtype
+        : null;
+
+    // Pre-replay success results are stale in practice (leftover from an
+    // earlier query segment) and must not end the current foreground run.
+    if (resultSubtype === "success") {
+      return true;
+    }
+
+    // For non-success results, keep the metadata-churn guard to avoid
+    // suppressing legitimate hard failures.
+    return this.preReplayMetadataSeen;
+  }
+
   private dispatchMetadataEvents(events: AgentStreamEvent[]): void {
     for (const event of events) {
       this.pushEvent(event);
@@ -2544,6 +2922,7 @@ class ClaudeAgentSession implements AgentSession {
       run.messageIds.has(identifiers.messageId)
     ) {
       run.promptReplaySeen = true;
+      this.preReplayMetadataSeen = false;
     }
 
     if (run.state === "queued") {
@@ -2584,12 +2963,36 @@ class ClaudeAgentSession implements AgentSession {
       return false;
     }
 
-    if (message.type === "user" && !localReplay) {
+    // Suppress only replay scaffolding. Do not suppress autonomous
+    // assistant/result events; otherwise task-notification replies can be dropped.
+    if (localReplay) {
+      return true;
+    }
+
+    if (message.type === "system") {
+      return true;
+    }
+
+    const identifiers = readEventIdentifiers(message);
+    const hasIdentifiers = Boolean(
+      identifiers.taskId || identifiers.parentMessageId || identifiers.messageId
+    );
+
+    if (message.type !== "user" && !hasIdentifiers) {
+      if (this.pendingAutonomousWakeReservations > 0) {
+        this.suppressLocalReplayActivity = false;
+        return false;
+      }
+      return true;
+    }
+
+    if (message.type === "user") {
       this.suppressLocalReplayActivity = false;
       return false;
     }
 
-    return true;
+    this.suppressLocalReplayActivity = false;
+    return false;
   }
 
   private isLocalReplayUserMessage(message: SDKMessage): boolean {
@@ -2608,22 +3011,22 @@ class ClaudeAgentSession implements AgentSession {
   private async interruptActiveTurn(): Promise<void> {
     const queryToInterrupt = this.query;
     if (!queryToInterrupt || typeof queryToInterrupt.interrupt !== "function") {
-      this.logger.info("interruptActiveTurn: no query to interrupt");
+      this.logger.debug("interruptActiveTurn: no query to interrupt");
       return;
     }
     try {
-      this.logger.info("interruptActiveTurn: calling query.interrupt()...");
+      this.logger.debug("interruptActiveTurn: calling query.interrupt()...");
       const t0 = Date.now();
       await queryToInterrupt.interrupt();
-      this.logger.info({ durationMs: Date.now() - t0 }, "interruptActiveTurn: query.interrupt() returned");
+      this.logger.debug({ durationMs: Date.now() - t0 }, "interruptActiveTurn: query.interrupt() returned");
       // After interrupt(), the query iterator is done (returns done: true).
       // Clear it so ensureQuery() creates a fresh query for the next turn.
       // Also end the input stream and call return() to clean up the SDK process.
       this.input?.end();
-      this.logger.info("interruptActiveTurn: calling query.return()...");
+      this.logger.debug("interruptActiveTurn: calling query.return()...");
       const t1 = Date.now();
       await queryToInterrupt.return?.();
-      this.logger.info({ durationMs: Date.now() - t1 }, "interruptActiveTurn: query.return() returned");
+      this.logger.debug({ durationMs: Date.now() - t1 }, "interruptActiveTurn: query.return() returned");
       this.query = null;
       this.input = null;
       this.queryRestartNeeded = false;
@@ -2906,6 +3309,7 @@ class ClaudeAgentSession implements AgentSession {
     options?: {
       suppressAssistantText?: boolean;
       suppressReasoning?: boolean;
+      suppressTerminalEvents?: boolean;
     }
   ): AgentStreamEvent[] {
     const parentToolUseId = "parent_tool_use_id" in message
@@ -2947,15 +3351,17 @@ class ClaudeAgentSession implements AgentSession {
             });
           }
         } else if (message.subtype === "compact_boundary") {
-          const meta = (message as Record<string, unknown>).compact_metadata as
-            { trigger?: string; pre_tokens?: number } | undefined;
+          const compactMetadata = readCompactionMetadata(
+            message as Record<string, unknown>
+          );
           events.push({
             type: "timeline",
             item: {
               type: "compaction",
               status: "completed",
-              trigger: meta?.trigger === "manual" ? "manual" : "auto",
-              preTokens: meta?.pre_tokens,
+              trigger:
+                compactMetadata?.trigger === "manual" ? "manual" : "auto",
+              preTokens: compactMetadata?.preTokens,
             },
             provider: "claude",
           });
@@ -3020,6 +3426,9 @@ class ClaudeAgentSession implements AgentSession {
         break;
       }
       case "result": {
+        if (options?.suppressTerminalEvents) {
+          break;
+        }
         const usage = this.convertUsage(message);
         if (message.subtype === "success") {
           events.push({ type: "turn_completed", provider: "claude", usage });
@@ -3277,9 +3686,19 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private pushEvent(event: AgentStreamEvent) {
-    if (this.activeForegroundTurn) {
-      this.activeForegroundTurn.queue.push(event);
-      return;
+    const foregroundTurn = this.activeForegroundTurn;
+    if (foregroundTurn) {
+      const run = this.runTracker.getRun(foregroundTurn.runId);
+      if (
+        run &&
+        run.owner === "foreground" &&
+        run.queue === foregroundTurn.queue &&
+        this.runTracker.isRunActive(run)
+      ) {
+        foregroundTurn.queue.push(event);
+        return;
+      }
+      this.activeForegroundTurn = null;
     }
     this.liveEventQueue.push(event);
   }
@@ -3369,7 +3788,7 @@ class ClaudeAgentSession implements AgentSession {
     const suppressReasoning = options?.suppressReasoning ?? false;
 
     if (typeof content === "string") {
-      if (!content || content === "[Request interrupted by user for tool use]") {
+      if (!content || content === INTERRUPT_TOOL_USE_PLACEHOLDER) {
         return [];
       }
       if (suppressAssistant) {
@@ -3383,7 +3802,7 @@ class ClaudeAgentSession implements AgentSession {
       switch (block.type) {
         case "text":
         case "text_delta":
-          if (block.text && block.text !== "[Request interrupted by user for tool use]") {
+          if (block.text && block.text !== INTERRUPT_TOOL_USE_PLACEHOLDER) {
             if (!suppressAssistant) {
               items.push({ type: "assistant_message", text: block.text });
             }
@@ -3491,7 +3910,7 @@ class ClaudeAgentSession implements AgentSession {
 
     const server = entry?.server ?? block.server ?? "tool";
     const tool = entry?.name ?? block.tool_name ?? "tool";
-    const content = typeof block.content === "string" ? block.content : "";
+    const content = coerceToolResultContentToString(block.content);
     const input = entry?.input;
 
     // Build structured result based on tool type
@@ -3859,6 +4278,29 @@ function hasToolLikeBlock(block?: ClaudeContentChunk | null): boolean {
   return type.includes("tool");
 }
 
+function readCompactionMetadata(
+  source: Record<string, unknown>
+): { trigger?: string; preTokens?: number } | null {
+  const candidates = [
+    source.compact_metadata,
+    source.compactMetadata,
+    source.compactionMetadata,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") {
+      continue;
+    }
+    const metadata = candidate as Record<string, unknown>;
+    const trigger =
+      typeof metadata.trigger === "string" ? metadata.trigger : undefined;
+    const preTokensRaw = metadata.preTokens ?? metadata.pre_tokens;
+    const preTokens =
+      typeof preTokensRaw === "number" ? preTokensRaw : undefined;
+    return { trigger, preTokens };
+  }
+  return null;
+}
+
 function normalizeHistoryBlocks(content: unknown): ClaudeContentChunk[] | null {
   if (Array.isArray(content)) {
     const blocks = content.filter((entry) => isClaudeContentChunk(entry));
@@ -3875,11 +4317,14 @@ export function convertClaudeHistoryEntry(
   mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[]
 ): AgentTimelineItem[] {
   if (entry.type === "system" && entry.subtype === "compact_boundary") {
+    const compactMetadata = readCompactionMetadata(
+      entry as Record<string, unknown>
+    );
     return [{
       type: "compaction",
       status: "completed",
-      trigger: entry.compactMetadata?.trigger === "manual" ? "manual" : "auto",
-      preTokens: entry.compactMetadata?.preTokens,
+      trigger: compactMetadata?.trigger === "manual" ? "manual" : "auto",
+      preTokens: compactMetadata?.preTokens,
     }];
   }
 

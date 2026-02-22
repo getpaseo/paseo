@@ -91,7 +91,7 @@ export interface Logger {
 }
 
 const consoleLogger: Logger = {
-  debug: (obj, msg) => console.debug(msg, obj),
+  debug: () => {},
   info: (obj, msg) => console.info(msg, obj),
   warn: (obj, msg) => console.warn(msg, obj),
   error: (obj, msg) => console.error(msg, obj),
@@ -2283,15 +2283,101 @@ export class DaemonClient {
     predicate: (snapshot: AgentSnapshotPayload) => boolean,
     timeout = 60000
   ): Promise<AgentSnapshotPayload> {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < timeout) {
-      const snapshot = await this.fetchAgent(agentId).catch(() => null)
-      if (snapshot && predicate(snapshot)) {
-        return snapshot
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250))
+    const initial = await this.fetchAgent(agentId).catch(() => null)
+    if (initial && predicate(initial)) {
+      return initial
     }
-    throw new Error(`Timed out waiting for agent ${agentId}`)
+
+    const deadline = Date.now() + timeout
+    return await new Promise<AgentSnapshotPayload>((resolve, reject) => {
+      let settled = false
+      let pollInFlight = false
+      let pollTimer: ReturnType<typeof setInterval> | null = null
+      let timeoutTimer: ReturnType<typeof setTimeout> | null = null
+      let unsubscribe: (() => void) | null = null
+
+      const finish = (
+        result:
+          | { kind: 'ok'; snapshot: AgentSnapshotPayload }
+          | { kind: 'error'; error: Error }
+      ) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        if (timeoutTimer) {
+          clearTimeout(timeoutTimer)
+          timeoutTimer = null
+        }
+        if (pollTimer) {
+          clearInterval(pollTimer)
+          pollTimer = null
+        }
+        if (unsubscribe) {
+          unsubscribe()
+          unsubscribe = null
+        }
+        if (result.kind === 'ok') {
+          resolve(result.snapshot)
+          return
+        }
+        reject(result.error)
+      }
+
+      const maybeResolve = (snapshot: AgentSnapshotPayload | null) => {
+        if (!snapshot) {
+          return false
+        }
+        if (!predicate(snapshot)) {
+          return false
+        }
+        finish({ kind: 'ok', snapshot })
+        return true
+      }
+
+      const poll = async () => {
+        if (settled || pollInFlight) {
+          return
+        }
+        pollInFlight = true
+        try {
+          const snapshot = await this.fetchAgent(agentId).catch(() => null)
+          maybeResolve(snapshot)
+        } finally {
+          pollInFlight = false
+        }
+      }
+
+      unsubscribe = this.on('agent_update', (message) => {
+        if (settled) {
+          return
+        }
+        if (message.type !== 'agent_update') {
+          return
+        }
+        if (message.payload.kind !== 'upsert') {
+          return
+        }
+        const snapshot = message.payload.agent
+        if (snapshot.id !== agentId) {
+          return
+        }
+        maybeResolve(snapshot)
+      })
+
+      const remaining = Math.max(1, deadline - Date.now())
+      timeoutTimer = setTimeout(() => {
+        finish({
+          kind: 'error',
+          error: new Error(`Timed out waiting for agent ${agentId}`),
+        })
+      }, remaining)
+
+      pollTimer = setInterval(() => {
+        void poll()
+      }, 250)
+      void poll()
+    })
   }
 
   async waitForFinish(agentId: string, timeout = 60000): Promise<WaitForFinishResult> {
@@ -2715,7 +2801,7 @@ export class DaemonClient {
         : null
     const reason = metadata?.reason ?? reasonFromNext
     const reasonCode = metadata?.reasonCode ?? toReasonCode(reason)
-    this.logger.info(
+    this.logger.debug(
       {
         serverId: this.logServerId,
         clientIdHash: this.logClientIdHash,

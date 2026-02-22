@@ -29,6 +29,7 @@ function createMockTransport() {
   let onOpen: () => void = () => {}
   let onClose: (_event?: unknown) => void = () => {}
   let onError: (_event?: unknown) => void = () => {}
+  let welcomeOrdinal = 1
 
   const transport: DaemonTransport = {
     send: (data) => sent.push(data),
@@ -54,7 +55,20 @@ function createMockTransport() {
   return {
     transport,
     sent,
-    triggerOpen: () => onOpen(),
+    triggerOpen: () => {
+      onOpen()
+      // Ignore HELLO handshake payloads in assertions.
+      sent.length = 0
+      onMessage(
+        JSON.stringify({
+          type: 'welcome',
+          serverId: `srv_test_${welcomeOrdinal++}`,
+          hostname: null,
+          version: null,
+          resumed: false,
+        })
+      )
+    },
     triggerClose: (event?: unknown) => onClose(event),
     triggerError: (event?: unknown) => onError(event),
     triggerMessage: (data: unknown) => onMessage(data),
@@ -309,7 +323,7 @@ describe('DaemonClient', () => {
     mock.triggerOpen()
     await connectPromise
 
-    const transitionPayloads = logger.info.mock.calls
+    const transitionPayloads = logger.debug.mock.calls
       .filter(([, message]) => message === 'DaemonClientTransition')
       .map(([payload]) => payload as { generation?: number | null })
     expect(transitionPayloads.length).toBeGreaterThan(0)
@@ -868,11 +882,15 @@ describe('DaemonClient', () => {
     vi.useFakeTimers()
     const logger = createMockLogger()
     const mock = createMockTransport()
+    let sendCount = 0
 
     const transportFactory = () => ({
       ...mock.transport,
       send: () => {
-        throw new Error('boom')
+        sendCount += 1
+        if (sendCount > 1) {
+          throw new Error('boom')
+        }
       },
     })
 

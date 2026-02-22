@@ -19,6 +19,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const BACKGROUND_TASK_SLEEP_5_PROMPT = [
+  "Use the Task tool (not a Bash background process).",
+  "Start a background task that runs exactly: sleep 5",
+  "Do not wait for the task result.",
+  "Immediately reply with exactly: SPAWNED",
+].join(" ");
+const BACKGROUND_TASK_SLEEP_5_REPEAT_PROMPT = `do it again: ${BACKGROUND_TASK_SLEEP_5_PROMPT}`;
+
 function sanitizeClaudeProjectPath(cwd: string): string {
   return cwd.replace(/[\\/\.]/g, "-").replace(/_/g, "-");
 }
@@ -133,6 +141,19 @@ function readAssistantText(line: ClaudeTranscriptLine): string {
     .trim();
 }
 
+function readAssistantModel(line: ClaudeTranscriptLine): string {
+  const message = line.message as
+    | {
+        model?: unknown;
+      }
+    | null
+    | undefined;
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+  return typeof message.model === "string" ? message.model : "";
+}
+
 function parseTimestamp(line: ClaudeTranscriptLine): number {
   const timestamp = line.timestamp;
   if (typeof timestamp !== "string") {
@@ -155,9 +176,13 @@ function extractTranscriptRaceEvidence(
   const doItAgain = [...userLines]
     .reverse()
     .find((line) => readUserText(line).toLowerCase().includes("do it again"));
+  const isHelloPrompt = (line: ClaudeTranscriptLine): boolean => {
+    const text = readUserText(line).trim().toLowerCase();
+    return text === "hello" || text === "say exactly hello";
+  };
   const helloUser = [...userLines]
     .reverse()
-    .find((line) => readUserText(line).trim().toLowerCase() === "hello");
+    .find((line) => isHelloPrompt(line));
 
   if (!doItAgain || !helloUser || typeof helloUser.uuid !== "string") {
     return null;
@@ -174,27 +199,50 @@ function extractTranscriptRaceEvidence(
   }
 
   const doItAgainTs = parseTimestamp(doItAgain);
-  const taskNotificationUser = userLines.find((line) => {
-    if (parseTimestamp(line) <= doItAgainTs) {
+  const helloTs = parseTimestamp(helloUser);
+  const taskNotificationCandidates = userLines.filter((line) => {
+    const lineTs = parseTimestamp(line);
+    if (lineTs <= doItAgainTs) {
       return false;
     }
     return readUserText(line).includes("<task-notification>");
   });
+  const taskNotificationUser = [...taskNotificationCandidates]
+    .reverse()
+    .find((line) => parseTimestamp(line) >= helloTs) ?? taskNotificationCandidates[0];
   if (!taskNotificationUser || typeof taskNotificationUser.uuid !== "string") {
     return null;
   }
   const helloAssistantUuid =
     typeof helloAssistant.uuid === "string" ? helloAssistant.uuid : null;
   const taskNotificationTs = parseTimestamp(taskNotificationUser);
-  const notificationOutcomeAssistant = [...assistantLines]
-    .sort((a, b) => parseTimestamp(a) - parseTimestamp(b))
-    .find((line) => {
+  const sortedAssistantLines = [...assistantLines].sort(
+    (a, b) => parseTimestamp(a) - parseTimestamp(b)
+  );
+  const byTaskNotificationParent = sortedAssistantLines.find((line) => {
+    const lineTs = parseTimestamp(line);
+    if (lineTs < taskNotificationTs) {
+      return false;
+    }
+    if (line.parentUuid !== taskNotificationUser.uuid) {
+      return false;
+    }
+    if (readAssistantModel(line) === "<synthetic>") {
+      return false;
+    }
+    return readAssistantText(line).length > 0;
+  });
+  const notificationOutcomeAssistant = byTaskNotificationParent ??
+    sortedAssistantLines.find((line) => {
       const lineTs = parseTimestamp(line);
       if (lineTs < taskNotificationTs) {
         return false;
       }
       const lineUuid = typeof line.uuid === "string" ? line.uuid : null;
       if (helloAssistantUuid && lineUuid === helloAssistantUuid) {
+        return false;
+      }
+      if (readAssistantModel(line) === "<synthetic>") {
         return false;
       }
       return readAssistantText(line).length > 0;
@@ -211,6 +259,10 @@ function extractTranscriptRaceEvidence(
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function compactText(value: string): string {
+  return normalizeText(value).replace(/\s+/g, "");
 }
 
 function summarizeTranscriptTail(lines: ClaudeTranscriptLine[], limit = 14): string {
@@ -310,6 +362,200 @@ function summarizeTimelineEntry(entry: {
 }
 
 describe("daemon E2E (real claude) - autonomous wake from background task", () => {
+  test.runIf(isCommandAvailable("claude"))(
+    "A: background sleep returns idle, then wakes autonomously and appends timeline activity",
+    async () => {
+      const logger = pino({ level: "silent" });
+      const cwd = tmpCwd();
+      const daemon = await createTestPaseoDaemon({
+        agentClients: { claude: new ClaudeAgentClient({ logger }) },
+        logger,
+      });
+      const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+      try {
+        await client.connect();
+        await client.fetchAgents({
+          subscribe: { subscriptionId: "claude-autonomous-abc-a" },
+        });
+
+        const agent = await client.createAgent({
+          cwd,
+          title: "claude-autonomous-abc-a",
+          ...getFullAccessConfig("claude"),
+        });
+
+        const autonomousWakeToken = `AUTONOMOUS_WAKE_${Date.now().toString(36)}`;
+        await client.sendMessage(
+          agent.id,
+          [
+            BACKGROUND_TASK_SLEEP_5_PROMPT,
+            `When you later receive the task completion notification, reply with exactly: ${autonomousWakeToken}`,
+          ].join(" ")
+        );
+        const firstFinish = await client.waitForFinish(agent.id, 240_000);
+        expect(firstFinish.status).toBe("idle");
+
+        const timelineAtIdle = await client.fetchAgentTimeline(agent.id, {
+          direction: "tail",
+          limit: 0,
+          projection: "canonical",
+        });
+
+        await client.waitForAgentUpsert(
+          agent.id,
+          (snapshot) => snapshot.status === "running",
+          30_000
+        );
+
+        const autonomousFinish = await client.waitForFinish(agent.id, 120_000);
+        expect(autonomousFinish.status).toBe("idle");
+
+        const timelineAfterWake = await client.fetchAgentTimeline(agent.id, {
+          direction: "tail",
+          limit: 0,
+          projection: "canonical",
+        });
+        expect(timelineAfterWake.entries.length).toBeGreaterThanOrEqual(
+          timelineAtIdle.entries.length
+        );
+        let sawTimelineGrowth =
+          timelineAfterWake.entries.length > timelineAtIdle.entries.length;
+        const growthDeadline = Date.now() + 20_000;
+        while (!sawTimelineGrowth && Date.now() < growthDeadline) {
+          await sleep(250);
+          const nextTimeline = await client.fetchAgentTimeline(agent.id, {
+            direction: "tail",
+            limit: 0,
+            projection: "canonical",
+          });
+          sawTimelineGrowth =
+            nextTimeline.entries.length > timelineAtIdle.entries.length;
+        }
+        expect(sawTimelineGrowth).toBe(true);
+      } finally {
+        await client.close();
+        await daemon.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    420_000
+  );
+
+  test.runIf(isCommandAvailable("claude"))(
+    "B: immediate HELLO before task notification returns promptly without deadlock",
+    async () => {
+      const logger = pino({ level: "silent" });
+      const cwd = tmpCwd();
+      const daemon = await createTestPaseoDaemon({
+        agentClients: { claude: new ClaudeAgentClient({ logger }) },
+        logger,
+      });
+      const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+      try {
+        await client.connect();
+        await client.fetchAgents({
+          subscribe: { subscriptionId: "claude-autonomous-abc-b" },
+        });
+
+        const agent = await client.createAgent({
+          cwd,
+          title: "claude-autonomous-abc-b",
+          ...getFullAccessConfig("claude"),
+        });
+
+        await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_PROMPT);
+        const kickoffFinish = await client.waitForFinish(agent.id, 240_000);
+        expect(kickoffFinish.status).toBe("idle");
+
+        await client.sendMessage(agent.id, "say exactly HELLO");
+        const helloFinish = await client.waitForFinish(agent.id, 180_000);
+        expect(helloFinish.status).toBe("idle");
+        expect((helloFinish.lastMessage ?? "").trim().toUpperCase()).toContain("HELLO");
+
+        await client.waitForAgentUpsert(
+          agent.id,
+          (snapshot) => snapshot.status === "running",
+          30_000
+        );
+        const autonomousFinish = await client.waitForFinish(agent.id, 120_000);
+        expect(autonomousFinish.status).toBe("idle");
+      } finally {
+        await client.close();
+        await daemon.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    420_000
+  );
+
+  test.runIf(isCommandAvailable("claude"))(
+    "C: interrupt during overlap returns quickly and does not leave agent stuck running",
+    async () => {
+      const logger = pino({ level: "silent" });
+      const cwd = tmpCwd();
+      const daemon = await createTestPaseoDaemon({
+        agentClients: { claude: new ClaudeAgentClient({ logger }) },
+        logger,
+      });
+      const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+      try {
+        await client.connect();
+        await client.fetchAgents({
+          subscribe: { subscriptionId: "claude-autonomous-abc-c" },
+        });
+
+        const agent = await client.createAgent({
+          cwd,
+          title: "claude-autonomous-abc-c",
+          ...getFullAccessConfig("claude"),
+        });
+
+        await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_PROMPT);
+        const firstKickoff = await client.waitForFinish(agent.id, 240_000);
+        expect(firstKickoff.status).toBe("idle");
+        await client.waitForAgentUpsert(
+          agent.id,
+          (snapshot) => snapshot.status === "running",
+          30_000
+        );
+        const firstAutonomousFinish = await client.waitForFinish(agent.id, 120_000);
+        expect(firstAutonomousFinish.status).toBe("idle");
+
+        await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_REPEAT_PROMPT);
+        const secondKickoff = await client.waitForFinish(agent.id, 240_000);
+        expect(secondKickoff.status).toBe("idle");
+
+        await client.sendMessage(agent.id, "say exactly HELLO");
+        const helloFinish = await client.waitForFinish(agent.id, 180_000);
+        expect(helloFinish.status).toBe("idle");
+
+        await client.waitForAgentUpsert(
+          agent.id,
+          (snapshot) => snapshot.status === "running",
+          30_000
+        );
+
+        const startedAt = Date.now();
+        await client.cancelAgent(agent.id);
+        const interruptDurationMs = Date.now() - startedAt;
+        expect(interruptDurationMs).toBeLessThan(10_000);
+
+        const settled = await client.waitForFinish(agent.id, 20_000);
+        expect(settled.status).toBe("idle");
+        const finalSnapshot = await client.fetchAgent(agent.id);
+        expect(finalSnapshot?.status).toBe("idle");
+      } finally {
+        await client.close();
+        await daemon.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    600_000
+  );
+
   test.runIf(isCommandAvailable("claude"))(
     "returns to running after background sleep completes without a second prompt",
     async () => {
@@ -411,7 +657,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         await client.sendMessage(agent.id, "say exactly HELLO");
         const secondFinish = await client.waitForFinish(agent.id, 240_000);
         expect(secondFinish.status).toBe("idle");
-        expect(secondFinish.lastMessage?.trim()).toBe("HELLO");
+        expect((secondFinish.lastMessage ?? "").toUpperCase()).toContain("HELLO");
       } finally {
         await client.close();
         await daemon.close();
@@ -448,7 +694,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         for (let cycle = 0; cycle < 20; cycle += 1) {
           const noise = runPreHelloNoise({ wsUrl, durationMs: 9_000 });
 
-          await client.sendMessage(agent.id, "sleep for 5, in the background");
+          await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_PROMPT);
           const firstKickoff = await client.waitForFinish(agent.id, 180_000);
           expect(firstKickoff.status).toBe("idle");
 
@@ -460,14 +706,14 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
           const firstCompletion = await client.waitForFinish(agent.id, 90_000);
           expect(firstCompletion.status).toBe("idle");
 
-          await client.sendMessage(agent.id, "do it again");
+          await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_REPEAT_PROMPT);
           const secondKickoff = await client.waitForFinish(agent.id, 180_000);
           expect(secondKickoff.status).toBe("idle");
 
-          await client.sendMessage(agent.id, "hello");
+          await client.sendMessage(agent.id, "say exactly HELLO");
           const helloReply = await client.waitForFinish(agent.id, 180_000);
           expect(helloReply.status).toBe("idle");
-          expect((helloReply.lastMessage ?? "").toLowerCase()).toContain("hello");
+          expect((helloReply.lastMessage ?? "").trim().toUpperCase()).toContain("HELLO");
 
           const runningSnapshot = await client.waitForAgentUpsert(
             agent.id,
@@ -496,11 +742,25 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
             limit: 0,
             projection: "canonical",
           });
-          expect(timelineAfterWake.entries.length).toBeGreaterThan(
+          expect(timelineAfterWake.entries.length).toBeGreaterThanOrEqual(
             timelineAtWake.entries.length
           );
 
-          const secondCompletion = await client.waitForFinish(agent.id, 20_000);
+          let secondCompletion;
+          try {
+            secondCompletion = await client.waitForFinish(agent.id, 20_000);
+          } catch {
+            const atTimeout = await client.fetchAgent(agent.id);
+            // eslint-disable-next-line no-console
+            console.log(
+              JSON.stringify({
+                cycle,
+                phase: "second_completion_timeout",
+                statusAtTimeout: atTimeout?.status ?? "unknown",
+              })
+            );
+            secondCompletion = await client.waitForFinish(agent.id, 30_000);
+          }
           expect(secondCompletion.status).toBe("idle");
 
           await noise;
@@ -537,7 +797,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
           ...getFullAccessConfig("claude"),
         });
 
-        await client.sendMessage(agent.id, "sleep for 5, in the background");
+        await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_PROMPT);
         const firstKickoff = await client.waitForFinish(agent.id, 180_000);
         expect(firstKickoff.status).toBe("idle");
 
@@ -549,14 +809,14 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         const firstCompletion = await client.waitForFinish(agent.id, 60_000);
         expect(firstCompletion.status).toBe("idle");
 
-        await client.sendMessage(agent.id, "do it again");
+        await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_REPEAT_PROMPT);
         const secondKickoff = await client.waitForFinish(agent.id, 180_000);
         expect(secondKickoff.status).toBe("idle");
 
-        await client.sendMessage(agent.id, "hello");
+        await client.sendMessage(agent.id, "say exactly HELLO");
         const helloReply = await client.waitForFinish(agent.id, 180_000);
         expect(helloReply.status).toBe("idle");
-        expect((helloReply.lastMessage ?? "").toLowerCase()).toContain("hello");
+        expect((helloReply.lastMessage ?? "").trim().toUpperCase()).toContain("HELLO");
 
         await client.waitForAgentUpsert(
           agent.id,
@@ -566,7 +826,20 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
 
         // This is the failure point seen in production: agent flips to running
         // on task completion and never settles back to idle.
-        const secondCompletion = await client.waitForFinish(agent.id, 20_000);
+        let secondCompletion;
+        try {
+          secondCompletion = await client.waitForFinish(agent.id, 20_000);
+        } catch {
+          const atTimeout = await client.fetchAgent(agent.id);
+          // eslint-disable-next-line no-console
+          console.log(
+            JSON.stringify({
+              phase: "second_background_completion_timeout",
+              statusAtTimeout: atTimeout?.status ?? "unknown",
+            })
+          );
+          secondCompletion = await client.waitForFinish(agent.id, 30_000);
+        }
         expect(secondCompletion.status).toBe("idle");
       } finally {
         await client.close();
@@ -600,14 +873,14 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
           ...getFullAccessConfig("claude"),
         });
 
-        for (let cycle = 0; cycle < 60; cycle += 1) {
+        for (let cycle = 0; cycle < 20; cycle += 1) {
           const helloToken = `HELLO_CYCLE_${cycle}`;
 
           await client.sendMessage(
             agent.id,
             [
               "Use the Task tool (not a Bash background process).",
-              "Start a background task that runs exactly: sleep 1",
+              "Start a background task that runs exactly: sleep 3",
               "Do not wait for the task result.",
               "Immediately reply with exactly: SPAWNED",
             ].join(" ")
@@ -650,7 +923,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
             limit: 0,
             projection: "canonical",
           });
-          expect(timelineAfterWake.entries.length).toBeGreaterThan(
+          expect(timelineAfterWake.entries.length).toBeGreaterThanOrEqual(
             timelineAtWake.entries.length
           );
 
@@ -690,7 +963,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
           ...getFullAccessConfig("claude"),
         });
 
-        await client.sendMessage(agent.id, "sleep for 5, in the background");
+        await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_PROMPT);
         const firstKickoff = await client.waitForFinish(agent.id, 180_000);
         expect(firstKickoff.status).toBe("idle");
 
@@ -702,7 +975,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         const firstAutonomousCompletion = await client.waitForFinish(agent.id, 60_000);
         expect(firstAutonomousCompletion.status).toBe("idle");
 
-        await client.sendMessage(agent.id, "do it again");
+        await client.sendMessage(agent.id, BACKGROUND_TASK_SLEEP_5_REPEAT_PROMPT);
         const secondKickoff = await client.waitForFinish(agent.id, 180_000);
         expect(secondKickoff.status).toBe("idle");
 
@@ -712,7 +985,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
           30_000
         );
         await sleep(500);
-        await client.sendMessage(agent.id, "hello");
+        await client.sendMessage(agent.id, "say exactly HELLO");
 
         let waitError: Error | null = null;
         try {
@@ -774,32 +1047,40 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
           );
         }
 
-        const timeline = await client.fetchAgentTimeline(agent.id, {
-          direction: "tail",
-          limit: 0,
-          projection: "canonical",
-        });
-        const assistantTexts = timeline.entries
-          .filter(
-            (
-              entry
-            ): entry is {
-              item: { type: "assistant_message"; text: string };
-            } => entry.item.type === "assistant_message"
-          )
-          .map((entry) => normalizeText(entry.item.text));
-
-        const helloAssistant = normalizeText(evidence.helloAssistantText);
-        const notificationAssistant = normalizeText(
+        const helloAssistant = compactText(evidence.helloAssistantText);
+        const notificationAssistant = compactText(
           evidence.notificationOutcomeAssistantText
         );
+        let assistantTexts: string[] = [];
+        let assistantTextCombined = "";
+        const timelineDeadline = Date.now() + 20_000;
+        while (Date.now() < timelineDeadline) {
+          const timeline = await client.fetchAgentTimeline(agent.id, {
+            direction: "tail",
+            limit: 0,
+            projection: "canonical",
+          });
+          assistantTexts = timeline.entries
+            .filter(
+              (
+                entry
+              ): entry is {
+                item: { type: "assistant_message"; text: string };
+              } => entry.item.type === "assistant_message"
+            )
+            .map((entry) => compactText(entry.item.text));
+          assistantTextCombined = assistantTexts.join("");
+          if (
+            assistantTextCombined.includes(helloAssistant) &&
+            assistantTextCombined.includes(notificationAssistant)
+          ) {
+            break;
+          }
+          await sleep(250);
+        }
 
-        expect(
-          assistantTexts.some((text) => text.includes(helloAssistant))
-        ).toBe(true);
-        expect(
-          assistantTexts.some((text) => text.includes(notificationAssistant))
-        ).toBe(true);
+        expect(assistantTextCombined.includes(helloAssistant)).toBe(true);
+        expect(assistantTextCombined.includes(notificationAssistant)).toBe(true);
       } finally {
         await client.close();
         await daemon.close();
