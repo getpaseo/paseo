@@ -47,6 +47,19 @@ function createAgent(id: string): Agent {
   };
 }
 
+function createAgentWithStatus({
+  id,
+  status,
+}: {
+  id: string;
+  status: Agent["status"];
+}): Agent {
+  return {
+    ...createAgent(id),
+    status,
+  };
+}
+
 function createBaseInput(): AgentScreenMachineInput {
   return {
     agent: null,
@@ -355,6 +368,86 @@ describe("deriveAgentScreenViewState", () => {
 
     expect(handoffReady.source).toBe("stale");
     expect(handoffReady.agent.id).toBe("draft-agent");
+  });
+
+  it("keeps optimistic running status while authoritative agent is still bootstrapping", () => {
+    const memory = createBaseMemory();
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      agent: createAgentWithStatus({ id: "agent-1", status: "idle" }),
+      placeholderAgent: createAgent("agent-1"),
+      shouldUseOptimisticStream: true,
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+
+    expect(ready.source).toBe("optimistic");
+    expect(ready.agent.status).toBe("running");
+  });
+
+  it("keeps optimistic running status while authoritative agent is initializing", () => {
+    const memory = createBaseMemory();
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      agent: createAgentWithStatus({ id: "agent-1", status: "initializing" }),
+      placeholderAgent: createAgent("agent-1"),
+      shouldUseOptimisticStream: true,
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+
+    expect(ready.source).toBe("optimistic");
+    expect(ready.agent.status).toBe("running");
+  });
+
+  it("hands off to authoritative once agent reaches running", () => {
+    const memory = createBaseMemory();
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      agent: createAgentWithStatus({ id: "agent-1", status: "running" }),
+      placeholderAgent: createAgent("agent-1"),
+      shouldUseOptimisticStream: true,
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+
+    expect(ready.source).toBe("authoritative");
+    expect(ready.agent.status).toBe("running");
+  });
+
+  it("hands off to authoritative for terminal error states", () => {
+    const memory = createBaseMemory();
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      agent: createAgentWithStatus({ id: "agent-1", status: "error" }),
+      placeholderAgent: createAgent("agent-1"),
+      shouldUseOptimisticStream: true,
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+
+    expect(ready.source).toBe("authoritative");
+    expect(ready.agent.status).toBe("error");
+  });
+
+  it("hands off to authoritative for terminal closed states", () => {
+    const memory = createBaseMemory();
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      agent: createAgentWithStatus({ id: "agent-1", status: "closed" }),
+      placeholderAgent: createAgent("agent-1"),
+      shouldUseOptimisticStream: true,
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+
+    expect(ready.source).toBe("authoritative");
+    expect(ready.agent.status).toBe("closed");
   });
 
   it("emits history refresh toast only on transition into toast catch-up state", () => {

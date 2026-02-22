@@ -93,7 +93,17 @@ export function deriveAgentScreenViewState({
     nextMemory.hadInitialSyncFailure = true;
   }
 
-  const candidateAgent = input.agent ?? input.placeholderAgent;
+  const useOptimisticCreateFlowAgent =
+    input.shouldUseOptimisticStream &&
+    Boolean(input.placeholderAgent) &&
+    (!input.agent ||
+      input.agent.status === "initializing" ||
+      input.agent.status === "idle");
+
+  const candidateAgent =
+    input.agent && useOptimisticCreateFlowAgent && input.placeholderAgent
+      ? { ...input.agent, status: input.placeholderAgent.status }
+      : input.agent ?? input.placeholderAgent;
   if (candidateAgent) {
     nextMemory.hasRenderedReady = true;
     nextMemory.lastReadyAgent = candidateAgent;
@@ -132,11 +142,13 @@ export function deriveAgentScreenViewState({
     };
   }
 
-  const source: "authoritative" | "optimistic" | "stale" = input.agent
-    ? "authoritative"
-    : input.shouldUseOptimisticStream
-      ? "optimistic"
-      : "stale";
+  const source: "authoritative" | "optimistic" | "stale" = useOptimisticCreateFlowAgent
+    ? "optimistic"
+    : input.agent
+      ? "authoritative"
+      : input.shouldUseOptimisticStream
+        ? "optimistic"
+        : "stale";
 
   let sync: AgentScreenReadySyncState;
   if (!input.isConnected) {
