@@ -5,7 +5,7 @@ import {
   shouldShowDesktopUpdateSection,
   type DesktopAppUpdateCheckResult,
   type DesktopAppUpdateInstallResult,
-} from '@/utils/desktop-updates'
+} from '@/desktop/updates/desktop-updates'
 
 export type DesktopAppUpdateStatus =
   | 'idle'

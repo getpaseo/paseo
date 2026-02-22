@@ -1,6 +1,7 @@
 import { Platform } from 'react-native'
 import type { HostProfile } from '@/contexts/daemon-registry-context'
 import { getTauri } from '@/utils/tauri'
+import { invokeDesktopCommand } from '@/desktop/tauri/invoke-desktop-command'
 
 export interface DesktopAppUpdateCheckResult {
   hasUpdate: boolean
@@ -41,15 +42,6 @@ function toStringOrEmpty(value: unknown): string {
 
 function toNumberOr(defaultValue: number, value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : defaultValue
-}
-
-async function invokeDesktopCommand<T>(command: string): Promise<T> {
-  const invoke = getTauri()?.core?.invoke
-  if (typeof invoke !== 'function') {
-    throw new Error('Tauri invoke() is unavailable in this environment.')
-  }
-
-  return (await invoke(command)) as T
 }
 
 function isLikelyLocalDirectEndpoint(endpoint: string): boolean {
