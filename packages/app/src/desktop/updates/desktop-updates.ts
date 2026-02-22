@@ -140,14 +140,20 @@ export function findLikelyLocalDaemonHost(daemons: HostProfile[]): HostProfile |
     return null
   }
 
-  const localhostDaemon = daemons.find((daemon) =>
-    daemon.connections.some(
-      (connection) =>
-        connection.type === 'direct' && isLikelyLocalDirectEndpoint(connection.endpoint)
-    )
-  )
+  const localhostDaemon = daemons.find((daemon) => isLikelyLocalHost(daemon))
 
   return localhostDaemon ?? daemons[0] ?? null
+}
+
+export function isLikelyLocalHost(host: HostProfile | null | undefined): boolean {
+  if (!host) {
+    return false
+  }
+
+  return host.connections.some(
+    (connection) =>
+      connection.type === 'direct' && isLikelyLocalDirectEndpoint(connection.endpoint)
+  )
 }
 
 export function buildDaemonUpdateDiagnostics(result: LocalDaemonUpdateResult): string {

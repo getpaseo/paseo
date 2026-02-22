@@ -24,7 +24,7 @@ export function DesktopPermissionsSection() {
   return (
     <View style={styles.section}>
       <View style={styles.permissionSectionHeader}>
-        <Text style={styles.sectionTitle}>Desktop permissions</Text>
+        <Text style={styles.sectionTitle}>Desktop Permissions</Text>
         <Pressable
           style={({ pressed }) => [
             styles.permissionRefreshButton,

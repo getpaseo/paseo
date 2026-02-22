@@ -12,6 +12,7 @@ import {
   buildDaemonUpdateDiagnostics,
   findLikelyLocalDaemonHost,
   formatVersionWithPrefix,
+  isLikelyLocalHost,
   isVersionMismatch,
   runLocalDaemonUpdate,
   shouldShowDesktopUpdateSection,
@@ -32,6 +33,7 @@ export function DesktopUpdatesSection({ appVersion }: DesktopUpdatesSectionProps
 
   const appVersionText = formatVersionWithPrefix(appVersion);
   const localDaemonHost = useMemo(() => findLikelyLocalDaemonHost(daemons), [daemons]);
+  const hasLikelyLocalDaemon = isLikelyLocalHost(localDaemonHost);
   const localDaemonServerId = localDaemonHost?.serverId ?? null;
   const localDaemonVersion = useSessionStore(
     useCallback(
@@ -44,6 +46,14 @@ export function DesktopUpdatesSection({ appVersion }: DesktopUpdatesSectionProps
   );
   const localDaemonVersionText = formatVersionWithPrefix(localDaemonVersion);
   const daemonVersionMismatch = isVersionMismatch(appVersion, localDaemonVersion);
+  const daemonVersionTitle = hasLikelyLocalDaemon
+    ? "Local daemon version"
+    : "Connected daemon version";
+  const daemonHostHint = localDaemonHost
+    ? hasLikelyLocalDaemon
+      ? `Connected host: ${localDaemonHost.label}`
+      : `No local daemon detected. Showing connected host: ${localDaemonHost.label}.`
+    : "No local daemon detected yet.";
 
   const {
     isDesktop: isDesktopUpdaterAvailable,
@@ -195,12 +205,8 @@ export function DesktopUpdatesSection({ appVersion }: DesktopUpdatesSectionProps
         </View>
         <View style={[styles.audioRow, styles.audioRowBorder]}>
           <View style={styles.audioRowContent}>
-            <Text style={styles.audioRowTitle}>Local daemon version</Text>
-            <Text style={styles.updateHintText}>
-              {localDaemonHost
-                ? `Connected host: ${localDaemonHost.label}`
-                : "No local daemon detected yet."}
-            </Text>
+            <Text style={styles.audioRowTitle}>{daemonVersionTitle}</Text>
+            <Text style={styles.updateHintText}>{daemonHostHint}</Text>
           </View>
           <Text style={styles.aboutValue}>{localDaemonVersionText}</Text>
         </View>

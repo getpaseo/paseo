@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import {
   checkDesktopAppUpdate,
+  formatVersionWithPrefix,
   installDesktopAppUpdate,
   shouldShowDesktopUpdateSection,
   type DesktopAppUpdateCheckResult,
@@ -57,7 +58,7 @@ function formatStatusText(input: {
 
   if (status === 'available') {
     if (availableUpdate?.latestVersion) {
-      return `Update available: ${availableUpdate.latestVersion}`
+      return `Update available: ${formatVersionWithPrefix(availableUpdate.latestVersion)}`
     }
     return 'An app update is available.'
   }
