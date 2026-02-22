@@ -1067,6 +1067,16 @@ export class VoiceAssistantWebSocketServer {
 
     const allStates = clientEntries.map((e) => e.state);
     const agent = this.agentManager.getAgent(params.agentId);
+    if (agent?.labels?.ui !== "true") {
+      this.logger.debug(
+        {
+          agentId: params.agentId,
+          labels: agent?.labels ?? null,
+        },
+        "Skipping attention notification for non-UI agent"
+      );
+      return;
+    }
     const notification = buildAgentAttentionNotificationPayload({
       reason: params.reason,
       serverId: this.serverId,

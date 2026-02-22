@@ -97,6 +97,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       getAgent: vi.fn(() => ({
         config: { title: null },
         cwd: "/tmp/worktree",
+        labels: { ui: "true" },
         timeline: [
           {
             type: "assistant_message",
@@ -125,5 +126,30 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
         },
       }
     );
+  });
+
+  it("skips push notifications for non-UI agents", () => {
+    const { server } = createServer({
+      getAgent: vi.fn(() => ({
+        config: { title: null },
+        cwd: "/tmp/worktree",
+        labels: {},
+        timeline: [
+          {
+            type: "assistant_message",
+            text: "Done.",
+          },
+        ],
+        pendingPermissions: new Map(),
+      })),
+    });
+
+    (server as any).broadcastAgentAttention({
+      agentId: "agent-2",
+      provider: "claude",
+      reason: "finished",
+    });
+
+    expect(pushMocks.sendPush).not.toHaveBeenCalled();
   });
 });
