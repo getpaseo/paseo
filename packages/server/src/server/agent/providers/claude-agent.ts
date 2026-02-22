@@ -65,6 +65,10 @@ import {
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;
+const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = [
+  "user",
+  "project",
+];
 
 type TurnState = "idle" | "foreground" | "autonomous";
 
@@ -118,6 +122,8 @@ type ForegroundTurnState = {
   queue: Pushable<AgentStreamEvent>;
 };
 
+type ClaudeModelFamily = "sonnet" | "opus" | "haiku";
+
 function normalizeClaudeModelLabel(model: ModelInfo): string {
   const fallback = model.displayName?.trim() || model.value;
   const prefix = model.description?.split(/[·•]/)[0]?.trim() || "";
@@ -136,6 +142,7 @@ function normalizeClaudeModelLabel(model: ModelInfo): string {
 type NormalizeClaudeRuntimeModelIdOptions = {
   runtimeModelId: string;
   supportedModelIds: ReadonlySet<string> | null;
+  supportedModelFamilyAliases?: ReadonlyMap<ClaudeModelFamily, string> | null;
   configuredModelId?: string | null;
   currentModelId?: string | null;
 };
@@ -159,6 +166,44 @@ function pickSupportedModelId(
   return supportedModelIds.has(normalizedCandidate) ? normalizedCandidate : null;
 }
 
+function inferClaudeModelFamilyFromText(
+  text: string | null | undefined
+): ClaudeModelFamily | null {
+  if (typeof text !== "string") {
+    return null;
+  }
+  const lowerText = text.toLowerCase();
+  if (lowerText.includes("sonnet")) {
+    return "sonnet";
+  }
+  if (lowerText.includes("opus")) {
+    return "opus";
+  }
+  if (lowerText.includes("haiku")) {
+    return "haiku";
+  }
+  return null;
+}
+
+function inferClaudeModelFamily(model: ModelInfo): ClaudeModelFamily | null {
+  const descriptionPrefix = model.description?.split(/[·•]/)[0]?.trim() || null;
+  return (
+    inferClaudeModelFamilyFromText(descriptionPrefix) ??
+    inferClaudeModelFamilyFromText(model.displayName) ??
+    inferClaudeModelFamilyFromText(model.value)
+  );
+}
+
+function pickFamilyAliasModelId(
+  familyAliases: ReadonlyMap<ClaudeModelFamily, string> | null | undefined,
+  family: ClaudeModelFamily
+): string | null {
+  if (!familyAliases) {
+    return null;
+  }
+  return normalizeModelIdCandidate(familyAliases.get(family) ?? null);
+}
+
 export function normalizeClaudeRuntimeModelId(
   options: NormalizeClaudeRuntimeModelIdOptions
 ): string {
@@ -172,27 +217,39 @@ export function normalizeClaudeRuntimeModelId(
     return runtimeModel;
   }
 
-  const lowerRuntimeModel = runtimeModel.toLowerCase();
-  if (lowerRuntimeModel.includes("sonnet")) {
+  const runtimeFamily = inferClaudeModelFamilyFromText(runtimeModel);
+  const familyAlias = runtimeFamily
+    ? pickFamilyAliasModelId(options.supportedModelFamilyAliases, runtimeFamily)
+    : null;
+  if (runtimeFamily === "sonnet") {
     const explicitSonnet = pickSupportedModelId(supportedModelIds, "sonnet");
     if (explicitSonnet) {
       return explicitSonnet;
+    }
+    if (familyAlias && supportedModelIds.has(familyAlias)) {
+      return familyAlias;
     }
     const defaultAlias = pickSupportedModelId(supportedModelIds, "default");
     if (defaultAlias) {
       return defaultAlias;
     }
   }
-  if (lowerRuntimeModel.includes("opus")) {
+  if (runtimeFamily === "opus") {
     const alias = pickSupportedModelId(supportedModelIds, "opus");
     if (alias) {
       return alias;
     }
+    if (familyAlias && supportedModelIds.has(familyAlias)) {
+      return familyAlias;
+    }
   }
-  if (lowerRuntimeModel.includes("haiku")) {
+  if (runtimeFamily === "haiku") {
     const alias = pickSupportedModelId(supportedModelIds, "haiku");
     if (alias) {
       return alias;
+    }
+    if (familyAlias && supportedModelIds.has(familyAlias)) {
+      return familyAlias;
     }
   }
 
@@ -214,6 +271,16 @@ export function normalizeClaudeRuntimeModelId(
   );
   if (currentModelId) {
     return currentModelId;
+  }
+
+  // If Claude reports a concrete family ID we can't map directly, prefer the
+  // provider default alias for unconfigured sessions so UI model/thinking state
+  // can still reconcile against the current model catalog.
+  const defaultAlias = pickSupportedModelId(supportedModelIds, "default");
+  const hasConfiguredModel = normalizeModelIdCandidate(options.configuredModelId) !== null;
+  const hasCurrentModel = normalizeModelIdCandidate(options.currentModelId) !== null;
+  if (runtimeFamily && defaultAlias && !hasConfiguredModel && !hasCurrentModel) {
+    return defaultAlias;
   }
 
   return runtimeModel;
@@ -1397,6 +1464,7 @@ export class ClaudeAgentClient implements AgentClient {
       cwd: options?.cwd ?? process.cwd(),
       permissionMode: "plan",
       includePartialMessages: false,
+      settingSources: CLAUDE_SETTING_SOURCES,
       ...(this.claudePath ? { pathToClaudeCodeExecutable: this.claudePath } : {}),
     };
 
@@ -1505,6 +1573,7 @@ class ClaudeAgentSession implements AgentSession {
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
   private selectableModelIds: Set<string> | null = null;
+  private selectableModelFamilyAliases: Map<ClaudeModelFamily, string> | null = null;
   private activeSidechains = new Map<string, SubAgentActivityState>();
   private compacting = false;
   private queryPumpPromise: Promise<void> | null = null;
@@ -2201,13 +2270,31 @@ class ClaudeAgentSession implements AgentSession {
   private async primeSelectableModelIds(query: Query): Promise<void> {
     try {
       const models = await query.supportedModels();
-      const ids = models
-        .map((model) => model.value?.trim())
-        .filter((id): id is string => typeof id === "string" && id.length > 0);
+      const ids: string[] = [];
+      const familyAliases = new Map<ClaudeModelFamily, string>();
+      for (const model of models) {
+        const modelId = normalizeModelIdCandidate(model.value);
+        if (!modelId) {
+          continue;
+        }
+        ids.push(modelId);
+        const family = inferClaudeModelFamily(model);
+        if (family && !familyAliases.has(family)) {
+          familyAliases.set(family, modelId);
+        }
+      }
       this.selectableModelIds = new Set(ids);
-      this.logger.debug({ modelIds: ids }, "Primed Claude selectable model IDs");
+      this.selectableModelFamilyAliases = familyAliases.size > 0 ? familyAliases : null;
+      this.logger.debug(
+        {
+          modelIds: ids,
+          modelFamilyAliases: Object.fromEntries(familyAliases),
+        },
+        "Primed Claude selectable model IDs"
+      );
     } catch (error) {
       this.selectableModelIds = null;
+      this.selectableModelFamilyAliases = null;
       this.logger.warn({ err: error }, "Failed to prime Claude selectable model IDs");
     }
   }
@@ -2295,7 +2382,7 @@ class ClaudeAgentSession implements AgentSession {
         preset: "claude_code",
         append: appendedSystemPrompt,
       },
-      settingSources: ["user", "project"],
+      settingSources: CLAUDE_SETTING_SOURCES,
       stderr: (data: string) => {
         this.logger.error({ stderr: data.trim() }, "Claude Agent SDK stderr");
       },
@@ -3511,6 +3598,7 @@ class ClaudeAgentSession implements AgentSession {
       const normalizedModel = normalizeClaudeRuntimeModelId({
         runtimeModelId: message.model,
         supportedModelIds: this.selectableModelIds,
+        supportedModelFamilyAliases: this.selectableModelFamilyAliases,
         configuredModelId: this.config.model ?? null,
         currentModelId: this.lastOptionsModel,
       });
