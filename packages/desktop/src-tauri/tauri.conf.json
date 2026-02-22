@@ -52,7 +52,7 @@
       "endpoints": [
         "https://github.com/getpaseo/paseo/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERDNjVEMDZGMUQ2MDhFMTgKUldRWWptQWRiOUJsM040L3ovSXQ0ZlhneDM1QkhDaTMxKzVkVTVWdE1USUw3OERmeEZNbFQrRUoK"
     }
   }
 }
