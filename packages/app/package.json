@@ -14,6 +14,7 @@
     "ios": "expo run:ios",
     "ios:release": "expo run:ios --configuration Release",
     "web": "expo start --web",
+    "web:tauri": "PASEO_WEB_PLATFORM=tauri expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -21,6 +22,7 @@
     "test:e2e:ui": "playwright test --ui",
     "build": "npm run build:web",
     "build:web": "expo export --platform web",
+    "build:web:tauri": "PASEO_WEB_PLATFORM=tauri expo export --platform web",
     "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app"
   },
   "dependencies": {
