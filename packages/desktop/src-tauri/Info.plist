@@ -7,9 +7,9 @@
     <key>CFBundleName</key>
     <string>Paseo</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.15</string>
+    <string>0.1.16</string>
     <key>CFBundleVersion</key>
-    <string>0.1.15</string>
+    <string>0.1.16</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Paseo needs access to your microphone for voice dictation and voice mode.</string>
   </dict>
