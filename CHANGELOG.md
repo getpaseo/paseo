@@ -2,20 +2,20 @@
 
 ## 0.1.16 - 2026-02-22
 ### Added
-- Added desktop Settings controls to update both the Paseo app and the local daemon.
-- Added support for provider thinking options and autonomous run handling.
+- Update the Paseo desktop app and local daemon directly from Settings.
+- Thinking/reasoning mode — agents can use extended thinking when the provider supports it.
+- Autonomous run mode — let agents keep working without manual approval at each step.
+- `paseo wait` now shows a snapshot of recent agent activity while you wait.
 
 ### Improved
-- Improved streaming performance and scroll stability to reduce UI churn during long runs.
-- Improved archive behavior by interrupting active agents before archive operations.
-- Improved agent title consistency across refreshes.
-- Improved desktop update/settings copy and labeling for clarity.
+- Smoother streaming with less UI flicker and scroll jumping during long agent runs.
+- Archiving an agent now stops it first instead of archiving a half-running session.
+- Agent titles no longer reset when refreshing.
 
 ### Fixed
-- Fixed duplicate user-message echoes by deduplicating with canonical message IDs.
-- Fixed app archive flow instability caused by hook-order issues.
-- Fixed startup crashes caused by the OpenCode SDK update.
-- Fixed noisy attention notifications from non-UI agent activity.
+- Fixed duplicate user messages appearing in the timeline.
+- Fixed a startup crash caused by an OpenCode SDK update.
+- Fixed spurious "needs attention" notifications from background agent activity.
 
 ## 0.1.15 - 2026-02-19
 ### Added
