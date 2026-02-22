@@ -597,14 +597,6 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     });
   }, [agentId, errorRecoveryPath, requestDirectoryListing, selectExplorerEntry]);
 
-  if (!agentExists) {
-    return (
-      <View style={styles.centerState}>
-        <Text style={styles.errorText}>Agent not found</Text>
-      </View>
-    );
-  }
-
   const handleTreeListScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       if (showDesktopWebScrollbar) {
@@ -622,6 +614,14 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     },
     [showDesktopWebScrollbar, treeScrollbarMetrics]
   );
+
+  if (!agentExists) {
+    return (
+      <View style={styles.centerState}>
+        <Text style={styles.errorText}>Agent not found</Text>
+      </View>
+    );
+  }
 
   return (
     <View

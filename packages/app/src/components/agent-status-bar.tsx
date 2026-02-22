@@ -38,17 +38,19 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
 
-  if (!agent) {
-    return null;
-  }
-
-  const canFetchModels = Boolean(client) && Boolean(agent.provider) && (IS_WEB || prefsOpen);
+  const canFetchModels =
+    Boolean(client) && Boolean(agent?.provider) && (IS_WEB || prefsOpen);
   const modelsQuery = useQuery({
-    queryKey: ["providerModels", serverId, agent.provider, agent.cwd],
+    queryKey: [
+      "providerModels",
+      serverId,
+      agent?.provider ?? "__missing_provider__",
+      agent?.cwd ?? "__missing_cwd__",
+    ],
     enabled: canFetchModels,
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      if (!client) {
+      if (!client || !agent) {
         throw new Error("Daemon client unavailable");
       }
       const payload = await client.listProviderModels(agent.provider, { cwd: agent.cwd });
@@ -61,7 +63,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   const models = modelsQuery.data ?? null;
 
   function handleModeChange(modeId: string) {
-    if (!client) {
+    if (!client || !agent) {
       return;
     }
     void client.setAgentMode(agentId, modeId).catch((error) => {
@@ -69,8 +71,8 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
     });
   }
 
-  const normalizedRuntimeModelId = normalizeModelId(agent.runtimeInfo?.model);
-  const normalizedConfiguredModelId = normalizeModelId(agent.model);
+  const normalizedRuntimeModelId = normalizeModelId(agent?.runtimeInfo?.model);
+  const normalizedConfiguredModelId = normalizeModelId(agent?.model);
   const preferredModelId = normalizedRuntimeModelId ?? normalizedConfiguredModelId;
   const selectedModel = useMemo(() => {
     if (!models || !preferredModelId) return null;
@@ -82,7 +84,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
 
   const thinkingOptions = selectedModel?.thinkingOptions ?? null;
   const explicitThinkingId =
-    agent.thinkingOptionId && agent.thinkingOptionId !== "default"
+    agent?.thinkingOptionId && agent.thinkingOptionId !== "default"
       ? agent.thinkingOptionId
       : null;
   const selectedThinkingId =
@@ -93,9 +95,13 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
     (selectedThinkingId === "default" ? "Model default" : selectedThinkingId ?? "auto");
 
   const displayMode =
-    agent.availableModes?.find((m) => m.id === agent.currentModeId)?.label ||
-    agent.currentModeId ||
+    agent?.availableModes?.find((m) => m.id === agent.currentModeId)?.label ||
+    agent?.currentModeId ||
     "default";
+
+  if (!agent) {
+    return null;
+  }
 
   return (
     <View style={[styles.container, IS_WEB && { marginBottom: -theme.spacing[1] }]}>

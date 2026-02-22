@@ -9,7 +9,7 @@ import {
   type SectionListRenderItem,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQueryClient } from "@tanstack/react-query";
@@ -79,6 +79,71 @@ function deriveDateSectionLabel(lastActivityAt: Date): string {
     return "This month";
   }
   return "Older";
+}
+
+interface AgentListRowProps {
+  agent: AggregatedAgent;
+  selectedAgentId?: string;
+  showCheckoutInfo: boolean;
+  onPress: (serverId: string, agentId: string) => void;
+  onLongPress: (agent: AggregatedAgent) => void;
+}
+
+function AgentListRow({
+  agent,
+  selectedAgentId,
+  showCheckoutInfo,
+  onPress,
+  onLongPress,
+}: AgentListRowProps) {
+  const timeAgo = formatTimeAgo(agent.lastActivityAt);
+  const agentKey = `${agent.serverId}:${agent.id}`;
+  const isSelected = selectedAgentId === agentKey;
+  const checkoutQuery = useCheckoutStatusCacheOnly({
+    serverId: agent.serverId,
+    cwd: agent.cwd,
+  });
+  const checkout = checkoutQuery.data ?? null;
+  const projectPath = showCheckoutInfo
+    ? deriveProjectPath(agent.cwd, checkout)
+    : agent.cwd;
+  const branchLabel = showCheckoutInfo ? deriveBranchLabel(checkout) : null;
+
+  return (
+    <Pressable
+      style={({ pressed, hovered }) => [
+        styles.agentItem,
+        isSelected && styles.agentItemSelected,
+        hovered && styles.agentItemHovered,
+        pressed && styles.agentItemPressed,
+      ]}
+      onPress={() => onPress(agent.serverId, agent.id)}
+      onLongPress={() => onLongPress(agent)}
+      testID={`agent-row-${agent.serverId}-${agent.id}`}
+    >
+      {({ hovered }) => (
+        <View style={styles.agentContent}>
+          <View style={styles.row}>
+            <AgentStatusDot status={agent.status} requiresAttention={agent.requiresAttention} />
+            <Text
+              style={[
+                styles.agentTitle,
+                (isSelected || hovered) && styles.agentTitleHighlighted,
+              ]}
+              numberOfLines={1}
+            >
+              {agent.title || "New agent"}
+            </Text>
+          </View>
+
+          <Text style={styles.secondaryRow} numberOfLines={1}>
+            {shortenPath(projectPath)}
+            {branchLabel ? ` · ${branchLabel}` : ""} · {timeAgo}
+          </Text>
+        </View>
+      )}
+    </Pressable>
+  );
 }
 
 export function AgentList({
@@ -187,66 +252,6 @@ export function AgentList({
     [queryClient, showCheckoutInfo]
   );
 
-  const AgentListRow = useCallback(
-    ({ agent }: { agent: AggregatedAgent }) => {
-      const timeAgo = formatTimeAgo(agent.lastActivityAt);
-      const agentKey = `${agent.serverId}:${agent.id}`;
-      const isSelected = selectedAgentId === agentKey;
-
-      const checkoutQuery = useCheckoutStatusCacheOnly({
-        serverId: agent.serverId,
-        cwd: agent.cwd,
-      });
-      const checkout = checkoutQuery.data ?? null;
-      const projectPath = showCheckoutInfo
-        ? deriveProjectPath(agent.cwd, checkout)
-        : agent.cwd;
-      const branchLabel = showCheckoutInfo ? deriveBranchLabel(checkout) : null;
-
-      return (
-        <Pressable
-          style={({ pressed, hovered }) => [
-            styles.agentItem,
-            isSelected && styles.agentItemSelected,
-            hovered && styles.agentItemHovered,
-            pressed && styles.agentItemPressed,
-          ]}
-          onPress={() => handleAgentPress(agent.serverId, agent.id)}
-          onLongPress={() => handleAgentLongPress(agent)}
-          testID={`agent-row-${agent.serverId}-${agent.id}`}
-        >
-          {({ hovered }) => (
-            <View style={styles.agentContent}>
-              <View style={styles.row}>
-                <AgentStatusDot status={agent.status} requiresAttention={agent.requiresAttention} />
-                <Text
-                  style={[
-                    styles.agentTitle,
-                    (isSelected || hovered) && styles.agentTitleHighlighted,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {agent.title || "New agent"}
-                </Text>
-              </View>
-
-              <Text style={styles.secondaryRow} numberOfLines={1}>
-                {shortenPath(projectPath)}
-                {branchLabel ? ` · ${branchLabel}` : ""} · {timeAgo}
-              </Text>
-            </View>
-          )}
-        </Pressable>
-      );
-    },
-    [
-      handleAgentLongPress,
-      handleAgentPress,
-      selectedAgentId,
-      showCheckoutInfo,
-    ]
-  );
-
   const sections = useMemo((): AgentListSection[] => {
     const order = ["Today", "Yesterday", "This week", "This month", "Older"] as const;
     const buckets = new Map<string, AggregatedAgent[]>();
@@ -269,7 +274,18 @@ export function AgentList({
   }, [agents]);
 
   const renderAgentItem: SectionListRenderItem<AggregatedAgent, AgentListSection> =
-    useCallback(({ item: agent }) => <AgentListRow agent={agent} />, [AgentListRow]);
+    useCallback(
+      ({ item: agent }) => (
+        <AgentListRow
+          agent={agent}
+          selectedAgentId={selectedAgentId}
+          showCheckoutInfo={showCheckoutInfo}
+          onPress={handleAgentPress}
+          onLongPress={handleAgentLongPress}
+        />
+      ),
+      [handleAgentLongPress, handleAgentPress, selectedAgentId, showCheckoutInfo]
+    );
 
   const renderSectionHeader = useCallback(
     ({ section }: { section: AgentListSection }) => (
