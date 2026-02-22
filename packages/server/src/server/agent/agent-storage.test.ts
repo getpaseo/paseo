@@ -36,6 +36,7 @@ function createManagedAgent(
   const config: AgentSessionConfig = {
     provider,
     cwd,
+    title: configOverrides.title,
     modeId: configOverrides.modeId ?? "plan",
     model: configOverrides.model ?? "gpt-5.1",
     extra: configOverrides.extra ?? { claude: { maxThinkingTokens: 1024 } },
@@ -118,6 +119,7 @@ describe("AgentStorage", () => {
         currentModeId: "coding",
         lifecycle: "idle",
         config: {
+          title: "Initial title",
           modeId: "coding",
           model: "gpt-5.1",
           systemPrompt: "Be terse and explicit.",
@@ -137,6 +139,7 @@ describe("AgentStorage", () => {
     expect(records).toHaveLength(1);
     const [record] = records;
     expect(record.provider).toBe("claude");
+    expect(record.config?.title).toBe("Initial title");
     expect(record.config?.modeId).toBe("coding");
     expect(record.config?.model).toBe("gpt-5.1");
     expect(record.config?.systemPrompt).toBe("Be terse and explicit.");

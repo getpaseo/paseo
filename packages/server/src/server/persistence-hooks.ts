@@ -54,7 +54,7 @@ export function buildConfigOverrides(
     modeId: record.lastModeId ?? record.config?.modeId ?? undefined,
     model: record.config?.model ?? undefined,
     thinkingOptionId: record.config?.thinkingOptionId ?? undefined,
-    title: record.title ?? undefined,
+    title: record.config?.title ?? undefined,
     extra: record.config?.extra ?? undefined,
     systemPrompt: record.config?.systemPrompt ?? undefined,
     mcpServers: record.config?.mcpServers ?? undefined,

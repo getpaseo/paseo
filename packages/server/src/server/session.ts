@@ -1725,7 +1725,6 @@ export class Session {
       }
 
       await this.agentStorage.applySnapshot(liveAgent, {
-        title: liveAgent.config.title ?? null,
         internal: liveAgent.internal,
       })
       archivedRecord = await this.agentStorage.get(agentId)
@@ -2397,7 +2396,17 @@ export class Session {
   private async handleCreateAgentRequest(
     msg: Extract<SessionInboundMessage, { type: 'create_agent_request' }>
   ): Promise<void> {
-    const { config, worktreeName, requestId, initialPrompt, outputSchema, git, images, labels } =
+    const {
+      config,
+      worktreeName,
+      requestId,
+      initialPrompt,
+      clientMessageId,
+      outputSchema,
+      git,
+      images,
+      labels,
+    } =
       msg
     this.sessionLogger.info(
       { cwd: config.cwd, provider: config.provider, worktreeName },
@@ -2432,7 +2441,7 @@ export class Session {
           await this.handleSendAgentMessage(
             snapshot.id,
             trimmedPrompt,
-            uuidv4(),
+            clientMessageId ?? uuidv4(),
             images,
             outputSchema ? { outputSchema } : undefined
           )

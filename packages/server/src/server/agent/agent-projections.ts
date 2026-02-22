@@ -138,6 +138,9 @@ function buildSerializableConfig(
   config: AgentSessionConfig
 ): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};
+  if (Object.prototype.hasOwnProperty.call(config, "title")) {
+    serializable.title = config.title ?? null;
+  }
   if (config.modeId) {
     serializable.modeId = config.modeId;
   }

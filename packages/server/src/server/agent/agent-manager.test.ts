@@ -408,6 +408,36 @@ describe("AgentManager", () => {
     expect(afterHydrate).toEqual(beforeReload);
   });
 
+  test("reloadAgentSession preserves current title when config title is unset", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-title-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000126",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+    await manager.setTitle(snapshot.id, "Generated title");
+
+    const beforeReload = await storage.get(snapshot.id);
+    expect(beforeReload?.title).toBe("Generated title");
+    expect(beforeReload?.config?.title).toBeUndefined();
+
+    await manager.reloadAgentSession(snapshot.id);
+
+    const afterReload = await storage.get(snapshot.id);
+    expect(afterReload?.title).toBe("Generated title");
+    expect(afterReload?.config?.title).toBeUndefined();
+  });
+
   test("reloadAgentSession cancels active run and resumes existing session once thread_started is observed", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-active-"));
     const storagePath = join(workdir, "agents");

@@ -1434,6 +1434,10 @@ export class AgentManager {
     if (this.agents.has(resolvedAgentId)) {
       throw new Error(`Agent with id ${resolvedAgentId} already exists`);
     }
+    const initialPersistedTitle = await this.resolveInitialPersistedTitle(
+      resolvedAgentId,
+      config
+    );
 
     const now = new Date();
     const initialTimeline = options?.timeline ? [...options.timeline] : [];
@@ -1494,7 +1498,7 @@ export class AgentManager {
     this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
     await this.refreshRuntimeInfo(managed);
     await this.persistSnapshot(managed, {
-      title: config.title ?? null,
+      title: initialPersistedTitle,
     });
     this.emitState(managed);
 
@@ -1504,6 +1508,20 @@ export class AgentManager {
     this.emitState(managed);
     this.startLiveEventPump(managed);
     return { ...managed };
+  }
+
+  private async resolveInitialPersistedTitle(
+    agentId: string,
+    config: AgentSessionConfig
+  ): Promise<string | null> {
+    const existing = await this.registry?.get(agentId);
+    if (existing) {
+      return existing.title ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "title")) {
+      return config.title ?? null;
+    }
+    return null;
   }
 
   private buildTimelineRowsFromItems(
