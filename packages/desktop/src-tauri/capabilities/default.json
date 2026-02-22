@@ -19,6 +19,7 @@
     "dialog:default",
     "notification:default",
     "opener:default",
+    "updater:default",
     "websocket:default"
   ]
 }
