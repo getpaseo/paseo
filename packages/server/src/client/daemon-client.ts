@@ -12,6 +12,7 @@ import {
 import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
+  ProjectPlacementPayload,
   AgentPermissionResolvedMessage,
   CreateAgentRequestMessage,
   FileDownloadTokenResponse,
@@ -202,6 +203,7 @@ export type CreateAgentRequestOptions = {
   provider?: AgentProvider
   cwd?: string
   initialPrompt?: string
+  clientMessageId?: string
   outputSchema?: Record<string, unknown>
   images?: CreateAgentRequestMessage['images']
   git?: GitSetupOptions
@@ -283,6 +285,11 @@ export type FetchAgentsOptions = Omit<FetchAgentsRequest, 'type' | 'requestId'> 
 }
 export type FetchAgentsEntry = FetchAgentsPayload['entries'][number]
 export type FetchAgentsPageInfo = FetchAgentsPayload['pageInfo']
+
+export type FetchAgentResult = {
+  agent: AgentSnapshotPayload
+  project: ProjectPlacementPayload | null
+}
 
 export type WaitForFinishResult = {
   status: 'idle' | 'error' | 'permission' | 'timeout'
@@ -1089,7 +1096,7 @@ export class DaemonClient {
     })
   }
 
-  async fetchAgent(agentId: string, requestId?: string): Promise<AgentSnapshotPayload | null> {
+  async fetchAgent(agentId: string, requestId?: string): Promise<FetchAgentResult | null> {
     const resolvedRequestId = this.createRequestId(requestId)
     const message = SessionInboundMessageSchema.parse({
       type: 'fetch_agent_request',
@@ -1114,7 +1121,10 @@ export class DaemonClient {
     if (payload.error) {
       throw new Error(payload.error)
     }
-    return payload.agent
+    if (!payload.agent) {
+      return null
+    }
+    return { agent: payload.agent, project: payload.project ?? null }
   }
 
   private resubscribeCheckoutDiffSubscriptions(): void {
@@ -1158,6 +1168,7 @@ export class DaemonClient {
       requestId,
       config,
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
+      ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
       ...(options.images && options.images.length > 0 ? { images: options.images } : {}),
       ...(options.git ? { git: options.git } : {}),
@@ -2316,9 +2327,9 @@ export class DaemonClient {
     predicate: (snapshot: AgentSnapshotPayload) => boolean,
     timeout = 60000
   ): Promise<AgentSnapshotPayload> {
-    const initial = await this.fetchAgent(agentId).catch(() => null)
-    if (initial && predicate(initial)) {
-      return initial
+    const initialResult = await this.fetchAgent(agentId).catch(() => null)
+    if (initialResult && predicate(initialResult.agent)) {
+      return initialResult.agent
     }
 
     const deadline = Date.now() + timeout
@@ -2374,8 +2385,8 @@ export class DaemonClient {
         }
         pollInFlight = true
         try {
-          const snapshot = await this.fetchAgent(agentId).catch(() => null)
-          maybeResolve(snapshot)
+          const result = await this.fetchAgent(agentId).catch(() => null)
+          maybeResolve(result?.agent ?? null)
         } finally {
           pollInFlight = false
         }

@@ -28,14 +28,13 @@ import {
   collectImageFilesFromClipboardData,
   filesToImageAttachments,
 } from '@/utils/image-attachments-from-files'
+import type { AttachmentMetadata } from '@/attachments/types'
+import { useAttachmentPreviewUrl } from '@/attachments/use-attachment-preview-url'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Shortcut } from '@/components/ui/shortcut'
 import type { MessageInputKeyboardActionKind } from '@/keyboard/actions'
 
-export interface ImageAttachment {
-  uri: string
-  mimeType: string
-}
+export type ImageAttachment = AttachmentMetadata
 
 export interface MessagePayload {
   text: string
@@ -109,6 +108,14 @@ type TextAreaHandle = {
     height?: string
     overflowY?: string
   } & Record<string, unknown>
+}
+
+function ImageAttachmentThumbnail({ image }: { image: ImageAttachment }) {
+  const uri = useAttachmentPreviewUrl(image)
+  if (!uri) {
+    return <View style={styles.imageThumbnailPlaceholder} />
+  }
+  return <Image source={{ uri }} style={styles.imageThumbnail} />
 }
 
 export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(function MessageInput(
@@ -636,14 +643,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
           <View style={styles.imagePreviewContainer} testID="message-input-image-preview">
             {images.map((image, index) => (
               <Pressable
-                key={`${image.uri}-${index}`}
+                key={`${image.id}-${index}`}
                 testID="message-input-image-pill"
                 style={styles.imagePill}
                 onPress={onRemoveImage ? () => onRemoveImage(index) : undefined}
               >
                 {({ hovered }) => (
                   <>
-                    <Image source={{ uri: image.uri }} style={styles.imageThumbnail} />
+                    <ImageAttachmentThumbnail image={image} />
                     {onRemoveImage && (
                       <View
                         style={[
@@ -893,6 +900,11 @@ const styles = StyleSheet.create(((theme: any) => ({
   imageThumbnail: {
     width: 48,
     height: 48,
+  },
+  imageThumbnailPlaceholder: {
+    width: 48,
+    height: 48,
+    backgroundColor: theme.colors.surface2,
   },
   removeImageButton: {
     position: 'absolute',

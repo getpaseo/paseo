@@ -1,3 +1,6 @@
+import type { AttachmentMetadata } from "@/attachments/types";
+import { persistAttachmentFromBlob } from "@/attachments/service";
+
 export interface ClipboardItemLike {
   kind?: string;
   type?: string;
@@ -8,23 +11,7 @@ export interface ClipboardDataLike {
   items?: ArrayLike<ClipboardItemLike> | null;
 }
 
-export interface ImageAttachmentFromFile {
-  uri: string;
-  mimeType: string;
-}
-
-function toBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  let binary = "";
-
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    const chunk = bytes.subarray(index, index + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-
-  return btoa(binary);
-}
+export type ImageAttachmentFromFile = AttachmentMetadata;
 
 export function collectImageFilesFromClipboardData(
   clipboardData?: ClipboardDataLike | null
@@ -54,14 +41,25 @@ export function collectImageFilesFromClipboardData(
 export async function filesToImageAttachments(
   files: readonly File[]
 ): Promise<ImageAttachmentFromFile[]> {
-  return Promise.all(
+  const attachments = await Promise.all(
     files.map(async (file) => {
-      const mimeType = file.type || "image/jpeg";
-      const base64 = toBase64(await file.arrayBuffer());
-      return {
-        uri: `data:${mimeType};base64,${base64}`,
-        mimeType,
-      };
+      try {
+        return await persistAttachmentFromBlob({
+          blob: file,
+          mimeType: file.type || "image/jpeg",
+          fileName: file.name,
+        });
+      } catch (error) {
+        console.error("[attachments] Failed to persist file attachment", {
+          fileName: file.name,
+          error,
+        });
+        return null;
+      }
     })
+  );
+
+  return attachments.filter(
+    (entry): entry is ImageAttachmentFromFile => entry !== null
   );
 }

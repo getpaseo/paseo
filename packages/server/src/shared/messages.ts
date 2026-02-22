@@ -491,7 +491,7 @@ export const FetchAgentsRequestMessageSchema = z.object({
     .optional(),
   page: z
     .object({
-      limit: z.number().int().positive().max(1000),
+      limit: z.number().int().positive().max(200),
       cursor: z.string().min(1).optional(),
     })
     .optional(),
@@ -578,6 +578,7 @@ export const CreateAgentRequestMessageSchema = z.object({
   config: AgentSessionConfigSchema,
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
+  clientMessageId: z.string().optional(),
   outputSchema: z.record(z.unknown()).optional(),
   images: z
     .array(
@@ -1469,6 +1470,7 @@ export const FetchAgentResponseMessageSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     agent: AgentSnapshotPayloadSchema.nullable(),
+    project: ProjectPlacementPayloadSchema.nullable().optional(),
     error: z.string().nullable(),
   }),
 })

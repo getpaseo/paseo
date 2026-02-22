@@ -75,6 +75,7 @@ import { openExternalUrl } from "@/utils/open-external-url";
 export type { InlinePathTarget } from "@/utils/inline-path";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
+import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 
 interface UserMessageProps {
   message: string;
@@ -306,6 +307,11 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     width: 48,
     height: 48,
   },
+  imageThumbnailPlaceholder: {
+    width: 48,
+    height: 48,
+    backgroundColor: theme.colors.surface1,
+  },
   copyButton: {
     alignSelf: "flex-end",
     padding: theme.spacing[1],
@@ -318,6 +324,18 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     opacity: 1,
   },
 }));
+
+function UserMessageAttachmentThumbnail({
+  image,
+}: {
+  image: UserMessageImageAttachment;
+}) {
+  const uri = useAttachmentPreviewUrl(image);
+  if (!uri) {
+    return <View style={userMessageStylesheet.imageThumbnailPlaceholder} />;
+  }
+  return <Image source={{ uri }} style={userMessageStylesheet.imageThumbnail} />;
+}
 
 export const UserMessage = memo(function UserMessage({
   message,
@@ -368,13 +386,10 @@ export const UserMessage = memo(function UserMessage({
             >
               {images.map((image, index) => (
                 <View
-                  key={`${image.uri}-${index}`}
+                  key={`${image.id}-${index}`}
                   style={userMessageStylesheet.imagePill}
                 >
-                  <Image
-                    source={{ uri: image.uri }}
-                    style={userMessageStylesheet.imageThumbnail}
-                  />
+                  <UserMessageAttachmentThumbnail image={image} />
                 </View>
               ))}
             </View>

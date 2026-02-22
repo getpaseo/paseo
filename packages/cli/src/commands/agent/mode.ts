@@ -65,8 +65,8 @@ export async function runModeCommand(
   let client: Awaited<ReturnType<typeof connectToDaemon>> | undefined
   try {
     client = await connectToDaemon({ host: options.host as string | undefined })
-    const agent = await client.fetchAgent(id)
-    if (!agent) {
+    const fetchResult = await client.fetchAgent(id)
+    if (!fetchResult) {
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `No agent found matching: ${id}`,
@@ -74,6 +74,7 @@ export async function runModeCommand(
       }
       throw error
     }
+    const agent = fetchResult.agent
     const resolvedId = agent.id
 
     if (options.list) {

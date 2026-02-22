@@ -134,7 +134,6 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
     isRevalidating,
     refreshAll,
   } = useSidebarAgentsList({
-    isOpen,
     serverId: activeServerId,
     selectedProjectFilterKeys,
   });

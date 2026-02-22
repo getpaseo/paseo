@@ -57,8 +57,8 @@ export async function runArchiveCommand(
   }
 
   try {
-    const agent = await client.fetchAgent(agentIdArg)
-    if (!agent) {
+    const fetchResult = await client.fetchAgent(agentIdArg)
+    if (!fetchResult) {
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `Agent not found: ${agentIdArg}`,
@@ -66,6 +66,7 @@ export async function runArchiveCommand(
       }
       throw error
     }
+    const agent = fetchResult.agent
     const agentId = agent.id
 
     // Check if agent is already archived

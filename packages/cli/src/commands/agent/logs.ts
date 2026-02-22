@@ -99,14 +99,14 @@ export async function runLogsCommand(
   }
 
   try {
-    const agent = await client.fetchAgent(id)
-    if (!agent) {
+    const fetchResult = await client.fetchAgent(id)
+    if (!fetchResult) {
       console.error(`Error: No agent found matching: ${id}`)
       console.error('Use `paseo ls` to list available agents')
       await client.close()
       process.exit(1)
     }
-    const resolvedId = agent.id
+    const resolvedId = fetchResult.agent.id
 
     // For follow mode, we stream events continuously
     if (options.follow) {

@@ -231,8 +231,8 @@ export async function runInspectCommand(
   }
 
   try {
-    const snapshot = await client.fetchAgent(agentIdArg)
-    if (!snapshot) {
+    const fetchResult = await client.fetchAgent(agentIdArg)
+    if (!fetchResult) {
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `Agent not found: ${agentIdArg}`,
@@ -243,7 +243,7 @@ export async function runInspectCommand(
 
     await client.close()
 
-    const inspectData = toInspectData(snapshot)
+    const inspectData = toInspectData(fetchResult.agent)
 
     return {
       type: 'list',

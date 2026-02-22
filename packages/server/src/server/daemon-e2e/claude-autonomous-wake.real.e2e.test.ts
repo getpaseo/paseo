@@ -545,8 +545,8 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
 
         const settled = await client.waitForFinish(agent.id, 20_000);
         expect(settled.status).toBe("idle");
-        const finalSnapshot = await client.fetchAgent(agent.id);
-        expect(finalSnapshot?.status).toBe("idle");
+        const finalResult = await client.fetchAgent(agent.id);
+        expect(finalResult?.agent.status).toBe("idle");
       } finally {
         await client.close();
         await daemon.close();
@@ -750,13 +750,13 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
           try {
             secondCompletion = await client.waitForFinish(agent.id, 20_000);
           } catch {
-            const atTimeout = await client.fetchAgent(agent.id);
+            const atTimeoutResult = await client.fetchAgent(agent.id);
             // eslint-disable-next-line no-console
             console.log(
               JSON.stringify({
                 cycle,
                 phase: "second_completion_timeout",
-                statusAtTimeout: atTimeout?.status ?? "unknown",
+                statusAtTimeout: atTimeoutResult?.agent.status ?? "unknown",
               })
             );
             secondCompletion = await client.waitForFinish(agent.id, 30_000);
@@ -830,12 +830,12 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         try {
           secondCompletion = await client.waitForFinish(agent.id, 20_000);
         } catch {
-          const atTimeout = await client.fetchAgent(agent.id);
+          const atTimeoutResult = await client.fetchAgent(agent.id);
           // eslint-disable-next-line no-console
           console.log(
             JSON.stringify({
               phase: "second_background_completion_timeout",
-              statusAtTimeout: atTimeout?.status ?? "unknown",
+              statusAtTimeout: atTimeoutResult?.agent.status ?? "unknown",
             })
           );
           secondCompletion = await client.waitForFinish(agent.id, 30_000);
@@ -995,9 +995,9 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
             error instanceof Error ? error : new Error(String(error ?? "wait_for_finish failed"));
         }
 
-        let afterWait = await client.fetchAgent(agent.id);
+        let afterWaitResult = await client.fetchAgent(agent.id);
         let cancelRecovered = true;
-        if (afterWait?.status === "running") {
+        if (afterWaitResult?.agent.status === "running") {
           await client.cancelAgent(agent.id);
           try {
             const afterCancel = await client.waitForFinish(agent.id, 15_000);
@@ -1005,12 +1005,13 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
           } catch {
             cancelRecovered = false;
           }
-          afterWait = await client.fetchAgent(agent.id);
+          afterWaitResult = await client.fetchAgent(agent.id);
         }
 
         expect(waitError).toBeNull();
         expect(cancelRecovered).toBe(true);
 
+        const afterWait = afterWaitResult?.agent ?? null;
         const sessionId =
           afterWait?.persistence?.sessionId ??
           afterWait?.runtimeInfo?.sessionId ??

@@ -5,7 +5,7 @@ import { mergePendingCreateImages } from "./pending-create-images";
 function userMessage(params: {
   id: string;
   text: string;
-  images?: Array<{ uri: string; mimeType: string }>;
+  images?: Array<{ id: string; storageType: "native-file"; storageKey: string; mimeType: string; createdAt: number }>;
 }): StreamItem {
   return {
     kind: "user_message",
@@ -16,25 +16,35 @@ function userMessage(params: {
   };
 }
 
+function buildImage(id: string) {
+  return [
+    {
+      id,
+      storageType: "native-file" as const,
+      storageKey: `/tmp/${id}.jpg`,
+      mimeType: "image/jpeg",
+      createdAt: Date.now(),
+    },
+  ];
+}
+
 describe("mergePendingCreateImages", () => {
   it("returns same reference when pending images are absent", () => {
     const streamItems = [userMessage({ id: "msg-1", text: "hello" })];
     const result = mergePendingCreateImages({
       streamItems,
-      messageId: "msg-1",
-      text: "hello",
+      clientMessageId: "msg-1",
       images: [],
     });
     expect(result).toBe(streamItems);
   });
 
-  it("merges images by messageId when the matched message has none", () => {
+  it("merges images by clientMessageId when matched message has none", () => {
     const streamItems = [userMessage({ id: "msg-1", text: "hello" })];
-    const images = [{ uri: "file:///tmp/image-1.jpg", mimeType: "image/jpeg" }];
+    const images = buildImage("image-1");
     const result = mergePendingCreateImages({
       streamItems,
-      messageId: "msg-1",
-      text: "hello",
+      clientMessageId: "msg-1",
       images,
     });
 
@@ -47,34 +57,27 @@ describe("mergePendingCreateImages", () => {
     expect(updated.images).toEqual(images);
   });
 
-  it("falls back to text matching when messageId does not match", () => {
+  it("does not merge when clientMessageId does not match", () => {
     const streamItems = [userMessage({ id: "msg-1", text: "same text" })];
-    const images = [{ uri: "file:///tmp/image-2.jpg", mimeType: "image/jpeg" }];
+    const images = buildImage("image-2");
     const result = mergePendingCreateImages({
       streamItems,
-      messageId: "missing-id",
-      text: "same text",
+      clientMessageId: "missing-id",
       images,
     });
 
-    const updated = result[0];
-    expect(updated?.kind).toBe("user_message");
-    if (updated?.kind !== "user_message") {
-      throw new Error("Expected user_message item");
-    }
-    expect(updated.images).toEqual(images);
+    expect(result).toBe(streamItems);
   });
 
   it("does not overwrite existing user message images", () => {
-    const existingImages = [{ uri: "file:///tmp/existing.jpg", mimeType: "image/jpeg" }];
+    const existingImages = buildImage("existing");
     const streamItems = [
       userMessage({ id: "msg-1", text: "hello", images: existingImages }),
     ];
     const result = mergePendingCreateImages({
       streamItems,
-      messageId: "msg-1",
-      text: "hello",
-      images: [{ uri: "file:///tmp/new.jpg", mimeType: "image/jpeg" }],
+      clientMessageId: "msg-1",
+      images: buildImage("new"),
     });
 
     expect(result).toBe(streamItems);

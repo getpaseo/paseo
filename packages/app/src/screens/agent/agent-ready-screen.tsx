@@ -77,7 +77,6 @@ import {
   derivePendingPermissionKey,
   normalizeAgentSnapshot,
 } from "@/utils/agent-snapshots";
-import { resolveProjectPlacement } from "@/utils/project-placement";
 import { mergePendingCreateImages } from "@/utils/pending-create-images";
 import { shouldClearAgentAttentionOnView } from "@/utils/agent-attention";
 import type { DaemonClient } from "@server/client/daemon-client";
@@ -424,9 +423,13 @@ function AgentScreenContent({
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
 
   const pendingCreate = useCreateFlowStore((state) => state.pending);
+  const markPendingCreateLifecycle = useCreateFlowStore(
+    (state) => state.markLifecycle
+  );
   const clearPendingCreate = useCreateFlowStore((state) => state.clear);
   const isPendingCreateForRoute =
     Boolean(pendingCreate) &&
+    pendingCreate?.lifecycle === "active" &&
     pendingCreate?.serverId === serverId &&
     pendingCreate?.agentId === resolvedAgentId;
 
@@ -624,7 +627,7 @@ function AgentScreenContent({
     return [
       {
         kind: "user_message",
-        id: pendingCreate.messageId,
+        id: pendingCreate.clientMessageId,
         text: pendingCreate.text,
         timestamp: new Date(pendingCreate.timestamp),
         ...(pendingCreate.images && pendingCreate.images.length > 0
@@ -725,7 +728,7 @@ function AgentScreenContent({
     const hasUserMessage = streamItems.some(
       (item) =>
         item.kind === "user_message" &&
-        (item.id === pendingCreate.messageId || item.text === pendingCreate.text)
+        item.id === pendingCreate.clientMessageId
     );
     if (agent && hasUserMessage) {
       if (
@@ -741,8 +744,7 @@ function AgentScreenContent({
 
           const merged = mergePendingCreateImages({
             streamItems: current,
-            messageId: pendingCreate.messageId,
-            text: pendingCreate.text,
+            clientMessageId: pendingCreate.clientMessageId,
             images: pendingCreate.images,
           });
           if (merged === current) {
@@ -754,12 +756,14 @@ function AgentScreenContent({
           return next;
         });
       }
+      markPendingCreateLifecycle("sent");
       clearPendingCreate();
     }
   }, [
     agent,
     clearPendingCreate,
     isPendingCreateForRoute,
+    markPendingCreateLifecycle,
     pendingCreate,
     resolvedAgentId,
     serverId,
@@ -827,24 +831,21 @@ function AgentScreenContent({
           .sessions[serverId]
           ?.agents.get(resolvedAgentId);
         if (!currentAgent && client) {
-          const snapshot = await client.fetchAgent(resolvedAgentId);
+          const result = await client.fetchAgent(resolvedAgentId);
           if (attemptToken !== initAttemptTokenRef.current) {
             return;
           }
-          if (!snapshot) {
+          if (!result) {
             setMissingAgentState({
               kind: "not_found",
               message: `Agent not found: ${resolvedAgentId}`,
             });
             return;
           }
-          const normalized = normalizeAgentSnapshot(snapshot, serverId);
+          const normalized = normalizeAgentSnapshot(result.agent, serverId);
           const hydrated = {
             ...normalized,
-            projectPlacement: resolveProjectPlacement({
-              projectPlacement: null,
-              cwd: normalized.cwd,
-            }),
+            projectPlacement: result.project,
           };
           setAgents(serverId, (prev) => {
             const next = new Map(prev);

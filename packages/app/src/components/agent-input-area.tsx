@@ -12,6 +12,7 @@ import { AgentStatusBar } from './agent-status-bar'
 import { useImageAttachmentPicker } from '@/hooks/use-image-attachment-picker'
 import { useSessionStore } from '@/stores/session-store'
 import { useDraftStore } from '@/stores/draft-store'
+import { buildDraftStoreKey } from '@/stores/draft-keys'
 import {
   MessageInput,
   type MessagePayload,
@@ -30,6 +31,11 @@ import { Shortcut } from '@/components/ui/shortcut'
 import { Autocomplete } from '@/components/ui/autocomplete'
 import { useAgentAutocomplete } from '@/hooks/use-agent-autocomplete'
 import { useHostRuntimeSession } from '@/runtime/host-runtime'
+import {
+  deleteAttachments,
+  persistAttachmentFromFileUri,
+} from '@/attachments/service'
+import { shouldSkipDraftPersist } from '@/components/agent-input-area.draft-persist-guard'
 
 type QueuedMessage = {
   id: string
@@ -40,6 +46,7 @@ type QueuedMessage = {
 interface AgentInputAreaProps {
   agentId: string
   serverId: string
+  draftId?: string
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean
@@ -60,6 +67,7 @@ const EMPTY_ARRAY: readonly QueuedMessage[] = []
 export function AgentInputArea({
   agentId,
   serverId,
+  draftId,
   onSubmitMessage,
   isSubmitLoading = false,
   blurOnSubmit = false,
@@ -89,8 +97,13 @@ export function AgentInputArea({
 
   const agent = useSessionStore((state) => state.sessions[serverId]?.agents?.get(agentId))
 
+  const draftStoreKey = buildDraftStoreKey({ serverId, agentId, draftId })
   const getDraftInput = useDraftStore((state) => state.getDraftInput)
+  const hydrateDraftInput = useDraftStore((state) => state.hydrateDraftInput)
   const saveDraftInput = useDraftStore((state) => state.saveDraftInput)
+  const clearDraftInput = useDraftStore((state) => state.clearDraftInput)
+  const beginDraftGeneration = useDraftStore((state) => state.beginDraftGeneration)
+  const isDraftGenerationCurrent = useDraftStore((state) => state.isDraftGenerationCurrent)
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId)
@@ -111,6 +124,8 @@ export function AgentInputArea({
   const [sendError, setSendError] = useState<string | null>(null)
   const lastHandledMessageInputActionRequestIdRef = useRef<number | null>(null)
   const messageInputRef = useRef<MessageInputRef>(null)
+  const draftGenerationRef = useRef(0)
+  const hydratedGenerationRef = useRef(0)
 
   const autocomplete = useAgentAutocomplete({
     userInput,
@@ -176,10 +191,10 @@ export function AgentInputArea({
         throw new Error('Host is not connected')
       }
 
-      const messageId = generateMessageId()
+      const clientMessageId = generateMessageId()
       const userMessage: StreamItem = {
         kind: 'user_message',
-        id: messageId,
+        id: clientMessageId,
         text,
         timestamp: new Date(),
         ...(images && images.length > 0 ? { images } : {}),
@@ -209,7 +224,7 @@ export function AgentInputArea({
 
       const imagesData = await encodeImages(images)
       await client.sendAgentMessage(agentId, text, {
-        messageId,
+        messageId: clientMessageId,
         ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
       })
     }
@@ -295,7 +310,7 @@ export function AgentInputArea({
     forceSend?: boolean
   ) {
     const trimmedMessage = message.trim()
-    if (!trimmedMessage) return
+    if (!trimmedMessage && !imageAttachments?.length) return
     // When the parent controls submission (e.g. draft agent creation), let it
     // decide what to do even if the socket is currently disconnected (so we
     // don't no-op and lose deterministic error handling in the UI/tests).
@@ -322,6 +337,7 @@ export function AgentInputArea({
 
     try {
       await submitMessage(trimmedMessage, imageAttachments)
+      clearDraftInput({ draftKey: draftStoreKey, lifecycle: 'sent' })
     } catch (error) {
       console.error('[AgentInput] Failed to send message:', error)
       // Restore input so the user never loses their message
@@ -353,15 +369,26 @@ export function AgentInputArea({
       return
     }
 
-    const newImages = result.assets.map((asset) => ({
-      uri: asset.uri,
-      mimeType: asset.mimeType || 'image/jpeg',
-    }))
+    const newImages = await Promise.all(
+      result.assets.map(async (asset) => {
+        return await persistAttachmentFromFileUri({
+          uri: asset.uri,
+          mimeType: asset.mimeType || 'image/jpeg',
+          fileName: asset.fileName ?? null,
+        })
+      })
+    )
     setSelectedImages((prev) => [...prev, ...newImages])
   }
 
   function handleRemoveImage(index: number) {
-    setSelectedImages((prev) => prev.filter((_, i) => i !== index))
+    setSelectedImages((prev) => {
+      const removed = prev[index]
+      if (removed) {
+        void deleteAttachments([removed])
+      }
+      return prev.filter((_, i) => i !== index)
+    })
   }
 
   useEffect(() => {
@@ -377,27 +404,72 @@ export function AgentInputArea({
     if (isControlled) {
       return
     }
-    const draft = getDraftInput(agentId)
-    if (!draft) {
-      setUserInput('')
-      setSelectedImages([])
-      return
-    }
+    const generation = beginDraftGeneration(draftStoreKey)
+    draftGenerationRef.current = generation
+    hydratedGenerationRef.current = 0
+    setUserInput('')
+    setSelectedImages([])
+    let cancelled = false
 
-    setUserInput(draft.text)
-    setSelectedImages(draft.images as ImageAttachment[])
-  }, [agentId, getDraftInput, isControlled])
+    void (async () => {
+      const draft = await hydrateDraftInput(draftStoreKey)
+      if (cancelled) {
+        return
+      }
+      if (!isDraftGenerationCurrent({ draftKey: draftStoreKey, generation })) {
+        return
+      }
+      if (!draft) {
+        hydratedGenerationRef.current = generation
+        return
+      }
+
+      setUserInput(draft.text)
+      setSelectedImages(draft.images)
+      hydratedGenerationRef.current = generation
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    beginDraftGeneration,
+    draftStoreKey,
+    hydrateDraftInput,
+    isControlled,
+    isDraftGenerationCurrent,
+    setUserInput,
+  ])
 
   // Persist drafts into the shared session store with change detection to avoid redundant work
   useEffect(() => {
-    const existing = getDraftInput(agentId)
+    const currentGeneration = draftGenerationRef.current
+    const isCurrentGeneration =
+      currentGeneration > 0
+        ? isDraftGenerationCurrent({ draftKey: draftStoreKey, generation: currentGeneration })
+        : true
+    if (
+      shouldSkipDraftPersist({
+        isControlled,
+        currentGeneration,
+        hydratedGeneration: hydratedGenerationRef.current,
+        isCurrentGeneration,
+      })
+    ) {
+      return
+    }
+
+    const existing = getDraftInput(draftStoreKey)
     const isSameText = existing?.text === userInput
-    const existingImages: ImageAttachment[] = (existing?.images ?? []) as ImageAttachment[]
+    const existingImages: ImageAttachment[] = existing?.images ?? []
     const isSameImages =
       existingImages.length === selectedImages.length &&
       existingImages.every((img, idx) => {
         return (
-          img.uri === selectedImages[idx]?.uri && img.mimeType === selectedImages[idx]?.mimeType
+          img.id === selectedImages[idx]?.id &&
+          img.mimeType === selectedImages[idx]?.mimeType &&
+          img.storageType === selectedImages[idx]?.storageType &&
+          img.storageKey === selectedImages[idx]?.storageKey
         )
       })
 
@@ -405,8 +477,28 @@ export function AgentInputArea({
       return
     }
 
-    saveDraftInput(agentId, { text: userInput, images: selectedImages })
-  }, [agentId, userInput, selectedImages, getDraftInput, saveDraftInput])
+    const hasContent = userInput.trim().length > 0 || selectedImages.length > 0
+    if (!hasContent) {
+      if (existing) {
+        clearDraftInput({ draftKey: draftStoreKey, lifecycle: 'abandoned' })
+      }
+      return
+    }
+
+    saveDraftInput({
+      draftKey: draftStoreKey,
+      draft: { text: userInput, images: selectedImages },
+    })
+  }, [
+    clearDraftInput,
+    draftStoreKey,
+    getDraftInput,
+    isControlled,
+    isDraftGenerationCurrent,
+    saveDraftInput,
+    selectedImages,
+    userInput,
+  ])
 
   // Keyboard-dispatched message-input actions are routed through store requests.
   useEffect(() => {

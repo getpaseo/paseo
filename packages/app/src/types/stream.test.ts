@@ -483,7 +483,13 @@ describe("stream reducer canonical tool calls", () => {
   it("preserves optimistic user message images when authoritative user message arrives", () => {
     const messageId = "msg-user-images";
     const optimisticImages = [
-      { uri: "file:///tmp/optimistic.jpg", mimeType: "image/jpeg" },
+      {
+        id: "att-optimistic",
+        mimeType: "image/jpeg",
+        storageType: "native-file" as const,
+        storageKey: "/tmp/optimistic.jpg",
+        createdAt: Date.now(),
+      },
     ];
     const initialState: StreamItem[] = [
       {

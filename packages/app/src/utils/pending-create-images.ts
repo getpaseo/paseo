@@ -2,15 +2,13 @@ import type { StreamItem, UserMessageImageAttachment } from "@/types/stream";
 
 type MergePendingCreateImagesParams = {
   streamItems: StreamItem[];
-  messageId: string;
-  text: string;
+  clientMessageId: string;
   images?: UserMessageImageAttachment[];
 };
 
 export function mergePendingCreateImages({
   streamItems,
-  messageId,
-  text,
+  clientMessageId,
   images,
 }: MergePendingCreateImagesParams): StreamItem[] {
   if (!images || images.length === 0) {
@@ -18,8 +16,7 @@ export function mergePendingCreateImages({
   }
 
   const targetIndex = streamItems.findIndex(
-    (item) =>
-      item.kind === "user_message" && (item.id === messageId || item.text === text)
+    (item) => item.kind === "user_message" && item.id === clientMessageId
   );
   if (targetIndex < 0) {
     return streamItems;

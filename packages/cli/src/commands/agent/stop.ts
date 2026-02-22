@@ -71,8 +71,8 @@ export async function runStopCommand(
       })
     } else if (id) {
       // Stop specific agent
-      const agent = await client.fetchAgent(id)
-      if (!agent) {
+      const fetchResult = await client.fetchAgent(id)
+      if (!fetchResult) {
         const error: CommandError = {
           code: 'AGENT_NOT_FOUND',
           message: `No agent found matching: ${id}`,
@@ -80,7 +80,7 @@ export async function runStopCommand(
         }
         throw error
       }
-      agents = [agent]
+      agents = [fetchResult.agent]
     }
 
     // Stop each agent

@@ -34,6 +34,7 @@ import { buildWorkingDirectorySuggestions } from '@/utils/working-directory-sugg
 import { useExplorerOpenGesture } from '@/hooks/use-explorer-open-gesture'
 import { useSessionStore } from '@/stores/session-store'
 import { useCreateFlowStore } from '@/stores/create-flow-store'
+import { generateDraftId } from '@/stores/draft-keys'
 import { getHostRuntimeStore, useHostRuntimeSession } from '@/runtime/host-runtime'
 import { ExplorerSidebarAnimationProvider } from '@/contexts/explorer-sidebar-animation-context'
 import { usePanelStore, type ExplorerCheckoutContext } from '@/stores/panel-store'
@@ -244,6 +245,7 @@ function DraftAgentScreenContent({
   )
   const tauriDragHandlers = useTauriDragHandlers()
   const isExplorerOpen = isMobile ? mobileView === 'file-explorer' : desktopFileExplorerOpen
+  const draftIdRef = useRef(generateDraftId())
 
   const [worktreeMode, setWorktreeMode] = useState<'none' | 'create' | 'attach'>('none')
   const [baseBranch, setBaseBranch] = useState('')
@@ -262,6 +264,7 @@ function DraftAgentScreenContent({
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null)
   const setPendingCreateAttempt = useCreateFlowStore((state) => state.setPending)
   const updatePendingAgentId = useCreateFlowStore((state) => state.updateAgentId)
+  const markPendingCreateLifecycle = useCreateFlowStore((state) => state.markLifecycle)
   const clearPendingCreateAttempt = useCreateFlowStore((state) => state.clear)
 
   useEffect(() => {
@@ -277,7 +280,7 @@ function DraftAgentScreenContent({
   }, [workingDirSearchQuery])
 
   type CreateAttempt = {
-    messageId: string
+    clientMessageId: string
     text: string
     timestamp: Date
     images?: UserMessageImageAttachment[]
@@ -832,7 +835,7 @@ function DraftAgentScreenContent({
     return [
       {
         kind: 'user_message',
-        id: machine.attempt.messageId,
+        id: machine.attempt.clientMessageId,
         text: machine.attempt.text,
         timestamp: machine.attempt.timestamp,
         ...(machine.attempt.images && machine.attempt.images.length > 0
@@ -972,15 +975,16 @@ function DraftAgentScreenContent({
         throw new Error('Host is not connected')
       }
       const attempt = {
-        messageId: generateMessageId(),
+        clientMessageId: generateMessageId(),
         text: trimmedPrompt,
         timestamp: new Date(),
         ...(images && images.length > 0 ? { images } : {}),
       }
       setPendingCreateAttempt({
+        draftId: draftIdRef.current,
         serverId: selectedServerId,
         agentId: null,
-        messageId: attempt.messageId,
+        clientMessageId: attempt.clientMessageId,
         text: attempt.text,
         timestamp: attempt.timestamp.getTime(),
         ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
@@ -1026,6 +1030,7 @@ function DraftAgentScreenContent({
           config,
           labels: { ui: 'true' },
           initialPrompt: trimmedPrompt,
+          clientMessageId: attempt.clientMessageId,
           ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
           git: gitOptions,
         })
@@ -1042,12 +1047,14 @@ function DraftAgentScreenContent({
           message: 'Failed to create agent',
         })
         onCreateFlowActiveChange?.(false)
+        markPendingCreateLifecycle('abandoned')
         clearPendingCreateAttempt()
         throw new Error('Failed to create agent')
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to create agent'
         dispatch({ type: 'CREATE_FAILED', message })
         onCreateFlowActiveChange?.(false)
+        markPendingCreateLifecycle('abandoned')
         clearPendingCreateAttempt()
         throw error // Re-throw so AgentInputArea knows it failed
       }
@@ -1073,6 +1080,7 @@ function DraftAgentScreenContent({
       createAgentClient,
       setPendingCreateAttempt,
       updatePendingAgentId,
+      markPendingCreateLifecycle,
       clearPendingCreateAttempt,
       workingDir,
       isAttachWorktree,
@@ -1324,6 +1332,7 @@ function DraftAgentScreenContent({
               autoFocus={machine.tag === 'draft'}
               onAddImages={handleAddImagesCallback}
               commandDraftConfig={draftCommandConfig}
+              draftId={draftIdRef.current}
             />
           </View>
         </View>

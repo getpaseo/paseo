@@ -79,8 +79,8 @@ export async function runAllowCommand(
   }
 
   try {
-    const agent = await client.fetchAgent(agentIdOrPrefix)
-    if (!agent) {
+    const fetchResult = await client.fetchAgent(agentIdOrPrefix)
+    if (!fetchResult) {
       await client.close()
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
@@ -89,6 +89,7 @@ export async function runAllowCommand(
       }
       throw error
     }
+    const agent = fetchResult.agent
     const resolvedAgentId = agent.id
 
     // Get pending permissions for this agent

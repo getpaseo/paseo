@@ -140,7 +140,7 @@ describe("daemon client E2E", () => {
     expect(ctx.client.isConnected).toBe(true);
 
     const agents = await ctx.client.fetchAgents();
-    expect(Array.isArray(agents)).toBe(true);
+    expect(Array.isArray(agents.entries)).toBe(true);
 
     const cwd = tmpCwd();
     const created = await ctx.client.createAgent({
@@ -218,10 +218,12 @@ describe("daemon client E2E", () => {
       const result = await ctx.client.archiveAgent(created.id);
       expect(result.archivedAt).toBeTruthy();
 
-      const archived = await ctx.client.fetchAgent(created.id);
-      expect(archived).not.toBeNull();
-      expect(archived?.archivedAt).toBeTruthy();
-      expect(archived?.status).not.toBe("running");
+      const archivedResult = await ctx.client.fetchAgent(created.id);
+      expect(archivedResult).not.toBeNull();
+      expect(archivedResult?.agent.archivedAt).toBeTruthy();
+      expect(archivedResult?.agent.status).not.toBe("running");
+      expect(archivedResult?.project).not.toBeNull();
+      expect(archivedResult?.project?.checkout.cwd).toBe(cwd);
 
       const runningAgents = await ctx.client.fetchAgents({
         filter: { includeArchived: true, statuses: ["running"] },
@@ -342,8 +344,10 @@ describe("daemon client E2E", () => {
       }),
     ]);
 
-    expect(Array.isArray(first)).toBe(true);
-    expect(Array.isArray(second)).toBe(true);
+    expect(first.requestId).toBe(firstRequestId);
+    expect(second.requestId).toBe(secondRequestId);
+    expect(Array.isArray(first.entries)).toBe(true);
+    expect(Array.isArray(second.entries)).toBe(true);
   }, 15000);
 
   test(
@@ -399,8 +403,8 @@ describe("daemon client E2E", () => {
 
       expect(agent.id).toBeTruthy();
       expect(agent.status).toBe("idle");
-      const fetched = await ctx.client.fetchAgent(agent.id);
-      expect(fetched?.id).toBe(agent.id);
+      const fetchedResult = await ctx.client.fetchAgent(agent.id);
+      expect(fetchedResult?.agent.id).toBe(agent.id);
 
       const agentUpdate = await agentUpdatePromise;
       expect(agentUpdate.payload.agent.id).toBe(agent.id);

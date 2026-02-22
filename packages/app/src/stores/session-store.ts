@@ -5,6 +5,7 @@ import type { useAudioPlayer } from "@/hooks/use-audio-player";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
+import type { AttachmentMetadata } from "@/attachments/types";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type {
   AgentPermissionResponse,
@@ -210,7 +211,10 @@ export interface SessionState {
   fileExplorer: Map<string, AgentFileExplorerState>;
 
   // Queued messages
-  queuedMessages: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>;
+  queuedMessages: Map<
+    string,
+    Array<{ id: string; text: string; images?: AttachmentMetadata[] }>
+  >;
 }
 
 // Global store state
@@ -278,7 +282,17 @@ interface SessionStoreActions {
   setFileExplorer: (serverId: string, state: Map<string, AgentFileExplorerState> | ((prev: Map<string, AgentFileExplorerState>) => Map<string, AgentFileExplorerState>)) => void;
 
   // Queued messages
-  setQueuedMessages: (serverId: string, value: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>> | ((prev: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>) => Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>)) => void;
+  setQueuedMessages: (
+    serverId: string,
+    value:
+      | Map<string, Array<{ id: string; text: string; images?: AttachmentMetadata[] }>>
+      | ((
+          prev: Map<
+            string,
+            Array<{ id: string; text: string; images?: AttachmentMetadata[] }>
+          >
+        ) => Map<string, Array<{ id: string; text: string; images?: AttachmentMetadata[] }>>)
+  ) => void;
 
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;

@@ -47,20 +47,32 @@ export function applyFetchedAgentDirectory(input: {
   serverId: string;
   entries: FetchAgentsEntry[];
 }): { agents: Map<string, Agent> } {
-  const { agents, pendingPermissions } = buildAgentDirectoryState(input);
+  const { agents: fetchedAgents, pendingPermissions } = buildAgentDirectoryState(input);
 
   const store = useSessionStore.getState();
 
-  store.setAgents(input.serverId, agents);
+  store.setAgents(input.serverId, (prev) => {
+    const merged = new Map(prev);
+    for (const [id, agent] of fetchedAgents) {
+      merged.set(id, agent);
+    }
+    return merged;
+  });
 
   const lastActivityByAgentId = new Map<string, Date>();
-  for (const agent of agents.values()) {
+  for (const agent of fetchedAgents.values()) {
     lastActivityByAgentId.set(agent.id, agent.lastActivityAt);
   }
   store.setAgentLastActivityBatch(lastActivityByAgentId);
 
-  store.setPendingPermissions(input.serverId, pendingPermissions);
+  store.setPendingPermissions(input.serverId, (prev) => {
+    const merged = new Map(prev);
+    for (const [key, entry] of pendingPermissions) {
+      merged.set(key, entry);
+    }
+    return merged;
+  });
   store.setInitializingAgents(input.serverId, new Map());
   store.setHasHydratedAgents(input.serverId, true);
-  return { agents };
+  return { agents: fetchedAgents };
 }

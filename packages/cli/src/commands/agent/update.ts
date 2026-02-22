@@ -127,8 +127,8 @@ export async function runUpdateCommand(
   }
 
   try {
-    const agent = await client.fetchAgent(agentIdArg)
-    if (!agent) {
+    const fetchResult = await client.fetchAgent(agentIdArg)
+    if (!fetchResult) {
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `Agent not found: ${agentIdArg}`,
@@ -136,15 +136,15 @@ export async function runUpdateCommand(
       }
       throw error
     }
-    const agentId = agent.id
+    const agentId = fetchResult.agent.id
 
     await client.updateAgent(agentId, {
       ...(name ? { name } : {}),
       ...(Object.keys(labels).length > 0 ? { labels } : {}),
     })
 
-    const updated = await client.fetchAgent(agentId)
-    if (!updated) {
+    const updatedResult = await client.fetchAgent(agentId)
+    if (!updatedResult) {
       throw new Error(`Agent not found after update: ${agentId}`)
     }
 
@@ -154,8 +154,8 @@ export async function runUpdateCommand(
       type: 'single',
       data: {
         agentId,
-        name: updated.title,
-        labels: formatLabels(updated.labels),
+        name: updatedResult.agent.title,
+        labels: formatLabels(updatedResult.agent.labels),
       },
       schema: updateSchema,
     }

@@ -1020,6 +1020,7 @@ export class HostRuntimeStore {
     const bootstrap = this.refreshAgentDirectory({
       serverId,
       subscribe: { subscriptionId: `app:${serverId}` },
+      page: { limit: 200 },
     })
       .then(() => undefined)
       .catch((error) => {
@@ -1094,6 +1095,7 @@ export class HostRuntimeStore {
     serverId: string;
     filter?: FetchAgentsOptions["filter"];
     subscribe?: FetchAgentsOptions["subscribe"];
+    page?: FetchAgentsOptions["page"];
   }): Promise<{
     agents: ReturnType<typeof applyFetchedAgentDirectory>["agents"];
     subscriptionId: string | null;
@@ -1113,6 +1115,7 @@ export class HostRuntimeStore {
       const payload = await client.fetchAgents({
         filter: input.filter ?? { labels: { ui: "true" } },
         ...(input.subscribe ? { subscribe: input.subscribe } : {}),
+        ...(input.page ? { page: input.page } : {}),
       });
       const agents = applyFetchedAgentDirectory({
         serverId: input.serverId,

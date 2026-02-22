@@ -3,6 +3,7 @@ import type {
   ToolCallDetail,
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentStreamEventPayload } from "@server/shared/messages";
+import type { AttachmentMetadata } from "@/attachments/types";
 import {
   extractTaskEntriesFromToolCall,
 } from "../utils/tool-call-parsers";
@@ -59,10 +60,7 @@ export type StreamItem =
   | ActivityLogItem
   | CompactionItem;
 
-export interface UserMessageImageAttachment {
-  uri: string;
-  mimeType: string;
-}
+export type UserMessageImageAttachment = AttachmentMetadata;
 
 export interface UserMessageItem {
   kind: "user_message";

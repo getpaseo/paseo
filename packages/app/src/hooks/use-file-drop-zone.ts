@@ -2,6 +2,10 @@ import { useState, useRef, useEffect } from "react";
 import { Platform } from "react-native";
 import type { ImageAttachment } from "@/components/message-input";
 import { getCurrentTauriWindow, getTauri } from "@/utils/tauri";
+import {
+  persistAttachmentFromBlob,
+  persistAttachmentFromFileUri,
+} from "@/attachments/service";
 
 interface UseFileDropZoneOptions {
   onFilesDropped: (files: ImageAttachment[]) => void;
@@ -66,34 +70,17 @@ function isImagePath(path: string): boolean {
   return getFileExtension(path) in IMAGE_MIME_BY_EXTENSION;
 }
 
-function filePathToImageAttachment(path: string): ImageAttachment {
+async function filePathToImageAttachment(path: string): Promise<ImageAttachment> {
   const extension = getFileExtension(path);
   const mimeType = IMAGE_MIME_BY_EXTENSION[extension] ?? "image/jpeg";
-  const convertFileSrc = getTauri()?.core?.convertFileSrc;
-  const uri =
-    typeof convertFileSrc === "function" ? convertFileSrc(path) : path;
-
-  return {
-    uri,
-    mimeType,
-  };
+  return await persistAttachmentFromFileUri({ uri: path, mimeType });
 }
 
 async function fileToImageAttachment(file: File): Promise<ImageAttachment> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        resolve({
-          uri: reader.result,
-          mimeType: file.type || "image/jpeg",
-        });
-      } else {
-        reject(new Error("Failed to read file as data URL"));
-      }
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
+  return await persistAttachmentFromBlob({
+    blob: file,
+    mimeType: file.type || "image/jpeg",
+    fileName: file.name,
   });
 }
 
@@ -177,8 +164,16 @@ export function useFileDropZone({
               return;
             }
 
-            const attachments = imagePaths.map(filePathToImageAttachment);
-            onFilesDroppedRef.current(attachments);
+            void Promise.all(imagePaths.map(filePathToImageAttachment))
+              .then((attachments) => {
+                if (attachments.length === 0) {
+                  return;
+                }
+                onFilesDroppedRef.current(attachments);
+              })
+              .catch((error) => {
+                console.error("[useFileDropZone] Failed to persist dropped files:", error);
+              });
           }
         );
 

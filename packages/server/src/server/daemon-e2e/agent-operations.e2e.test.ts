@@ -68,14 +68,14 @@ describe("daemon E2E", () => {
           limit: 200,
           projection: "projected",
         });
-        const refreshedState = await ctx.client.fetchAgent(agent.id);
+        const refreshedResult = await ctx.client.fetchAgent(agent.id);
 
         // Verify agent is still idle
-        expect(refreshedState?.status).toBe("idle");
+        expect(refreshedResult?.agent.status).toBe("idle");
 
         // CRITICAL: The timestamp should NOT have changed
         // Just opening/clicking an agent should not update its updatedAt
-        expect(refreshedState?.updatedAt).toBe(initialUpdatedAt);
+        expect(refreshedResult?.agent.updatedAt).toBe(initialUpdatedAt);
 
         // Also clear attention (what happens when opening an agent with notification)
         await ctx.client.clearAgentAttention(agent.id);
@@ -86,10 +86,10 @@ describe("daemon E2E", () => {
           limit: 200,
           projection: "projected",
         });
-        const stateAfterClear = await ctx.client.fetchAgent(agent.id);
+        const clearResult = await ctx.client.fetchAgent(agent.id);
 
         // Timestamp should STILL not have changed
-        expect(stateAfterClear?.updatedAt).toBe(initialUpdatedAt);
+        expect(clearResult?.agent.updatedAt).toBe(initialUpdatedAt);
 
         // Cleanup
         rmSync(cwd, { recursive: true, force: true });
@@ -341,7 +341,7 @@ describe("daemon E2E", () => {
 
         // Initially, there should be no agents (fresh session)
         const initialAgents = await ctx.client.fetchAgents();
-        expect(initialAgents).toHaveLength(0);
+        expect(initialAgents.entries).toHaveLength(0);
 
         // Create first agent
         const agent1 = await ctx.client.createAgent({
@@ -355,10 +355,10 @@ describe("daemon E2E", () => {
 
         // fetchAgents should now return 1 agent
         const afterFirst = await ctx.client.fetchAgents();
-        expect(afterFirst).toHaveLength(1);
-        expect(afterFirst[0].id).toBe(agent1.id);
+        expect(afterFirst.entries).toHaveLength(1);
+        expect(afterFirst.entries[0]?.agent.id).toBe(agent1.id);
         // Title may or may not be set depending on timing
-        expect(afterFirst[0].cwd).toBe(cwd1);
+        expect(afterFirst.entries[0]?.agent.cwd).toBe(cwd1);
 
         // Create second agent
         const agent2 = await ctx.client.createAgent({
@@ -372,15 +372,15 @@ describe("daemon E2E", () => {
 
         // fetchAgents should now return 2 agents
         const afterSecond = await ctx.client.fetchAgents();
-        expect(afterSecond).toHaveLength(2);
+        expect(afterSecond.entries).toHaveLength(2);
 
         // Verify both agents are present with correct IDs and states
-        const ids = afterSecond.map((a) => a.id);
+        const ids = afterSecond.entries.map((entry) => entry.agent.id);
         expect(ids).toContain(agent1.id);
         expect(ids).toContain(agent2.id);
 
-        const agent1State = afterSecond.find((a) => a.id === agent1.id);
-        const agent2State = afterSecond.find((a) => a.id === agent2.id);
+        const agent1State = afterSecond.entries.find((entry) => entry.agent.id === agent1.id)?.agent;
+        const agent2State = afterSecond.entries.find((entry) => entry.agent.id === agent2.id)?.agent;
 
         // Title may or may not be set depending on timing
         expect(agent1State?.cwd).toBe(cwd1);
@@ -395,12 +395,12 @@ describe("daemon E2E", () => {
 
         // fetchAgents should now return only 1 agent
         const afterDelete = await ctx.client.fetchAgents();
-        expect(afterDelete).toHaveLength(1);
-        expect(afterDelete[0].id).toBe(agent2.id);
-        expect(afterDelete[0].cwd).toBe(cwd2);
+        expect(afterDelete.entries).toHaveLength(1);
+        expect(afterDelete.entries[0]?.agent.id).toBe(agent2.id);
+        expect(afterDelete.entries[0]?.agent.cwd).toBe(cwd2);
 
         // Verify agent1 is no longer in the list
-        const deletedAgent = afterDelete.find((a) => a.id === agent1.id);
+        const deletedAgent = afterDelete.entries.find((entry) => entry.agent.id === agent1.id);
         expect(deletedAgent).toBeUndefined();
 
         // Cleanup

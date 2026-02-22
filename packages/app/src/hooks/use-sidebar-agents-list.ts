@@ -144,11 +144,9 @@ function toAggregatedAgent(params: {
 }
 
 export function useSidebarAgentsList(options?: {
-  isOpen?: boolean;
   serverId?: string | null;
   selectedProjectFilterKeys?: string[];
 }): SidebarAgentsListResult {
-  const isSidebarOpen = options?.isOpen ?? true;
   const { daemons } = useDaemonRegistry();
   const runtime = getHostRuntimeStore();
   const daemonLabelSignature = useMemo(
@@ -181,7 +179,7 @@ export function useSidebarAgentsList(options?: {
     [options?.selectedProjectFilterKeys]
   );
 
-  const isActive = Boolean(serverId && isSidebarOpen);
+  const isActive = Boolean(serverId);
   const liveAgents = useSessionStore((state) =>
     isActive && serverId ? state.sessions[serverId]?.agents ?? null : null
   );
@@ -309,7 +307,7 @@ export function useSidebarAgentsList(options?: {
     if (!isActive || !serverId || connectionStatus !== "online") {
       return;
     }
-    void runtime.refreshAgentDirectory({ serverId }).catch(() => undefined);
+    void runtime.refreshAgentDirectory({ serverId, page: { limit: 50 } }).catch(() => undefined);
   }, [connectionStatus, isActive, runtime, serverId]);
 
   const isDirectoryLoading =

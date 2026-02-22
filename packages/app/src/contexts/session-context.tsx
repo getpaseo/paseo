@@ -42,6 +42,8 @@ import {
   normalizeAgentSnapshot,
 } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
+import type { AttachmentMetadata } from "@/attachments/types";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -259,7 +261,7 @@ function SessionProviderInternal({
     | ((
         agentId: string,
         message: string,
-        images?: Array<{ uri: string; mimeType?: string }>
+        images?: AttachmentMetadata[]
       ) => Promise<void>)
     | null
   >(null);
@@ -1172,7 +1174,9 @@ function SessionProviderInternal({
       });
 
       // Remove draft input
-      clearDraftInput(agentId);
+      clearDraftInput({
+        draftKey: buildDraftStoreKey({ serverId, agentId }),
+      });
 
       setPendingPermissions(serverId, (prev) => {
         let changed = false;
@@ -1270,7 +1274,7 @@ function SessionProviderInternal({
     async (
       agentId: string,
       message: string,
-      images?: Array<{ uri: string; mimeType?: string }>
+      images?: AttachmentMetadata[]
     ) => {
       const messageId = generateMessageId();
       const userMessage: StreamItem = {
@@ -1385,7 +1389,7 @@ function SessionProviderInternal({
     }: {
       config: any;
       initialPrompt: string;
-      images?: Array<{ uri: string; mimeType?: string }>;
+      images?: AttachmentMetadata[];
       git?: any;
       worktreeName?: string;
       requestId?: string;

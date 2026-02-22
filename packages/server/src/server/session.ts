@@ -4926,6 +4926,22 @@ export class Session {
     }
   }
 
+  private getFetchAgentsSortValueFromAgent(
+    agent: AgentSnapshotPayload,
+    key: FetchAgentsRequestSort['key']
+  ): string | number | null {
+    switch (key) {
+      case 'status_priority':
+        return this.getStatusPriority(agent)
+      case 'created_at':
+        return Date.parse(agent.createdAt)
+      case 'updated_at':
+        return Date.parse(agent.updatedAt)
+      case 'title':
+        return agent.title?.toLocaleLowerCase() ?? ''
+    }
+  }
+
   private compareSortValues(left: string | number | null, right: string | number | null): number {
     if (left === right) {
       return 0
@@ -4942,21 +4958,21 @@ export class Session {
     return String(left).localeCompare(String(right))
   }
 
-  private compareFetchAgentsEntries(
-    left: FetchAgentsResponseEntry,
-    right: FetchAgentsResponseEntry,
+  private compareFetchAgentsAgents(
+    left: AgentSnapshotPayload,
+    right: AgentSnapshotPayload,
     sort: FetchAgentsRequestSort[]
   ): number {
     for (const spec of sort) {
-      const leftValue = this.getFetchAgentsSortValue(left, spec.key)
-      const rightValue = this.getFetchAgentsSortValue(right, spec.key)
+      const leftValue = this.getFetchAgentsSortValueFromAgent(left, spec.key)
+      const rightValue = this.getFetchAgentsSortValueFromAgent(right, spec.key)
       const base = this.compareSortValues(leftValue, rightValue)
       if (base === 0) {
         continue
       }
       return spec.direction === 'asc' ? base : -base
     }
-    return left.agent.id.localeCompare(right.agent.id)
+    return left.id.localeCompare(right.id)
   }
 
   private encodeFetchAgentsCursor(
@@ -5050,13 +5066,13 @@ export class Session {
     }
   }
 
-  private compareEntryWithCursor(
-    entry: FetchAgentsResponseEntry,
+  private compareAgentWithCursor(
+    agent: AgentSnapshotPayload,
     cursor: FetchAgentsCursor,
     sort: FetchAgentsRequestSort[]
   ): number {
     for (const spec of sort) {
-      const leftValue = this.getFetchAgentsSortValue(entry, spec.key)
+      const leftValue = this.getFetchAgentsSortValueFromAgent(agent, spec.key)
       const rightValue =
         cursor.values[spec.key] !== undefined ? (cursor.values[spec.key] ?? null) : null
       const base = this.compareSortValues(leftValue, rightValue)
@@ -5065,7 +5081,7 @@ export class Session {
       }
       return spec.direction === 'asc' ? base : -base
     }
-    return entry.agent.id.localeCompare(cursor.id)
+    return agent.id.localeCompare(cursor.id)
   }
 
   private async listFetchAgentsEntries(
@@ -5092,31 +5108,45 @@ export class Session {
       return placementPromise
     }
 
-    let entries = await Promise.all(
-      agents.map(async (agent) => ({
-        agent,
-        project: await getPlacement(agent.cwd),
-      }))
-    )
-    entries = entries.filter((entry) =>
-      this.matchesAgentFilter({
-        agent: entry.agent,
-        project: entry.project,
-        filter,
-      })
-    )
-
-    entries.sort((left, right) => this.compareFetchAgentsEntries(left, right, sort))
-
+    let candidates = [...agents]
+    candidates.sort((left, right) => this.compareFetchAgentsAgents(left, right, sort))
     const cursorToken = request.page?.cursor
     if (cursorToken) {
       const cursor = this.decodeFetchAgentsCursor(cursorToken, sort)
-      entries = entries.filter((entry) => this.compareEntryWithCursor(entry, cursor, sort) > 0)
+      candidates = candidates.filter((agent) => this.compareAgentWithCursor(agent, cursor, sort) > 0)
     }
 
-    const limit = request.page?.limit ?? entries.length
-    const pagedEntries = entries.slice(0, limit)
-    const hasMore = entries.length > limit
+    const limit = request.page?.limit ?? 200
+
+    const matchedEntries: FetchAgentsResponseEntry[] = []
+    const batchSize = 25
+    for (let start = 0; start < candidates.length && matchedEntries.length <= limit; start += batchSize) {
+      const batch = candidates.slice(start, start + batchSize)
+      const batchEntries = await Promise.all(
+        batch.map(async (agent) => ({
+          agent,
+          project: await getPlacement(agent.cwd),
+        }))
+      )
+      for (const entry of batchEntries) {
+        if (
+          !this.matchesAgentFilter({
+            agent: entry.agent,
+            project: entry.project,
+            filter,
+          })
+        ) {
+          continue
+        }
+        matchedEntries.push(entry)
+        if (matchedEntries.length > limit) {
+          break
+        }
+      }
+    }
+
+    const pagedEntries = matchedEntries.slice(0, limit)
+    const hasMore = matchedEntries.length > limit
     const nextCursor =
       hasMore && pagedEntries.length > 0
         ? this.encodeFetchAgentsCursor(pagedEntries[pagedEntries.length - 1], sort)
@@ -5197,7 +5227,7 @@ export class Session {
     if (!resolved.ok) {
       this.emit({
         type: 'fetch_agent_response',
-        payload: { requestId, agent: null, error: resolved.error },
+        payload: { requestId, agent: null, project: null, error: resolved.error },
       })
       return
     }
@@ -5206,14 +5236,20 @@ export class Session {
     if (!agent) {
       this.emit({
         type: 'fetch_agent_response',
-        payload: { requestId, agent: null, error: `Agent not found: ${resolved.agentId}` },
+        payload: {
+          requestId,
+          agent: null,
+          project: null,
+          error: `Agent not found: ${resolved.agentId}`,
+        },
       })
       return
     }
 
+    const project = await this.buildProjectPlacement(agent.cwd)
     this.emit({
       type: 'fetch_agent_response',
-      payload: { requestId, agent, error: null },
+      payload: { requestId, agent, project, error: null },
     })
   }
 

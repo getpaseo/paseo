@@ -99,9 +99,9 @@ describe("daemon E2E (real codex) - send while running recovery", () => {
           }
 
           await secondary.waitForFinish(agent.id, 120_000);
-          const finalSnapshot = await secondary.fetchAgent(agent.id);
-          if (finalSnapshot) {
-            applySnapshot(finalSnapshot);
+          const finalResult = await secondary.fetchAgent(agent.id);
+          if (finalResult) {
+            applySnapshot(finalResult.agent);
           }
 
           // Sending while running should clear processing even if reconnect misses the
