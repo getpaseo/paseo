@@ -1,4 +1,8 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::Serialize;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu};
@@ -51,6 +55,13 @@ struct AppUpdateInstallResult {
 struct LocalDaemonVersionResult {
     version: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AttachmentFileResult {
+    path: String,
+    byte_size: u64,
 }
 
 fn resolve_login_shell() -> String {
@@ -209,6 +220,223 @@ async fn install_app_update(app: AppHandle) -> Result<AppUpdateInstallResult, St
     })
 }
 
+fn resolve_attachment_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
+    let attachment_dir = app_data_dir.join("paseo-desktop-attachments");
+    fs::create_dir_all(&attachment_dir)
+        .map_err(|error| format!("Failed to create attachment directory: {error}"))?;
+    Ok(attachment_dir)
+}
+
+fn normalize_extension(extension: Option<String>) -> String {
+    let raw = extension
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('.')
+        .to_string();
+    if raw.is_empty() {
+        String::new()
+    } else {
+        format!(".{raw}")
+    }
+}
+
+fn validate_attachment_id(attachment_id: &str) -> Result<(), String> {
+    if attachment_id.is_empty() {
+        return Err("Attachment ID cannot be empty.".to_string());
+    }
+    if !attachment_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Err("Attachment ID contains invalid characters.".to_string());
+    }
+    Ok(())
+}
+
+fn clear_existing_attachment_files(
+    attachment_dir: &Path,
+    attachment_id: &str,
+) -> Result<(), String> {
+    let id_prefix = format!("{attachment_id}.");
+    let entries = fs::read_dir(attachment_dir)
+        .map_err(|error| format!("Failed to scan attachment directory: {error}"))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("Failed to read directory entry: {error}"))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if file_name == attachment_id || file_name.starts_with(&id_prefix) {
+            fs::remove_file(&path)
+                .map_err(|error| format!("Failed to remove prior attachment file: {error}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn build_attachment_path(attachment_dir: &Path, attachment_id: &str, extension: &str) -> PathBuf {
+    attachment_dir.join(format!("{attachment_id}{extension}"))
+}
+
+fn canonicalize_managed_attachment_path(
+    attachment_dir: &Path,
+    path: &str,
+) -> Result<PathBuf, String> {
+    let candidate = PathBuf::from(path);
+    if !candidate.exists() {
+        return Err(format!("Attachment file not found at path: {path}"));
+    }
+
+    let canonical_candidate = fs::canonicalize(&candidate)
+        .map_err(|error| format!("Failed to resolve attachment path: {error}"))?;
+    let canonical_dir = fs::canonicalize(attachment_dir)
+        .map_err(|error| format!("Failed to resolve attachment directory: {error}"))?;
+
+    if !canonical_candidate.starts_with(&canonical_dir) {
+        return Err("Attachment path is outside managed attachment directory.".to_string());
+    }
+
+    Ok(canonical_candidate)
+}
+
+#[tauri::command]
+async fn write_attachment_base64(
+    app: AppHandle,
+    attachment_id: String,
+    base64: String,
+    extension: Option<String>,
+) -> Result<AttachmentFileResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_attachment_id(&attachment_id)?;
+        let attachment_dir = resolve_attachment_dir(&app)?;
+        clear_existing_attachment_files(&attachment_dir, &attachment_id)?;
+        let normalized_extension = normalize_extension(extension);
+        let attachment_path =
+            build_attachment_path(&attachment_dir, &attachment_id, &normalized_extension);
+        let decoded_bytes = BASE64_STANDARD
+            .decode(base64.as_bytes())
+            .map_err(|error| format!("Failed to decode attachment base64: {error}"))?;
+        fs::write(&attachment_path, &decoded_bytes)
+            .map_err(|error| format!("Failed to write attachment file: {error}"))?;
+
+        Ok(AttachmentFileResult {
+            path: attachment_path.to_string_lossy().into_owned(),
+            byte_size: decoded_bytes.len() as u64,
+        })
+    })
+    .await
+    .map_err(|error| format!("Attachment write task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn copy_attachment_file(
+    app: AppHandle,
+    attachment_id: String,
+    source_path: String,
+    extension: Option<String>,
+) -> Result<AttachmentFileResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_attachment_id(&attachment_id)?;
+        let source = PathBuf::from(source_path);
+        if !source.exists() {
+            return Err("Source attachment file does not exist.".to_string());
+        }
+
+        let source_extension = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_string());
+        let normalized_extension = normalize_extension(extension.or(source_extension));
+        let attachment_dir = resolve_attachment_dir(&app)?;
+        clear_existing_attachment_files(&attachment_dir, &attachment_id)?;
+        let destination_path =
+            build_attachment_path(&attachment_dir, &attachment_id, &normalized_extension);
+        let copied_bytes = fs::copy(&source, &destination_path)
+            .map_err(|error| format!("Failed to copy attachment file: {error}"))?;
+
+        Ok(AttachmentFileResult {
+            path: destination_path.to_string_lossy().into_owned(),
+            byte_size: copied_bytes,
+        })
+    })
+    .await
+    .map_err(|error| format!("Attachment copy task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn read_file_base64(app: AppHandle, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let attachment_dir = resolve_attachment_dir(&app)?;
+        let attachment_path = canonicalize_managed_attachment_path(&attachment_dir, &path)?;
+        let bytes = fs::read(&attachment_path)
+            .map_err(|error| format!("Failed to read attachment file: {error}"))?;
+        Ok(BASE64_STANDARD.encode(bytes))
+    })
+    .await
+    .map_err(|error| format!("Attachment read task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn delete_attachment_file(app: AppHandle, path: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let attachment_dir = resolve_attachment_dir(&app)?;
+        let attachment_path = match canonicalize_managed_attachment_path(&attachment_dir, &path) {
+            Ok(path) => path,
+            Err(_) => return Ok(false),
+        };
+        fs::remove_file(&attachment_path)
+            .map_err(|error| format!("Failed to delete attachment file: {error}"))?;
+        Ok(true)
+    })
+    .await
+    .map_err(|error| format!("Attachment delete task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn garbage_collect_attachment_files(
+    app: AppHandle,
+    referenced_ids: Vec<String>,
+) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let attachment_dir = resolve_attachment_dir(&app)?;
+        let referenced = referenced_ids.into_iter().collect::<HashSet<String>>();
+        let mut deleted_count = 0_u64;
+
+        let entries = fs::read_dir(&attachment_dir)
+            .map_err(|error| format!("Failed to scan attachment directory: {error}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("Failed to read directory entry: {error}"))?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            let id = file_name.split('.').next().unwrap_or_default();
+            if id.is_empty() || referenced.contains(id) {
+                continue;
+            }
+
+            fs::remove_file(&path)
+                .map_err(|error| format!("Failed to delete stale attachment file: {error}"))?;
+            deleted_count += 1;
+        }
+
+        Ok(deleted_count)
+    })
+    .await
+    .map_err(|error| format!("Attachment GC task failed: {error}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -221,7 +449,12 @@ pub fn run() {
             get_local_daemon_version,
             run_local_daemon_update,
             check_app_update,
-            install_app_update
+            install_app_update,
+            write_attachment_base64,
+            copy_attachment_file,
+            read_file_base64,
+            delete_attachment_file,
+            garbage_collect_attachment_files
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
