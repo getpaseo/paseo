@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.16 - 2026-02-22
+### Added
+- Added desktop Settings controls to update both the Paseo app and the local daemon.
+- Added support for provider thinking options and autonomous run handling.
+
+### Improved
+- Improved streaming performance and scroll stability to reduce UI churn during long runs.
+- Improved archive behavior by interrupting active agents before archive operations.
+- Improved agent title consistency across refreshes.
+- Improved desktop update/settings copy and labeling for clarity.
+
+### Fixed
+- Fixed duplicate user-message echoes by deduplicating with canonical message IDs.
+- Fixed app archive flow instability caused by hook-order issues.
+- Fixed startup crashes caused by the OpenCode SDK update.
+- Fixed noisy attention notifications from non-UI agent activity.
+
 ## 0.1.15 - 2026-02-19
 ### Added
 - Added a public changelog page on the website so users can browse release notes.
