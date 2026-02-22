@@ -601,10 +601,8 @@ type SubAgentActionCandidate = {
   input: unknown;
 };
 
-const DEFAULT_PERMISSION_TIMEOUT_MS = 120_000;
 const MAX_SUB_AGENT_LOG_ENTRIES = 200;
 const MAX_SUB_AGENT_SUMMARY_CHARS = 160;
-
 function isMetadata(value: unknown): value is AgentMetadata {
   return typeof value === "object" && value !== null;
 }
@@ -1670,6 +1668,7 @@ class ClaudeAgentSession implements AgentSession {
       if (this.cancelCurrentTurn === requestCancel) {
         this.cancelCurrentTurn = null;
       }
+      this.rejectAllPendingPermissions(new Error("Permission request aborted"));
       this.cancelRun(run, {
         type: "turn_canceled",
         provider: "claude",
@@ -3612,19 +3611,6 @@ class ClaudeAgentSession implements AgentSession {
           }
         }
       };
-      const timeout = setTimeout(() => {
-        this.pendingPermissions.delete(requestId);
-        cleanup();
-        const error = new Error("Permission request timed out");
-        this.pushEvent({
-          type: "permission_resolved",
-          provider: "claude",
-          requestId,
-          resolution: { behavior: "deny", message: "timeout" },
-        });
-        reject(error);
-      }, DEFAULT_PERMISSION_TIMEOUT_MS);
-      cleanupFns.push(() => clearTimeout(timeout));
 
       const abortHandler = () => {
         this.pendingPermissions.delete(requestId);
