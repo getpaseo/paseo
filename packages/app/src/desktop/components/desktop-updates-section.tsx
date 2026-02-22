@@ -1,114 +1,53 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { Alert, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet } from "react-native-unistyles";
-import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { useSessionStore } from "@/stores/session-store";
-import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import {
   buildDaemonUpdateDiagnostics,
-  findLikelyLocalDaemonHost,
   formatVersionWithPrefix,
-  isLikelyLocalHost,
+  getLocalDaemonVersion,
   isVersionMismatch,
   runLocalDaemonUpdate,
   shouldShowDesktopUpdateSection,
 } from "@/desktop/updates/desktop-updates";
 
-export interface DesktopUpdatesSectionProps {
+export interface LocalDaemonSectionProps {
   appVersion: string | null;
 }
 
-export function DesktopUpdatesSection({ appVersion }: DesktopUpdatesSectionProps) {
-  const showDesktopUpdatesSection = shouldShowDesktopUpdateSection();
-  const { daemons } = useDaemonRegistry();
+export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
+  const showSection = shouldShowDesktopUpdateSection();
+  const [localDaemonVersion, setLocalDaemonVersion] = useState<string | null>(null);
+  const [localDaemonVersionError, setLocalDaemonVersionError] = useState<string | null>(null);
   const [isUpdatingLocalDaemon, setIsUpdatingLocalDaemon] = useState(false);
   const [localDaemonUpdateMessage, setLocalDaemonUpdateMessage] = useState<string | null>(null);
   const [localDaemonUpdateDiagnostics, setLocalDaemonUpdateDiagnostics] = useState<string | null>(
     null
   );
 
-  const appVersionText = formatVersionWithPrefix(appVersion);
-  const localDaemonHost = useMemo(() => findLikelyLocalDaemonHost(daemons), [daemons]);
-  const hasLikelyLocalDaemon = isLikelyLocalHost(localDaemonHost);
-  const localDaemonServerId = localDaemonHost?.serverId ?? null;
-  const localDaemonVersion = useSessionStore(
-    useCallback(
-      (state) =>
-        localDaemonServerId
-          ? (state.sessions[localDaemonServerId]?.serverInfo?.version ?? null)
-          : null,
-      [localDaemonServerId]
-    )
-  );
-  const localDaemonVersionText = formatVersionWithPrefix(localDaemonVersion);
-  const daemonVersionMismatch = isVersionMismatch(appVersion, localDaemonVersion);
-  const daemonVersionTitle = hasLikelyLocalDaemon
-    ? "Local daemon version"
-    : "Connected daemon version";
-  const daemonHostHint = localDaemonHost
-    ? hasLikelyLocalDaemon
-      ? `Connected host: ${localDaemonHost.label}`
-      : `No local daemon detected. Showing connected host: ${localDaemonHost.label}.`
-    : "No local daemon detected yet.";
-
-  const {
-    isDesktop: isDesktopUpdaterAvailable,
-    statusText: appUpdateStatusText,
-    availableUpdate,
-    errorMessage: appUpdateError,
-    isChecking: isCheckingAppUpdate,
-    isInstalling: isInstallingAppUpdate,
-    checkForUpdates,
-    installUpdate,
-  } = useDesktopAppUpdater();
-
   useFocusEffect(
     useCallback(() => {
-      if (!showDesktopUpdatesSection || !isDesktopUpdaterAvailable) {
+      if (!showSection) {
         return undefined;
       }
 
-      void checkForUpdates({ silent: true });
+      void getLocalDaemonVersion().then((result) => {
+        setLocalDaemonVersion(result.version);
+        setLocalDaemonVersionError(result.error);
+      });
       return undefined;
-    }, [checkForUpdates, isDesktopUpdaterAvailable, showDesktopUpdatesSection])
+    }, [showSection])
   );
 
-  const handleCheckForAppUpdates = useCallback(() => {
-    if (!showDesktopUpdatesSection || !isDesktopUpdaterAvailable) {
-      return;
-    }
-    void checkForUpdates();
-  }, [checkForUpdates, isDesktopUpdaterAvailable, showDesktopUpdatesSection]);
-
-  const handleInstallAppUpdate = useCallback(() => {
-    if (!showDesktopUpdatesSection || !isDesktopUpdaterAvailable) {
-      return;
-    }
-
-    void confirmDialog({
-      title: "Install desktop update",
-      message: "This updates Paseo on this computer.",
-      confirmLabel: "Install update",
-      cancelLabel: "Cancel",
-    })
-      .then((confirmed) => {
-        if (!confirmed) {
-          return;
-        }
-        void installUpdate();
-      })
-      .catch((error) => {
-        console.error("[Settings] Failed to open app update confirmation", error);
-        Alert.alert("Error", "Unable to open the update confirmation dialog.");
-      });
-  }, [installUpdate, isDesktopUpdaterAvailable, showDesktopUpdatesSection]);
+  const localDaemonVersionText = formatVersionWithPrefix(localDaemonVersion);
+  const daemonVersionMismatch = isVersionMismatch(appVersion, localDaemonVersion);
+  const daemonVersionHint = localDaemonVersionError ?? "Daemon installed on this computer.";
 
   const handleUpdateLocalDaemon = useCallback(() => {
-    if (!showDesktopUpdatesSection || !isDesktopUpdaterAvailable) {
+    if (!showSection) {
       return;
     }
     if (isUpdatingLocalDaemon) {
@@ -148,6 +87,11 @@ export function DesktopUpdatesSection({ appVersion }: DesktopUpdatesSectionProps
             if (result.stdout.trim().length > 0 || result.stderr.trim().length > 0) {
               setLocalDaemonUpdateDiagnostics(diagnostics);
             }
+
+            void getLocalDaemonVersion().then((versionResult) => {
+              setLocalDaemonVersion(versionResult.version);
+              setLocalDaemonVersionError(versionResult.error);
+            });
           })
           .catch((error) => {
             console.error("[Settings] Failed to update local daemon", error);
@@ -171,7 +115,7 @@ export function DesktopUpdatesSection({ appVersion }: DesktopUpdatesSectionProps
         console.error("[Settings] Failed to open daemon update confirmation", error);
         Alert.alert("Error", "Unable to open the daemon update confirmation dialog.");
       });
-  }, [isDesktopUpdaterAvailable, isUpdatingLocalDaemon, showDesktopUpdatesSection]);
+  }, [isUpdatingLocalDaemon, showSection]);
 
   const handleCopyDaemonDiagnostics = useCallback(() => {
     if (!localDaemonUpdateDiagnostics) {
@@ -188,82 +132,36 @@ export function DesktopUpdatesSection({ appVersion }: DesktopUpdatesSectionProps
       });
   }, [localDaemonUpdateDiagnostics]);
 
-  if (!showDesktopUpdatesSection) {
+  if (!showSection) {
     return null;
   }
 
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Updates</Text>
-      <View style={styles.audioCard}>
-        <View style={styles.audioRow}>
-          <View style={styles.audioRowContent}>
-            <Text style={styles.audioRowTitle}>Desktop app version</Text>
-            <Text style={styles.updateHintText}>Paseo installed on this computer.</Text>
+      <Text style={styles.sectionTitle}>Local daemon</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.rowContent}>
+            <Text style={styles.rowTitle}>Version</Text>
+            <Text style={styles.hintText}>{daemonVersionHint}</Text>
           </View>
-          <Text style={styles.aboutValue}>{appVersionText}</Text>
+          <Text style={styles.valueText}>{localDaemonVersionText}</Text>
         </View>
-        <View style={[styles.audioRow, styles.audioRowBorder]}>
-          <View style={styles.audioRowContent}>
-            <Text style={styles.audioRowTitle}>{daemonVersionTitle}</Text>
-            <Text style={styles.updateHintText}>{daemonHostHint}</Text>
-          </View>
-          <Text style={styles.aboutValue}>{localDaemonVersionText}</Text>
-        </View>
-        <View style={[styles.audioRow, styles.audioRowBorder]}>
-          <View style={styles.audioRowContent}>
-            <Text style={styles.audioRowTitle}>App update status</Text>
-            <Text style={styles.updateStatusText}>{appUpdateStatusText}</Text>
-            {availableUpdate?.latestVersion ? (
-              <Text style={styles.updateHintText}>
-                New version available: {formatVersionWithPrefix(availableUpdate.latestVersion)}
-              </Text>
-            ) : null}
-            {appUpdateError ? <Text style={styles.updateErrorText}>{appUpdateError}</Text> : null}
-          </View>
-          <View style={styles.updateActions}>
-            <Button
-              variant="secondary"
-              size="sm"
-              onPress={handleCheckForAppUpdates}
-              disabled={!isDesktopUpdaterAvailable || isCheckingAppUpdate || isInstallingAppUpdate}
-            >
-              {isCheckingAppUpdate ? "Checking..." : "Check for updates"}
-            </Button>
-            <Button
-              variant="default"
-              size="sm"
-              onPress={handleInstallAppUpdate}
-              disabled={
-                !isDesktopUpdaterAvailable ||
-                isCheckingAppUpdate ||
-                isInstallingAppUpdate ||
-                !availableUpdate
-              }
-            >
-              {isInstallingAppUpdate
-                ? "Installing..."
-                : availableUpdate?.latestVersion
-                  ? `Update to ${formatVersionWithPrefix(availableUpdate.latestVersion)}`
-                  : "Update app"}
-            </Button>
-          </View>
-        </View>
-        <View style={[styles.audioRow, styles.audioRowBorder]}>
-          <View style={styles.audioRowContent}>
-            <Text style={styles.audioRowTitle}>Update local daemon</Text>
-            <Text style={styles.updateHintText}>
+        <View style={[styles.row, styles.rowBorder]}>
+          <View style={styles.rowContent}>
+            <Text style={styles.rowTitle}>Update daemon</Text>
+            <Text style={styles.hintText}>
               Updates the daemon on this computer only. Requires a restart.
             </Text>
             {localDaemonUpdateMessage ? (
-              <Text style={styles.updateStatusText}>{localDaemonUpdateMessage}</Text>
+              <Text style={styles.statusText}>{localDaemonUpdateMessage}</Text>
             ) : null}
           </View>
           <Button
             variant="secondary"
             size="sm"
             onPress={handleUpdateLocalDaemon}
-            disabled={!isDesktopUpdaterAvailable || isUpdatingLocalDaemon}
+            disabled={isUpdatingLocalDaemon}
           >
             {isUpdatingLocalDaemon ? "Updating..." : "Update daemon"}
           </Button>
@@ -271,8 +169,8 @@ export function DesktopUpdatesSection({ appVersion }: DesktopUpdatesSectionProps
       </View>
 
       {daemonVersionMismatch ? (
-        <View style={styles.updateWarningCard}>
-          <Text style={styles.updateWarningText}>
+        <View style={styles.warningCard}>
+          <Text style={styles.warningText}>
             Desktop app and local daemon versions differ. Keep both on the same version to avoid
             stability issues or breaking changes.
           </Text>
@@ -280,14 +178,14 @@ export function DesktopUpdatesSection({ appVersion }: DesktopUpdatesSectionProps
       ) : null}
 
       {localDaemonUpdateDiagnostics ? (
-        <View style={styles.updateDiagnosticsCard}>
-          <View style={styles.updateDiagnosticsHeader}>
-            <Text style={styles.updateDiagnosticsTitle}>Daemon update diagnostics</Text>
+        <View style={styles.diagnosticsCard}>
+          <View style={styles.diagnosticsHeader}>
+            <Text style={styles.diagnosticsTitle}>Daemon update diagnostics</Text>
             <Button variant="secondary" size="sm" onPress={handleCopyDaemonDiagnostics}>
               Copy output
             </Button>
           </View>
-          <Text style={styles.updateDiagnosticsText} selectable>
+          <Text style={styles.diagnosticsText} selectable>
             {localDaemonUpdateDiagnostics}
           </Text>
         </View>
@@ -307,58 +205,48 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[3],
     marginLeft: theme.spacing[1],
   },
-  audioCard: {
+  card: {
     backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
     overflow: "hidden",
   },
-  audioRow: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: theme.spacing[4],
     paddingHorizontal: theme.spacing[4],
   },
-  audioRowBorder: {
+  rowBorder: {
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
   },
-  audioRowContent: {
+  rowContent: {
     flex: 1,
     marginRight: theme.spacing[3],
   },
-  audioRowTitle: {
+  rowTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
-  aboutValue: {
+  valueText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
-  updateHintText: {
+  hintText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginTop: 2,
   },
-  updateStatusText: {
+  statusText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[1],
   },
-  updateActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  updateErrorText: {
-    color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
-    marginTop: theme.spacing[1],
-  },
-  updateWarningCard: {
+  warningCard: {
     marginTop: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
@@ -367,11 +255,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
   },
-  updateWarningText: {
+  warningText: {
     color: theme.colors.palette.amber[500],
     fontSize: theme.fontSize.xs,
   },
-  updateDiagnosticsCard: {
+  diagnosticsCard: {
     marginTop: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
@@ -380,17 +268,17 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[3],
     gap: theme.spacing[2],
   },
-  updateDiagnosticsHeader: {
+  diagnosticsHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
   },
-  updateDiagnosticsTitle: {
+  diagnosticsTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
   },
-  updateDiagnosticsText: {
+  diagnosticsText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",

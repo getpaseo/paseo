@@ -1,51 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { HostProfile } from '@/contexts/daemon-registry-context'
 
 async function loadModuleForPlatform(platform: 'web' | 'ios' | 'android') {
   vi.resetModules()
   vi.doMock('react-native', () => ({ Platform: { OS: platform } }))
   return import('./desktop-updates')
-}
-
-function createHost(input: {
-  serverId: string
-  endpoint: string
-  type?: 'direct' | 'relay'
-}): HostProfile {
-  const now = new Date(0).toISOString()
-
-  if (input.type === 'relay') {
-    return {
-      serverId: input.serverId,
-      label: input.serverId,
-      connections: [
-        {
-          id: `${input.serverId}-relay`,
-          type: 'relay',
-          relayEndpoint: input.endpoint,
-          daemonPublicKeyB64: 'test-key',
-        },
-      ],
-      preferredConnectionId: `${input.serverId}-relay`,
-      createdAt: now,
-      updatedAt: now,
-    }
-  }
-
-  return {
-    serverId: input.serverId,
-    label: input.serverId,
-    connections: [
-      {
-        id: `${input.serverId}-direct`,
-        type: 'direct',
-        endpoint: input.endpoint,
-      },
-    ],
-    preferredConnectionId: `${input.serverId}-direct`,
-    createdAt: now,
-    updatedAt: now,
-  }
 }
 
 describe('desktop-updates helpers', () => {
@@ -79,20 +37,47 @@ describe('desktop-updates helpers', () => {
     expect(formatVersionWithPrefix(null)).toBe('\u2014')
   })
 
-  it('prefers localhost direct host when selecting local daemon', async () => {
-    const { findLikelyLocalDaemonHost } = await loadModuleForPlatform('web')
-    const remote = createHost({ serverId: 'remote', endpoint: '10.0.0.2:6767' })
-    const local = createHost({ serverId: 'local', endpoint: 'localhost:6767' })
+  it('parses valid local daemon version result', async () => {
+    const { parseLocalDaemonVersionResult } = await loadModuleForPlatform('web')
 
-    expect(findLikelyLocalDaemonHost([remote, local])?.serverId).toBe('local')
+    expect(parseLocalDaemonVersionResult({ version: '0.1.15', error: null })).toEqual({
+      version: '0.1.15',
+      error: null,
+    })
   })
 
-  it('falls back to first host when no localhost endpoint exists', async () => {
-    const { findLikelyLocalDaemonHost } = await loadModuleForPlatform('web')
-    const relay = createHost({ serverId: 'relay', endpoint: 'relay.paseo.sh:443', type: 'relay' })
-    const remote = createHost({ serverId: 'remote', endpoint: '10.0.0.2:6767' })
+  it('parses local daemon version error result', async () => {
+    const { parseLocalDaemonVersionResult } = await loadModuleForPlatform('web')
 
-    expect(findLikelyLocalDaemonHost([relay, remote])?.serverId).toBe('relay')
+    expect(
+      parseLocalDaemonVersionResult({ version: null, error: 'paseo command not found in PATH' })
+    ).toEqual({
+      version: null,
+      error: 'paseo command not found in PATH',
+    })
+  })
+
+  it('parses unexpected local daemon version result', async () => {
+    const { parseLocalDaemonVersionResult } = await loadModuleForPlatform('web')
+
+    expect(parseLocalDaemonVersionResult(null)).toEqual({
+      version: null,
+      error: 'Unexpected response from version check.',
+    })
+
+    expect(parseLocalDaemonVersionResult('not an object')).toEqual({
+      version: null,
+      error: 'Unexpected response from version check.',
+    })
+  })
+
+  it('trims whitespace in parsed version', async () => {
+    const { parseLocalDaemonVersionResult } = await loadModuleForPlatform('web')
+
+    expect(parseLocalDaemonVersionResult({ version: ' 0.1.15 ', error: null })).toEqual({
+      version: '0.1.15',
+      error: null,
+    })
   })
 
   it('builds copyable daemon update diagnostics', async () => {

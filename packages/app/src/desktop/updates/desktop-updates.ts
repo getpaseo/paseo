@@ -1,5 +1,4 @@
 import { Platform } from 'react-native'
-import type { HostProfile } from '@/contexts/daemon-registry-context'
 import { getTauri } from '@/utils/tauri'
 import { invokeDesktopCommand } from '@/desktop/tauri/invoke-desktop-command'
 
@@ -23,6 +22,11 @@ export interface LocalDaemonUpdateResult {
   stderr: string
 }
 
+export interface LocalDaemonVersionResult {
+  version: string | null
+  error: string | null
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -44,22 +48,24 @@ function toNumberOr(defaultValue: number, value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : defaultValue
 }
 
-function isLikelyLocalDirectEndpoint(endpoint: string): boolean {
-  const normalized = endpoint.trim().toLowerCase()
-  return (
-    normalized === 'localhost' ||
-    normalized.startsWith('localhost:') ||
-    normalized === '127.0.0.1' ||
-    normalized.startsWith('127.0.0.1:') ||
-    normalized === '::1' ||
-    normalized.startsWith('::1:') ||
-    normalized === '[::1]' ||
-    normalized.startsWith('[::1]:')
-  )
-}
-
 export function shouldShowDesktopUpdateSection(): boolean {
   return Platform.OS === 'web' && getTauri() !== null
+}
+
+export function parseLocalDaemonVersionResult(raw: unknown): LocalDaemonVersionResult {
+  if (!isRecord(raw)) {
+    return { version: null, error: 'Unexpected response from version check.' }
+  }
+
+  return {
+    version: toStringOrNull(raw.version),
+    error: toStringOrNull(raw.error),
+  }
+}
+
+export async function getLocalDaemonVersion(): Promise<LocalDaemonVersionResult> {
+  const result = await invokeDesktopCommand<unknown>('get_local_daemon_version')
+  return parseLocalDaemonVersionResult(result)
 }
 
 export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResult> {
@@ -133,27 +139,6 @@ export function formatVersionWithPrefix(version: string | null | undefined): str
   }
 
   return value.startsWith('v') ? value : `v${value}`
-}
-
-export function findLikelyLocalDaemonHost(daemons: HostProfile[]): HostProfile | null {
-  if (daemons.length === 0) {
-    return null
-  }
-
-  const localhostDaemon = daemons.find((daemon) => isLikelyLocalHost(daemon))
-
-  return localhostDaemon ?? daemons[0] ?? null
-}
-
-export function isLikelyLocalHost(host: HostProfile | null | undefined): boolean {
-  if (!host) {
-    return false
-  }
-
-  return host.connections.some(
-    (connection) =>
-      connection.type === 'direct' && isLikelyLocalDirectEndpoint(connection.endpoint)
-  )
 }
 
 export function buildDaemonUpdateDiagnostics(result: LocalDaemonUpdateResult): string {

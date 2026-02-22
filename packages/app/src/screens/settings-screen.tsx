@@ -9,7 +9,9 @@ import {
   Platform,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import Constants from "expo-constants";
+import appPackage from "../../package.json";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2 } from "lucide-react-native";
@@ -38,7 +40,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
-import { DesktopUpdatesSection } from "@/desktop/components/desktop-updates-section";
+import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
+import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
+import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -319,6 +323,21 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
+  aboutHintText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    marginTop: 2,
+  },
+  aboutErrorText: {
+    color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.xs,
+    marginTop: theme.spacing[1],
+  },
+  aboutUpdateActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
   // Empty state
   emptyCard: {
     backgroundColor: theme.colors.surface2,
@@ -367,6 +386,11 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 function resolveAppVersion(): string | null {
+  const packageVersion = appPackage?.version;
+  if (typeof packageVersion === "string" && packageVersion.trim().length > 0) {
+    return packageVersion.trim();
+  }
+
   const expoVersion = Constants.expoConfig?.version;
   if (typeof expoVersion === "string" && expoVersion.trim().length > 0) {
     return expoVersion.trim();
@@ -402,6 +426,100 @@ function formatVersionForDisplay(version: string | null | undefined): string {
   }
 
   return `v${value}`;
+}
+
+function DesktopAppUpdateRow() {
+  const {
+    isDesktop,
+    statusText,
+    availableUpdate,
+    errorMessage,
+    isChecking,
+    isInstalling,
+    checkForUpdates,
+    installUpdate,
+  } = useDesktopAppUpdater();
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isDesktop) {
+        return undefined;
+      }
+      void checkForUpdates({ silent: true });
+      return undefined;
+    }, [checkForUpdates, isDesktop])
+  );
+
+  const handleCheckForUpdates = useCallback(() => {
+    if (!isDesktop) {
+      return;
+    }
+    void checkForUpdates();
+  }, [checkForUpdates, isDesktop]);
+
+  const handleInstallUpdate = useCallback(() => {
+    if (!isDesktop) {
+      return;
+    }
+
+    void confirmDialog({
+      title: "Install desktop update",
+      message: "This updates Paseo on this computer.",
+      confirmLabel: "Install update",
+      cancelLabel: "Cancel",
+    })
+      .then((confirmed) => {
+        if (!confirmed) {
+          return;
+        }
+        void installUpdate();
+      })
+      .catch((error) => {
+        console.error("[Settings] Failed to open app update confirmation", error);
+        Alert.alert("Error", "Unable to open the update confirmation dialog.");
+      });
+  }, [installUpdate, isDesktop]);
+
+  if (!isDesktop) {
+    return null;
+  }
+
+  return (
+    <View style={[styles.audioRow, styles.audioRowBorder]}>
+      <View style={styles.audioRowContent}>
+        <Text style={styles.audioRowTitle}>App updates</Text>
+        <Text style={styles.aboutHintText}>{statusText}</Text>
+        {availableUpdate?.latestVersion ? (
+          <Text style={styles.aboutHintText}>
+            New version available: {formatVersionWithPrefix(availableUpdate.latestVersion)}
+          </Text>
+        ) : null}
+        {errorMessage ? <Text style={styles.aboutErrorText}>{errorMessage}</Text> : null}
+      </View>
+      <View style={styles.aboutUpdateActions}>
+        <Button
+          variant="secondary"
+          size="sm"
+          onPress={handleCheckForUpdates}
+          disabled={isChecking || isInstalling}
+        >
+          {isChecking ? "Checking..." : "Check"}
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          onPress={handleInstallUpdate}
+          disabled={isChecking || isInstalling || !availableUpdate}
+        >
+          {isInstalling
+            ? "Installing..."
+            : availableUpdate?.latestVersion
+              ? `Update to ${formatVersionWithPrefix(availableUpdate.latestVersion)}`
+              : "Update"}
+        </Button>
+      </View>
+    </View>
+  );
 }
 
 export default function SettingsScreen() {
@@ -791,7 +909,7 @@ export default function SettingsScreen() {
           </View>
 
           {isDesktop ? <DesktopPermissionsSection /> : null}
-          {isDesktop ? <DesktopUpdatesSection appVersion={appVersion} /> : null}
+          {isDesktop ? <LocalDaemonSection appVersion={appVersion} /> : null}
 
           {/* About */}
           <View style={styles.section}>
@@ -803,6 +921,7 @@ export default function SettingsScreen() {
                 </View>
                 <Text style={styles.aboutValue}>{appVersionText}</Text>
               </View>
+              {isDesktop ? <DesktopAppUpdateRow /> : null}
             </View>
           </View>
         </View>

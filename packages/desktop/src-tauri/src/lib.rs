@@ -46,12 +46,61 @@ struct AppUpdateInstallResult {
     message: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalDaemonVersionResult {
+    version: Option<String>,
+    error: Option<String>,
+}
+
 fn resolve_login_shell() -> String {
     std::env::var("SHELL")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "/bin/zsh".to_string())
+}
+
+fn execute_local_daemon_version(shell: &str) -> LocalDaemonVersionResult {
+    let script = r#"if command -v paseo >/dev/null 2>&1; then
+  paseo --version
+else
+  echo "paseo command not found in PATH" >&2
+  exit 127
+fi"#;
+
+    match Command::new(shell).arg("-lc").arg(script).output() {
+        Ok(output) => {
+            if output.status.success() {
+                let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if version.is_empty() {
+                    LocalDaemonVersionResult {
+                        version: None,
+                        error: Some("paseo --version returned empty output".to_string()),
+                    }
+                } else {
+                    LocalDaemonVersionResult {
+                        version: Some(version),
+                        error: None,
+                    }
+                }
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                LocalDaemonVersionResult {
+                    version: None,
+                    error: Some(if stderr.is_empty() {
+                        format!("paseo --version exited with code {}", output.status.code().unwrap_or(1))
+                    } else {
+                        stderr
+                    }),
+                }
+            }
+        }
+        Err(error) => LocalDaemonVersionResult {
+            version: None,
+            error: Some(format!("Failed to run version check: {error}")),
+        },
+    }
 }
 
 fn execute_local_daemon_update(shell: &str) -> DaemonUpdateCommandResult {
@@ -74,6 +123,17 @@ fi"#;
             stderr: format!("Failed to run daemon update command: {error}"),
         },
     }
+}
+
+#[tauri::command]
+async fn get_local_daemon_version() -> LocalDaemonVersionResult {
+    let shell = resolve_login_shell();
+    tauri::async_runtime::spawn_blocking(move || execute_local_daemon_version(&shell))
+        .await
+        .unwrap_or_else(|error| LocalDaemonVersionResult {
+            version: None,
+            error: Some(format!("Version check task failed: {error}")),
+        })
 }
 
 #[tauri::command]
@@ -158,6 +218,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_websocket::init())
         .invoke_handler(tauri::generate_handler![
+            get_local_daemon_version,
             run_local_daemon_update,
             check_app_update,
             install_app_update
