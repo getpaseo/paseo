@@ -1280,7 +1280,7 @@ function isMetadataOnlySdkMessage(message: SDKMessage): boolean {
   return isTaskNotificationUserContent(message.message?.content);
 }
 
-function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
+export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   const root = message as unknown as Record<string, unknown>;
   const messageType = readTrimmedString(root.type);
   const streamEvent = root.event as Record<string, unknown> | undefined;
@@ -2445,10 +2445,6 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private emitRunEvent(run: RunRecord, event: AgentStreamEvent): void {
-    this.logger.debug(
-      { runId: run.id, owner: run.owner, eventType: event.type },
-      "Claude run event dispatch"
-    );
     if (run.owner === "foreground" && run.queue) {
       run.queue.push(event);
       if (
@@ -2480,12 +2476,6 @@ class ClaudeAgentSession implements AgentSession {
       this.preReplayMetadataSeen = false;
     }
     this.transitionTurnStateFromActiveRuns(`run ${run.id} terminal`);
-    this.logDerivedSessionLifecycle("terminal_event");
-  }
-
-  private logDerivedSessionLifecycle(context: string): void {
-    const lifecycle = this.runTracker.deriveLifecycle(this.pendingPermissions.size);
-    this.logger.debug({ lifecycle, context }, "Claude session lifecycle derived");
   }
 
   private async transitionAutonomousToForeground(): Promise<void> {
@@ -2829,17 +2819,6 @@ class ClaudeAgentSession implements AgentSession {
       }
     }
 
-    this.logger.debug(
-      {
-        routeReason: route.reason,
-        runId: route.run?.id ?? null,
-        turnState: this.turnState,
-        metadataOnly,
-        identifiers,
-      },
-      "Claude query pump routing decision"
-    );
-
     const messageEvents = this.translateMessageToEvents(message, {
       suppressAssistantText: true,
       suppressReasoning: true,
@@ -2934,17 +2913,13 @@ class ClaudeAgentSession implements AgentSession {
       message.type === "tool_progress"
     ) {
       this.runTracker.transition(run, "streaming");
-      this.logDerivedSessionLifecycle("streaming_event");
       return;
     }
 
     if (message.type === "result") {
       this.runTracker.transition(run, "finalizing");
-      this.logDerivedSessionLifecycle("result_event");
       return;
     }
-
-    this.logDerivedSessionLifecycle("non_terminal_event");
   }
 
   private shouldSuppressLocalReplayActivity(message: SDKMessage): boolean {

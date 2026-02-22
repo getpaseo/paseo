@@ -3,7 +3,7 @@ import type { Logger } from "pino";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { AgentManager } from "../agent-manager.js";
-import { ClaudeAgentClient } from "./claude-agent.js";
+import { ClaudeAgentClient, readEventIdentifiers } from "./claude-agent.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 
 const sdkMocks = vi.hoisted(() => ({
@@ -325,13 +325,7 @@ describe("ClaudeAgentSession redesign invariants", () => {
     }
   });
 
-  test("extracts identifiers from fixture-driven protocol shape variants", async () => {
-    const spy = createSpyLogger();
-    const session = await createSessionWithLogger(spy.logger);
-    const internal = session as unknown as {
-      routeSdkMessageFromPump: (message: Record<string, unknown>) => void;
-    };
-
+  test("extracts identifiers from fixture-driven protocol shape variants", () => {
     const fixtures = [
       {
         name: "root identifiers take priority over nested variants",
@@ -406,23 +400,12 @@ describe("ClaudeAgentSession redesign invariants", () => {
       },
     ] as const;
 
-    try {
-      for (const fixture of fixtures) {
-        spy.debug.mockClear();
-        internal.routeSdkMessageFromPump(
-          fixture.message as unknown as Record<string, unknown>
-        );
-        const routingCall = spy.debug.mock.calls.find(
-          (args) => args[1] === "Claude query pump routing decision"
-        );
-        expect(routingCall).toBeDefined();
-        const payload = routingCall?.[0] as
-          | { identifiers?: Record<string, string | null> }
-          | undefined;
-        expect(payload?.identifiers).toEqual(fixture.expected);
-      }
-    } finally {
-      await session.close();
+    for (const fixture of fixtures) {
+      expect(
+        readEventIdentifiers(
+          fixture.message as unknown as Parameters<typeof readEventIdentifiers>[0]
+        )
+      ).toEqual(fixture.expected);
     }
   });
 
