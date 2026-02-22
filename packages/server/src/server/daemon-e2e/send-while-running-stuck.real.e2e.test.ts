@@ -41,7 +41,7 @@ describe("daemon E2E (real codex) - send while running recovery", () => {
           ...getFullAccessConfig("codex"),
         });
 
-        await primary.sendMessage(agent.id, "Run: sleep 30");
+        await primary.sendMessage(agent.id, "Run: sleep 5");
         await primary.waitForAgentUpsert(
           agent.id,
           (snapshot) => snapshot.status === "running",
@@ -64,9 +64,19 @@ describe("daemon E2E (real codex) - send while running recovery", () => {
         const reconnected = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
         try {
           await reconnected.connect();
-          await reconnected.fetchAgents({
-            subscribe: { subscriptionId: "reconnected" },
-          });
+          const applySnapshot = (
+            snapshot: Parameters<typeof applyAgentInputProcessingTransition>[0]["snapshot"]
+          ) => {
+            const next = applyAgentInputProcessingTransition({
+              snapshot,
+              currentIsProcessing: isProcessing,
+              previousIsRunning,
+              latestUpdatedAt,
+            });
+            isProcessing = next.isProcessing;
+            previousIsRunning = next.previousIsRunning;
+            latestUpdatedAt = next.latestUpdatedAt;
+          };
 
           reconnected.on("agent_update", (message) => {
             if (message.type !== "agent_update" || message.payload.kind !== "upsert") {
@@ -75,19 +85,24 @@ describe("daemon E2E (real codex) - send while running recovery", () => {
             if (message.payload.agent.id !== agent.id) {
               return;
             }
-
-            const next = applyAgentInputProcessingTransition({
-              snapshot: message.payload.agent,
-              currentIsProcessing: isProcessing,
-              previousIsRunning,
-              latestUpdatedAt,
-            });
-            isProcessing = next.isProcessing;
-            previousIsRunning = next.previousIsRunning;
-            latestUpdatedAt = next.latestUpdatedAt;
+            applySnapshot(message.payload.agent);
           });
 
+          const initial = await reconnected.fetchAgents({
+            subscribe: { subscriptionId: "reconnected" },
+          });
+          const hydratedSnapshot = initial.entries.find(
+            (candidate) => candidate.agent.id === agent.id
+          )?.agent;
+          if (hydratedSnapshot) {
+            applySnapshot(hydratedSnapshot);
+          }
+
           await secondary.waitForFinish(agent.id, 120_000);
+          const finalSnapshot = await secondary.fetchAgent(agent.id);
+          if (finalSnapshot) {
+            applySnapshot(finalSnapshot);
+          }
 
           // Sending while running should clear processing even if reconnect misses the
           // not-running -> running transition.

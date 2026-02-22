@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useSessionStore } from "@/stores/session-store";
+import { useHostRuntimeSession } from "@/runtime/host-runtime";
 import type { CheckoutPrStatusResponse } from "@server/shared/messages";
 
 const CHECKOUT_PR_STATUS_STALE_TIME = 20_000;
@@ -21,12 +21,7 @@ export function useCheckoutPrStatusQuery({
   cwd,
   enabled = true,
 }: UseCheckoutPrStatusQueryOptions) {
-  const client = useSessionStore(
-    (state) => state.sessions[serverId]?.client ?? null
-  );
-  const isConnected = useSessionStore(
-    (state) => state.sessions[serverId]?.connection.isConnected ?? false
-  );
+  const { client, isConnected } = useHostRuntimeSession(serverId);
 
   const query = useQuery({
     queryKey: checkoutPrStatusQueryKey(serverId, cwd),

@@ -1,4 +1,11 @@
-import { useCallback, useMemo, useState, useEffect, useRef } from "react";
+import {
+  useCallback,
+  useMemo,
+  useState,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { View, Pressable, Text, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -14,13 +21,13 @@ import { router, usePathname } from "expo-router";
 import { usePanelStore } from "@/stores/panel-store";
 import { SidebarAgentList } from "./sidebar-agent-list";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
-import { useSidebarAgentsGrouped } from "@/hooks/use-sidebar-agents-grouped";
+import { useSidebarAgentsList } from "@/hooks/use-sidebar-agents-list";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { useTauriDragHandlers, useTrafficLightPadding } from "@/utils/tauri-window";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { Combobox } from "@/components/ui/combobox";
 import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
@@ -57,7 +64,28 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
   const closeToAgent = usePanelStore((state) => state.closeToAgent);
   const pathname = usePathname();
   const { daemons } = useDaemonRegistry();
-  const { connectionStates } = useDaemonConnections();
+  const runtime = getHostRuntimeStore();
+  const runtimeConnectionStatusSignature = useSyncExternalStore(
+    (onStoreChange) => runtime.subscribeAll(onStoreChange),
+    () =>
+      daemons
+        .map(
+          (daemon) =>
+            `${daemon.serverId}:${
+              runtime.getSnapshot(daemon.serverId)?.connectionStatus ?? "connecting"
+            }`
+        )
+        .join("|"),
+    () =>
+      daemons
+        .map(
+          (daemon) =>
+            `${daemon.serverId}:${
+              runtime.getSnapshot(daemon.serverId)?.connectionStatus ?? "connecting"
+            }`
+        )
+        .join("|")
+  );
   const activeServerIdFromPath = useMemo(
     () => parseServerIdFromPathname(pathname),
     [pathname]
@@ -70,7 +98,7 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
     return trimmed && trimmed.length > 0 ? trimmed : activeServerId;
   }, [activeServerId, daemons]);
   const activeHostStatus = activeServerId
-    ? (connectionStates.get(activeServerId)?.status ?? "idle")
+    ? runtime.getSnapshot(activeServerId)?.connectionStatus ?? "connecting"
     : "idle";
   const activeHostStatusColor =
     activeHostStatus === "online"
@@ -84,32 +112,34 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
         id: daemon.serverId,
         label: daemon.label?.trim() || daemon.serverId,
         description: formatConnectionStatus(
-          connectionStates.get(daemon.serverId)?.status ?? "idle"
+          runtime.getSnapshot(daemon.serverId)?.connectionStatus ?? "connecting"
         ),
       })),
-    [connectionStates, daemons]
+    [daemons, runtime, runtimeConnectionStatusSignature]
   );
   const hostTriggerRef = useRef<View>(null);
   const [isHostPickerOpen, setIsHostPickerOpen] = useState(false);
 
   // Derive isOpen from the unified panel state
   const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
-  const [selectedProjectKeys, setSelectedProjectKeys] = useState<string[]>([]);
+  const [selectedProjectFilterKeys, setSelectedProjectFilterKeys] = useState<
+    string[]
+  >([]);
 
   const {
     entries,
-    projectOptions,
+    projectFilterOptions,
     hasMoreEntries,
     isInitialLoad,
     isRevalidating,
     refreshAll,
-  } = useSidebarAgentsGrouped({
+  } = useSidebarAgentsList({
     isOpen,
     serverId: activeServerId,
-    selectedProjectKeys,
+    selectedProjectFilterKeys,
   });
   useEffect(() => {
-    setSelectedProjectKeys([]);
+    setSelectedProjectFilterKeys([]);
   }, [activeServerId]);
   const {
     translateX,
@@ -372,10 +402,11 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
                 <SidebarAgentListSkeleton />
               ) : (
                 <SidebarAgentList
+                  isOpen={isOpen}
                   entries={entries}
-                  projectOptions={projectOptions}
-                  selectedProjectKeys={selectedProjectKeys}
-                  onSelectedProjectKeysChange={setSelectedProjectKeys}
+                  projectFilterOptions={projectFilterOptions}
+                  selectedProjectFilterKeys={selectedProjectFilterKeys}
+                  onSelectedProjectFilterKeysChange={setSelectedProjectFilterKeys}
                   isRefreshing={isManualRefresh && isRevalidating}
                   onRefresh={handleRefresh}
                   listFooterComponent={listFooterComponent}
@@ -498,10 +529,11 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
         <SidebarAgentListSkeleton />
       ) : (
         <SidebarAgentList
+          isOpen={isOpen}
           entries={entries}
-          projectOptions={projectOptions}
-          selectedProjectKeys={selectedProjectKeys}
-          onSelectedProjectKeysChange={setSelectedProjectKeys}
+          projectFilterOptions={projectFilterOptions}
+          selectedProjectFilterKeys={selectedProjectFilterKeys}
+          onSelectedProjectFilterKeysChange={setSelectedProjectFilterKeys}
           isRefreshing={isManualRefresh && isRevalidating}
           onRefresh={handleRefresh}
           listFooterComponent={listFooterComponent}

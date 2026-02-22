@@ -17,7 +17,7 @@ import Svg, {
 } from "react-native-svg";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import type { ListTerminalsResponse } from "@server/shared/messages";
-import { useSessionStore } from "@/stores/session-store";
+import { useHostRuntimeSession } from "@/runtime/host-runtime";
 import {
   hasPendingTerminalModifiers,
   normalizeTerminalTransportKey,
@@ -135,10 +135,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
 
   const queryClient = useQueryClient();
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
-  const isConnected = useSessionStore(
-    (state) => state.sessions[serverId]?.connection.isConnected ?? false
-  );
+  const { client, isConnected } = useHostRuntimeSession(serverId);
 
   const scopeKey = useMemo(() => terminalScopeKey({ serverId, cwd }), [serverId, cwd]);
   const terminalsQueryKey = useMemo(() => ["terminals", serverId, cwd] as const, [cwd, serverId]);

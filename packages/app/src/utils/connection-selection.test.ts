@@ -25,7 +25,7 @@ function probes(
 }
 
 describe("selectBestConnection", () => {
-  it("picks the available connection with lowest latency regardless of transport type", () => {
+  it("picks the available connection with lowest latency regardless of transport", () => {
     const candidates: ConnectionCandidate[] = [
       { connectionId: "direct:a", connection: makeDirect("direct:a", "a:6767") },
       {
@@ -36,10 +36,31 @@ describe("selectBestConnection", () => {
 
     const selected = selectBestConnection({
       candidates,
-      preferredConnectionId: "direct:a",
       probeByConnectionId: probes({
         "direct:a": { status: "available", latencyMs: 84 },
         "relay:b": { status: "available", latencyMs: 34 },
+      }),
+    });
+
+    expect(selected).toBe("relay:b");
+  });
+
+  it("picks the lowest-latency connection among mixed transport candidates", () => {
+    const candidates: ConnectionCandidate[] = [
+      { connectionId: "direct:a", connection: makeDirect("direct:a", "a:6767") },
+      { connectionId: "direct:c", connection: makeDirect("direct:c", "c:6767") },
+      {
+        connectionId: "relay:b",
+        connection: makeRelay("relay:b", "relay.example:443"),
+      },
+    ];
+
+    const selected = selectBestConnection({
+      candidates,
+      probeByConnectionId: probes({
+        "direct:a": { status: "available", latencyMs: 84 },
+        "direct:c": { status: "available", latencyMs: 41 },
+        "relay:b": { status: "available", latencyMs: 12 },
       }),
     });
 
@@ -58,7 +79,6 @@ describe("selectBestConnection", () => {
 
     const selected = selectBestConnection({
       candidates,
-      preferredConnectionId: "direct:a",
       probeByConnectionId: probes({
         "direct:a": { status: "pending", latencyMs: null },
         "relay:b": { status: "unavailable", latencyMs: null },
@@ -69,7 +89,7 @@ describe("selectBestConnection", () => {
     expect(selected).toBe("direct:c");
   });
 
-  it("falls back to preferred connection when no candidates are available", () => {
+  it("returns null when no candidates are available", () => {
     const candidates: ConnectionCandidate[] = [
       { connectionId: "direct:a", connection: makeDirect("direct:a", "a:6767") },
       {
@@ -80,17 +100,16 @@ describe("selectBestConnection", () => {
 
     const selected = selectBestConnection({
       candidates,
-      preferredConnectionId: "relay:b",
       probeByConnectionId: probes({
         "direct:a": { status: "pending", latencyMs: null },
         "relay:b": { status: "unavailable", latencyMs: null },
       }),
     });
 
-    expect(selected).toBe("relay:b");
+    expect(selected).toBeNull();
   });
 
-  it("falls back to first candidate when preferred is missing and none are available", () => {
+  it("returns null when no probes are available even if candidates exist", () => {
     const candidates: ConnectionCandidate[] = [
       { connectionId: "direct:a", connection: makeDirect("direct:a", "a:6767") },
       {
@@ -101,13 +120,12 @@ describe("selectBestConnection", () => {
 
     const selected = selectBestConnection({
       candidates,
-      preferredConnectionId: "missing",
       probeByConnectionId: probes({
         "direct:a": { status: "unavailable", latencyMs: null },
         "relay:b": { status: "pending", latencyMs: null },
       }),
     });
 
-    expect(selected).toBe("direct:a");
+    expect(selected).toBeNull();
   });
 });

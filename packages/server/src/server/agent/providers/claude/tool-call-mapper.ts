@@ -75,6 +75,8 @@ const ClaudeSearchToolNameSchema = z.union([
   z.literal("WebSearch"),
   z.literal("web_search"),
   z.literal("search"),
+  z.literal("Glob"),
+  z.literal("glob"),
 ]);
 const ClaudeSpeakToolNameSchema = z
   .string()

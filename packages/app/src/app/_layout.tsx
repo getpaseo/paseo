@@ -13,7 +13,6 @@ import { View, ActivityIndicator, Text } from "react-native";
 import { UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { darkTheme } from "@/styles/theme";
 import { DaemonRegistryProvider, useDaemonRegistry } from "@/contexts/daemon-registry-context";
-import { DaemonConnectionsProvider, useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { MultiDaemonSessionHost } from "@/components/multi-daemon-session-host";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect, type ReactNode, useMemo, useRef } from "react";
@@ -50,6 +49,7 @@ import {
   parseHostAgentRouteFromPathname,
 } from "@/utils/host-routes";
 import { getTauri } from "@/utils/tauri";
+import { PerfDiagnosticsProvider } from "@/runtime/perf-diagnostics";
 
 polyfillCrypto();
 const IS_DEV = Boolean((globalThis as { __DEV__?: boolean }).__DEV__);
@@ -443,13 +443,13 @@ function MissingDaemonView() {
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <PortalProvider>
-        <SafeAreaProvider>
-          <KeyboardProvider>
-            <BottomSheetModalProvider>
-              <QueryProvider>
-                <DaemonRegistryProvider>
-                  <DaemonConnectionsProvider>
+      <PerfDiagnosticsProvider scope="root_layout">
+        <PortalProvider>
+          <SafeAreaProvider>
+            <KeyboardProvider>
+              <BottomSheetModalProvider>
+                <QueryProvider>
+                  <DaemonRegistryProvider>
                     <PushNotificationRouter />
                     <MultiDaemonSessionHost />
                     <ProvidersWrapper>
@@ -479,13 +479,13 @@ export default function RootLayout() {
                         </HorizontalScrollProvider>
                       </SidebarAnimationProvider>
                     </ProvidersWrapper>
-                  </DaemonConnectionsProvider>
-                </DaemonRegistryProvider>
-              </QueryProvider>
-            </BottomSheetModalProvider>
-          </KeyboardProvider>
-        </SafeAreaProvider>
-      </PortalProvider>
+                  </DaemonRegistryProvider>
+                </QueryProvider>
+              </BottomSheetModalProvider>
+            </KeyboardProvider>
+          </SafeAreaProvider>
+        </PortalProvider>
+      </PerfDiagnosticsProvider>
     </GestureHandlerRootView>
   );
 }

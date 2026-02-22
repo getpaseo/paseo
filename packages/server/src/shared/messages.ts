@@ -198,6 +198,19 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail> = z.discriminatedUn
     truncated: z.boolean().optional(),
   }),
   z.object({
+    type: z.literal('sub_agent'),
+    subAgentType: z.string().optional(),
+    description: z.string().optional(),
+    log: z.string(),
+    actions: z.array(
+      z.object({
+        index: z.number().int().positive(),
+        toolName: z.string(),
+        summary: z.string().optional(),
+      })
+    ),
+  }),
+  z.object({
     type: z.literal('unknown'),
     input: UnknownValueSchema,
     output: UnknownValueSchema,
@@ -353,6 +366,7 @@ const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
   provider: AgentProviderSchema,
   sessionId: z.string().nullable(),
   model: z.string().nullable().optional(),
+  thinkingOptionId: z.string().nullable().optional(),
   modeId: z.string().nullable().optional(),
   extra: z.record(z.unknown()).optional(),
 })
@@ -363,6 +377,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   cwd: z.string(),
   model: z.string().nullable(),
   thinkingOptionId: z.string().nullable().optional(),
+  effectiveThinkingOptionId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastUserMessageAt: z.string().nullable(),
@@ -413,6 +428,7 @@ const AgentDirectoryFilterSchema = z.object({
   statuses: z.array(AgentStatusSchema).optional(),
   includeArchived: z.boolean().optional(),
   requiresAttention: z.boolean().optional(),
+  thinkingOptionId: z.string().nullable().optional(),
 })
 
 export const DeleteAgentRequestMessageSchema = z.object({
@@ -2201,6 +2217,29 @@ export const WSPongMessageSchema = z.object({
   type: z.literal('pong'),
 })
 
+export const WSHelloMessageSchema = z.object({
+  type: z.literal('hello'),
+  clientId: z.string().min(1),
+  clientType: z.enum(['mobile', 'browser', 'cli', 'mcp']),
+  protocolVersion: z.number().int(),
+  capabilities: z
+    .object({
+      voice: z.boolean().optional(),
+      pushNotifications: z.boolean().optional(),
+    })
+    .passthrough()
+    .optional(),
+})
+
+export const WSWelcomeMessageSchema = z.object({
+  type: z.literal('welcome'),
+  serverId: z.string(),
+  hostname: z.string().nullable(),
+  version: z.string().nullable(),
+  resumed: z.boolean(),
+  capabilities: ServerCapabilitiesSchema.optional(),
+})
+
 export const WSRecordingStateMessageSchema = z.object({
   type: z.literal('recording_state'),
   isRecording: z.boolean(),
@@ -2220,17 +2259,21 @@ export const WSSessionOutboundSchema = z.object({
 // Complete WebSocket message schemas
 export const WSInboundMessageSchema = z.discriminatedUnion('type', [
   WSPingMessageSchema,
+  WSHelloMessageSchema,
   WSRecordingStateMessageSchema,
   WSSessionInboundSchema,
 ])
 
 export const WSOutboundMessageSchema = z.discriminatedUnion('type', [
   WSPongMessageSchema,
+  WSWelcomeMessageSchema,
   WSSessionOutboundSchema,
 ])
 
 export type WSInboundMessage = z.infer<typeof WSInboundMessageSchema>
 export type WSOutboundMessage = z.infer<typeof WSOutboundMessageSchema>
+export type WSHelloMessage = z.infer<typeof WSHelloMessageSchema>
+export type WSWelcomeMessage = z.infer<typeof WSWelcomeMessageSchema>
 
 // ============================================================================
 // Helper functions for message conversion

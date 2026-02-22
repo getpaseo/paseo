@@ -30,6 +30,9 @@ export function decodeOfferFragmentPayload(encoded: string): unknown {
   return JSON.parse(json) as unknown;
 }
 
-export function buildRelayWebSocketUrl(params: { endpoint: string; serverId: string }): string {
+export function buildRelayWebSocketUrl(params: {
+  endpoint: string;
+  serverId: string;
+}): string {
   return buildSharedRelayWebSocketUrl({ ...params, role: "client" });
 }

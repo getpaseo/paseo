@@ -226,6 +226,25 @@ describe("claude tool-call mapper", () => {
     });
   });
 
+  it("maps Glob calls as search detail using pattern input", () => {
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-glob-1",
+        name: "Glob",
+        input: { pattern: "**/.claude/commands/paseo*" },
+        output: { output: "No files found" },
+      })
+    );
+
+    expect(item.status).toBe("completed");
+    expect(item.error).toBeNull();
+    expect(item.name).toBe("Glob");
+    expect(item.detail).toEqual({
+      type: "search",
+      query: "**/.claude/commands/paseo*",
+    });
+  });
+
   it("normalizes claude speak tool names through schema transforms", () => {
     const item = expectMapped(
       mapClaudeCompletedToolCall({

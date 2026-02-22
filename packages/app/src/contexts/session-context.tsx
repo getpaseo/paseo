@@ -1,7 +1,6 @@
-import { useRef, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { useRef, ReactNode, useCallback, useEffect, useMemo } from "react";
 import { AppState, Platform } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useDaemonClient } from "@/hooks/use-daemon-client";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
@@ -15,7 +14,6 @@ import {
 } from "@/types/stream";
 import type {
   ActivityLogPayload,
-  AgentSnapshotPayload,
   AgentStreamEventPayload,
   SessionOutboundMessage,
 } from "@server/shared/messages";
@@ -26,21 +24,24 @@ import {
   type NotificationPermissionRequest,
 } from "@server/shared/agent-attention-notification";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
-import type { DaemonClient, ConnectionState } from "@server/client/daemon-client";
+import type { DaemonClient } from "@server/client/daemon-client";
 import { File } from "expo-file-system";
-import { useDaemonConnections } from "./daemon-connections-context";
-import type { ActiveConnection } from "./daemon-connections-context";
+import { useHostRuntimeSession } from "@/runtime/host-runtime";
 import {
   useSessionStore,
   type Agent,
   type SessionState,
-  type DaemonConnectionSnapshot,
 } from "@/stores/session-store";
 import { useDraftStore } from "@/stores/draft-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import { sendOsNotification } from "@/utils/os-notifications";
 import { getInitKey, getInitDeferred, resolveInitDeferred, rejectInitDeferred, createInitDeferred } from "@/utils/agent-initialization";
 import { encodeImages } from "@/utils/encode-images";
+import {
+  derivePendingPermissionKey,
+  normalizeAgentSnapshot,
+} from "@/utils/agent-snapshots";
+import { resolveProjectPlacement } from "@/utils/project-placement";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -55,24 +56,6 @@ export type {
   AgentFileExplorerState,
 } from "@/stores/session-store";
 
-const derivePendingPermissionKey = (
-  agentId: string,
-  request: NotificationPermissionRequest
-) => {
-  const fallbackId =
-    request.id ||
-    (typeof request.metadata?.id === "string"
-      ? request.metadata.id
-      : undefined) ||
-    request.name ||
-    request.title ||
-    `${request.kind}:${JSON.stringify(
-      request.input ?? request.metadata ?? {}
-    )}`;
-
-  return `${agentId}:${fallbackId}`;
-};
-
 const HISTORY_STALE_AFTER_MS = 60_000;
 
 const findLatestAssistantMessageText = (items: StreamItem[]): string | null => {
@@ -84,15 +67,6 @@ const findLatestAssistantMessageText = (items: StreamItem[]): string | null => {
   }
   return null;
 };
-
-const mapConnectionState = (
-  state: ConnectionState,
-  lastError: string | null
-): DaemonConnectionSnapshot => ({
-  isConnected: state.status === "connected",
-  isConnecting: state.status === "connecting",
-  lastError: state.status === "disconnected" ? state.reason ?? lastError : null,
-});
 
 const getLatestPermissionRequest = (
   session: SessionState | undefined,
@@ -138,51 +112,6 @@ type AgentUpdatePayload = Extract<
 const getAgentIdFromUpdate = (update: AgentUpdatePayload): string =>
   update.kind === "remove" ? update.agentId : update.agent.id;
 
-function normalizeAgentSnapshot(
-  snapshot: AgentSnapshotPayload,
-  serverId: string
-) {
-  const createdAt = new Date(snapshot.createdAt);
-  const updatedAt = new Date(snapshot.updatedAt);
-  const lastUserMessageAt = snapshot.lastUserMessageAt
-    ? new Date(snapshot.lastUserMessageAt)
-    : null;
-  const attentionTimestamp = snapshot.attentionTimestamp
-    ? new Date(snapshot.attentionTimestamp)
-    : null;
-  const archivedAt = snapshot.archivedAt
-    ? new Date(snapshot.archivedAt)
-    : null;
-  return {
-    serverId,
-    id: snapshot.id,
-    provider: snapshot.provider,
-    status: snapshot.status as AgentLifecycleStatus,
-    createdAt,
-    updatedAt,
-    lastUserMessageAt,
-    lastActivityAt: updatedAt,
-    capabilities: snapshot.capabilities,
-    currentModeId: snapshot.currentModeId,
-    availableModes: snapshot.availableModes ?? [],
-    pendingPermissions: snapshot.pendingPermissions ?? [],
-    persistence: snapshot.persistence ?? null,
-    runtimeInfo: snapshot.runtimeInfo,
-    lastUsage: snapshot.lastUsage,
-    lastError: snapshot.lastError ?? null,
-    title: snapshot.title ?? null,
-    cwd: snapshot.cwd,
-    model: snapshot.model ?? null,
-    thinkingOptionId: snapshot.thinkingOptionId ?? null,
-    requiresAttention: snapshot.requiresAttention ?? false,
-    attentionReason: snapshot.attentionReason ?? null,
-    attentionTimestamp,
-    archivedAt,
-    labels: snapshot.labels,
-    projectPlacement: null,
-  };
-}
-
 const createExplorerState = () => ({
   directories: new Map(),
   files: new Map(),
@@ -204,29 +133,41 @@ const pushHistory = (history: string[], path: string): string[] => {
   return [...normalizedHistory, path];
 };
 
-interface SessionProviderProps {
+interface SessionProviderSharedProps {
   children: ReactNode;
-  serverUrl: string;
   serverId: string;
-  activeConnection: ActiveConnection | null;
-  daemonPublicKeyB64?: string;
+}
+
+interface SessionProviderClientProps extends SessionProviderSharedProps {
+  client: DaemonClient;
+}
+
+export type SessionProviderProps = SessionProviderClientProps;
+
+function SessionProviderWithClient({
+  children,
+  serverId,
+  client,
+}: SessionProviderClientProps) {
+  return (
+    <SessionProviderInternal serverId={serverId} client={client}>
+      {children}
+    </SessionProviderInternal>
+  );
 }
 
 // SessionProvider: Daemon client message handler that updates Zustand store
-export function SessionProvider({
+export function SessionProvider(props: SessionProviderProps) {
+  return <SessionProviderWithClient {...props} />;
+}
+
+function SessionProviderInternal({
   children,
-  serverUrl,
   serverId,
-  activeConnection,
-  daemonPublicKeyB64,
-}: SessionProviderProps) {
+  client,
+}: SessionProviderClientProps) {
   const queryClient = useQueryClient();
-  const client = useDaemonClient(serverUrl, { daemonPublicKeyB64 });
-  const [connectionSnapshot, setConnectionSnapshot] =
-    useState<DaemonConnectionSnapshot>(() =>
-      mapConnectionState(client.getConnectionState(), client.lastError)
-    );
-  const { updateConnectionStatus } = useDaemonConnections();
+  const { isConnected } = useHostRuntimeSession(serverId);
 
   // Zustand store actions
   const initializeSession = useSessionStore((state) => state.initializeSession);
@@ -264,6 +205,9 @@ export function SessionProvider({
   const setAgentLastActivity = useSessionStore(
     (state) => state.setAgentLastActivity
   );
+  const flushAgentLastActivity = useSessionStore(
+    (state) => state.flushAgentLastActivity
+  );
   const setPendingPermissions = useSessionStore(
     (state) => state.setPendingPermissions
   );
@@ -271,14 +215,14 @@ export function SessionProvider({
   const clearDraftInput = useDraftStore((state) => state.clearDraftInput);
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
   const updateSessionClient = useSessionStore((state) => state.updateSessionClient);
-  const updateSessionConnection = useSessionStore(
-    (state) => state.updateSessionConnection
-  );
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
 
   // Track focused agent for heartbeat
   const focusedAgentId = useSessionStore(
     (state) => state.sessions[serverId]?.focusedAgentId ?? null
+  );
+  const sessionAgents = useSessionStore(
+    (state) => state.sessions[serverId]?.agents
   );
 
   const handleAppResumed = useCallback(
@@ -316,8 +260,6 @@ export function SessionProvider({
       ) => Promise<void>)
     | null
   >(null);
-  const hasBootstrappedAgentUpdatesRef = useRef(false);
-  const agentUpdatesSubscriptionIdRef = useRef<string | null>(null);
   const sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
@@ -336,6 +278,18 @@ export function SessionProvider({
       subscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (!sessionAgents) {
+      previousAgentStatusRef.current.clear();
+      return;
+    }
+    const nextStatuses = new Map<string, AgentLifecycleStatus>();
+    for (const nextAgent of sessionAgents.values()) {
+      nextStatuses.set(nextAgent.id, nextAgent.status);
+    }
+    previousAgentStatusRef.current = nextStatuses;
+  }, [sessionAgents]);
 
   const notifyAgentAttention = useCallback(
     (params: {
@@ -413,26 +367,6 @@ export function SessionProvider({
   }
   const audioChunkBuffersRef = useRef<Map<string, AudioChunk[]>>(new Map());
 
-  useEffect(() => {
-    const unsubscribe = client.subscribeConnectionStatus((state) => {
-      setConnectionSnapshot(mapConnectionState(state, client.lastError));
-    });
-    return unsubscribe;
-  }, [client]);
-
-  const wasConnectedRef = useRef(client.isConnected);
-  useEffect(() => {
-    const wasConnected = wasConnectedRef.current;
-    if (!wasConnected && connectionSnapshot.isConnected) {
-      bumpHistorySyncGeneration(serverId);
-    }
-    wasConnectedRef.current = connectionSnapshot.isConnected;
-  }, [serverId, connectionSnapshot.isConnected, bumpHistorySyncGeneration]);
-
-  useEffect(() => {
-    updateSessionConnection(serverId, connectionSnapshot);
-  }, [serverId, connectionSnapshot, updateSessionConnection]);
-
   // Initialize session in store
   useEffect(() => {
     initializeSession(serverId, client, audioPlayer);
@@ -442,48 +376,14 @@ export function SessionProvider({
     updateSessionClient(serverId, client);
   }, [serverId, client, updateSessionClient]);
 
-  // Connection status tracking
-  useEffect(() => {
-    if (connectionSnapshot.isConnected) {
-      updateConnectionStatus(serverId, {
-        status: "online",
-        activeConnection,
-        lastOnlineAt: new Date().toISOString(),
-      });
-      return;
-    }
-
-    if (connectionSnapshot.isConnecting) {
-      updateConnectionStatus(serverId, { status: "connecting", activeConnection });
-      return;
-    }
-
-    if (connectionSnapshot.lastError) {
-      updateConnectionStatus(serverId, {
-        status: "error",
-        activeConnection,
-        lastError: connectionSnapshot.lastError,
-      });
-      return;
-    }
-
-    updateConnectionStatus(serverId, { status: "offline", activeConnection });
-  }, [
-    serverId,
-    updateConnectionStatus,
-    connectionSnapshot.isConnected,
-    connectionSnapshot.isConnecting,
-    connectionSnapshot.lastError,
-    activeConnection,
-  ]);
-
   // If the client drops mid-initialization, clear pending flags
   useEffect(() => {
-    if (!connectionSnapshot.isConnected) {
+    if (!isConnected) {
+      flushAgentLastActivity();
       pendingAgentUpdatesRef.current.clear();
       setInitializingAgents(serverId, new Map());
     }
-  }, [serverId, connectionSnapshot.isConnected, setInitializingAgents]);
+  }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
 
   const applyAgentUpdatePayload = useCallback(
     (update: AgentUpdatePayload) => {
@@ -534,16 +434,17 @@ export function SessionProvider({
           next.delete(agentId);
           return next;
         });
-
         return;
       }
 
+      const normalized = normalizeAgentSnapshot(update.agent, serverId);
       const agent = {
-        ...normalizeAgentSnapshot(update.agent, serverId),
-        projectPlacement: update.project,
+        ...normalized,
+        projectPlacement: resolveProjectPlacement({
+          projectPlacement: update.project,
+          cwd: normalized.cwd,
+        }),
       };
-
-      console.log("[Session] Agent update:", agent.id, agent.status);
 
       setAgents(serverId, (prev) => {
         const current = prev.get(agent.id);
@@ -567,15 +468,53 @@ export function SessionProvider({
       setAgentLastActivity(agent.id, agent.lastActivityAt);
 
       setPendingPermissions(serverId, (prev) => {
-        const next = new Map(prev);
-        for (const [key, pending] of Array.from(next.entries())) {
+        const existingKeysForAgent: string[] = [];
+        for (const [key, pending] of prev.entries()) {
           if (pending.agentId === agent.id) {
-            next.delete(key);
+            existingKeysForAgent.push(key);
           }
         }
-        for (const request of agent.pendingPermissions) {
-          const key = derivePendingPermissionKey(agent.id, request);
-          next.set(key, { key, agentId: agent.id, request });
+
+        const nextEntries = agent.pendingPermissions.map((request) => ({
+          key: derivePendingPermissionKey(agent.id, request),
+          agentId: agent.id,
+          request,
+        }));
+
+        let changed = existingKeysForAgent.length !== nextEntries.length;
+        if (!changed) {
+          const existingKeySet = new Set(existingKeysForAgent);
+          for (const entry of nextEntries) {
+            const existing = prev.get(entry.key);
+            if (!existingKeySet.has(entry.key) || !existing) {
+              changed = true;
+              break;
+            }
+
+            const currentRequest = existing.request;
+            if (
+              currentRequest.id !== entry.request.id ||
+              currentRequest.kind !== entry.request.kind ||
+              currentRequest.name !== entry.request.name ||
+              currentRequest.title !== entry.request.title ||
+              currentRequest.description !== entry.request.description
+            ) {
+              changed = true;
+              break;
+            }
+          }
+        }
+
+        if (!changed) {
+          return prev;
+        }
+
+        const next = new Map(prev);
+        for (const key of existingKeysForAgent) {
+          next.delete(key);
+        }
+        for (const entry of nextEntries) {
+          next.set(entry.key, entry);
         }
         return next;
       });
@@ -615,12 +554,6 @@ export function SessionProvider({
       setAgentTimelineCursor,
     ]
   );
-
-  useEffect(() => {
-    return () => {
-      updateConnectionStatus(serverId, { status: "offline", activeConnection, lastError: null });
-    };
-  }, [serverId, updateConnectionStatus, activeConnection]);
 
   const updateExplorerState = useCallback(
     (agentId: string, updater: (state: any) => any) => {
@@ -798,95 +731,11 @@ export function SessionProvider({
   );
 
   useEffect(() => {
-    if (!connectionSnapshot.isConnected) {
-      hasBootstrappedAgentUpdatesRef.current = false;
-      pendingAgentUpdatesRef.current.clear();
-      agentUpdatesSubscriptionIdRef.current = null;
+    if (isConnected) {
       return;
     }
-    if (hasBootstrappedAgentUpdatesRef.current) {
-      return;
-    }
-    hasBootstrappedAgentUpdatesRef.current = true;
-
-    let cancelled = false;
-    const requestedSubscriptionId = `app:${serverId}`;
-
-    const bootstrapAgentDirectory = async () => {
-      try {
-        const payload = await client.fetchAgents({
-          filter: { labels: { ui: "true" } },
-          subscribe: { subscriptionId: requestedSubscriptionId },
-        });
-        if (cancelled) {
-          return;
-        }
-
-        agentUpdatesSubscriptionIdRef.current =
-          payload.subscriptionId ?? requestedSubscriptionId;
-
-        const nextAgents = new Map<string, Agent>();
-        const nextPendingPermissions = new Map<
-          string,
-          { key: string; agentId: string; request: NotificationPermissionRequest }
-        >();
-        const nextStatuses = new Map<string, AgentLifecycleStatus>();
-
-        for (const entry of payload.entries) {
-          const agent = {
-            ...normalizeAgentSnapshot(entry.agent, serverId),
-            projectPlacement: entry.project,
-          };
-          nextAgents.set(agent.id, agent);
-          nextStatuses.set(agent.id, agent.status);
-
-          for (const request of agent.pendingPermissions) {
-            const key = derivePendingPermissionKey(agent.id, request);
-            nextPendingPermissions.set(key, { key, agentId: agent.id, request });
-          }
-        }
-
-        previousAgentStatusRef.current = nextStatuses;
-        pendingAgentUpdatesRef.current.clear();
-        setAgents(serverId, nextAgents);
-        for (const agent of nextAgents.values()) {
-          setAgentLastActivity(agent.id, agent.lastActivityAt);
-        }
-        setPendingPermissions(serverId, nextPendingPermissions);
-        setInitializingAgents(serverId, new Map());
-        setHasHydratedAgents(serverId, true);
-        updateConnectionStatus(serverId, {
-          status: "online",
-          lastOnlineAt: new Date().toISOString(),
-          agentListReady: true,
-        });
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        hasBootstrappedAgentUpdatesRef.current = false;
-        pendingAgentUpdatesRef.current.clear();
-        agentUpdatesSubscriptionIdRef.current = null;
-        console.error("[Session] fetchAgents bootstrap failed", { serverId, err });
-      }
-    };
-
-    void bootstrapAgentDirectory();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    connectionSnapshot.isConnected,
-    client,
-    serverId,
-    setAgentLastActivity,
-    setAgents,
-    setHasHydratedAgents,
-    setInitializingAgents,
-    setPendingPermissions,
-    updateConnectionStatus,
-  ]);
+    pendingAgentUpdatesRef.current.clear();
+  }, [isConnected]);
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {
@@ -1420,7 +1269,6 @@ export function SessionProvider({
     setPendingPermissions,
     setFileExplorer,
     setHasHydratedAgents,
-    updateConnectionStatus,
     clearDraftInput,
     notifyAgentAttention,
     applyAgentUpdatePayload,

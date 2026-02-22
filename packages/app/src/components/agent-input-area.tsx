@@ -29,6 +29,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Shortcut } from '@/components/ui/shortcut'
 import { Autocomplete } from '@/components/ui/autocomplete'
 import { useAgentAutocomplete } from '@/hooks/use-agent-autocomplete'
+import { useHostRuntimeSession } from '@/runtime/host-runtime'
 
 type QueuedMessage = {
   id: string
@@ -77,10 +78,14 @@ export function AgentInputArea({
     (s) => s.clearMessageInputActionRequest
   )
 
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null)
+  const { client, isConnected, snapshot } = useHostRuntimeSession(serverId)
   const toast = useToast()
   const voice = useVoiceOptional()
-  const isConnected = client?.isConnected ?? false
+  const isDictationReady =
+    isConnected &&
+    (snapshot?.agentDirectoryStatus === 'ready' ||
+      snapshot?.agentDirectoryStatus === 'revalidating' ||
+      snapshot?.agentDirectoryStatus === 'error_after_ready')
 
   const agent = useSessionStore((state) => state.sessions[serverId]?.agents?.get(agentId))
 
@@ -222,6 +227,10 @@ export function AgentInputArea({
   useEffect(() => {
     const previousUpdatedAt = latestAgentUpdatedAtRef.current
     if (agentUpdatedAtMs < previousUpdatedAt) {
+      if (isProcessing && !isAgentRunning) {
+        prevIsAgentRunningRef.current = false
+        setIsProcessing(false)
+      }
       return
     }
 
@@ -503,8 +512,7 @@ export function AgentInputArea({
 
     updateQueue((current) => current.filter((q) => q.id !== id))
 
-    // Cancels current agent run before sending queued prompt
-    handleCancelAgent()
+    // Reuse the regular send path; server-side send atomically interrupts any active run.
     try {
       await submitMessage(item.text, item.images)
     } catch (error) {
@@ -673,6 +681,7 @@ export function AgentInputArea({
               onAddImages={addImages}
               onRemoveImage={handleRemoveImage}
               client={client}
+              isReadyForDictation={isDictationReady}
               placeholder="Message agent..."
               autoFocus={autoFocus}
               disabled={isSubmitLoading}

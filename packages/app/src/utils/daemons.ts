@@ -1,7 +1,7 @@
-import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
+import type { HostRuntimeConnectionStatus } from "@/runtime/host-runtime";
 import { assertUnreachable } from "./exhaustive";
 
-export function formatConnectionStatus(status: ConnectionStatus): string {
+export function formatConnectionStatus(status: HostRuntimeConnectionStatus): string {
   switch (status) {
     case "online":
       return "Online";
@@ -20,7 +20,9 @@ export function formatConnectionStatus(status: ConnectionStatus): string {
 
 export type ConnectionStatusTone = "success" | "warning" | "error" | "muted";
 
-export function getConnectionStatusTone(status: ConnectionStatus): ConnectionStatusTone {
+export function getConnectionStatusTone(
+  status: HostRuntimeConnectionStatus
+): ConnectionStatusTone {
   switch (status) {
     case "online":
       return "success";

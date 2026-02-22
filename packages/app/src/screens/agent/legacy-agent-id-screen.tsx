@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { useSessionDirectory } from "@/hooks/use-session-directory";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import type { Agent } from "@/contexts/session-context";
 import {
   buildHostAgentDetailRoute,
@@ -21,7 +21,7 @@ type AgentMatch = {
 export function LegacyAgentIdScreen({ agentId }: { agentId: string }) {
   const router = useRouter();
   const { theme } = useUnistyles();
-  const { connectionStates } = useDaemonConnections();
+  const { daemons } = useDaemonRegistry();
   const sessionDirectory = useSessionDirectory();
   const resolvedAgentId = typeof agentId === "string" ? agentId.trim() : undefined;
 
@@ -39,12 +39,13 @@ export function LegacyAgentIdScreen({ agentId }: { agentId: string }) {
       if (!agent) {
         return;
       }
-      const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
+      const serverLabel =
+        daemons.find((daemon) => daemon.serverId === serverId)?.label ?? serverId;
       results.push({ serverId, serverLabel, agent });
     });
 
     return results;
-  }, [resolvedAgentId, sessionDirectory, connectionStates]);
+  }, [daemons, resolvedAgentId, sessionDirectory]);
 
   const hasSessions = sessionDirectory.size > 0;
   const isRedirecting = Boolean(resolvedAgentId && matches.length === 1);

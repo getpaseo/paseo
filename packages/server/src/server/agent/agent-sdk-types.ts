@@ -150,6 +150,17 @@ export type ToolCallDetail =
       truncated?: boolean;
     }
   | {
+      type: "sub_agent";
+      subAgentType?: string;
+      description?: string;
+      log: string;
+      actions: Array<{
+        index: number;
+        toolName: string;
+        summary?: string;
+      }>;
+    }
+  | {
       type: "unknown";
       input: unknown | null;
       output: unknown | null;
@@ -267,6 +278,7 @@ export type AgentRuntimeInfo = {
   provider: AgentProvider;
   sessionId: string | null;
   model?: string | null;
+  thinkingOptionId?: string | null;
   modeId?: string | null;
   extra?: AgentMetadata;
 };

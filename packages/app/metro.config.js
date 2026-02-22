@@ -7,6 +7,10 @@ const projectRoot = __dirname;
 const monorepoRoot = path.resolve(projectRoot, "../..");
 const serverSrcRoot = path.resolve(projectRoot, "../server/src");
 const relaySrcRoot = path.resolve(projectRoot, "../relay/src");
+const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
+  .trim()
+  .replace(/^\./, "")
+  .toLowerCase();
 
 const config = getDefaultConfig(projectRoot);
 const defaultResolveRequest = config.resolver.resolveRequest ?? resolve;
@@ -25,6 +29,40 @@ config.resolver.nodeModulesPaths = Array.from(
   ])
 );
 
+function isLocalModuleImport(moduleName) {
+  return (
+    moduleName.startsWith("./") ||
+    moduleName.startsWith("../") ||
+    moduleName.startsWith("@/") ||
+    path.isAbsolute(moduleName)
+  );
+}
+
+function resolveWithCustomWebOverlay(context, moduleName, platform) {
+  const shouldResolveCustomWebVariant =
+    platform === "web" &&
+    customWebPlatform.length > 0 &&
+    customWebPlatform !== "web" &&
+    isLocalModuleImport(moduleName);
+
+  if (shouldResolveCustomWebVariant) {
+    const overlayContext = {
+      ...context,
+      // Resolve only "<custom-platform>.<ext>" variants in overlay mode.
+      sourceExts: context.sourceExts.map((ext) => `${customWebPlatform}.${ext}`),
+      preferNativePlatform: false,
+    };
+
+    try {
+      return defaultResolveRequest(overlayContext, moduleName, null);
+    } catch {
+      // Ignore overlay misses and continue with normal web resolution.
+    }
+  }
+
+  return defaultResolveRequest(context, moduleName, platform);
+}
+
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   const origin = context.originModulePath;
   if (
@@ -35,11 +73,11 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     const tsModuleName = moduleName.replace(/\.js$/, ".ts");
     const candidatePath = path.resolve(path.dirname(origin), tsModuleName);
     if (fs.existsSync(candidatePath)) {
-      return defaultResolveRequest(context, tsModuleName, platform);
+      return resolveWithCustomWebOverlay(context, tsModuleName, platform);
     }
   }
 
-  return defaultResolveRequest(context, moduleName, platform);
+  return resolveWithCustomWebOverlay(context, moduleName, platform);
 };
 
 module.exports = config;

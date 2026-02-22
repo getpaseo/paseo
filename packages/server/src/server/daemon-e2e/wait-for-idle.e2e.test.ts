@@ -126,4 +126,64 @@ describe("waitForFinish edge cases", () => {
     rmSync(cwd1, { recursive: true, force: true });
     rmSync(cwd2, { recursive: true, force: true });
   }, 60000);
+
+  test("waitForFinish resolves first idle edge even if a new run starts immediately after", async () => {
+    const cwd = tmpCwd();
+
+    const agent = await ctx.client.createAgent({
+      provider: "codex",
+      cwd,
+      title: "Idle Edge Coherence",
+      modeId: "bypassPermissions",
+    });
+
+    let sawRunning = false;
+    let spawnedSecondRun = false;
+    let secondRunDrain: Promise<void> | null = null;
+    const unsubscribe = ctx.daemon.daemon.agentManager.subscribe(
+      (event) => {
+        if (event.type !== "agent_state" || event.agent.id !== agent.id) {
+          return;
+        }
+        if (event.agent.lifecycle === "running") {
+          sawRunning = true;
+          return;
+        }
+        if (
+          event.agent.lifecycle !== "idle" ||
+          !sawRunning ||
+          spawnedSecondRun
+        ) {
+          return;
+        }
+
+        spawnedSecondRun = true;
+        const stream = ctx.daemon.daemon.agentManager.streamAgent(
+          agent.id,
+          "Use your shell tool to run sleep 1 and then reply done."
+        );
+        secondRunDrain = (async () => {
+          for await (const _event of stream) {
+            // Drain second run so manager can settle.
+          }
+        })();
+      },
+      { agentId: agent.id, replayState: false }
+    );
+
+    try {
+      await ctx.client.sendMessage(agent.id, "Reply with exactly: first");
+      const state = await ctx.client.waitForFinish(agent.id, 30000);
+
+      expect(spawnedSecondRun).toBe(true);
+      expect(state.status).toBe("idle");
+      expect(state.final?.status === "idle" || state.final?.status === "running").toBe(true);
+      expect(state.error).toBeNull();
+    } finally {
+      unsubscribe();
+      await secondRunDrain;
+      await ctx.client.deleteAgent(agent.id);
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 60000);
 });

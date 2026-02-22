@@ -1,6 +1,9 @@
 import { useCallback } from "react";
 import { useSessionStore } from "@/stores/session-store";
-import type { FetchAgentTimelineOptions } from "@server/client/daemon-client";
+import type {
+  DaemonClient,
+  FetchAgentTimelineOptions,
+} from "@server/client/daemon-client";
 import {
   attachInitTimeout,
   createInitDeferred,
@@ -37,8 +40,13 @@ function buildInitialTimelineRequest(
   };
 }
 
-export function useAgentInitialization(serverId: string) {
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+export function useAgentInitialization({
+  serverId,
+  client,
+}: {
+  serverId: string;
+  client: DaemonClient | null;
+}) {
   const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
   const setAgentInitializing = useCallback(
     (agentId: string, initializing: boolean) => {

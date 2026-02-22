@@ -24,6 +24,10 @@ import type {
   ServerCapabilities,
 } from "@server/shared/messages";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
+import {
+  createAgentLastActivityCoalescer,
+  type AgentLastActivityCommitter,
+} from "@/runtime/activity";
 
 // Re-export types that were in session-context
 export type MessageEntry =
@@ -147,12 +151,6 @@ export interface AgentFileExplorerState {
   selectedEntryPath: string | null;
 }
 
-export interface DaemonConnectionSnapshot {
-  isConnected: boolean;
-  isConnecting: boolean;
-  lastError: string | null;
-}
-
 export type DaemonServerInfo = {
   serverId: string;
   hostname: string | null;
@@ -172,9 +170,6 @@ export interface SessionState {
 
   // Daemon client (immutable reference)
   client: DaemonClient | null;
-
-  // Connection snapshot (mutable)
-  connection: DaemonConnectionSnapshot;
 
   // Server metadata (from server_info handshake)
   serverInfo: DaemonServerInfo | null;
@@ -233,7 +228,6 @@ interface SessionStoreActions {
   clearSession: (serverId: string) => void;
   getSession: (serverId: string) => SessionState | undefined;
   updateSessionClient: (serverId: string, client: DaemonClient) => void;
-  updateSessionConnection: (serverId: string, connection: DaemonConnectionSnapshot) => void;
   updateSessionServerInfo: (serverId: string, info: DaemonServerInfo) => void;
 
   // Audio state
@@ -267,6 +261,10 @@ interface SessionStoreActions {
 
   // Agent activity timestamps
   setAgentLastActivity: (agentId: string, timestamp: Date) => void;
+  setAgentLastActivityBatch: (
+    updates: Map<string, Date> | ((prev: Map<string, Date>) => Map<string, Date>)
+  ) => void;
+  flushAgentLastActivity: () => void;
 
   // Permissions
   setPendingPermissions: (serverId: string, perms: Map<string, PendingPermission> | ((prev: Map<string, PendingPermission>) => Map<string, PendingPermission>)) => void;
@@ -288,6 +286,7 @@ type SessionStore = SessionStoreState & SessionStoreActions;
 
 const SESSION_STORE_LOG_TAG = "[SessionStore]";
 let sessionStoreUpdateCount = 0;
+const agentLastActivityCoalescer = createAgentLastActivityCoalescer();
 
 function logSessionStoreUpdate(
   type: string,
@@ -309,25 +308,11 @@ function logSessionStoreUpdate(
   });
 }
 
-
-function createDefaultConnectionSnapshot(client?: DaemonClient | null): DaemonConnectionSnapshot {
-  if (!client) {
-    return { isConnected: false, isConnecting: false, lastError: null };
-  }
-  const state = client.getConnectionState();
-  return {
-    isConnected: state.status === "connected",
-    isConnecting: state.status === "connecting",
-    lastError: state.status === "disconnected" ? state.reason ?? client.lastError ?? null : null,
-  };
-}
-
 // Helper to create initial session state
 function createInitialSessionState(serverId: string, client: DaemonClient, audioPlayer: ReturnType<typeof useAudioPlayer>): SessionState {
   return {
     serverId,
     client,
-    connection: createDefaultConnectionSnapshot(client),
     serverInfo: null,
     audioPlayer,
     hasHydratedAgents: false,
@@ -356,9 +341,34 @@ function areServerCapabilitiesEqual(
 }
 
 export const useSessionStore = create<SessionStore>()(
-  subscribeWithSelector((set, get) => ({
-    sessions: {},
-    agentLastActivity: new Map(),
+  subscribeWithSelector((set, get) => {
+    const commitActivityUpdates: AgentLastActivityCommitter = (updates) => {
+      set((prev) => {
+        let nextActivity: Map<string, Date> | null = null;
+        for (const [agentId, timestamp] of updates.entries()) {
+          const current = prev.agentLastActivity.get(agentId);
+          if (current && current.getTime() >= timestamp.getTime()) {
+            continue;
+          }
+          if (!nextActivity) {
+            nextActivity = new Map(prev.agentLastActivity);
+          }
+          nextActivity.set(agentId, timestamp);
+        }
+        if (!nextActivity) {
+          return prev;
+        }
+        return {
+          ...prev,
+          agentLastActivity: nextActivity,
+        };
+      });
+    };
+    agentLastActivityCoalescer.setCommitter(commitActivityUpdates);
+
+    return {
+      sessions: {},
+      agentLastActivity: new Map(),
 
     // Session management
     initializeSession: (serverId, client, audioPlayer) => {
@@ -378,14 +388,34 @@ export const useSessionStore = create<SessionStore>()(
     },
 
     clearSession: (serverId) => {
+      agentLastActivityCoalescer.flushNow();
       set((prev) => {
-        if (!(serverId in prev.sessions)) {
+        const session = prev.sessions[serverId];
+        if (!session) {
           return prev;
         }
         logSessionStoreUpdate("clearSession", serverId);
         const nextSessions = { ...prev.sessions };
         delete nextSessions[serverId];
-        return { ...prev, sessions: nextSessions };
+        let nextActivity = prev.agentLastActivity;
+        if (session.agents.size > 0) {
+          const candidate = new Map(prev.agentLastActivity);
+          let changed = false;
+          for (const agentId of session.agents.keys()) {
+            if (candidate.delete(agentId)) {
+              changed = true;
+            }
+            agentLastActivityCoalescer.deletePending(agentId);
+          }
+          if (changed) {
+            nextActivity = candidate;
+          }
+        }
+        return {
+          ...prev,
+          sessions: nextSessions,
+          agentLastActivity: nextActivity,
+        };
       });
     },
 
@@ -414,33 +444,6 @@ export const useSessionStore = create<SessionStore>()(
             [serverId]: {
               ...session,
               client,
-            },
-          },
-        };
-      });
-    },
-
-    updateSessionConnection: (serverId, connection) => {
-      set((prev) => {
-        const session = prev.sessions[serverId];
-        if (!session) {
-          return prev;
-        }
-        if (
-          session.connection.isConnected === connection.isConnected &&
-          session.connection.isConnecting === connection.isConnecting &&
-          session.connection.lastError === connection.lastError
-        ) {
-          return prev;
-        }
-        logSessionStoreUpdate("updateSessionConnection", serverId, connection);
-        return {
-          ...prev,
-          sessions: {
-            ...prev.sessions,
-            [serverId]: {
-              ...session,
-              connection,
             },
           },
         };
@@ -765,18 +768,47 @@ export const useSessionStore = create<SessionStore>()(
 
     // Agent activity timestamps (top-level, does NOT mutate session object)
     setAgentLastActivity: (agentId, timestamp) => {
+      agentLastActivityCoalescer.enqueue(agentId, timestamp);
+    },
+
+    setAgentLastActivityBatch: (updates) => {
       set((prev) => {
-        const currentTimestamp = prev.agentLastActivity.get(agentId);
-        if (currentTimestamp && currentTimestamp.getTime() === timestamp.getTime()) {
+        const nextActivity =
+          typeof updates === "function"
+            ? updates(prev.agentLastActivity)
+            : updates;
+        if (nextActivity === prev.agentLastActivity) {
           return prev;
         }
-        const nextActivity = new Map(prev.agentLastActivity);
-        nextActivity.set(agentId, timestamp);
+        if (nextActivity.size === 0) {
+          if (prev.agentLastActivity.size === 0) {
+            return prev;
+          }
+          return {
+            ...prev,
+            agentLastActivity: new Map(),
+          };
+        }
+        let changed = false;
+        for (const [agentId, timestamp] of nextActivity.entries()) {
+          const currentTimestamp = prev.agentLastActivity.get(agentId);
+          if (!currentTimestamp || currentTimestamp.getTime() !== timestamp.getTime()) {
+            changed = true;
+            break;
+          }
+        }
+        if (!changed && nextActivity.size === prev.agentLastActivity.size) {
+          return prev;
+        }
         return {
           ...prev,
-          agentLastActivity: nextActivity,
+          agentLastActivity: new Map(nextActivity),
         };
       });
+    },
+
+    flushAgentLastActivity: () => {
+      agentLastActivityCoalescer.flushNow();
     },
 
     // Permissions
@@ -891,5 +923,6 @@ export const useSessionStore = create<SessionStore>()(
       }
       return entries;
     },
-  }))
+  };
+  })
 );

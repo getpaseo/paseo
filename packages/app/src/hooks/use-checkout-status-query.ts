@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
 import { UnistylesRuntime } from "react-native-unistyles";
-import { useSessionStore } from "@/stores/session-store";
 import { usePanelStore } from "@/stores/panel-store";
+import { useHostRuntimeSession } from "@/runtime/host-runtime";
 import type { CheckoutStatusResponse } from "@server/shared/messages";
 import {
   checkoutStatusRevalidationKey,
@@ -30,12 +30,7 @@ function fetchCheckoutStatus(
 }
 
 export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQueryOptions) {
-  const client = useSessionStore(
-    (state) => state.sessions[serverId]?.client ?? null
-  );
-  const isConnected = useSessionStore(
-    (state) => state.sessions[serverId]?.connection.isConnected ?? false
-  );
+  const { client, isConnected } = useHostRuntimeSession(serverId);
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const mobileView = usePanelStore((state) => state.mobileView);
@@ -92,9 +87,7 @@ export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQuery
  * only the visible agents.
  */
 export function useCheckoutStatusCacheOnly({ serverId, cwd }: UseCheckoutStatusQueryOptions) {
-  const client = useSessionStore(
-    (state) => state.sessions[serverId]?.client ?? null
-  );
+  const { client } = useHostRuntimeSession(serverId);
 
   return useQuery({
     queryKey: checkoutStatusQueryKey(serverId, cwd),

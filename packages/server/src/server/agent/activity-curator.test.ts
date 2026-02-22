@@ -128,26 +128,51 @@ describe("curateAgentActivity", () => {
         callId: "task-1",
         name: "Task",
         status: "running",
-        input: { description: "Investigate" },
+        detail: {
+          type: "sub_agent",
+          subAgentType: "Explore",
+          description: "Investigate repository",
+          log: "[Read] README.md",
+          actions: [
+            {
+              index: 1,
+              toolName: "Read",
+              summary: "README.md",
+            },
+          ],
+        },
       }),
       toolCallItem({
         callId: "task-1",
         name: "Task",
         status: "running",
-        metadata: { subAgentActivity: "Read" },
-      }),
-      toolCallItem({
-        callId: "task-1",
-        name: "Task",
-        status: "running",
-        metadata: { subAgentActivity: "Edit" },
+        detail: {
+          type: "sub_agent",
+          subAgentType: "Explore",
+          description: "Investigate repository",
+          log: "[Read] README.md\n[Bash] ls",
+          actions: [
+            {
+              index: 1,
+              toolName: "Read",
+              summary: "README.md",
+            },
+            {
+              index: 2,
+              toolName: "Bash",
+              summary: "ls",
+            },
+          ],
+        },
       }),
     ];
 
     const result = curateAgentActivity(timeline);
     const lines = result.split("\n");
 
-    expect(lines.filter((line) => line.startsWith("[Task]"))).toEqual(["[Task] Edit"]);
+    expect(lines.filter((line) => line.startsWith("[Explore]"))).toEqual([
+      "[Explore] Investigate repository",
+    ]);
   });
 
   it("renders todo/error/compaction entries", () => {

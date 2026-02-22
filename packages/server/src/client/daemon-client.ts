@@ -6,6 +6,7 @@ import {
   AgentResumedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
   SessionInboundMessageSchema,
+  type WSWelcomeMessage,
   WSOutboundMessageSchema,
 } from '../shared/messages.js'
 import type {
@@ -77,7 +78,6 @@ import {
   describeTransportClose,
   describeTransportError,
   encodeUtf8String,
-  safeRandomId,
   type DaemonTransport,
   type DaemonTransportFactory,
   type WebSocketFactory,
@@ -91,10 +91,17 @@ export interface Logger {
 }
 
 const consoleLogger: Logger = {
-  debug: (obj, msg) => console.debug(msg, obj),
+  debug: () => {},
   info: (obj, msg) => console.info(msg, obj),
   warn: (obj, msg) => console.warn(msg, obj),
   error: (obj, msg) => console.error(msg, obj),
+}
+
+function getNowMs(): number {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now()
+  }
+  return Date.now()
 }
 
 export type {
@@ -110,6 +117,7 @@ export type ConnectionState =
   | { status: 'connecting'; attempt: number }
   | { status: 'connected' }
   | { status: 'disconnected'; reason?: string }
+  | { status: 'disposed' }
 
 export type DaemonEvent =
   | {
@@ -144,11 +152,15 @@ export type DaemonEventHandler = (event: DaemonEvent) => void
 
 export type DaemonClientConfig = {
   url: string
+  clientId: string
+  clientType?: 'mobile' | 'browser' | 'cli' | 'mcp'
+  runtimeGeneration?: number | null
   authHeader?: string
   suppressSendErrors?: boolean
   transportFactory?: DaemonTransportFactory
   webSocketFactory?: WebSocketFactory
   logger?: Logger
+  connectTimeoutMs?: number
   e2ee?: {
     enabled?: boolean
     daemonPublicKeyB64?: string
@@ -158,7 +170,25 @@ export type DaemonClientConfig = {
     baseDelayMs?: number
     maxDelayMs?: number
   }
+  onDiagnosticsEvent?: (event: DaemonClientDiagnosticsEvent) => void
 }
+
+export type DaemonClientDiagnosticsEvent =
+  | {
+      type: 'transport_message_timing'
+      messageType: string
+      payloadBytes: number
+      parseMs: number
+      validateMs: number
+      totalMs: number
+      outcome: 'ok' | 'parse_error' | 'validation_error'
+    }
+  | {
+      type: 'transport_binary_frame'
+      channel: BinaryMuxChannel
+      messageType: number
+      payloadBytes: number
+    }
 
 export type SendMessageOptions = {
   messageId?: string
@@ -297,6 +327,7 @@ class DaemonRpcError extends Error {
 
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000
+const DEFAULT_CONNECT_TIMEOUT_MS = 15000
 
 /** Default timeout for waiting for connection before sending queued messages */
 const DEFAULT_SEND_QUEUE_TIMEOUT_MS = 10000
@@ -306,6 +337,45 @@ const DEFAULT_DICTATION_FINISH_TIMEOUT_GRACE_MS = 5000
 
 function isWaiterTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith('Timeout waiting for message')
+}
+
+function normalizeClientId(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+function hashForLog(value: string): string {
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0
+  }
+  return `h_${Math.abs(hash).toString(16)}`
+}
+
+function toReasonCode(reason: string | null | undefined): string | null {
+  if (!reason) {
+    return null
+  }
+  const normalized = reason.toLowerCase()
+  if (normalized.includes('timed out')) {
+    return 'connect_timeout'
+  }
+  if (normalized.includes('disposed')) {
+    return 'disposed'
+  }
+  if (normalized.includes('client closed')) {
+    return 'client_closed'
+  }
+  if (normalized.includes('transport')) {
+    return 'transport_error'
+  }
+  if (normalized.includes('failed to connect')) {
+    return 'connect_failed'
+  }
+  return 'unknown'
 }
 
 interface PendingSend {
@@ -328,6 +398,7 @@ export class DaemonClient {
   private checkoutStatusInFlight: Map<string, Promise<CheckoutStatusPayload>> = new Map()
   private connectionListeners: Set<(status: ConnectionState) => void> = new Set()
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null
+  private connectTimeout: ReturnType<typeof setTimeout> | null = null
   private pendingGenericTransportErrorTimeout: ReturnType<typeof setTimeout> | null = null
   private reconnectAttempt = 0
   private shouldReconnect = true
@@ -343,11 +414,36 @@ export class DaemonClient {
   private terminalDirectorySubscriptions = new Set<string>()
   private logger: Logger
   private pendingSendQueue: PendingSend[] = []
-  private relayClientId: string | null = null
   private terminalStreams: TerminalStreamManager
+  private readonly logConnectionPath: 'direct' | 'relay'
+  private readonly logServerId: string | null
+  private readonly logClientIdHash: string
+  private readonly logGeneration: number | null
+  private lastWelcomeMessage: WSWelcomeMessage | null = null
 
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger
+    this.logConnectionPath = isRelayClientWebSocketUrl(this.config.url) ? 'relay' : 'direct'
+    let parsedUrlForLog: URL | null = null
+    try {
+      parsedUrlForLog = new URL(this.config.url)
+    } catch {
+      parsedUrlForLog = null
+    }
+    const parsedServerIdForLog = normalizeClientId(
+      parsedUrlForLog?.searchParams.get('serverId')
+    )
+    this.logServerId = parsedServerIdForLog ?? parsedUrlForLog?.host ?? null
+    const resolvedClientId = normalizeClientId(this.config.clientId)
+    if (!resolvedClientId) {
+      throw new Error('Daemon client requires a non-empty clientId')
+    }
+    this.config.clientId = resolvedClientId
+    this.logClientIdHash = hashForLog(resolvedClientId)
+    this.logGeneration =
+      typeof this.config.runtimeGeneration === 'number' && Number.isFinite(this.config.runtimeGeneration)
+        ? this.config.runtimeGeneration
+        : null
     this.terminalStreams = new TerminalStreamManager({
       sendAck: (ack) => {
         this.sendBinaryFrame({
@@ -359,20 +455,13 @@ export class DaemonClient {
         })
       },
     })
-    // Relay requires a clientId so the daemon can create an independent
-    // socket + E2EE channel per connected client. Generate one per DaemonClient
-    // instance (stable across reconnects in this tab/app session).
-    if (isRelayClientWebSocketUrl(this.config.url)) {
-      try {
-        const parsed = new URL(this.config.url)
-        if (!parsed.searchParams.get('clientId')) {
-          this.relayClientId = `clt_${safeRandomId()}`
-          parsed.searchParams.set('clientId', this.relayClientId)
-          this.config.url = parsed.toString()
-        }
-      } catch {
-        // ignore - invalid URL will be handled on connect
-      }
+  }
+
+  private emitDiagnosticsEvent(event: DaemonClientDiagnosticsEvent): void {
+    try {
+      this.config.onDiagnosticsEvent?.(event)
+    } catch {
+      // Diagnostics hooks must never break daemon message handling.
     }
   }
 
@@ -381,6 +470,9 @@ export class DaemonClient {
   // ============================================================================
 
   async connect(): Promise<void> {
+    if (this.connectionState.status === 'disposed') {
+      throw new Error('Daemon client is disposed')
+    }
     if (this.connectionState.status === 'connected') {
       return
     }
@@ -399,6 +491,10 @@ export class DaemonClient {
   }
 
   private attemptConnect(): void {
+    if (this.connectionState.status === 'disposed') {
+      this.rejectConnect(new Error('Daemon client is disposed'))
+      return
+    }
     if (!this.shouldReconnect) {
       this.rejectConnect(new Error('Daemon client is closed'))
       return
@@ -414,10 +510,8 @@ export class DaemonClient {
     }
 
     try {
-      // If we reconnect while the previous socket is still open (common in browsers
-      // where `onerror` may fire before `onclose`), we can end up with multiple
-      // concurrent relay sockets. Cloudflare then closes the old one with
-      // "Replaced by new connection", causing a disconnect loop.
+      // Reconnect can overlap with browser close/error delivery ordering.
+      // Always dispose previous transport before constructing the next one.
       this.disposeTransport()
       const baseTransportFactory =
         this.config.transportFactory ??
@@ -437,13 +531,29 @@ export class DaemonClient {
           logger: this.logger,
         })
       }
-      const transport = transportFactory({ url: this.config.url, headers })
+      const transportUrl = this.resolveTransportUrlForAttempt()
+      const transport = transportFactory({ url: transportUrl, headers })
       this.transport = transport
+      this.lastWelcomeMessage = null
 
       this.updateConnectionState({
         status: 'connecting',
         attempt: this.reconnectAttempt,
-      })
+      }, { event: 'CONNECT_REQUEST' })
+      this.resetConnectTimeout()
+      const timeoutMs = Math.max(1, this.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS)
+      this.connectTimeout = setTimeout(() => {
+        if (this.connectionState.status !== 'connecting') {
+          return
+        }
+        this.lastErrorValue = 'Connection timed out'
+        this.disposeTransport(1001, 'Connection timed out')
+        this.scheduleReconnect({
+          reason: 'Connection timed out',
+          event: 'CONNECT_TIMEOUT',
+          reasonCode: 'connect_timeout',
+        })
+      }, timeoutMs)
 
       this.transportCleanup = [
         transport.onOpen(() => {
@@ -452,53 +562,26 @@ export class DaemonClient {
             this.pendingGenericTransportErrorTimeout = null
           }
           this.lastErrorValue = null
-          this.reconnectAttempt = 0
-          this.updateConnectionState({ status: 'connected' })
-          this.resubscribeCheckoutDiffSubscriptions()
-          this.resubscribeTerminalDirectorySubscriptions()
-          this.flushPendingSendQueue()
-          this.resolveConnect()
+          this.sendHelloMessage()
         }),
         transport.onClose((event) => {
+          this.resetConnectTimeout()
           if (this.pendingGenericTransportErrorTimeout) {
             clearTimeout(this.pendingGenericTransportErrorTimeout)
             this.pendingGenericTransportErrorTimeout = null
           }
-          const closeRecord = event as { code?: unknown; reason?: unknown } | null
-          const closeCode =
-            closeRecord && typeof closeRecord === 'object' && typeof closeRecord.code === 'number'
-              ? closeRecord.code
-              : null
-          const closeReason =
-            closeRecord && typeof closeRecord === 'object' && typeof closeRecord.reason === 'string'
-              ? closeRecord.reason
-              : null
           const reason = describeTransportClose(event)
           if (reason) {
             this.lastErrorValue = reason
           }
-          this.updateConnectionState({
-            status: 'disconnected',
-            ...(reason ? { reason } : {}),
+          this.scheduleReconnect({
+            reason,
+            event: 'TRANSPORT_CLOSE',
+            reasonCode: 'transport_closed',
           })
-
-          // When connecting over the relay, only one client connection is allowed at a time.
-          // If another device/tab takes over, we should not auto-reconnect and "fight" the new
-          // connection (which causes flapping where both sides repeatedly replace each other).
-          if (
-            isRelayClientWebSocketUrl(this.config.url) &&
-            closeCode === 1008 &&
-            (closeReason ?? reason) === 'Replaced by new connection'
-          ) {
-            this.shouldReconnect = false
-            this.clearWaiters(new Error(reason ?? 'Replaced by new connection'))
-            this.rejectPendingSendQueue(new Error(reason ?? 'Replaced by new connection'))
-            this.rejectConnect(new Error(reason ?? 'Replaced by new connection'))
-            return
-          }
-          this.scheduleReconnect(reason)
         }),
         transport.onError((event) => {
+          this.resetConnectTimeout()
           const reason = describeTransportError(event)
           const isGeneric = reason === 'Transport error'
           // Browser WebSocket.onerror often provides no useful details and is followed
@@ -514,8 +597,11 @@ export class DaemonClient {
                   this.connectionState.status === 'connecting'
                 ) {
                   this.lastErrorValue = reason
-                  this.updateConnectionState({ status: 'disconnected', reason })
-                  this.scheduleReconnect(reason)
+                  this.scheduleReconnect({
+                    reason,
+                    event: 'TRANSPORT_ERROR',
+                    reasonCode: 'transport_error',
+                  })
                 }
               }, 250)
             }
@@ -527,15 +613,23 @@ export class DaemonClient {
             this.pendingGenericTransportErrorTimeout = null
           }
           this.lastErrorValue = reason
-          this.updateConnectionState({ status: 'disconnected', reason })
-          this.scheduleReconnect(reason)
+          this.scheduleReconnect({
+            reason,
+            event: 'TRANSPORT_ERROR',
+            reasonCode: 'transport_error',
+          })
         }),
         transport.onMessage((data) => this.handleTransportMessage(data)),
       ]
     } catch (error) {
+      this.resetConnectTimeout()
       const message = error instanceof Error ? error.message : 'Failed to connect'
       this.lastErrorValue = message
-      this.scheduleReconnect(message)
+      this.scheduleReconnect({
+        reason: message,
+        event: 'CONNECT_FAILED',
+        reasonCode: 'connect_failed',
+      })
       this.rejectConnect(error instanceof Error ? error : new Error(message))
     }
   }
@@ -559,6 +653,9 @@ export class DaemonClient {
   }
 
   async close(): Promise<void> {
+    if (this.connectionState.status === 'disposed') {
+      return
+    }
     this.shouldReconnect = false
     this.connectPromise = null
     this.connectResolve = null
@@ -567,16 +664,22 @@ export class DaemonClient {
       clearTimeout(this.reconnectTimeout)
       this.reconnectTimeout = null
     }
+    this.resetConnectTimeout()
     this.disposeTransport(1000, 'Client closed')
     this.clearWaiters(new Error('Daemon client closed'))
+    this.rejectPendingSendQueue(new Error('Daemon client closed'))
     this.terminalStreams.clearAll()
-    this.updateConnectionState({
-      status: 'disconnected',
-      reason: 'client_closed',
-    })
+    this.lastWelcomeMessage = null
+    this.updateConnectionState(
+      { status: 'disposed' },
+      { event: 'DISPOSE', reason: 'Client closed', reasonCode: 'disposed' }
+    )
   }
 
   ensureConnected(): void {
+    if (this.connectionState.status === 'disposed') {
+      return
+    }
     if (!this.shouldReconnect) {
       this.shouldReconnect = true
     }
@@ -2213,15 +2316,101 @@ export class DaemonClient {
     predicate: (snapshot: AgentSnapshotPayload) => boolean,
     timeout = 60000
   ): Promise<AgentSnapshotPayload> {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < timeout) {
-      const snapshot = await this.fetchAgent(agentId).catch(() => null)
-      if (snapshot && predicate(snapshot)) {
-        return snapshot
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250))
+    const initial = await this.fetchAgent(agentId).catch(() => null)
+    if (initial && predicate(initial)) {
+      return initial
     }
-    throw new Error(`Timed out waiting for agent ${agentId}`)
+
+    const deadline = Date.now() + timeout
+    return await new Promise<AgentSnapshotPayload>((resolve, reject) => {
+      let settled = false
+      let pollInFlight = false
+      let pollTimer: ReturnType<typeof setInterval> | null = null
+      let timeoutTimer: ReturnType<typeof setTimeout> | null = null
+      let unsubscribe: (() => void) | null = null
+
+      const finish = (
+        result:
+          | { kind: 'ok'; snapshot: AgentSnapshotPayload }
+          | { kind: 'error'; error: Error }
+      ) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        if (timeoutTimer) {
+          clearTimeout(timeoutTimer)
+          timeoutTimer = null
+        }
+        if (pollTimer) {
+          clearInterval(pollTimer)
+          pollTimer = null
+        }
+        if (unsubscribe) {
+          unsubscribe()
+          unsubscribe = null
+        }
+        if (result.kind === 'ok') {
+          resolve(result.snapshot)
+          return
+        }
+        reject(result.error)
+      }
+
+      const maybeResolve = (snapshot: AgentSnapshotPayload | null) => {
+        if (!snapshot) {
+          return false
+        }
+        if (!predicate(snapshot)) {
+          return false
+        }
+        finish({ kind: 'ok', snapshot })
+        return true
+      }
+
+      const poll = async () => {
+        if (settled || pollInFlight) {
+          return
+        }
+        pollInFlight = true
+        try {
+          const snapshot = await this.fetchAgent(agentId).catch(() => null)
+          maybeResolve(snapshot)
+        } finally {
+          pollInFlight = false
+        }
+      }
+
+      unsubscribe = this.on('agent_update', (message) => {
+        if (settled) {
+          return
+        }
+        if (message.type !== 'agent_update') {
+          return
+        }
+        if (message.payload.kind !== 'upsert') {
+          return
+        }
+        const snapshot = message.payload.agent
+        if (snapshot.id !== agentId) {
+          return
+        }
+        maybeResolve(snapshot)
+      })
+
+      const remaining = Math.max(1, deadline - Date.now())
+      timeoutTimer = setTimeout(() => {
+        finish({
+          kind: 'error',
+          error: new Error(`Timed out waiting for agent ${agentId}`),
+        })
+      }, remaining)
+
+      pollTimer = setInterval(() => {
+        void poll()
+      }, 250)
+      void poll()
+    })
   }
 
   async waitForFinish(agentId: string, timeout = 60000): Promise<WaitForFinishResult> {
@@ -2492,6 +2681,45 @@ export class DaemonClient {
     return requestId ?? crypto.randomUUID()
   }
 
+  getLastWelcomeMessage(): WSWelcomeMessage | null {
+    return this.lastWelcomeMessage
+  }
+
+  private resolveTransportUrlForAttempt(): string {
+    return this.config.url
+  }
+
+  private sendHelloMessage(): void {
+    if (!this.transport) {
+      this.scheduleReconnect({
+        reason: 'Transport unavailable before hello',
+        event: 'HELLO_TRANSPORT_MISSING',
+        reasonCode: 'transport_error',
+      })
+      return
+    }
+
+    try {
+      this.transport.send(
+        JSON.stringify({
+          type: 'hello',
+          clientId: this.config.clientId,
+          clientType: this.config.clientType ?? 'cli',
+          protocolVersion: 1,
+        })
+      )
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to send hello message'
+      this.lastErrorValue = message
+      this.scheduleReconnect({
+        reason: message,
+        event: 'HELLO_SEND_FAILED',
+        reasonCode: 'transport_error',
+      })
+    }
+  }
+
   private disposeTransport(code = 1001, reason = 'Reconnecting'): void {
     this.cleanupTransport()
     if (this.transport) {
@@ -2505,6 +2733,7 @@ export class DaemonClient {
   }
 
   private cleanupTransport(): void {
+    this.resetConnectTimeout()
     if (this.pendingGenericTransportErrorTimeout) {
       clearTimeout(this.pendingGenericTransportErrorTimeout)
       this.pendingGenericTransportErrorTimeout = null
@@ -2519,13 +2748,28 @@ export class DaemonClient {
     this.transportCleanup = []
   }
 
+  private resetConnectTimeout(): void {
+    if (!this.connectTimeout) {
+      return
+    }
+    clearTimeout(this.connectTimeout)
+    this.connectTimeout = null
+  }
+
   private handleTransportMessage(data: unknown): void {
+    const startedAtMs = getNowMs()
     const rawData =
       data && typeof data === 'object' && 'data' in data ? (data as { data: unknown }).data : data
     const rawBytes = asUint8Array(rawData)
     if (rawBytes) {
       const frame = decodeBinaryMuxFrame(rawBytes)
       if (frame) {
+        this.emitDiagnosticsEvent({
+          type: 'transport_binary_frame',
+          channel: frame.channel,
+          messageType: frame.messageType,
+          payloadBytes: frame.payload?.byteLength ?? 0,
+        })
         this.handleBinaryFrame(frame)
         return
       }
@@ -2536,20 +2780,65 @@ export class DaemonClient {
     }
 
     let parsedJson: unknown
+    let parseMs = 0
     try {
+      const parseStartedAtMs = getNowMs()
       parsedJson = JSON.parse(payload)
+      parseMs = getNowMs() - parseStartedAtMs
     } catch {
+      this.emitDiagnosticsEvent({
+        type: 'transport_message_timing',
+        messageType: 'unknown',
+        payloadBytes: payload.length,
+        parseMs: 0,
+        validateMs: 0,
+        totalMs: getNowMs() - startedAtMs,
+        outcome: 'parse_error',
+      })
       return
     }
 
+    const validateStartedAtMs = getNowMs()
     const parsed = WSOutboundMessageSchema.safeParse(parsedJson)
+    const validateMs = getNowMs() - validateStartedAtMs
     if (!parsed.success) {
-      const msgType = (parsedJson as { message?: { type?: string } })?.message?.type ?? 'unknown'
+      const msgType = (parsedJson as { type?: string })?.type ?? 'unknown'
+      this.emitDiagnosticsEvent({
+        type: 'transport_message_timing',
+        messageType: msgType,
+        payloadBytes: payload.length,
+        parseMs,
+        validateMs,
+        totalMs: getNowMs() - startedAtMs,
+        outcome: 'validation_error',
+      })
       this.logger.warn({ msgType, error: parsed.error.message }, 'Message validation failed')
       return
     }
 
+    this.emitDiagnosticsEvent({
+      type: 'transport_message_timing',
+      messageType: parsed.data.type,
+      payloadBytes: payload.length,
+      parseMs,
+      validateMs,
+      totalMs: getNowMs() - startedAtMs,
+      outcome: 'ok',
+    })
+
     if (parsed.data.type === 'pong') {
+      return
+    }
+
+    if (parsed.data.type === 'welcome') {
+      this.lastWelcomeMessage = parsed.data
+      this.resetConnectTimeout()
+      this.reconnectAttempt = 0
+      this.updateConnectionState({ status: 'connected' }, { event: 'HELLO_WELCOME' })
+      this.resubscribeCheckoutDiffSubscriptions()
+      this.resubscribeTerminalDirectorySubscriptions()
+      this.flushPendingSendQueue()
+      this.resolveConnect()
       return
     }
 
@@ -2573,8 +2862,32 @@ export class DaemonClient {
     }
   }
 
-  private updateConnectionState(next: ConnectionState): void {
+  private updateConnectionState(
+    next: ConnectionState,
+    metadata?: { event: string; reason?: string; reasonCode?: string }
+  ): void {
+    const previous = this.connectionState
     this.connectionState = next
+    const reasonFromNext =
+      next.status === 'disconnected' && typeof next.reason === 'string'
+        ? next.reason
+        : null
+    const reason = metadata?.reason ?? reasonFromNext
+    const reasonCode = metadata?.reasonCode ?? toReasonCode(reason)
+    this.logger.debug(
+      {
+        serverId: this.logServerId,
+        clientIdHash: this.logClientIdHash,
+        from: previous.status,
+        to: next.status,
+        event: metadata?.event ?? 'STATE_UPDATE',
+        connectionPath: this.logConnectionPath,
+        generation: this.logGeneration,
+        reasonCode,
+        reason,
+      },
+      'DaemonClientTransition'
+    )
     for (const listener of this.connectionListeners) {
       try {
         listener(next)
@@ -2584,22 +2897,17 @@ export class DaemonClient {
     }
   }
 
-  private scheduleReconnect(reason?: string): void {
+  private scheduleReconnect(input?: {
+    reason?: string
+    event?: string
+    reasonCode?: string
+  }): void {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout)
       this.reconnectTimeout = null
     }
-
-    if (!this.shouldReconnect || this.config.reconnect?.enabled === false) {
-      this.rejectConnect(new Error(reason ?? 'Transport disconnected before connect'))
-      return
-    }
-
-    const attempt = this.reconnectAttempt
-    const baseDelay = this.config.reconnect?.baseDelayMs ?? DEFAULT_RECONNECT_BASE_DELAY_MS
-    const maxDelay = this.config.reconnect?.maxDelayMs ?? DEFAULT_RECONNECT_MAX_DELAY_MS
-    const delay = Math.min(baseDelay * 2 ** attempt, maxDelay)
-    this.reconnectAttempt = attempt + 1
+    const wasDisposed = this.connectionState.status === 'disposed'
+    const reason = input?.reason
 
     if (typeof reason === 'string' && reason.trim().length > 0) {
       this.lastErrorValue = reason.trim()
@@ -2610,11 +2918,30 @@ export class DaemonClient {
     this.clearWaiters(new Error(reason ?? 'Connection lost'))
     this.rejectPendingSendQueue(new Error(reason ?? 'Connection lost'))
     this.terminalStreams.clearAll()
+    this.lastWelcomeMessage = null
 
+    if (wasDisposed) {
+      this.rejectConnect(new Error(reason ?? 'Daemon client is disposed'))
+      return
+    }
     this.updateConnectionState({
       status: 'disconnected',
       ...(reason ? { reason } : {}),
+    }, {
+      event: input?.event ?? 'TRANSPORT_CLOSE',
+      ...(reason ? { reason } : {}),
+      ...(input?.reasonCode ? { reasonCode: input.reasonCode } : {}),
     })
+    if (!this.shouldReconnect || this.config.reconnect?.enabled === false) {
+      this.rejectConnect(new Error(reason ?? 'Transport disconnected before connect'))
+      return
+    }
+
+    const attempt = this.reconnectAttempt
+    const baseDelay = this.config.reconnect?.baseDelayMs ?? DEFAULT_RECONNECT_BASE_DELAY_MS
+    const maxDelay = this.config.reconnect?.maxDelayMs ?? DEFAULT_RECONNECT_MAX_DELAY_MS
+    const delay = Math.min(baseDelay * 2 ** attempt, maxDelay)
+    this.reconnectAttempt = attempt + 1
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null
       if (!this.shouldReconnect) {

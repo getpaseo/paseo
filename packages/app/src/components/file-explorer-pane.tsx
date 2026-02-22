@@ -49,7 +49,7 @@ import type {
   ExplorerEntry,
   ExplorerFile,
 } from "@/stores/session-store";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { useSessionStore } from "@/stores/session-store";
 import { useDownloadStore } from "@/stores/download-store";
 import {
@@ -95,8 +95,11 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
 
-  const { connectionStates } = useDaemonConnections();
-  const daemonProfile = connectionStates.get(serverId)?.daemon;
+  const { daemons } = useDaemonRegistry();
+  const daemonProfile = useMemo(
+    () => daemons.find((daemon) => daemon.serverId === serverId),
+    [daemons, serverId]
+  );
   const agentExists = useSessionStore((state) =>
     agentId && state.sessions[serverId]
       ? state.sessions[serverId]?.agents.has(agentId)

@@ -29,6 +29,7 @@ import {
   mapClaudeFailedToolCall,
   mapClaudeRunningToolCall,
 } from "./claude/tool-call-mapper.js";
+import { buildToolCallDisplayModel } from "../../../shared/tool-call-display.js";
 
 import type {
   AgentCapabilityFlags,
@@ -65,15 +66,57 @@ import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js
 
 const fsPromises = promises;
 
-/**
- * Per-turn context to track streaming state.
- * This prevents race conditions when multiple stream() calls overlap
- * (e.g., when an interrupt sends a new message before the previous one completes).
- */
-interface TurnContext {
-  streamedAssistantTextThisTurn: boolean;
-  streamedReasoningThisTurn: boolean;
-}
+type TurnState = "idle" | "foreground" | "autonomous";
+
+type RunOwner = "foreground" | "autonomous";
+
+type RunLifecycleState =
+  | "queued"
+  | "awaiting_response"
+  | "streaming"
+  | "finalizing"
+  | "completed"
+  | "interrupted"
+  | "error";
+
+type SessionLifecycleState = "running" | "permission" | "error" | "idle";
+
+type RoutingReason =
+  | "foreground"
+  | "task_id"
+  | "task_id_new"
+  | "parent_message_id"
+  | "message_id"
+  | "unbound_autonomous"
+  | "fallback"
+  | "metadata";
+
+type EventIdentifiers = {
+  taskId: string | null;
+  parentMessageId: string | null;
+  messageId: string | null;
+};
+
+type RunRoute = {
+  run: RunRecord | null;
+  reason: RoutingReason;
+};
+
+type RunRecord = {
+  id: string;
+  owner: RunOwner;
+  queue: Pushable<AgentStreamEvent> | null;
+  state: RunLifecycleState;
+  promptReplaySeen: boolean;
+  taskIds: Set<string>;
+  parentMessageIds: Set<string>;
+  messageIds: Set<string>;
+};
+
+type ForegroundTurnState = {
+  runId: string;
+  queue: Pushable<AgentStreamEvent>;
+};
 
 function normalizeClaudeModelLabel(model: ModelInfo): string {
   const fallback = model.displayName?.trim() || model.value;
@@ -218,6 +261,7 @@ const REWIND_COMMAND: AgentSlashCommand = {
   description: "Rewind tracked files to a previous user message",
   argumentHint: "[user_message_uuid]",
 };
+const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -287,6 +331,201 @@ function resolveClaudeSpawnCommand(
   };
 }
 
+function applyRuntimeSettingsToClaudeOptions(
+  options: ClaudeOptions,
+  runtimeSettings?: ProviderRuntimeSettings
+): ClaudeOptions {
+  const hasEnvOverrides = Object.keys(runtimeSettings?.env ?? {}).length > 0;
+  const commandMode = runtimeSettings?.command?.mode;
+  const needsCustomSpawn =
+    hasEnvOverrides || commandMode === "append" || commandMode === "replace";
+
+  if (!needsCustomSpawn) {
+    return options;
+  }
+
+  return {
+    ...options,
+    spawnClaudeCodeProcess: (spawnOptions) => {
+      const resolved = resolveClaudeSpawnCommand(
+        spawnOptions,
+        runtimeSettings
+      );
+      return spawn(resolved.command, resolved.args, {
+        cwd: spawnOptions.cwd,
+        env: applyProviderEnv(spawnOptions.env, runtimeSettings),
+        signal: spawnOptions.signal,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    },
+  };
+}
+
+type ClaudeOptionsLogSummary = {
+  cwd: string | null;
+  permissionMode: string | null;
+  model: string | null;
+  includePartialMessages: boolean;
+  settingSources: string[];
+  enableFileCheckpointing: boolean;
+  hasResume: boolean;
+  maxThinkingTokens: number | null;
+  hasEnv: boolean;
+  envKeyCount: number;
+  hasMcpServers: boolean;
+  mcpServerNames: string[];
+  systemPromptMode: "none" | "string" | "preset" | "custom";
+  systemPromptPreset: string | null;
+  hasCanUseTool: boolean;
+  hasSpawnOverride: boolean;
+  hasStderrHandler: boolean;
+};
+
+function summarizeClaudeOptionsForLog(options: ClaudeOptions): ClaudeOptionsLogSummary {
+  const systemPromptRaw = options.systemPrompt;
+  const systemPromptSummary = (() => {
+    if (!systemPromptRaw) {
+      return { mode: "none" as const, preset: null };
+    }
+    if (typeof systemPromptRaw === "string") {
+      return { mode: "string" as const, preset: null };
+    }
+    const prompt = systemPromptRaw as Record<string, unknown>;
+    const promptType =
+      typeof prompt.type === "string" ? prompt.type : "custom";
+    return {
+      mode:
+        promptType === "preset"
+          ? ("preset" as const)
+          : ("custom" as const),
+      preset:
+        typeof prompt.preset === "string" && prompt.preset.length > 0
+          ? prompt.preset
+          : null,
+    };
+  })();
+  const mcpServerNames = options.mcpServers
+    ? Object.keys(options.mcpServers).sort()
+    : [];
+
+  return {
+    cwd: typeof options.cwd === "string" ? options.cwd : null,
+    permissionMode:
+      typeof options.permissionMode === "string"
+        ? options.permissionMode
+        : null,
+    model: typeof options.model === "string" ? options.model : null,
+    includePartialMessages: options.includePartialMessages === true,
+    settingSources: Array.isArray(options.settingSources)
+      ? options.settingSources
+      : [],
+    enableFileCheckpointing: options.enableFileCheckpointing === true,
+    hasResume: typeof options.resume === "string" && options.resume.length > 0,
+    maxThinkingTokens:
+      typeof options.maxThinkingTokens === "number"
+        ? options.maxThinkingTokens
+        : null,
+    hasEnv: !!options.env,
+    envKeyCount: Object.keys(options.env ?? {}).length,
+    hasMcpServers: mcpServerNames.length > 0,
+    mcpServerNames,
+    systemPromptMode: systemPromptSummary.mode,
+    systemPromptPreset: systemPromptSummary.preset,
+    hasCanUseTool: typeof options.canUseTool === "function",
+    hasSpawnOverride: typeof options.spawnClaudeCodeProcess === "function",
+    hasStderrHandler: typeof options.stderr === "function",
+  };
+}
+
+function isToolResultTextBlock(
+  value: unknown
+): value is { type: "text"; text: string } {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { type?: unknown }).type === "text" &&
+    typeof (value as { text?: unknown }).text === "string"
+  );
+}
+
+function normalizeForDeterministicString(
+  value: unknown,
+  seen: WeakSet<object>
+): unknown {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "function") {
+    return "[function]";
+  }
+  if (typeof value === "symbol") {
+    return value.toString();
+  }
+  if (typeof value === "undefined") {
+    return "[undefined]";
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) =>
+      normalizeForDeterministicString(entry, seen)
+    );
+  }
+  if (typeof value === "object") {
+    const objectValue = value as object;
+    if (seen.has(objectValue)) {
+      return "[circular]";
+    }
+    seen.add(objectValue);
+    const record = value as Record<string, unknown>;
+    const normalized: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+      normalized[key] = normalizeForDeterministicString(record[key], seen);
+    }
+    seen.delete(objectValue);
+    return normalized;
+  }
+  return String(value);
+}
+
+function deterministicStringify(value: unknown): string {
+  if (typeof value === "undefined") {
+    return "";
+  }
+  try {
+    const normalized = normalizeForDeterministicString(
+      value,
+      new WeakSet<object>()
+    );
+    if (typeof normalized === "string") {
+      return normalized;
+    }
+    return JSON.stringify(normalized);
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return "[unserializable]";
+    }
+  }
+}
+
+function coerceToolResultContentToString(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content) && content.every((block) => isToolResultTextBlock(block))) {
+    return content.map((block) => block.text).join("");
+  }
+  return deterministicStringify(content);
+}
+
 
 export function extractUserMessageText(content: unknown): string | null {
   if (typeof content === "string") {
@@ -341,8 +580,39 @@ type ToolUseCacheEntry = {
   input?: AgentMetadata | null;
 };
 
+type SubAgentActionEntry = {
+  index: number;
+  toolName: string;
+  summary?: string;
+};
+
+type SubAgentActivityState = {
+  subAgentType?: string;
+  description?: string;
+  actions: SubAgentActionEntry[];
+  actionKeys: string[];
+  nextActionIndex: number;
+  actionIndexByKey: Map<string, number>;
+};
+
+type SubAgentActionCandidate = {
+  key: string;
+  toolName: string;
+  input: unknown;
+};
+
+const MAX_SUB_AGENT_LOG_ENTRIES = 200;
+const MAX_SUB_AGENT_SUMMARY_CHARS = 160;
 function isMetadata(value: unknown): value is AgentMetadata {
   return typeof value === "object" && value !== null;
+}
+
+function readTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function isMcpServerConfig(value: unknown): value is McpServerConfig {
@@ -489,6 +759,581 @@ function resolvePermissionKind(
   return "tool";
 }
 
+const ACTIVE_RUN_STATES = new Set<RunLifecycleState>([
+  "queued",
+  "awaiting_response",
+  "streaming",
+  "finalizing",
+]);
+
+class RunTracker {
+  private readonly runs = new Map<string, RunRecord>();
+  private readonly runByTaskId = new Map<string, string>();
+  private readonly runByParentMessageId = new Map<string, string>();
+  private readonly runByMessageId = new Map<string, string>();
+
+  createRun(input: {
+    id: string;
+    owner: RunOwner;
+    queue: Pushable<AgentStreamEvent> | null;
+    promptReplaySeen?: boolean;
+  }): RunRecord {
+    const run: RunRecord = {
+      id: input.id,
+      owner: input.owner,
+      queue: input.queue,
+      state: "queued",
+      promptReplaySeen: input.promptReplaySeen ?? true,
+      taskIds: new Set<string>(),
+      parentMessageIds: new Set<string>(),
+      messageIds: new Set<string>(),
+    };
+    this.runs.set(run.id, run);
+    return run;
+  }
+
+  getRun(runId: string): RunRecord | null {
+    return this.runs.get(runId) ?? null;
+  }
+
+  getForegroundRun(): RunRecord | null {
+    for (const run of this.runs.values()) {
+      if (run.owner === "foreground" && this.isActive(run.state)) {
+        return run;
+      }
+    }
+    return null;
+  }
+
+  listActiveRuns(owner?: RunOwner): RunRecord[] {
+    const runs: RunRecord[] = [];
+    for (const run of this.runs.values()) {
+      if (!this.isActive(run.state)) {
+        continue;
+      }
+      if (owner && run.owner !== owner) {
+        continue;
+      }
+      runs.push(run);
+    }
+    return runs;
+  }
+
+  hasActiveRuns(owner?: RunOwner): boolean {
+    for (const run of this.runs.values()) {
+      if (!this.isActive(run.state)) {
+        continue;
+      }
+      if (owner && run.owner !== owner) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  getLatestActiveRun(owner?: RunOwner): RunRecord | null {
+    let latest: RunRecord | null = null;
+    for (const run of this.runs.values()) {
+      if (!this.isActive(run.state)) {
+        continue;
+      }
+      if (owner && run.owner !== owner) {
+        continue;
+      }
+      latest = run;
+    }
+    return latest;
+  }
+
+  isRunActive(run: RunRecord | null): boolean {
+    if (!run) {
+      return false;
+    }
+    return this.isActive(run.state);
+  }
+
+  resolveByIdentifiers(identifiers: EventIdentifiers): RunRoute {
+    if (identifiers.taskId) {
+      const run = this.resolveMappedRun(this.runByTaskId, identifiers.taskId);
+      if (run) {
+        return { run, reason: "task_id" };
+      }
+    }
+    if (identifiers.parentMessageId) {
+      const run = this.resolveMappedRun(
+        this.runByParentMessageId,
+        identifiers.parentMessageId
+      );
+      if (run) {
+        return { run, reason: "parent_message_id" };
+      }
+    }
+    if (identifiers.messageId) {
+      const run = this.resolveMappedRun(
+        this.runByMessageId,
+        identifiers.messageId
+      );
+      if (run) {
+        return { run, reason: "message_id" };
+      }
+    }
+    return { run: null, reason: "metadata" };
+  }
+
+  bindIdentifiers(run: RunRecord, identifiers: EventIdentifiers): void {
+    if (identifiers.taskId) {
+      run.taskIds.add(identifiers.taskId);
+      this.runByTaskId.set(identifiers.taskId, run.id);
+    }
+    if (identifiers.parentMessageId) {
+      run.parentMessageIds.add(identifiers.parentMessageId);
+      this.runByParentMessageId.set(identifiers.parentMessageId, run.id);
+    }
+    if (identifiers.messageId) {
+      run.messageIds.add(identifiers.messageId);
+      this.runByMessageId.set(identifiers.messageId, run.id);
+    }
+  }
+
+  transition(run: RunRecord, nextState: RunLifecycleState): void {
+    run.state = nextState;
+  }
+
+  complete(run: RunRecord, terminalState: "completed" | "interrupted" | "error"): void {
+    run.state = terminalState;
+    this.clearRunIndex(run);
+  }
+
+  deriveLifecycle(pendingPermissionCount: number): SessionLifecycleState {
+    for (const run of this.runs.values()) {
+      if (this.isActive(run.state)) {
+        return "running";
+      }
+    }
+    if (pendingPermissionCount > 0) {
+      return "permission";
+    }
+    for (const run of this.runs.values()) {
+      if (run.state === "error") {
+        return "error";
+      }
+    }
+    return "idle";
+  }
+
+  private resolveMappedRun(
+    mapping: Map<string, string>,
+    identifier: string
+  ): RunRecord | null {
+    const runId = mapping.get(identifier);
+    if (!runId) {
+      return null;
+    }
+    const run = this.runs.get(runId);
+    if (!run || !this.isActive(run.state)) {
+      mapping.delete(identifier);
+      return null;
+    }
+    return run;
+  }
+
+  private clearRunIndex(run: RunRecord): void {
+    for (const taskId of run.taskIds) {
+      this.runByTaskId.delete(taskId);
+    }
+    for (const parentMessageId of run.parentMessageIds) {
+      this.runByParentMessageId.delete(parentMessageId);
+    }
+    for (const messageId of run.messageIds) {
+      this.runByMessageId.delete(messageId);
+    }
+    run.taskIds.clear();
+    run.parentMessageIds.clear();
+    run.messageIds.clear();
+  }
+
+  private isActive(state: RunLifecycleState): boolean {
+    return ACTIVE_RUN_STATES.has(state);
+  }
+}
+
+type TimelineFragment = {
+  kind: "assistant" | "reasoning";
+  text: string;
+};
+
+type TimelineMessageState = {
+  id: string;
+  assistantText: string;
+  reasoningText: string;
+  emittedAssistantLength: number;
+  emittedReasoningLength: number;
+  stopped: boolean;
+};
+
+class TimelineAssembler {
+  private readonly messages = new Map<string, TimelineMessageState>();
+  private readonly activeMessageByRun = new Map<string, string>();
+  private syntheticMessageCounter = 0;
+
+  consume(input: {
+    message: SDKMessage;
+    runId: string | null;
+    messageIdHint?: string | null;
+  }): AgentTimelineItem[] {
+    if (input.message.type === "assistant") {
+      return this.consumeAssistantMessage(
+        input.message,
+        input.runId,
+        input.messageIdHint ?? null
+      );
+    }
+    if (input.message.type === "stream_event") {
+      return this.consumeStreamEvent(
+        input.message,
+        input.runId,
+        input.messageIdHint ?? null
+      );
+    }
+    return [];
+  }
+
+  private consumeAssistantMessage(
+    message: SDKMessage & { type: "assistant" },
+    runId: string | null,
+    messageIdHint: string | null
+  ): AgentTimelineItem[] {
+    const messageId =
+      this.readMessageIdFromAssistantMessage(message) ??
+      messageIdHint ??
+      this.resolveMessageId({ runId, createIfMissing: true, messageId: null });
+    if (!messageId) {
+      return [];
+    }
+    const state = this.ensureMessageState(messageId, runId);
+    const fragments = this.extractFragments(message.message?.content);
+    return this.applyAbsoluteFragments(state, fragments);
+  }
+
+  private consumeStreamEvent(
+    message: SDKMessage & { type: "stream_event" },
+    runId: string | null,
+    messageIdHint: string | null
+  ): AgentTimelineItem[] {
+    const event = message.event as Record<string, unknown>;
+    const eventType = readTrimmedString(event.type);
+    const streamEventMessageId =
+      this.readMessageIdFromStreamEvent(event) ?? messageIdHint;
+
+    if (eventType === "message_start") {
+      const messageId = this.resolveMessageId({
+        runId,
+        createIfMissing: true,
+        messageId: streamEventMessageId,
+      });
+      if (!messageId) {
+        return [];
+      }
+      this.ensureMessageState(messageId, runId);
+      return [];
+    }
+
+    if (eventType === "message_stop") {
+      const messageId = this.resolveMessageId({
+        runId,
+        createIfMissing: false,
+        messageId: streamEventMessageId,
+      });
+      if (!messageId) {
+        return [];
+      }
+      return this.finalizeMessage(messageId, runId);
+    }
+
+    if (eventType === "content_block_start") {
+      return this.consumeDeltaContent(
+        event.content_block,
+        runId,
+        streamEventMessageId
+      );
+    }
+
+    if (eventType === "content_block_delta") {
+      return this.consumeDeltaContent(event.delta, runId, streamEventMessageId);
+    }
+
+    return [];
+  }
+
+  private consumeDeltaContent(
+    content: unknown,
+    runId: string | null,
+    messageIdHint: string | null
+  ): AgentTimelineItem[] {
+    const fragments = this.extractFragments(content);
+    if (fragments.length === 0) {
+      return [];
+    }
+    const messageId = this.resolveMessageId({
+      runId,
+      createIfMissing: true,
+      messageId: messageIdHint,
+    });
+    if (!messageId) {
+      return [];
+    }
+    const state = this.ensureMessageState(messageId, runId);
+    return this.appendFragments(state, fragments);
+  }
+
+  private appendFragments(
+    state: TimelineMessageState,
+    fragments: TimelineFragment[]
+  ): AgentTimelineItem[] {
+    for (const fragment of fragments) {
+      if (fragment.kind === "assistant") {
+        state.assistantText += fragment.text;
+      } else {
+        state.reasoningText += fragment.text;
+      }
+    }
+    return this.emitNewContent(state);
+  }
+
+  private applyAbsoluteFragments(
+    state: TimelineMessageState,
+    fragments: TimelineFragment[]
+  ): AgentTimelineItem[] {
+    const assistantText = fragments
+      .filter((fragment) => fragment.kind === "assistant")
+      .map((fragment) => fragment.text)
+      .join("");
+    const reasoningText = fragments
+      .filter((fragment) => fragment.kind === "reasoning")
+      .map((fragment) => fragment.text)
+      .join("");
+
+    if (assistantText.length > 0) {
+      if (!assistantText.startsWith(state.assistantText)) {
+        state.emittedAssistantLength = 0;
+      }
+      state.assistantText = assistantText;
+    }
+    if (reasoningText.length > 0) {
+      if (!reasoningText.startsWith(state.reasoningText)) {
+        state.emittedReasoningLength = 0;
+      }
+      state.reasoningText = reasoningText;
+    }
+    return this.emitNewContent(state);
+  }
+
+  private finalizeMessage(
+    messageId: string,
+    runId: string | null
+  ): AgentTimelineItem[] {
+    const state = this.messages.get(messageId);
+    if (!state) {
+      return [];
+    }
+    state.stopped = true;
+    const items = this.emitNewContent(state);
+    if (runId && this.activeMessageByRun.get(runId) === messageId) {
+      this.activeMessageByRun.delete(runId);
+    }
+    return items;
+  }
+
+  private emitNewContent(state: TimelineMessageState): AgentTimelineItem[] {
+    const items: AgentTimelineItem[] = [];
+    const nextAssistantText = state.assistantText.slice(state.emittedAssistantLength);
+    if (
+      nextAssistantText.length > 0 &&
+      nextAssistantText !== INTERRUPT_TOOL_USE_PLACEHOLDER
+    ) {
+      state.emittedAssistantLength = state.assistantText.length;
+      items.push({ type: "assistant_message", text: nextAssistantText });
+    }
+
+    const nextReasoningText = state.reasoningText.slice(state.emittedReasoningLength);
+    if (nextReasoningText.length > 0) {
+      state.emittedReasoningLength = state.reasoningText.length;
+      items.push({ type: "reasoning", text: nextReasoningText });
+    }
+    return items;
+  }
+
+  private ensureMessageState(
+    messageId: string,
+    runId: string | null
+  ): TimelineMessageState {
+    const existing = this.messages.get(messageId);
+    if (existing) {
+      existing.stopped = false;
+      if (runId) {
+        this.activeMessageByRun.set(runId, messageId);
+      }
+      return existing;
+    }
+    const created: TimelineMessageState = {
+      id: messageId,
+      assistantText: "",
+      reasoningText: "",
+      emittedAssistantLength: 0,
+      emittedReasoningLength: 0,
+      stopped: false,
+    };
+    this.messages.set(messageId, created);
+    if (runId) {
+      this.activeMessageByRun.set(runId, messageId);
+    }
+    return created;
+  }
+
+  private resolveMessageId(input: {
+    runId: string | null;
+    createIfMissing: boolean;
+    messageId: string | null;
+  }): string | null {
+    if (input.messageId) {
+      return input.messageId;
+    }
+    if (input.runId) {
+      const active = this.activeMessageByRun.get(input.runId);
+      if (active) {
+        return active;
+      }
+    }
+    if (!input.createIfMissing) {
+      return null;
+    }
+    const synthetic = `synthetic-message-${++this.syntheticMessageCounter}`;
+    if (input.runId) {
+      this.activeMessageByRun.set(input.runId, synthetic);
+    }
+    return synthetic;
+  }
+
+  private extractFragments(content: unknown): TimelineFragment[] {
+    if (typeof content === "string") {
+      if (content.length === 0) {
+        return [];
+      }
+      return [{ kind: "assistant", text: content }];
+    }
+    const blocks = Array.isArray(content) ? content : [content];
+    const fragments: TimelineFragment[] = [];
+    for (const rawBlock of blocks) {
+      if (!isClaudeContentChunk(rawBlock)) {
+        continue;
+      }
+      if (
+        (rawBlock.type === "text" || rawBlock.type === "text_delta") &&
+        typeof rawBlock.text === "string" &&
+        rawBlock.text.length > 0
+      ) {
+        fragments.push({ kind: "assistant", text: rawBlock.text });
+      }
+      if (
+        (rawBlock.type === "thinking" || rawBlock.type === "thinking_delta") &&
+        typeof rawBlock.thinking === "string" &&
+        rawBlock.thinking.length > 0
+      ) {
+        fragments.push({ kind: "reasoning", text: rawBlock.thinking });
+      }
+    }
+    return fragments;
+  }
+
+  private readMessageIdFromAssistantMessage(
+    message: SDKMessage & { type: "assistant" }
+  ): string | null {
+    const candidate = message as unknown as {
+      message_id?: unknown;
+      message?: { id?: unknown } | null;
+    };
+    return readTrimmedString(candidate.message_id) ??
+      readTrimmedString(candidate.message?.id) ??
+      null;
+  }
+
+  private readMessageIdFromStreamEvent(
+    event: Record<string, unknown>
+  ): string | null {
+    const message = event.message as { id?: unknown } | undefined;
+    return (
+      readTrimmedString(event.message_id) ??
+      readTrimmedString(message?.id) ??
+      null
+    );
+  }
+}
+
+function isMetadataOnlySdkMessage(message: SDKMessage): boolean {
+  if (message.type === "system") {
+    return true;
+  }
+  if (message.type !== "user") {
+    return false;
+  }
+  return isTaskNotificationUserContent(message.message?.content);
+}
+
+function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
+  const root = message as unknown as Record<string, unknown>;
+  const messageType = readTrimmedString(root.type);
+  const streamEvent = root.event as Record<string, unknown> | undefined;
+  const streamEventMessage = streamEvent?.message as
+    | Record<string, unknown>
+    | undefined;
+  const messageContainer = root.message as Record<string, unknown> | undefined;
+
+  return {
+    taskId:
+      readTrimmedString(root.task_id) ??
+      readTrimmedString(streamEvent?.task_id) ??
+      readTrimmedString(streamEventMessage?.task_id) ??
+      readTrimmedString(messageContainer?.task_id) ??
+      null,
+    parentMessageId:
+      readTrimmedString(root.parent_message_id) ??
+      readTrimmedString(streamEvent?.parent_message_id) ??
+      readTrimmedString(streamEventMessage?.parent_message_id) ??
+      readTrimmedString(messageContainer?.parent_message_id) ??
+      null,
+    messageId:
+      readTrimmedString(root.message_id) ??
+      readTrimmedString(streamEvent?.message_id) ??
+      readTrimmedString(streamEventMessage?.id) ??
+      readTrimmedString(streamEventMessage?.message_id) ??
+      readTrimmedString(messageContainer?.id) ??
+      readTrimmedString(messageContainer?.message_id) ??
+      (messageType === "user" ? readTrimmedString(root.uuid) : null) ??
+      null,
+  };
+}
+
+function isTaskNotificationUserContent(content: unknown): boolean {
+  if (typeof content === "string") {
+    return content.includes("<task-notification>");
+  }
+  if (!Array.isArray(content)) {
+    return false;
+  }
+  for (const block of content) {
+    if (
+      block &&
+      typeof block === "object" &&
+      typeof (block as { text?: unknown }).text === "string" &&
+      (block as { text: string }).text.includes("<task-notification>")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export class ClaudeAgentClient implements AgentClient {
   readonly provider: "claude" = "claude";
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -510,30 +1355,10 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
-    const hasEnvOverrides = Object.keys(this.runtimeSettings?.env ?? {}).length > 0;
-    const commandMode = this.runtimeSettings?.command?.mode;
-    const needsCustomSpawn =
-      hasEnvOverrides || commandMode === "append" || commandMode === "replace";
-
-    if (!needsCustomSpawn) {
-      return options;
-    }
-
-    return {
-      ...options,
-      spawnClaudeCodeProcess: (spawnOptions) => {
-        const resolved = resolveClaudeSpawnCommand(
-          spawnOptions,
-          this.runtimeSettings
-        );
-        return spawn(resolved.command, resolved.args, {
-          cwd: spawnOptions.cwd,
-          env: applyProviderEnv(spawnOptions.env, this.runtimeSettings),
-          signal: spawnOptions.signal,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      },
-    };
+    return applyRuntimeSettingsToClaudeOptions(
+      options,
+      this.runtimeSettings
+    );
   }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
@@ -664,28 +1489,30 @@ class ClaudeAgentSession implements AgentSession {
   private toolUseIndexToId = new Map<number, string>();
   private toolUseInputBuffers = new Map<string, string>();
   private pendingPermissions = new Map<string, PendingPermission>();
-  private eventQueue: Pushable<AgentStreamEvent> | null = null;
+  private activeForegroundTurn: ForegroundTurnState | null = null;
+  private liveEventQueue = new Pushable<AgentStreamEvent>();
+  private readonly runTracker = new RunTracker();
+  private readonly timelineAssembler = new TimelineAssembler();
   private persistedHistory: AgentTimelineItem[] = [];
   private historyPending = false;
-  private turnCancelRequested = false;
-  // NOTE: streamedAssistantTextThisTurn and streamedReasoningThisTurn were removed
-  // These flags are now tracked per-turn via TurnContext to prevent race conditions
-  // when multiple stream() calls overlap (e.g., interrupt + new message)
+  private turnState: TurnState = "idle";
+  private preReplayMetadataSeen = false;
+  private pendingAutonomousWakeReservations = 0;
+  private nextRunOrdinal = 1;
   private cancelCurrentTurn: (() => void) | null = null;
-  // Track the pending interrupt promise so we can await it in processPrompt
-  // This ensures the interrupt's response is consumed before we call query.next()
   private pendingInterruptPromise: Promise<void> | null = null;
-  // Track the current turn ID and active turn promise to serialize concurrent stream() calls
-  // and prevent race conditions where two processPrompt() loops run against the same query
-  private currentTurnId = 0;
   private activeTurnPromise: Promise<void> | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
   private selectableModelIds: Set<string> | null = null;
-  private activeSidechains = new Map<string, string>();
+  private activeSidechains = new Map<string, SubAgentActivityState>();
   private compacting = false;
+  private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
   private userMessageIds: string[] = [];
+  private readonly localUserMessageIds = new Set<string>();
+  private suppressLocalReplayActivity = false;
+  private closed = false;
 
   constructor(
     config: ClaudeAgentConfig,
@@ -788,18 +1615,11 @@ class ClaudeAgentSession implements AgentSession {
     options?: AgentRunOptions
   ): AsyncGenerator<AgentStreamEvent> {
     void options;
-    // Increment turn ID to invalidate any in-flight processPrompt() loops from previous turns.
-    // This prevents race conditions where an interrupted turn's events get mixed with the new turn.
-    const turnId = ++this.currentTurnId;
-
-    // Cancel the previous turn if one exists. The caller of interrupt() is responsible
-    // for awaiting completion - the new turn just signals cancellation and proceeds.
     if (this.cancelCurrentTurn) {
       this.cancelCurrentTurn();
     }
-
-    // Reset cancel flag at the start of each turn to prevent stale state from previous turns
-    this.turnCancelRequested = false;
+    this.suppressLocalReplayActivity = false;
+    this.pendingAutonomousWakeReservations = 0;
 
     const slashCommand = this.resolveSlashCommandInvocation(prompt);
     if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
@@ -807,71 +1627,126 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
 
+    await this.awaitPendingInterruptPromise();
+    if (
+      this.turnState === "autonomous" &&
+      this.runTracker.hasActiveRuns("autonomous")
+    ) {
+      await this.transitionAutonomousToForeground();
+    }
+
     const sdkMessage = this.toSdkUserMessage(prompt);
     const queue = new Pushable<AgentStreamEvent>();
-    this.eventQueue = queue;
+    const run = this.createRun("foreground", queue);
+    this.runTracker.bindIdentifiers(run, {
+      taskId: null,
+      parentMessageId: null,
+      messageId: typeof sdkMessage.uuid === "string" ? sdkMessage.uuid : null,
+    });
+    const foregroundTurn: ForegroundTurnState = {
+      runId: run.id,
+      queue,
+    };
+    this.activeForegroundTurn = foregroundTurn;
+    this.preReplayMetadataSeen = false;
+    this.transitionTurnState("foreground", "foreground stream started");
+
     let finishedNaturally = false;
     let cancelIssued = false;
+    let queueDrainedWithoutTerminal = false;
+    const turnPromise = Promise.resolve();
+    this.activeTurnPromise = turnPromise;
+
     const requestCancel = () => {
       if (cancelIssued) {
         return;
       }
       cancelIssued = true;
-      this.turnCancelRequested = true;
-      // Store the interrupt promise so processPrompt can await it before calling query.next()
-      this.pendingInterruptPromise = this.interruptActiveTurn().catch((error) => {
-        this.logger.warn({ err: error }, "Failed to interrupt during cancel");
-      });
-      this.rejectAllPendingPermissions(new Error("Permission request aborted"));
-      this.flushPendingToolCalls();
-      // Push turn_canceled before ending the queue so consumers get proper lifecycle signals
-      queue.push({
-        type: "turn_canceled",
-        provider: "claude",
-        reason: "Interrupted",
-      });
-      queue.end();
-    };
-    this.cancelCurrentTurn = requestCancel;
-
-    // Start forwarding events and track the promise so future turns can wait for completion
-    const forwardPromise = this.forwardPromptEvents(sdkMessage, queue, turnId);
-    this.activeTurnPromise = forwardPromise;
-    forwardPromise.catch((error) => {
-      this.logger.error({ err: error }, "Unexpected error in forwardPromptEvents");
-    });
-
-    try {
-      for await (const event of queue) {
-        yield event;
-        if (
-          event.type === "turn_completed" ||
-          event.type === "turn_failed" ||
-          event.type === "turn_canceled"
-        ) {
-          finishedNaturally = true;
-          break;
-        }
-      }
-    } finally {
-      if (!finishedNaturally && !cancelIssued) {
-        requestCancel();
-      }
-      if (this.eventQueue === queue) {
-        this.eventQueue = null;
+      if (this.activeForegroundTurn?.runId === run.id) {
+        this.activeForegroundTurn = null;
       }
       if (this.cancelCurrentTurn === requestCancel) {
         this.cancelCurrentTurn = null;
       }
-      // Clear the active turn promise if it's still ours
-      if (this.activeTurnPromise === forwardPromise) {
+      this.rejectAllPendingPermissions(new Error("Permission request aborted"));
+      this.cancelRun(run, {
+        type: "turn_canceled",
+        provider: "claude",
+        reason: "Interrupted",
+      });
+      this.pendingInterruptPromise = this.interruptActiveTurn().catch((error) => {
+        this.logger.warn({ err: error }, "Failed to interrupt during cancel");
+      });
+    };
+    this.cancelCurrentTurn = requestCancel;
+
+    try {
+      await this.ensureQuery();
+      if (!this.input) {
+        throw new Error("Claude session input stream not initialized");
+      }
+      this.startQueryPump();
+      this.input.push(sdkMessage);
+    } catch (error) {
+      this.failRun(
+        run,
+        error instanceof Error ? error.message : "Claude stream failed"
+      );
+      finishedNaturally = true;
+    }
+
+    try {
+      for await (const event of queue) {
+        const isTerminalEvent =
+          event.type === "turn_completed" ||
+          event.type === "turn_failed" ||
+          event.type === "turn_canceled";
+        if (isTerminalEvent) {
+          finishedNaturally = true;
+        }
+        yield event;
+        if (isTerminalEvent) {
+          break;
+        }
+      }
+      if (!finishedNaturally && !cancelIssued) {
+        queueDrainedWithoutTerminal = true;
+      }
+    } finally {
+      if (!finishedNaturally && !cancelIssued && !queueDrainedWithoutTerminal) {
+        requestCancel();
+      }
+      if (this.activeForegroundTurn === foregroundTurn) {
+        this.activeForegroundTurn = null;
+      }
+      if (this.cancelCurrentTurn === requestCancel) {
+        this.cancelCurrentTurn = null;
+      }
+      if (this.activeTurnPromise === turnPromise) {
         this.activeTurnPromise = null;
       }
     }
   }
 
   async interrupt(): Promise<void> {
-    this.cancelCurrentTurn?.();
+    if (this.cancelCurrentTurn) {
+      this.cancelCurrentTurn();
+      return;
+    }
+
+    const autonomousRuns = this.runTracker.listActiveRuns("autonomous");
+    if (autonomousRuns.length > 0) {
+      this.flushPendingToolCalls();
+      for (const run of autonomousRuns) {
+        this.emitRunEvent(run, {
+          type: "turn_canceled",
+          provider: "claude",
+          reason: "Interrupted",
+        });
+      }
+    }
+
+    await this.interruptActiveTurn();
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -883,6 +1758,16 @@ class ClaudeAgentSession implements AgentSession {
     this.historyPending = false;
     for (const item of history) {
       yield { type: "timeline", item, provider: "claude" };
+    }
+  }
+
+  async *streamLiveEvents(): AsyncGenerator<AgentStreamEvent> {
+    if (this.claudeSessionId) {
+      this.startQueryPump();
+    }
+
+    for await (const event of this.liveEventQueue) {
+      yield event;
     }
   }
 
@@ -1017,10 +1902,20 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     this.rejectAllPendingPermissions(new Error("Claude session closed"));
+    this.cancelCurrentTurn?.();
+    this.activeForegroundTurn?.queue.end();
+    this.activeForegroundTurn = null;
+    this.cancelCurrentTurn = null;
+    this.turnState = "idle";
+    this.suppressLocalReplayActivity = false;
+    this.pendingAutonomousWakeReservations = 0;
+    this.liveEventQueue.end();
+    this.activeTurnPromise = null;
     this.input?.end();
-    await this.query?.interrupt?.();
-    await this.query?.return?.();
+    await this.awaitWithTimeout(this.query?.interrupt?.(), "close query interrupt");
+    await this.awaitWithTimeout(this.query?.return?.(), "close query return");
     this.query = null;
     this.input = null;
   }
@@ -1332,12 +2227,38 @@ class ClaudeAgentSession implements AgentSession {
 
     const input = new Pushable<SDKUserMessage>();
     const options = this.buildOptions();
-    this.logger.debug({ options }, "claude query");
+    this.logger.debug(
+      { options: summarizeClaudeOptionsForLog(options) },
+      "claude query"
+    );
     this.input = input;
     this.query = query({ prompt: input, options });
-    await this.primeSelectableModelIds(this.query);
-    await this.query.setPermissionMode(this.currentMode);
+    // Do not block query readiness on control-plane calls. We need `next()` to
+    // start immediately so autonomous wake events are not missed between turns.
+    void this.awaitWithTimeout(
+      this.primeSelectableModelIds(this.query),
+      "prime selectable model ids"
+    );
     return this.query;
+  }
+
+  private async awaitWithTimeout(
+    promise: Promise<unknown> | undefined,
+    label: string
+  ): Promise<void> {
+    if (!promise) {
+      return;
+    }
+    try {
+      await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("timeout")), 3_000);
+        }),
+      ]);
+    } catch (error) {
+      this.logger.warn({ err: error, label }, "Claude query operation did not settle cleanly");
+    }
   }
 
   private buildOptions(): ClaudeOptions {
@@ -1408,30 +2329,10 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
-    const hasEnvOverrides = Object.keys(this.runtimeSettings?.env ?? {}).length > 0;
-    const commandMode = this.runtimeSettings?.command?.mode;
-    const needsCustomSpawn =
-      hasEnvOverrides || commandMode === "append" || commandMode === "replace";
-
-    if (!needsCustomSpawn) {
-      return options;
-    }
-
-    return {
-      ...options,
-      spawnClaudeCodeProcess: (spawnOptions) => {
-        const resolved = resolveClaudeSpawnCommand(
-          spawnOptions,
-          this.runtimeSettings
-        );
-        return spawn(resolved.command, resolved.args, {
-          cwd: spawnOptions.cwd,
-          env: applyProviderEnv(spawnOptions.env, this.runtimeSettings),
-          signal: spawnOptions.signal,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      },
-    };
+    return applyRuntimeSettingsToClaudeOptions(
+      options,
+      this.runtimeSettings
+    );
   }
 
   private normalizeMcpServers(
@@ -1467,6 +2368,7 @@ class ClaudeAgentSession implements AgentSession {
 
     const messageId = randomUUID();
     this.rememberUserMessageId(messageId);
+    this.localUserMessageIds.add(messageId);
 
     return {
       type: "user",
@@ -1480,132 +2382,658 @@ class ClaudeAgentSession implements AgentSession {
     };
   }
 
-  private async *processPrompt(
-    sdkMessage: SDKUserMessage,
-    turnId: number
-  ): AsyncGenerator<SDKMessage, void, undefined> {
-    // If there's a pending interrupt, await it BEFORE calling ensureQuery().
-    // interruptActiveTurn() clears this.query after interrupt() returns,
-    // so we must wait for it to complete before we try to get the query.
-    if (this.pendingInterruptPromise) {
-      await this.pendingInterruptPromise;
-      this.pendingInterruptPromise = null;
+  private async awaitPendingInterruptPromise(): Promise<void> {
+    if (!this.pendingInterruptPromise) {
+      return;
     }
+    await this.pendingInterruptPromise;
+    this.pendingInterruptPromise = null;
+  }
 
-    // Check if we were superseded while waiting for the interrupt
-    if (this.currentTurnId !== turnId) {
+  private createRun(
+    owner: RunOwner,
+    queue: Pushable<AgentStreamEvent> | null
+  ): RunRecord {
+    const runId = `${owner}-run-${this.nextRunOrdinal++}`;
+    const run = this.runTracker.createRun({
+      id: runId,
+      owner,
+      queue,
+      promptReplaySeen: owner === "autonomous",
+    });
+    this.logger.debug({ runId, owner, state: run.state }, "Created Claude run");
+    return run;
+  }
+
+  private transitionTurnState(next: TurnState, reason: string): void {
+    if (this.turnState === next) {
+      return;
+    }
+    this.logger.debug(
+      { from: this.turnState, to: next, reason },
+      "Claude turn state transition"
+    );
+    this.turnState = next;
+  }
+
+  private transitionTurnStateFromActiveRuns(reason: string): void {
+    if (this.runTracker.hasActiveRuns("foreground")) {
+      this.transitionTurnState("foreground", reason);
+      return;
+    }
+    if (this.runTracker.hasActiveRuns("autonomous")) {
+      this.transitionTurnState("autonomous", reason);
+      return;
+    }
+    this.transitionTurnState("idle", reason);
+  }
+
+  private failRun(run: RunRecord, errorMessage: string): void {
+    this.emitRunEvent(run, {
+      type: "turn_failed",
+      provider: "claude",
+      error: errorMessage,
+    });
+  }
+
+  private cancelRun(
+    run: RunRecord,
+    event: Extract<AgentStreamEvent, { type: "turn_canceled" }>
+  ): void {
+    this.flushPendingToolCalls();
+    this.emitRunEvent(run, event);
+  }
+
+  private emitRunEvent(run: RunRecord, event: AgentStreamEvent): void {
+    this.logger.debug(
+      { runId: run.id, owner: run.owner, eventType: event.type },
+      "Claude run event dispatch"
+    );
+    if (run.owner === "foreground" && run.queue) {
+      run.queue.push(event);
+      if (
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled"
+      ) {
+        run.queue.end();
+      }
+    } else {
+      this.liveEventQueue.push(event);
+    }
+    this.handleRunTerminalEvent(run, event);
+  }
+
+  private handleRunTerminalEvent(run: RunRecord, event: AgentStreamEvent): void {
+    if (event.type === "turn_completed") {
+      this.runTracker.complete(run, "completed");
+    } else if (event.type === "turn_failed") {
+      this.runTracker.complete(run, "error");
+    } else if (event.type === "turn_canceled") {
+      this.runTracker.complete(run, "interrupted");
+    } else {
       return;
     }
 
-    const query = await this.ensureQuery();
-    if (!this.input) {
-      throw new Error("Claude session input stream not initialized");
+    if (this.activeForegroundTurn?.runId === run.id) {
+      this.activeForegroundTurn = null;
+      this.preReplayMetadataSeen = false;
+    }
+    this.transitionTurnStateFromActiveRuns(`run ${run.id} terminal`);
+    this.logDerivedSessionLifecycle("terminal_event");
+  }
+
+  private logDerivedSessionLifecycle(context: string): void {
+    const lifecycle = this.runTracker.deriveLifecycle(this.pendingPermissions.size);
+    this.logger.debug({ lifecycle, context }, "Claude session lifecycle derived");
+  }
+
+  private async transitionAutonomousToForeground(): Promise<void> {
+    const autonomousRuns = this.runTracker.listActiveRuns("autonomous");
+    if (autonomousRuns.length === 0) {
+      this.transitionTurnStateFromActiveRuns("no autonomous runs to transition");
+      return;
     }
 
-    this.input.push(sdkMessage);
+    this.logger.debug(
+      { runIds: autonomousRuns.map((run) => run.id) },
+      "Transitioning autonomous runs to foreground ownership"
+    );
+    this.flushPendingToolCalls();
+    for (const run of autonomousRuns) {
+      this.emitRunEvent(run, {
+        type: "turn_canceled",
+        provider: "claude",
+        reason: "Interrupted by foreground prompt",
+      });
+    }
+    this.pendingInterruptPromise = this.interruptActiveTurn().catch((error) => {
+      this.logger.warn(
+        { err: error },
+        "Failed to interrupt autonomous run during foreground transition"
+      );
+    });
+    await this.awaitPendingInterruptPromise();
+    this.transitionTurnStateFromActiveRuns("autonomous interrupted for foreground");
+  }
 
-    while (true) {
-      // Check if this turn has been superseded by a new one.
-      if (this.currentTurnId !== turnId) {
-        break;
+  private routeMessage(
+    normalized: {
+      message: SDKMessage;
+      identifiers: EventIdentifiers;
+      metadataOnly: boolean;
+    }
+  ): RunRoute {
+    if (normalized.metadataOnly) {
+      if (
+        normalized.message.type === "user" &&
+        isTaskNotificationUserContent(normalized.message.message?.content)
+      ) {
+        this.reserveAutonomousWake("task_notification");
+      }
+      this.notePreReplayMetadata(normalized.message);
+      return { run: null, reason: "metadata" };
+    }
+
+    const hasIdentifiers = Boolean(
+      normalized.identifiers.taskId ||
+        normalized.identifiers.parentMessageId ||
+        normalized.identifiers.messageId
+    );
+
+    const byIdentifiers = this.runTracker.resolveByIdentifiers(normalized.identifiers);
+    if (byIdentifiers.run) {
+      return byIdentifiers;
+    }
+
+    if (this.turnState === "autonomous") {
+      const activeAutonomousRun = this.runTracker.getLatestActiveRun("autonomous");
+      if (activeAutonomousRun) {
+        return { run: activeAutonomousRun, reason: "unbound_autonomous" };
+      }
+    }
+
+    const foregroundRun = this.activeForegroundTurn
+      ? this.runTracker.getRun(this.activeForegroundTurn.runId)
+      : null;
+
+    // A previously unseen task_id during foreground ownership is deterministic
+    // evidence of a distinct autonomous wake/run, not foreground response text.
+    if (
+      this.turnState === "foreground" &&
+      foregroundRun &&
+      normalized.identifiers.taskId
+    ) {
+      const incomingTaskId = normalized.identifiers.taskId;
+      // Foreground must claim its first task_id; otherwise early foreground
+      // result events can be misrouted to autonomous fallback runs.
+      if (foregroundRun.taskIds.size === 0) {
+        if (foregroundRun.state !== "finalizing") {
+          return { run: foregroundRun, reason: "foreground" };
+        }
+      } else if (foregroundRun.taskIds.has(incomingTaskId)) {
+        return { run: foregroundRun, reason: "foreground" };
       }
 
-      const { value, done } = await query.next();
-      if (done) {
-        break;
+      const autonomousRun = this.createRun("autonomous", null);
+      this.emitRunEvent(autonomousRun, { type: "turn_started", provider: "claude" });
+      return { run: autonomousRun, reason: "task_id_new" };
+    }
+
+    if (
+      this.turnState === "foreground" &&
+      foregroundRun &&
+      this.shouldPreferForegroundRun({
+        run: foregroundRun,
+        message: normalized.message,
+      })
+    ) {
+      return { run: foregroundRun, reason: "foreground" };
+    }
+
+    if (!hasIdentifiers) {
+      if (this.pendingAutonomousWakeReservations > 0) {
+        const reservedAutonomousRun = this.claimOrCreateAutonomousRun(
+          "reservation_unbound"
+        );
+        return {
+          run: reservedAutonomousRun,
+          reason: "unbound_autonomous",
+        };
       }
-      if (!value) {
+      const activeAutonomousRun = this.runTracker.getLatestActiveRun("autonomous");
+      if (activeAutonomousRun) {
+        return { run: activeAutonomousRun, reason: "unbound_autonomous" };
+      }
+    }
+
+    if (this.pendingAutonomousWakeReservations > 0) {
+      const reservedAutonomousRun = this.claimOrCreateAutonomousRun(
+        "reservation_fallback"
+      );
+      return { run: reservedAutonomousRun, reason: "fallback" };
+    }
+
+    const autonomousRun = this.createRun("autonomous", null);
+    this.emitRunEvent(autonomousRun, { type: "turn_started", provider: "claude" });
+    return { run: autonomousRun, reason: "fallback" };
+  }
+
+  private shouldPreferForegroundRun(input: {
+    run: RunRecord;
+    message: SDKMessage;
+  }): boolean {
+    const { run, message } = input;
+    if (
+      run.state === "completed" ||
+      run.state === "interrupted" ||
+      run.state === "error"
+    ) {
+      return false;
+    }
+
+    // Before prompt replay is observed, prefer foreground by default so the
+    // first turn cannot be stranded in autonomous fallback. If metadata churn
+    // was observed pre-replay, stay conservative and wait for replay.
+    if (!run.promptReplaySeen) {
+      // Keep pre-replay result events with the foreground run so stale result
+      // bursts cannot consume autonomous wake reservations.
+      if (message.type === "result") {
+        return true;
+      }
+      if (
+        message.type === "assistant" ||
+        message.type === "stream_event" ||
+        message.type === "tool_progress"
+      ) {
+        return !this.preReplayMetadataSeen;
+      }
+      return true;
+    }
+
+    if (
+      run.state === "finalizing" &&
+      (message.type === "assistant" || message.type === "stream_event")
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private notePreReplayMetadata(message: SDKMessage): void {
+    if (this.turnState !== "foreground") {
+      return;
+    }
+    const foregroundRun = this.activeForegroundTurn
+      ? this.runTracker.getRun(this.activeForegroundTurn.runId)
+      : null;
+    if (!foregroundRun || foregroundRun.promptReplaySeen) {
+      return;
+    }
+    if (message.type === "system" && message.subtype === "init") {
+      return;
+    }
+    this.preReplayMetadataSeen = true;
+  }
+
+  private reserveAutonomousWake(reason: string): void {
+    this.pendingAutonomousWakeReservations += 1;
+    this.logger.debug(
+      {
+        reason,
+        pendingAutonomousWakeReservations: this.pendingAutonomousWakeReservations,
+      },
+      "Reserved autonomous wake"
+    );
+  }
+
+  private claimOrCreateAutonomousRun(reason: string): RunRecord {
+    const existing = this.runTracker.getLatestActiveRun("autonomous");
+    if (existing) {
+      if (this.pendingAutonomousWakeReservations > 0) {
+        this.pendingAutonomousWakeReservations -= 1;
+      }
+      this.logger.debug(
+        {
+          reason,
+          runId: existing.id,
+          pendingAutonomousWakeReservations: this.pendingAutonomousWakeReservations,
+        },
+        "Claimed autonomous wake reservation on existing run"
+      );
+      return existing;
+    }
+
+    const run = this.createRun("autonomous", null);
+    this.emitRunEvent(run, { type: "turn_started", provider: "claude" });
+    if (this.pendingAutonomousWakeReservations > 0) {
+      this.pendingAutonomousWakeReservations -= 1;
+    }
+    this.logger.debug(
+      {
+        reason,
+        runId: run.id,
+        pendingAutonomousWakeReservations: this.pendingAutonomousWakeReservations,
+      },
+      "Claimed autonomous wake reservation with new run"
+    );
+    return run;
+  }
+
+  private startQueryPump(): void {
+    if (this.closed || this.queryPumpPromise) {
+      return;
+    }
+
+    const pump = this.runQueryPump().catch((error) => {
+      this.logger.warn({ err: error }, "Claude query pump exited unexpectedly");
+    });
+
+    this.queryPumpPromise = pump;
+    pump.finally(() => {
+      if (this.queryPumpPromise === pump) {
+        this.queryPumpPromise = null;
+      }
+    });
+  }
+
+  private async runQueryPump(): Promise<void> {
+    while (!this.closed) {
+      if (!this.claudeSessionId && !this.activeForegroundTurn && !this.query) {
+        await this.waitForLiveHistoryPoll();
         continue;
       }
 
-      // Double-check turn ID after awaiting, in case a new turn started while we waited
-      if (this.currentTurnId !== turnId) {
-        break;
+      let q: Query;
+      try {
+        q = await this.ensureQuery();
+      } catch (error) {
+        this.logger.warn({ err: error }, "Failed to initialize Claude query pump");
+        await this.waitForLiveHistoryPoll();
+        continue;
       }
 
-      yield value;
-      if (value.type === "result") {
-        break;
+      let next: IteratorResult<SDKMessage, void>;
+      try {
+        next = await q.next();
+      } catch (error) {
+        this.logger.warn({ err: error }, "Claude query pump next() failed");
+        for (const run of this.runTracker.listActiveRuns()) {
+          this.failRun(
+            run,
+            error instanceof Error ? error.message : "Claude stream failed"
+          );
+        }
+        this.input?.end();
+        await this.awaitWithTimeout(q.return?.(), "query pump return after failure");
+        if (this.query === q) {
+          this.query = null;
+          this.input = null;
+        }
+        await this.waitForLiveHistoryPoll();
+        continue;
+      }
+
+      if (next.done) {
+        this.input?.end();
+        await this.awaitWithTimeout(q.return?.(), "query pump return on done");
+        if (this.query === q) {
+          this.query = null;
+          this.input = null;
+        }
+        const activeRuns = this.runTracker.listActiveRuns();
+        if (activeRuns.length > 0) {
+          for (const run of activeRuns) {
+            this.failRun(run, "Claude stream ended before terminal result");
+          }
+        }
+        await this.waitForLiveHistoryPoll();
+        continue;
+      }
+
+      const sdkMessage = next.value;
+      if (!sdkMessage) {
+        continue;
+      }
+
+      try {
+        this.routeSdkMessageFromPump(sdkMessage);
+      } catch (error) {
+        this.logger.warn({ err: error }, "Failed to route Claude SDK message from query pump");
       }
     }
   }
 
-  private async forwardPromptEvents(
-    message: SDKUserMessage,
-    queue: Pushable<AgentStreamEvent>,
-    turnId: number
-  ) {
-    // Create a turn-local context to track streaming state.
-    // This prevents race conditions when a new stream() call interrupts a running one.
-    const turnContext: TurnContext = {
-      streamedAssistantTextThisTurn: false,
-      streamedReasoningThisTurn: false,
-    };
-    let completedNormally = false;
-    try {
-      for await (const sdkEvent of this.processPrompt(message, turnId)) {
-        // Check if this turn has been superseded before pushing events
-        if (this.currentTurnId !== turnId) {
-          break;
-        }
-        const events = this.translateMessageToEvents(sdkEvent, turnContext);
-        for (const event of events) {
-          queue.push(event);
-          if (event.type === "turn_completed") {
-            completedNormally = true;
-          }
-        }
-      }
-    } catch (error) {
-      if (!this.turnCancelRequested && this.currentTurnId === turnId) {
-        queue.push({
-          type: "turn_failed",
-          provider: "claude",
-          error: error instanceof Error ? error.message : "Claude stream failed",
-        });
-      }
-    } finally {
-      // Emit terminal event for superseded turns so consumers get proper lifecycle signals.
-      // Use turn_canceled (not turn_failed) to distinguish intentional interruption from errors.
-      // Only emit if not already emitted by requestCancel() (indicated by turnCancelRequested).
-      const wasSuperseded = this.currentTurnId !== turnId;
-      if (wasSuperseded && !completedNormally && !this.turnCancelRequested) {
-        this.flushPendingToolCalls();
-        queue.push({
-          type: "turn_canceled",
-          provider: "claude",
-          reason: "Interrupted by new message",
-        });
-      }
-      this.turnCancelRequested = false;
-      queue.end();
+  private routeSdkMessageFromPump(message: SDKMessage): void {
+    if (this.shouldSuppressLocalReplayActivity(message)) {
+      return;
     }
+
+    const identifiers = readEventIdentifiers(message);
+    const metadataOnly = isMetadataOnlySdkMessage(message);
+    const route = this.routeMessage({
+      message,
+      identifiers,
+      metadataOnly,
+    });
+    const suppressTerminalEvents = this.shouldSuppressReplayResultTerminal({
+      run: route.run,
+      message,
+    });
+    if (route.run) {
+      this.transitionTurnStateFromActiveRuns(`routed via ${route.reason}`);
+      this.runTracker.bindIdentifiers(route.run, identifiers);
+      if (!suppressTerminalEvents) {
+        this.updateRunLifecycleForMessage(route.run, message, identifiers);
+      }
+    }
+
+    this.logger.debug(
+      {
+        routeReason: route.reason,
+        runId: route.run?.id ?? null,
+        turnState: this.turnState,
+        metadataOnly,
+        identifiers,
+      },
+      "Claude query pump routing decision"
+    );
+
+    const messageEvents = this.translateMessageToEvents(message, {
+      suppressAssistantText: true,
+      suppressReasoning: true,
+      suppressTerminalEvents,
+    });
+    const assistantTimelineItems = this.timelineAssembler.consume({
+      message,
+      runId: route.run?.id ?? null,
+      messageIdHint: identifiers.messageId,
+    });
+    const assistantTimelineEvents: AgentStreamEvent[] = assistantTimelineItems.map(
+      (item) => ({
+        type: "timeline",
+        item,
+        provider: "claude",
+      })
+    );
+    const events = [...messageEvents, ...assistantTimelineEvents];
+
+    if (events.length === 0) {
+      return;
+    }
+
+    if (!route.run) {
+      this.dispatchMetadataEvents(events);
+      return;
+    }
+
+    for (const event of events) {
+      this.emitRunEvent(route.run, event);
+    }
+  }
+
+  private shouldSuppressReplayResultTerminal(input: {
+    run: RunRecord | null;
+    message: SDKMessage;
+  }): boolean {
+    const { run, message } = input;
+    if (!run || run.owner !== "foreground" || message.type !== "result") {
+      return false;
+    }
+    if (run.promptReplaySeen) {
+      return false;
+    }
+    if (run.state === "streaming" || run.state === "finalizing") {
+      return false;
+    }
+
+    const resultSubtype =
+      "subtype" in message && typeof message.subtype === "string"
+        ? message.subtype
+        : null;
+
+    // Pre-replay success results are stale in practice (leftover from an
+    // earlier query segment) and must not end the current foreground run.
+    if (resultSubtype === "success") {
+      return true;
+    }
+
+    // For non-success results, keep the metadata-churn guard to avoid
+    // suppressing legitimate hard failures.
+    return this.preReplayMetadataSeen;
+  }
+
+  private dispatchMetadataEvents(events: AgentStreamEvent[]): void {
+    for (const event of events) {
+      this.pushEvent(event);
+    }
+  }
+
+  private updateRunLifecycleForMessage(
+    run: RunRecord,
+    message: SDKMessage,
+    identifiers: EventIdentifiers
+  ): void {
+    if (
+      message.type === "user" &&
+      identifiers.messageId &&
+      run.messageIds.has(identifiers.messageId)
+    ) {
+      run.promptReplaySeen = true;
+      this.preReplayMetadataSeen = false;
+    }
+
+    if (run.state === "queued") {
+      this.runTracker.transition(run, "awaiting_response");
+    }
+
+    if (
+      message.type === "assistant" ||
+      message.type === "stream_event" ||
+      message.type === "tool_progress"
+    ) {
+      this.runTracker.transition(run, "streaming");
+      this.logDerivedSessionLifecycle("streaming_event");
+      return;
+    }
+
+    if (message.type === "result") {
+      this.runTracker.transition(run, "finalizing");
+      this.logDerivedSessionLifecycle("result_event");
+      return;
+    }
+
+    this.logDerivedSessionLifecycle("non_terminal_event");
+  }
+
+  private shouldSuppressLocalReplayActivity(message: SDKMessage): boolean {
+    const localReplay = this.isLocalReplayUserMessage(message);
+    if (!this.activeForegroundTurn && localReplay) {
+      this.suppressLocalReplayActivity = true;
+      this.logger.debug(
+        { uuid: (message as { uuid?: string }).uuid },
+        "Suppressing local replay user message from live pump"
+      );
+      return true;
+    }
+
+    if (!this.suppressLocalReplayActivity) {
+      return false;
+    }
+
+    // Suppress only replay scaffolding. Do not suppress autonomous
+    // assistant/result events; otherwise task-notification replies can be dropped.
+    if (localReplay) {
+      return true;
+    }
+
+    if (message.type === "system") {
+      return true;
+    }
+
+    const identifiers = readEventIdentifiers(message);
+    const hasIdentifiers = Boolean(
+      identifiers.taskId || identifiers.parentMessageId || identifiers.messageId
+    );
+
+    if (message.type !== "user" && !hasIdentifiers) {
+      if (this.pendingAutonomousWakeReservations > 0) {
+        this.suppressLocalReplayActivity = false;
+        return false;
+      }
+      return true;
+    }
+
+    if (message.type === "user") {
+      this.suppressLocalReplayActivity = false;
+      return false;
+    }
+
+    this.suppressLocalReplayActivity = false;
+    return false;
+  }
+
+  private isLocalReplayUserMessage(message: SDKMessage): boolean {
+    if (message.type !== "user") {
+      return false;
+    }
+    const uuid = readTrimmedString(
+      (message as unknown as { uuid?: unknown }).uuid
+    );
+    if (!uuid) {
+      return false;
+    }
+    return this.localUserMessageIds.has(uuid);
   }
 
   private async interruptActiveTurn(): Promise<void> {
     const queryToInterrupt = this.query;
     if (!queryToInterrupt || typeof queryToInterrupt.interrupt !== "function") {
-      this.logger.info("interruptActiveTurn: no query to interrupt");
+      this.logger.debug("interruptActiveTurn: no query to interrupt");
       return;
     }
     try {
-      this.logger.info("interruptActiveTurn: calling query.interrupt()...");
+      this.logger.debug("interruptActiveTurn: calling query.interrupt()...");
       const t0 = Date.now();
       await queryToInterrupt.interrupt();
-      this.logger.info({ durationMs: Date.now() - t0 }, "interruptActiveTurn: query.interrupt() returned");
+      this.logger.debug({ durationMs: Date.now() - t0 }, "interruptActiveTurn: query.interrupt() returned");
       // After interrupt(), the query iterator is done (returns done: true).
       // Clear it so ensureQuery() creates a fresh query for the next turn.
       // Also end the input stream and call return() to clean up the SDK process.
       this.input?.end();
-      this.logger.info("interruptActiveTurn: calling query.return()...");
+      this.logger.debug("interruptActiveTurn: calling query.return()...");
       const t1 = Date.now();
       await queryToInterrupt.return?.();
-      this.logger.info({ durationMs: Date.now() - t1 }, "interruptActiveTurn: query.return() returned");
+      this.logger.debug({ durationMs: Date.now() - t1 }, "interruptActiveTurn: query.return() returned");
       this.query = null;
       this.input = null;
       this.queryRestartNeeded = false;
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to interrupt active turn");
+      // If interrupt fails, the SDK iterator may remain in an indeterminate state.
+      // Force a teardown/recreate path so the next turn cannot reuse stale query state.
+      this.queryRestartNeeded = true;
     }
   }
 
@@ -1613,64 +3041,276 @@ class ClaudeAgentSession implements AgentSession {
     message: SDKMessage,
     parentToolUseId: string
   ): AgentStreamEvent[] {
-    let toolName: string | undefined;
+    const state =
+      this.activeSidechains.get(parentToolUseId) ??
+      ({
+        actions: [],
+        actionKeys: [],
+        nextActionIndex: 1,
+        actionIndexByKey: new Map<string, number>(),
+      } satisfies SubAgentActivityState);
+    this.activeSidechains.set(parentToolUseId, state);
 
-    if (message.type === "assistant") {
-      const content = message.message?.content;
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (isClaudeContentChunk(block) &&
-            (block.type === "tool_use" || block.type === "mcp_tool_use" || block.type === "server_tool_use") &&
-            typeof block.name === "string"
-          ) {
-            toolName = block.name;
-            break;
-          }
-        }
+    const contextUpdated = this.updateSubAgentContextFromTaskInput(
+      state,
+      parentToolUseId
+    );
+    const actionCandidates = this.extractSubAgentActionCandidates(message);
+    let actionUpdated = false;
+    for (const action of actionCandidates) {
+      if (this.appendSubAgentAction(state, action)) {
+        actionUpdated = true;
       }
-    } else if (message.type === "stream_event") {
-      const event = message.event;
-      if (event.type === "content_block_start") {
-        const cb = isClaudeContentChunk(event.content_block) ? event.content_block : null;
-        if (cb?.type === "tool_use" && typeof cb.name === "string") {
-          toolName = cb.name;
-        }
-      }
-    } else if (message.type === "tool_progress") {
-      toolName = message.tool_name;
     }
 
-    if (!toolName) {
+    if (!contextUpdated && !actionUpdated) {
       return [];
     }
-
-    const prev = this.activeSidechains.get(parentToolUseId);
-    if (prev === toolName) {
-      return [];
-    }
-    this.activeSidechains.set(parentToolUseId, toolName);
 
     const toolCall = mapClaudeRunningToolCall({
       name: "Task",
       callId: parentToolUseId,
       input: null,
       output: null,
-      metadata: { subAgentActivity: toolName },
     });
     if (!toolCall) {
       return [];
     }
 
+    const detail: Extract<AgentTimelineItem, { type: "tool_call" }>["detail"] = {
+      type: "sub_agent",
+      ...(state.subAgentType ? { subAgentType: state.subAgentType } : {}),
+      ...(state.description ? { description: state.description } : {}),
+      log: state.actions
+        .map((action) =>
+          action.summary
+            ? `[${action.toolName}] ${action.summary}`
+            : `[${action.toolName}]`
+        )
+        .join("\n"),
+      actions: state.actions.map((action) => ({
+        index: action.index,
+        toolName: action.toolName,
+        ...(action.summary ? { summary: action.summary } : {}),
+      })),
+    };
+
     return [
       {
         type: "timeline",
-        item: toolCall,
+        item: {
+          ...toolCall,
+          detail,
+        },
         provider: "claude",
       },
     ];
   }
 
-  private translateMessageToEvents(message: SDKMessage, turnContext: TurnContext): AgentStreamEvent[] {
+  private updateSubAgentContextFromTaskInput(
+    state: SubAgentActivityState,
+    parentToolUseId: string
+  ): boolean {
+    const taskInput = this.toolUseCache.get(parentToolUseId)?.input;
+    const nextSubAgentType = this.normalizeSubAgentText(taskInput?.subagent_type);
+    const nextDescription = this.normalizeSubAgentText(taskInput?.description);
+
+    let changed = false;
+    if (nextSubAgentType && nextSubAgentType !== state.subAgentType) {
+      state.subAgentType = nextSubAgentType;
+      changed = true;
+    }
+    if (nextDescription && nextDescription !== state.description) {
+      state.description = nextDescription;
+      changed = true;
+    }
+    return changed;
+  }
+
+  private normalizeSubAgentText(value: unknown): string | undefined {
+    const normalized = readTrimmedString(value)?.replace(/\s+/g, " ");
+    if (!normalized) {
+      return undefined;
+    }
+    if (normalized.length <= MAX_SUB_AGENT_SUMMARY_CHARS) {
+      return normalized;
+    }
+    return `${normalized.slice(0, MAX_SUB_AGENT_SUMMARY_CHARS)}...`;
+  }
+
+  private extractSubAgentActionCandidates(
+    message: SDKMessage
+  ): SubAgentActionCandidate[] {
+    if (message.type === "assistant") {
+      const content = message.message?.content;
+      if (!Array.isArray(content)) {
+        return [];
+      }
+      const actions: SubAgentActionCandidate[] = [];
+      for (const block of content) {
+        if (
+          !isClaudeContentChunk(block) ||
+          !(
+            block.type === "tool_use" ||
+            block.type === "mcp_tool_use" ||
+            block.type === "server_tool_use"
+          ) ||
+          typeof block.name !== "string"
+        ) {
+          continue;
+        }
+        const key =
+          readTrimmedString(block.id) ??
+          `assistant:${block.name}:${actions.length}`;
+        actions.push({
+          key,
+          toolName: block.name,
+          input: block.input ?? null,
+        });
+      }
+      return actions;
+    }
+
+    if (message.type === "stream_event") {
+      const event = message.event;
+      if (event.type !== "content_block_start") {
+        return [];
+      }
+      const block = isClaudeContentChunk(event.content_block)
+        ? event.content_block
+        : null;
+      if (
+        !block ||
+        !(
+          block.type === "tool_use" ||
+          block.type === "mcp_tool_use" ||
+          block.type === "server_tool_use"
+        ) ||
+        typeof block.name !== "string"
+      ) {
+        return [];
+      }
+      const key =
+        readTrimmedString(block.id) ??
+        `stream:${block.name}:${typeof event.index === "number" ? event.index : 0}`;
+      return [
+        {
+          key,
+          toolName: block.name,
+          input: block.input ?? null,
+        },
+      ];
+    }
+
+    if (message.type === "tool_progress") {
+      const toolName = readTrimmedString(message.tool_name);
+      if (!toolName) {
+        return [];
+      }
+      const key =
+        readTrimmedString(message.tool_use_id) ?? `progress:${toolName}`;
+      return [{ key, toolName, input: null }];
+    }
+
+    return [];
+  }
+
+  private appendSubAgentAction(
+    state: SubAgentActivityState,
+    candidate: SubAgentActionCandidate
+  ): boolean {
+    const normalizedToolName = readTrimmedString(candidate.toolName);
+    if (!normalizedToolName) {
+      return false;
+    }
+
+    const summary = this.deriveSubAgentActionSummary(
+      normalizedToolName,
+      candidate.input
+    );
+    const existingIndex = state.actionIndexByKey.get(candidate.key);
+
+    if (existingIndex !== undefined) {
+      const existing = state.actions[existingIndex];
+      if (!existing) {
+        return false;
+      }
+      const nextSummary = existing.summary ?? summary;
+      const unchanged =
+        existing.toolName === normalizedToolName &&
+        existing.summary === nextSummary;
+      if (unchanged) {
+        return false;
+      }
+      state.actions[existingIndex] = {
+        ...existing,
+        toolName: normalizedToolName,
+        ...(nextSummary ? { summary: nextSummary } : {}),
+      };
+      return true;
+    }
+
+    const nextEntry: SubAgentActionEntry = {
+      index: state.nextActionIndex,
+      toolName: normalizedToolName,
+      ...(summary ? { summary } : {}),
+    };
+    state.nextActionIndex += 1;
+    state.actions.push(nextEntry);
+    state.actionKeys.push(candidate.key);
+    this.trimSubAgentTail(state);
+    this.rebuildSubAgentActionIndex(state);
+    return true;
+  }
+
+  private trimSubAgentTail(state: SubAgentActivityState): void {
+    while (state.actions.length > MAX_SUB_AGENT_LOG_ENTRIES) {
+      state.actions.shift();
+      state.actionKeys.shift();
+    }
+  }
+
+  private rebuildSubAgentActionIndex(state: SubAgentActivityState): void {
+    state.actionIndexByKey.clear();
+    for (let index = 0; index < state.actionKeys.length; index += 1) {
+      const key = state.actionKeys[index];
+      if (key) {
+        state.actionIndexByKey.set(key, index);
+      }
+    }
+  }
+
+  private deriveSubAgentActionSummary(
+    toolName: string,
+    input: unknown
+  ): string | undefined {
+    const runningToolCall = mapClaudeRunningToolCall({
+      name: toolName,
+      callId: `sub-agent-summary-${toolName}`,
+      input,
+      output: null,
+    });
+    if (!runningToolCall) {
+      return undefined;
+    }
+    const display = buildToolCallDisplayModel({
+      name: runningToolCall.name,
+      status: runningToolCall.status,
+      error: runningToolCall.error,
+      detail: runningToolCall.detail,
+      metadata: runningToolCall.metadata,
+    });
+    return this.normalizeSubAgentText(display.summary);
+  }
+
+  private translateMessageToEvents(
+    message: SDKMessage,
+    options?: {
+      suppressAssistantText?: boolean;
+      suppressReasoning?: boolean;
+      suppressTerminalEvents?: boolean;
+    }
+  ): AgentStreamEvent[] {
     const parentToolUseId = "parent_tool_use_id" in message
       ? (message as { parent_tool_use_id: string | null }).parent_tool_use_id
       : null;
@@ -1679,6 +3319,14 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const events: AgentStreamEvent[] = [];
+    const fallbackThreadSessionId = this.captureSessionIdFromMessage(message);
+    if (fallbackThreadSessionId) {
+      events.push({
+        type: "thread_started",
+        provider: "claude",
+        sessionId: fallbackThreadSessionId,
+      });
+    }
 
     switch (message.type) {
       case "system":
@@ -1702,15 +3350,17 @@ class ClaudeAgentSession implements AgentSession {
             });
           }
         } else if (message.subtype === "compact_boundary") {
-          const meta = (message as Record<string, unknown>).compact_metadata as
-            { trigger?: string; pre_tokens?: number } | undefined;
+          const compactMetadata = readCompactionMetadata(
+            message as Record<string, unknown>
+          );
           events.push({
             type: "timeline",
             item: {
               type: "compaction",
               status: "completed",
-              trigger: meta?.trigger === "manual" ? "manual" : "auto",
-              preTokens: meta?.pre_tokens,
+              trigger:
+                compactMetadata?.trigger === "manual" ? "manual" : "auto",
+              preTokens: compactMetadata?.preTokens,
             },
             provider: "claude",
           });
@@ -1739,7 +3389,7 @@ class ClaudeAgentSession implements AgentSession {
             provider: "claude",
           });
         } else if (Array.isArray(content)) {
-          const timelineItems = this.mapBlocksToTimeline(content, { turnContext });
+          const timelineItems = this.mapBlocksToTimeline(content);
           for (const item of timelineItems) {
             if (item.type === "user_message" && messageId && !item.messageId) {
               events.push({
@@ -1756,9 +3406,8 @@ class ClaudeAgentSession implements AgentSession {
       }
       case "assistant": {
         const timelineItems = this.mapBlocksToTimeline(message.message.content, {
-          turnContext,
-          suppressAssistantText: turnContext.streamedAssistantTextThisTurn,
-          suppressReasoning: turnContext.streamedReasoningThisTurn,
+          suppressAssistantText: options?.suppressAssistantText ?? false,
+          suppressReasoning: options?.suppressReasoning ?? false,
         });
         for (const item of timelineItems) {
           events.push({ type: "timeline", item, provider: "claude" });
@@ -1766,13 +3415,19 @@ class ClaudeAgentSession implements AgentSession {
         break;
       }
       case "stream_event": {
-        const timelineItems = this.mapPartialEvent(message.event, turnContext);
+        const timelineItems = this.mapPartialEvent(message.event, {
+          suppressAssistantText: options?.suppressAssistantText ?? false,
+          suppressReasoning: options?.suppressReasoning ?? false,
+        });
         for (const item of timelineItems) {
           events.push({ type: "timeline", item, provider: "claude" });
         }
         break;
       }
       case "result": {
+        if (options?.suppressTerminalEvents) {
+          break;
+        }
         const usage = this.convertUsage(message);
         if (message.subtype === "success") {
           events.push({ type: "turn_completed", provider: "claude", usage });
@@ -1790,6 +3445,39 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return events;
+  }
+
+  private captureSessionIdFromMessage(message: SDKMessage): string | null {
+    const msg = message as unknown as {
+      session_id?: unknown;
+      sessionId?: unknown;
+      session?: { id?: unknown } | null;
+    };
+    const sessionIdRaw =
+      typeof msg.session_id === "string"
+        ? msg.session_id
+        : typeof msg.sessionId === "string"
+          ? msg.sessionId
+          : typeof msg.session?.id === "string"
+            ? msg.session.id
+            : "";
+    const sessionId = sessionIdRaw.trim();
+    if (!sessionId) {
+      return null;
+    }
+    if (this.claudeSessionId === null) {
+      this.claudeSessionId = sessionId;
+      this.persistence = null;
+      return sessionId;
+    }
+    if (this.claudeSessionId === sessionId) {
+      return null;
+    }
+    throw new Error(
+      `CRITICAL: Claude session ID overwrite detected! ` +
+        `Existing: ${this.claudeSessionId}, New: ${sessionId}. ` +
+        `This indicates a session identity corruption bug.`
+    );
   }
 
   private handleSystemMessage(message: SDKSystemMessage): string | null {
@@ -1966,6 +3654,7 @@ class ClaudeAgentSession implements AgentSession {
       }
     }
     this.toolUseCache.clear();
+    this.activeSidechains.clear();
   }
 
   private pushToolCall(
@@ -1983,9 +3672,21 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private pushEvent(event: AgentStreamEvent) {
-    if (this.eventQueue) {
-      this.eventQueue.push(event);
+    const foregroundTurn = this.activeForegroundTurn;
+    if (foregroundTurn) {
+      const run = this.runTracker.getRun(foregroundTurn.runId);
+      if (
+        run &&
+        run.owner === "foreground" &&
+        run.queue === foregroundTurn.queue &&
+        this.runTracker.isRunActive(run)
+      ) {
+        foregroundTurn.queue.push(event);
+        return;
+      }
+      this.activeForegroundTurn = null;
     }
+    this.liveEventQueue.push(event);
   }
 
   private normalizePermissionUpdates(
@@ -2004,6 +3705,10 @@ class ClaudeAgentSession implements AgentSession {
       pending.reject(error);
       this.pendingPermissions.delete(id);
     }
+  }
+
+  private waitForLiveHistoryPoll(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 250));
   }
 
   private loadPersistedHistory(sessionId: string) {
@@ -2054,30 +3759,23 @@ class ClaudeAgentSession implements AgentSession {
 
   private convertHistoryEntry(entry: any): AgentTimelineItem[] {
     return convertClaudeHistoryEntry(entry, (content) =>
-      this.mapBlocksToTimeline(content, { context: "history" })
+      this.mapBlocksToTimeline(content)
     );
   }
 
   private mapBlocksToTimeline(
     content: string | ClaudeContentChunk[],
     options?: {
-      context?: "live" | "history";
-      turnContext?: TurnContext;
       suppressAssistantText?: boolean;
       suppressReasoning?: boolean;
     }
   ): AgentTimelineItem[] {
-    const context = options?.context ?? "live";
-    const turnContext = options?.turnContext;
     const suppressAssistant = options?.suppressAssistantText ?? false;
     const suppressReasoning = options?.suppressReasoning ?? false;
 
     if (typeof content === "string") {
-      if (!content || content === "[Request interrupted by user for tool use]") {
+      if (!content || content === INTERRUPT_TOOL_USE_PLACEHOLDER) {
         return [];
-      }
-      if (context === "live" && turnContext) {
-        turnContext.streamedAssistantTextThisTurn = true;
       }
       if (suppressAssistant) {
         return [];
@@ -2090,10 +3788,7 @@ class ClaudeAgentSession implements AgentSession {
       switch (block.type) {
         case "text":
         case "text_delta":
-          if (block.text && block.text !== "[Request interrupted by user for tool use]") {
-            if (context === "live" && turnContext) {
-              turnContext.streamedAssistantTextThisTurn = true;
-            }
+          if (block.text && block.text !== INTERRUPT_TOOL_USE_PLACEHOLDER) {
             if (!suppressAssistant) {
               items.push({ type: "assistant_message", text: block.text });
             }
@@ -2102,9 +3797,6 @@ class ClaudeAgentSession implements AgentSession {
         case "thinking":
         case "thinking_delta":
           if (block.thinking) {
-            if (context === "live" && turnContext) {
-              turnContext.streamedReasoningThisTurn = true;
-            }
             if (!suppressReasoning) {
               items.push({ type: "reasoning", text: block.thinking });
             }
@@ -2190,6 +3882,7 @@ class ClaudeAgentSession implements AgentSession {
 
     if (typeof block.tool_use_id === "string") {
       this.toolUseCache.delete(block.tool_use_id);
+      this.activeSidechains.delete(block.tool_use_id);
     }
   }
 
@@ -2203,7 +3896,7 @@ class ClaudeAgentSession implements AgentSession {
 
     const server = entry?.server ?? block.server ?? "tool";
     const tool = entry?.name ?? block.tool_name ?? "tool";
-    const content = typeof block.content === "string" ? block.content : "";
+    const content = coerceToolResultContentToString(block.content);
     const input = entry?.input;
 
     // Build structured result based on tool type
@@ -2317,7 +4010,13 @@ class ClaudeAgentSession implements AgentSession {
     return undefined;
   }
 
-  private mapPartialEvent(event: SDKPartialAssistantMessage["event"], turnContext: TurnContext): AgentTimelineItem[] {
+  private mapPartialEvent(
+    event: SDKPartialAssistantMessage["event"],
+    options?: {
+      suppressAssistantText?: boolean;
+      suppressReasoning?: boolean;
+    }
+  ): AgentTimelineItem[] {
     if (event.type === "content_block_start") {
       const block = isClaudeContentChunk(event.content_block) ? event.content_block : null;
       if (block?.type === "tool_use" && typeof event.index === "number" && typeof block.id === "string") {
@@ -2342,10 +4041,18 @@ class ClaudeAgentSession implements AgentSession {
     switch (event.type) {
       case "content_block_start":
         return isClaudeContentChunk(event.content_block)
-          ? this.mapBlocksToTimeline([event.content_block], { turnContext })
+          ? this.mapBlocksToTimeline([event.content_block], {
+              suppressAssistantText: options?.suppressAssistantText,
+              suppressReasoning: options?.suppressReasoning,
+            })
           : [];
       case "content_block_delta":
-        return isClaudeContentChunk(event.delta) ? this.mapBlocksToTimeline([event.delta], { turnContext }) : [];
+        return isClaudeContentChunk(event.delta)
+          ? this.mapBlocksToTimeline([event.delta], {
+              suppressAssistantText: options?.suppressAssistantText,
+              suppressReasoning: options?.suppressReasoning,
+            })
+          : [];
       default:
         return [];
     }
@@ -2557,6 +4264,29 @@ function hasToolLikeBlock(block?: ClaudeContentChunk | null): boolean {
   return type.includes("tool");
 }
 
+function readCompactionMetadata(
+  source: Record<string, unknown>
+): { trigger?: string; preTokens?: number } | null {
+  const candidates = [
+    source.compact_metadata,
+    source.compactMetadata,
+    source.compactionMetadata,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") {
+      continue;
+    }
+    const metadata = candidate as Record<string, unknown>;
+    const trigger =
+      typeof metadata.trigger === "string" ? metadata.trigger : undefined;
+    const preTokensRaw = metadata.preTokens ?? metadata.pre_tokens;
+    const preTokens =
+      typeof preTokensRaw === "number" ? preTokensRaw : undefined;
+    return { trigger, preTokens };
+  }
+  return null;
+}
+
 function normalizeHistoryBlocks(content: unknown): ClaudeContentChunk[] | null {
   if (Array.isArray(content)) {
     const blocks = content.filter((entry) => isClaudeContentChunk(entry));
@@ -2573,11 +4303,14 @@ export function convertClaudeHistoryEntry(
   mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[]
 ): AgentTimelineItem[] {
   if (entry.type === "system" && entry.subtype === "compact_boundary") {
+    const compactMetadata = readCompactionMetadata(
+      entry as Record<string, unknown>
+    );
     return [{
       type: "compaction",
       status: "completed",
-      trigger: entry.compactMetadata?.trigger === "manual" ? "manual" : "auto",
-      preTokens: entry.compactMetadata?.preTokens,
+      trigger: compactMetadata?.trigger === "manual" ? "manual" : "auto",
+      preTokens: compactMetadata?.preTokens,
     }];
   }
 

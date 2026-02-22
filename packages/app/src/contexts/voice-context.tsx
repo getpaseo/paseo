@@ -2,6 +2,7 @@ import { createContext, useContext, useState, ReactNode, useCallback, useEffect,
 import { useSpeechmaticsAudio } from "@/hooks/use-speechmatics-audio";
 import type { SessionState } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
+import { useHostRuntimeSession } from "@/runtime/host-runtime";
 import { resolveVoiceUnavailableMessage } from "@/utils/server-info-capabilities";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { REALTIME_VOICE_VAD_CONFIG } from "@/voice/realtime-voice-config";
@@ -45,6 +46,9 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   const getSession = useSessionStore((state) => state.getSession);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  const { client: runtimeClient, isConnected: activeRuntimeConnected } = useHostRuntimeSession(
+    activeServerId ?? ""
+  );
   const activeSession = useSessionStore(
     useCallback(
       (state: ReturnType<typeof useSessionStore.getState>) => {
@@ -274,8 +278,8 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   }, [isVoiceMode, realtimeAudio.isDetecting, realtimeAudio.isSpeaking]);
 
   useEffect(() => {
-    const connected = activeSession?.connection.isConnected ?? false;
-    const client = activeSession?.client ?? null;
+    const connected = activeRuntimeConnected;
+    const client = runtimeClient;
     if (!connected) {
       voiceTransportReadyRef.current = false;
     }
@@ -313,7 +317,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     }
 
     wasVoiceSocketConnectedRef.current = connected;
-  }, [activeAgentId, activeServerId, activeSession?.client, activeSession?.connection.isConnected, isVoiceMode]);
+  }, [activeAgentId, activeRuntimeConnected, activeServerId, isVoiceMode, runtimeClient]);
 
   const isPlayingAudio = activeSession?.isPlayingAudio ?? false;
 

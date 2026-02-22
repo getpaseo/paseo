@@ -509,6 +509,7 @@ export const ToolEditOutputSchema = z.union([
 export const ToolSearchInputSchema = z.union([
   z.object({ query: z.string() }).passthrough().transform((value) => ({ query: value.query })),
   z.object({ q: z.string() }).passthrough().transform((value) => ({ query: value.q })),
+  z.object({ pattern: z.string() }).passthrough().transform((value) => ({ query: value.pattern })),
 ]);
 
 export type ParsedToolShellInput = z.infer<typeof ToolShellInputSchema>;

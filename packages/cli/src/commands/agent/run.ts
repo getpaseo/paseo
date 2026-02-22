@@ -36,6 +36,7 @@ export interface AgentRunOptions extends CommandOptions {
   name?: string
   provider?: string
   model?: string
+  thinking?: string
   mode?: string
   worktree?: string
   base?: string
@@ -219,6 +220,16 @@ export async function runRunCommand(
   try {
     // Resolve working directory
     const cwd = options.cwd ?? process.cwd()
+    const thinkingOptionId = options.thinking?.trim()
+    if (options.thinking !== undefined && !thinkingOptionId) {
+      const error: CommandError = {
+        code: 'INVALID_THINKING_OPTION',
+        message: '--thinking cannot be empty',
+        details:
+          'Provide a thinking option ID. Use "paseo provider models <provider> --thinking" to list valid IDs.',
+      }
+      throw error
+    }
 
     // Process images if provided
     let images: Array<{ data: string; mimeType: string }> | undefined
@@ -290,6 +301,7 @@ export async function runRunCommand(
             title: options.name,
             modeId: options.mode,
             model: options.model,
+            thinkingOptionId,
             initialPrompt: structuredPrompt,
             images,
             git,
@@ -387,6 +399,7 @@ export async function runRunCommand(
       title: options.name,
       modeId: options.mode,
       model: options.model,
+      thinkingOptionId,
       initialPrompt: prompt,
       images,
       git,

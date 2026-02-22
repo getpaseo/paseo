@@ -1,14 +1,18 @@
 import { useCallback, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { useSessionStore, type Agent } from "@/stores/session-store";
-import type { AggregatedAgent, AggregatedAgentsResult } from "@/hooks/use-aggregated-agents";
-import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
-
-const ALL_AGENTS_STALE_TIME = 60_000;
+import {
+  getHostRuntimeStore,
+  isHostRuntimeDirectoryLoading,
+  useHostRuntimeSession,
+} from "@/runtime/host-runtime";
+import type {
+  AggregatedAgent,
+  AggregatedAgentsResult,
+} from "@/hooks/use-aggregated-agents";
 
 function toAggregatedAgent(params: {
-  source: Agent | ReturnType<typeof normalizeAgentSnapshot>;
+  source: Agent;
   serverId: string;
   serverLabel: string;
 }): AggregatedAgent {
@@ -33,8 +37,9 @@ function toAggregatedAgent(params: {
 export function useAllAgentsList(options?: {
   serverId?: string | null;
 }): AggregatedAgentsResult {
-  const { connectionStates } = useDaemonConnections();
-  const queryClient = useQueryClient();
+  const { daemons } = useDaemonRegistry();
+  const runtime = getHostRuntimeStore();
+
   const serverId = useMemo(() => {
     const value = options?.serverId;
     return typeof value === "string" && value.trim().length > 0
@@ -42,56 +47,36 @@ export function useAllAgentsList(options?: {
       : null;
   }, [options?.serverId]);
 
-  const session = useSessionStore((state) =>
-    serverId ? state.sessions[serverId] : undefined
+  const liveAgents = useSessionStore((state) =>
+    serverId ? state.sessions[serverId]?.agents ?? null : null
   );
-  const client = session?.client ?? null;
-  const isConnected = session?.connection.isConnected ?? false;
-  const liveAgents = session?.agents ?? null;
-  const canFetch = Boolean(serverId && client && isConnected);
-
-  const agentsQuery = useQuery({
-    queryKey: ["allAgents", serverId] as const,
-    queryFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client not available");
-      }
-      return await client.fetchAgents({
-        filter: { labels: { ui: "true" } },
-      });
-    },
-    enabled: canFetch,
-    staleTime: ALL_AGENTS_STALE_TIME,
-    refetchOnMount: "always" as const,
-  });
+  const { snapshot } = useHostRuntimeSession(serverId ?? "");
 
   const refreshAll = useCallback(() => {
-    if (!serverId) {
+    if (!serverId || snapshot?.connectionStatus !== "online") {
       return;
     }
-    void queryClient.invalidateQueries({
-      queryKey: ["allAgents", serverId],
-    });
-  }, [queryClient, serverId]);
+    void runtime.refreshAgentDirectory({ serverId }).catch(() => undefined);
+  }, [runtime, serverId, snapshot?.connectionStatus]);
 
   const agents = useMemo(() => {
-    if (!serverId) {
+    if (!serverId || !liveAgents) {
       return [];
     }
-    const data = agentsQuery.data?.entries ?? [];
-    const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
+    const serverLabel =
+      daemons.find((daemon) => daemon.serverId === serverId)?.label ?? serverId;
     const list: AggregatedAgent[] = [];
 
-    for (const entry of data) {
-      const snapshot = entry.agent;
-      const normalized = normalizeAgentSnapshot(snapshot, serverId);
-      const live = liveAgents?.get(snapshot.id);
+    for (const agent of liveAgents.values()) {
       const aggregated = toAggregatedAgent({
-        source: live ?? normalized,
+        source: agent,
         serverId,
         serverLabel,
       });
       if (aggregated.archivedAt) {
+        continue;
+      }
+      if (aggregated.labels.ui !== "true") {
         continue;
       }
       list.push(aggregated);
@@ -110,16 +95,15 @@ export function useAllAgentsList(options?: {
     });
 
     return list;
-  }, [agentsQuery.data, connectionStates, liveAgents, serverId]);
+  }, [daemons, liveAgents, serverId]);
 
-  const isFetching =
-    canFetch && (agentsQuery.isPending || agentsQuery.isFetching);
-  const isInitialLoad = isFetching && agents.length === 0;
-  const isRevalidating = isFetching && agents.length > 0;
+  const isDirectoryLoading = Boolean(serverId && isHostRuntimeDirectoryLoading(snapshot));
+  const isInitialLoad = isDirectoryLoading && agents.length === 0;
+  const isRevalidating = isDirectoryLoading && agents.length > 0;
 
   return {
     agents,
-    isLoading: isFetching,
+    isLoading: isDirectoryLoading,
     isInitialLoad,
     isRevalidating,
     refreshAll,

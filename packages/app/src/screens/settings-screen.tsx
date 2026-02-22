@@ -12,16 +12,18 @@ import { router, useLocalSearchParams } from "expo-router";
 import Constants from "expo-constants";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { useQueries } from "@tanstack/react-query";
-import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2, Check } from "lucide-react-native";
+import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2 } from "lucide-react-native";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import { useDaemonRegistry, type HostProfile, type HostConnection } from "@/contexts/daemon-registry-context";
-import { useDaemonConnections, type ActiveConnection, type ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
-import { measureConnectionLatency } from "@/utils/test-daemon-connection";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
+import {
+  getHostRuntimeStore,
+  isHostRuntimeConnected,
+  useHostRuntimeSession,
+} from "@/runtime/host-runtime";
 import { AddHostMethodModal } from "@/components/add-host-method-modal";
 import { AddHostModal } from "@/components/add-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
@@ -35,14 +37,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
-import {
-  getDesktopPermissionSnapshot,
-  requestDesktopPermission,
-  shouldShowDesktopPermissionSection,
-  type DesktopPermissionKind,
-  type DesktopPermissionSnapshot,
-  type DesktopPermissionStatus,
-} from "@/utils/desktop-permissions";
+import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
+import { DesktopUpdatesSection } from "@/desktop/components/desktop-updates-section";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -318,54 +314,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
-  permissionSectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-    marginBottom: theme.spacing[3],
-  },
-  permissionRefreshButton: {
-    width: 34,
-    height: 34,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  permissionRefreshButtonDisabled: {
-    opacity: theme.opacity[50],
-  },
-  permissionRowActions: {
-    alignItems: "flex-end",
-    gap: theme.spacing[1],
-  },
-  permissionStatusPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    borderRadius: theme.borderRadius.full,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface3,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 4,
-    minWidth: 88,
-    justifyContent: "center",
-  },
-  permissionStatusText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.foregroundMuted,
-  },
-  permissionDetailText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    maxWidth: 220,
-    textAlign: "right",
-  },
   aboutValue: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
@@ -443,6 +391,19 @@ function formatDaemonVersionBadge(version: string | null): string | null {
   return `v${daemonVersion}`;
 }
 
+function formatVersionForDisplay(version: string | null | undefined): string {
+  const value = version?.trim();
+  if (!value) {
+    return "\u2014";
+  }
+
+  if (value.startsWith("v")) {
+    return value;
+  }
+
+  return `v${value}`;
+}
+
 export default function SettingsScreen() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -456,7 +417,6 @@ export default function SettingsScreen() {
     removeHost,
     removeConnection,
   } = useDaemonRegistry();
-  const { connectionStates } = useDaemonConnections();
   const [isAddHostMethodVisible, setIsAddHostMethodVisible] = useState(false);
   const [isDirectHostVisible, setIsDirectHostVisible] = useState(false);
   const [isPasteLinkVisible, setIsPasteLinkVisible] = useState(false);
@@ -467,17 +427,12 @@ export default function SettingsScreen() {
   const [isRemovingHost, setIsRemovingHost] = useState(false);
   const [editingDaemon, setEditingDaemon] = useState<HostProfile | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
-  const [desktopPermissionSnapshot, setDesktopPermissionSnapshot] =
-    useState<DesktopPermissionSnapshot | null>(null);
-  const [isRefreshingDesktopPermissions, setIsRefreshingDesktopPermissions] =
-    useState(false);
-  const [requestingDesktopPermission, setRequestingDesktopPermission] =
-    useState<DesktopPermissionKind | null>(null);
   const isLoading = settingsLoading || daemonLoading;
-  const showDesktopPermissionSection = shouldShowDesktopPermissionSection();
   const isMountedRef = useRef(true);
   const lastHandledEditHostRef = useRef<string | null>(null);
+  const isDesktop = Platform.OS === "web";
   const appVersion = resolveAppVersion();
+  const appVersionText = formatVersionForDisplay(appVersion);
   const editingServerId = editingDaemon?.serverId ?? null;
   const editingDaemonLive = editingServerId
     ? daemons.find((daemon) => daemon.serverId === editingServerId) ?? null
@@ -572,73 +527,6 @@ export default function SettingsScreen() {
     pendingEditReopenServerId,
   ]);
 
-  const refreshDesktopPermissions = useCallback(async () => {
-    if (!showDesktopPermissionSection) return;
-
-    setIsRefreshingDesktopPermissions(true);
-    try {
-      const snapshot = await getDesktopPermissionSnapshot();
-      if (!isMountedRef.current) return;
-      setDesktopPermissionSnapshot(snapshot);
-    } catch (error) {
-      console.error("[Settings] Failed to load desktop permission status", error);
-    } finally {
-      if (isMountedRef.current) {
-        setIsRefreshingDesktopPermissions(false);
-      }
-    }
-  }, [showDesktopPermissionSection]);
-
-  const handleRequestDesktopPermission = useCallback(
-    async (kind: DesktopPermissionKind) => {
-      if (!showDesktopPermissionSection) return;
-
-      setRequestingDesktopPermission(kind);
-      try {
-        const status = await requestDesktopPermission({ kind });
-        if (!isMountedRef.current) return;
-        setDesktopPermissionSnapshot((previous) => {
-          const base: DesktopPermissionSnapshot = previous ?? {
-            checkedAt: Date.now(),
-            notifications: {
-              state: "unknown",
-              detail: "Notification status has not been checked yet.",
-            },
-            microphone: {
-              state: "unknown",
-              detail: "Microphone status has not been checked yet.",
-            },
-          };
-
-          return kind === "notifications"
-            ? {
-                ...base,
-                checkedAt: Date.now(),
-                notifications: status,
-              }
-            : {
-                ...base,
-                checkedAt: Date.now(),
-                microphone: status,
-              };
-        });
-      } catch (error) {
-        console.error(`[Settings] Failed to request ${kind} permission`, error);
-      } finally {
-        if (isMountedRef.current) {
-          setRequestingDesktopPermission(null);
-        }
-        await refreshDesktopPermissions();
-      }
-    },
-    [refreshDesktopPermissions, showDesktopPermissionSection]
-  );
-
-  useEffect(() => {
-    if (!showDesktopPermissionSection) return;
-    void refreshDesktopPermissions();
-  }, [refreshDesktopPermissions, showDesktopPermissionSection]);
-
   const handleSaveEditDaemon = useCallback(async (nextLabelRaw: string) => {
     if (!editingServerId) return;
     if (isSavingEdit) return;
@@ -722,17 +610,10 @@ export default function SettingsScreen() {
               </View>
             ) : (
               daemons.map((daemon) => {
-                const connection = connectionStates.get(daemon.serverId);
-                const connectionStatus = connection?.status ?? "idle";
-                const activeConnection = connection?.activeConnection ?? null;
-                const lastConnectionError = connection?.lastError ?? null;
                 return (
                   <DaemonCard
                     key={daemon.serverId}
                     daemon={daemon}
-                    connectionStatus={connectionStatus}
-                    activeConnection={activeConnection}
-                    lastError={lastConnectionError}
                     onOpenSettings={handleEditDaemon}
                   />
                 );
@@ -864,9 +745,6 @@ export default function SettingsScreen() {
           <HostDetailModal
             visible={Boolean(editingDaemonLive)}
             host={editingDaemonLive}
-            connectionStatus={editingServerId ? (connectionStates.get(editingServerId)?.status ?? "idle") : "idle"}
-            activeConnection={editingServerId ? (connectionStates.get(editingServerId)?.activeConnection ?? null) : null}
-            lastError={editingServerId ? (connectionStates.get(editingServerId)?.lastError ?? null) : null}
             isSaving={isSavingEdit}
             onClose={handleCloseEditDaemon}
             onSave={(label) => void handleSaveEditDaemon(label)}
@@ -912,54 +790,8 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          {showDesktopPermissionSection ? (
-            <View style={styles.section}>
-              <View style={styles.permissionSectionHeader}>
-                <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>
-                  Desktop permissions
-                </Text>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.permissionRefreshButton,
-                    (isRefreshingDesktopPermissions ||
-                      requestingDesktopPermission !== null) &&
-                      styles.permissionRefreshButtonDisabled,
-                    pressed && { opacity: 0.85 },
-                  ]}
-                  onPress={() => {
-                    void refreshDesktopPermissions();
-                  }}
-                  disabled={
-                    isRefreshingDesktopPermissions ||
-                    requestingDesktopPermission !== null
-                  }
-                  accessibilityRole="button"
-                  accessibilityLabel="Refresh desktop permissions"
-                >
-                  <RotateCw size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                </Pressable>
-              </View>
-              <View style={styles.audioCard}>
-                <DesktopPermissionRow
-                  title="Notifications"
-                  status={desktopPermissionSnapshot?.notifications ?? null}
-                  isRequesting={requestingDesktopPermission === "notifications"}
-                  onRequest={() => {
-                    void handleRequestDesktopPermission("notifications");
-                  }}
-                />
-                <DesktopPermissionRow
-                  title="Microphone"
-                  showBorder
-                  status={desktopPermissionSnapshot?.microphone ?? null}
-                  isRequesting={requestingDesktopPermission === "microphone"}
-                  onRequest={() => {
-                    void handleRequestDesktopPermission("microphone");
-                  }}
-                />
-              </View>
-            </View>
-          ) : null}
+          {isDesktop ? <DesktopPermissionsSection /> : null}
+          {isDesktop ? <DesktopUpdatesSection appVersion={appVersion} /> : null}
 
           {/* About */}
           <View style={styles.section}>
@@ -969,7 +801,7 @@ export default function SettingsScreen() {
                 <View style={styles.audioRowContent}>
                   <Text style={styles.audioRowTitle}>Version</Text>
                 </View>
-                <Text style={styles.aboutValue}>{appVersion ?? "Unavailable"}</Text>
+                <Text style={styles.aboutValue}>{appVersionText}</Text>
               </View>
             </View>
           </View>
@@ -982,9 +814,6 @@ export default function SettingsScreen() {
 interface HostDetailModalProps {
   visible: boolean;
   host: HostProfile | null;
-  connectionStatus: ConnectionStatus;
-  activeConnection: ActiveConnection | null;
-  lastError: string | null;
   isSaving: boolean;
   onClose: () => void;
   onSave: (label: string) => void;
@@ -999,9 +828,6 @@ interface HostDetailModalProps {
 function HostDetailModal({
   visible,
   host,
-  connectionStatus,
-  activeConnection,
-  lastError,
   isSaving,
   onClose,
   onSave,
@@ -1017,44 +843,37 @@ function HostDetailModal({
   const [pendingRemoveConnection, setPendingRemoveConnection] = useState<{ serverId: string; connectionId: string; title: string } | null>(null);
   const [isRemovingConnection, setIsRemovingConnection] = useState(false);
 
-  // Latency probes for each connection
+  // Read per-connection probes from host runtime snapshots.
   const connections = host?.connections ?? [];
-  const latencyQueries = useQueries({
-    queries: connections.map((conn) => ({
-      queryKey: ["connection-latency", conn.id],
-      queryFn: () => measureConnectionLatency(conn, { serverId: host?.serverId }),
-      enabled: visible,
-      refetchInterval: 5_000,
-      staleTime: 4_000,
-      gcTime: 60_000,
-      retry: 1,
-    })),
-  });
-  const latencyByConnectionId = new Map(
-    connections.map((conn, i) => [conn.id, latencyQueries[i]] as const)
-  );
 
   // Restart logic (moved from DaemonCard)
-  const daemonClient = useSessionStore((state) => host ? (state.sessions[host.serverId]?.client ?? null) : null);
-  const daemonConnection = useSessionStore((state) => host ? (state.sessions[host.serverId]?.connection ?? null) : null);
+  const { snapshot: runtimeSnapshot, client: runtimeClient, isConnected } = useHostRuntimeSession(
+    host?.serverId ?? ""
+  );
+  const runtime = getHostRuntimeStore();
+  const daemonClient = runtimeClient;
   const daemonVersion = useSessionStore((state) => host ? (state.sessions[host.serverId]?.serverInfo?.version ?? null) : null);
-  const isConnected = daemonConnection?.isConnected ?? false;
-  const isConnectedRef = useRef(isConnected);
+  const probeByConnectionId = runtimeSnapshot?.probeByConnectionId ?? new Map();
+  const connectionStatus = runtimeSnapshot?.connectionStatus ?? "connecting";
+  const activeConnection = runtimeSnapshot?.activeConnection ?? null;
+  const lastError = runtimeSnapshot?.lastError ?? null;
   const [isRestarting, setIsRestarting] = useState(false);
-
-  useEffect(() => {
-    isConnectedRef.current = isConnected;
-  }, [isConnected]);
+  const isHostConnected = useCallback(() => {
+    if (!host) {
+      return false;
+    }
+    return isHostRuntimeConnected(runtime.getSnapshot(host.serverId));
+  }, [host, runtime]);
 
   const waitForDaemonRestart = useCallback(async () => {
     const disconnectTimeoutMs = 7000;
     const reconnectTimeoutMs = 30000;
 
-    if (isConnectedRef.current) {
-      await waitForCondition(() => !isConnectedRef.current, disconnectTimeoutMs);
+    if (isHostConnected()) {
+      await waitForCondition(() => !isHostConnected(), disconnectTimeoutMs);
     }
 
-    const reconnected = await waitForCondition(() => isConnectedRef.current, reconnectTimeoutMs);
+    const reconnected = await waitForCondition(() => isHostConnected(), reconnectTimeoutMs);
 
     if (isScreenMountedRef.current) {
       setIsRestarting(false);
@@ -1065,12 +884,12 @@ function HostDetailModal({
         );
       }
     }
-  }, [host, isScreenMountedRef, waitForCondition]);
+  }, [host, isHostConnected, isScreenMountedRef, waitForCondition]);
 
   const beginServerRestart = useCallback(() => {
     if (!daemonClient || !host) return;
 
-    if (!isConnectedRef.current) {
+    if (!isHostConnected()) {
       Alert.alert(
         "Host offline",
         "This host is offline. Paseo reconnects automatically—wait until it's back online before restarting."
@@ -1092,7 +911,7 @@ function HostDetailModal({
       });
 
     void waitForDaemonRestart();
-  }, [daemonClient, host, isScreenMountedRef, waitForDaemonRestart]);
+  }, [daemonClient, host, isHostConnected, isScreenMountedRef, waitForDaemonRestart]);
 
   const handleRestartPress = useCallback(() => {
     if (!daemonClient || !host) {
@@ -1223,14 +1042,14 @@ function HostDetailModal({
             <Text style={styles.label}>Connections</Text>
             <View style={{ gap: 8 }}>
               {host.connections.map((conn) => {
-                const latency = latencyByConnectionId.get(conn.id);
+                const probe = probeByConnectionId.get(conn.id);
                 return (
                   <ConnectionRow
                     key={conn.id}
                     connection={conn}
-                    latencyMs={latency?.data ?? undefined}
-                    latencyLoading={latency?.isLoading ?? false}
-                    latencyError={latency?.isError ?? false}
+                    latencyMs={probe?.status === "available" ? probe.latencyMs : undefined}
+                    latencyLoading={!probe || probe.status === "pending"}
+                    latencyError={probe?.status === "unavailable"}
                     onRemove={() => {
                       const title =
                         conn.type === "relay"
@@ -1270,7 +1089,7 @@ function HostDetailModal({
                   leading={<RotateCw size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
                   status={isRestarting ? "pending" : "idle"}
                   pendingLabel="Restarting..."
-                  disabled={!daemonClient || !isConnectedRef.current}
+                  disabled={!daemonClient || !isConnected}
                 >
                   Restart daemon
                 </DropdownMenuItem>
@@ -1356,60 +1175,6 @@ function HostDetailModal({
   );
 }
 
-interface DesktopPermissionRowProps {
-  title: string;
-  status: DesktopPermissionStatus | null;
-  isRequesting: boolean;
-  showBorder?: boolean;
-  onRequest: () => void;
-}
-
-function DesktopPermissionRow({
-  title,
-  status,
-  isRequesting,
-  showBorder,
-  onRequest,
-}: DesktopPermissionRowProps) {
-  const { theme } = useUnistyles();
-  const state = status?.state ?? "unknown";
-  const isGranted = state === "granted";
-  const shouldShowDetail =
-    status !== null &&
-    status.detail.trim().length > 0 &&
-    state !== "granted" &&
-    state !== "prompt" &&
-    state !== "not-granted";
-
-  return (
-    <View style={[styles.audioRow, showBorder && styles.audioRowBorder]}>
-      <View style={styles.audioRowContent}>
-        <Text style={styles.audioRowTitle}>{title}</Text>
-      </View>
-      <View style={styles.permissionRowActions}>
-        {isGranted ? (
-          <View style={styles.permissionStatusPill}>
-            <Check size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            <Text style={styles.permissionStatusText}>Granted</Text>
-          </View>
-        ) : (
-          <Button
-            variant="secondary"
-            size="sm"
-            onPress={onRequest}
-            disabled={isRequesting}
-          >
-            {isRequesting ? "Requesting..." : "Request"}
-          </Button>
-        )}
-        {shouldShowDetail ? (
-          <Text style={styles.permissionDetailText}>{status?.detail}</Text>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 function ConnectionRow({
   connection,
   latencyMs,
@@ -1473,20 +1238,18 @@ function ConnectionRow({
 
 interface DaemonCardProps {
   daemon: HostProfile;
-  connectionStatus: ConnectionStatus;
-  activeConnection: ActiveConnection | null;
-  lastError: string | null;
   onOpenSettings: (daemon: HostProfile) => void;
 }
 
 function DaemonCard({
   daemon,
-  connectionStatus,
-  activeConnection,
-  lastError,
   onOpenSettings,
 }: DaemonCardProps) {
   const { theme } = useUnistyles();
+  const { snapshot } = useHostRuntimeSession(daemon.serverId);
+  const connectionStatus = snapshot?.connectionStatus ?? "connecting";
+  const activeConnection = snapshot?.activeConnection ?? null;
+  const lastError = snapshot?.lastError ?? null;
   const daemonVersion = useSessionStore(
     useCallback(
       (state) => state.sessions[daemon.serverId]?.serverInfo?.version ?? null,

@@ -2229,6 +2229,7 @@ class CodexAppServerAgentSession implements AgentSession {
       provider: CODEX_PROVIDER,
       sessionId: this.currentThreadId,
       model: this.config.model ?? null,
+      thinkingOptionId: normalizeCodexThinkingOptionId(this.config.thinkingOptionId) ?? null,
       modeId: this.currentMode ?? null,
       extra: this.resolvedCollaborationMode
         ? { collaborationMode: this.resolvedCollaborationMode.name }
@@ -2434,22 +2435,39 @@ class CodexAppServerAgentSession implements AgentSession {
     if (!this.client) return;
     if (this.currentThreadId) return;
 
-    // Resolve model - if not specified, query available models and pick default
+    // Resolve model + thinking defaults when omitted.
+    let configuredDefaults: CodexConfiguredDefaults = {};
     let model = this.config.model;
-    if (!model) {
-      const configuredDefaults = await readCodexConfiguredDefaults(this.client, this.logger);
-      model = configuredDefaults.model;
+    let thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
+    if (!model || !thinkingOptionId) {
+      configuredDefaults = await readCodexConfiguredDefaults(this.client, this.logger);
     }
     if (!model) {
+      model = configuredDefaults.model;
+    }
+    if (!thinkingOptionId) {
+      thinkingOptionId = configuredDefaults.thinkingOptionId;
+    }
+
+    if (!model || !thinkingOptionId) {
       const modelResponse = (await this.client.request("model/list", {})) as CodexModelListResponse;
       const models = modelResponse?.data ?? [];
       const defaultModel = models.find((m) => m.isDefault) ?? models[0];
       if (!defaultModel) {
         throw new Error("No models available from Codex app-server");
       }
-      model = defaultModel.id;
+      const selectedModel =
+        (model ? models.find((candidate) => candidate.id === model) : undefined) ?? defaultModel;
+      if (!model) {
+        model = selectedModel.id;
+      }
+      if (!thinkingOptionId) {
+        thinkingOptionId = normalizeCodexThinkingOptionId(selectedModel.defaultReasoningEffort);
+      }
     }
+
     this.config.model = model;
+    this.config.thinkingOptionId = thinkingOptionId;
 
     const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
     const approvalPolicy = this.config.approvalPolicy ?? preset.approvalPolicy;

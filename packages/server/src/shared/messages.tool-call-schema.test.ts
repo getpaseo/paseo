@@ -109,4 +109,41 @@ describe("shared messages tool_call schema", () => {
     expect(missingDetail.success).toBe(false);
     expect(legacyStatus.success).toBe(false);
   });
+
+  it("parses canonical sub_agent detail payload", () => {
+    const parsed = AgentTimelineItemPayloadSchema.parse({
+      type: "tool_call",
+      callId: "call_sub_agent_1",
+      name: "Task",
+      status: "running",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Explore",
+        description: "Inspect repository structure",
+        log: "[Read] README.md\n[Bash] ls",
+        actions: [
+          {
+            index: 1,
+            toolName: "Read",
+            summary: "README.md",
+          },
+          {
+            index: 2,
+            toolName: "Bash",
+            summary: "ls",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.type).toBe("tool_call");
+    if (parsed.type === "tool_call") {
+      expect(parsed.detail.type).toBe("sub_agent");
+      if (parsed.detail.type === "sub_agent") {
+        expect(parsed.detail.subAgentType).toBe("Explore");
+        expect(parsed.detail.actions).toHaveLength(2);
+      }
+    }
+  });
 });

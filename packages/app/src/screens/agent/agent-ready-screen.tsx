@@ -40,9 +40,12 @@ import {
   ExplorerSidebarAnimationProvider,
 } from "@/contexts/explorer-sidebar-animation-context";
 import { usePanelStore } from "@/stores/panel-store";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
+import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { useSessionStore } from "@/stores/session-store";
+import {
+  useHostRuntimeSession,
+  type HostRuntimeConnectionStatus,
+} from "@/runtime/host-runtime";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/contexts/session-context";
 import type { StreamItem } from "@/types/stream";
@@ -63,15 +66,21 @@ import {
 } from "@/hooks/use-checkout-status-query";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import {
+  useAgentScreenStateMachine,
+  type AgentScreenMissingState,
+} from "@/hooks/use-agent-screen-state-machine";
 import { useToast } from "@/contexts/toast-context";
+import { useDelayedHistoryRefreshToast } from "@/hooks/use-delayed-history-refresh-toast";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import {
   derivePendingPermissionKey,
   normalizeAgentSnapshot,
 } from "@/utils/agent-snapshots";
+import { resolveProjectPlacement } from "@/utils/project-placement";
 import { mergePendingCreateImages } from "@/utils/pending-create-images";
 import { shouldClearAgentAttentionOnView } from "@/utils/agent-attention";
-import type { FetchAgentsEntry } from "@server/client/daemon-client";
+import type { DaemonClient } from "@server/client/daemon-client";
 import { useExplorerOpenGesture } from "@/hooks/use-explorer-open-gesture";
 import {
   DropdownMenu,
@@ -85,8 +94,6 @@ import type { ExplorerCheckoutContext } from "@/stores/panel-store";
 
 const DROPDOWN_WIDTH = 220;
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
-const RECONNECT_NOTICE_DELAY_MS = 10_000;
-const CONNECTED_NOTICE_DURATION_MS = 2_500;
 const IS_DEV = Boolean((globalThis as { __DEV__?: boolean }).__DEV__);
 
 function logAgentExplorer(event: string, details: Record<string, unknown>): void {
@@ -106,23 +113,26 @@ export function AgentReadyScreen({
   const router = useRouter();
   const resolvedAgentId = agentId?.trim() || undefined;
   const resolvedServerId = serverId?.trim() || undefined;
-  const { connectionStates } = useDaemonConnections();
-
-  // Check if session exists for this serverId
-  const hasSession = useSessionStore((state) =>
-    resolvedServerId ? !!state.sessions[resolvedServerId] : false
-  );
+  const { daemons } = useDaemonRegistry();
+  const runtimeServerId = resolvedServerId ?? "";
+  const {
+    snapshot: runtimeSnapshot,
+    client: runtimeClient,
+    isConnected: runtimeIsConnected,
+  } = useHostRuntimeSession(runtimeServerId);
 
   const connectionServerId = resolvedServerId ?? null;
-  const connection = connectionServerId
-    ? connectionStates.get(connectionServerId)
+  const daemon = connectionServerId
+    ? daemons.find((entry) => entry.serverId === connectionServerId) ?? null
     : null;
   const serverLabel =
-    connection?.daemon.label ?? connectionServerId ?? "Selected host";
-  const isUnknownDaemon = Boolean(connectionServerId && !connection);
-  const connectionStatus =
-    connection?.status ?? (isUnknownDaemon ? "offline" : "idle");
-  const lastConnectionError = connection?.lastError ?? null;
+    daemon?.label ?? connectionServerId ?? "Selected host";
+  const isUnknownDaemon = Boolean(connectionServerId && !daemon);
+  const connectionStatus: HostRuntimeConnectionStatus =
+    runtimeSnapshot?.connectionStatus ??
+    (isUnknownDaemon ? "offline" : "connecting");
+  const lastConnectionError = runtimeSnapshot?.lastError ?? null;
+  const isRuntimeSessionAvailable = Boolean(resolvedServerId && runtimeClient);
 
   const handleBackToHome = useCallback(() => {
     const targetServerId = resolvedServerId;
@@ -152,7 +162,9 @@ export function AgentReadyScreen({
   }, [resolvedAgentId, resolvedServerId, router]);
 
   const focusServerId = resolvedServerId;
-  const navigationStatus = hasSession ? "ready" : "session_unavailable";
+  const navigationStatus = isRuntimeSessionAvailable
+    ? "ready"
+    : "session_unavailable";
 
   useFocusEffect(
     useCallback(() => {
@@ -170,7 +182,7 @@ export function AgentReadyScreen({
     }, [focusServerId, navigationStatus, resolvedAgentId])
   );
 
-  if (!hasSession || !resolvedServerId) {
+  if (!resolvedServerId || !runtimeClient) {
     return (
       <AgentSessionUnavailableState
         onBack={handleBackToHome}
@@ -187,6 +199,8 @@ export function AgentReadyScreen({
       <AgentScreenContent
         serverId={resolvedServerId}
         agentId={resolvedAgentId}
+        client={runtimeClient}
+        isConnected={runtimeIsConnected}
         connectionStatus={connectionStatus}
       />
     </ExplorerSidebarAnimationProvider>
@@ -196,14 +210,10 @@ export function AgentReadyScreen({
 type AgentScreenContentProps = {
   serverId: string;
   agentId?: string;
-  connectionStatus: ConnectionStatus;
+  client: DaemonClient;
+  isConnected: boolean;
+  connectionStatus: HostRuntimeConnectionStatus;
 };
-
-type MissingAgentState =
-  | { kind: "idle" }
-  | { kind: "resolving" }
-  | { kind: "not_found"; message: string }
-  | { kind: "error"; message: string };
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -219,6 +229,8 @@ function isNotFoundErrorMessage(message: string): boolean {
 function AgentScreenContent({
   serverId,
   agentId,
+  client,
+  isConnected,
   connectionStatus,
 }: AgentScreenContentProps) {
   const { theme } = useUnistyles();
@@ -268,26 +280,12 @@ function AgentScreenContent({
   const checkout = checkoutStatusQuery.status;
   const resolveCachedCheckoutIsGit = useCallback(
     (params: {
-      agentId?: string | null;
       cwd?: string | null;
       projectPlacementIsGit?: boolean;
       checkoutStatusIsGit?: boolean;
     }): boolean | null => {
       if (typeof params.projectPlacementIsGit === "boolean") {
         return params.projectPlacementIsGit;
-      }
-
-      const agentId = params.agentId?.trim();
-      if (agentId) {
-        const sidebarAgents = queryClient.getQueryData<{
-          entries: FetchAgentsEntry[];
-        }>(["sidebarAgentsList", serverId]);
-        const sidebarIsGit = sidebarAgents?.entries.find(
-          (entry) => entry.agent.id === agentId
-        )?.project?.checkout?.isGit;
-        if (typeof sidebarIsGit === "boolean") {
-          return sidebarIsGit;
-        }
       }
 
       const cwd = params.cwd?.trim();
@@ -317,7 +315,6 @@ function AgentScreenContent({
       ?.agents?.get(resolvedAgentId);
     const cwd = currentAgent?.cwd?.trim();
     const isGit = resolveCachedCheckoutIsGit({
-      agentId: resolvedAgentId,
       cwd,
       projectPlacementIsGit: currentAgent?.projectPlacement?.checkout?.isGit,
       checkoutStatusIsGit: checkout?.isGit,
@@ -384,7 +381,6 @@ function AgentScreenContent({
   const activeExplorerCheckout = useMemo<ExplorerCheckoutContext | null>(() => {
     const cwd = agent?.cwd?.trim();
     const isGit = resolveCachedCheckoutIsGit({
-      agentId: resolvedAgentId,
       cwd,
       projectPlacementIsGit: agent?.projectPlacement?.checkout?.isGit,
       checkoutStatusIsGit: checkout?.isGit,
@@ -448,6 +444,7 @@ function AgentScreenContent({
       ? state.sessions[serverId]?.agentHistorySyncGeneration?.get(resolvedAgentId) ?? -1
       : -1
   );
+  const hasHydratedHistoryBefore = agentHistorySyncGeneration >= 0;
 
   // Select raw pending permissions - filter with useMemo to avoid new Map on every render
   const allPendingPermissions = useSessionStore(
@@ -469,24 +466,20 @@ function AgentScreenContent({
     return filtered;
   }, [allPendingPermissions, resolvedAgentId]);
 
-  const client = useSessionStore(
-    (state) => state.sessions[serverId]?.client ?? null
-  );
-  const isConnected = useSessionStore(
-    (state) => state.sessions[serverId]?.connection.isConnected ?? false
+  const hasSession = useSessionStore(
+    (state) => Boolean(state.sessions[serverId])
   );
   const focusedAgentId = useSessionStore(
     (state) => state.sessions[serverId]?.focusedAgentId ?? null
   );
-  const { ensureAgentIsInitialized, refreshAgent } = useAgentInitialization(serverId);
-  const [missingAgentState, setMissingAgentState] = useState<MissingAgentState>({
+  const { ensureAgentIsInitialized, refreshAgent } = useAgentInitialization({
+    serverId,
+    client: hasSession ? client : null,
+  });
+  const [missingAgentState, setMissingAgentState] = useState<AgentScreenMissingState>({
     kind: "idle",
   });
-  const [showReconnectNotice, setShowReconnectNotice] = useState(false);
-  const [dismissedReconnectNotice, setDismissedReconnectNotice] = useState(false);
-  const [showConnectedNotice, setShowConnectedNotice] = useState(false);
-  const reconnectNoticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const connectedNoticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectToastArmedRef = useRef(false);
   const initAttemptTokenRef = useRef(0);
   const setFocusedAgentId = useCallback(
     (agentId: string | null) => {
@@ -511,58 +504,68 @@ function AgentScreenContent({
     };
   });
 
-  const agentModel = extractAgentModel(agent);
-  const modelDisplayValue = agentModel ?? "Unknown";
+  const handleHistorySyncFailure = useCallback(
+    ({ origin, error }: { origin: "focus" | "entry"; error: unknown }) => {
+      if (resolvedAgentId) {
+        console.warn("[AgentScreen] history sync failed", {
+          origin,
+          agentId: resolvedAgentId,
+          error,
+        });
+      }
+      const message = toErrorMessage(error);
+      setMissingAgentState((prev) => {
+        if (prev.kind === "error" && prev.message === message) {
+          return prev;
+        }
+        return { kind: "error", message };
+      });
+    },
+    [resolvedAgentId]
+  );
+
+  const ensureInitializedWithSyncErrorHandling = useCallback(
+    (origin: "focus" | "entry") => {
+      if (!resolvedAgentId) {
+        return;
+      }
+      ensureAgentIsInitialized(resolvedAgentId).catch((error) => {
+        handleHistorySyncFailure({ origin, error });
+      });
+    },
+    [ensureAgentIsInitialized, handleHistorySyncFailure, resolvedAgentId]
+  );
 
   useEffect(() => {
-    if (reconnectNoticeTimeoutRef.current) {
-      clearTimeout(reconnectNoticeTimeoutRef.current);
-      reconnectNoticeTimeoutRef.current = null;
-    }
-
     if (connectionStatus === "online") {
-      if (showReconnectNotice || dismissedReconnectNotice) {
-        setShowConnectedNotice(true);
-      }
-      setShowReconnectNotice(false);
-      setDismissedReconnectNotice(false);
+      reconnectToastArmedRef.current = false;
       return;
     }
-
-    setShowConnectedNotice(false);
-    if (!showReconnectNotice && !dismissedReconnectNotice) {
-      reconnectNoticeTimeoutRef.current = setTimeout(() => {
-        setShowReconnectNotice(true);
-      }, RECONNECT_NOTICE_DELAY_MS);
-    }
-
-    return () => {
-      if (reconnectNoticeTimeoutRef.current) {
-        clearTimeout(reconnectNoticeTimeoutRef.current);
-        reconnectNoticeTimeoutRef.current = null;
-      }
-    };
-  }, [connectionStatus, dismissedReconnectNotice, showReconnectNotice]);
-
-  useEffect(() => {
-    if (!showConnectedNotice) {
-      if (connectedNoticeTimeoutRef.current) {
-        clearTimeout(connectedNoticeTimeoutRef.current);
-        connectedNoticeTimeoutRef.current = null;
-      }
+    if (connectionStatus === "idle") {
       return;
     }
-    connectedNoticeTimeoutRef.current = setTimeout(() => {
-      setShowConnectedNotice(false);
-      connectedNoticeTimeoutRef.current = null;
-    }, CONNECTED_NOTICE_DURATION_MS);
-    return () => {
-      if (connectedNoticeTimeoutRef.current) {
-        clearTimeout(connectedNoticeTimeoutRef.current);
-        connectedNoticeTimeoutRef.current = null;
+    if (!reconnectToastArmedRef.current) {
+      reconnectToastArmedRef.current = true;
+      toast.show("Reconnecting...", {
+        durationMs: 2200,
+        testID: "agent-reconnecting-toast",
+      });
+    }
+  }, [connectionStatus, toast]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!resolvedAgentId || !isConnected || !hasSession) {
+        return;
       }
-    };
-  }, [showConnectedNotice]);
+      ensureInitializedWithSyncErrorHandling("focus");
+    }, [
+      ensureInitializedWithSyncErrorHandling,
+      hasSession,
+      isConnected,
+      resolvedAgentId,
+    ])
+  );
 
   const isGitCheckout = activeExplorerCheckout?.isGit ?? false;
   const isArchivingCurrentAgent = Boolean(
@@ -646,7 +649,6 @@ function AgentScreenContent({
   }, [optimisticStreamItems, streamItems]);
 
   const shouldUseOptimisticStream = isPendingCreateForRoute && optimisticStreamItems.length > 0;
-  const shouldBlockForHistorySync = !shouldUseOptimisticStream && (needsAuthoritativeSync || isHistorySyncing);
 
   const placeholderAgent: Agent | null = useMemo(() => {
     if (!shouldUseOptimisticStream || !resolvedAgentId) {
@@ -687,9 +689,27 @@ function AgentScreenContent({
     };
   }, [resolvedAgentId, serverId, shouldUseOptimisticStream]);
 
-  const effectiveAgent = agent ?? placeholderAgent;
-  const providerLabel = (effectiveAgent?.provider ?? "Provider").replace(/^\w/, (m) =>
-    m.toUpperCase()
+  const viewState = useAgentScreenStateMachine({
+    routeKey: `${serverId}:${resolvedAgentId ?? ""}`,
+    input: {
+      agent: agent ?? null,
+      placeholderAgent,
+      missingAgentState,
+      isConnected,
+      isArchivingCurrentAgent,
+      isHistorySyncing,
+      needsAuthoritativeSync,
+      shouldUseOptimisticStream,
+      hasHydratedHistoryBefore,
+    },
+  });
+
+  const effectiveAgent = viewState.tag === "ready" ? viewState.agent : null;
+  const agentModel = extractAgentModel(effectiveAgent ?? agent);
+  const modelDisplayValue = agentModel ?? "Unknown";
+  const providerLabel = (effectiveAgent?.provider ?? "Provider").replace(
+    /^\w/,
+    (m) => m.toUpperCase()
   );
   const providerSessionId =
     effectiveAgent?.runtimeInfo?.sessionId ?? effectiveAgent?.persistence?.sessionId ?? null;
@@ -752,7 +772,7 @@ function AgentScreenContent({
       return;
     }
 
-    if (!isConnected) {
+    if (!isConnected || !hasSession) {
       return;
     }
     // On native clients, daemon stream forwarding is focused-agent only, so switching
@@ -762,15 +782,11 @@ function AgentScreenContent({
       return;
     }
 
-    ensureAgentIsInitialized(resolvedAgentId).catch((error) => {
-      console.warn("[AgentScreen] Agent initialization failed", {
-        agentId: resolvedAgentId,
-        error,
-      });
-    });
+    ensureInitializedWithSyncErrorHandling("entry");
   }, [
     resolvedAgentId,
-    ensureAgentIsInitialized,
+    ensureInitializedWithSyncErrorHandling,
+    hasSession,
     isConnected,
     needsAuthoritativeSync,
   ]);
@@ -791,7 +807,7 @@ function AgentScreenContent({
       }
       return;
     }
-    if (!isConnected) {
+    if (!isConnected || !hasSession) {
       return;
     }
     if (missingAgentState.kind === "resolving" || missingAgentState.kind === "not_found") {
@@ -823,21 +839,28 @@ function AgentScreenContent({
             return;
           }
           const normalized = normalizeAgentSnapshot(snapshot, serverId);
+          const hydrated = {
+            ...normalized,
+            projectPlacement: resolveProjectPlacement({
+              projectPlacement: null,
+              cwd: normalized.cwd,
+            }),
+          };
           setAgents(serverId, (prev) => {
             const next = new Map(prev);
-            next.set(normalized.id, normalized);
+            next.set(hydrated.id, hydrated);
             return next;
           });
           setPendingPermissions(serverId, (prev) => {
             const next = new Map(prev);
             for (const [key, pending] of next.entries()) {
-              if (pending.agentId === normalized.id) {
+              if (pending.agentId === hydrated.id) {
                 next.delete(key);
               }
             }
-            for (const request of normalized.pendingPermissions) {
-              const key = derivePendingPermissionKey(normalized.id, request);
-              next.set(key, { key, agentId: normalized.id, request });
+            for (const request of hydrated.pendingPermissions) {
+              const key = derivePendingPermissionKey(hydrated.id, request);
+              next.set(key, { key, agentId: hydrated.id, request });
             }
             return next;
           });
@@ -862,6 +885,7 @@ function AgentScreenContent({
     agent,
     client,
     ensureAgentIsInitialized,
+    hasSession,
     isConnected,
     missingAgentState.kind,
     resolvedAgentId,
@@ -905,13 +929,13 @@ function AgentScreenContent({
   ]);
 
   const handleRefreshAgent = useCallback(() => {
-    if (!resolvedAgentId) {
+    if (!resolvedAgentId || !hasSession) {
       return;
     }
     void refreshAgent(resolvedAgentId).catch((error) => {
       console.warn("[AgentScreen] refreshAgent failed", { agentId: resolvedAgentId, error });
     });
-  }, [resolvedAgentId, refreshAgent]);
+  }, [hasSession, refreshAgent, resolvedAgentId]);
 
   const handleCopyMeta = useCallback(
     async (label: string, value: string | null | undefined) => {
@@ -931,34 +955,56 @@ function AgentScreenContent({
     [theme.colors.primary, toast]
   );
 
-  if (!effectiveAgent) {
-    if (missingAgentState.kind === "not_found") {
-      return (
-        <View style={styles.container} testID="agent-not-found">
-          <MenuHeader title="Agent" />
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>Agent not found</Text>
-          </View>
-        </View>
-      );
-    }
-    if (missingAgentState.kind === "error") {
-      return (
-        <View style={styles.container} testID="agent-load-error">
-          <MenuHeader title="Agent" />
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>Failed to load agent</Text>
-            <Text style={styles.statusText}>{missingAgentState.message}</Text>
-          </View>
-        </View>
-      );
-    }
+  const isHistoryRefreshCatchingUp =
+    viewState.tag === "ready" &&
+    viewState.sync.status === "catching_up" &&
+    viewState.sync.ui === "toast";
+  const shouldEmitSyncErrorToast =
+    viewState.tag === "ready" &&
+    viewState.sync.status === "sync_error" &&
+    viewState.sync.shouldEmitSyncErrorToast;
 
+  useDelayedHistoryRefreshToast({
+    isCatchingUp: isHistoryRefreshCatchingUp,
+    indicatorColor: theme.colors.primary,
+  });
+
+  useEffect(() => {
+    if (!shouldEmitSyncErrorToast) {
+      return;
+    }
+    toast.error("Failed to refresh agent. Retrying in background.");
+  }, [shouldEmitSyncErrorToast, toast]);
+
+  if (viewState.tag === "not_found") {
+    return (
+      <View style={styles.container} testID="agent-not-found">
+        <MenuHeader title="Agent" />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Agent not found</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (viewState.tag === "error") {
+    return (
+      <View style={styles.container} testID="agent-load-error">
+        <MenuHeader title="Agent" />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Failed to load agent</Text>
+          <Text style={styles.statusText}>{viewState.message}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (viewState.tag === "boot" || !effectiveAgent) {
     return (
       <View style={styles.container} testID="agent-loading">
         <MenuHeader title="Agent" />
         <View style={styles.errorContainer}>
-          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          <ActivityIndicator size="large" color={theme.colors.foregroundMuted} />
         </View>
       </View>
     );
@@ -968,7 +1014,7 @@ function AgentScreenContent({
     <View style={styles.outerContainer}>
       <FileDropZone
         onFilesDropped={handleFilesDropped}
-        disabled={isInitializing || shouldBlockForHistorySync || isArchivingCurrentAgent}
+        disabled={isArchivingCurrentAgent}
       >
       <View style={styles.container}>
         {/* Header */}
@@ -1149,7 +1195,7 @@ function AgentScreenContent({
 
                   <DropdownMenuItem
                     leading={<RotateCcw size={theme.iconSize.md} color={theme.colors.foreground} />}
-                    disabled={isInitializing || shouldBlockForHistorySync}
+                    disabled={isInitializing}
                     trailing={
                       isInitializing ? (
                         <ActivityIndicator
@@ -1169,75 +1215,25 @@ function AgentScreenContent({
           }
         />
 
-          {(showReconnectNotice || showConnectedNotice) && (
-            <View
-              style={[
-                styles.connectionNotice,
-                showReconnectNotice
-                  ? styles.connectionNoticeReconnecting
-                  : styles.connectionNoticeConnected,
-              ]}
-            >
-              {showConnectedNotice ? (
-                <CheckCircle2
-                  size={theme.iconSize.sm}
-                  color={theme.colors.palette.green[600]}
-                />
-              ) : null}
-              <Text
-                style={[
-                  styles.connectionNoticeText,
-                  showReconnectNotice
-                    ? styles.connectionNoticeTextReconnecting
-                    : styles.connectionNoticeTextConnected,
-                ]}
-              >
-                {showReconnectNotice ? "Reconnecting..." : "Connected"}
-              </Text>
-              {showReconnectNotice ? (
-                <Pressable
-                  onPress={() => {
-                    setShowReconnectNotice(false);
-                    setDismissedReconnectNotice(true);
-                  }}
-                  style={styles.connectionNoticeDismiss}
-                  accessibilityRole="button"
-                  accessibilityLabel="Dismiss reconnecting notice"
-                >
-                  <Text style={styles.connectionNoticeDismissText}>Dismiss</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          )}
-
           {/* Content Area with Keyboard Animation */}
           <View style={styles.contentContainer}>
-            {shouldBlockForHistorySync ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={theme.colors.primary} />
-              </View>
-            ) : (
-              <ReanimatedAnimated.View
-                style={[styles.content, animatedKeyboardStyle]}
-              >
-                <AgentStreamView
-                  agentId={effectiveAgent.id}
-                  serverId={serverId}
-                  agent={effectiveAgent}
-                  streamItems={
-                    shouldUseOptimisticStream ? mergedStreamItems : streamItems
-                  }
-                  pendingPermissions={pendingPermissions}
-                />
-              </ReanimatedAnimated.View>
-            )}
+            <ReanimatedAnimated.View
+              style={[styles.content, animatedKeyboardStyle]}
+            >
+              <AgentStreamView
+                agentId={effectiveAgent.id}
+                serverId={serverId}
+                agent={effectiveAgent}
+                streamItems={
+                  shouldUseOptimisticStream ? mergedStreamItems : streamItems
+                }
+                pendingPermissions={pendingPermissions}
+              />
+            </ReanimatedAnimated.View>
           </View>
 
           {/* Agent Input Area */}
-          {agent &&
-            resolvedAgentId &&
-            !shouldBlockForHistorySync &&
-            !isArchivingCurrentAgent && (
+          {resolvedAgentId && !isArchivingCurrentAgent && (
             <AgentInputArea
               agentId={resolvedAgentId}
               serverId={serverId}
@@ -1245,6 +1241,14 @@ function AgentScreenContent({
               onAddImages={handleAddImagesCallback}
             />
           )}
+
+          {viewState.tag === "ready" &&
+          viewState.sync.status === "catching_up" &&
+          viewState.sync.ui === "overlay" ? (
+            <View style={styles.historySyncOverlay} testID="agent-history-overlay">
+              <ActivityIndicator size="large" color={theme.colors.foregroundMuted} />
+            </View>
+          ) : null}
 
         </View>
       </FileDropZone>
@@ -1303,7 +1307,7 @@ function AgentSessionUnavailableState({
 }: {
   onBack: () => void;
   serverLabel: string;
-  connectionStatus: ConnectionStatus;
+  connectionStatus: HostRuntimeConnectionStatus;
   lastError: string | null;
   isUnknownDaemon?: boolean;
 }) {
@@ -1326,19 +1330,24 @@ function AgentSessionUnavailableState({
   }
 
   const isConnecting = connectionStatus === "connecting";
+  const isPreparingSession = connectionStatus === "online";
 
   return (
     <View style={styles.container}>
       <BackHeader title="Agent" onBack={onBack} />
       <View style={styles.centerState}>
-        {isConnecting ? (
+        {isConnecting || isPreparingSession ? (
           <>
             <ActivityIndicator size="large" />
             <Text style={styles.loadingText}>
-              Connecting to {serverLabel}...
+              {isPreparingSession
+                ? `Preparing ${serverLabel} session...`
+                : `Connecting to ${serverLabel}...`}
             </Text>
             <Text style={styles.statusText}>
-              We will show this agent once the host is online.
+              {isPreparingSession
+                ? "We will show this agent in a moment."
+                : "We will show this agent once the host is online."}
             </Text>
           </>
         ) : (
@@ -1377,57 +1386,19 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     overflow: "hidden",
   },
-  connectionNotice: {
-    marginHorizontal: theme.spacing[4],
-    marginTop: theme.spacing[1],
-    marginBottom: theme.spacing[2],
-    minHeight: 32,
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing[3],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  connectionNoticeReconnecting: {
-    backgroundColor: `${theme.colors.palette.yellow[400]}22`,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.palette.yellow[400],
-  },
-  connectionNoticeConnected: {
-    backgroundColor: theme.colors.palette.green[100],
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.palette.green[400],
-  },
-  connectionNoticeText: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
-  },
-  connectionNoticeTextReconnecting: {
-    color: theme.colors.foreground,
-  },
-  connectionNoticeTextConnected: {
-    color: theme.colors.palette.green[800],
-  },
-  connectionNoticeDismiss: {
-    marginLeft: "auto",
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface0,
-  },
-  connectionNoticeDismissText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foregroundMuted,
-  },
   content: {
     flex: 1,
   },
-  loadingContainer: {
-    flex: 1,
+  historySyncOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: theme.colors.surface0,
     alignItems: "center",
     justifyContent: "center",
-    gap: 16,
+    zIndex: 40,
   },
   archivingOverlay: {
     position: "absolute",

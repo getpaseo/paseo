@@ -32,6 +32,7 @@ class LoggingWebSocket extends OriginalWebSocket {
 const PASEO_HOME = process.env.PASEO_HOME ?? `${os.homedir()}/.paseo`;
 const PASEO_LISTEN = process.env.PASEO_LISTEN ?? "127.0.0.1:6767";
 const DAEMON_URL = `ws://${PASEO_LISTEN}/ws`;
+const CLIENT_ID = "clsk_checkout_debug";
 
 async function testMultiAgentSequence() {
   console.log("\n=== Testing multi-agent checkout sequence ===");
@@ -39,6 +40,7 @@ async function testMultiAgentSequence() {
 
   const client = new DaemonClient({
     url: DAEMON_URL,
+    clientId: CLIENT_ID,
     webSocketFactory: (url) => new LoggingWebSocket(url) as any,
     reconnect: { enabled: false },
   });

@@ -36,14 +36,14 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
     await withRetry(
       async () => {
         const serverId = `live-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const clientId = `clt_live_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-        const serverControlUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(serverId)}&role=server`;
+        const connectionId = `clt_live_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const serverControlUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(serverId)}&role=server&v=2`;
         const serverDataUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(
           serverId
-        )}&role=server&clientId=${encodeURIComponent(clientId)}`;
+        )}&role=server&connectionId=${encodeURIComponent(connectionId)}&v=2`;
         const clientUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(
           serverId
-        )}&role=client&clientId=${encodeURIComponent(clientId)}`;
+        )}&role=client&connectionId=${encodeURIComponent(connectionId)}&v=2`;
 
         // === Key setup ===
         const daemonKeyPair = await generateKeyPair();
@@ -87,13 +87,13 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
 
           await new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(
-              () => reject(new Error("Timed out waiting for client_connected")),
+              () => reject(new Error("Timed out waiting for connected")),
               10_000
             );
             daemonControlWs.on("message", (raw) => {
               try {
                 const msg = JSON.parse(raw.toString());
-                if (msg && msg.type === "client_connected" && msg.clientId === clientId) {
+                if (msg && msg.type === "connected" && msg.connectionId === connectionId) {
                   clearTimeout(timeout);
                   resolve();
                 }

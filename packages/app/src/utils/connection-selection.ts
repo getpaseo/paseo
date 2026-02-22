@@ -12,14 +12,13 @@ export type ConnectionProbeState =
 
 export type SelectBestConnectionInput = {
   candidates: ConnectionCandidate[];
-  preferredConnectionId: string | null;
   probeByConnectionId: Map<string, ConnectionProbeState>;
 };
 
 export function selectBestConnection(
   input: SelectBestConnectionInput
 ): string | null {
-  const { candidates, preferredConnectionId, probeByConnectionId } = input;
+  const { candidates, probeByConnectionId } = input;
   if (candidates.length === 0) {
     return null;
   }
@@ -29,8 +28,9 @@ export function selectBestConnection(
     .filter(({ candidate }) => {
       const probe = probeByConnectionId.get(candidate.connectionId);
       return probe?.status === "available";
-    })
-    .sort((left, right) => {
+    });
+
+  const byLatency = (left: { candidate: ConnectionCandidate; index: number }, right: { candidate: ConnectionCandidate; index: number }) => {
       const leftProbe = probeByConnectionId.get(left.candidate.connectionId);
       const rightProbe = probeByConnectionId.get(right.candidate.connectionId);
 
@@ -48,18 +48,12 @@ export function selectBestConnection(
       }
 
       return leftLatency - rightLatency;
-    });
+    };
 
-  if (available.length > 0) {
-    return available[0]!.candidate.connectionId;
+  if (available.length === 0) {
+    return null;
   }
 
-  const preferred = candidates.find(
-    (candidate) => candidate.connectionId === preferredConnectionId
-  );
-  if (preferred) {
-    return preferred.connectionId;
-  }
-
-  return candidates[0]!.connectionId;
+  const sorted = available.sort(byLatency);
+  return sorted[0]!.candidate.connectionId;
 }

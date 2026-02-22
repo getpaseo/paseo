@@ -159,6 +159,85 @@ describe("stream reducer canonical tool calls", () => {
     });
   });
 
+  it("keeps sub_agent detail through lifecycle updates for the same callId", () => {
+    const callId = "task-sub-agent-1";
+    const updates = [
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId,
+          name: "Task",
+          status: "running",
+          detail: {
+            type: "sub_agent",
+            subAgentType: "Explore",
+            description: "Inspect repository structure",
+            log: "[Read] README.md\n[Bash] ls",
+            actions: [
+              {
+                index: 1,
+                toolName: "Read",
+                summary: "README.md",
+              },
+              {
+                index: 2,
+                toolName: "Bash",
+                summary: "ls",
+              },
+            ],
+          },
+        }),
+        timestamp: new Date("2025-01-01T10:12:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId,
+          name: "Task",
+          status: "completed",
+          input: null,
+          output: { ok: true },
+        }),
+        timestamp: new Date("2025-01-01T10:12:01Z"),
+      },
+    ];
+
+    const state = hydrateStreamState(updates);
+    const tools = state.filter(isAgentToolCallItem);
+
+    assert.strictEqual(tools.length, 1);
+    assert.strictEqual(tools[0].payload.data.status, "completed");
+    assert.deepStrictEqual(tools[0].payload.data.detail, {
+      type: "sub_agent",
+      subAgentType: "Explore",
+      description: "Inspect repository structure",
+      log: "[Read] README.md\n[Bash] ls",
+      actions: [
+        {
+          index: 1,
+          toolName: "Read",
+          summary: "README.md",
+        },
+        {
+          index: 2,
+          toolName: "Bash",
+          summary: "ls",
+        },
+      ],
+    });
+
+    const display = buildToolCallDisplayModel({
+      name: tools[0].payload.data.name,
+      status: tools[0].payload.data.status,
+      error: tools[0].payload.data.error,
+      detail: tools[0].payload.data.detail,
+    });
+    assert.deepStrictEqual(display, {
+      displayName: "Explore",
+      summary: "Inspect repository structure",
+    });
+  });
+
   it("exposes shell summary from running input before completion", () => {
     const callId = "running-summary-shell";
     const state = hydrateStreamState([

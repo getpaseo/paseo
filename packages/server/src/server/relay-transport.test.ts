@@ -203,7 +203,7 @@ describe("relay-transport control lifecycle", () => {
     const control = MockWebSocket.instances[0];
     control.open();
     control.message(JSON.stringify({ type: "pong", ts: Date.now() }));
-    control.message(JSON.stringify({ type: "client_connected", clientId: "clt_test" }));
+    control.message(JSON.stringify({ type: "connected", connectionId: "clt_test" }));
 
     const dataSocket = MockWebSocket.instances[1];
     expect(dataSocket).toBeDefined();
@@ -216,7 +216,7 @@ describe("relay-transport control lifecycle", () => {
       dataSocket,
       {
         transport: "relay",
-        externalSessionKey: "relay:clt_test",
+        externalSessionKey: "session:clt_test",
       }
     );
   });

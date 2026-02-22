@@ -20,6 +20,7 @@ const TOOL_DETAIL_ICONS: Record<ToolCallDetail["type"], ToolCallIconComponent> =
   write: Pencil,
   search: Search,
   worktree_setup: SquareTerminal,
+  sub_agent: Bot,
   unknown: Wrench,
 };
 
@@ -33,13 +34,12 @@ export function resolveToolCallIcon(toolName: string, detail?: ToolCallDetail): 
   if (lowerName === "speak") {
     return MicVocal;
   }
+  if (lowerName === "task") {
+    return Bot;
+  }
 
   if (detail) {
     return TOOL_DETAIL_ICONS[detail.type];
-  }
-
-  if (lowerName === "task") {
-    return Bot;
   }
   return Wrench;
 }

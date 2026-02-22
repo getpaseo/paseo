@@ -74,7 +74,6 @@ vi.mock("./push/push-service.js", () => ({
 
 import {
   VoiceAssistantWebSocketServer,
-  type ExternalSocketMetadata,
 } from "./websocket-server";
 import { parseServerInfoStatusPayload } from "./messages.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
@@ -242,6 +241,65 @@ function createDownloadInProgressSpeechReadinessSnapshot(): SpeechReadinessSnaps
   };
 }
 
+function createHelloMessage(clientId: string) {
+  return {
+    type: "hello" as const,
+    clientId,
+    clientType: "cli" as const,
+    protocolVersion: 1,
+  };
+}
+
+function createDirectRequest() {
+  return {
+    headers: {
+      host: "localhost:6767",
+      origin: "http://localhost:6767",
+      "user-agent": "vitest",
+    },
+    socket: {
+      remoteAddress: "127.0.0.1",
+    },
+    url: "/ws",
+  };
+}
+
+async function attachRelayAndHello(params: {
+  server: VoiceAssistantWebSocketServer;
+  socket: MockSocket;
+  clientId: string;
+}) {
+  await params.server.attachExternalSocket(params.socket, { transport: "relay" });
+  params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
+  await Promise.resolve();
+  expect(params.socket.sent.length).toBeGreaterThan(0);
+  const welcome = JSON.parse(params.socket.sent[0] as string) as {
+    type?: unknown;
+    resumed?: unknown;
+    serverId?: unknown;
+  };
+  expect(welcome.type).toBe("welcome");
+  return welcome;
+}
+
+async function attachDirectAndHello(params: {
+  server: VoiceAssistantWebSocketServer;
+  socket: MockSocket;
+  clientId: string;
+}) {
+  await (params.server as any).attachSocket(params.socket, createDirectRequest());
+  params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
+  await Promise.resolve();
+  expect(params.socket.sent.length).toBeGreaterThan(0);
+  const welcome = JSON.parse(params.socket.sent[0] as string) as {
+    type?: unknown;
+    resumed?: unknown;
+    serverId?: unknown;
+  };
+  expect(welcome.type).toBe("welcome");
+  return welcome;
+}
+
 describe("relay external socket reconnect behavior", () => {
   beforeEach(() => {
     sessionMock.instances.length = 0;
@@ -254,13 +312,15 @@ describe("relay external socket reconnect behavior", () => {
 
   test("keeps the same session when relay reconnects within grace window", async () => {
     const server = createServer();
-    const metadata: ExternalSocketMetadata = {
-      transport: "relay",
-      externalSessionKey: "relay:client-1",
-    };
+    const clientId = "cid-relay-reconnect";
 
     const socket1 = new MockSocket();
-    await server.attachExternalSocket(socket1, metadata);
+    const firstWelcome = await attachRelayAndHello({
+      server,
+      socket: socket1,
+      clientId,
+    });
+    expect(firstWelcome.resumed).toBe(false);
     expect(sessionMock.instances).toHaveLength(1);
     const session = sessionMock.instances[0]!;
 
@@ -269,7 +329,12 @@ describe("relay external socket reconnect behavior", () => {
     expect(session.cleanup).not.toHaveBeenCalled();
 
     const socket2 = new MockSocket();
-    await server.attachExternalSocket(socket2, metadata);
+    const secondWelcome = await attachRelayAndHello({
+      server,
+      socket: socket2,
+      clientId,
+    });
+    expect(secondWelcome.resumed).toBe(true);
     expect(sessionMock.instances).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(20_000);
@@ -278,15 +343,192 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
-  test("cleans up relay session when reconnect grace expires", async () => {
+  test("closes pending connection when hello timeout elapses", async () => {
     const server = createServer();
-    const metadata: ExternalSocketMetadata = {
-      transport: "relay",
-      externalSessionKey: "relay:client-2",
-    };
+
+    const socket = new MockSocket();
+    let closeCode: number | null = null;
+    let closeReason = "";
+    socket.on("close", (code: unknown, reason: unknown) => {
+      closeCode = typeof code === "number" ? code : null;
+      closeReason = typeof reason === "string" ? reason : String(reason ?? "");
+    });
+
+    await (server as any).attachSocket(socket, createDirectRequest());
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(closeCode).toBe(4001);
+    expect(closeReason).toBe("Hello timeout");
+    expect(sessionMock.instances).toHaveLength(0);
+
+    await server.close();
+  });
+
+  test("marks hello as resumed when clientId already has a session", async () => {
+    const server = createServer();
+    const clientId = "cid-resume-flag";
+
+    const firstSocket = new MockSocket();
+    const firstWelcome = await attachRelayAndHello({
+      server,
+      socket: firstSocket,
+      clientId,
+    });
+    expect(firstWelcome.resumed).toBe(false);
+
+    firstSocket.emit("close", 1006, "");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    const secondSocket = new MockSocket();
+    const secondWelcome = await attachRelayAndHello({
+      server,
+      socket: secondSocket,
+      clientId,
+    });
+    expect(secondWelcome.resumed).toBe(true);
+
+    await server.close();
+  });
+
+  test("marks hello as not resumed for new clientIds", async () => {
+    const server = createServer();
+
+    const firstSocket = new MockSocket();
+    const firstWelcome = await attachRelayAndHello({
+      server,
+      socket: firstSocket,
+      clientId: "cid-new-1",
+    });
+    expect(firstWelcome.resumed).toBe(false);
+
+    const secondSocket = new MockSocket();
+    const secondWelcome = await attachRelayAndHello({
+      server,
+      socket: secondSocket,
+      clientId: "cid-new-2",
+    });
+    expect(secondWelcome.resumed).toBe(false);
+    expect(sessionMock.instances).toHaveLength(2);
+
+    await server.close();
+  });
+
+  test("rejects session messages before hello", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    let closeCode: number | null = null;
+    let closeReason = "";
+    socket.on("close", (code: unknown, reason: unknown) => {
+      closeCode = typeof code === "number" ? code : null;
+      closeReason = typeof reason === "string" ? reason : String(reason ?? "");
+    });
+
+    await server.attachExternalSocket(socket, { transport: "relay" });
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "ping",
+        },
+      })
+    );
+    await Promise.resolve();
+
+    expect(closeCode).toBe(4002);
+    expect(["Invalid hello", "Session message before hello"]).toContain(closeReason);
+    expect(sessionMock.instances).toHaveLength(0);
+
+    await server.close();
+  });
+
+  test("reuses direct session when same clientId reconnects within grace window", async () => {
+    const server = createServer();
+    const clientId = "cid-direct-reconnect";
 
     const socket1 = new MockSocket();
-    await server.attachExternalSocket(socket1, metadata);
+    const firstWelcome = await attachDirectAndHello({
+      server,
+      socket: socket1,
+      clientId,
+    });
+    expect(firstWelcome.resumed).toBe(false);
+    expect(sessionMock.instances).toHaveLength(1);
+    const session = sessionMock.instances[0]!;
+
+    socket1.emit("close", 1006, "");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(session.cleanup).not.toHaveBeenCalled();
+
+    const socket2 = new MockSocket();
+    const secondWelcome = await attachDirectAndHello({
+      server,
+      socket: socket2,
+      clientId,
+    });
+    expect(secondWelcome.resumed).toBe(true);
+    expect(sessionMock.instances).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(session.cleanup).not.toHaveBeenCalled();
+
+    await server.close();
+  });
+
+  test("reuses one session when switching from direct to relay with the same clientId", async () => {
+    const server = createServer();
+    const clientId = "cid-switch-path";
+
+    const directSocket = new MockSocket();
+    await attachDirectAndHello({
+      server,
+      socket: directSocket,
+      clientId,
+    });
+    expect(sessionMock.instances).toHaveLength(1);
+    const session = sessionMock.instances[0]!;
+
+    const relaySocket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket: relaySocket,
+      clientId,
+    });
+    expect(sessionMock.instances).toHaveLength(1);
+
+    const onMessage = session.args.onMessage as
+      | ((msg: { type: "status"; payload: { status: string } }) => void)
+      | undefined;
+    expect(onMessage).toBeTypeOf("function");
+    onMessage?.({
+      type: "status",
+      payload: { status: "ok" },
+    });
+
+    expect(directSocket.sent.length).toBeGreaterThan(0);
+    expect(relaySocket.sent.length).toBeGreaterThan(0);
+
+    directSocket.emit("close", 1006, "");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(session.cleanup).not.toHaveBeenCalled();
+
+    relaySocket.emit("close", 1006, "");
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(session.cleanup).toHaveBeenCalledTimes(1);
+
+    await server.close();
+  });
+
+  test("cleans up relay session when reconnect grace expires", async () => {
+    const server = createServer();
+    const clientId = "cid-relay-grace-expire";
+
+    const socket1 = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket: socket1,
+      clientId,
+    });
     expect(sessionMock.instances).toHaveLength(1);
     const session = sessionMock.instances[0]!;
 
@@ -297,53 +539,46 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
-  test("includes voice capabilities in server_info when speech readiness exists", async () => {
+  test("includes voice capabilities in welcome when speech readiness exists", async () => {
     const speechReadiness = createReadySpeechReadinessSnapshot();
     const server = createServer({ speechReadiness });
-    const metadata: ExternalSocketMetadata = {
-      transport: "relay",
-      externalSessionKey: "relay:client-server-info-capabilities",
-    };
 
     const socket = new MockSocket();
-    await server.attachExternalSocket(socket, metadata);
-
-    expect(socket.sent).toHaveLength(1);
-    expect(typeof socket.sent[0]).toBe("string");
-    const envelope = JSON.parse(socket.sent[0] as string) as {
-      type?: unknown;
-      message?: {
-        type?: unknown;
-        payload?: unknown;
+    const welcome = await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-server-info-capabilities",
+    }) as {
+      version?: unknown;
+      capabilities?: {
+        voice?: {
+          dictation?: { enabled?: unknown; reason?: unknown };
+          voice?: { enabled?: unknown; reason?: unknown };
+        };
       };
     };
-    expect(envelope.type).toBe("session");
-    expect(envelope.message?.type).toBe("status");
-
-    const payload = parseServerInfoStatusPayload(envelope.message?.payload);
-    expect(payload?.status).toBe("server_info");
-    expect(payload?.version).toBe(TEST_DAEMON_VERSION);
-    expect(payload?.capabilities?.voice?.dictation.enabled).toBe(
+    expect(welcome.version).toBe(TEST_DAEMON_VERSION);
+    expect(welcome.capabilities?.voice?.dictation?.enabled).toBe(
       speechReadiness.dictation.enabled
     );
-    expect(payload?.capabilities?.voice?.dictation.reason).toBe("");
-    expect(payload?.capabilities?.voice?.voice.enabled).toBe(
+    expect(welcome.capabilities?.voice?.dictation?.reason).toBe("");
+    expect(welcome.capabilities?.voice?.voice?.enabled).toBe(
       speechReadiness.realtimeVoice.enabled
     );
-    expect(payload?.capabilities?.voice?.voice.reason).toBe("");
+    expect(welcome.capabilities?.voice?.voice?.reason).toBe("");
 
     await server.close();
   });
 
   test("broadcasts updated server_info when capabilities change", async () => {
     const server = createServer();
-    const metadata: ExternalSocketMetadata = {
-      transport: "relay",
-      externalSessionKey: "relay:client-server-info-broadcast",
-    };
 
     const socket = new MockSocket();
-    await server.attachExternalSocket(socket, metadata);
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-server-info-broadcast",
+    });
     expect(socket.sent).toHaveLength(1);
 
     const speechReadiness = createReadySpeechReadinessSnapshot();
@@ -366,12 +601,12 @@ describe("relay external socket reconnect behavior", () => {
 
   test("includes temporary retry guidance while models are downloading", async () => {
     const server = createServer();
-    const metadata: ExternalSocketMetadata = {
-      transport: "relay",
-      externalSessionKey: "relay:client-server-info-download-guidance",
-    };
     const socket = new MockSocket();
-    await server.attachExternalSocket(socket, metadata);
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-server-info-download-guidance",
+    });
     expect(socket.sent).toHaveLength(1);
 
     server.publishSpeechReadiness(createDownloadInProgressSpeechReadinessSnapshot());
@@ -395,13 +630,13 @@ describe("relay external socket reconnect behavior", () => {
 
   test("routes inbound binary mux frames to session.handleBinaryFrame", async () => {
     const server = createServer();
-    const metadata: ExternalSocketMetadata = {
-      transport: "relay",
-      externalSessionKey: "relay:client-binary-inbound",
-    };
 
     const socket = new MockSocket();
-    await server.attachExternalSocket(socket, metadata);
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-binary-inbound",
+    });
     expect(sessionMock.instances).toHaveLength(1);
     const session = sessionMock.instances[0]!;
 
@@ -436,13 +671,13 @@ describe("relay external socket reconnect behavior", () => {
 
   test("sends outbound binary mux frames from session over websocket", async () => {
     const server = createServer();
-    const metadata: ExternalSocketMetadata = {
-      transport: "relay",
-      externalSessionKey: "relay:client-binary-outbound",
-    };
 
     const socket = new MockSocket();
-    await server.attachExternalSocket(socket, metadata);
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-binary-outbound",
+    });
     expect(sessionMock.instances).toHaveLength(1);
     const session = sessionMock.instances[0]!;
 

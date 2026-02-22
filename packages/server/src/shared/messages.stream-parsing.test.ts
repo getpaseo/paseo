@@ -78,6 +78,48 @@ describe('shared messages stream parsing', () => {
     }
   })
 
+  it('parses representative sub_agent tool_call event', () => {
+    const parsed = AgentStreamMessageSchema.parse({
+      type: 'agent_stream',
+      payload: {
+        agentId: 'agent_live',
+        timestamp: '2026-02-08T20:10:00.000Z',
+        event: {
+          type: 'timeline',
+          provider: 'claude',
+          item: {
+            type: 'tool_call',
+            callId: 'call_sub_agent_live',
+            name: 'Task',
+            status: 'running',
+            detail: {
+              type: 'sub_agent',
+              subAgentType: 'Explore',
+              description: 'Inspect repository structure',
+              log: '[Read] README.md',
+              actions: [
+                {
+                  index: 1,
+                  toolName: 'Read',
+                  summary: 'README.md',
+                },
+              ],
+            },
+            error: null,
+          },
+        },
+      },
+    })
+
+    expect(parsed.payload.event.type).toBe('timeline')
+    if (parsed.payload.event.type === 'timeline') {
+      expect(parsed.payload.event.item.type).toBe('tool_call')
+      if (parsed.payload.event.item.type === 'tool_call') {
+        expect(parsed.payload.event.item.detail.type).toBe('sub_agent')
+      }
+    }
+  })
+
   it('rejects removed initialize_agent_request inbound payload', () => {
     const parsed = SessionInboundMessageSchema.safeParse({
       type: 'initialize_agent_request',

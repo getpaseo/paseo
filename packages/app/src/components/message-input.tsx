@@ -55,6 +55,8 @@ export interface MessageInputProps {
   onAddImages?: (images: ImageAttachment[]) => void
   onRemoveImage?: (index: number) => void
   client: DaemonClient | null
+  /** Dictation start gate from host runtime (socket connected + directory ready). */
+  isReadyForDictation?: boolean
   placeholder?: string
   autoFocus?: boolean
   disabled?: boolean
@@ -121,6 +123,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     onAddImages,
     onRemoveImage,
     client,
+    isReadyForDictation,
     placeholder = 'Message...',
     autoFocus = false,
     disabled = false,
@@ -262,14 +265,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
 
   const canStartDictation = useCallback(() => {
     const socketConnected = client?.isConnected ?? false
-    return socketConnected && !disabled && !dictationUnavailableMessage
-  }, [client, disabled, dictationUnavailableMessage])
+    const readyForDictation = isReadyForDictation ?? socketConnected
+    return socketConnected && readyForDictation && !disabled && !dictationUnavailableMessage
+  }, [client, disabled, dictationUnavailableMessage, isReadyForDictation])
 
   const canConfirmDictation = useCallback(() => {
     const socketConnected = client?.isConnected ?? false
     return socketConnected
   }, [client])
   const isConnected = client?.isConnected ?? false
+  const isDictationStartEnabled = (isReadyForDictation ?? isConnected) && !disabled
 
   const {
     isRecording: isDictating,
@@ -290,7 +295,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     onError: handleDictationError,
     canStart: canStartDictation,
     canConfirm: canConfirmDictation,
-    autoStopWhenHidden: { isVisible: isScreenFocused },
+    autoStopWhenHidden:
+      Platform.OS === 'web' ? undefined : { isVisible: isScreenFocused },
     enableDuration: true,
   })
 
@@ -718,7 +724,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
             <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
               <TooltipTrigger
                 onPress={handleVoicePress}
-                disabled={!isConnected || disabled}
+                disabled={!isDictationStartEnabled}
                 accessibilityRole="button"
                 accessibilityLabel={
                   isRealtimeVoiceForCurrentAgent
@@ -731,7 +737,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                 }
                 style={[
                   styles.voiceButton,
-                  (!isConnected || disabled) && styles.buttonDisabled,
+                  (!isDictationStartEnabled) && styles.buttonDisabled,
                   isDictating && styles.voiceButtonRecording,
                 ]}
               >

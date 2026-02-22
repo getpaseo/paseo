@@ -9,6 +9,7 @@ export interface AgentListItem {
   shortId: string
   name: string
   provider: string
+  thinking: string
   status: string
   cwd: string
   created: string
@@ -35,6 +36,13 @@ function shortenPath(path: string): string {
   return path
 }
 
+function normalizeModelId(modelId: string | null | undefined): string | null {
+  if (typeof modelId !== 'string') return null
+  const normalized = modelId.trim()
+  if (!normalized || normalized.toLowerCase() === 'default') return null
+  return normalized
+}
+
 /** Schema for agent ls output */
 export const agentLsSchema: OutputSchema<AgentListItem> = {
   idField: 'shortId',
@@ -42,6 +50,7 @@ export const agentLsSchema: OutputSchema<AgentListItem> = {
     { header: 'AGENT ID', field: 'shortId', width: 12 },
     { header: 'NAME', field: 'name', width: 20 },
     { header: 'PROVIDER', field: 'provider', width: 15 },
+    { header: 'THINKING', field: 'thinking', width: 12 },
     {
       header: 'STATUS',
       field: 'status',
@@ -60,11 +69,13 @@ export const agentLsSchema: OutputSchema<AgentListItem> = {
 
 /** Transform agent snapshot to AgentListItem */
 function toListItem(agent: AgentSnapshotPayload): AgentListItem {
+  const model = normalizeModelId(agent.runtimeInfo?.model) ?? normalizeModelId(agent.model)
   return {
     id: agent.id,
     shortId: agent.id.slice(0, 7),
     name: agent.title ?? '-',
-    provider: agent.model ? `${agent.provider}/${agent.model}` : agent.provider,
+    provider: model ? `${agent.provider}/${model}` : agent.provider,
+    thinking: agent.effectiveThinkingOptionId ?? 'auto',
     status: agent.status,
     cwd: shortenPath(agent.cwd),
     created: relativeTime(agent.createdAt),
@@ -84,6 +95,8 @@ export interface AgentLsOptions extends CommandOptions {
   cwd?: string
   /** Filter by labels (key=value format) */
   label?: string[]
+  /** Filter by thinking option ID */
+  thinking?: string
 }
 
 /**
@@ -111,8 +124,45 @@ export async function runLsCommand(
   }
 
   try {
+    const normalizedThinkingOptionId = options.thinking?.trim()
+    if (options.thinking !== undefined && !normalizedThinkingOptionId) {
+      const error: CommandError = {
+        code: 'INVALID_THINKING_OPTION',
+        message: '--thinking cannot be empty',
+      }
+      throw error
+    }
+
+    // Parse --label filters (key=value).
+    const labelFilters: Record<string, string> = {}
+    if (options.label) {
+      for (const labelStr of options.label) {
+        const eqIndex = labelStr.indexOf('=')
+        if (eqIndex !== -1) {
+          const key = labelStr.slice(0, eqIndex)
+          const value = labelStr.slice(eqIndex + 1)
+          labelFilters[key] = value
+        }
+      }
+    }
+
+    const daemonFilter: {
+      includeArchived?: boolean
+      labels?: Record<string, string>
+      thinkingOptionId?: string
+    } = {}
+    if (options.all) {
+      daemonFilter.includeArchived = true
+    }
+    if (Object.keys(labelFilters).length > 0) {
+      daemonFilter.labels = labelFilters
+    }
+    if (normalizedThinkingOptionId) {
+      daemonFilter.thinkingOptionId = normalizedThinkingOptionId
+    }
+
     const fetchPayload = await client.fetchAgents({
-      filter: options.all ? { includeArchived: true } : undefined,
+      filter: Object.keys(daemonFilter).length > 0 ? daemonFilter : undefined,
     })
     let agents = fetchPayload.entries.map((entry) => entry.agent)
 
@@ -133,19 +183,6 @@ export async function runLsCommand(
         const agentCwd = a.cwd.replace(/\/$/, '')
         return agentCwd === targetCwd || agentCwd.startsWith(targetCwd + '/')
       })
-    }
-
-    // Parse --label filters (key=value).
-    const labelFilters: Record<string, string> = {}
-    if (options.label) {
-      for (const labelStr of options.label) {
-        const eqIndex = labelStr.indexOf('=')
-        if (eqIndex !== -1) {
-          const key = labelStr.slice(0, eqIndex)
-          const value = labelStr.slice(eqIndex + 1)
-          labelFilters[key] = value
-        }
-      }
     }
 
     // Apply label filtering only when explicitly requested.

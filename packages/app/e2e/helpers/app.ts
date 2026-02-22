@@ -162,9 +162,16 @@ export const gotoHome = async (page: Page) => {
 };
 
 export const openSettings = async (page: Page) => {
-  // Navigate directly to settings page
-  await page.goto('/settings');
-  await expect(page).toHaveURL(/\/settings$/);
+  const serverId = process.env.E2E_SERVER_ID;
+  if (!serverId) {
+    throw new Error('E2E_SERVER_ID is not set (expected from Playwright globalSetup).');
+  }
+
+  // Navigate through the real app control so route changes stay aligned with UI behavior.
+  const settingsButton = page.locator('[data-testid="sidebar-settings"]:visible').first();
+  await expect(settingsButton).toBeVisible();
+  await settingsButton.click();
+  await expect(page).toHaveURL(new RegExp(`/h/${escapeRegex(serverId)}/settings$`));
 };
 
 export const setWorkingDirectory = async (page: Page, directory: string) => {

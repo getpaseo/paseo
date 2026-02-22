@@ -83,7 +83,8 @@ export async function runArchiveCommand(
       const error: CommandError = {
         code: 'AGENT_RUNNING',
         message: `Agent ${agentId.slice(0, 7)} is currently running`,
-        details: 'Use --force to archive a running agent, or stop it first with: paseo agent stop',
+        details:
+          'Use --force to archive a running agent (it will interrupt the active run), or stop it first with: paseo agent stop',
       }
       throw error
     }

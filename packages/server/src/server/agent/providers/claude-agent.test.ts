@@ -1264,7 +1264,7 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
   );
 
   test(
-    "collapses sub-agent tool calls into Task metadata updates",
+    "collapses sub-agent tool calls into Task sub_agent detail updates",
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient({ logger });
@@ -1297,19 +1297,13 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const taskCalls = toolCalls.filter((item) => item.name === "Task");
       expect(taskCalls.length).toBeGreaterThanOrEqual(1);
 
-      // Sub-agent tool calls (Read, Bash, shell, etc.) should NOT appear as
-      // separate timeline items — they should only appear as Task metadata updates
-      const subAgentLeaks = toolCalls.filter(
-        (item) => item.name !== "Task" && item.metadata?.subAgentActivity === undefined
-      );
-      // If there are non-Task tool calls, they must be from the main agent, not sub-agent
-      // We can't 100% guarantee Claude won't also use tools directly, but Task metadata
+      // We can't 100% guarantee Claude won't also use tools directly, but Task detail
       // updates should exist for the sub-agent activity
-      const taskWithMetadata = taskCalls.filter(
-        (item) => item.metadata?.subAgentActivity
+      const taskWithSubAgentDetail = taskCalls.filter(
+        (item) => item.detail.type === "sub_agent"
       );
       if (taskCalls.length > 0) {
-        expect(taskWithMetadata.length).toBeGreaterThanOrEqual(1);
+        expect(taskWithSubAgentDetail.length).toBeGreaterThanOrEqual(1);
       }
 
       // Verify the curator produces clean output with collapsed Task entries
@@ -1398,6 +1392,56 @@ describe("convertClaudeHistoryEntry", () => {
         preTokens: 168428,
       },
     ]);
+  });
+
+  test("supports compact boundary metadata shape variants", () => {
+    const fixtures = [
+      {
+        entry: {
+          type: "system",
+          subtype: "compact_boundary",
+          compactMetadata: { trigger: "manual", preTokens: 12 },
+        },
+        expected: {
+          trigger: "manual",
+          preTokens: 12,
+        },
+      },
+      {
+        entry: {
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "manual", pre_tokens: 34 },
+        },
+        expected: {
+          trigger: "manual",
+          preTokens: 34,
+        },
+      },
+      {
+        entry: {
+          type: "system",
+          subtype: "compact_boundary",
+          compactionMetadata: { trigger: "auto", preTokens: 56 },
+        },
+        expected: {
+          trigger: "auto",
+          preTokens: 56,
+        },
+      },
+    ] as const;
+
+    for (const fixture of fixtures) {
+      const result = convertClaudeHistoryEntry(fixture.entry, () => []);
+      expect(result).toEqual([
+        {
+          type: "compaction",
+          status: "completed",
+          trigger: fixture.expected.trigger,
+          preTokens: fixture.expected.preTokens,
+        },
+      ]);
+    }
   });
 
   test("skips isCompactSummary user entries", () => {

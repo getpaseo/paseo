@@ -48,7 +48,8 @@ export function ToolCallDetailsContent({
     (detail?.type === "shell" ||
       detail?.type === "edit" ||
       detail?.type === "write" ||
-      detail?.type === "read");
+      detail?.type === "read" ||
+      detail?.type === "sub_agent");
   const codeBlockStyle = isFullBleed ? styles.fullBleedBlock : styles.diffContainer;
 
   if (detail?.type === "shell") {
@@ -119,6 +120,45 @@ export function ToolCallDetailsContent({
                   {hasLog
                     ? setupLog
                     : `Preparing worktree ${detail.branchName} at ${detail.worktreePath}`}
+                </Text>
+              </View>
+            </ScrollView>
+          </ScrollView>
+        </View>
+      </View>
+    );
+  } else if (detail?.type === "sub_agent") {
+    const activityLog = detail.log.replace(/^\n+/, "");
+    const hasLog = activityLog.length > 0;
+    const fallbackHeader =
+      detail.subAgentType && detail.description
+        ? `${detail.subAgentType}: ${detail.description}`
+        : detail.subAgentType ?? detail.description ?? "Sub-agent activity";
+    sections.push(
+      <View
+        key="sub-agent"
+        style={[styles.section, shouldFill && styles.fillHeight]}
+      >
+        <View style={[codeBlockStyle, shouldFill && styles.fillHeight]}>
+          <ScrollView
+            style={[
+              styles.codeVerticalScroll,
+              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+              shouldFill && styles.fillHeight,
+            ]}
+            contentContainerStyle={styles.codeVerticalContent}
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+          >
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              showsHorizontalScrollIndicator
+              contentContainerStyle={styles.codeHorizontalContent}
+            >
+              <View style={styles.codeLine}>
+                <Text selectable style={styles.scrollText}>
+                  {hasLog ? activityLog : fallbackHeader}
                 </Text>
               </View>
             </ScrollView>

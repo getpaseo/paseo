@@ -198,13 +198,12 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
         const offerUrl = parseOfferUrlFromLogs(lines);
         const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
 
-        const clientId = `clt_test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+        const stableClientId = `cid_test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
         const ws = new WebSocket(
           buildRelayWebSocketUrl({
             endpoint: `127.0.0.1:${relayPort}`,
             serverId,
             role: "client",
-            clientId,
           })
         );
 
@@ -234,6 +233,8 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
 
           ws.on("open", async () => {
             try {
+              let pingSent = false;
+              let channelRef: Awaited<ReturnType<typeof createClientChannel>> | null = null;
               const channel = await createClientChannel(
                 transport,
                 daemonPublicKeyB64,
@@ -242,8 +243,13 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                     try {
                       const payload =
                         typeof data === "string" ? JSON.parse(data) : data;
-                      // The daemon may send an initial `server_info` status message
-                      // immediately upon connect; ignore everything until we see `pong`.
+                      if (payload && typeof payload === "object" && (payload as any).type === "welcome") {
+                        if (!pingSent && channelRef) {
+                          pingSent = true;
+                          void channelRef.send(JSON.stringify({ type: "ping" }));
+                        }
+                        return;
+                      }
                       if (payload && typeof payload === "object" && (payload as any).type === "pong") {
                         clearTimeout(timeout);
                         resolve(payload);
@@ -260,7 +266,15 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                   },
                 }
               );
-              await channel.send(JSON.stringify({ type: "ping" }));
+              channelRef = channel;
+              await channel.send(
+                JSON.stringify({
+                  type: "hello",
+                  clientId: stableClientId,
+                  clientType: "cli",
+                  protocolVersion: 1,
+                })
+              );
             } catch (err) {
               clearTimeout(timeout);
               reject(err);
@@ -316,9 +330,9 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
             endpoint: `127.0.0.1:${relayPort}`,
             serverId,
             role: "client",
-            clientId: `clt_test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`,
           })
         );
+        const stableClientId = `cid_test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 
         const received = await new Promise<unknown>((resolve, reject) => {
           const timeout = setTimeout(() => {
@@ -346,9 +360,18 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
 
           ws.on("open", async () => {
             try {
+              let pingSent = false;
+              let channelRef: Awaited<ReturnType<typeof createClientChannel>> | null = null;
               const channel = await createClientChannel(transport, daemonPublicKeyB64, {
                 onmessage: (data) => {
                   const payload = typeof data === "string" ? JSON.parse(data) : data;
+                  if (payload && typeof payload === "object" && (payload as any).type === "welcome") {
+                    if (!pingSent && channelRef) {
+                      pingSent = true;
+                      void channelRef.send(JSON.stringify({ type: "ping" }));
+                    }
+                    return;
+                  }
                   if (payload && typeof payload === "object" && (payload as any).type === "pong") {
                     clearTimeout(timeout);
                     resolve(payload);
@@ -360,7 +383,15 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                   reject(err);
                 },
               });
-              await channel.send(JSON.stringify({ type: "ping" }));
+              channelRef = channel;
+              await channel.send(
+                JSON.stringify({
+                  type: "hello",
+                  clientId: stableClientId,
+                  clientType: "cli",
+                  protocolVersion: 1,
+                })
+              );
             } catch (err) {
               clearTimeout(timeout);
               reject(err);

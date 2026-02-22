@@ -96,6 +96,12 @@ const ClaudeToolDetailPass2Schema = z.union([
   toolDetailBranchByName("search", ToolSearchInputSchema, z.unknown(), (input) =>
     toSearchToolDetail(input)
   ),
+  toolDetailBranchByName("Glob", ToolSearchInputSchema, z.unknown(), (input) =>
+    toSearchToolDetail(input)
+  ),
+  toolDetailBranchByName("glob", ToolSearchInputSchema, z.unknown(), (input) =>
+    toSearchToolDetail(input)
+  ),
   ClaudeSpeakToolDetailSchema,
 ]);
 

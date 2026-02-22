@@ -1,6 +1,7 @@
 import type { Command } from 'commander'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
+import { fetchAgentTimelineItems, formatAgentActivityTranscript } from './logs.js'
 
 /** Result type for agent wait command */
 export interface AgentWaitResult {
@@ -22,6 +23,28 @@ export const agentWaitSchema: OutputSchema<AgentWaitResult> = {
 export interface AgentWaitOptions extends CommandOptions {
   timeout?: string
   host?: string
+}
+
+const WAIT_ACTIVITY_PREVIEW_COUNT = 5
+
+function appendRecentActivity(message: string, transcript: string | null): string {
+  if (!transcript || transcript.trim().length === 0) {
+    return message
+  }
+
+  return `${message}\nLast ${WAIT_ACTIVITY_PREVIEW_COUNT} activity items:\n${transcript}`
+}
+
+async function getRecentActivityTranscript(
+  client: Awaited<ReturnType<typeof connectToDaemon>>,
+  agentId: string
+): Promise<string | null> {
+  try {
+    const timelineItems = await fetchAgentTimelineItems(client, agentId)
+    return formatAgentActivityTranscript(timelineItems, WAIT_ACTIVITY_PREVIEW_COUNT)
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -106,6 +129,7 @@ export async function runWaitCommand(
     timeoutMs = 10 * 60 * 1000 // default 10 minutes
   }
   const timeoutSeconds = Math.floor(timeoutMs / 1000)
+  const timeoutLabel = `${timeoutSeconds} second${timeoutSeconds === 1 ? '' : 's'}`
 
   let client
   try {
@@ -123,15 +147,24 @@ export async function runWaitCommand(
   try {
     try {
       const state = await client.waitForFinish(agentIdArg, timeoutMs)
+      const resolvedAgentId = state.final?.id ?? agentIdArg
+      const recentActivity =
+        state.status === 'timeout' || state.status === 'idle'
+          ? await getRecentActivityTranscript(client, resolvedAgentId)
+          : null
+
       await client.close()
 
       if (state.status === 'timeout') {
         return {
           type: 'single',
           data: {
-            agentId: agentIdArg,
+            agentId: resolvedAgentId,
             status: 'timeout',
-            message: `Timed out waiting for agent after ${timeoutSeconds} seconds`,
+            message: appendRecentActivity(
+              `Agent did not finish within ${timeoutLabel}. Run \`paseo wait ${resolvedAgentId}\` again to keep waiting.`,
+              recentActivity
+            ),
           },
           schema: agentWaitSchema,
         }
@@ -142,7 +175,7 @@ export async function runWaitCommand(
         return {
           type: 'single',
           data: {
-            agentId: state.final?.id ?? agentIdArg,
+            agentId: resolvedAgentId,
             status: 'permission',
             message: permission
               ? `Agent is waiting for permission: ${permission.kind}`
@@ -156,7 +189,7 @@ export async function runWaitCommand(
         return {
           type: 'single',
           data: {
-            agentId: state.final?.id ?? agentIdArg,
+            agentId: resolvedAgentId,
             status: 'error',
             message: state.error ?? 'Agent finished with error',
           },
@@ -168,9 +201,9 @@ export async function runWaitCommand(
       return {
         type: 'single',
         data: {
-          agentId: state.final?.id ?? agentIdArg,
+          agentId: resolvedAgentId,
           status: 'idle',
-          message: 'Agent is now idle',
+          message: appendRecentActivity('Agent is idle.', recentActivity),
         },
         schema: agentWaitSchema,
       }

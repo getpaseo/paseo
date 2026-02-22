@@ -38,24 +38,29 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
-  it("keeps task metadata summary on unknown detail", () => {
+  it("uses sub-agent detail for task label and description", () => {
     const display = buildToolCallDisplayModel({
       name: "task",
       status: "running",
       error: null,
       detail: {
-        type: "unknown",
-        input: null,
-        output: null,
-      },
-      metadata: {
-        subAgentActivity: "Running tests",
+        type: "sub_agent",
+        subAgentType: "Explore",
+        description: "Inspect repository structure",
+        log: "[Read] README.md",
+        actions: [
+          {
+            index: 1,
+            toolName: "Read",
+            summary: "README.md",
+          },
+        ],
       },
     });
 
     expect(display).toEqual({
-      displayName: "Task",
-      summary: "Running tests",
+      displayName: "Explore",
+      summary: "Inspect repository structure",
     });
   });
 

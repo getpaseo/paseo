@@ -29,6 +29,7 @@ function createMockTransport() {
   let onOpen: () => void = () => {}
   let onClose: (_event?: unknown) => void = () => {}
   let onError: (_event?: unknown) => void = () => {}
+  let welcomeOrdinal = 1
 
   const transport: DaemonTransport = {
     send: (data) => sent.push(data),
@@ -54,7 +55,20 @@ function createMockTransport() {
   return {
     transport,
     sent,
-    triggerOpen: () => onOpen(),
+    triggerOpen: () => {
+      onOpen()
+      // Ignore HELLO handshake payloads in assertions.
+      sent.length = 0
+      onMessage(
+        JSON.stringify({
+          type: 'welcome',
+          serverId: `srv_test_${welcomeOrdinal++}`,
+          hostname: null,
+          version: null,
+          resumed: false,
+        })
+      )
+    },
     triggerClose: (event?: unknown) => onClose(event),
     triggerError: (event?: unknown) => onError(event),
     triggerMessage: (data: unknown) => onMessage(data),
@@ -84,6 +98,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -166,12 +181,164 @@ describe('DaemonClient', () => {
     })
   })
 
+  test('does not reconnect after close when ensureConnected is called', async () => {
+    const logger = createMockLogger()
+    const mock = createMockTransport()
+
+    const client = new DaemonClient({
+      url: 'ws://test',
+      clientId: 'clsk_unit_test',
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    })
+    clients.push(client)
+
+    const connectPromise = client.connect()
+    mock.triggerOpen()
+    await connectPromise
+    expect(client.getConnectionState().status).toBe('connected')
+
+    await client.close()
+    expect(client.getConnectionState().status).toBe('disposed')
+
+    client.ensureConnected()
+    expect(client.getConnectionState().status).toBe('disposed')
+  })
+
+  test('transitions out of connecting when connect timeout elapses', async () => {
+    vi.useFakeTimers()
+    try {
+      const logger = createMockLogger()
+      const mock = createMockTransport()
+
+      const client = new DaemonClient({
+        url: 'ws://test',
+        clientId: 'clsk_unit_test',
+        logger,
+        reconnect: { enabled: false },
+        connectTimeoutMs: 100,
+        transportFactory: () => mock.transport,
+      })
+      clients.push(client)
+
+      const pendingConnect = client.connect().then(
+        () => ({ ok: true as const }),
+        (error) => ({ ok: false as const, error })
+      )
+      expect(client.getConnectionState().status).toBe('connecting')
+
+      await vi.advanceTimersByTimeAsync(120)
+      const result = await pendingConnect
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(Error)
+        expect((result.error as Error).message).toContain('Connection timed out')
+      }
+      expect(client.getConnectionState().status).toBe('disconnected')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('reconnects after relay close with replaced-by-new-connection reason', async () => {
+    vi.useFakeTimers()
+    try {
+      const logger = createMockLogger()
+      const first = createMockTransport()
+      const second = createMockTransport()
+      const transports = [first, second]
+      let transportIndex = 0
+
+      const client = new DaemonClient({
+        url: 'ws://relay.test/ws?role=client&serverId=srv_test&v=2',
+        clientId: 'clsk_test',
+        logger,
+        reconnect: {
+          enabled: true,
+          baseDelayMs: 5,
+          maxDelayMs: 5,
+        },
+        transportFactory: () => {
+          const next = transports[Math.min(transportIndex, transports.length - 1)]
+          transportIndex += 1
+          return next.transport
+        },
+      })
+      clients.push(client)
+
+      const connectPromise = client.connect()
+      first.triggerOpen()
+      await connectPromise
+      expect(client.getConnectionState().status).toBe('connected')
+
+      first.triggerClose({ code: 1008, reason: 'Replaced by new connection' })
+      expect(client.getConnectionState().status).toBe('disconnected')
+
+      await vi.advanceTimersByTimeAsync(10)
+      expect(client.getConnectionState().status).toBe('connecting')
+
+      second.triggerOpen()
+      expect(client.getConnectionState().status).toBe('connected')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('requires non-empty clientId', () => {
+    expect(() => {
+      new DaemonClient({
+        url: 'ws://relay.test/ws?role=client&serverId=srv_test&v=2',
+        clientId: '',
+        reconnect: { enabled: false },
+      })
+    }).toThrow('Daemon client requires a non-empty clientId')
+  })
+
+  test('requires non-empty clientId for direct connections', () => {
+    expect(() => {
+      new DaemonClient({
+        url: 'ws://127.0.0.1:6767/ws',
+        clientId: '   ',
+        reconnect: { enabled: false },
+      })
+    }).toThrow('Daemon client requires a non-empty clientId')
+  })
+
+  test('logs configured runtime generation in connection transition events', async () => {
+    const logger = createMockLogger()
+    const mock = createMockTransport()
+
+    const client = new DaemonClient({
+      url: 'ws://test',
+      clientId: 'clsk_unit_test',
+      logger,
+      reconnect: { enabled: false },
+      runtimeGeneration: 7,
+      transportFactory: () => mock.transport,
+    })
+    clients.push(client)
+
+    const connectPromise = client.connect()
+    mock.triggerOpen()
+    await connectPromise
+
+    const transitionPayloads = logger.debug.mock.calls
+      .filter(([, message]) => message === 'DaemonClientTransition')
+      .map(([payload]) => payload as { generation?: number | null })
+    expect(transitionPayloads.length).toBeGreaterThan(0)
+    for (const payload of transitionPayloads) {
+      expect(payload.generation).toBe(7)
+    }
+  })
+
   test('subscribes to checkout diff updates via RPC handshake', async () => {
     const logger = createMockLogger()
     const mock = createMockTransport()
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -235,6 +402,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -303,6 +471,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -362,6 +531,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -433,6 +603,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -495,6 +666,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -541,6 +713,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -622,6 +795,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -665,6 +839,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -707,16 +882,21 @@ describe('DaemonClient', () => {
     vi.useFakeTimers()
     const logger = createMockLogger()
     const mock = createMockTransport()
+    let sendCount = 0
 
     const transportFactory = () => ({
       ...mock.transport,
       send: () => {
-        throw new Error('boom')
+        sendCount += 1
+        if (sendCount > 1) {
+          throw new Error('boom')
+        }
       },
     })
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory,
@@ -744,6 +924,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -798,6 +979,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -873,6 +1055,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -929,6 +1112,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -975,6 +1159,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -1017,6 +1202,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -1037,7 +1223,12 @@ describe('DaemonClient', () => {
       })
     )
 
-    expect(mock.sent).toHaveLength(0)
+    expect(mock.sent).toHaveLength(1)
+    const bufferedAck = decodeBinaryMuxFrame(asUint8Array(mock.sent[0])!)
+    expect(bufferedAck?.messageType).toBe(TerminalBinaryMessageType.Ack)
+    expect(bufferedAck?.streamId).toBe(19)
+    expect(bufferedAck?.offset).toBe(8)
+    mock.sent.length = 0
 
     const seen: string[] = []
     client.onTerminalStreamData(19, (chunk) => {
@@ -1045,11 +1236,7 @@ describe('DaemonClient', () => {
     })
 
     expect(seen.join('')).toContain('buffered')
-    expect(mock.sent).toHaveLength(1)
-    const ackFrame = decodeBinaryMuxFrame(asUint8Array(mock.sent[0])!)
-    expect(ackFrame?.messageType).toBe(TerminalBinaryMessageType.Ack)
-    expect(ackFrame?.streamId).toBe(19)
-    expect(ackFrame?.offset).toBe(8)
+    expect(mock.sent).toHaveLength(0)
   })
 
   test('stops delivering and acking after terminal_stream_exit', async () => {
@@ -1058,6 +1245,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -1106,7 +1294,11 @@ describe('DaemonClient', () => {
     )
 
     expect(seen).toEqual(['before-exit'])
-    expect(mock.sent).toHaveLength(0)
+    expect(mock.sent).toHaveLength(1)
+    const postExitAck = decodeBinaryMuxFrame(asUint8Array(mock.sent[0])!)
+    expect(postExitAck?.messageType).toBe(TerminalBinaryMessageType.Ack)
+    expect(postExitAck?.streamId).toBe(23)
+    expect(postExitAck?.offset).toBe(22)
     unsubscribe()
   })
 
@@ -1116,6 +1308,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -1165,7 +1358,11 @@ describe('DaemonClient', () => {
     )
 
     expect(seen).toEqual([])
-    expect(mock.sent).toHaveLength(0)
+    expect(mock.sent).toHaveLength(1)
+    const detachedAck = decodeBinaryMuxFrame(asUint8Array(mock.sent[0])!)
+    expect(detachedAck?.messageType).toBe(TerminalBinaryMessageType.Ack)
+    expect(detachedAck?.streamId).toBe(31)
+    expect(detachedAck?.offset).toBe(12)
   })
 
   test('parses canonical agent_stream tool_call payloads without crashing', async () => {
@@ -1174,6 +1371,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -1245,6 +1443,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -1297,6 +1496,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -1389,6 +1589,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -1459,6 +1660,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,
@@ -1495,6 +1697,7 @@ describe('DaemonClient', () => {
 
     const client = new DaemonClient({
       url: 'ws://test',
+      clientId: 'clsk_unit_test',
       logger,
       reconnect: { enabled: false },
       transportFactory: () => mock.transport,

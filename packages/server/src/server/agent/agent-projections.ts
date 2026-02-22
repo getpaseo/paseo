@@ -24,6 +24,23 @@ type ProjectionOptions = {
   internal?: boolean;
 };
 
+function normalizeThinkingOptionId(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function resolveEffectiveThinkingOptionId(options: {
+  runtimeInfo?: AgentRuntimeInfo | null;
+  configuredThinkingOptionId?: string | null;
+}): string | null {
+  const runtimeInfo = options.runtimeInfo;
+  if (runtimeInfo && "thinkingOptionId" in runtimeInfo) {
+    return normalizeThinkingOptionId(runtimeInfo.thinkingOptionId);
+  }
+  return normalizeThinkingOptionId(options.configuredThinkingOptionId);
+}
+
 export function toStoredAgentRecord(
   agent: ManagedAgent,
   options?: ProjectionOptions
@@ -67,6 +84,10 @@ export function toAgentPayload(
 ): AgentSnapshotPayload {
   const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo);
   const thinkingOptionId = agent.config.thinkingOptionId ?? null;
+  const effectiveThinkingOptionId = resolveEffectiveThinkingOptionId({
+    runtimeInfo,
+    configuredThinkingOptionId: thinkingOptionId,
+  });
 
   const payload: AgentSnapshotPayload = {
     id: agent.id,
@@ -74,6 +95,7 @@ export function toAgentPayload(
     cwd: agent.cwd,
     model: agent.config.model ?? null,
     thinkingOptionId,
+    effectiveThinkingOptionId,
     runtimeInfo,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
@@ -286,6 +308,9 @@ function sanitizeRuntimeInfo(
   };
   if (runtimeInfo.model !== undefined) {
     sanitized.model = runtimeInfo.model;
+  }
+  if (runtimeInfo.thinkingOptionId !== undefined) {
+    sanitized.thinkingOptionId = runtimeInfo.thinkingOptionId;
   }
   if (runtimeInfo.modeId !== undefined) {
     sanitized.modeId = runtimeInfo.modeId;

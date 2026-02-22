@@ -87,6 +87,10 @@ export function buildToolCallDisplayModel(input: ToolCallDisplayInput): ToolCall
       displayName = "Worktree Setup";
       summary = input.detail.branchName;
       break;
+    case "sub_agent":
+      displayName = readString(input.detail.subAgentType) ?? "Task";
+      summary = readString(input.detail.description);
+      break;
     case "unknown":
       break;
   }

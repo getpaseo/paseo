@@ -32,9 +32,9 @@ type RelaySocketLike = {
 };
 
 type ControlMessage =
-  | { type: "sync"; clientIds: string[] }
-  | { type: "client_connected"; clientId: string }
-  | { type: "client_disconnected"; clientId: string }
+  | { type: "sync"; connectionIds: string[] }
+  | { type: "connected"; connectionId: string }
+  | { type: "disconnected"; connectionId: string }
   | { type: "ping" }
   | { type: "pong" };
 
@@ -50,15 +50,15 @@ function tryParseControlMessage(raw: unknown): ControlMessage | null {
     if (!parsed || typeof parsed !== "object") return null;
     if (parsed.type === "ping") return { type: "ping" };
     if (parsed.type === "pong") return { type: "pong" };
-    if (parsed.type === "sync" && Array.isArray(parsed.clientIds)) {
-      const clientIds = parsed.clientIds.filter((id: unknown) => typeof id === "string" && id.trim().length > 0);
-      return { type: "sync", clientIds };
+    if (parsed.type === "sync" && Array.isArray(parsed.connectionIds)) {
+      const connectionIds = parsed.connectionIds.filter((id: unknown) => typeof id === "string" && id.trim().length > 0);
+      return { type: "sync", connectionIds };
     }
-    if (parsed.type === "client_connected" && typeof parsed.clientId === "string" && parsed.clientId.trim()) {
-      return { type: "client_connected", clientId: parsed.clientId.trim() };
+    if (parsed.type === "connected" && typeof parsed.connectionId === "string" && parsed.connectionId.trim()) {
+      return { type: "connected", connectionId: parsed.connectionId.trim() };
     }
-    if (parsed.type === "client_disconnected" && typeof parsed.clientId === "string" && parsed.clientId.trim()) {
-      return { type: "client_disconnected", clientId: parsed.clientId.trim() };
+    if (parsed.type === "disconnected" && typeof parsed.connectionId === "string" && parsed.connectionId.trim()) {
+      return { type: "disconnected", connectionId: parsed.connectionId.trim() };
     }
     return null;
   } catch {
@@ -79,7 +79,7 @@ export function startRelayTransport({
   let controlWs: WebSocket | null = null;
   let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
-  const dataSockets = new Map<string, WebSocket>(); // clientId -> ws
+  const dataSockets = new Map<string, WebSocket>(); // connectionId -> ws
   let controlKeepaliveInterval: ReturnType<typeof setInterval> | null = null;
   let controlReadyTimeout: ReturnType<typeof setTimeout> | null = null;
   let controlLastSeenAt = 0;
@@ -256,24 +256,24 @@ export function startRelayTransport({
       }
       if (msg.type === "pong") return;
       if (msg.type === "sync") {
-        for (const clientId of msg.clientIds) {
-          ensureClientDataSocket(clientId);
+        for (const connectionId of msg.connectionIds) {
+          ensureClientDataSocket(connectionId);
         }
         return;
       }
-      if (msg.type === "client_connected") {
-        ensureClientDataSocket(msg.clientId);
+      if (msg.type === "connected") {
+        ensureClientDataSocket(msg.connectionId);
         return;
       }
-      if (msg.type === "client_disconnected") {
-        const existing = dataSockets.get(msg.clientId);
+      if (msg.type === "disconnected") {
+        const existing = dataSockets.get(msg.connectionId);
         if (existing) {
           try {
             existing.close(1001, "Client disconnected");
           } catch {
             // ignore
           }
-          dataSockets.delete(msg.clientId);
+          dataSockets.delete(msg.connectionId);
         }
       }
     });
@@ -291,25 +291,25 @@ export function startRelayTransport({
     }, delayMs);
   };
 
-  const ensureClientDataSocket = (clientId: string): void => {
+  const ensureClientDataSocket = (connectionId: string): void => {
     if (stopped) return;
-    if (!clientId) return;
-    if (dataSockets.has(clientId)) return;
+    if (!connectionId) return;
+    if (dataSockets.has(connectionId)) return;
 
     const url = buildRelayWebSocketUrl({
       endpoint: relayEndpoint,
       serverId,
       role: "server",
-      clientId,
+      connectionId,
     });
     const socket = new WebSocket(url, { handshakeTimeout: 10_000, perMessageDeflate: false });
-    dataSockets.set(clientId, socket);
+    dataSockets.set(connectionId, socket);
 
     let attached = false;
     const openTimeout = setTimeout(() => {
       if (stopped) return;
       if (socket.readyState === WebSocket.OPEN) return;
-      relayLogger.warn({ url, clientId }, "relay_data_open_timeout_terminating");
+      relayLogger.warn({ url, connectionId }, "relay_data_open_timeout_terminating");
       try {
         socket.terminate();
       } catch {
@@ -319,18 +319,17 @@ export function startRelayTransport({
 
     socket.on("open", () => {
       clearTimeout(openTimeout);
-      relayLogger.info({ url, clientId }, "relay_data_connected");
+      relayLogger.info({ url, connectionId }, "relay_data_connected");
       if (attached) return;
       attached = true;
       const externalMetadata: ExternalSocketMetadata = {
         transport: "relay",
-        externalSessionKey: `relay:${clientId}`,
       };
       if (daemonKeyPair) {
         void attachEncryptedSocket(
           socket,
           daemonKeyPair,
-          relayLogger.child({ clientId }),
+          relayLogger.child({ connectionId }),
           attachSocket,
           externalMetadata
         );
@@ -342,16 +341,16 @@ export function startRelayTransport({
     socket.on("close", (code, reason) => {
       clearTimeout(openTimeout);
       relayLogger.warn(
-        { code, reason: reason?.toString?.(), url, clientId },
+        { code, reason: reason?.toString?.(), url, connectionId },
         "relay_data_disconnected"
       );
-      if (dataSockets.get(clientId) === socket) {
-        dataSockets.delete(clientId);
+      if (dataSockets.get(connectionId) === socket) {
+        dataSockets.delete(connectionId);
       }
     });
 
     socket.on("error", (err) => {
-      relayLogger.warn({ err, url, clientId }, "relay_data_error");
+      relayLogger.warn({ err, url, connectionId }, "relay_data_error");
     });
   };
 

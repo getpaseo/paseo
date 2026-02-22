@@ -17,6 +17,7 @@ export function createProviderCommand(): Command {
     .command('models')
     .description('List models for a provider')
     .argument('<provider>', 'Provider name (claude, codex, opencode)')
+    .option('--thinking', 'Include thinking option IDs for each model')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runModelsCommand))

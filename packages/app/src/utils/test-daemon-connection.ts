@@ -1,9 +1,18 @@
 import { DaemonClient } from "@server/client/daemon-client";
 import type { DaemonClientConfig } from "@server/client/daemon-client";
-import { parseServerInfoStatusPayload } from "@server/shared/messages";
 import type { HostConnection } from "@/contexts/daemon-registry-context";
 import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "./daemon-endpoints";
 import { createTauriWebSocketTransportFactory } from "./tauri-daemon-transport";
+function createProbeClientId(): string {
+  const randomUuid = (() => {
+    const cryptoObj = globalThis.crypto as { randomUUID?: () => string } | undefined;
+    if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
+      return cryptoObj.randomUUID().replace(/-/g, "");
+    }
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  })();
+  return `cid_probe_${randomUuid}`;
+}
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -41,15 +50,24 @@ export class DaemonConnectionTestError extends Error {
   }
 }
 
-function buildClientConfig(connection: HostConnection, serverId?: string): DaemonClientConfig {
+async function buildClientConfig(
+  connection: HostConnection,
+  serverId?: string
+): Promise<DaemonClientConfig> {
+  const clientId = createProbeClientId();
   const tauriTransportFactory = createTauriWebSocketTransportFactory();
   const base = {
+    clientId,
+    clientType: "mobile" as const,
     suppressSendErrors: true,
     ...(tauriTransportFactory ? { transportFactory: tauriTransportFactory } : {}),
   };
 
   if (connection.type === "direct") {
-    return { ...base, url: buildDaemonWebSocketUrl(connection.endpoint) };
+    return {
+      ...base,
+      url: buildDaemonWebSocketUrl(connection.endpoint),
+    };
   }
 
   if (!serverId) {
@@ -58,7 +76,10 @@ function buildClientConfig(connection: HostConnection, serverId?: string): Daemo
 
   return {
     ...base,
-    url: buildRelayWebSocketUrl({ endpoint: connection.relayEndpoint, serverId }),
+    url: buildRelayWebSocketUrl({
+      endpoint: connection.relayEndpoint,
+      serverId,
+    }),
     e2ee: { enabled: true, daemonPublicKeyB64: connection.daemonPublicKeyB64 },
   };
 }
@@ -70,35 +91,9 @@ function connectAndProbe(
   const client = new DaemonClient(config);
 
   return new Promise<{ client: DaemonClient; serverId: string; hostname: string | null }>((resolve, reject) => {
-    let cleanedUp = false;
-    let unsubscribe: (() => void) | null = null;
-    let unsubscribeStatus: (() => void) | null = null;
-    let serverId: string | null = null;
-    let hostname: string | null = null;
-
-    const cleanup = () => {
-      if (cleanedUp) return;
-      cleanedUp = true;
-      clearTimeout(timer);
-      unsubscribe?.();
-      unsubscribeStatus?.();
-    };
-
-    const maybeFinishOk = () => {
-      if (!serverId) return;
-      cleanup();
-      resolve({ client, serverId, hostname });
-    };
-
-    const finishErr = (error: Error) => {
-      if (cleanedUp) return;
-      cleanup();
-      client.close().catch(() => undefined);
-      reject(error);
-    };
-
     const timer = setTimeout(() => {
-      finishErr(
+      void client.close().catch(() => undefined);
+      reject(
         new DaemonConnectionTestError("Connection timed out", {
           reason: "Connection timed out",
           lastError: client.lastError ?? null,
@@ -106,25 +101,32 @@ function connectAndProbe(
       );
     }, timeoutMs);
 
-    unsubscribe = client.subscribeConnectionStatus((state) => {
-      if (state.status === "disconnected") {
-        const reason = normalizeNonEmptyString(state.reason);
-        const lastError = normalizeNonEmptyString(client.lastError);
-        const message = pickBestReason(reason, lastError);
-        finishErr(new DaemonConnectionTestError(message, { reason, lastError }));
+    void client.connect().then(() => {
+      clearTimeout(timer);
+      const welcome = client.getLastWelcomeMessage();
+      if (!welcome) {
+        void client.close().catch(() => undefined);
+        reject(
+          new DaemonConnectionTestError("Missing welcome message", {
+            reason: "Missing welcome message",
+            lastError: client.lastError ?? null,
+          })
+        );
+        return;
       }
+      resolve({
+        client,
+        serverId: welcome.serverId,
+        hostname: welcome.hostname,
+      });
+    }).catch((error) => {
+      clearTimeout(timer);
+      const reason = normalizeNonEmptyString(error instanceof Error ? error.message : String(error));
+      const lastError = normalizeNonEmptyString(client.lastError);
+      const message = pickBestReason(reason, lastError);
+      void client.close().catch(() => undefined);
+      reject(new DaemonConnectionTestError(message, { reason, lastError }));
     });
-
-    unsubscribeStatus = client.on("status", (message) => {
-      if (message.type !== "status") return;
-      const payload = parseServerInfoStatusPayload(message.payload);
-      if (!payload) return;
-      serverId = payload.serverId;
-      hostname = payload.hostname;
-      maybeFinishOk();
-    });
-
-    void client.connect().catch(() => undefined);
   });
 }
 
@@ -142,7 +144,7 @@ export async function probeConnection(
   connection: HostConnection,
   options?: ProbeOptions,
 ): Promise<{ serverId: string; hostname: string | null }> {
-  const config = buildClientConfig(connection, options?.serverId);
+  const config = await buildClientConfig(connection, options?.serverId);
   const { client, serverId, hostname } = await connectAndProbe(config, resolveTimeout(connection, options));
   await client.close().catch(() => undefined);
   return { serverId, hostname };
@@ -152,7 +154,7 @@ export async function measureConnectionLatency(
   connection: HostConnection,
   options?: ProbeOptions,
 ): Promise<number> {
-  const config = buildClientConfig(connection, options?.serverId);
+  const config = await buildClientConfig(connection, options?.serverId);
   const { client } = await connectAndProbe(config, resolveTimeout(connection, options));
   try {
     const { rttMs } = await client.ping({ timeoutMs: 5000 });

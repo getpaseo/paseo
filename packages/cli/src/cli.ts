@@ -9,6 +9,7 @@ import { createWorktreeCommand } from './commands/worktree/index.js'
 import { startCommand as daemonStartCommand } from './commands/daemon/start.js'
 import { runStatusCommand as runDaemonStatusCommand } from './commands/daemon/status.js'
 import { runRestartCommand as runDaemonRestartCommand } from './commands/daemon/restart.js'
+import { runDaemonUpdateCommandOrExit } from './commands/daemon/update.js'
 import { runLsCommand } from './commands/agent/ls.js'
 import { runRunCommand } from './commands/agent/run.js'
 import { runLogsCommand } from './commands/agent/logs.js'
@@ -17,7 +18,6 @@ import { runSendCommand } from './commands/agent/send.js'
 import { runInspectCommand } from './commands/agent/inspect.js'
 import { runWaitCommand } from './commands/agent/wait.js'
 import { runAttachCommand } from './commands/agent/attach.js'
-import { runUpdateCommand } from './commands/agent/update.js'
 import { withOutput } from './output/index.js'
 import { onboardCommand } from './commands/onboard.js'
 
@@ -63,6 +63,7 @@ export function createCli(): Command {
     .option('-a, --all', 'Include archived agents')
     .option('-g, --global', 'Legacy no-op (kept for compatibility)')
     .option('--label <key=value>', 'Filter by label (can be used multiple times)', collectMultiple, [])
+    .option('--thinking <id>', 'Filter by thinking option ID')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runLsCommand))
@@ -75,6 +76,7 @@ export function createCli(): Command {
     .option('--name <name>', 'Assign a name/title to the agent')
     .option('--provider <provider>', 'Agent provider: claude | codex | opencode', 'claude')
     .option('--model <model>', 'Model to use (e.g., claude-sonnet-4-20250514, claude-3-5-haiku-20241022)')
+    .option('--thinking <id>', 'Thinking option ID to use for this run')
     .option('--mode <mode>', 'Provider-specific mode (e.g., plan, default, bypass)')
     .option('--worktree <name>', 'Create agent in a new git worktree')
     .option('--base <branch>', 'Base branch for worktree (default: current branch)')
@@ -143,24 +145,18 @@ export function createCli(): Command {
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runWaitCommand))
 
-  program
-    .command('update')
-    .description('Update an agent (alias for "paseo agent update")')
-    .argument('<id>', 'Agent ID (or prefix)')
-    .option('--name <name>', "Update the agent's display name")
-    .option(
-      '--label <label>',
-      'Add/set label(s) on the agent (can be used multiple times or comma-separated)',
-      collectMultiple,
-      []
-    )
-    .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action(withOutput(runUpdateCommand))
-
   // Top-level local daemon shortcuts
   program.addCommand(onboardCommand())
   program.addCommand(daemonStartCommand())
+
+  program
+    .command('update')
+    .description('Update local daemon package (alias for "paseo daemon update")')
+    .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
+    .option('-y, --yes', 'Restart automatically after update')
+    .action(async (options: { home?: string; yes?: boolean }) => {
+      await runDaemonUpdateCommandOrExit(options)
+    })
 
   program
     .command('status')

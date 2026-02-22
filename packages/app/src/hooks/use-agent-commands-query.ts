@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useSessionStore } from "@/stores/session-store";
+import { useHostRuntimeSession } from "@/runtime/host-runtime";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 
 const COMMANDS_STALE_TIME = 60_000; // Commands rarely change, cache for 1 minute
@@ -48,12 +48,7 @@ export function useAgentCommandsQuery({
   enabled = true,
   draftConfig,
 }: UseAgentCommandsQueryOptions) {
-  const client = useSessionStore(
-    (state) => state.sessions[serverId]?.client ?? null
-  );
-  const isConnected = useSessionStore(
-    (state) => state.sessions[serverId]?.connection.isConnected ?? false
-  );
+  const { client, isConnected } = useHostRuntimeSession(serverId);
 
   const query = useQuery({
     queryKey: commandsQueryKey(serverId, agentId, draftConfig),

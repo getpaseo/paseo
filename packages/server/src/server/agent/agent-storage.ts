@@ -49,6 +49,7 @@ const STORED_AGENT_SCHEMA = z.object({
       provider: z.string(),
       sessionId: z.string().nullable(),
       model: z.string().nullable().optional(),
+      thinkingOptionId: z.string().nullable().optional(),
       modeId: z.string().nullable().optional(),
       extra: z.record(z.unknown()).optional(),
     })

@@ -19,8 +19,13 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { CheckCircle2, AlertTriangle } from "lucide-react-native";
+import {
+  HEADER_INNER_HEIGHT,
+  HEADER_INNER_HEIGHT_MOBILE,
+  HEADER_TOP_PADDING_MOBILE,
+} from "@/constants/layout";
 
 type ToastVariant = "default" | "success" | "error";
 
@@ -209,6 +214,11 @@ function ToastViewport({
     return null;
   }
 
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
+  const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
+
   const icon =
     toast.icon ?? (
       toast.variant === "success" ? (
@@ -227,7 +237,8 @@ function ToastViewport({
           toast.variant === "success" ? styles.toastSuccess : null,
           toast.variant === "error" ? styles.toastError : null,
           {
-            marginTop: theme.spacing[2] + insets.top,
+            marginTop:
+              insets.top + headerTopPadding + headerHeight + theme.spacing[2],
             opacity,
             transform: [{ translateY }],
           },

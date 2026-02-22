@@ -9,6 +9,7 @@ interface AgentInspect {
   Name: string
   Provider: string
   Model: string
+  Thinking: string
   Status: string
   Mode: string
   Cwd: string
@@ -84,6 +85,17 @@ function formatCost(costUsd: number): string {
   return `$${costUsd.toFixed(2)}`
 }
 
+function normalizeModelId(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  if (!normalized || normalized.toLowerCase() === 'default') return null
+  return normalized
+}
+
+function resolveModel(snapshot: AgentSnapshotPayload): string | null {
+  return normalizeModelId(snapshot.runtimeInfo?.model) ?? normalizeModelId(snapshot.model)
+}
+
 /** Convert agent snapshot to inspection data */
 function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
   const lastUsage = snapshot.lastUsage
@@ -112,7 +124,8 @@ function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
     Id: snapshot.id,
     Name: snapshot.title ?? '-',
     Provider: snapshot.provider,
-    Model: snapshot.model ?? '-',
+    Model: resolveModel(snapshot) ?? '-',
+    Thinking: snapshot.effectiveThinkingOptionId ?? 'auto',
     Status: snapshot.status,
     Mode: snapshot.currentModeId ?? 'default',
     Cwd: snapshot.cwd,
@@ -139,6 +152,7 @@ function toInspectRows(agent: AgentInspect): InspectRow[] {
     { key: 'Name', value: agent.Name },
     { key: 'Provider', value: agent.Provider },
     { key: 'Model', value: agent.Model },
+    { key: 'Thinking', value: agent.Thinking },
     { key: 'Status', value: agent.Status },
     { key: 'Mode', value: agent.Mode },
     { key: 'Cwd', value: shortenPath(agent.Cwd) },

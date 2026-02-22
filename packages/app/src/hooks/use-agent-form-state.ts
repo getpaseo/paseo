@@ -9,8 +9,8 @@ import type {
   AgentModelDefinition,
   AgentProvider,
 } from "@server/server/agent/agent-sdk-types";
-import { useSessionStore } from "@/stores/session-store";
 import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
+import { useHostRuntimeSession } from "@/runtime/host-runtime";
 import { useFormPreferences, type FormPreferences } from "./use-form-preferences";
 
 // Explicit overrides from URL params or "New Agent" button
@@ -364,11 +364,7 @@ export function useAgentFormState(
   }, [isVisible]);
 
   // Session state for provider model listing
-  const sessionState = useSessionStore((state) =>
-    formState.serverId ? state.sessions[formState.serverId] : undefined
-  );
-  const client = sessionState?.client ?? null;
-  const isConnected = sessionState?.connection?.isConnected ?? false;
+  const { client, isConnected } = useHostRuntimeSession(formState.serverId ?? "");
 
   const availableProvidersQuery = useQuery({
     queryKey: ["availableProviders", formState.serverId],

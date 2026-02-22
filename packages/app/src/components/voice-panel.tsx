@@ -3,11 +3,11 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { MicOff, Square } from "lucide-react-native";
 import { VolumeMeter } from "./volume-meter";
 import { useVoice } from "@/contexts/voice-context";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 
 export function VoicePanel() {
   const { theme } = useUnistyles();
-  const { connectionStates } = useDaemonConnections();
+  const { daemons } = useDaemonRegistry();
   const {
     volume,
     isMuted,
@@ -18,8 +18,9 @@ export function VoicePanel() {
     activeServerId,
   } = useVoice();
 
-  const activeHost = activeServerId ? connectionStates.get(activeServerId) ?? null : null;
-  const hostLabel = activeHost?.daemon.label ?? null;
+  const hostLabel = activeServerId
+    ? daemons.find((daemon) => daemon.serverId === activeServerId)?.label ?? null
+    : null;
   const hostSuffix = hostLabel ? ` (${hostLabel})` : "";
 
   return (

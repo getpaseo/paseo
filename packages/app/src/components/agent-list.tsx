@@ -18,6 +18,10 @@ import { shortenPath } from "@/utils/shorten-path";
 import { deriveBranchLabel, deriveProjectPath } from "@/utils/agent-display-info";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
+import {
+  getHostRuntimeStore,
+  isHostRuntimeConnected,
+} from "@/runtime/host-runtime";
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import {
   CHECKOUT_STATUS_STALE_TIME,
@@ -154,9 +158,9 @@ export function AgentList({
           continue;
         }
 
-        const session = useSessionStore.getState().sessions[agent.serverId];
-        const client = session?.client ?? null;
-        const isConnected = session?.connection.isConnected ?? false;
+        const runtime = getHostRuntimeStore();
+        const client = runtime.getClient(agent.serverId);
+        const isConnected = isHostRuntimeConnected(runtime.getSnapshot(agent.serverId));
         if (!client || !isConnected) {
           continue;
         }

@@ -28,7 +28,10 @@ import {
   DraggableList,
   type DraggableRenderItemInfo,
 } from "./draggable-list";
-import { useSessionStore } from "@/stores/session-store";
+import {
+  getHostRuntimeStore,
+  isHostRuntimeConnected,
+} from "@/runtime/host-runtime";
 import {
   buildAgentNavigationKey,
   startNavigationTiming,
@@ -40,8 +43,9 @@ import {
 import { projectIconQueryKey } from "@/hooks/use-project-icon-query";
 import {
   type SidebarAgentListEntry,
-  type SidebarProjectOption,
-} from "@/hooks/use-sidebar-agents-grouped";
+  type SidebarProjectFilterOption,
+} from "@/hooks/use-sidebar-agents-list";
+import type { ProjectIcon } from "@server/shared/messages";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { getIsTauri } from "@/constants/layout";
 import { AgentStatusDot } from "@/components/agent-status-dot";
@@ -54,11 +58,19 @@ import { useArchiveAgent } from "@/hooks/use-archive-agent";
 
 type EntryData = SidebarAgentListEntry;
 
+function toProjectIconDataUri(icon: ProjectIcon | null): string | null {
+  if (!icon) {
+    return null;
+  }
+  return `data:${icon.mimeType};base64,${icon.data}`;
+}
+
 interface SidebarAgentListProps {
+  isOpen?: boolean;
   entries: SidebarAgentListEntry[];
-  projectOptions: SidebarProjectOption[];
-  selectedProjectKeys: string[];
-  onSelectedProjectKeysChange: (keys: string[]) => void;
+  projectFilterOptions: SidebarProjectFilterOption[];
+  selectedProjectFilterKeys: string[];
+  onSelectedProjectFilterKeysChange: (keys: string[]) => void;
   isRefreshing?: boolean;
   onRefresh?: () => void;
   selectedAgentId?: string;
@@ -69,7 +81,7 @@ interface SidebarAgentListProps {
 }
 
 interface ProjectFilterOptionRowProps {
-  option: SidebarProjectOption;
+  option: SidebarProjectFilterOption;
   selected: boolean;
   iconDataUri: string | null;
   displayName: string;
@@ -378,15 +390,15 @@ function deriveShortcutIndexByAgentKey(sidebarShortcutAgentKeys: string[]) {
 }
 
 function resolveSelectedProjectLabel(input: {
-  selectedProjectKeys: string[];
-  projectOptions: SidebarProjectOption[];
+  selectedProjectFilterKeys: string[];
+  projectFilterOptions: SidebarProjectFilterOption[];
 }): string {
-  if (input.selectedProjectKeys.length === 0) {
+  if (input.selectedProjectFilterKeys.length === 0) {
     return "Project";
   }
-  if (input.selectedProjectKeys.length === 1) {
-    const selected = input.projectOptions.find(
-      (option) => option.projectKey === input.selectedProjectKeys[0]
+  if (input.selectedProjectFilterKeys.length === 1) {
+    const selected = input.projectFilterOptions.find(
+      (option) => option.projectKey === input.selectedProjectFilterKeys[0]
     );
     if (selected) {
       return deriveProjectDisplayName({
@@ -396,7 +408,7 @@ function resolveSelectedProjectLabel(input: {
       });
     }
     return deriveProjectDisplayName({
-      projectKey: input.selectedProjectKeys[0] ?? "",
+      projectKey: input.selectedProjectFilterKeys[0] ?? "",
       projectName: "",
       remoteUrl: null,
     });
@@ -440,10 +452,11 @@ function deriveProjectDisplayName(input: {
 }
 
 export function SidebarAgentList({
+  isOpen = true,
   entries,
-  projectOptions,
-  selectedProjectKeys,
-  onSelectedProjectKeysChange,
+  projectFilterOptions,
+  selectedProjectFilterKeys,
+  onSelectedProjectFilterKeysChange,
   isRefreshing = false,
   onRefresh,
   selectedAgentId,
@@ -476,24 +489,26 @@ export function SidebarAgentList({
   );
 
   const selectedProjectLabel = useMemo(
-    () => resolveSelectedProjectLabel({ selectedProjectKeys, projectOptions }),
-    [projectOptions, selectedProjectKeys]
+    () => resolveSelectedProjectLabel({ selectedProjectFilterKeys, projectFilterOptions }),
+    [projectFilterOptions, selectedProjectFilterKeys]
   );
 
   const selectedProjectOption = useMemo(() => {
-    if (selectedProjectKeys.length !== 1) {
+    if (selectedProjectFilterKeys.length !== 1) {
       return null;
     }
     return (
-      projectOptions.find((option) => option.projectKey === selectedProjectKeys[0]) ?? null
+      projectFilterOptions.find((option) => option.projectKey === selectedProjectFilterKeys[0]) ?? null
     );
-  }, [projectOptions, selectedProjectKeys]);
-  const showProjectFilters = projectOptions.length > 0;
+  }, [projectFilterOptions, selectedProjectFilterKeys]);
+  const showProjectFilters = projectFilterOptions.length > 0;
 
-  const sessions = useSessionStore((state) => state.sessions);
   const projectIconRequests = useMemo(() => {
+    if (!isOpen) {
+      return [];
+    }
     const unique = new Map<string, { serverId: string; cwd: string }>();
-    for (const option of projectOptions) {
+    for (const option of projectFilterOptions) {
       if (!option.serverId || !option.workingDir) {
         continue;
       }
@@ -511,23 +526,26 @@ export function SidebarAgentList({
       unique.set(`${serverId}:${cwd}`, { serverId, cwd });
     }
     return Array.from(unique.values());
-  }, [entries, projectOptions]);
+  }, [entries, isOpen, projectFilterOptions]);
 
   const projectIconQueries = useQueries({
     queries: projectIconRequests.map((request) => ({
       queryKey: projectIconQueryKey(request.serverId, request.cwd),
       queryFn: async () => {
-        const client =
-          useSessionStore.getState().sessions[request.serverId]?.client ?? null;
+        const client = getHostRuntimeStore().getClient(request.serverId);
         if (!client) {
           return null;
         }
         const result = await client.requestProjectIcon(request.cwd);
         return result.icon;
       },
+      select: toProjectIconDataUri,
       enabled: Boolean(
-        sessions[request.serverId]?.client &&
-          sessions[request.serverId]?.connection.isConnected &&
+        isOpen &&
+          getHostRuntimeStore().getClient(request.serverId) &&
+          isHostRuntimeConnected(
+            getHostRuntimeStore().getSnapshot(request.serverId)
+          ) &&
           request.cwd
       ),
       staleTime: Infinity,
@@ -545,10 +563,7 @@ export function SidebarAgentList({
       if (!request) {
         continue;
       }
-      const icon = projectIconQueries[i]?.data ?? null;
-      const dataUri = icon
-        ? `data:${icon.mimeType};base64,${icon.data}`
-        : null;
+      const dataUri = projectIconQueries[i]?.data ?? null;
       map.set(`${request.serverId}:${request.cwd}`, dataUri);
     }
     return map;
@@ -556,7 +571,7 @@ export function SidebarAgentList({
 
   const projectIconByProjectKey = useMemo(() => {
     const map = new Map<string, string | null>();
-    for (const option of projectOptions) {
+    for (const option of projectFilterOptions) {
       map.set(
         option.projectKey,
         projectIconByQueryKey.get(`${option.serverId}:${option.workingDir}`) ?? null
@@ -574,7 +589,7 @@ export function SidebarAgentList({
       );
     }
     return map;
-  }, [entries, projectIconByQueryKey, projectOptions]);
+  }, [entries, projectIconByQueryKey, projectFilterOptions]);
 
   const selectedProjectIconUri = useMemo(() => {
     if (!selectedProjectOption) {
@@ -585,20 +600,20 @@ export function SidebarAgentList({
 
   const handleToggleProject = useCallback(
     (projectKey: string) => {
-      const next = new Set(selectedProjectKeys);
+      const next = new Set(selectedProjectFilterKeys);
       if (next.has(projectKey)) {
         next.delete(projectKey);
       } else {
         next.add(projectKey);
       }
-      onSelectedProjectKeysChange(Array.from(next));
+      onSelectedProjectFilterKeysChange(Array.from(next));
     },
-    [onSelectedProjectKeysChange, selectedProjectKeys]
+    [onSelectedProjectFilterKeysChange, selectedProjectFilterKeys]
   );
 
   const handleClearProjectFilter = useCallback(() => {
-    onSelectedProjectKeysChange([]);
-  }, [onSelectedProjectKeysChange]);
+    onSelectedProjectFilterKeysChange([]);
+  }, [onSelectedProjectFilterKeysChange]);
 
   const handleAgentPress = useCallback(
     (entry: SidebarAgentListEntry) => {
@@ -752,7 +767,7 @@ export function SidebarAgentList({
             ref={projectFilterAnchorRef}
             style={({ hovered = false, pressed }) => [
               styles.filterTrigger,
-              (selectedProjectKeys.length > 0 || hovered || pressed) &&
+              (selectedProjectFilterKeys.length > 0 || hovered || pressed) &&
                 styles.filterTriggerActive,
             ]}
             onPress={() => setIsProjectFilterOpen(true)}
@@ -760,20 +775,20 @@ export function SidebarAgentList({
             {({ hovered = false, pressed }) => {
               const isInteracting = hovered || pressed;
               const showActiveForeground =
-                selectedProjectKeys.length > 0 || isInteracting;
+                selectedProjectFilterKeys.length > 0 || isInteracting;
               return (
                 <>
-                  {selectedProjectKeys.length === 1 && selectedProjectIconUri ? (
+                  {selectedProjectFilterKeys.length === 1 && selectedProjectIconUri ? (
                     <Image
                       source={{
                         uri: selectedProjectIconUri,
                       }}
                       style={styles.selectedProjectIcon}
                     />
-                  ) : selectedProjectKeys.length > 1 ? (
+                  ) : selectedProjectFilterKeys.length > 1 ? (
                     <View style={styles.projectCountBadge}>
                       <Text style={styles.projectCountBadgeText}>
-                        {selectedProjectKeys.length}
+                        {selectedProjectFilterKeys.length}
                       </Text>
                     </View>
                   ) : null}
@@ -799,7 +814,7 @@ export function SidebarAgentList({
             }}
           </Pressable>
 
-          {selectedProjectKeys.length > 0 ? (
+          {selectedProjectFilterKeys.length > 0 ? (
             <Pressable style={styles.clearFilterButton} onPress={handleClearProjectFilter}>
               <Text style={styles.clearFilterText}>Clear</Text>
             </Pressable>
@@ -818,14 +833,14 @@ export function SidebarAgentList({
             anchorRef={projectFilterAnchorRef}
           >
             <View style={styles.filterOptionsList}>
-              {projectOptions.length === 0 ? (
+              {projectFilterOptions.length === 0 ? (
                 <Text style={styles.filterEmptyText}>No projects</Text>
               ) : (
-                projectOptions.map((option) => (
+                projectFilterOptions.map((option) => (
                   <ProjectFilterOptionRow
                     key={option.projectKey}
                     option={option}
-                    selected={selectedProjectKeys.includes(option.projectKey)}
+                    selected={selectedProjectFilterKeys.includes(option.projectKey)}
                     iconDataUri={projectIconByProjectKey.get(option.projectKey) ?? null}
                     displayName={deriveProjectDisplayName({
                       projectKey: option.projectKey,

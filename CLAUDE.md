@@ -56,6 +56,26 @@ Use `npm run cli` to run the local CLI (instead of the globally linked `paseo` w
 
 Use `--host <host:port>` to point the CLI at a different daemon (e.g., `--host localhost:7777`).
 
+### Relay build sync (important)
+
+When changing `packages/relay/src/*`, rebuild relay before running/debugging the daemon:
+
+```bash
+npm run build --workspace=@getpaseo/relay
+```
+
+Reason: Node daemon imports `@getpaseo/relay` from `packages/relay/dist/*` (`node` export path), not directly from `src/*`.
+
+### Server build sync for CLI (important)
+
+When changing `packages/server/src/client/*` (especially `daemon-client.ts`) or shared WS protocol types, rebuild server before running/debugging CLI commands:
+
+```bash
+npm run build --workspace=@getpaseo/server
+```
+
+Reason: local CLI imports `@getpaseo/server` via package exports that resolve to `packages/server/dist/*` first. If `dist` is stale, CLI can speak an old protocol (for example, sending `session` before `hello`) and fail with handshake warnings/timeouts.
+
 ### Quick reference CLI commands
 
 ```bash

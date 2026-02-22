@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useSessionStore } from "@/stores/session-store";
+import { useHostRuntimeSession } from "@/runtime/host-runtime";
 import type { ProjectIcon } from "@server/shared/messages";
 
 export function projectIconQueryKey(serverId: string, cwd: string) {
@@ -12,12 +12,7 @@ interface UseProjectIconQueryOptions {
 }
 
 export function useProjectIconQuery({ serverId, cwd }: UseProjectIconQueryOptions) {
-  const client = useSessionStore(
-    (state) => state.sessions[serverId]?.client ?? null
-  );
-  const isConnected = useSessionStore(
-    (state) => state.sessions[serverId]?.connection.isConnected ?? false
-  );
+  const { client, isConnected } = useHostRuntimeSession(serverId);
 
   const query = useQuery({
     queryKey: projectIconQueryKey(serverId, cwd),

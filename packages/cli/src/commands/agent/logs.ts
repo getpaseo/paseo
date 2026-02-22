@@ -19,6 +19,27 @@ export interface AgentLogsOptions extends CommandOptions {
 // Logs command returns void - it outputs directly to console
 export type AgentLogsResult = void
 
+export const NO_ACTIVITY_MESSAGE = 'No activity to display.'
+
+export async function fetchAgentTimelineItems(
+  client: DaemonClient,
+  agentId: string
+): Promise<AgentTimelineItem[]> {
+  return fetchProjectedTimelineItems({ client, agentId })
+}
+
+export function formatAgentActivityTranscript(
+  timelineItems: AgentTimelineItem[],
+  tailCount?: number
+): string {
+  if (tailCount === 0) {
+    return ''
+  }
+  return curateAgentActivity(
+    timelineItems,
+    tailCount !== undefined ? { maxItems: tailCount } : undefined
+  )
+}
 
 function parseTailCount(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined
@@ -100,10 +121,7 @@ export async function runLogsCommand(
     }
 
     // Fetch timeline directly via cursor RPC.
-    let timelineItems = await fetchProjectedTimelineItems({
-      client,
-      agentId: resolvedId,
-    })
+    let timelineItems = await fetchAgentTimelineItems(client, resolvedId)
 
     // Apply filter
     if (options.filter) {
@@ -125,7 +143,7 @@ export async function runLogsCommand(
       return
     }
 
-    const transcript = curateAgentActivity(timelineItems, tailCount !== undefined ? { maxItems: tailCount } : undefined)
+    const transcript = formatAgentActivityTranscript(timelineItems, tailCount)
     console.log(transcript)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -147,10 +165,7 @@ async function runFollowMode(
   const tailCount = parseTailCount(options.tail) ?? DEFAULT_FOLLOW_TAIL
 
   // First, get existing timeline.
-  let existingItems = await fetchProjectedTimelineItems({
-    client,
-    agentId,
-  })
+  let existingItems = await fetchAgentTimelineItems(client, agentId)
 
   // Apply filter to existing items
   if (options.filter) {
@@ -159,8 +174,8 @@ async function runFollowMode(
 
   // Print existing transcript (tail-like behavior)
   if (tailCount > 0) {
-    const existingTranscript = curateAgentActivity(existingItems, { maxItems: tailCount })
-    if (existingTranscript !== 'No activity to display.') {
+    const existingTranscript = formatAgentActivityTranscript(existingItems, tailCount)
+    if (existingTranscript !== NO_ACTIVITY_MESSAGE) {
       console.log(existingTranscript)
     }
   }
@@ -181,8 +196,8 @@ async function runFollowMode(
         return
       }
       // Print each timeline item as it arrives using the curator format
-      const transcript = curateAgentActivity([item])
-      if (transcript !== 'No activity to display.') {
+      const transcript = formatAgentActivityTranscript([item])
+      if (transcript !== NO_ACTIVITY_MESSAGE) {
         console.log(transcript)
       }
     }

@@ -4,6 +4,7 @@ import { runStatusCommand } from './status.js'
 import { runStopCommand } from './stop.js'
 import { runRestartCommand } from './restart.js'
 import { pairCommand } from './pair.js'
+import { updateCommand } from './update.js'
 import { withOutput } from '../../output/index.js'
 
 export function createDaemonCommand(): Command {
@@ -11,6 +12,7 @@ export function createDaemonCommand(): Command {
 
   daemon.addCommand(startCommand())
   daemon.addCommand(pairCommand())
+  daemon.addCommand(updateCommand())
 
   daemon
     .command('status')

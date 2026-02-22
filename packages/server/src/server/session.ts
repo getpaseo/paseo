@@ -63,7 +63,7 @@ import type {
   ManagedAgent,
 } from './agent/agent-manager.js'
 import { scheduleAgentMetadataGeneration } from './agent/agent-metadata-generator.js'
-import { toAgentPayload } from './agent/agent-projections.js'
+import { resolveEffectiveThinkingOptionId, toAgentPayload } from './agent/agent-projections.js'
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -953,12 +953,33 @@ export class Session {
     const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null
 
     const provider = coerceAgentProvider(this.sessionLogger, record.provider, record.id)
+    const runtimeInfo = record.runtimeInfo
+      ? {
+          provider: coerceAgentProvider(this.sessionLogger, record.runtimeInfo.provider, record.id),
+          sessionId: record.runtimeInfo.sessionId,
+          ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, 'model')
+            ? { model: record.runtimeInfo.model ?? null }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, 'thinkingOptionId')
+            ? { thinkingOptionId: record.runtimeInfo.thinkingOptionId ?? null }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, 'modeId')
+            ? { modeId: record.runtimeInfo.modeId ?? null }
+            : {}),
+          ...(record.runtimeInfo.extra ? { extra: record.runtimeInfo.extra } : {}),
+        }
+      : undefined
     return {
       id: record.id,
       provider,
       cwd: record.cwd,
       model: record.config?.model ?? null,
       thinkingOptionId: record.config?.thinkingOptionId ?? null,
+      effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
+        runtimeInfo,
+        configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
+      }),
+      ...(runtimeInfo ? { runtimeInfo } : {}),
       createdAt: createdAt.toISOString(),
       updatedAt: updatedAt.toISOString(),
       lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
@@ -1053,6 +1074,21 @@ export class Session {
     const includeArchived = filter?.includeArchived ?? false
     if (!includeArchived && agent.archivedAt) {
       return false
+    }
+
+    if (filter?.thinkingOptionId !== undefined) {
+      const expectedThinkingOptionId = resolveEffectiveThinkingOptionId({
+        configuredThinkingOptionId: filter.thinkingOptionId ?? null,
+      })
+      const resolvedThinkingOptionId =
+        agent.effectiveThinkingOptionId ??
+        resolveEffectiveThinkingOptionId({
+          runtimeInfo: agent.runtimeInfo,
+          configuredThinkingOptionId: agent.thinkingOptionId ?? null,
+        })
+      if (resolvedThinkingOptionId !== expectedThinkingOptionId) {
+        return false
+      }
     }
 
     if (filter?.statuses && filter.statuses.length > 0) {
@@ -1674,6 +1710,10 @@ export class Session {
   private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Archiving agent ${agentId}`)
 
+    if (this.agentManager.getAgent(agentId)) {
+      await this.interruptAgentIfRunning(agentId)
+    }
+
     const archivedAt = new Date().toISOString()
 
     const existing = await this.agentStorage.get(agentId)
@@ -1715,6 +1755,11 @@ export class Session {
       archivedAgentCwd: archivedRecord.cwd,
       requestId,
     })
+  }
+
+  private async getArchivedAt(agentId: string): Promise<string | null> {
+    const record = await this.agentStorage.get(agentId)
+    return record?.archivedAt ?? null
   }
 
   private async handleUpdateAgentRequest(
@@ -2305,6 +2350,16 @@ export class Session {
       await this.ensureAgentLoaded(agentId)
     } catch (error) {
       this.handleAgentRunError(agentId, error, 'Failed to initialize agent before sending prompt')
+      return
+    }
+
+    const archivedAt = await this.getArchivedAt(agentId)
+    if (archivedAt) {
+      this.handleAgentRunError(
+        agentId,
+        new Error(`Agent ${agentId} is archived`),
+        'Refusing to send prompt to archived agent'
+      )
       return
     }
 
@@ -5250,6 +5305,20 @@ export class Session {
     try {
       const agentId = resolved.agentId
 
+      const archivedAt = await this.getArchivedAt(agentId)
+      if (archivedAt) {
+        this.emit({
+          type: 'send_agent_message_response',
+          payload: {
+            requestId: msg.requestId,
+            agentId,
+            accepted: false,
+            error: `Agent ${agentId} is archived`,
+          },
+        })
+        return
+      }
+
       await this.ensureAgentLoaded(agentId)
       await this.interruptAgentIfRunning(agentId)
 
@@ -5388,16 +5457,16 @@ export class Session {
     }, effectiveTimeoutMs)
 
     try {
-      const result = await this.agentManager.waitForAgentEvent(agentId, {
+      let result = await this.agentManager.waitForAgentEvent(agentId, {
         signal: abortController.signal,
       })
-
-      const final = await this.getAgentPayloadById(agentId)
+      let final = await this.getAgentPayloadById(agentId)
       if (!final) {
         throw new Error(`Agent ${agentId} disappeared while waiting`)
       }
 
-      const status = result.permission ? 'permission' : result.status === 'error' ? 'error' : 'idle'
+      let status: 'permission' | 'error' | 'idle' =
+        result.permission ? 'permission' : result.status === 'error' ? 'error' : 'idle'
 
       this.emit({
         type: 'wait_for_finish_response',
