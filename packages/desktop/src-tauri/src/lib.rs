@@ -1,9 +1,11 @@
+use serde::Serialize;
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu};
 #[cfg(target_os = "macos")]
 use tauri::menu::AboutMetadata;
-use tauri::Manager;
-use tauri::WebviewWindow;
+use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri_plugin_updater::UpdaterExt;
 
 // Store zoom as u64 bits (f64 * 100 as integer for atomic ops)
 static ZOOM_LEVEL: AtomicU64 = AtomicU64::new(100);
@@ -18,13 +20,148 @@ fn set_zoom_factor(webview: &WebviewWindow, factor: f64) {
     let _ = webview.set_zoom(clamped);
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DaemonUpdateCommandResult {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppUpdateCheckResult {
+    has_update: bool,
+    current_version: String,
+    latest_version: Option<String>,
+    body: Option<String>,
+    date: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppUpdateInstallResult {
+    installed: bool,
+    version: Option<String>,
+    message: String,
+}
+
+fn resolve_login_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "/bin/zsh".to_string())
+}
+
+fn execute_local_daemon_update(shell: &str) -> DaemonUpdateCommandResult {
+    let script = r#"if command -v paseo >/dev/null 2>&1; then
+  paseo daemon update
+else
+  echo "paseo command not found in PATH. Ensure Paseo CLI is installed for this user." >&2
+  exit 127
+fi"#;
+
+    match Command::new(shell).arg("-lc").arg(script).output() {
+        Ok(output) => DaemonUpdateCommandResult {
+            exit_code: output.status.code().unwrap_or(1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        },
+        Err(error) => DaemonUpdateCommandResult {
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: format!("Failed to run daemon update command: {error}"),
+        },
+    }
+}
+
+#[tauri::command]
+async fn run_local_daemon_update() -> DaemonUpdateCommandResult {
+    let shell = resolve_login_shell();
+    tauri::async_runtime::spawn_blocking(move || execute_local_daemon_update(&shell))
+        .await
+        .unwrap_or_else(|error| DaemonUpdateCommandResult {
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: format!("Daemon update task failed: {error}"),
+        })
+}
+
+#[tauri::command]
+async fn check_app_update(app: AppHandle) -> Result<AppUpdateCheckResult, String> {
+    let current_version = app.package_info().version.to_string();
+    let updater = app
+        .updater()
+        .map_err(|error| format!("Failed to initialize updater: {error}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| format!("Failed to check for updates: {error}"))?;
+
+    if let Some(update) = update {
+        return Ok(AppUpdateCheckResult {
+            has_update: true,
+            current_version,
+            latest_version: Some(update.version.to_string()),
+            body: update.body,
+            date: update.date.map(|date| date.to_string()),
+        });
+    }
+
+    Ok(AppUpdateCheckResult {
+        has_update: false,
+        current_version,
+        latest_version: None,
+        body: None,
+        date: None,
+    })
+}
+
+#[tauri::command]
+async fn install_app_update(app: AppHandle) -> Result<AppUpdateInstallResult, String> {
+    let updater = app
+        .updater()
+        .map_err(|error| format!("Failed to initialize updater: {error}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| format!("Failed to check for updates: {error}"))?;
+
+    let Some(update) = update else {
+        return Ok(AppUpdateInstallResult {
+            installed: false,
+            version: None,
+            message: "No update is currently available.".to_string(),
+        });
+    };
+
+    let version = update.version.to_string();
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| format!("Failed to download and install update: {error}"))?;
+
+    Ok(AppUpdateInstallResult {
+        installed: true,
+        version: Some(version),
+        message: "Update installed. Restart Paseo to finish applying it.".to_string(),
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_websocket::init())
+        .invoke_handler(tauri::generate_handler![
+            run_local_daemon_update,
+            check_app_update,
+            install_app_update
+        ])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
