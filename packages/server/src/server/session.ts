@@ -138,6 +138,7 @@ import {
 import type { Resolvable } from './speech/provider-resolver.js'
 import type { SpeechReadinessSnapshot, SpeechReadinessState } from './speech/speech-runtime.js'
 import type pino from 'pino'
+import { resolveClientMessageId } from './client-message-id.js'
 
 const execAsync = promisify(exec)
 const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
@@ -2441,7 +2442,7 @@ export class Session {
           await this.handleSendAgentMessage(
             snapshot.id,
             trimmedPrompt,
-            clientMessageId ?? uuidv4(),
+            resolveClientMessageId(clientMessageId),
             images,
             outputSchema ? { outputSchema } : undefined
           )
