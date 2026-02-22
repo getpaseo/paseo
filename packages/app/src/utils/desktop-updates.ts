@@ -137,7 +137,7 @@ export function isVersionMismatch(
 export function formatVersionWithPrefix(version: string | null | undefined): string {
   const value = version?.trim()
   if (!value) {
-    return 'Unavailable'
+    return '\u2014'
   }
 
   return value.startsWith('v') ? value : `v${value}`

@@ -395,12 +395,18 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: theme.spacing[1],
   },
   updateActions: {
-    alignItems: "flex-end",
+    flexDirection: "row",
+    alignItems: "center",
     gap: theme.spacing[2],
+  },
+  updateErrorText: {
+    color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.xs,
+    marginTop: theme.spacing[1],
   },
   updateWarningCard: {
     marginTop: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.palette.amber[500],
     backgroundColor: "rgba(245, 158, 11, 0.12)",
@@ -413,7 +419,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   updateDiagnosticsCard: {
     marginTop: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface1,
@@ -782,8 +788,7 @@ export default function SettingsScreen() {
 
     void confirmDialog({
       title: "Update local daemon",
-      message:
-        "This updates the Paseo daemon on this computer only. A daemon restart is required after the update.",
+      message: "This updates the Paseo daemon on this computer. A restart is required afterwards.",
       confirmLabel: "Update daemon",
       cancelLabel: "Cancel",
     })
@@ -1188,7 +1193,7 @@ export default function SettingsScreen() {
                     <Text style={styles.updateHintText}>
                       {localDaemonHost
                         ? `Connected host: ${localDaemonHost.label}`
-                        : "No local daemon detected in Settings yet."}
+                        : "No local daemon detected yet."}
                     </Text>
                   </View>
                   <Text style={styles.aboutValue}>{localDaemonVersionText}</Text>
@@ -1203,7 +1208,7 @@ export default function SettingsScreen() {
                       </Text>
                     ) : null}
                     {appUpdateError ? (
-                      <Text style={[styles.updateStatusText, { color: theme.colors.palette.red[300] }]}>
+                      <Text style={styles.updateErrorText}>
                         {appUpdateError}
                       </Text>
                     ) : null}
@@ -1240,7 +1245,7 @@ export default function SettingsScreen() {
                   <View style={styles.audioRowContent}>
                     <Text style={styles.audioRowTitle}>Update local daemon</Text>
                     <Text style={styles.updateHintText}>
-                      This updates the daemon on THIS computer only and requires a restart.
+                      Updates the daemon on this computer only. Requires a restart.
                     </Text>
                     {localDaemonUpdateMessage ? (
                       <Text style={styles.updateStatusText}>{localDaemonUpdateMessage}</Text>
