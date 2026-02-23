@@ -10,8 +10,6 @@ import {
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
-import Constants from "expo-constants";
-import appPackage from "../../package.json";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2 } from "lucide-react-native";
@@ -43,6 +41,7 @@ import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissi
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
+import { resolveAppVersion } from "@/utils/app-version";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -385,25 +384,6 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-function resolveAppVersion(): string | null {
-  const packageVersion = appPackage?.version;
-  if (typeof packageVersion === "string" && packageVersion.trim().length > 0) {
-    return packageVersion.trim();
-  }
-
-  const expoVersion = Constants.expoConfig?.version;
-  if (typeof expoVersion === "string" && expoVersion.trim().length > 0) {
-    return expoVersion.trim();
-  }
-
-  const manifestVersion = (Constants as any).manifest?.version;
-  if (typeof manifestVersion === "string" && manifestVersion.trim().length > 0) {
-    return manifestVersion.trim();
-  }
-
-  return null;
-}
-
 function formatDaemonVersionBadge(version: string | null): string | null {
   const daemonVersion = version?.trim();
   if (!daemonVersion) {
@@ -413,19 +393,6 @@ function formatDaemonVersionBadge(version: string | null): string | null {
     return daemonVersion;
   }
   return `v${daemonVersion}`;
-}
-
-function formatVersionForDisplay(version: string | null | undefined): string {
-  const value = version?.trim();
-  if (!value) {
-    return "\u2014";
-  }
-
-  if (value.startsWith("v")) {
-    return value;
-  }
-
-  return `v${value}`;
 }
 
 function DesktopAppUpdateRow() {
@@ -550,7 +517,7 @@ export default function SettingsScreen() {
   const lastHandledEditHostRef = useRef<string | null>(null);
   const isDesktop = Platform.OS === "web";
   const appVersion = resolveAppVersion();
-  const appVersionText = formatVersionForDisplay(appVersion);
+  const appVersionText = formatVersionWithPrefix(appVersion);
   const editingServerId = editingDaemon?.serverId ?? null;
   const editingDaemonLive = editingServerId
     ? daemons.find((daemon) => daemon.serverId === editingServerId) ?? null

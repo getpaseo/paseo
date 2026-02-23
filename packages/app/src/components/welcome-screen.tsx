@@ -10,12 +10,19 @@ import { AddHostModal } from "./add-host-modal";
 import { PairLinkModal } from "./pair-link-modal";
 import { NameHostModal } from "./name-host-modal";
 import { buildHostAgentDraftRoute } from "@/utils/host-routes";
+import { resolveAppVersion } from "@/utils/app-version";
+import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    flex: 1,
+    flexGrow: 1,
     backgroundColor: theme.colors.surface0,
     padding: theme.spacing[6],
+    alignItems: "center",
+  },
+  content: {
+    width: "100%",
+    flexGrow: 1,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -65,6 +72,12 @@ const styles = StyleSheet.create((theme) => ({
   actionTextPrimary: {
     color: theme.colors.palette.white,
   },
+  versionLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    textAlign: "center",
+    marginTop: theme.spacing[6],
+  },
 }));
 
 export interface WelcomeScreenProps {
@@ -75,6 +88,8 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const { updateHost } = useDaemonRegistry();
+  const appVersion = resolveAppVersion();
+  const appVersionText = formatVersionWithPrefix(appVersion);
   const [isDirectOpen, setIsDirectOpen] = useState(false);
   const [isPasteLinkOpen, setIsPasteLinkOpen] = useState(false);
   const [pendingNameHost, setPendingNameHost] = useState<{ serverId: string; hostname: string | null } | null>(null);
@@ -103,44 +118,47 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
       showsVerticalScrollIndicator={false}
       testID="welcome-screen"
     >
-      <Image
-        source={require("../../assets/images/icon.png")}
-        style={styles.logo}
-        resizeMode="contain"
-      />
-      <Text style={styles.title}>Welcome to Paseo</Text>
-      <Text style={styles.subtitle}>Add a host to start.</Text>
+      <View style={styles.content}>
+        <Image
+          source={require("../../assets/images/icon.png")}
+          style={styles.logo}
+          resizeMode="contain"
+        />
+        <Text style={styles.title}>Welcome to Paseo</Text>
+        <Text style={styles.subtitle}>Add a host to start.</Text>
 
-      <View style={styles.actions}>
-        <Pressable
-          style={[styles.actionButton, styles.actionButtonPrimary]}
-          onPress={() => setIsDirectOpen(true)}
-          testID="welcome-direct-connection"
-        >
-          <Link2 size={18} color={theme.colors.palette.white} />
-          <Text style={[styles.actionText, styles.actionTextPrimary]}>Direct connection</Text>
-        </Pressable>
+        <View style={styles.actions}>
+          <Pressable
+            style={[styles.actionButton, styles.actionButtonPrimary]}
+            onPress={() => setIsDirectOpen(true)}
+            testID="welcome-direct-connection"
+          >
+            <Link2 size={18} color={theme.colors.palette.white} />
+            <Text style={[styles.actionText, styles.actionTextPrimary]}>Direct connection</Text>
+          </Pressable>
 
-        <Pressable
-          style={styles.actionButton}
-          onPress={() => setIsPasteLinkOpen(true)}
-          testID="welcome-paste-pairing-link"
-        >
-          <ClipboardPaste size={18} color={theme.colors.foreground} />
-          <Text style={styles.actionText}>Paste pairing link</Text>
-        </Pressable>
-
-        {Platform.OS !== "web" ? (
           <Pressable
             style={styles.actionButton}
-            onPress={() => router.push("/pair-scan?source=onboarding")}
-            testID="welcome-scan-qr"
+            onPress={() => setIsPasteLinkOpen(true)}
+            testID="welcome-paste-pairing-link"
           >
-            <QrCode size={18} color={theme.colors.foreground} />
-            <Text style={styles.actionText}>Scan QR code</Text>
+            <ClipboardPaste size={18} color={theme.colors.foreground} />
+            <Text style={styles.actionText}>Paste pairing link</Text>
           </Pressable>
-        ) : null}
+
+          {Platform.OS !== "web" ? (
+            <Pressable
+              style={styles.actionButton}
+              onPress={() => router.push("/pair-scan?source=onboarding")}
+              testID="welcome-scan-qr"
+            >
+              <QrCode size={18} color={theme.colors.foreground} />
+              <Text style={styles.actionText}>Scan QR code</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
+      <Text style={styles.versionLabel}>{appVersionText}</Text>
 
       <AddHostModal
         visible={isDirectOpen}
