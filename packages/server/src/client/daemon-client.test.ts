@@ -1740,4 +1740,72 @@ describe('DaemonClient', () => {
       },
     ])
   })
+
+  test('waitForFinish with timeout=0 omits timeoutMs and has no client deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const logger = createMockLogger()
+      const mock = createMockTransport()
+
+      const client = new DaemonClient({
+        url: 'ws://test',
+        clientId: 'clsk_unit_test',
+        logger,
+        reconnect: { enabled: false },
+        transportFactory: () => mock.transport,
+      })
+      clients.push(client)
+
+      const connectPromise = client.connect()
+      mock.triggerOpen()
+      await connectPromise
+
+      const waitPromise = client.waitForFinish('agent-wait-zero-timeout', 0)
+
+      expect(mock.sent).toHaveLength(1)
+      const request = JSON.parse(String(mock.sent[0])) as {
+        type: 'session'
+        message: {
+          type: 'wait_for_finish_request'
+          requestId: string
+          agentId: string
+          timeoutMs?: number
+        }
+      }
+      expect(request.message.type).toBe('wait_for_finish_request')
+      expect(request.message.agentId).toBe('agent-wait-zero-timeout')
+      expect(request.message).not.toHaveProperty('timeoutMs')
+
+      const settled = vi.fn()
+      void waitPromise.then(
+        () => settled('resolved'),
+        () => settled('rejected')
+      )
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+      expect(settled).not.toHaveBeenCalled()
+
+      mock.triggerMessage(
+        wrapSessionMessage({
+          type: 'wait_for_finish_response',
+          payload: {
+            requestId: request.message.requestId,
+            status: 'idle',
+            final: null,
+            error: null,
+            lastMessage: null,
+          },
+        })
+      )
+
+      await expect(waitPromise).resolves.toEqual({
+        status: 'idle',
+        final: null,
+        error: null,
+        lastMessage: null,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

@@ -167,15 +167,16 @@ try {
     console.log('wait command mentions ID\n')
   }
 
-  // Test 12: timeout option has default value documented
+  // Test 12: timeout option documents no default limit
   {
-    console.log('Test 12: timeout option has default value documented')
+    console.log('Test 12: timeout option documents no default limit')
     const result = await $`npx paseo wait --help`.nothrow()
     assert.strictEqual(result.exitCode, 0, 'wait --help should exit 0')
-    const hasDefault =
-      result.stdout.includes('600') || result.stdout.toLowerCase().includes('default')
-    assert(hasDefault, 'help should mention timeout default value')
-    console.log('timeout option has default value documented\n')
+    assert(
+      result.stdout.toLowerCase().includes('default: no limit'),
+      'help should mention timeout default is no limit'
+    )
+    console.log('timeout option documents no default limit\n')
   }
 } finally {
   // Clean up temp directory

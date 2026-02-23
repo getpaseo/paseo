@@ -2426,17 +2426,18 @@ export class DaemonClient {
 
   async waitForFinish(agentId: string, timeout = 60000): Promise<WaitForFinishResult> {
     const requestId = this.createRequestId()
+    const hasTimeout = Number.isFinite(timeout) && timeout > 0
     const message = SessionInboundMessageSchema.parse({
       type: 'wait_for_finish_request',
       requestId,
       agentId,
-      timeoutMs: timeout,
+      ...(hasTimeout ? { timeoutMs: timeout } : {}),
     })
     const payload = await this.sendCorrelatedRequest({
       requestId,
       message,
       responseType: 'wait_for_finish_response',
-      timeout: timeout + 5000,
+      timeout: hasTimeout ? timeout + 5000 : 0,
       options: { skipQueue: true },
     })
     return {

@@ -5497,10 +5497,12 @@ export class Session {
     }
 
     const abortController = new AbortController()
-    const effectiveTimeoutMs = timeoutMs ?? 600_000 // 10 minutes default
-    const timeoutHandle = setTimeout(() => {
-      abortController.abort('timeout')
-    }, effectiveTimeoutMs)
+    const hasTimeout = typeof timeoutMs === 'number' && timeoutMs > 0
+    const timeoutHandle = hasTimeout
+      ? setTimeout(() => {
+          abortController.abort('timeout')
+        }, timeoutMs)
+      : null
 
     try {
       let result = await this.agentManager.waitForAgentEvent(agentId, {
@@ -5553,7 +5555,9 @@ export class Session {
         payload: { requestId, status: 'timeout', final, error: null, lastMessage: null },
       })
     } finally {
-      clearTimeout(timeoutHandle)
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle)
+      }
     }
   }
 

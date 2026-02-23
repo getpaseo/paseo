@@ -99,7 +99,7 @@ export function createAgentCommand(): Command {
     .command('wait')
     .description('Wait for an agent to become idle')
     .argument('<id>', 'Agent ID (or prefix)')
-    .option('--timeout <seconds>', 'Maximum wait time (default: 600)')
+    .option('--timeout <seconds>', 'Maximum wait time (default: no limit)')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runWaitCommand))

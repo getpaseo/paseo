@@ -108,14 +108,17 @@ export async function runWaitCommand(
     throw error
   }
 
-  // Parse timeout (default 10 minutes)
-  let timeoutMs: number
+  // Parse timeout (no limit unless explicitly provided)
+  let timeoutMs = 0
+  let timeoutLabel: string | null = null
   if (options.timeout) {
     try {
       timeoutMs = parseDuration(options.timeout)
       if (timeoutMs <= 0) {
         throw new Error('Timeout must be positive')
       }
+      const timeoutSeconds = Math.floor(timeoutMs / 1000)
+      timeoutLabel = `${timeoutSeconds} second${timeoutSeconds === 1 ? '' : 's'}`
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const error: CommandError = {
@@ -125,11 +128,7 @@ export async function runWaitCommand(
       }
       throw error
     }
-  } else {
-    timeoutMs = 10 * 60 * 1000 // default 10 minutes
   }
-  const timeoutSeconds = Math.floor(timeoutMs / 1000)
-  const timeoutLabel = `${timeoutSeconds} second${timeoutSeconds === 1 ? '' : 's'}`
 
   let client
   try {
@@ -156,15 +155,15 @@ export async function runWaitCommand(
       await client.close()
 
       if (state.status === 'timeout') {
+        const timeoutMessage = timeoutLabel
+          ? `Agent did not finish within ${timeoutLabel}. Run \`paseo wait ${resolvedAgentId}\` again to keep waiting.`
+          : `Agent wait timed out. Run \`paseo wait ${resolvedAgentId}\` again to keep waiting.`
         return {
           type: 'single',
           data: {
             agentId: resolvedAgentId,
             status: 'timeout',
-            message: appendRecentActivity(
-              `Agent did not finish within ${timeoutLabel}. Run \`paseo wait ${resolvedAgentId}\` again to keep waiting.`,
-              recentActivity
-            ),
+            message: appendRecentActivity(timeoutMessage, recentActivity),
           },
           schema: agentWaitSchema,
         }
