@@ -921,6 +921,7 @@ function SessionProviderInternal({
 
       // Apply cursor patch
       if (result.cursorChanged && result.cursor) {
+        const nextCursor = result.cursor;
         setAgentTimelineCursor(serverId, (prev) => {
           const current = prev.get(agentId);
           if (
@@ -936,20 +937,21 @@ function SessionProviderInternal({
           }
           if (
             current &&
-            current.epoch === result.cursor.epoch &&
-            current.startSeq === result.cursor.startSeq &&
-            current.endSeq === result.cursor.endSeq
+            current.epoch === nextCursor.epoch &&
+            current.startSeq === nextCursor.startSeq &&
+            current.endSeq === nextCursor.endSeq
           ) {
             return prev;
           }
           const next = new Map(prev);
-          next.set(agentId, result.cursor);
+          next.set(agentId, nextCursor);
           return next;
         });
       }
 
       // Apply agent patch (optimistic lifecycle)
       if (result.agentChanged && result.agent) {
+        const nextAgent = result.agent;
         setAgents(serverId, (prev) => {
           const current = prev.get(agentId);
           if (!current) {
@@ -958,9 +960,9 @@ function SessionProviderInternal({
           const next = new Map(prev);
           next.set(agentId, {
             ...current,
-            status: result.agent.status,
-            updatedAt: result.agent.updatedAt,
-            lastActivityAt: result.agent.lastActivityAt,
+            status: nextAgent.status,
+            updatedAt: nextAgent.updatedAt,
+            lastActivityAt: nextAgent.lastActivityAt,
           });
           return next;
         });
