@@ -474,7 +474,7 @@ export function AgentStreamView({
       const getTurnContent = () => collectAssistantTurnContent(flatListData, index);
 
       return (
-        <View style={[stylesheet.paddedContentWrapper, { marginBottom: gapBelow }]}>
+        <View style={[stylesheet.streamItemWrapper, { marginBottom: gapBelow }]}>
           {content}
           {isEndOfAssistantTurn ? (
             <TurnCopyButton getContent={getTurnContent} />
@@ -575,7 +575,7 @@ export function AgentStreamView({
     const leftContent = showWorkingIndicator ? <WorkingIndicator /> : null;
 
     return (
-      <View style={stylesheet.paddedContentWrapper}>
+      <View style={stylesheet.contentWrapper}>
         <View
           style={[
             stylesheet.listHeaderContent,
@@ -657,7 +657,7 @@ export function AgentStreamView({
 
     if (shouldShowWorking) {
       return (
-        <View style={[stylesheet.emptyState, stylesheet.paddedContentWrapper]}>
+        <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
           <ActivityIndicator
             size="small"
             color={theme.colors.foregroundMuted}
@@ -668,7 +668,7 @@ export function AgentStreamView({
     }
 
     return (
-      <View style={[stylesheet.emptyState, stylesheet.paddedContentWrapper]}>
+      <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
         <Text style={stylesheet.emptyStateText}>
           Start chatting with this agent...
         </Text>
@@ -692,10 +692,7 @@ export function AgentStreamView({
               keyExtractor={(item) => item.id}
               testID="agent-chat-scroll"
               ListHeaderComponentStyle={headerGapStyle}
-              contentContainerStyle={{
-                paddingVertical: 0,
-                flexGrow: 1,
-              }}
+              contentContainerStyle={stylesheet.listContentContainer}
               style={stylesheet.list}
               onLayout={
                 showDesktopWebScrollbar
@@ -1279,10 +1276,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     flex: 1,
     backgroundColor: theme.colors.surface0,
   },
-  paddedContentWrapper: {
+  contentWrapper: {
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
+  },
+  listContentContainer: {
+    paddingVertical: 0,
+    flexGrow: 1,
     paddingHorizontal: {
       xs: theme.spacing[2],
       md: theme.spacing[4],
