@@ -27,7 +27,7 @@ function buildInitialTimelineRequest(
     return {
       direction: "tail",
       limit: DEFAULT_INITIAL_TIMELINE_LIMIT,
-      projection: "projected",
+      projection: "canonical",
     };
   }
 
@@ -36,9 +36,13 @@ function buildInitialTimelineRequest(
     cursor: { epoch: cursor.epoch, seq: cursor.endSeq },
     // Catch up all missing canonical rows by default.
     limit: 0,
-    projection: "projected",
+    projection: "canonical",
   };
 }
+
+export const __private__ = {
+  buildInitialTimelineRequest,
+};
 
 export function useAgentInitialization({
   serverId,
@@ -70,7 +74,13 @@ export function useAgentInitialization({
         return existing.promise;
       }
 
-      const deferred = createInitDeferred(key);
+      const session = useSessionStore.getState().sessions[serverId];
+      const cursor = session?.agentTimelineCursor.get(agentId);
+      const timelineRequest = buildInitialTimelineRequest(cursor);
+      const initRequestDirection =
+        timelineRequest.direction === "after" ? "after" : "tail";
+
+      const deferred = createInitDeferred(key, initRequestDirection);
       const timeoutId = setTimeout(() => {
         setAgentInitializing(agentId, false);
         rejectInitDeferred(
@@ -89,10 +99,6 @@ export function useAgentInitialization({
         rejectInitDeferred(key, new Error("Host is not connected"));
         return deferred.promise;
       }
-
-      const session = useSessionStore.getState().sessions[serverId];
-      const cursor = session?.agentTimelineCursor.get(agentId);
-      const timelineRequest = buildInitialTimelineRequest(cursor);
 
       client
         .fetchAgentTimeline(agentId, timelineRequest)
@@ -125,7 +131,7 @@ export function useAgentInitialization({
         await client.fetchAgentTimeline(agentId, {
           direction: "tail",
           limit: DEFAULT_INITIAL_TIMELINE_LIMIT,
-          projection: "projected",
+          projection: "canonical",
         });
       } catch (error) {
         setAgentInitializing(agentId, false);
