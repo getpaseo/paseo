@@ -12,6 +12,14 @@ import {
   reduceStreamUpdate,
   type StreamItem,
 } from "@/types/stream";
+import {
+  deriveOptimisticLifecycleStatus,
+} from "@/contexts/session-stream-lifecycle";
+import {
+  deriveBootstrapTailTimelinePolicy,
+  shouldResolveTimelineInit,
+} from "@/contexts/session-timeline-bootstrap-policy";
+import { classifySessionTimelineSeq } from "@/contexts/session-timeline-seq-gate";
 import type {
   ActivityLogPayload,
   AgentStreamEventPayload,
@@ -35,7 +43,12 @@ import {
 import { useDraftStore } from "@/stores/draft-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import { sendOsNotification } from "@/utils/os-notifications";
-import { getInitKey, getInitDeferred, resolveInitDeferred, rejectInitDeferred, createInitDeferred } from "@/utils/agent-initialization";
+import {
+  getInitKey,
+  getInitDeferred,
+  resolveInitDeferred,
+  rejectInitDeferred,
+} from "@/utils/agent-initialization";
 import { encodeImages } from "@/utils/encode-images";
 import {
   derivePendingPermissionKey,
@@ -635,6 +648,26 @@ function SessionProviderInternal({
     },
   });
 
+  const requestCanonicalCatchUp = useCallback(
+    (agentId: string, cursor: { epoch: string; endSeq: number }) => {
+      void client
+        .fetchAgentTimeline(agentId, {
+          direction: "after",
+          cursor: { epoch: cursor.epoch, seq: cursor.endSeq },
+          limit: 0,
+          projection: "canonical",
+        })
+        .catch((error) => {
+          console.warn(
+            "[Session] failed to fetch canonical catch-up timeline",
+            agentId,
+            error
+          );
+        });
+    },
+    [client]
+  );
+
   const applyTimelineResponse = useCallback(
     (
       payload: Extract<
@@ -658,53 +691,162 @@ function SessionProviderInternal({
         return;
       }
 
-      const hydratedEvents: Array<{
-        event: AgentStreamEventPayload;
-        timestamp: Date;
-      }> = payload.entries.map((entry) => ({
+      const timelineUnits = payload.entries.map((entry) => ({
+        seq: entry.seqStart,
         event: {
           type: "timeline",
           provider: entry.provider,
           item: entry.item,
-        },
+        } as AgentStreamEventPayload,
         timestamp: new Date(entry.timestamp),
       }));
 
-      const replace = payload.reset || payload.direction !== "after";
+      const toHydratedEvents = (
+        units: typeof timelineUnits
+      ): Array<{ event: AgentStreamEventPayload; timestamp: Date }> =>
+        units.map(({ event, timestamp }) => ({ event, timestamp }));
+
+      const session = useSessionStore.getState().sessions[serverId];
+      const isInitializing = session?.initializingAgents.get(agentId) === true;
+      const activeInitDeferred = getInitDeferred(initKey);
+      const hasActiveInitDeferred = Boolean(activeInitDeferred);
+      const currentCursor = session?.agentTimelineCursor.get(agentId);
+      const bootstrapPolicy = deriveBootstrapTailTimelinePolicy({
+        direction: payload.direction,
+        reset: payload.reset,
+        epoch: payload.epoch,
+        endCursor: payload.endCursor,
+        isInitializing,
+        hasActiveInitDeferred,
+      });
+      const replace = bootstrapPolicy.replace;
+
+      let nextCursor:
+        | { epoch: string; startSeq: number; endSeq: number }
+        | null
+        | undefined;
+      let shouldSetCursor = false;
+
       if (replace) {
-        const hydrated = hydrateStreamState(hydratedEvents);
+        const hydrated = hydrateStreamState(toHydratedEvents(timelineUnits));
         setAgentStreamTail(serverId, (prev) => {
           const next = new Map(prev);
           next.set(agentId, hydrated);
           return next;
         });
         clearAgentStreamHead(serverId, agentId);
-      } else if (hydratedEvents.length > 0) {
-        setAgentStreamTail(serverId, (prev) => {
-          const next = new Map(prev);
-          const current = next.get(agentId) ?? [];
-          const updated = hydratedEvents.reduce<StreamItem[]>(
-            (state, { event, timestamp }) => reduceStreamUpdate(state, event, timestamp),
-            current
-          );
-          next.set(agentId, updated);
-          return next;
-        });
-      }
 
-      setAgentTimelineCursor(serverId, (prev) => {
-        const next = new Map(prev);
         if (payload.startCursor && payload.endCursor) {
-          next.set(agentId, {
+          nextCursor = {
             epoch: payload.epoch,
             startSeq: payload.startCursor.seq,
             endSeq: payload.endCursor.seq,
-          });
-        } else if (payload.reset) {
-          next.delete(agentId);
+          };
+          shouldSetCursor = true;
+        } else {
+          nextCursor = null;
+          shouldSetCursor = true;
         }
-        return next;
-      });
+
+        if (bootstrapPolicy.catchUpCursor) {
+          requestCanonicalCatchUp(agentId, bootstrapPolicy.catchUpCursor);
+        }
+
+      } else if (timelineUnits.length > 0) {
+        const acceptedUnits: typeof timelineUnits = [];
+        let cursor = currentCursor;
+        let gapCursor: { epoch: string; endSeq: number } | null = null;
+
+        for (const unit of timelineUnits) {
+          const decision = classifySessionTimelineSeq({
+            cursor: cursor
+              ? { epoch: cursor.epoch, endSeq: cursor.endSeq }
+              : null,
+            epoch: payload.epoch,
+            seq: unit.seq,
+          });
+
+          if (decision === "gap") {
+            gapCursor = cursor
+              ? { epoch: cursor.epoch, endSeq: cursor.endSeq }
+              : null;
+            break;
+          }
+          if (decision === "drop_stale" || decision === "drop_epoch") {
+            continue;
+          }
+
+          acceptedUnits.push(unit);
+          if (decision === "init") {
+            cursor = {
+              epoch: payload.epoch,
+              startSeq: unit.seq,
+              endSeq: unit.seq,
+            };
+            continue;
+          }
+          if (!cursor) {
+            continue;
+          }
+          cursor = {
+            ...cursor,
+            endSeq: unit.seq,
+          };
+        }
+
+        if (acceptedUnits.length > 0) {
+          setAgentStreamTail(serverId, (prev) => {
+            const next = new Map(prev);
+            const current = next.get(agentId) ?? [];
+            const updated = acceptedUnits.reduce<StreamItem[]>(
+              (state, { event, timestamp }) => reduceStreamUpdate(state, event, timestamp),
+              current
+            );
+            next.set(agentId, updated);
+            return next;
+          });
+        }
+
+        if (
+          cursor &&
+          (!currentCursor ||
+            currentCursor.epoch !== cursor.epoch ||
+            currentCursor.startSeq !== cursor.startSeq ||
+            currentCursor.endSeq !== cursor.endSeq)
+        ) {
+          nextCursor = cursor;
+          shouldSetCursor = true;
+        }
+
+        if (gapCursor) {
+          requestCanonicalCatchUp(agentId, gapCursor);
+        }
+      }
+
+      if (shouldSetCursor) {
+        setAgentTimelineCursor(serverId, (prev) => {
+          const current = prev.get(agentId);
+          if (!nextCursor) {
+            if (!current) {
+              return prev;
+            }
+            const next = new Map(prev);
+            next.delete(agentId);
+            return next;
+          }
+          if (
+            current &&
+            current.epoch === nextCursor.epoch &&
+            current.startSeq === nextCursor.startSeq &&
+            current.endSeq === nextCursor.endSeq
+          ) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.set(agentId, nextCursor);
+          return next;
+        });
+      }
 
       const deferredUpdate = pendingAgentUpdatesRef.current.get(agentId);
       pendingAgentUpdatesRef.current.delete(agentId);
@@ -712,22 +854,39 @@ function SessionProviderInternal({
         applyAgentUpdatePayload(deferredUpdate);
       }
 
-      setInitializingAgents(serverId, (prev) => {
-        if (prev.get(agentId) !== true) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(agentId, false);
-        return next;
+      const shouldResolveDeferredInit = shouldResolveTimelineInit({
+        hasActiveInitDeferred,
+        isInitializing,
+        initRequestDirection: activeInitDeferred?.requestDirection ?? "tail",
+        responseDirection: payload.direction,
+        reset: payload.reset,
       });
+      const shouldClearInitializing =
+        shouldResolveDeferredInit || (isInitializing && !hasActiveInitDeferred);
 
-      resolveInitDeferred(initKey);
-      markAgentHistorySynchronized(serverId, agentId);
+      if (shouldClearInitializing) {
+        setInitializingAgents(serverId, (prev) => {
+          if (prev.get(agentId) !== true) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.set(agentId, false);
+          return next;
+        });
+      }
+
+      if (shouldResolveDeferredInit) {
+        resolveInitDeferred(initKey);
+      }
+      if (shouldClearInitializing) {
+        markAgentHistorySynchronized(serverId, agentId);
+      }
     },
     [
       applyAgentUpdatePayload,
       clearAgentStreamHead,
       markAgentHistorySynchronized,
+      requestCanonicalCatchUp,
       serverId,
       setAgentStreamTail,
       setAgentTimelineCursor,
@@ -767,6 +926,7 @@ function SessionProviderInternal({
       if (message.type !== "agent_stream") return;
       const { agentId, event, timestamp, seq, epoch } = message.payload;
       const parsedTimestamp = new Date(timestamp);
+      const streamEvent = event as AgentStreamEventPayload;
 
       if (event.type === "attention_required") {
         if (event.shouldNotify) {
@@ -782,12 +942,58 @@ function SessionProviderInternal({
       const session = useSessionStore.getState().sessions[serverId];
       const currentTail = session?.agentStreamTail.get(agentId) ?? [];
       const currentHead = session?.agentStreamHead.get(agentId) ?? [];
-      const { tail, head, changedTail, changedHead } = applyStreamEvent({
-        tail: currentTail,
-        head: currentHead,
-        event: event as AgentStreamEventPayload,
-        timestamp: parsedTimestamp,
-      });
+      const currentCursor = session?.agentTimelineCursor.get(agentId);
+
+      let shouldApplyStreamEvent = true;
+      let nextTimelineCursor: { epoch: string; startSeq: number; endSeq: number } | null = null;
+
+      if (
+        streamEvent.type === "timeline" &&
+        typeof seq === "number" &&
+        typeof epoch === "string"
+      ) {
+        const decision = classifySessionTimelineSeq({
+          cursor: currentCursor
+            ? { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq }
+            : null,
+          epoch,
+          seq,
+        });
+
+        if (decision === "init") {
+          nextTimelineCursor = { epoch, startSeq: seq, endSeq: seq };
+        } else if (decision === "accept") {
+          nextTimelineCursor = {
+            ...(currentCursor ?? { epoch, startSeq: seq, endSeq: seq }),
+            epoch,
+            endSeq: seq,
+          };
+        } else if (decision === "gap") {
+          shouldApplyStreamEvent = false;
+          if (currentCursor) {
+            requestCanonicalCatchUp(agentId, {
+              epoch: currentCursor.epoch,
+              endSeq: currentCursor.endSeq,
+            });
+          }
+        } else {
+          shouldApplyStreamEvent = false;
+        }
+      }
+
+      const { tail, head, changedTail, changedHead } = shouldApplyStreamEvent
+        ? applyStreamEvent({
+            tail: currentTail,
+            head: currentHead,
+            event: streamEvent,
+            timestamp: parsedTimestamp,
+          })
+        : {
+            tail: currentTail,
+            head: currentHead,
+            changedTail: false,
+            changedHead: false,
+          };
 
       if (changedTail || changedHead) {
         setAgentStreamState(serverId, agentId, {
@@ -796,22 +1002,54 @@ function SessionProviderInternal({
         });
       }
 
-      if (
-        event.type === "timeline" &&
-        typeof seq === "number" &&
-        typeof epoch === "string"
-      ) {
+      if (nextTimelineCursor) {
         setAgentTimelineCursor(serverId, (prev) => {
           const current = prev.get(agentId);
-          const next = new Map(prev);
-          if (!current || current.epoch !== epoch) {
-            next.set(agentId, { epoch, startSeq: seq, endSeq: seq });
-            return next;
+          if (
+            current &&
+            current.epoch === nextTimelineCursor.epoch &&
+            current.startSeq === nextTimelineCursor.startSeq &&
+            current.endSeq === nextTimelineCursor.endSeq
+          ) {
+            return prev;
           }
+          const next = new Map(prev);
+          next.set(agentId, nextTimelineCursor);
+          return next;
+        });
+      }
+
+      if (
+        streamEvent.type === "turn_completed" ||
+        streamEvent.type === "turn_canceled" ||
+        streamEvent.type === "turn_failed"
+      ) {
+        setAgents(serverId, (prev) => {
+          const current = prev.get(agentId);
+          if (!current) {
+            return prev;
+          }
+          const optimisticStatus = deriveOptimisticLifecycleStatus(
+            current.status,
+            streamEvent
+          );
+          if (!optimisticStatus) {
+            return prev;
+          }
+          const nextUpdatedAtMs = Math.max(
+            current.updatedAt.getTime(),
+            parsedTimestamp.getTime()
+          );
+          const nextLastActivityAtMs = Math.max(
+            current.lastActivityAt.getTime(),
+            parsedTimestamp.getTime()
+          );
+          const next = new Map(prev);
           next.set(agentId, {
-            epoch,
-            startSeq: Math.min(current.startSeq, seq),
-            endSeq: Math.max(current.endSeq, seq),
+            ...current,
+            status: optimisticStatus,
+            updatedAt: new Date(nextUpdatedAtMs),
+            lastActivityAt: new Date(nextLastActivityAtMs),
           });
           return next;
         });
@@ -1266,6 +1504,7 @@ function SessionProviderInternal({
     setHasHydratedAgents,
     clearDraftInput,
     notifyAgentAttention,
+    requestCanonicalCatchUp,
     applyAgentUpdatePayload,
     applyTimelineResponse,
   ]);

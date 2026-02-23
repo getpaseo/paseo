@@ -3,6 +3,7 @@ export interface DeferredInit {
   resolve: () => void;
   reject: (error: Error) => void;
   timeoutId: ReturnType<typeof setTimeout> | null;
+  requestDirection: "tail" | "after";
 }
 
 const initPromises = new Map<string, DeferredInit>();
@@ -15,7 +16,10 @@ export function getInitDeferred(key: string): DeferredInit | undefined {
   return initPromises.get(key);
 }
 
-export function createInitDeferred(key: string): DeferredInit {
+export function createInitDeferred(
+  key: string,
+  requestDirection: "tail" | "after"
+): DeferredInit {
   let resolve!: () => void;
   let reject!: (error: Error) => void;
 
@@ -24,7 +28,13 @@ export function createInitDeferred(key: string): DeferredInit {
     reject = rej;
   });
 
-  const deferred: DeferredInit = { promise, resolve, reject, timeoutId: null };
+  const deferred: DeferredInit = {
+    promise,
+    resolve,
+    reject,
+    timeoutId: null,
+    requestDirection,
+  };
   initPromises.set(key, deferred);
   return deferred;
 }
