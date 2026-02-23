@@ -6,20 +6,13 @@ import { useClientActivity } from "@/hooks/use-client-activity";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import {
-  applyStreamEvent,
   generateMessageId,
-  hydrateStreamState,
-  reduceStreamUpdate,
   type StreamItem,
 } from "@/types/stream";
 import {
-  deriveOptimisticLifecycleStatus,
-} from "@/contexts/session-stream-lifecycle";
-import {
-  deriveBootstrapTailTimelinePolicy,
-  shouldResolveTimelineInit,
-} from "@/contexts/session-timeline-bootstrap-policy";
-import { classifySessionTimelineSeq } from "@/contexts/session-timeline-seq-gate";
+  processTimelineResponse,
+  processAgentStreamEvent,
+} from "@/contexts/session-stream-reducers";
 import type {
   ActivityLogPayload,
   AgentStreamEventPayload,
@@ -126,6 +119,48 @@ type AgentUpdatePayload = Extract<
 
 const getAgentIdFromUpdate = (update: AgentUpdatePayload): string =>
   update.kind === "remove" ? update.agentId : update.agent.id;
+
+// ---------------------------------------------------------------------------
+// Module-level pending agent updates buffer (scoped by serverId)
+// ---------------------------------------------------------------------------
+const pendingAgentUpdates = new Map<string, AgentUpdatePayload>();
+
+function pendingKey(serverId: string, agentId: string): string {
+  return `${serverId}:${agentId}`;
+}
+
+export function bufferPendingAgentUpdate(
+  serverId: string,
+  agentId: string,
+  update: AgentUpdatePayload
+): void {
+  pendingAgentUpdates.set(pendingKey(serverId, agentId), update);
+}
+
+export function flushPendingAgentUpdate(
+  serverId: string,
+  agentId: string
+): AgentUpdatePayload | undefined {
+  const key = pendingKey(serverId, agentId);
+  const update = pendingAgentUpdates.get(key);
+  pendingAgentUpdates.delete(key);
+  return update;
+}
+
+export function deletePendingAgentUpdate(
+  serverId: string,
+  agentId: string
+): void {
+  pendingAgentUpdates.delete(pendingKey(serverId, agentId));
+}
+
+export function clearPendingAgentUpdates(serverId: string): void {
+  for (const key of [...pendingAgentUpdates.keys()]) {
+    if (key.startsWith(`${serverId}:`)) {
+      pendingAgentUpdates.delete(key);
+    }
+  }
+}
 
 const createExplorerState = () => ({
   directories: new Map(),
@@ -283,9 +318,6 @@ function SessionProviderInternal({
   );
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
-  const pendingAgentUpdatesRef = useRef<Map<string, AgentUpdatePayload>>(
-    new Map()
-  );
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -398,7 +430,7 @@ function SessionProviderInternal({
   useEffect(() => {
     if (!isConnected) {
       flushAgentLastActivity();
-      pendingAgentUpdatesRef.current.clear();
+      clearPendingAgentUpdates(serverId);
       setInitializingAgents(serverId, new Map());
     }
   }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
@@ -408,7 +440,7 @@ function SessionProviderInternal({
       if (update.kind === "remove") {
         const agentId = update.agentId;
         previousAgentStatusRef.current.delete(agentId);
-        pendingAgentUpdatesRef.current.delete(agentId);
+        deletePendingAgentUpdate(serverId, agentId);
         clearArchiveAgentPending({ queryClient, serverId, agentId });
 
         setAgents(serverId, (prev) => {
@@ -678,155 +710,71 @@ function SessionProviderInternal({
       const agentId = payload.agentId;
       const initKey = getInitKey(serverId, agentId);
 
-      if (payload.error) {
-        setInitializingAgents(serverId, (prev) => {
-          if (prev.get(agentId) !== true) {
-            return prev;
-          }
-          const next = new Map(prev);
-          next.set(agentId, false);
-          return next;
-        });
-        rejectInitDeferred(initKey, new Error(payload.error));
-        return;
-      }
-
-      const timelineUnits = payload.entries.map((entry) => ({
-        seq: entry.seqStart,
-        event: {
-          type: "timeline",
-          provider: entry.provider,
-          item: entry.item,
-        } as AgentStreamEventPayload,
-        timestamp: new Date(entry.timestamp),
-      }));
-
-      const toHydratedEvents = (
-        units: typeof timelineUnits
-      ): Array<{ event: AgentStreamEventPayload; timestamp: Date }> =>
-        units.map(({ event, timestamp }) => ({ event, timestamp }));
-
+      // Read current store state
       const session = useSessionStore.getState().sessions[serverId];
       const isInitializing = session?.initializingAgents.get(agentId) === true;
       const activeInitDeferred = getInitDeferred(initKey);
       const hasActiveInitDeferred = Boolean(activeInitDeferred);
       const currentCursor = session?.agentTimelineCursor.get(agentId);
-      const bootstrapPolicy = deriveBootstrapTailTimelinePolicy({
-        direction: payload.direction,
-        reset: payload.reset,
-        epoch: payload.epoch,
-        endCursor: payload.endCursor,
+      const currentTail = session?.agentStreamTail.get(agentId) ?? [];
+      const currentHead = session?.agentStreamHead.get(agentId) ?? [];
+
+      // Call pure reducer
+      const result = processTimelineResponse({
+        payload,
+        currentTail,
+        currentHead,
+        currentCursor,
         isInitializing,
         hasActiveInitDeferred,
+        initRequestDirection: activeInitDeferred?.requestDirection ?? "tail",
       });
-      const replace = bootstrapPolicy.replace;
 
-      let nextCursor:
-        | { epoch: string; startSeq: number; endSeq: number }
-        | null
-        | undefined;
-      let shouldSetCursor = false;
-
-      if (replace) {
-        const hydrated = hydrateStreamState(toHydratedEvents(timelineUnits));
-        setAgentStreamTail(serverId, (prev) => {
-          const next = new Map(prev);
-          next.set(agentId, hydrated);
-          return next;
-        });
-        clearAgentStreamHead(serverId, agentId);
-
-        if (payload.startCursor && payload.endCursor) {
-          nextCursor = {
-            epoch: payload.epoch,
-            startSeq: payload.startCursor.seq,
-            endSeq: payload.endCursor.seq,
-          };
-          shouldSetCursor = true;
-        } else {
-          nextCursor = null;
-          shouldSetCursor = true;
-        }
-
-        if (bootstrapPolicy.catchUpCursor) {
-          requestCanonicalCatchUp(agentId, bootstrapPolicy.catchUpCursor);
-        }
-
-      } else if (timelineUnits.length > 0) {
-        const acceptedUnits: typeof timelineUnits = [];
-        let cursor = currentCursor;
-        let gapCursor: { epoch: string; endSeq: number } | null = null;
-
-        for (const unit of timelineUnits) {
-          const decision = classifySessionTimelineSeq({
-            cursor: cursor
-              ? { epoch: cursor.epoch, endSeq: cursor.endSeq }
-              : null,
-            epoch: payload.epoch,
-            seq: unit.seq,
-          });
-
-          if (decision === "gap") {
-            gapCursor = cursor
-              ? { epoch: cursor.epoch, endSeq: cursor.endSeq }
-              : null;
-            break;
-          }
-          if (decision === "drop_stale" || decision === "drop_epoch") {
-            continue;
-          }
-
-          acceptedUnits.push(unit);
-          if (decision === "init") {
-            cursor = {
-              epoch: payload.epoch,
-              startSeq: unit.seq,
-              endSeq: unit.seq,
-            };
-            continue;
-          }
-          if (!cursor) {
-            continue;
-          }
-          cursor = {
-            ...cursor,
-            endSeq: unit.seq,
-          };
-        }
-
-        if (acceptedUnits.length > 0) {
-          setAgentStreamTail(serverId, (prev) => {
+      // Apply error path
+      if (result.error) {
+        if (result.clearInitializing) {
+          setInitializingAgents(serverId, (prev) => {
+            if (prev.get(agentId) !== true) {
+              return prev;
+            }
             const next = new Map(prev);
-            const current = next.get(agentId) ?? [];
-            const updated = acceptedUnits.reduce<StreamItem[]>(
-              (state, { event, timestamp }) => reduceStreamUpdate(state, event, timestamp),
-              current
-            );
-            next.set(agentId, updated);
+            next.set(agentId, false);
             return next;
           });
         }
-
-        if (
-          cursor &&
-          (!currentCursor ||
-            currentCursor.epoch !== cursor.epoch ||
-            currentCursor.startSeq !== cursor.startSeq ||
-            currentCursor.endSeq !== cursor.endSeq)
-        ) {
-          nextCursor = cursor;
-          shouldSetCursor = true;
+        if (result.initResolution === "reject") {
+          rejectInitDeferred(initKey, new Error(result.error));
         }
+        return;
+      }
 
-        if (gapCursor) {
-          requestCanonicalCatchUp(agentId, gapCursor);
+      // Apply tail patch
+      if (result.tail !== currentTail) {
+        setAgentStreamTail(serverId, (prev) => {
+          const next = new Map(prev);
+          next.set(agentId, result.tail);
+          return next;
+        });
+      }
+
+      // Apply head patch
+      if (result.head !== currentHead) {
+        if (result.head.length === 0) {
+          clearAgentStreamHead(serverId, agentId);
+        } else {
+          setAgentStreamHead(serverId, (prev) => {
+            const next = new Map(prev);
+            next.set(agentId, result.head);
+            return next;
+          });
         }
       }
 
-      if (shouldSetCursor) {
+      // Apply cursor patch
+      if (result.cursorChanged) {
         setAgentTimelineCursor(serverId, (prev) => {
           const current = prev.get(agentId);
-          if (!nextCursor) {
+          if (!result.cursor) {
             if (!current) {
               return prev;
             }
@@ -836,35 +784,32 @@ function SessionProviderInternal({
           }
           if (
             current &&
-            current.epoch === nextCursor.epoch &&
-            current.startSeq === nextCursor.startSeq &&
-            current.endSeq === nextCursor.endSeq
+            current.epoch === result.cursor.epoch &&
+            current.startSeq === result.cursor.startSeq &&
+            current.endSeq === result.cursor.endSeq
           ) {
             return prev;
           }
           const next = new Map(prev);
-          next.set(agentId, nextCursor);
+          next.set(agentId, result.cursor);
           return next;
         });
       }
 
-      const deferredUpdate = pendingAgentUpdatesRef.current.get(agentId);
-      pendingAgentUpdatesRef.current.delete(agentId);
-      if (deferredUpdate) {
-        applyAgentUpdatePayload(deferredUpdate);
+      // Execute side effects
+      for (const effect of result.sideEffects) {
+        if (effect.type === "catch_up") {
+          requestCanonicalCatchUp(agentId, effect.cursor);
+        } else if (effect.type === "flush_pending_updates") {
+          const deferredUpdate = flushPendingAgentUpdate(serverId, agentId);
+          if (deferredUpdate) {
+            applyAgentUpdatePayload(deferredUpdate);
+          }
+        }
       }
 
-      const shouldResolveDeferredInit = shouldResolveTimelineInit({
-        hasActiveInitDeferred,
-        isInitializing,
-        initRequestDirection: activeInitDeferred?.requestDirection ?? "tail",
-        responseDirection: payload.direction,
-        reset: payload.reset,
-      });
-      const shouldClearInitializing =
-        shouldResolveDeferredInit || (isInitializing && !hasActiveInitDeferred);
-
-      if (shouldClearInitializing) {
+      // Apply init resolution
+      if (result.clearInitializing) {
         setInitializingAgents(serverId, (prev) => {
           if (prev.get(agentId) !== true) {
             return prev;
@@ -875,10 +820,10 @@ function SessionProviderInternal({
         });
       }
 
-      if (shouldResolveDeferredInit) {
+      if (result.initResolution === "resolve") {
         resolveInitDeferred(initKey);
       }
-      if (shouldClearInitializing) {
+      if (result.clearInitializing) {
         markAgentHistorySynchronized(serverId, agentId);
       }
     },
@@ -898,8 +843,8 @@ function SessionProviderInternal({
     if (isConnected) {
       return;
     }
-    pendingAgentUpdatesRef.current.clear();
-  }, [isConnected]);
+    clearPendingAgentUpdates(serverId);
+  }, [isConnected, serverId]);
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {
@@ -914,11 +859,11 @@ function SessionProviderInternal({
         Boolean(getInitDeferred(initKey));
 
       if (isSyncingHistory) {
-        pendingAgentUpdatesRef.current.set(agentId, update);
+        bufferPendingAgentUpdate(serverId, agentId, update);
         return;
       }
 
-      pendingAgentUpdatesRef.current.delete(agentId);
+      deletePendingAgentUpdate(serverId, agentId);
       applyAgentUpdatePayload(update);
     });
 
@@ -928,6 +873,7 @@ function SessionProviderInternal({
       const parsedTimestamp = new Date(timestamp);
       const streamEvent = event as AgentStreamEventPayload;
 
+      // Attention notification stays in React (not extractable to pure reducer)
       if (event.type === "attention_required") {
         if (event.shouldNotify) {
           notifyAgentAttention({
@@ -939,120 +885,81 @@ function SessionProviderInternal({
         }
       }
 
+      // Read current store state
       const session = useSessionStore.getState().sessions[serverId];
       const currentTail = session?.agentStreamTail.get(agentId) ?? [];
       const currentHead = session?.agentStreamHead.get(agentId) ?? [];
       const currentCursor = session?.agentTimelineCursor.get(agentId);
-
-      let shouldApplyStreamEvent = true;
-      let nextTimelineCursor: { epoch: string; startSeq: number; endSeq: number } | null = null;
-
-      if (
-        streamEvent.type === "timeline" &&
-        typeof seq === "number" &&
-        typeof epoch === "string"
-      ) {
-        const decision = classifySessionTimelineSeq({
-          cursor: currentCursor
-            ? { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq }
-            : null,
-          epoch,
-          seq,
-        });
-
-        if (decision === "init") {
-          nextTimelineCursor = { epoch, startSeq: seq, endSeq: seq };
-        } else if (decision === "accept") {
-          nextTimelineCursor = {
-            ...(currentCursor ?? { epoch, startSeq: seq, endSeq: seq }),
-            epoch,
-            endSeq: seq,
-          };
-        } else if (decision === "gap") {
-          shouldApplyStreamEvent = false;
-          if (currentCursor) {
-            requestCanonicalCatchUp(agentId, {
-              epoch: currentCursor.epoch,
-              endSeq: currentCursor.endSeq,
-            });
+      const currentAgentEntry = session?.agents.get(agentId);
+      const currentAgent = currentAgentEntry
+        ? {
+            status: currentAgentEntry.status,
+            updatedAt: currentAgentEntry.updatedAt,
+            lastActivityAt: currentAgentEntry.lastActivityAt,
           }
-        } else {
-          shouldApplyStreamEvent = false;
-        }
-      }
+        : null;
 
-      const { tail, head, changedTail, changedHead } = shouldApplyStreamEvent
-        ? applyStreamEvent({
-            tail: currentTail,
-            head: currentHead,
-            event: streamEvent,
-            timestamp: parsedTimestamp,
-          })
-        : {
-            tail: currentTail,
-            head: currentHead,
-            changedTail: false,
-            changedHead: false,
-          };
+      // Call pure reducer
+      const result = processAgentStreamEvent({
+        event: streamEvent,
+        seq,
+        epoch,
+        currentTail,
+        currentHead,
+        currentCursor,
+        currentAgent,
+        timestamp: parsedTimestamp,
+      });
 
-      if (changedTail || changedHead) {
+      // Apply tail/head patches
+      if (result.changedTail || result.changedHead) {
         setAgentStreamState(serverId, agentId, {
-          ...(changedTail ? { tail } : {}),
-          ...(changedHead ? { head } : {}),
+          ...(result.changedTail ? { tail: result.tail } : {}),
+          ...(result.changedHead ? { head: result.head } : {}),
         });
       }
 
-      if (nextTimelineCursor) {
+      // Apply cursor patch
+      if (result.cursorChanged && result.cursor) {
         setAgentTimelineCursor(serverId, (prev) => {
           const current = prev.get(agentId);
           if (
             current &&
-            current.epoch === nextTimelineCursor.epoch &&
-            current.startSeq === nextTimelineCursor.startSeq &&
-            current.endSeq === nextTimelineCursor.endSeq
+            current.epoch === result.cursor!.epoch &&
+            current.startSeq === result.cursor!.startSeq &&
+            current.endSeq === result.cursor!.endSeq
           ) {
             return prev;
           }
           const next = new Map(prev);
-          next.set(agentId, nextTimelineCursor);
+          next.set(agentId, result.cursor!);
           return next;
         });
       }
 
-      if (
-        streamEvent.type === "turn_completed" ||
-        streamEvent.type === "turn_canceled" ||
-        streamEvent.type === "turn_failed"
-      ) {
+      // Apply agent patch (optimistic lifecycle)
+      if (result.agentChanged && result.agent) {
         setAgents(serverId, (prev) => {
           const current = prev.get(agentId);
           if (!current) {
             return prev;
           }
-          const optimisticStatus = deriveOptimisticLifecycleStatus(
-            current.status,
-            streamEvent
-          );
-          if (!optimisticStatus) {
-            return prev;
-          }
-          const nextUpdatedAtMs = Math.max(
-            current.updatedAt.getTime(),
-            parsedTimestamp.getTime()
-          );
-          const nextLastActivityAtMs = Math.max(
-            current.lastActivityAt.getTime(),
-            parsedTimestamp.getTime()
-          );
           const next = new Map(prev);
           next.set(agentId, {
             ...current,
-            status: optimisticStatus,
-            updatedAt: new Date(nextUpdatedAtMs),
-            lastActivityAt: new Date(nextLastActivityAtMs),
+            status: result.agent!.status,
+            updatedAt: result.agent!.updatedAt,
+            lastActivityAt: result.agent!.lastActivityAt,
           });
           return next;
         });
+      }
+
+      // Execute side effects
+      for (const effect of result.sideEffects) {
+        if (effect.type === "catch_up") {
+          requestCanonicalCatchUp(agentId, effect.cursor);
+        }
       }
 
       // NOTE: We don't update lastActivityAt on every stream event to prevent
@@ -1368,7 +1275,7 @@ function SessionProviderInternal({
       }
       const { agentId } = message.payload;
       console.log("[Session] Agent deleted:", agentId);
-      pendingAgentUpdatesRef.current.delete(agentId);
+      deletePendingAgentUpdate(serverId, agentId);
       clearArchiveAgentPending({ queryClient, serverId, agentId });
 
       setAgents(serverId, (prev) => {
