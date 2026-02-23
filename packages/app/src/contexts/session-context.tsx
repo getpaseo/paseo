@@ -803,16 +803,22 @@ function SessionProviderInternal({
       ) {
         setAgentTimelineCursor(serverId, (prev) => {
           const current = prev.get(agentId);
-          const next = new Map(prev);
-          if (!current || current.epoch !== epoch) {
-            next.set(agentId, { epoch, startSeq: seq, endSeq: seq });
+          if (current && current.epoch === epoch) {
+            // Fast-path: seq only extends the range during streaming.
+            // Skip the Map copy when nothing actually changes.
+            if (seq >= current.startSeq && seq <= current.endSeq) {
+              return prev;
+            }
+            const next = new Map(prev);
+            next.set(agentId, {
+              epoch,
+              startSeq: Math.min(current.startSeq, seq),
+              endSeq: Math.max(current.endSeq, seq),
+            });
             return next;
           }
-          next.set(agentId, {
-            epoch,
-            startSeq: Math.min(current.startSeq, seq),
-            endSeq: Math.max(current.endSeq, seq),
-          });
+          const next = new Map(prev);
+          next.set(agentId, { epoch, startSeq: seq, endSeq: seq });
           return next;
         });
       }

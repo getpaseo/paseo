@@ -546,11 +546,15 @@ export const useSessionStore = create<SessionStore>()(
           return prev;
         }
         logSessionStoreUpdate("setFocusedAgentId", serverId, { agentId });
+
         return {
           ...prev,
           sessions: {
             ...prev.sessions,
-            [serverId]: { ...session, focusedAgentId: agentId },
+            [serverId]: {
+              ...session,
+              focusedAgentId: agentId,
+            },
           },
         };
       });
@@ -563,7 +567,8 @@ export const useSessionStore = create<SessionStore>()(
         if (!session) {
           return prev;
         }
-        const nextMessages = typeof messages === "function" ? messages(session.messages) : messages;
+        const nextMessages =
+          typeof messages === "function" ? messages(session.messages) : messages;
         if (session.messages === nextMessages) {
           return prev;
         }

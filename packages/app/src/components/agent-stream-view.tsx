@@ -636,6 +636,14 @@ export function AgentStreamView({
     ]
   );
 
+  // Keep maintainVisibleContentPosition shape and values stable to avoid
+  // reconfiguring RN's internal anchoring logic during streaming transitions.
+  // We rely on our own follow-tail logic, so keep threshold at 0.
+  const maintainVisibleContentPosition = useMemo(
+    () => ({ minIndexForVisible: 0, autoscrollToTopThreshold: 0 }),
+    []
+  );
+
   // FlatList's ListHeaderComponent renders at the *bottom* when inverted.
   // Without explicit spacing, the newest "head" rows (like Thinking/Setup tool badges)
   // can butt up directly against the most recent stream item.
@@ -709,12 +717,7 @@ export function AgentStreamView({
               ListEmptyComponent={listEmptyComponent}
               ListHeaderComponent={listHeaderComponent}
               extraData={flatListExtraData}
-              maintainVisibleContentPosition={
-                // Disable when streaming and user is at bottom - we handle auto-scroll ourselves
-                agent.status === "running" && isNearBottom
-                  ? undefined
-                  : { minIndexForVisible: 0, autoscrollToTopThreshold: 40 }
-              }
+              maintainVisibleContentPosition={maintainVisibleContentPosition}
               initialNumToRender={12}
               windowSize={10}
               scrollEnabled={Platform.OS !== "web" || expandedInlineToolCallIds.size === 0}
