@@ -192,7 +192,7 @@ export interface ProjectGroup {
   projectKey: string;
   projectName: string;
   agents: AggregatedAgent[];
-  /** Number of truly active agents (running or requires attention) */
+  /** Number of truly active agents (running, needs input, or requires attention) */
   activeCount: number;
   /** Total agents before any limit was applied */
   totalCount: number;
@@ -222,11 +222,11 @@ const MAX_INACTIVE_PER_PROJECT = 5;
 
 /**
  * Groups agents into active (by project) and inactive (by date) sections.
- * Active = running, requires attention, or had activity within the grace period (24 hours).
+ * Active = running, needs input, requires attention, or had activity within the grace period.
  *
  * Within each project group:
- * - All truly active agents (running/requires attention) are always shown
- * - Recently active (within grace period but not running) are limited to MAX_INACTIVE_PER_PROJECT
+ * - All truly active agents (running/needs input/requires attention) are always shown
+ * - Recently active (within grace period but not truly active) are limited to MAX_INACTIVE_PER_PROJECT
  */
 export function groupAgents(
   agents: AggregatedAgent[],
@@ -244,7 +244,9 @@ export function groupAgents(
     }
 
     const isRunningOrAttention =
-      agent.status === "running" || agent.requiresAttention;
+      agent.status === "running" ||
+      agent.requiresAttention ||
+      (agent.pendingPermissionCount ?? 0) > 0;
     const ageDiff = now - agent.lastActivityAt.getTime();
     const isRecentlyActive = ageDiff < ACTIVE_GRACE_PERIOD_MS;
     const isActive = isRunningOrAttention || isRecentlyActive;
@@ -272,7 +274,9 @@ export function groupAgents(
     };
 
     const isTrulyActive =
-      agent.status === "running" || agent.requiresAttention;
+      agent.status === "running" ||
+      agent.requiresAttention ||
+      (agent.pendingPermissionCount ?? 0) > 0;
     if (isTrulyActive) {
       existing.trulyActive.push(agent);
     } else {

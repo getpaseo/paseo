@@ -26,6 +26,7 @@ function toAggregatedAgent(params: {
     lastActivityAt: source.lastActivityAt,
     cwd: source.cwd,
     provider: source.provider,
+    pendingPermissionCount: source.pendingPermissions.length,
     requiresAttention: source.requiresAttention,
     attentionReason: source.attentionReason,
     attentionTimestamp: source.attentionTimestamp ?? null,

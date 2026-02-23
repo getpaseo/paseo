@@ -40,6 +40,10 @@ function isMatch(agent: AggregatedAgent, query: string): boolean {
 }
 
 function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
+  const leftNeedsInput = (left.pendingPermissionCount ?? 0) > 0 ? 1 : 0;
+  const rightNeedsInput = (right.pendingPermissionCount ?? 0) > 0 ? 1 : 0;
+  if (leftNeedsInput !== rightNeedsInput) return rightNeedsInput - leftNeedsInput;
+
   const leftAttention = left.requiresAttention ? 1 : 0;
   const rightAttention = right.requiresAttention ? 1 : 0;
   if (leftAttention !== rightAttention) return rightAttention - leftAttention;

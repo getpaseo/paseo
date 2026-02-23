@@ -924,6 +924,7 @@ function AgentScreenContent({
         focusedAgentId,
         isConnected,
         requiresAttention: agent?.requiresAttention,
+        attentionReason: agent?.attentionReason,
       })
     ) {
       return;

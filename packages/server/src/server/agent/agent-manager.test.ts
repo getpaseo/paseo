@@ -1699,6 +1699,171 @@ describe("AgentManager", () => {
     expect(attentionCalls).toHaveLength(0);
   });
 
+  test("clearAgentAttention on errored agent stays cleared until a new error transition", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-error-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class FailingSession extends TestAgentSession {
+      private attempt = 0;
+
+      async *stream(): AsyncGenerator<AgentStreamEvent> {
+        this.attempt += 1;
+        yield { type: "turn_started", provider: this.provider };
+        throw new Error(`boom-${this.attempt}`);
+      }
+    }
+
+    class FailingClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new FailingSession(config);
+      }
+
+      async resumeSession(config?: Partial<AgentSessionConfig>): Promise<AgentSession> {
+        return new FailingSession({
+          provider: "codex",
+          cwd: config?.cwd ?? process.cwd(),
+        });
+      }
+    }
+
+    const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+    const manager = new AgentManager({
+      clients: {
+        codex: new FailingClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000130",
+      onAgentAttention: ({ reason }) => {
+        attentionReasons.push(reason);
+      },
+    });
+
+    const agent = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Attention transition test",
+    });
+
+    await expect(manager.runAgent(agent.id, "fail once")).rejects.toThrow("boom-1");
+
+    const afterFirstFailure = manager.getAgent(agent.id);
+    expect(afterFirstFailure?.lifecycle).toBe("error");
+    expect(afterFirstFailure?.attention.requiresAttention).toBe(true);
+    expect(afterFirstFailure?.attention).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+
+    await manager.clearAgentAttention(agent.id);
+    manager.notifyAgentState(agent.id);
+
+    const afterClear = manager.getAgent(agent.id);
+    expect(afterClear?.lifecycle).toBe("error");
+    expect(afterClear?.attention).toEqual({ requiresAttention: false });
+
+    await expect(manager.runAgent(agent.id, "fail again")).rejects.toThrow("boom-2");
+
+    const afterSecondFailure = manager.getAgent(agent.id);
+    expect(afterSecondFailure?.lifecycle).toBe("error");
+    expect(afterSecondFailure?.attention).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    expect(attentionReasons).toEqual(["error", "error"]);
+  });
+
+  test("permission request notifies once without forcing unread attention state", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-permission-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class PermissionSession extends TestAgentSession {
+      async *stream(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: "turn_started", provider: this.provider };
+        yield {
+          type: "permission_requested",
+          provider: this.provider,
+          request: {
+            id: "perm-1",
+            provider: this.provider,
+            kind: "tool",
+            name: "Read file",
+          },
+        };
+        yield {
+          type: "permission_resolved",
+          provider: this.provider,
+          requestId: "perm-1",
+          resolution: { behavior: "allow" },
+        };
+        yield { type: "turn_completed", provider: this.provider };
+      }
+    }
+
+    class PermissionClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new PermissionSession(config);
+      }
+
+      async resumeSession(config?: Partial<AgentSessionConfig>): Promise<AgentSession> {
+        return new PermissionSession({
+          provider: "codex",
+          cwd: config?.cwd ?? process.cwd(),
+        });
+      }
+    }
+
+    const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+    const manager = new AgentManager({
+      clients: {
+        codex: new PermissionClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000131",
+      onAgentAttention: ({ reason }) => {
+        attentionReasons.push(reason);
+      },
+    });
+
+    const agent = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Permission transition test",
+    });
+
+    const stream = manager.streamAgent(agent.id, "permission flow");
+    await stream.next(); // turn_started
+    await stream.next(); // permission_requested
+
+    const withPermissionPending = manager.getAgent(agent.id);
+    expect(withPermissionPending?.pendingPermissions.size).toBe(1);
+    expect(withPermissionPending?.attention).toEqual({ requiresAttention: false });
+
+    // Drain the rest of the stream to close cleanly.
+    while (!(await stream.next()).done) {
+      // no-op
+    }
+
+    expect(attentionReasons).toContain("permission");
+  });
+
   test("respondToPermission updates currentModeId after plan approval", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");

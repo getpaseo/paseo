@@ -10,6 +10,7 @@ describe("shouldClearAgentAttentionOnView", () => {
         focusedAgentId: "agent-1",
         isConnected: true,
         requiresAttention: true,
+        attentionReason: "finished",
       })
     ).toBe(true);
   });
@@ -21,6 +22,7 @@ describe("shouldClearAgentAttentionOnView", () => {
         focusedAgentId: "agent-1",
         isConnected: false,
         requiresAttention: true,
+        attentionReason: "finished",
       })
     ).toBe(false);
   });
@@ -32,6 +34,7 @@ describe("shouldClearAgentAttentionOnView", () => {
         focusedAgentId: "agent-2",
         isConnected: true,
         requiresAttention: true,
+        attentionReason: "finished",
       })
     ).toBe(false);
   });
@@ -43,6 +46,7 @@ describe("shouldClearAgentAttentionOnView", () => {
         focusedAgentId: "agent-1",
         isConnected: true,
         requiresAttention: false,
+        attentionReason: null,
       })
     ).toBe(false);
   });
@@ -54,6 +58,19 @@ describe("shouldClearAgentAttentionOnView", () => {
         focusedAgentId: "agent-1",
         isConnected: true,
         requiresAttention: true,
+        attentionReason: "finished",
+      })
+    ).toBe(false);
+  });
+
+  it("returns false for permission-shaped attention", () => {
+    expect(
+      shouldClearAgentAttentionOnView({
+        agentId: "agent-1",
+        focusedAgentId: "agent-1",
+        isConnected: true,
+        requiresAttention: true,
+        attentionReason: "permission",
       })
     ).toBe(false);
   });

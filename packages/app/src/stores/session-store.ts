@@ -995,6 +995,7 @@ export const useSessionStore = create<SessionStore>()(
           lastActivityAt,
           cwd: agent.cwd,
           provider: agent.provider,
+          pendingPermissionCount: agent.pendingPermissions.length,
           requiresAttention: agent.requiresAttention ?? false,
           attentionReason: agent.attentionReason ?? null,
           attentionTimestamp: agent.attentionTimestamp ?? null,

@@ -185,6 +185,7 @@ function SidebarAgentRow({
   const relativeCreatedAt = formatTimeAgo(entry.agent.createdAt);
   const isActive = isSidebarActiveAgent({
     status: entry.agent.status,
+    pendingPermissionCount: entry.agent.pendingPermissionCount,
     requiresAttention: entry.agent.requiresAttention,
     attentionReason: entry.agent.attentionReason,
   });

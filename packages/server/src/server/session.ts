@@ -4894,9 +4894,9 @@ export class Session {
   }
 
   private getStatusPriority(agent: AgentSnapshotPayload): number {
-    const requiresAttention = agent.requiresAttention ?? false
     const attentionReason = agent.attentionReason ?? null
-    if (requiresAttention && attentionReason === 'permission') {
+    const hasPendingPermission = (agent.pendingPermissions?.length ?? 0) > 0
+    if (hasPendingPermission || attentionReason === 'permission') {
       return 0
     }
     if (agent.status === 'error' || attentionReason === 'error') {

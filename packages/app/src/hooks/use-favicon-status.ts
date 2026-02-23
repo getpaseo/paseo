@@ -30,7 +30,8 @@ function deriveFaviconStatus(
     return "running";
   }
   const hasAttention = agents.some((agent) => agent.requiresAttention);
-  if (hasAttention) {
+  const hasNeedsInput = agents.some((agent) => (agent.pendingPermissionCount ?? 0) > 0);
+  if (hasAttention || hasNeedsInput) {
     return "attention";
   }
   return "none";
@@ -41,8 +42,8 @@ function deriveMacDockBadgeCount(
 ): number | undefined {
   const attentionCount = agents.filter(
     (agent) =>
-      agent.requiresAttention &&
-      (agent.attentionReason === "permission" || agent.attentionReason === "finished")
+      (agent.pendingPermissionCount ?? 0) > 0 ||
+      (agent.requiresAttention && agent.attentionReason === "finished")
   ).length;
   if (attentionCount > 0) {
     return attentionCount;

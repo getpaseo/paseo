@@ -77,6 +77,7 @@ function applySidebarDefaultOrdering(
   for (const entry of entries) {
     const bucket = deriveSidebarStateBucket({
       status: entry.agent.status,
+      pendingPermissionCount: entry.agent.pendingPermissionCount,
       requiresAttention: entry.agent.requiresAttention,
       attentionReason: entry.agent.attentionReason,
     });
@@ -135,6 +136,7 @@ function toAggregatedAgent(params: {
     lastActivityAt: params.lastActivityAt,
     cwd: source.cwd,
     provider: source.provider,
+    pendingPermissionCount: source.pendingPermissions.length,
     requiresAttention: source.requiresAttention,
     attentionReason: source.attentionReason,
     attentionTimestamp: source.attentionTimestamp ?? null,
@@ -239,6 +241,7 @@ export function useSidebarAgentsList(options?: {
       const existing = byProject.get(entry.project.projectKey);
       const isActive = isSidebarActiveAgent({
         status: entry.agent.status,
+        pendingPermissionCount: entry.agent.pendingPermissionCount,
         requiresAttention: entry.agent.requiresAttention,
         attentionReason: entry.agent.attentionReason,
       });

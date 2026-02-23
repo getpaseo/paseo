@@ -64,6 +64,7 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
           lastActivityAt: agent.lastActivityAt,
           cwd: agent.cwd,
           provider: agent.provider,
+          pendingPermissionCount: agent.pendingPermissions.length,
           requiresAttention: agent.requiresAttention,
           attentionReason: agent.attentionReason,
           attentionTimestamp: agent.attentionTimestamp,

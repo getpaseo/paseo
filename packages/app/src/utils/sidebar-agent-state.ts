@@ -16,10 +16,16 @@ export type SidebarStateBucket =
 
 export function deriveSidebarStateBucket(input: {
   status: AgentLifecycleStatus;
+  pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: SidebarAttentionReason;
 }): SidebarStateBucket {
-  if (input.requiresAttention && input.attentionReason === "permission") {
+  if ((input.pendingPermissionCount ?? 0) > 0) {
+    return "needs_input";
+  }
+  // Legacy fallback for snapshots persisted before permission state was decoupled
+  // from unread attention.
+  if (input.attentionReason === "permission") {
     return "needs_input";
   }
   if (input.status === "error" || input.attentionReason === "error") {
@@ -37,6 +43,7 @@ export function deriveSidebarStateBucket(input: {
 
 export function isSidebarActiveAgent(input: {
   status: AgentLifecycleStatus;
+  pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: SidebarAttentionReason;
 }): boolean {

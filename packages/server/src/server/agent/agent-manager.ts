@@ -1776,7 +1776,13 @@ export class AgentManager {
         }
         break;
       case "permission_requested":
-        agent.pendingPermissions.set(event.request.id, event.request);
+        {
+          const hadPendingPermissions = agent.pendingPermissions.size > 0;
+          agent.pendingPermissions.set(event.request.id, event.request);
+          if (!hadPendingPermissions && !agent.internal) {
+            this.broadcastAgentAttention(agent, "permission");
+          }
+        }
         this.emitState(agent);
         break;
       case "permission_resolved":
@@ -1849,7 +1855,7 @@ export class AgentManager {
   }
 
   private emitState(agent: ManagedAgent): void {
-    // Check if attention should be set based on status change
+    // Keep attention as an edge-triggered unread signal, not a level signal.
     this.checkAndSetAttention(agent);
 
     this.dispatch({
@@ -1888,25 +1894,13 @@ export class AgentManager {
     }
 
     // Check if agent entered error state
-    if (currentStatus === "error") {
+    if (previousStatus !== "error" && currentStatus === "error") {
       agent.attention = {
         requiresAttention: true,
         attentionReason: "error",
         attentionTimestamp: new Date(),
       };
       this.broadcastAgentAttention(agent, "error");
-      this.enqueueBackgroundPersist(agent);
-      return;
-    }
-
-    // Check if agent has pending permissions
-    if (agent.pendingPermissions.size > 0) {
-      agent.attention = {
-        requiresAttention: true,
-        attentionReason: "permission",
-        attentionTimestamp: new Date(),
-      };
-      this.broadcastAgentAttention(agent, "permission");
       this.enqueueBackgroundPersist(agent);
       return;
     }

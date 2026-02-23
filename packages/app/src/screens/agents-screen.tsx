@@ -29,6 +29,11 @@ export function AgentsScreen({ serverId }: { serverId: string }) {
 
   const sortedAgents = useMemo(() => {
     return [...agents].sort((a, b) => {
+      const aNeedsInput = (a.pendingPermissionCount ?? 0) > 0;
+      const bNeedsInput = (b.pendingPermissionCount ?? 0) > 0;
+      if (aNeedsInput && !bNeedsInput) return -1;
+      if (!aNeedsInput && bNeedsInput) return 1;
+
       if (a.requiresAttention && !b.requiresAttention) return -1;
       if (!a.requiresAttention && b.requiresAttention) return 1;
       return 0;
