@@ -6,12 +6,13 @@ import { useClientActivity } from "@/hooks/use-client-activity";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import {
-  applyStreamEvent,
   generateMessageId,
-  hydrateStreamState,
-  reduceStreamUpdate,
   type StreamItem,
 } from "@/types/stream";
+import {
+  processTimelineResponse,
+  processAgentStreamEvent,
+} from "@/contexts/session-stream-reducers";
 import type {
   ActivityLogPayload,
   AgentStreamEventPayload,
@@ -35,7 +36,12 @@ import {
 import { useDraftStore } from "@/stores/draft-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import { sendOsNotification } from "@/utils/os-notifications";
-import { getInitKey, getInitDeferred, resolveInitDeferred, rejectInitDeferred, createInitDeferred } from "@/utils/agent-initialization";
+import {
+  getInitKey,
+  getInitDeferred,
+  resolveInitDeferred,
+  rejectInitDeferred,
+} from "@/utils/agent-initialization";
 import { encodeImages } from "@/utils/encode-images";
 import {
   derivePendingPermissionKey,
@@ -113,6 +119,48 @@ type AgentUpdatePayload = Extract<
 
 const getAgentIdFromUpdate = (update: AgentUpdatePayload): string =>
   update.kind === "remove" ? update.agentId : update.agent.id;
+
+// ---------------------------------------------------------------------------
+// Module-level pending agent updates buffer (scoped by serverId)
+// ---------------------------------------------------------------------------
+const pendingAgentUpdates = new Map<string, AgentUpdatePayload>();
+
+function pendingKey(serverId: string, agentId: string): string {
+  return `${serverId}:${agentId}`;
+}
+
+export function bufferPendingAgentUpdate(
+  serverId: string,
+  agentId: string,
+  update: AgentUpdatePayload
+): void {
+  pendingAgentUpdates.set(pendingKey(serverId, agentId), update);
+}
+
+export function flushPendingAgentUpdate(
+  serverId: string,
+  agentId: string
+): AgentUpdatePayload | undefined {
+  const key = pendingKey(serverId, agentId);
+  const update = pendingAgentUpdates.get(key);
+  pendingAgentUpdates.delete(key);
+  return update;
+}
+
+export function deletePendingAgentUpdate(
+  serverId: string,
+  agentId: string
+): void {
+  pendingAgentUpdates.delete(pendingKey(serverId, agentId));
+}
+
+export function clearPendingAgentUpdates(serverId: string): void {
+  for (const key of [...pendingAgentUpdates.keys()]) {
+    if (key.startsWith(`${serverId}:`)) {
+      pendingAgentUpdates.delete(key);
+    }
+  }
+}
 
 const createExplorerState = () => ({
   directories: new Map(),
@@ -270,9 +318,6 @@ function SessionProviderInternal({
   );
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
-  const pendingAgentUpdatesRef = useRef<Map<string, AgentUpdatePayload>>(
-    new Map()
-  );
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -385,7 +430,7 @@ function SessionProviderInternal({
   useEffect(() => {
     if (!isConnected) {
       flushAgentLastActivity();
-      pendingAgentUpdatesRef.current.clear();
+      clearPendingAgentUpdates(serverId);
       setInitializingAgents(serverId, new Map());
     }
   }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
@@ -395,7 +440,7 @@ function SessionProviderInternal({
       if (update.kind === "remove") {
         const agentId = update.agentId;
         previousAgentStatusRef.current.delete(agentId);
-        pendingAgentUpdatesRef.current.delete(agentId);
+        deletePendingAgentUpdate(serverId, agentId);
         clearArchiveAgentPending({ queryClient, serverId, agentId });
 
         setAgents(serverId, (prev) => {
@@ -635,6 +680,26 @@ function SessionProviderInternal({
     },
   });
 
+  const requestCanonicalCatchUp = useCallback(
+    (agentId: string, cursor: { epoch: string; endSeq: number }) => {
+      void client
+        .fetchAgentTimeline(agentId, {
+          direction: "after",
+          cursor: { epoch: cursor.epoch, seq: cursor.endSeq },
+          limit: 0,
+          projection: "canonical",
+        })
+        .catch((error) => {
+          console.warn(
+            "[Session] failed to fetch canonical catch-up timeline",
+            agentId,
+            error
+          );
+        });
+    },
+    [client]
+  );
+
   const applyTimelineResponse = useCallback(
     (
       payload: Extract<
@@ -645,7 +710,106 @@ function SessionProviderInternal({
       const agentId = payload.agentId;
       const initKey = getInitKey(serverId, agentId);
 
-      if (payload.error) {
+      // Read current store state
+      const session = useSessionStore.getState().sessions[serverId];
+      const isInitializing = session?.initializingAgents.get(agentId) === true;
+      const activeInitDeferred = getInitDeferred(initKey);
+      const hasActiveInitDeferred = Boolean(activeInitDeferred);
+      const currentCursor = session?.agentTimelineCursor.get(agentId);
+      const currentTail = session?.agentStreamTail.get(agentId) ?? [];
+      const currentHead = session?.agentStreamHead.get(agentId) ?? [];
+
+      // Call pure reducer
+      const result = processTimelineResponse({
+        payload,
+        currentTail,
+        currentHead,
+        currentCursor,
+        isInitializing,
+        hasActiveInitDeferred,
+        initRequestDirection: activeInitDeferred?.requestDirection ?? "tail",
+      });
+
+      // Apply error path
+      if (result.error) {
+        if (result.clearInitializing) {
+          setInitializingAgents(serverId, (prev) => {
+            if (prev.get(agentId) !== true) {
+              return prev;
+            }
+            const next = new Map(prev);
+            next.set(agentId, false);
+            return next;
+          });
+        }
+        if (result.initResolution === "reject") {
+          rejectInitDeferred(initKey, new Error(result.error));
+        }
+        return;
+      }
+
+      // Apply tail patch
+      if (result.tail !== currentTail) {
+        setAgentStreamTail(serverId, (prev) => {
+          const next = new Map(prev);
+          next.set(agentId, result.tail);
+          return next;
+        });
+      }
+
+      // Apply head patch
+      if (result.head !== currentHead) {
+        if (result.head.length === 0) {
+          clearAgentStreamHead(serverId, agentId);
+        } else {
+          setAgentStreamHead(serverId, (prev) => {
+            const next = new Map(prev);
+            next.set(agentId, result.head);
+            return next;
+          });
+        }
+      }
+
+      // Apply cursor patch
+      if (result.cursorChanged) {
+        setAgentTimelineCursor(serverId, (prev) => {
+          const current = prev.get(agentId);
+          if (!result.cursor) {
+            if (!current) {
+              return prev;
+            }
+            const next = new Map(prev);
+            next.delete(agentId);
+            return next;
+          }
+          if (
+            current &&
+            current.epoch === result.cursor.epoch &&
+            current.startSeq === result.cursor.startSeq &&
+            current.endSeq === result.cursor.endSeq
+          ) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.set(agentId, result.cursor);
+          return next;
+        });
+      }
+
+      // Execute side effects
+      for (const effect of result.sideEffects) {
+        if (effect.type === "catch_up") {
+          requestCanonicalCatchUp(agentId, effect.cursor);
+        } else if (effect.type === "flush_pending_updates") {
+          const deferredUpdate = flushPendingAgentUpdate(serverId, agentId);
+          if (deferredUpdate) {
+            applyAgentUpdatePayload(deferredUpdate);
+          }
+        }
+      }
+
+      // Apply init resolution
+      if (result.clearInitializing) {
         setInitializingAgents(serverId, (prev) => {
           if (prev.get(agentId) !== true) {
             return prev;
@@ -654,80 +818,20 @@ function SessionProviderInternal({
           next.set(agentId, false);
           return next;
         });
-        rejectInitDeferred(initKey, new Error(payload.error));
-        return;
       }
 
-      const hydratedEvents: Array<{
-        event: AgentStreamEventPayload;
-        timestamp: Date;
-      }> = payload.entries.map((entry) => ({
-        event: {
-          type: "timeline",
-          provider: entry.provider,
-          item: entry.item,
-        },
-        timestamp: new Date(entry.timestamp),
-      }));
-
-      const replace = payload.reset || payload.direction !== "after";
-      if (replace) {
-        const hydrated = hydrateStreamState(hydratedEvents);
-        setAgentStreamTail(serverId, (prev) => {
-          const next = new Map(prev);
-          next.set(agentId, hydrated);
-          return next;
-        });
-        clearAgentStreamHead(serverId, agentId);
-      } else if (hydratedEvents.length > 0) {
-        setAgentStreamTail(serverId, (prev) => {
-          const next = new Map(prev);
-          const current = next.get(agentId) ?? [];
-          const updated = hydratedEvents.reduce<StreamItem[]>(
-            (state, { event, timestamp }) => reduceStreamUpdate(state, event, timestamp),
-            current
-          );
-          next.set(agentId, updated);
-          return next;
-        });
+      if (result.initResolution === "resolve") {
+        resolveInitDeferred(initKey);
       }
-
-      setAgentTimelineCursor(serverId, (prev) => {
-        const next = new Map(prev);
-        if (payload.startCursor && payload.endCursor) {
-          next.set(agentId, {
-            epoch: payload.epoch,
-            startSeq: payload.startCursor.seq,
-            endSeq: payload.endCursor.seq,
-          });
-        } else if (payload.reset) {
-          next.delete(agentId);
-        }
-        return next;
-      });
-
-      const deferredUpdate = pendingAgentUpdatesRef.current.get(agentId);
-      pendingAgentUpdatesRef.current.delete(agentId);
-      if (deferredUpdate) {
-        applyAgentUpdatePayload(deferredUpdate);
+      if (result.clearInitializing) {
+        markAgentHistorySynchronized(serverId, agentId);
       }
-
-      setInitializingAgents(serverId, (prev) => {
-        if (prev.get(agentId) !== true) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(agentId, false);
-        return next;
-      });
-
-      resolveInitDeferred(initKey);
-      markAgentHistorySynchronized(serverId, agentId);
     },
     [
       applyAgentUpdatePayload,
       clearAgentStreamHead,
       markAgentHistorySynchronized,
+      requestCanonicalCatchUp,
       serverId,
       setAgentStreamTail,
       setAgentTimelineCursor,
@@ -739,8 +843,8 @@ function SessionProviderInternal({
     if (isConnected) {
       return;
     }
-    pendingAgentUpdatesRef.current.clear();
-  }, [isConnected]);
+    clearPendingAgentUpdates(serverId);
+  }, [isConnected, serverId]);
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {
@@ -755,11 +859,11 @@ function SessionProviderInternal({
         Boolean(getInitDeferred(initKey));
 
       if (isSyncingHistory) {
-        pendingAgentUpdatesRef.current.set(agentId, update);
+        bufferPendingAgentUpdate(serverId, agentId, update);
         return;
       }
 
-      pendingAgentUpdatesRef.current.delete(agentId);
+      deletePendingAgentUpdate(serverId, agentId);
       applyAgentUpdatePayload(update);
     });
 
@@ -767,7 +871,9 @@ function SessionProviderInternal({
       if (message.type !== "agent_stream") return;
       const { agentId, event, timestamp, seq, epoch } = message.payload;
       const parsedTimestamp = new Date(timestamp);
+      const streamEvent = event as AgentStreamEventPayload;
 
+      // Attention notification stays in React (not extractable to pure reducer)
       if (event.type === "attention_required") {
         if (event.shouldNotify) {
           notifyAgentAttention({
@@ -779,42 +885,81 @@ function SessionProviderInternal({
         }
       }
 
+      // Read current store state
       const session = useSessionStore.getState().sessions[serverId];
       const currentTail = session?.agentStreamTail.get(agentId) ?? [];
       const currentHead = session?.agentStreamHead.get(agentId) ?? [];
-      const { tail, head, changedTail, changedHead } = applyStreamEvent({
-        tail: currentTail,
-        head: currentHead,
-        event: event as AgentStreamEventPayload,
+      const currentCursor = session?.agentTimelineCursor.get(agentId);
+      const currentAgentEntry = session?.agents.get(agentId);
+      const currentAgent = currentAgentEntry
+        ? {
+            status: currentAgentEntry.status,
+            updatedAt: currentAgentEntry.updatedAt,
+            lastActivityAt: currentAgentEntry.lastActivityAt,
+          }
+        : null;
+
+      // Call pure reducer
+      const result = processAgentStreamEvent({
+        event: streamEvent,
+        seq,
+        epoch,
+        currentTail,
+        currentHead,
+        currentCursor,
+        currentAgent,
         timestamp: parsedTimestamp,
       });
 
-      if (changedTail || changedHead) {
+      // Apply tail/head patches
+      if (result.changedTail || result.changedHead) {
         setAgentStreamState(serverId, agentId, {
-          ...(changedTail ? { tail } : {}),
-          ...(changedHead ? { head } : {}),
+          ...(result.changedTail ? { tail: result.tail } : {}),
+          ...(result.changedHead ? { head: result.head } : {}),
         });
       }
 
-      if (
-        event.type === "timeline" &&
-        typeof seq === "number" &&
-        typeof epoch === "string"
-      ) {
+      // Apply cursor patch
+      if (result.cursorChanged && result.cursor) {
         setAgentTimelineCursor(serverId, (prev) => {
           const current = prev.get(agentId);
-          const next = new Map(prev);
-          if (!current || current.epoch !== epoch) {
-            next.set(agentId, { epoch, startSeq: seq, endSeq: seq });
-            return next;
+          if (
+            current &&
+            current.epoch === result.cursor!.epoch &&
+            current.startSeq === result.cursor!.startSeq &&
+            current.endSeq === result.cursor!.endSeq
+          ) {
+            return prev;
           }
+          const next = new Map(prev);
+          next.set(agentId, result.cursor!);
+          return next;
+        });
+      }
+
+      // Apply agent patch (optimistic lifecycle)
+      if (result.agentChanged && result.agent) {
+        setAgents(serverId, (prev) => {
+          const current = prev.get(agentId);
+          if (!current) {
+            return prev;
+          }
+          const next = new Map(prev);
           next.set(agentId, {
-            epoch,
-            startSeq: Math.min(current.startSeq, seq),
-            endSeq: Math.max(current.endSeq, seq),
+            ...current,
+            status: result.agent!.status,
+            updatedAt: result.agent!.updatedAt,
+            lastActivityAt: result.agent!.lastActivityAt,
           });
           return next;
         });
+      }
+
+      // Execute side effects
+      for (const effect of result.sideEffects) {
+        if (effect.type === "catch_up") {
+          requestCanonicalCatchUp(agentId, effect.cursor);
+        }
       }
 
       // NOTE: We don't update lastActivityAt on every stream event to prevent
@@ -1130,7 +1275,7 @@ function SessionProviderInternal({
       }
       const { agentId } = message.payload;
       console.log("[Session] Agent deleted:", agentId);
-      pendingAgentUpdatesRef.current.delete(agentId);
+      deletePendingAgentUpdate(serverId, agentId);
       clearArchiveAgentPending({ queryClient, serverId, agentId });
 
       setAgents(serverId, (prev) => {
@@ -1266,6 +1411,7 @@ function SessionProviderInternal({
     setHasHydratedAgents,
     clearDraftInput,
     notifyAgentAttention,
+    requestCanonicalCatchUp,
     applyAgentUpdatePayload,
     applyTimelineResponse,
   ]);
