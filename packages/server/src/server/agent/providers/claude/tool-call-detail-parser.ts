@@ -102,6 +102,25 @@ const ClaudeToolDetailPass2Schema = z.union([
   toolDetailBranchByName("glob", ToolSearchInputSchema, z.unknown(), (input) =>
     toSearchToolDetail(input)
   ),
+  toolDetailBranchByName(
+    "Skill",
+    z.object({ skill: z.string() }).passthrough(),
+    z.union([
+      z.object({ output: z.string() }).passthrough().transform((value) => value.output),
+      z.string(),
+    ]).nullable(),
+    (input, output) => {
+      const skillName = input?.skill;
+      if (!skillName) {
+        return undefined;
+      }
+      return {
+        type: "plain_text" as const,
+        label: skillName,
+        ...(output ? { text: output } : {}),
+      } satisfies ToolCallDetail;
+    }
+  ),
   ClaudeSpeakToolDetailSchema,
 ]);
 

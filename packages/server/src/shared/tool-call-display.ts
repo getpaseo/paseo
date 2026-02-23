@@ -91,6 +91,9 @@ export function buildToolCallDisplayModel(input: ToolCallDisplayInput): ToolCall
       displayName = readString(input.detail.subAgentType) ?? "Task";
       summary = readString(input.detail.description);
       break;
+    case "plain_text":
+      summary = input.detail.label;
+      break;
     case "unknown":
       break;
   }

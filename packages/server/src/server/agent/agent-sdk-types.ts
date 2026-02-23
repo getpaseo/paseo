@@ -161,6 +161,11 @@ export type ToolCallDetail =
       }>;
     }
   | {
+      type: "plain_text";
+      label?: string;
+      text?: string;
+    }
+  | {
       type: "unknown";
       input: unknown | null;
       output: unknown | null;

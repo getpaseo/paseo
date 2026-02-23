@@ -1344,7 +1344,17 @@ function isMetadataOnlySdkMessage(message: SDKMessage): boolean {
   if (message.type !== "user") {
     return false;
   }
+  if (isSyntheticUserEntry(message)) {
+    return true;
+  }
   return isTaskNotificationUserContent(message.message?.content);
+}
+
+function isSyntheticUserEntry(entry: unknown): boolean {
+  if (!entry || typeof entry !== "object") {
+    return false;
+  }
+  return (entry as { isSynthetic?: unknown }).isSynthetic === true;
 }
 
 export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
@@ -3429,6 +3439,9 @@ class ClaudeAgentSession implements AgentSession {
         }
         break;
       case "user": {
+        if (isSyntheticUserEntry(message)) {
+          break;
+        }
         if (this.compacting) {
           this.compacting = false;
           break;
@@ -4380,6 +4393,9 @@ export function convertClaudeHistoryEntry(
   if (entry.isCompactSummary) {
     return [];
   }
+  if (entry.type === "user" && isSyntheticUserEntry(entry)) {
+    return [];
+  }
 
   const message = entry?.message;
   if (!message || !("content" in message)) {
@@ -4554,6 +4570,9 @@ async function parseClaudeSessionDescriptor(
       continue;
     }
     if (entry?.isSidechain) {
+      continue;
+    }
+    if (entry?.type === "user" && isSyntheticUserEntry(entry)) {
       continue;
     }
     if (!sessionId && typeof entry.sessionId === "string") {

@@ -211,6 +211,11 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail> = z.discriminatedUn
     ),
   }),
   z.object({
+    type: z.literal('plain_text'),
+    label: z.string().optional(),
+    text: z.string().optional(),
+  }),
+  z.object({
     type: z.literal('unknown'),
     input: UnknownValueSchema,
     output: UnknownValueSchema,

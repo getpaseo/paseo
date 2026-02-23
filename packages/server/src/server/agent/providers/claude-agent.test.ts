@@ -1460,6 +1460,28 @@ describe("convertClaudeHistoryEntry", () => {
     expect(result).toEqual([]);
   });
 
+  test("skips synthetic user entries", () => {
+    const entry = {
+      type: "user",
+      isSynthetic: true,
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Base directory for this skill: /tmp/skill",
+          },
+        ],
+      },
+    };
+
+    const mapBlocks = vi.fn().mockReturnValue([]);
+    const result = convertClaudeHistoryEntry(entry, mapBlocks);
+
+    expect(result).toEqual([]);
+    expect(mapBlocks).not.toHaveBeenCalled();
+  });
+
   test("passes thinking blocks to mapBlocks for assistant entries", () => {
     const entry = {
       type: "assistant",

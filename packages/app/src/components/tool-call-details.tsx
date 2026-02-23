@@ -245,6 +245,14 @@ export function ToolCallDetailsContent({
         <Text selectable style={styles.scrollText}>{detail.query}</Text>
       </View>
     );
+  } else if (detail?.type === "plain_text") {
+    if (detail.text) {
+      sections.push(
+        <View key="plain-text" style={styles.plainTextSection}>
+          <Text selectable style={styles.plainText}>{detail.text}</Text>
+        </View>
+      );
+    }
   } else if (detail?.type === "unknown") {
     const plainInputText =
       typeof detail.input === "string" && detail.output === null

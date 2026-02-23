@@ -6,6 +6,7 @@ import {
   MicVocal,
   Pencil,
   Search,
+  Sparkles,
   SquareTerminal,
   Wrench,
 } from "lucide-react-native";
@@ -21,6 +22,7 @@ const TOOL_DETAIL_ICONS: Record<ToolCallDetail["type"], ToolCallIconComponent> =
   search: Search,
   worktree_setup: SquareTerminal,
   sub_agent: Bot,
+  plain_text: Wrench,
   unknown: Wrench,
 };
 
@@ -36,6 +38,9 @@ export function resolveToolCallIcon(toolName: string, detail?: ToolCallDetail): 
   }
   if (lowerName === "task") {
     return Bot;
+  }
+  if (lowerName === "skill") {
+    return Sparkles;
   }
 
   if (detail) {
