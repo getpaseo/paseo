@@ -146,4 +146,42 @@ describe("shared messages tool_call schema", () => {
       }
     }
   });
+
+  it("parses plain_text detail with icon and rejects unknown icon names", () => {
+    const parsed = AgentTimelineItemPayloadSchema.parse({
+      type: "tool_call",
+      callId: "call_plain_text_1",
+      name: "task_notification",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plain_text",
+        label: "Background task completed",
+        icon: "wrench",
+      },
+    });
+
+    expect(parsed.type).toBe("tool_call");
+    if (parsed.type === "tool_call") {
+      expect(parsed.detail.type).toBe("plain_text");
+      if (parsed.detail.type === "plain_text") {
+        expect(parsed.detail.icon).toBe("wrench");
+      }
+    }
+
+    const invalid = AgentTimelineItemPayloadSchema.safeParse({
+      type: "tool_call",
+      callId: "call_plain_text_invalid",
+      name: "task_notification",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plain_text",
+        label: "Background task completed",
+        icon: "laser",
+      },
+    });
+
+    expect(invalid.success).toBe(false);
+  });
 });

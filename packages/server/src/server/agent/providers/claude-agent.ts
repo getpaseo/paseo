@@ -29,6 +29,11 @@ import {
   mapClaudeFailedToolCall,
   mapClaudeRunningToolCall,
 } from "./claude/tool-call-mapper.js";
+import {
+  isTaskNotificationUserContent,
+  mapTaskNotificationSystemRecordToToolCall,
+  mapTaskNotificationUserContentToToolCall,
+} from "./claude/task-notification-tool-call.js";
 import { buildToolCallDisplayModel } from "../../../shared/tool-call-display.js";
 
 import type {
@@ -1389,26 +1394,6 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
       (messageType === "user" ? readTrimmedString(root.uuid) : null) ??
       null,
   };
-}
-
-function isTaskNotificationUserContent(content: unknown): boolean {
-  if (typeof content === "string") {
-    return content.includes("<task-notification>");
-  }
-  if (!Array.isArray(content)) {
-    return false;
-  }
-  for (const block of content) {
-    if (
-      block &&
-      typeof block === "object" &&
-      typeof (block as { text?: unknown }).text === "string" &&
-      (block as { text: string }).text.includes("<task-notification>")
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 export class ClaudeAgentClient implements AgentClient {
@@ -3436,6 +3421,17 @@ class ClaudeAgentSession implements AgentSession {
             },
             provider: "claude",
           });
+        } else if (message.subtype === "task_notification") {
+          const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(
+            message
+          );
+          if (taskNotificationItem) {
+            events.push({
+              type: "timeline",
+              item: taskNotificationItem,
+              provider: "claude",
+            });
+          }
         }
         break;
       case "user": {
@@ -3452,6 +3448,18 @@ class ClaudeAgentSession implements AgentSession {
             : undefined;
         this.rememberUserMessageId(messageId);
         const content = message.message?.content;
+        const taskNotificationItem = mapTaskNotificationUserContentToToolCall({
+          content,
+          messageId,
+        });
+        if (taskNotificationItem) {
+          events.push({
+            type: "timeline",
+            item: taskNotificationItem,
+            provider: "claude",
+          });
+          break;
+        }
         if (typeof content === "string" && content.length > 0) {
           // String content from user messages (e.g., local command output)
           events.push({
@@ -4390,6 +4398,15 @@ export function convertClaudeHistoryEntry(
     }];
   }
 
+  if (entry.type === "system") {
+    const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(
+      entry
+    );
+    if (taskNotificationItem) {
+      return [taskNotificationItem];
+    }
+  }
+
   if (entry.isCompactSummary) {
     return [];
   }
@@ -4409,19 +4426,30 @@ export function convertClaudeHistoryEntry(
       ? content
       : normalizedBlocks;
   const hasToolBlock = normalizedBlocks?.some((block) => hasToolLikeBlock(block)) ?? false;
+  const userMessageId =
+    entry.type === "user" && typeof entry.uuid === "string" && entry.uuid.length > 0
+      ? entry.uuid
+      : null;
+
+  if (entry.type === "user") {
+    const taskNotificationItem = mapTaskNotificationUserContentToToolCall({
+      content,
+      messageId: userMessageId,
+    });
+    if (taskNotificationItem) {
+      return [taskNotificationItem];
+    }
+  }
+
   const timeline: AgentTimelineItem[] = [];
 
   if (entry.type === "user") {
     const text = extractUserMessageText(content);
     if (text) {
-      const messageId =
-        typeof entry.uuid === "string" && entry.uuid.length > 0
-          ? entry.uuid
-          : undefined;
       timeline.push({
         type: "user_message",
         text,
-        ...(messageId ? { messageId } : {}),
+        ...(userMessageId ? { messageId: userMessageId } : {}),
       });
     }
   }

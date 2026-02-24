@@ -117,6 +117,7 @@ const ClaudeToolDetailPass2Schema = z.union([
       return {
         type: "plain_text" as const,
         label: skillName,
+        icon: "sparkles" as const,
         ...(output ? { text: output } : {}),
       } satisfies ToolCallDetail;
     }

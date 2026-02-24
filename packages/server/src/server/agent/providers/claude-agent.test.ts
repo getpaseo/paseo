@@ -1482,6 +1482,81 @@ describe("convertClaudeHistoryEntry", () => {
     expect(mapBlocks).not.toHaveBeenCalled();
   });
 
+  test("maps user task notifications to synthetic tool calls", () => {
+    const content =
+      "<task-notification>\n<task-id>bg-1</task-id>\n<status>completed</status>\n</task-notification>";
+    const entry = {
+      type: "user",
+      uuid: "task-note-user-1",
+      message: {
+        role: "user",
+        content,
+      },
+    };
+
+    const mapBlocks = vi.fn().mockReturnValue([]);
+    const result = convertClaudeHistoryEntry(entry, mapBlocks);
+
+    expect(result).toEqual([
+      {
+        type: "tool_call",
+        callId: "task_notification_task-note-user-1",
+        name: "task_notification",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "plain_text",
+          label: "Background task completed",
+          icon: "wrench",
+          text: content,
+        },
+        metadata: {
+          synthetic: true,
+          source: "claude_task_notification",
+          taskId: "bg-1",
+          status: "completed",
+        },
+      },
+    ]);
+    expect(mapBlocks).not.toHaveBeenCalled();
+  });
+
+  test("maps system task notifications to synthetic failed tool calls", () => {
+    const entry = {
+      type: "system",
+      subtype: "task_notification",
+      uuid: "task-note-system-1",
+      task_id: "bg-fail-1",
+      status: "failed",
+      summary: "Background task failed",
+      output_file: "/tmp/bg-fail-1.txt",
+    };
+
+    const result = convertClaudeHistoryEntry(entry, () => []);
+    expect(result).toEqual([
+      {
+        type: "tool_call",
+        callId: "task_notification_task-note-system-1",
+        name: "task_notification",
+        status: "failed",
+        error: { message: "Background task failed" },
+        detail: {
+          type: "plain_text",
+          label: "Background task failed",
+          icon: "wrench",
+          text: "Background task failed",
+        },
+        metadata: {
+          synthetic: true,
+          source: "claude_task_notification",
+          taskId: "bg-fail-1",
+          status: "failed",
+          outputFile: "/tmp/bg-fail-1.txt",
+        },
+      },
+    ]);
+  });
+
   test("passes thinking blocks to mapBlocks for assistant entries", () => {
     const entry = {
       type: "assistant",
