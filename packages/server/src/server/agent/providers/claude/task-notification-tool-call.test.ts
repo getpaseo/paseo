@@ -47,14 +47,12 @@ describe("task-notification-tool-call", () => {
 
   it("maps system task notification to failed synthetic tool call", () => {
     const item = mapTaskNotificationSystemRecordToToolCall({
-      record: {
-        subtype: "task_notification",
-        uuid: "task-note-system-1",
-        task_id: "bg-fail-1",
-        status: "failed",
-        summary: "Background task failed",
-        output_file: "/tmp/bg-fail-1.txt",
-      },
+      subtype: "task_notification",
+      uuid: "task-note-system-1",
+      task_id: "bg-fail-1",
+      status: "failed",
+      summary: "Background task failed",
+      output_file: "/tmp/bg-fail-1.txt",
     });
 
     expect(item).toEqual({
@@ -81,9 +79,7 @@ describe("task-notification-tool-call", () => {
 
   it("returns null for non-task system records", () => {
     const item = mapTaskNotificationSystemRecordToToolCall({
-      record: {
-        subtype: "init",
-      },
+      subtype: "init",
     });
 
     expect(item).toBeNull();

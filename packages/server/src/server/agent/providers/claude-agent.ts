@@ -3423,7 +3423,7 @@ class ClaudeAgentSession implements AgentSession {
           });
         } else if (message.subtype === "task_notification") {
           const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(
-            { record: message as unknown as Record<string, unknown> }
+            message
           );
           if (taskNotificationItem) {
             events.push({
@@ -4400,7 +4400,7 @@ export function convertClaudeHistoryEntry(
 
   if (entry.type === "system") {
     const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(
-      { record: entry as Record<string, unknown> }
+      entry
     );
     if (taskNotificationItem) {
       return [taskNotificationItem];
