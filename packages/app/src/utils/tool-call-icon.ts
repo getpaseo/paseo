@@ -42,6 +42,9 @@ export function resolveToolCallIcon(toolName: string, detail?: ToolCallDetail): 
   if (lowerName === "skill") {
     return Sparkles;
   }
+  if (lowerName === "task_notification") {
+    return Wrench;
+  }
 
   if (detail) {
     return TOOL_DETAIL_ICONS[detail.type];

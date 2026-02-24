@@ -48,4 +48,14 @@ describe("tool-call-icon", () => {
 
     expect(icon).toBe(iconMocks.Brain);
   });
+
+  it("uses wrench icon for task notification tool calls", () => {
+    const icon = resolveToolCallIcon("task_notification", {
+      type: "plain_text",
+      label: "Background task completed",
+      text: "notification payload",
+    });
+
+    expect(icon).toBe(iconMocks.Wrench);
+  });
 });
