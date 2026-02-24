@@ -269,6 +269,42 @@ describe("AgentStorage", () => {
     expect(record?.lastStatus).toBe("running");
   });
 
+  test("applySnapshot waits for in-flight writes before reading existing title", async () => {
+    const agentId = "agent-pending-write";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const initialRecord = await storage.get(agentId);
+    expect(initialRecord).not.toBeNull();
+
+    let releasePendingWrite: (() => void) | null = null;
+    const pendingWrite = new Promise<void>((resolve) => {
+      releasePendingWrite = resolve;
+    });
+
+    const storageInternals = storage as unknown as {
+      pendingWrites: Map<string, Promise<void>>;
+      cache: Map<string, any>;
+    };
+    storageInternals.pendingWrites.set(agentId, pendingWrite);
+
+    const applySnapshotPromise = storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lifecycle: "running",
+        updatedAt: new Date("2025-01-02T00:00:00.000Z"),
+      })
+    );
+
+    storageInternals.cache.set(agentId, {
+      ...initialRecord!,
+      title: "Generated title",
+    });
+    releasePendingWrite?.();
+
+    await applySnapshotPromise;
+    const record = await storage.get(agentId);
+    expect(record?.title).toBe("Generated title");
+  });
+
   test("list returns all agents including internal ones", async () => {
     // Create a normal agent
     await storage.applySnapshot(

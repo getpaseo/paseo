@@ -439,6 +439,38 @@ describe("AgentManager", () => {
     expect(afterReload?.config?.title).toBeUndefined();
   });
 
+  test("setTitle bumps updatedAt and persists title in the same snapshot write", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-title-updated-at-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000127",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    const before = await storage.get(snapshot.id);
+    expect(before).not.toBeNull();
+
+    await manager.setTitle(snapshot.id, "Generated title");
+
+    const after = await storage.get(snapshot.id);
+    expect(after?.title).toBe("Generated title");
+    expect(Date.parse(after!.updatedAt)).toBeGreaterThan(Date.parse(before!.updatedAt));
+
+    const live = manager.getAgent(snapshot.id);
+    expect(live).not.toBeNull();
+    expect(live!.updatedAt.getTime()).toBeGreaterThan(Date.parse(before!.updatedAt));
+  });
+
   test("reloadAgentSession cancels active run and resumes existing session once thread_started is observed", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-active-"));
     const storagePath = join(workdir, "agents");
