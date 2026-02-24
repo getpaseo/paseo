@@ -6,6 +6,7 @@ import {
   Pressable,
   FlatList,
   ListRenderItemInfo,
+  LayoutChangeEvent,
   NativeScrollEvent,
   NativeSyntheticEvent,
   InteractionManager,
@@ -54,6 +55,16 @@ import {
   WebDesktopScrollbarOverlay,
   useWebDesktopScrollbarMetrics,
 } from "./web-desktop-scrollbar";
+import {
+  collectAssistantTurnContentForStreamRenderStrategy,
+  getBottomOffsetForStreamRenderStrategy,
+  getStreamEdgeSlotProps,
+  getStreamNeighborItem,
+  isNearBottomForStreamRenderStrategy,
+  orderHeadForStreamRenderStrategy,
+  orderTailForStreamRenderStrategy,
+  resolveStreamRenderStrategy,
+} from "./agent-stream-render-strategy";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
@@ -65,23 +76,6 @@ const isToolSequenceItem = (item?: StreamItem) =>
 const AGENT_STREAM_LOG_TAG = "[AgentStreamView]";
 const STREAM_ITEM_LOG_MIN_COUNT = 200;
 const STREAM_ITEM_LOG_DELTA_THRESHOLD = 50;
-
-function collectAssistantTurnContent(
-  flatListData: StreamItem[],
-  startIndex: number
-): string {
-  const messages: string[] = [];
-  for (let i = startIndex; i < flatListData.length; i++) {
-    const currentItem = flatListData[i];
-    if (currentItem.kind === "user_message") {
-      break;
-    }
-    if (currentItem.kind === "assistant_message") {
-      messages.push(currentItem.text);
-    }
-  }
-  return messages.reverse().join("\n\n");
-}
 export interface AgentStreamViewProps {
   agentId: string;
   serverId?: string;
@@ -101,6 +95,14 @@ export function AgentStreamView({
   const { theme } = useUnistyles();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const streamRenderStrategy = useMemo(
+    () =>
+      resolveStreamRenderStrategy({
+        platform: Platform.OS,
+        isMobileBreakpoint: isMobile,
+      }),
+    [isMobile]
+  );
   const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
   const insets = useSafeAreaInsets();
   const [isNearBottom, setIsNearBottom] = useState(true);
@@ -110,6 +112,10 @@ export function AgentStreamView({
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollAnimatedRef = useRef(false);
   const streamItemCountRef = useRef(0);
+  const streamViewportMetricsRef = useRef({
+    contentHeight: 0,
+    viewportHeight: 0,
+  });
   const streamScrollbarMetrics = useWebDesktopScrollbarMetrics();
   const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(new Set());
   const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
@@ -185,10 +191,19 @@ export function AgentStreamView({
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const { contentOffset } = event.nativeEvent;
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      streamViewportMetricsRef.current = {
+        contentHeight: Math.max(0, contentSize.height),
+        viewportHeight: Math.max(0, layoutMeasurement.height),
+      };
       const threshold = Math.max(insets.bottom, 32);
-      // In inverted list: scrollTop 0 = bottom, higher values = scrolled up
-      const nearBottom = contentOffset.y <= threshold;
+      const nearBottom = isNearBottomForStreamRenderStrategy({
+        strategy: streamRenderStrategy,
+        offsetY: contentOffset.y,
+        threshold,
+        contentHeight: streamViewportMetricsRef.current.contentHeight,
+        viewportHeight: streamViewportMetricsRef.current.viewportHeight,
+      });
 
       if (isNearBottomRef.current !== nearBottom) {
         isNearBottomRef.current = nearBottom;
@@ -199,7 +214,38 @@ export function AgentStreamView({
         streamScrollbarMetrics.onScroll(event);
       }
     },
-    [insets.bottom, showDesktopWebScrollbar, streamScrollbarMetrics]
+    [
+      insets.bottom,
+      showDesktopWebScrollbar,
+      streamRenderStrategy,
+      streamScrollbarMetrics,
+    ]
+  );
+
+  const handleListLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      streamViewportMetricsRef.current = {
+        ...streamViewportMetricsRef.current,
+        viewportHeight: Math.max(0, event.nativeEvent.layout.height),
+      };
+      if (showDesktopWebScrollbar) {
+        streamScrollbarMetrics.onLayout(event);
+      }
+    },
+    [showDesktopWebScrollbar, streamScrollbarMetrics]
+  );
+
+  const handleContentSizeChange = useCallback(
+    (width: number, height: number) => {
+      streamViewportMetricsRef.current = {
+        ...streamViewportMetricsRef.current,
+        contentHeight: Math.max(0, height),
+      };
+      if (showDesktopWebScrollbar) {
+        streamScrollbarMetrics.onContentSizeChange(width, height);
+      }
+    },
+    [showDesktopWebScrollbar, streamScrollbarMetrics]
   );
 
   const scrollToBottomInternal = useCallback(
@@ -209,11 +255,16 @@ export function AgentStreamView({
         return;
       }
 
-      list.scrollToOffset({ offset: 0, animated });
+      const offset = getBottomOffsetForStreamRenderStrategy({
+        strategy: streamRenderStrategy,
+        contentHeight: streamViewportMetricsRef.current.contentHeight,
+        viewportHeight: streamViewportMetricsRef.current.viewportHeight,
+      });
+      list.scrollToOffset({ offset, animated });
       isNearBottomRef.current = true;
       setIsNearBottom(true);
     },
-    []
+    [streamRenderStrategy]
   );
 
   const scheduleAutoScroll = useCallback(
@@ -275,20 +326,31 @@ export function AgentStreamView({
   }
 
   const flatListData = useMemo(() => {
-    return [...streamItems].reverse();
-  }, [streamItems]);
+    return orderTailForStreamRenderStrategy({
+      strategy: streamRenderStrategy,
+      streamItems,
+    });
+  }, [streamItems, streamRenderStrategy]);
+
+  const orderedStreamHead = useMemo(() => {
+    return orderHeadForStreamRenderStrategy({
+      strategy: streamRenderStrategy,
+      streamHead: streamHead ?? [],
+    });
+  }, [streamHead, streamRenderStrategy]);
 
   const tightGap = theme.spacing[1]; // 4px
   const looseGap = theme.spacing[4]; // 16px
 
-  // The FlatList is inverted, but each row is re-inverted by RN, so `marginBottom` still
-  // manifests as the gap *below* the row in the final visual layout. Compute spacing
-  // against the item visually below (index - 1 in our inverted list).
   const getGapBelow = useCallback(
-    (item: StreamItem, index: number) => {
-      const belowItem = flatListData[index - 1];
+    (item: StreamItem, index: number, items: StreamItem[]) => {
+      const belowItem = getStreamNeighborItem({
+        strategy: streamRenderStrategy,
+        items,
+        index,
+        relation: "below",
+      });
       if (!belowItem) {
-        // This is the bottommost (newest) item; nothing below it visually.
         return 0;
       }
 
@@ -327,13 +389,15 @@ export function AgentStreamView({
       // Different types get loose gap (16px)
       return looseGap;
     },
-    [flatListData, looseGap, tightGap]
+    [looseGap, streamRenderStrategy, tightGap]
   );
 
   const renderStreamItemContent = useCallback(
-    (item: StreamItem, index: number) => {
+    (item: StreamItem, index: number, items: StreamItem[]) => {
       const handleInlineDetailsExpandedChange = (expanded: boolean) => {
-        if (Platform.OS !== "web") {
+        if (
+          !streamRenderStrategy.disableParentScrollOnInlineDetailsExpansion
+        ) {
           return;
         }
         setExpandedInlineToolCallIds((previous) => {
@@ -349,11 +413,20 @@ export function AgentStreamView({
 
       switch (item.kind) {
         case "user_message": {
-          // In inverted list: index+1 is the item above, index-1 is below.
-          const prevItem = flatListData[index + 1];
-          const nextItem = flatListData[index - 1];
-          const isFirstInGroup = prevItem?.kind !== "user_message";
-          const isLastInGroup = nextItem?.kind !== "user_message";
+          const aboveItem = getStreamNeighborItem({
+            strategy: streamRenderStrategy,
+            items,
+            index,
+            relation: "above",
+          });
+          const belowItem = getStreamNeighborItem({
+            strategy: streamRenderStrategy,
+            items,
+            index,
+            relation: "below",
+          });
+          const isFirstInGroup = aboveItem?.kind !== "user_message";
+          const isLastInGroup = belowItem?.kind !== "user_message";
           return (
             <UserMessage
               message={item.text}
@@ -375,8 +448,12 @@ export function AgentStreamView({
           );
 
         case "thought": {
-          // In inverted list: index+1 is the item above, index-1 is below.
-          const nextItem = flatListData[index - 1];
+          const nextItem = getStreamNeighborItem({
+            strategy: streamRenderStrategy,
+            items,
+            index,
+            relation: "below",
+          });
           const isLastInSequence =
             nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
           return (
@@ -392,8 +469,12 @@ export function AgentStreamView({
 
         case "tool_call": {
           const { payload } = item;
-          // In inverted list: index+1 is the item above, index-1 is below.
-          const nextItem = flatListData[index - 1];
+          const nextItem = getStreamNeighborItem({
+            strategy: streamRenderStrategy,
+            items,
+            index,
+            relation: "below",
+          });
           const isLastInSequence =
             nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
 
@@ -455,23 +536,33 @@ export function AgentStreamView({
           return null;
       }
     },
-    [handleInlinePathPress, agent.cwd, flatListData]
+    [handleInlinePathPress, agent.cwd, streamRenderStrategy]
   );
 
   const renderStreamItem = useCallback(
     ({ item, index }: ListRenderItemInfo<StreamItem>) => {
-      const content = renderStreamItemContent(item, index);
+      const content = renderStreamItemContent(item, index, flatListData);
       if (!content) {
         return null;
       }
 
-      const gapBelow = getGapBelow(item, index);
-      const nextItem = flatListData[index - 1];
+      const gapBelow = getGapBelow(item, index, flatListData);
+      const nextItem = getStreamNeighborItem({
+        strategy: streamRenderStrategy,
+        items: flatListData,
+        index,
+        relation: "below",
+      });
       const isEndOfAssistantTurn =
         item.kind === "assistant_message" &&
         (nextItem?.kind === "user_message" ||
           (nextItem === undefined && agent.status !== "running"));
-      const getTurnContent = () => collectAssistantTurnContent(flatListData, index);
+      const getTurnContent = () =>
+        collectAssistantTurnContentForStreamRenderStrategy({
+          strategy: streamRenderStrategy,
+          items: flatListData,
+          startIndex: index,
+        });
 
       return (
         <View style={[stylesheet.streamItemWrapper, { marginBottom: gapBelow }]}>
@@ -482,7 +573,13 @@ export function AgentStreamView({
         </View>
       );
     },
-    [getGapBelow, renderStreamItemContent, flatListData, agent.status]
+    [
+      getGapBelow,
+      renderStreamItemContent,
+      flatListData,
+      agent.status,
+      streamRenderStrategy,
+    ]
   );
 
   const pendingPermissionItems = useMemo(
@@ -564,9 +661,9 @@ export function AgentStreamView({
   const showWorkingIndicator = agent.status === "running";
   const showBottomBar = showWorkingIndicator;
 
-  const listHeaderComponent = useMemo(() => {
+  const listEdgeSlotComponent = useMemo(() => {
     const hasPermissions = pendingPermissionItems.length > 0;
-    const hasHeadItems = streamHead && streamHead.length > 0;
+    const hasHeadItems = orderedStreamHead.length > 0;
 
     if (!hasPermissions && !showBottomBar && !hasHeadItems) {
       return null;
@@ -579,10 +676,8 @@ export function AgentStreamView({
         <View
           style={[
             stylesheet.listHeaderContent,
-            // In an inverted FlatList, the header is rendered at the visual bottom, so its
-            // top edge can sit directly against the newest timeline item. Add a small
-            // padding to prevent badges (e.g. Thinking/Setup) from butting up against
-            // the last user message when the streaming head is present.
+            // The edge slot (header for inverted streams, footer for forward streams)
+            // sits next to the newest timeline item.
             hasHeadItems ? { paddingTop: tightGap } : null,
           ]}
         >
@@ -599,8 +694,12 @@ export function AgentStreamView({
           ) : null}
 
           {hasHeadItems
-            ? [...streamHead].reverse().map((item, index) => {
-                const rendered = renderStreamItemContent(item, index);
+            ? orderedStreamHead.map((item, index) => {
+                const rendered = renderStreamItemContent(
+                  item,
+                  index,
+                  orderedStreamHead
+                );
                 return rendered ? (
                   <View key={item.id} style={stylesheet.streamItemWrapper}>
                     {rendered}
@@ -617,7 +716,7 @@ export function AgentStreamView({
     pendingPermissionItems,
     showWorkingIndicator,
     client,
-    streamHead,
+    orderedStreamHead,
     renderStreamItemContent,
     tightGap,
     showBottomBar,
@@ -636,27 +735,20 @@ export function AgentStreamView({
     ]
   );
 
-  // Keep maintainVisibleContentPosition shape and values stable to avoid
-  // reconfiguring RN's internal anchoring logic during streaming transitions.
-  // We rely on our own follow-tail logic, so keep threshold at 0.
-  const maintainVisibleContentPosition = useMemo(
-    () => ({ minIndexForVisible: 0, autoscrollToTopThreshold: 0 }),
-    []
-  );
-
-  // FlatList's ListHeaderComponent renders at the *bottom* when inverted.
-  // Without explicit spacing, the newest "head" rows (like Thinking/Setup tool badges)
-  // can butt up directly against the most recent stream item.
-  const headerGapStyle = useMemo(() => {
-    if (!listHeaderComponent) {
-      return undefined;
+  const listEdgeSlotProps = useMemo(() => {
+    if (!listEdgeSlotComponent) {
+      return {};
     }
-    return { marginBottom: tightGap };
-  }, [listHeaderComponent, tightGap]);
+    return getStreamEdgeSlotProps({
+      strategy: streamRenderStrategy,
+      component: listEdgeSlotComponent,
+      gapSize: tightGap,
+    });
+  }, [listEdgeSlotComponent, streamRenderStrategy, tightGap]);
 
   const listEmptyComponent = useMemo(() => {
     const hasPermissions = pendingPermissionItems.length > 0;
-    const hasHeadItems = (streamHead?.length ?? 0) > 0;
+    const hasHeadItems = orderedStreamHead.length > 0;
     if (hasPermissions || hasHeadItems) {
       return null;
     }
@@ -685,7 +777,7 @@ export function AgentStreamView({
   }, [
     agent.status,
     pendingPermissionItems.length,
-    streamHead,
+    orderedStreamHead,
     theme.colors.foregroundMuted,
   ]);
 
@@ -699,36 +791,32 @@ export function AgentStreamView({
               renderItem={renderStreamItem}
               keyExtractor={(item) => item.id}
               testID="agent-chat-scroll"
-              ListHeaderComponentStyle={headerGapStyle}
+              {...listEdgeSlotProps}
               contentContainerStyle={stylesheet.listContentContainer}
               style={stylesheet.list}
-              onLayout={
-                showDesktopWebScrollbar
-                  ? streamScrollbarMetrics.onLayout
-                  : undefined
-              }
+              onLayout={handleListLayout}
               onScroll={handleScroll}
               scrollEventThrottle={16}
-              onContentSizeChange={
-                showDesktopWebScrollbar
-                  ? streamScrollbarMetrics.onContentSizeChange
-                  : undefined
-              }
+              onContentSizeChange={handleContentSizeChange}
               ListEmptyComponent={listEmptyComponent}
-              ListHeaderComponent={listHeaderComponent}
               extraData={flatListExtraData}
-              maintainVisibleContentPosition={maintainVisibleContentPosition}
+              maintainVisibleContentPosition={
+                streamRenderStrategy.maintainVisibleContentPosition
+              }
               initialNumToRender={12}
               windowSize={10}
-              scrollEnabled={Platform.OS !== "web" || expandedInlineToolCallIds.size === 0}
+              scrollEnabled={
+                !streamRenderStrategy.disableParentScrollOnInlineDetailsExpansion ||
+                expandedInlineToolCallIds.size === 0
+              }
               showsVerticalScrollIndicator={!showDesktopWebScrollbar}
-              inverted
+              inverted={streamRenderStrategy.flatListInverted}
             />
           </MessageOuterSpacingProvider>
           <WebDesktopScrollbarOverlay
             enabled={showDesktopWebScrollbar}
             metrics={streamScrollbarMetrics}
-            inverted
+            inverted={streamRenderStrategy.overlayScrollbarInverted}
             onScrollToOffset={(nextOffset) => {
               flatListRef.current?.scrollToOffset({
                 offset: nextOffset,
