@@ -228,6 +228,7 @@ export class AgentStorage {
     options?: { title?: string | null; internal?: boolean }
   ): Promise<void> {
     await this.load();
+    await this.waitForPendingWrite(agent.id);
     const existing = (await this.get(agent.id)) ?? null;
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
@@ -252,6 +253,7 @@ export class AgentStorage {
 
   async setTitle(agentId: string, title: string): Promise<void> {
     await this.load();
+    await this.waitForPendingWrite(agentId);
     const record = await this.get(agentId);
     if (!record) {
       throw new Error(`Agent ${agentId} not found`);
@@ -376,6 +378,12 @@ export class AgentStorage {
     }
 
     return null;
+  }
+
+  private async waitForPendingWrite(agentId: string): Promise<void> {
+    await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(
+      () => undefined
+    );
   }
 }
 

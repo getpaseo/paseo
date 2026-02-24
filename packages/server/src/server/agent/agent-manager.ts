@@ -859,7 +859,12 @@ export class AgentManager {
 
   async setTitle(agentId: string, title: string): Promise<void> {
     const agent = this.requireAgent(agentId);
-    await this.registry?.setTitle(agentId, title);
+    const normalizedTitle = title.trim();
+    if (!normalizedTitle) {
+      return;
+    }
+    this.touchUpdatedAt(agent);
+    await this.persistSnapshot(agent, { title: normalizedTitle });
     this.emitState(agent);
   }
 
@@ -878,6 +883,7 @@ export class AgentManager {
     if (!agent || agent.internal) {
       return;
     }
+    this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
 
