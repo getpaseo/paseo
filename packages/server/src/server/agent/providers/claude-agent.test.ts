@@ -1507,6 +1507,7 @@ describe("convertClaudeHistoryEntry", () => {
         detail: {
           type: "plain_text",
           label: "Background task completed",
+          icon: "wrench",
           text: content,
         },
         metadata: {
@@ -1542,6 +1543,7 @@ describe("convertClaudeHistoryEntry", () => {
         detail: {
           type: "plain_text",
           label: "Background task failed",
+          icon: "wrench",
           text: "Background task failed",
         },
         metadata: {

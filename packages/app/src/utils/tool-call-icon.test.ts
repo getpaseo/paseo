@@ -7,6 +7,7 @@ const iconMocks = vi.hoisted(() => ({
   MicVocal: () => null,
   Pencil: () => null,
   Search: () => null,
+  Sparkles: () => null,
   SquareTerminal: () => null,
   Wrench: () => null,
 }));
@@ -49,11 +50,21 @@ describe("tool-call-icon", () => {
     expect(icon).toBe(iconMocks.Brain);
   });
 
-  it("uses wrench icon for task notification tool calls", () => {
-    const icon = resolveToolCallIcon("task_notification", {
+  it("uses custom icon from plain_text detail", () => {
+    const icon = resolveToolCallIcon("custom_tool", {
       type: "plain_text",
       label: "Background task completed",
+      icon: "sparkles",
       text: "notification payload",
+    });
+
+    expect(icon).toBe(iconMocks.Sparkles);
+  });
+
+  it("does not special-case skill tool names", () => {
+    const icon = resolveToolCallIcon("skill", {
+      type: "plain_text",
+      label: "Skill output",
     });
 
     expect(icon).toBe(iconMocks.Wrench);

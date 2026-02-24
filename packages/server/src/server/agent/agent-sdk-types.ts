@@ -103,6 +103,20 @@ export type AgentUsage = {
   totalCostUsd?: number;
 };
 
+export const TOOL_CALL_ICON_NAMES = [
+  "wrench",
+  "square_terminal",
+  "eye",
+  "pencil",
+  "search",
+  "bot",
+  "sparkles",
+  "brain",
+  "mic_vocal",
+] as const;
+
+export type ToolCallIconName = (typeof TOOL_CALL_ICON_NAMES)[number];
+
 export type ToolCallDetail =
   | {
       type: "shell";
@@ -164,6 +178,7 @@ export type ToolCallDetail =
       type: "plain_text";
       label?: string;
       text?: string;
+      icon?: ToolCallIconName;
     }
   | {
       type: "unknown";

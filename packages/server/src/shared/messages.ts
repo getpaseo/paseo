@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { AGENT_LIFECYCLE_STATUSES } from './agent-lifecycle.js'
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from '../server/agent/agent-title-limits.js'
 import { AgentProviderSchema } from '../server/agent/provider-manifest.js'
+import { TOOL_CALL_ICON_NAMES } from '../server/agent/agent-sdk-types.js'
 import type {
   AgentCapabilityFlags,
   AgentModelDefinition,
@@ -215,6 +216,7 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail> = z.discriminatedUn
     type: z.literal('plain_text'),
     label: z.string().optional(),
     text: z.string().optional(),
+    icon: z.enum(TOOL_CALL_ICON_NAMES).optional(),
   }),
   z.object({
     type: z.literal('unknown'),

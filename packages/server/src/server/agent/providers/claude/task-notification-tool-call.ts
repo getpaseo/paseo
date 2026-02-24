@@ -261,6 +261,7 @@ function toTaskNotificationToolCall(
     detail: {
       type: "plain_text" as const,
       label,
+      icon: "wrench" as const,
       ...(detailText ? { text: detailText } : {}),
     },
     metadata,
