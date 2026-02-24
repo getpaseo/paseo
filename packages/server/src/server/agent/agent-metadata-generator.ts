@@ -15,6 +15,7 @@ import {
   renameCurrentBranch,
   type CheckoutStatusResult,
 } from "../../utils/checkout-git.js";
+import { MAX_AUTO_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 
 export type AgentMetadataGeneratorDeps = {
   generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
@@ -41,6 +42,14 @@ type AgentMetadataNeeds = {
 
 function hasExplicitTitle(title?: string | null): boolean {
   return Boolean(title && title.trim().length > 0);
+}
+
+function normalizeAutoTitle(title: string): string | null {
+  const normalized = title.trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.slice(0, MAX_AUTO_AGENT_TITLE_CHARS).trim() || null;
 }
 
 async function canRenameBranch(
@@ -97,7 +106,7 @@ function buildMetadataSchema(needs: AgentMetadataNeeds): z.ZodObject<any> | null
 
   const shape: Record<string, z.ZodTypeAny> = {};
   if (needs.needsTitle) {
-    shape.title = z.string().min(1).max(60);
+    shape.title = z.string().min(1).max(MAX_AUTO_AGENT_TITLE_CHARS);
   }
   if (needs.needsBranch) {
     shape.branch = z.string().min(1).max(100);
@@ -115,7 +124,9 @@ function buildPrompt(needs: AgentMetadataNeeds): string {
   ];
 
   if (needs.needsTitle) {
-    instructions.push("Title: short descriptive label (<= 60 chars).");
+    instructions.push(
+      `Title: short descriptive label (<= ${MAX_AUTO_AGENT_TITLE_CHARS} chars).`
+    );
   }
   if (needs.needsBranch) {
     instructions.push(
@@ -187,8 +198,8 @@ export async function generateAndApplyAgentMetadata(
   }
 
   if (needs.needsTitle && typeof result.title === "string") {
-    const normalizedTitle = result.title.trim();
-    if (normalizedTitle.length > 0) {
+    const normalizedTitle = normalizeAutoTitle(result.title);
+    if (normalizedTitle) {
       await options.agentManager.setTitle(options.agentId, normalizedTitle);
     }
   }

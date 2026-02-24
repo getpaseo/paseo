@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { AGENT_LIFECYCLE_STATUSES } from './agent-lifecycle.js'
+import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from '../server/agent/agent-title-limits.js'
 import { AgentProviderSchema } from '../server/agent/provider-manifest.js'
 import type {
   AgentCapabilityFlags,
@@ -89,7 +90,7 @@ const AgentSessionConfigSchema = z.object({
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
-  title: z.string().trim().min(1).max(40).optional().nullable(),
+  title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
   approvalPolicy: z.string().optional(),
   sandboxMode: z.string().optional(),
   networkAccess: z.boolean().optional(),
