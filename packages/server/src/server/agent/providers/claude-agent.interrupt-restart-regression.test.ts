@@ -1211,11 +1211,28 @@ describe("ClaudeAgentSession interrupt restart regression", () => {
       liveEvents.some(
         (event) =>
           event.type === "timeline" &&
+          event.item.type === "user_message" &&
+          event.item.text.includes("<task-notification>")
+      )
+    ).toBe(false);
+    expect(
+      liveEvents.some(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.name === "task_notification" &&
+          event.item.status === "completed"
+      )
+    ).toBe(true);
+    expect(liveEvents.some((event) => event.type === "turn_started")).toBe(true);
+    expect(
+      liveEvents.some(
+        (event) =>
+          event.type === "timeline" &&
           event.item.type === "assistant_message" &&
           event.item.text.includes("SHOULD_STAY_SUPPRESSED")
       )
     ).toBe(false);
-    expect(liveEvents.some((event) => event.type === "turn_started")).toBe(true);
     expect(
       liveEvents.some(
         (event) =>
