@@ -1,5 +1,8 @@
 import { fileURLToPath } from "url";
 import { existsSync } from "node:fs";
+import { loadConfig } from "../src/server/config.js";
+import { acquirePidLock, PidLockError, releasePidLock } from "../src/server/pid-lock.js";
+import { resolvePaseoHome } from "../src/server/paseo-home.js";
 import { runSupervisor } from "./supervisor.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
 
@@ -52,20 +55,59 @@ function resolveWorkerExecArgv(workerEntry: string): string[] {
   return workerEntry.endsWith(".ts") ? ["--import", "tsx"] : [];
 }
 
-const config = parseConfig(process.argv.slice(2));
-const workerEntry = config.devMode ? resolveDevWorkerEntry() : resolveWorkerEntry();
+async function main(): Promise<void> {
+  const config = parseConfig(process.argv.slice(2));
+  const workerEntry = config.devMode ? resolveDevWorkerEntry() : resolveWorkerEntry();
+  const workerEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    PASEO_PID_LOCK_MODE: "external",
+  };
 
-applySherpaLoaderEnv(process.env);
+  applySherpaLoaderEnv(workerEnv);
 
-runSupervisor({
-  name: "DaemonRunner",
-  startupMessage: config.devMode
-    ? "Starting daemon worker (dev mode, crash restarts enabled)"
-    : "Starting daemon worker (IPC restart enabled)",
-  resolveWorkerEntry: () => workerEntry,
-  workerArgs: config.workerArgs,
-  workerEnv: process.env,
-  workerExecArgv: resolveWorkerExecArgv(workerEntry),
-  restartOnCrash: config.devMode,
-  shutdownReasons: ["cli_shutdown"],
+  const paseoHome = resolvePaseoHome(workerEnv);
+  const daemonConfig = loadConfig(paseoHome, { env: workerEnv });
+
+  try {
+    await acquirePidLock(paseoHome, daemonConfig.listen, {
+      ownerPid: process.pid,
+    });
+  } catch (error) {
+    if (error instanceof PidLockError) {
+      process.stderr.write(`${error.message}\n`);
+      process.exit(1);
+      return;
+    }
+    throw error;
+  }
+
+  let lockReleased = false;
+  const releaseLock = async (): Promise<void> => {
+    if (lockReleased) {
+      return;
+    }
+    lockReleased = true;
+    await releasePidLock(paseoHome, {
+      ownerPid: process.pid,
+    });
+  };
+
+  runSupervisor({
+    name: "DaemonRunner",
+    startupMessage: config.devMode
+      ? "Starting daemon worker (dev mode, crash restarts enabled)"
+      : "Starting daemon worker (IPC restart enabled)",
+    resolveWorkerEntry: () => workerEntry,
+    workerArgs: config.workerArgs,
+    workerEnv,
+    workerExecArgv: resolveWorkerExecArgv(workerEntry),
+    restartOnCrash: config.devMode,
+    onSupervisorExit: releaseLock,
+  });
+}
+
+void main().catch((error) => {
+  const message = error instanceof Error ? error.stack ?? error.message : String(error);
+  process.stderr.write(`${message}\n`);
+  process.exit(1);
 });

@@ -33,6 +33,10 @@ import { useAttachmentPreviewUrl } from '@/attachments/use-attachment-preview-ur
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Shortcut } from '@/components/ui/shortcut'
 import type { MessageInputKeyboardActionKind } from '@/keyboard/actions'
+import {
+  markScrollInvestigationEvent,
+  markScrollInvestigationRender,
+} from '@/utils/scroll-jank-investigation'
 
 export type ImageAttachment = AttachmentMetadata
 
@@ -148,6 +152,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   ref
 ) {
   const { theme } = useUnistyles()
+  const investigationComponentId = `MessageInput:${voiceServerId ?? 'unknown-server'}:${voiceAgentId ?? 'unknown-agent'}`
+  markScrollInvestigationRender(investigationComponentId)
   const toast = useToast()
   const voice = useVoiceOptional()
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT)
@@ -247,7 +253,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
 
       if (shouldAutoSend) {
         const imageAttachments = images.length > 0 ? images : undefined
-        onSubmit({ text: nextValue, images: imageAttachments })
+        onSubmit({
+          text: nextValue,
+          images: imageAttachments,
+          forceSend: isAgentRunning || undefined,
+        })
       } else {
         onChangeText(nextValue)
       }
@@ -258,7 +268,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
         })
       }
     },
-    [onChangeText, onSubmit, images]
+    [onChangeText, onSubmit, images, isAgentRunning]
   )
 
   const handleDictationError = useCallback((error: Error) => {
@@ -302,8 +312,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     onError: handleDictationError,
     canStart: canStartDictation,
     canConfirm: canConfirmDictation,
-    autoStopWhenHidden:
-      Platform.OS === 'web' ? undefined : { isVisible: isScreenFocused },
+    autoStopWhenHidden: { isVisible: isScreenFocused },
     enableDuration: true,
   })
 
@@ -330,9 +339,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
 
   const startDictationIfAvailable = useCallback(async () => {
     if (dictationUnavailableMessage) {
+      isDictatingRef.current = false
       toast.error(dictationUnavailableMessage)
       return
     }
+    // Keep hotkey toggling deterministic between the async start call and the
+    // state-ref sync effect, so a rapid second toggle routes to confirm.
+    isDictatingRef.current = true
     await startDictation()
   }, [dictationUnavailableMessage, startDictation, toast])
 
@@ -590,6 +603,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   const shouldHandleDesktopSubmit = IS_WEB
 
   function handleDesktopKeyPress(event: WebTextInputKeyPressEvent) {
+    markScrollInvestigationEvent(investigationComponentId, 'keyPress')
     if (!shouldHandleDesktopSubmit) return
 
     // Allow parent to intercept key events (e.g., for autocomplete navigation)
@@ -634,6 +648,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
       ? 'Send and interrupt'
       : 'Send message'
 
+  const handleInputChange = useCallback(
+    (nextValue: string) => {
+      markScrollInvestigationEvent(investigationComponentId, 'inputChange')
+      onChangeText(nextValue)
+    },
+    [investigationComponentId, onChangeText]
+  )
+
   return (
     <View style={styles.container} testID="message-input-root">
       {/* Regular input */}
@@ -672,7 +694,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
         <TextInput
           ref={textInputRef}
           value={value}
-          onChangeText={onChangeText}
+          onChangeText={handleInputChange}
           placeholder={placeholder}
           placeholderTextColor={theme.colors.mutedForeground}
           onFocus={() => {

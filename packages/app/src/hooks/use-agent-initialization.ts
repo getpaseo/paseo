@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { Platform } from "react-native";
 import { useSessionStore } from "@/stores/session-store";
 import type {
   DaemonClient,
@@ -13,20 +14,28 @@ import {
 } from "@/utils/agent-initialization";
 
 const INIT_TIMEOUT_MS = 5 * 60_000;
-const DEFAULT_INITIAL_TIMELINE_LIMIT = 200;
+const NATIVE_INITIAL_TIMELINE_LIMIT = 200;
+const UNBOUNDED_TIMELINE_LIMIT = 0;
 
 type TimelineCursorState = {
   epoch: string;
   endSeq: number;
 };
 
+type BuildInitialTimelineRequestInput = {
+  cursor: TimelineCursorState | undefined;
+  hasLocalTail: boolean;
+  initialTimelineLimit: number;
+};
+
 function buildInitialTimelineRequest(
-  cursor: TimelineCursorState | undefined
+  input: BuildInitialTimelineRequestInput
 ): FetchAgentTimelineOptions {
-  if (!cursor) {
+  const { cursor, hasLocalTail, initialTimelineLimit } = input;
+  if (!cursor || !hasLocalTail) {
     return {
       direction: "tail",
-      limit: DEFAULT_INITIAL_TIMELINE_LIMIT,
+      limit: initialTimelineLimit,
       projection: "canonical",
     };
   }
@@ -40,8 +49,15 @@ function buildInitialTimelineRequest(
   };
 }
 
+function resolveInitialTimelineLimit(): number {
+  return Platform.OS === "web"
+    ? UNBOUNDED_TIMELINE_LIMIT
+    : NATIVE_INITIAL_TIMELINE_LIMIT;
+}
+
 export const __private__ = {
   buildInitialTimelineRequest,
+  resolveInitialTimelineLimit,
 };
 
 export function useAgentInitialization({
@@ -76,7 +92,13 @@ export function useAgentInitialization({
 
       const session = useSessionStore.getState().sessions[serverId];
       const cursor = session?.agentTimelineCursor.get(agentId);
-      const timelineRequest = buildInitialTimelineRequest(cursor);
+      const hasLocalTail = (session?.agentStreamTail.get(agentId)?.length ?? 0) > 0;
+      const initialTimelineLimit = resolveInitialTimelineLimit();
+      const timelineRequest = buildInitialTimelineRequest({
+        cursor,
+        hasLocalTail,
+        initialTimelineLimit,
+      });
       const initRequestDirection =
         timelineRequest.direction === "after" ? "after" : "tail";
 
@@ -128,9 +150,10 @@ export function useAgentInitialization({
 
       try {
         await client.refreshAgent(agentId);
+        const initialTimelineLimit = resolveInitialTimelineLimit();
         await client.fetchAgentTimeline(agentId, {
           direction: "tail",
-          limit: DEFAULT_INITIAL_TIMELINE_LIMIT,
+          limit: initialTimelineLimit,
           projection: "canonical",
         });
       } catch (error) {

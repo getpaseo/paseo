@@ -1,18 +1,9 @@
 import { DaemonClient } from "@server/client/daemon-client";
 import type { DaemonClientConfig } from "@server/client/daemon-client";
 import type { HostConnection } from "@/contexts/daemon-registry-context";
+import { getOrCreateClientId } from "./client-id";
 import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "./daemon-endpoints";
 import { createTauriWebSocketTransportFactory } from "./tauri-daemon-transport";
-function createProbeClientId(): string {
-  const randomUuid = (() => {
-    const cryptoObj = globalThis.crypto as { randomUUID?: () => string } | undefined;
-    if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
-      return cryptoObj.randomUUID().replace(/-/g, "");
-    }
-    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
-  })();
-  return `cid_probe_${randomUuid}`;
-}
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -54,7 +45,7 @@ async function buildClientConfig(
   connection: HostConnection,
   serverId?: string
 ): Promise<DaemonClientConfig> {
-  const clientId = createProbeClientId();
+  const clientId = await getOrCreateClientId();
   const tauriTransportFactory = createTauriWebSocketTransportFactory();
   const base = {
     clientId,

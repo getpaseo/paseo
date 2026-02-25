@@ -5,7 +5,7 @@ import { z } from "zod";
 const server = new McpServer({ name: "paseo-test-mcp", version: "1.0.0" });
 
 server.tool(
-  "echo",
+  "paseo_roundtrip_text",
   { text: z.string() },
   async ({ text }) => ({
     content: [{ type: "text", text: `ECHO:${text}` }],

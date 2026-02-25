@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { ActivityIndicator, View } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useUnistyles } from "react-native-unistyles";
 import { DraftAgentScreen } from "@/screens/agent/draft-agent-screen";
 import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
@@ -9,13 +9,25 @@ import { buildHostAgentDraftRoute } from "@/utils/host-routes";
 
 export default function Index() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ serverId?: string }>();
   const { theme } = useUnistyles();
   const { daemons, isLoading: registryLoading } = useDaemonRegistry();
   const { preferences, isLoading: preferencesLoading } = useFormPreferences();
+  const requestedServerId = useMemo(() => {
+    return typeof params.serverId === "string" ? params.serverId.trim() : "";
+  }, [params.serverId]);
 
   const targetServerId = useMemo(() => {
     if (daemons.length === 0) {
       return null;
+    }
+    if (requestedServerId) {
+      const requested = daemons.find(
+        (daemon) => daemon.serverId === requestedServerId
+      );
+      if (requested) {
+        return requested.serverId;
+      }
     }
     if (preferences.serverId) {
       const match = daemons.find((daemon) => daemon.serverId === preferences.serverId);
@@ -24,7 +36,7 @@ export default function Index() {
       }
     }
     return daemons[0]?.serverId ?? null;
-  }, [daemons, preferences.serverId]);
+  }, [daemons, preferences.serverId, requestedServerId]);
 
   useEffect(() => {
     if (registryLoading || preferencesLoading) {

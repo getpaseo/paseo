@@ -77,10 +77,10 @@ test.beforeEach(async ({ page }) => {
     // Ensure create flow never uses a remembered host from the developer's real app.
     serverId: testDaemon.serverId,
     // Keep e2e fast/cheap by default.
-    provider: 'claude',
+    provider: 'codex',
     providerPreferences: {
       claude: { model: 'haiku' },
-      codex: { model: 'gpt-5.1-codex-mini' },
+      codex: { model: 'gpt-5.1-codex-mini', thinkingOptionId: 'low' },
     },
   };
 

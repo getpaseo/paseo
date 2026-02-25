@@ -244,6 +244,57 @@ describe("codex tool-call mapper", () => {
     }
   });
 
+  it("maps fileChange object-style change payloads keyed by path", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "codex-content-object-map",
+        status: "completed",
+        changes: {
+          "/tmp/repo/src/object-map.ts": {
+            type: "modify",
+            unified_diff: "@@\n-old\n+new\n",
+          },
+        },
+      },
+      { cwd: "/tmp/repo" }
+    );
+
+    expect(item).toBeTruthy();
+    expect(item?.detail?.type).toBe("edit");
+    if (item?.detail?.type === "edit") {
+      expect(item.detail.filePath).toBe("src/object-map.ts");
+      expect(item.detail.unifiedDiff).toContain("-old");
+      expect(item.detail.unifiedDiff).toContain("+new");
+    }
+  });
+
+  it("maps fileChange array payloads that use file_path aliases", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "codex-content-file-path-alias",
+        status: "completed",
+        changes: [
+          {
+            file_path: "/tmp/repo/src/file-path-alias.ts",
+            kind: "modify",
+            patch: "@@\n-before\n+after\n",
+          },
+        ],
+      },
+      { cwd: "/tmp/repo" }
+    );
+
+    expect(item).toBeTruthy();
+    expect(item?.detail?.type).toBe("edit");
+    if (item?.detail?.type === "edit") {
+      expect(item.detail.filePath).toBe("src/file-path-alias.ts");
+      expect(item.detail.unifiedDiff).toContain("-before");
+      expect(item.detail.unifiedDiff).toContain("+after");
+    }
+  });
+
   it("maps write/edit/search known variants with distinct detail types", () => {
     const writeItem = mapCodexToolCallFromThreadItem(
       {

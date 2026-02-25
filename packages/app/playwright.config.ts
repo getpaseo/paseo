@@ -11,7 +11,10 @@ export default defineConfig({
   expect: {
     timeout: 10_000,
   },
-  fullyParallel: true,
+  // E2E tests share a single daemon/relay/metro stack from global setup.
+  // Running tests concurrently causes cross-test contention and non-deterministic failures.
+  fullyParallel: false,
+  workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
   use: {

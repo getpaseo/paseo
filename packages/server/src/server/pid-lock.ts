@@ -34,20 +34,17 @@ function getPidFilePath(paseoHome: string): string {
   return join(paseoHome, "paseo.pid");
 }
 
-function resolveLockOwnerPid(): number {
-  if (typeof process.send === "function") {
-    const ppid = process.ppid;
-    if (Number.isInteger(ppid) && ppid > 1) {
-      return ppid;
-    }
+function resolveOwnerPid(ownerPid?: number): number {
+  if (typeof ownerPid === "number" && Number.isInteger(ownerPid) && ownerPid > 0) {
+    return ownerPid;
   }
-
   return process.pid;
 }
 
 export async function acquirePidLock(
   paseoHome: string,
-  sockPath: string
+  sockPath: string,
+  options?: { ownerPid?: number }
 ): Promise<void> {
   const pidPath = getPidFilePath(paseoHome);
 
@@ -66,7 +63,7 @@ export async function acquirePidLock(
   }
 
   // Check if existing lock is stale
-  const lockOwnerPid = resolveLockOwnerPid();
+  const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
   if (existingLock) {
     if (isPidRunning(existingLock.pid)) {
       if (existingLock.pid === lockOwnerPid) {
@@ -117,9 +114,12 @@ export async function acquirePidLock(
   }
 }
 
-export async function releasePidLock(paseoHome: string): Promise<void> {
+export async function releasePidLock(
+  paseoHome: string,
+  options?: { ownerPid?: number }
+): Promise<void> {
   const pidPath = getPidFilePath(paseoHome);
-  const lockOwnerPid = resolveLockOwnerPid();
+  const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
   try {
     // Only remove if it's our lock
     const content = await readFile(pidPath, "utf-8");

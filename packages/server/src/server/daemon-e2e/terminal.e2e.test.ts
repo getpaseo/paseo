@@ -377,7 +377,8 @@ const shouldRun = !process.env.CI;
         }
       });
 
-      ctx.client.sendTerminalStreamKey(streamId, { key: "d", ctrl: true });
+      const kill = await ctx.client.killTerminal(terminalId);
+      expect(kill.success).toBe(true);
 
       await waitForCondition(() => sawExit, 10000);
 
@@ -456,6 +457,60 @@ const shouldRun = !process.env.CI;
         ws.once("open", () => resolve());
         ws.once("error", reject);
       });
+
+      const helloReady = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          cleanup();
+          reject(new Error("Timed out waiting for websocket welcome"));
+        }, 10000);
+
+        const onError = (error: Error) => {
+          cleanup();
+          reject(error);
+        };
+
+        const onMessage = (raw: WebSocket.RawData) => {
+          if (Array.isArray(raw)) {
+            raw = Buffer.concat(
+              raw.map((part) => (Buffer.isBuffer(part) ? part : Buffer.from(part)))
+            );
+          }
+          if (typeof raw !== "string" && !Buffer.isBuffer(raw)) {
+            return;
+          }
+          const text = typeof raw === "string" ? raw : raw.toString("utf8");
+          try {
+            const parsed = JSON.parse(text) as { type?: string };
+            if (parsed.type === "welcome") {
+              cleanup();
+              resolve();
+            }
+          } catch {
+            // Ignore non-JSON payloads (binary mux frames).
+          }
+        };
+
+        const cleanup = () => {
+          clearTimeout(timeout);
+          ws.off("message", onMessage);
+          ws.off("error", onError);
+        };
+
+        ws.on("message", onMessage);
+        ws.on("error", onError);
+      });
+
+      ws.send(
+        JSON.stringify({
+          type: "hello",
+          clientId: `terminal-backpressure-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2)}`,
+          clientType: "cli",
+          protocolVersion: 1,
+        })
+      );
+      await helloReady;
 
       const attachRequestId = `attach-${Date.now()}`;
       const detachRequestId = `detach-${Date.now()}`;
@@ -546,7 +601,7 @@ const shouldRun = !process.env.CI;
             terminalId,
             message: {
               type: "input",
-              data: "head -c 1048576 /dev/zero | tr '\\0' 'A'\r",
+              data: "head -c 8388608 /dev/zero | tr '\\0' 'A'\r",
             },
           },
         })

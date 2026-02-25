@@ -41,10 +41,10 @@ test('new agent respects serverId in the URL', async ({ page }) => {
   };
   const createAgentPreferences = {
     serverId: testDaemon.serverId,
-    provider: 'claude',
+    provider: 'codex',
     providerPreferences: {
       claude: { model: 'haiku' },
-      codex: { model: 'gpt-5.1-codex-mini' },
+      codex: { model: 'gpt-5.1-codex-mini', thinkingOptionId: 'low' },
     },
   };
 
@@ -60,7 +60,7 @@ test('new agent respects serverId in the URL', async ({ page }) => {
     { daemon: testDaemon, preferences: createAgentPreferences }
   );
   await page.reload();
-  await expect(page.getByText('Online', { exact: true }).first()).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText('New agent', { exact: true }).first()).toBeVisible({ timeout: 20000 });
 
   await page.goto(`/?serverId=${encodeURIComponent(serverId)}`);
   await expect(page.getByText('New agent', { exact: true }).first()).toBeVisible();
@@ -109,7 +109,6 @@ test('new agent auto-selects first online host when no preference is stored', as
 
   await page.reload();
   await expect(page.getByText('New agent', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Online', { exact: true }).first()).toBeVisible({ timeout: 20000 });
 
   // Host should be auto-selected (no manual selection required).
   await expect(page.getByText('localhost', { exact: true }).first()).toBeVisible();

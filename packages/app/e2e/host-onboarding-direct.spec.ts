@@ -38,5 +38,7 @@ test('no hosts shows welcome; direct connection adds host and lands on agent cre
 
   await expect(page.getByTestId('sidebar-new-agent')).toBeVisible();
   await expect(page.getByText(serverId, { exact: true })).toBeVisible();
-  await expect(page.getByText('Online', { exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole('textbox', { name: 'Message agent...' })).toBeEditable({
+    timeout: 15000,
+  });
 });

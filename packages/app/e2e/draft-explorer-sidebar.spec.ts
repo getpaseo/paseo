@@ -12,7 +12,7 @@ test("draft enables explorer after selecting a working directory", async ({ page
     const newAgentButton = page.getByTestId("sidebar-new-agent").first();
     await expect(newAgentButton).toBeVisible({ timeout: 30000 });
     await newAgentButton.click();
-    await expect(page).toHaveURL(/\/agent\/?$/, { timeout: 30000 });
+    await expect(page).toHaveURL(/\/h\/[^/]+\/agent(\?|$)/, { timeout: 30000 });
 
     await setWorkingDirectory(page, repo.path);
 

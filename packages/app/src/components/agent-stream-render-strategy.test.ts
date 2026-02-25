@@ -41,9 +41,10 @@ describe("resolveStreamRenderStrategy", () => {
       isMobileBreakpoint: false,
     });
 
-    expect(strategy.kind).toBe("forward_stream");
-    expect(strategy.flatListInverted).toBe(false);
-    expect(strategy.overlayScrollbarInverted).toBe(false);
+    expect(strategy.shouldUseVirtualizedList()).toBe(false);
+    expect(strategy.getFlatListInverted()).toBe(false);
+    expect(strategy.getOverlayScrollbarInverted()).toBe(false);
+    expect(strategy.shouldAnchorBottomOnContentSizeChange()).toBe(true);
   });
 
   it("uses inverted_stream on native", () => {
@@ -52,9 +53,10 @@ describe("resolveStreamRenderStrategy", () => {
       isMobileBreakpoint: false,
     });
 
-    expect(strategy.kind).toBe("inverted_stream");
-    expect(strategy.flatListInverted).toBe(true);
-    expect(strategy.overlayScrollbarInverted).toBe(true);
+    expect(strategy.shouldUseVirtualizedList()).toBe(true);
+    expect(strategy.getFlatListInverted()).toBe(true);
+    expect(strategy.getOverlayScrollbarInverted()).toBe(true);
+    expect(strategy.shouldAnchorBottomOnContentSizeChange()).toBe(false);
   });
 });
 

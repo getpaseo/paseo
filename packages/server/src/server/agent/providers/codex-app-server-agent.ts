@@ -812,6 +812,20 @@ function normalizeCodexCommandValue(
 }
 
 function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
+  const resolvePathFromRecord = (record: Record<string, unknown>): string => {
+    const directPath =
+      (typeof record.path === "string" && record.path.trim().length > 0
+        ? record.path.trim()
+        : "") ||
+      (typeof record.file_path === "string" && record.file_path.trim().length > 0
+        ? record.file_path.trim()
+        : "") ||
+      (typeof record.filePath === "string" && record.filePath.trim().length > 0
+        ? record.filePath.trim()
+        : "");
+    return directPath;
+  };
+
   if (!changes || typeof changes !== "object") {
     return [];
   }
@@ -823,10 +837,7 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
           return null;
         }
         const record = entry as Record<string, unknown>;
-        const pathValue =
-          typeof record.path === "string" && record.path.trim().length > 0
-            ? record.path.trim()
-            : "";
+        const pathValue = resolvePathFromRecord(record);
         if (!pathValue) {
           return null;
         }
@@ -843,10 +854,11 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
   }
 
   const recordChanges = changes as Record<string, unknown>;
-  if (typeof recordChanges.path === "string" && recordChanges.path.trim().length > 0) {
+  const directPathValue = resolvePathFromRecord(recordChanges);
+  if (directPathValue) {
     return [
       {
-        path: recordChanges.path.trim(),
+        path: directPathValue,
         kind:
           (typeof recordChanges.kind === "string" && recordChanges.kind) ||
           (typeof recordChanges.type === "string" && recordChanges.type) ||
@@ -2188,7 +2200,22 @@ class CodexAppServerAgentSession implements AgentSession {
 
       await this.client.request("turn/start", params, TURN_START_TIMEOUT_MS);
 
+      let sawTurnStarted = false;
       for await (const event of queue) {
+        // Drop pre-start timeline noise that can leak from the previous turn.
+        // Keep permission events, which can legitimately arrive before turn_started.
+        if (!sawTurnStarted) {
+          if (event.type === "permission_requested" || event.type === "permission_resolved") {
+            yield event;
+            continue;
+          }
+          if (event.type === "turn_started") {
+            sawTurnStarted = true;
+          } else {
+            continue;
+          }
+        }
+
         yield event;
         if (
           event.type === "turn_completed" ||

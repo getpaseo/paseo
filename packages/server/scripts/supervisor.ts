@@ -1,9 +1,13 @@
 import { fork, type ChildProcess } from "child_process";
 
-type RestartMessage = {
-  type: "paseo:restart";
-  reason?: string;
-};
+type WorkerLifecycleMessage =
+  | {
+      type: "paseo:shutdown";
+    }
+  | {
+      type: "paseo:restart";
+      reason?: string;
+    };
 
 type SupervisorOptions = {
   name: string;
@@ -13,24 +17,32 @@ type SupervisorOptions = {
   workerEnv?: NodeJS.ProcessEnv;
   workerExecArgv?: string[];
   restartOnCrash?: boolean;
-  shutdownReasons?: string[];
+  onSupervisorExit?: () => Promise<void> | void;
 };
 
 function describeExit(code: number | null, signal: NodeJS.Signals | null): string {
   return signal ?? (typeof code === "number" ? `code ${code}` : "unknown");
 }
 
-function isRestartMessage(msg: unknown): msg is RestartMessage {
-  return (
-    typeof msg === "object" &&
-    msg !== null &&
-    "type" in msg &&
-    (msg as { type?: unknown }).type === "paseo:restart"
-  );
+function parseLifecycleMessage(msg: unknown): WorkerLifecycleMessage | null {
+  if (typeof msg !== "object" || msg === null || !("type" in msg)) {
+    return null;
+  }
+  const type = (msg as { type?: unknown }).type;
+  if (type === "paseo:shutdown") {
+    return { type: "paseo:shutdown" };
+  }
+  if (type === "paseo:restart") {
+    const reason = (msg as { reason?: unknown }).reason;
+    return {
+      type: "paseo:restart",
+      ...(typeof reason === "string" && reason.trim().length > 0 ? { reason } : {}),
+    };
+  }
+  return null;
 }
 
 export function runSupervisor(options: SupervisorOptions): void {
-  const shutdownReasons = new Set(options.shutdownReasons ?? ["cli_shutdown"]);
   const restartOnCrash = options.restartOnCrash ?? false;
   const workerArgs = options.workerArgs ?? process.argv.slice(2);
   const workerEnv = options.workerEnv ?? process.env;
@@ -39,9 +51,25 @@ export function runSupervisor(options: SupervisorOptions): void {
   let child: ChildProcess | null = null;
   let restarting = false;
   let shuttingDown = false;
+  let exiting = false;
 
   const log = (message: string): void => {
     process.stderr.write(`[${options.name}] ${message}\n`);
+  };
+
+  const exitSupervisor = (code: number): void => {
+    if (exiting) {
+      return;
+    }
+    exiting = true;
+    Promise.resolve(options.onSupervisorExit?.())
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`Supervisor exit cleanup failed: ${message}`);
+      })
+      .finally(() => {
+        process.exit(code);
+      });
   };
 
   const spawnWorker = () => {
@@ -52,7 +80,7 @@ export function runSupervisor(options: SupervisorOptions): void {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log(`Failed to resolve worker entry: ${message}`);
-      process.exit(1);
+      exitSupervisor(1);
       return;
     }
 
@@ -63,12 +91,13 @@ export function runSupervisor(options: SupervisorOptions): void {
     });
 
     child.on("message", (msg: unknown) => {
-      if (!isRestartMessage(msg)) {
+      const lifecycleMessage = parseLifecycleMessage(msg);
+      if (!lifecycleMessage) {
         return;
       }
 
-      if (msg.reason && shutdownReasons.has(msg.reason)) {
-        requestShutdown(`Shutdown requested by worker (${msg.reason})`);
+      if (lifecycleMessage.type === "paseo:shutdown") {
+        requestShutdown("Shutdown requested by worker");
         return;
       }
 
@@ -80,7 +109,8 @@ export function runSupervisor(options: SupervisorOptions): void {
 
       if (shuttingDown) {
         log(`Worker exited (${exitDescriptor}). Supervisor shutting down.`);
-        process.exit(0);
+        exitSupervisor(0);
+        return;
       }
 
       if (restarting || (restartOnCrash && code !== 0 && code !== null)) {
@@ -91,7 +121,7 @@ export function runSupervisor(options: SupervisorOptions): void {
       }
 
       log(`Worker exited (${exitDescriptor}). Supervisor exiting.`);
-      process.exit(typeof code === "number" ? code : 0);
+      exitSupervisor(typeof code === "number" ? code : 0);
     });
   };
 
@@ -112,7 +142,7 @@ export function runSupervisor(options: SupervisorOptions): void {
     restarting = false;
     log(`${reason}. Stopping worker...`);
     if (!child) {
-      process.exit(0);
+      exitSupervisor(0);
       return;
     }
     child.kill("SIGTERM");

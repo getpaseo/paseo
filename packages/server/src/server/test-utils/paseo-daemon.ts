@@ -51,10 +51,38 @@ async function getAvailablePort(): Promise<number> {
   });
 }
 
+const TEST_DAEMON_START_TIMEOUT_MS = 20_000;
+
+async function startDaemonWithTimeout(
+  daemon: Awaited<ReturnType<typeof createPaseoDaemon>>,
+  timeoutMs: number
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const timeoutHandle = setTimeout(() => {
+      const timeoutError = new Error(
+        `Timed out starting test daemon after ${timeoutMs}ms`
+      ) as Error & { code?: string };
+      timeoutError.code = "TEST_DAEMON_START_TIMEOUT";
+      reject(timeoutError);
+    }, timeoutMs);
+
+    daemon.start().then(
+      () => {
+        clearTimeout(timeoutHandle);
+        resolve();
+      },
+      (error) => {
+        clearTimeout(timeoutHandle);
+        reject(error);
+      }
+    );
+  });
+}
+
 export async function createTestPaseoDaemon(
   options: TestPaseoDaemonOptions = {}
 ): Promise<TestPaseoDaemon> {
-  const maxAttempts = 5;
+  const maxAttempts = 8;
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -91,7 +119,7 @@ export async function createTestPaseoDaemon(
     const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createPaseoDaemon(config, logger);
     try {
-      await daemon.start();
+      await startDaemonWithTimeout(daemon, TEST_DAEMON_START_TIMEOUT_MS);
 
       const close = async (): Promise<void> => {
         await daemon.stop().catch(() => undefined);
@@ -117,7 +145,10 @@ export async function createTestPaseoDaemon(
       await rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 
-      if (!isAddressInUseError(error) || attempt === maxAttempts - 1) {
+      if (
+        (!isAddressInUseError(error) && !isStartupTimeoutError(error)) ||
+        attempt === maxAttempts - 1
+      ) {
         throw error;
       }
     }
@@ -132,4 +163,12 @@ function isAddressInUseError(error: unknown): boolean {
   }
   const record = error as { code?: string };
   return record.code === "EADDRINUSE";
+}
+
+function isStartupTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const record = error as { code?: string };
+  return record.code === "TEST_DAEMON_START_TIMEOUT";
 }

@@ -17,6 +17,7 @@ import Svg, {
 } from "react-native-svg";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import type { ListTerminalsResponse } from "@server/shared/messages";
+import { encodeTerminalKeyInput } from "@server/shared/terminal-key-input";
 import { useHostRuntimeSession } from "@/runtime/host-runtime";
 import {
   hasPendingTerminalModifiers,
@@ -557,29 +558,60 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
     }
   }, []);
 
+  const dispatchTerminalInputEntry = useCallback(
+    (entry: PendingTerminalInput): boolean => {
+      if (!client) {
+        return false;
+      }
+
+      const terminalId = selectedTerminalIdRef.current;
+      if (!terminalId) {
+        return false;
+      }
+
+      if (entry.type === "data") {
+        client.sendTerminalInput(terminalId, {
+          type: "input",
+          data: entry.data,
+        });
+        return true;
+      }
+
+      const encoded = encodeTerminalKeyInput(entry.input);
+      if (encoded.length === 0) {
+        return true;
+      }
+      client.sendTerminalInput(terminalId, {
+        type: "input",
+        data: encoded,
+      });
+      return true;
+    },
+    [client]
+  );
+
   const flushPendingTerminalInput = useCallback(() => {
-    if (!client) {
-      return;
-    }
-    const currentStreamId = getCurrentActiveStreamId();
-    if (currentStreamId === null) {
-      return;
-    }
     const queue = pendingTerminalInputRef.current;
     if (queue.length === 0) {
       return;
     }
 
-    const pending = queue.splice(0, queue.length);
-
-    for (const entry of pending) {
-      if (entry.type === "data") {
-        client.sendTerminalStreamInput(currentStreamId, entry.data);
-        continue;
+    let sentCount = 0;
+    while (sentCount < queue.length) {
+      const entry = queue[sentCount];
+      if (!entry) {
+        break;
       }
-      client.sendTerminalStreamKey(currentStreamId, entry.input);
+      if (!dispatchTerminalInputEntry(entry)) {
+        break;
+      }
+      sentCount += 1;
     }
-  }, [client, getCurrentActiveStreamId]);
+
+    if (sentCount > 0) {
+      queue.splice(0, sentCount);
+    }
+  }, [dispatchTerminalInputEntry]);
 
   useEffect(() => {
     flushPendingTerminalInput();
@@ -625,8 +657,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
         meta?: boolean;
       }
     ): boolean => {
-      const currentStreamId = getCurrentActiveStreamId();
-      if (!client || currentStreamId === null) {
+      if (!client || !selectedTerminalIdRef.current) {
         enqueuePendingTerminalInput({
           type: "key",
           input: {
@@ -641,6 +672,16 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
       }
 
       const normalizedKey = normalizeTerminalTransportKey(input.key);
+      const pendingEntry: PendingTerminalInput = {
+        type: "key",
+        input: {
+          key: normalizedKey,
+          ctrl: input.ctrl,
+          shift: input.shift,
+          alt: input.alt,
+          meta: input.meta,
+        },
+      };
       terminalDebugLog({
         scope: "terminal-pane",
         event: "input:key:send",
@@ -649,19 +690,20 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
           ctrl: input.ctrl,
           shift: input.shift,
           alt: input.alt,
-          activeStreamId: currentStreamId,
+          activeStreamId: getCurrentActiveStreamId(),
         },
       });
-      client.sendTerminalStreamKey(currentStreamId, {
-        key: normalizedKey,
-        ctrl: input.ctrl,
-        shift: input.shift,
-        alt: input.alt,
-        meta: input.meta,
-      });
+      if (!dispatchTerminalInputEntry(pendingEntry)) {
+        enqueuePendingTerminalInput(pendingEntry);
+      }
       return true;
     },
-    [client, enqueuePendingTerminalInput, getCurrentActiveStreamId]
+    [
+      client,
+      dispatchTerminalInputEntry,
+      enqueuePendingTerminalInput,
+      getCurrentActiveStreamId,
+    ]
   );
 
   const handleTerminalData = useCallback(
@@ -705,7 +747,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
         }
       }
 
-      if (!client || currentStreamId === null) {
+      if (!client || !selectedTerminalIdRef.current) {
         enqueuePendingTerminalInput({
           type: "data",
           data,
@@ -721,11 +763,18 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
           activeStreamId: currentStreamId,
         },
       });
-      client.sendTerminalStreamInput(currentStreamId, data);
+      const pendingEntry: PendingTerminalInput = {
+        type: "data",
+        data,
+      };
+      if (!dispatchTerminalInputEntry(pendingEntry)) {
+        enqueuePendingTerminalInput(pendingEntry);
+      }
     },
     [
       clearPendingModifiers,
       client,
+      dispatchTerminalInputEntry,
       getCurrentActiveStreamId,
       modifiers.alt,
       modifiers.ctrl,

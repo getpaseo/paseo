@@ -78,11 +78,21 @@ test('host removal removes the host from UI and persists after reload', async ({
   await expect(page.getByText('extra', { exact: true }).first()).toBeVisible();
   await expect(page.getByText(extraEndpoint, { exact: true }).first()).toBeVisible();
 
-  await page.getByTestId(`daemon-menu-trigger-${extraDaemon.serverId}`).click();
-  await page.getByTestId(`daemon-menu-remove-${extraDaemon.serverId}`).click();
+  const hostSettingsButton = page.getByTestId(`daemon-card-settings-${extraDaemon.serverId}`).first();
+  await expect(hostSettingsButton).toBeVisible({ timeout: 10000 });
+  await hostSettingsButton.click();
+
+  const hostDetailModal = page.getByTestId('host-detail-modal');
+  await expect(hostDetailModal).toBeVisible({ timeout: 10000 });
+  await hostDetailModal.getByText('Advanced', { exact: true }).click();
+  await page.getByText('Remove host', { exact: true }).last().click();
+
   await expect(page.getByTestId('remove-host-confirm-modal')).toBeVisible();
   await page.getByTestId('remove-host-confirm').click();
 
+  await expect(page.getByTestId(`daemon-card-${extraDaemon.serverId}`)).toHaveCount(0, {
+    timeout: 30000,
+  });
   await expect(page.getByText(extraEndpoint, { exact: true })).toHaveCount(0);
   await page.waitForFunction(
     (serverId) => {

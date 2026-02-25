@@ -1209,6 +1209,7 @@ function DraftAgentScreenContent({
                         icon={<GitBranch size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
                         showLabel={false}
                         valueEllipsizeMode="middle"
+                        testID="worktree-select-trigger"
                       />
                       {worktreeMode === 'create' ? (
                         <FormSelectTrigger
@@ -1221,6 +1222,7 @@ function DraftAgentScreenContent({
                           disabled={repoInfoStatus === 'loading'}
                           icon={<GitBranch size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
                           showLabel={false}
+                          testID="worktree-base-branch-trigger"
                         />
                       ) : null}
                     </View>

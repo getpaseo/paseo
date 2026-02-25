@@ -15,6 +15,7 @@ interface KeyboardShortcutsState {
   /** Sidebar-visible agent keys (up to 9), in top-to-bottom visual order. */
   sidebarShortcutAgentKeys: string[];
   messageInputActionRequest: MessageInputActionRequest | null;
+  nextMessageInputActionRequestId: number;
 
   setCommandCenterOpen: (open: boolean) => void;
   setShortcutsDialogOpen: (open: boolean) => void;
@@ -38,6 +39,7 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>(
     cmdOrCtrlDown: false,
     sidebarShortcutAgentKeys: [],
     messageInputActionRequest: null,
+    nextMessageInputActionRequestId: 1,
 
     setCommandCenterOpen: (open) => set({ commandCenterOpen: open }),
     setShortcutsDialogOpen: (open) => set({ shortcutsDialogOpen: open }),
@@ -47,9 +49,11 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>(
     resetModifiers: () => set({ altDown: false, cmdOrCtrlDown: false }),
 
     requestMessageInputAction: ({ agentKey, kind }) => {
-      const previous = get().messageInputActionRequest;
-      const id = (previous?.id ?? 0) + 1;
-      set({ messageInputActionRequest: { id, agentKey, kind } });
+      const id = get().nextMessageInputActionRequestId;
+      set({
+        messageInputActionRequest: { id, agentKey, kind },
+        nextMessageInputActionRequestId: id + 1,
+      });
     },
     clearMessageInputActionRequest: (id) => {
       const current = get().messageInputActionRequest;

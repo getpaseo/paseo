@@ -1088,8 +1088,9 @@ function AgentScreenContent({
                   />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" width={DROPDOWN_WIDTH} testID="agent-overflow-content">
-                  <View style={styles.menuMetaContainer}>
+                  <View style={styles.menuMetaContainer} testID="agent-details-sheet">
                     <Pressable
+                      testID="agent-details-agent-id"
                       style={({ hovered, pressed }) => [
                         styles.menuMetaRow,
                         (hovered || pressed) && styles.menuMetaRowActive,
@@ -1102,6 +1103,7 @@ function AgentScreenContent({
                         Directory
                       </Text>
                       <Text
+                        testID="agent-details-agent-id-value"
                         style={styles.menuMetaValue}
                         numberOfLines={1}
                         ellipsizeMode="middle"
@@ -1179,6 +1181,7 @@ function AgentScreenContent({
                     </Pressable>
 
                     <Pressable
+                      testID="agent-details-persistence-session-id"
                       style={({ hovered, pressed }) => [
                         styles.menuMetaRow,
                         providerSessionId && (hovered || pressed) && styles.menuMetaRowActive,
@@ -1192,6 +1195,7 @@ function AgentScreenContent({
                         {providerLabel} ID
                       </Text>
                       <Text
+                        testID="agent-details-persistence-session-id-value"
                         style={[styles.menuMetaValue, !providerSessionId && styles.menuMetaValueError]}
                         numberOfLines={1}
                         ellipsizeMode="middle"

@@ -99,6 +99,19 @@ export type PaseoSpeechConfig = {
   local?: PaseoLocalSpeechConfig;
 };
 
+export type DaemonLifecycleIntent =
+  | {
+      type: "shutdown";
+      clientId: string;
+      requestId: string;
+    }
+  | {
+      type: "restart";
+      clientId: string;
+      requestId: string;
+      reason?: string;
+    };
+
 export type PaseoDaemonConfig = {
   listen: string;
   paseoHome: string;
@@ -121,6 +134,11 @@ export type PaseoDaemonConfig = {
   dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
+  onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
+  pidLock?: {
+    mode?: "self" | "external";
+    ownerPid?: number;
+  };
 };
 
 export interface PaseoDaemon {
@@ -138,9 +156,16 @@ export async function createPaseoDaemon(
 ): Promise<PaseoDaemon> {
   const logger = rootLogger.child({ module: "bootstrap" });
   const daemonVersion = resolveDaemonVersion(import.meta.url);
+  const pidLockMode = config.pidLock?.mode ?? "self";
+  const pidLockOwnerPid = config.pidLock?.ownerPid;
+  const ownsPidLock = pidLockMode === "self";
 
   // Acquire PID lock before expensive bootstrap work so duplicate starts fail immediately.
-  await acquirePidLock(config.paseoHome, config.listen);
+  if (ownsPidLock) {
+    await acquirePidLock(config.paseoHome, config.listen, {
+      ownerPid: pidLockOwnerPid,
+    });
+  }
 
   try {
     const serverId = getOrCreateServerId(config.paseoHome, { logger });
@@ -499,7 +524,14 @@ export async function createPaseoDaemon(
       getSpeechReadiness,
     },
     config.agentProviderSettings,
-    daemonVersion
+    daemonVersion,
+    (intent) => {
+      try {
+        config.onLifecycleIntent?.(intent);
+      } catch (error) {
+        logger.error({ err: error, intent }, "Failed to handle daemon lifecycle intent");
+      }
+    }
   );
   unsubscribeSpeechReadiness = subscribeSpeechReadiness((snapshot) => {
     wsServer?.publishSpeechReadiness(snapshot);
@@ -601,7 +633,11 @@ export async function createPaseoDaemon(
         unlinkSync(listenTarget.path);
       }
       // Release PID lock
-      await releasePidLock(config.paseoHome);
+      if (ownsPidLock) {
+        await releasePidLock(config.paseoHome, {
+          ownerPid: pidLockOwnerPid,
+        });
+      }
     };
 
     return {
@@ -613,7 +649,11 @@ export async function createPaseoDaemon(
       stop,
     };
   } catch (err) {
-    await releasePidLock(config.paseoHome).catch(() => undefined);
+    if (ownsPidLock) {
+      await releasePidLock(config.paseoHome, {
+        ownerPid: pidLockOwnerPid,
+      }).catch(() => undefined);
+    }
     throw err;
   }
 }

@@ -5,10 +5,14 @@ import type { Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function addFakeMicrophone(page: Page) {
-  const fixturePath = path.resolve(__dirname, 'fixtures', 'recording.webm');
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'recording.wav');
   const base64Audio = (await readFile(fixturePath)).toString('base64');
-  const mimeType = 'audio/webm;codecs=opus';
+  const mimeType = 'audio/wav';
 
   return page.addInitScript(({ base64Audio, mimeType }) => {
     const mic = {
@@ -38,6 +42,24 @@ async function addFakeMicrophone(page: Page) {
         getTracks: () => [track],
       };
     };
+
+    const AudioContextCtor =
+      (window as any).AudioContext ?? (window as any).webkitAudioContext;
+    if (AudioContextCtor?.prototype?.createMediaStreamSource) {
+      const nativeCreateMediaStreamSource =
+        AudioContextCtor.prototype.createMediaStreamSource;
+      AudioContextCtor.prototype.createMediaStreamSource =
+        function patchedCreateMediaStreamSource(stream: unknown) {
+          const isFakeStream =
+            !!stream &&
+            typeof (stream as { getTracks?: unknown }).getTracks === 'function' &&
+            typeof (stream as { id?: unknown }).id === 'undefined';
+          if (isFakeStream) {
+            throw new Error('Force recorder fallback for fake microphone stream');
+          }
+          return nativeCreateMediaStreamSource.call(this, stream);
+        };
+    }
 
     const blobFromBase64 = (base64: string, mimeType: string): Blob => {
       const binaryString = atob(base64);
@@ -142,6 +164,9 @@ test('dictation transcribes fixture via real STT', async ({ page }) => {
       .count();
 
     await page.keyboard.press('Control+d');
+    await expect
+      .poll(async () => page.evaluate(() => (window as any).__mic.active as number))
+      .toBe(0);
 
     await expect
       .poll(
@@ -199,7 +224,14 @@ test('dictation confirm+send does not dispatch after navigating away', async ({ 
     await createAgent(page, 'Respond with exactly: Hello');
 
     await expect(page).toHaveURL(/\/agent($|\/)/);
+    const match = page.url().match(/\/h\/([^/]+)\/agent\/([^/?#]+)/);
+    if (!match) {
+      throw new Error(`Expected /h/:serverId/agent/:agentId URL, got ${page.url()}`);
+    }
+    const serverId = decodeURIComponent(match[1]!);
+    const agentId = decodeURIComponent(match[2]!);
     await expect(page.getByRole('textbox', { name: 'Message agent...' })).toBeEditable();
+    const initialCopyMessageCount = await page.getByRole('button', { name: 'Copy message' }).count();
 
     await page.keyboard.press('Control+d');
     await expect
@@ -211,16 +243,19 @@ test('dictation confirm+send does not dispatch after navigating away', async ({ 
     const newAgentButton = page.getByTestId('sidebar-new-agent');
     await expect(newAgentButton).toBeVisible();
     await newAgentButton.click();
-    await expect(page).toHaveURL(/\/agent\/?$/);
+    await expect(page).toHaveURL(/\/h\/[^/]+\/agent(\?|$)/);
 
     await page.waitForTimeout(10_000);
 
-    const agentEntry = page.getByText(repo.path).first();
+    const agentEntry = page.getByTestId(`agent-row-${serverId}-${agentId}`).first();
     await expect(agentEntry).toBeVisible();
     await agentEntry.click();
-    await expect(page).toHaveURL(/\/agent($|\/)/);
+    await expect(page).toHaveURL(
+      new RegExp(`/h/${escapeRegex(serverId)}/agent/${escapeRegex(agentId)}(?:\\?|$)`)
+    );
 
-    await expect(page.getByText(/voice note/i)).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Copy message' })).toHaveCount(initialCopyMessageCount);
+    await expect(page.getByTestId('agent-chat-scroll').getByText(/this is a voice note\./i)).toHaveCount(0);
   } finally {
     await repo.cleanup();
   }

@@ -1,10 +1,20 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import type { ReactNode } from "react";
+import {
+  Fragment,
+  createElement,
+  isValidElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+} from "react";
+import type { ComponentType, ReactElement, ReactNode } from "react";
 import {
   View,
   Text,
   Pressable,
   FlatList,
+  ScrollView,
   ListRenderItemInfo,
   LayoutChangeEvent,
   NativeScrollEvent,
@@ -57,13 +67,13 @@ import {
 } from "./web-desktop-scrollbar";
 import {
   collectAssistantTurnContentForStreamRenderStrategy,
-  getBottomOffsetForStreamRenderStrategy,
   getStreamEdgeSlotProps,
   getStreamNeighborItem,
   isNearBottomForStreamRenderStrategy,
   orderHeadForStreamRenderStrategy,
   orderTailForStreamRenderStrategy,
   resolveStreamRenderStrategy,
+  type StreamEdgeSlotProps,
 } from "./agent-stream-render-strategy";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -76,6 +86,24 @@ const isToolSequenceItem = (item?: StreamItem) =>
 const AGENT_STREAM_LOG_TAG = "[AgentStreamView]";
 const STREAM_ITEM_LOG_MIN_COUNT = 200;
 const STREAM_ITEM_LOG_DELTA_THRESHOLD = 50;
+const NOOP_SEPARATORS: ListRenderItemInfo<StreamItem>["separators"] = {
+  highlight: () => {},
+  unhighlight: () => {},
+  updateProps: () => {},
+};
+
+function renderStreamEdgeComponent(
+  component: ReactElement | ComponentType<any> | null | undefined
+): ReactNode {
+  if (!component) {
+    return null;
+  }
+  if (isValidElement(component)) {
+    return component;
+  }
+  return createElement(component);
+}
+
 export interface AgentStreamViewProps {
   agentId: string;
   serverId?: string;
@@ -92,6 +120,8 @@ export function AgentStreamView({
   pendingPermissions,
 }: AgentStreamViewProps) {
   const flatListRef = useRef<FlatList<StreamItem>>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const bottomAnchorRef = useRef<View>(null);
   const { theme } = useUnistyles();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
@@ -111,6 +141,7 @@ export function AgentStreamView({
   const isNearBottomRef = useRef(true);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollAnimatedRef = useRef(false);
+  const scrollOffsetYRef = useRef(0);
   const streamItemCountRef = useRef(0);
   const streamViewportMetricsRef = useRef({
     contentHeight: 0,
@@ -120,6 +151,10 @@ export function AgentStreamView({
   const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(new Set());
   const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
   const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
+  const streamRenderRefs = useMemo(
+    () => ({ flatListRef, scrollViewRef, bottomAnchorRef }),
+    []
+  );
 
   // Get serverId (fallback to agent's serverId if not provided)
   const resolvedServerId = serverId ?? agent.serverId ?? "";
@@ -192,6 +227,7 @@ export function AgentStreamView({
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      scrollOffsetYRef.current = contentOffset.y;
       streamViewportMetricsRef.current = {
         contentHeight: Math.max(0, contentSize.height),
         viewportHeight: Math.max(0, layoutMeasurement.height),
@@ -235,36 +271,61 @@ export function AgentStreamView({
     [showDesktopWebScrollbar, streamScrollbarMetrics]
   );
 
+  const scrollToBottomInternal = useCallback(
+    ({ animated }: { animated: boolean }) => {
+      const targetOffset = streamRenderStrategy.getBottomOffset(
+        streamViewportMetricsRef.current
+      );
+      streamRenderStrategy.scrollToBottom({
+        refs: streamRenderRefs,
+        metrics: streamViewportMetricsRef.current,
+        animated,
+      });
+      scrollOffsetYRef.current = targetOffset;
+      isNearBottomRef.current = true;
+      setIsNearBottom(true);
+    },
+    [streamRenderRefs, streamRenderStrategy]
+  );
+
   const handleContentSizeChange = useCallback(
     (width: number, height: number) => {
+      const previousMetrics = streamViewportMetricsRef.current;
+      const threshold = Math.max(insets.bottom, 32);
+      const wasNearBottom = isNearBottomForStreamRenderStrategy({
+        strategy: streamRenderStrategy,
+        offsetY: scrollOffsetYRef.current,
+        threshold,
+        contentHeight: previousMetrics.contentHeight,
+        viewportHeight: previousMetrics.viewportHeight,
+      });
+
       streamViewportMetricsRef.current = {
-        ...streamViewportMetricsRef.current,
+        ...previousMetrics,
         contentHeight: Math.max(0, height),
       };
+
+      if (streamRenderStrategy.shouldAnchorBottomOnContentSizeChange()) {
+        if (!hasAutoScrolledOnce.current) {
+          scrollToBottomInternal({ animated: false });
+          hasAutoScrolledOnce.current = true;
+          hasScrolledInitially.current = true;
+        } else if (wasNearBottom || isNearBottomRef.current) {
+          scrollToBottomInternal({ animated: false });
+        }
+      }
+
       if (showDesktopWebScrollbar) {
         streamScrollbarMetrics.onContentSizeChange(width, height);
       }
     },
-    [showDesktopWebScrollbar, streamScrollbarMetrics]
-  );
-
-  const scrollToBottomInternal = useCallback(
-    ({ animated }: { animated: boolean }) => {
-      const list = flatListRef.current;
-      if (!list) {
-        return;
-      }
-
-      const offset = getBottomOffsetForStreamRenderStrategy({
-        strategy: streamRenderStrategy,
-        contentHeight: streamViewportMetricsRef.current.contentHeight,
-        viewportHeight: streamViewportMetricsRef.current.viewportHeight,
-      });
-      list.scrollToOffset({ offset, animated });
-      isNearBottomRef.current = true;
-      setIsNearBottom(true);
-    },
-    [streamRenderStrategy]
+    [
+      insets.bottom,
+      scrollToBottomInternal,
+      showDesktopWebScrollbar,
+      streamRenderStrategy,
+      streamScrollbarMetrics,
+    ]
   );
 
   const scheduleAutoScroll = useCallback(
@@ -301,6 +362,11 @@ export function AgentStreamView({
       return;
     }
 
+    if (streamRenderStrategy.shouldAnchorBottomOnContentSizeChange()) {
+      // Forward streams anchor from measurement updates in handleContentSizeChange.
+      return;
+    }
+
     if (!hasAutoScrolledOnce.current) {
       const handle = InteractionManager.runAfterInteractions(() => {
         scrollToBottomInternal({ animated: false });
@@ -317,10 +383,16 @@ export function AgentStreamView({
     const shouldAnimate = hasScrolledInitially.current;
     scheduleAutoScroll({ animated: shouldAnimate });
     hasScrolledInitially.current = true;
-  }, [streamItems, scheduleAutoScroll]);
+  }, [
+    scheduleAutoScroll,
+    scrollToBottomInternal,
+    streamItems,
+    streamRenderStrategy,
+  ]);
 
   function scrollToBottom() {
-    scrollToBottomInternal({ animated: true });
+    const animated = streamRenderStrategy.shouldAnimateManualScrollToBottom();
+    scrollToBottomInternal({ animated });
     isNearBottomRef.current = true;
     setIsNearBottom(true);
   }
@@ -396,7 +468,7 @@ export function AgentStreamView({
     (item: StreamItem, index: number, items: StreamItem[]) => {
       const handleInlineDetailsExpandedChange = (expanded: boolean) => {
         if (
-          !streamRenderStrategy.disableParentScrollOnInlineDetailsExpansion
+          !streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion()
         ) {
           return;
         }
@@ -660,6 +732,7 @@ export function AgentStreamView({
 
   const showWorkingIndicator = agent.status === "running";
   const showBottomBar = showWorkingIndicator;
+  const usesVirtualizedList = streamRenderStrategy.shouldUseVirtualizedList();
 
   const listEdgeSlotComponent = useMemo(() => {
     const hasPermissions = pendingPermissionItems.length > 0;
@@ -718,8 +791,8 @@ export function AgentStreamView({
     client,
     orderedStreamHead,
     renderStreamItemContent,
-    tightGap,
     showBottomBar,
+    tightGap,
   ]);
 
   const flatListExtraData = useMemo(
@@ -735,7 +808,7 @@ export function AgentStreamView({
     ]
   );
 
-  const listEdgeSlotProps = useMemo(() => {
+  const listEdgeSlotProps = useMemo<StreamEdgeSlotProps>(() => {
     if (!listEdgeSlotComponent) {
       return {};
     }
@@ -781,10 +854,45 @@ export function AgentStreamView({
     theme.colors.foregroundMuted,
   ]);
 
+  const streamScrollEnabled =
+    !streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion() ||
+    expandedInlineToolCallIds.size === 0;
+  const listContentContainerStyle = useMemo(
+    () =>
+      usesVirtualizedList
+        ? stylesheet.listContentContainer
+        : [stylesheet.listContentContainer, stylesheet.forwardListContentContainer],
+    [usesVirtualizedList]
+  );
+  const headerEdgeContent = renderStreamEdgeComponent(
+    listEdgeSlotProps.ListHeaderComponent
+  );
+  const footerEdgeContent = renderStreamEdgeComponent(
+    listEdgeSlotProps.ListFooterComponent
+  );
+  const nonVirtualizedItems = useMemo(() => {
+    if (flatListData.length === 0) {
+      return null;
+    }
+
+    return flatListData.map((item, index) => {
+      const rendered = renderStreamItem({
+        item,
+        index,
+        separators: NOOP_SEPARATORS,
+      });
+      if (!rendered) {
+        return null;
+      }
+      return <Fragment key={item.id}>{rendered}</Fragment>;
+    });
+  }, [flatListData, renderStreamItem]);
+
   return (
     <ToolCallSheetProvider>
       <View style={stylesheet.container}>
-          <MessageOuterSpacingProvider disableOuterSpacing>
+        <MessageOuterSpacingProvider disableOuterSpacing>
+          {usesVirtualizedList ? (
             <FlatList
               ref={flatListRef}
               data={flatListData}
@@ -792,7 +900,7 @@ export function AgentStreamView({
               keyExtractor={(item) => item.id}
               testID="agent-chat-scroll"
               {...listEdgeSlotProps}
-              contentContainerStyle={stylesheet.listContentContainer}
+              contentContainerStyle={listContentContainerStyle}
               style={stylesheet.list}
               onLayout={handleListLayout}
               onScroll={handleScroll}
@@ -801,51 +909,77 @@ export function AgentStreamView({
               ListEmptyComponent={listEmptyComponent}
               extraData={flatListExtraData}
               maintainVisibleContentPosition={
-                streamRenderStrategy.maintainVisibleContentPosition
+                streamRenderStrategy.getMaintainVisibleContentPosition()
               }
               initialNumToRender={12}
               windowSize={10}
-              scrollEnabled={
-                !streamRenderStrategy.disableParentScrollOnInlineDetailsExpansion ||
-                expandedInlineToolCallIds.size === 0
-              }
+              scrollEnabled={streamScrollEnabled}
               showsVerticalScrollIndicator={!showDesktopWebScrollbar}
-              inverted={streamRenderStrategy.flatListInverted}
+              inverted={streamRenderStrategy.getFlatListInverted()}
             />
-          </MessageOuterSpacingProvider>
-          <WebDesktopScrollbarOverlay
-            enabled={showDesktopWebScrollbar}
-            metrics={streamScrollbarMetrics}
-            inverted={streamRenderStrategy.overlayScrollbarInverted}
-            onScrollToOffset={(nextOffset) => {
-              flatListRef.current?.scrollToOffset({
-                offset: nextOffset,
-                animated: false,
-              });
-            }}
-          />
-
-          {/* Scroll to bottom button */}
-          {!isNearBottom && (
-            <Animated.View
-              style={stylesheet.scrollToBottomContainer}
-              entering={scrollIndicatorFadeIn}
-              exiting={scrollIndicatorFadeOut}
+          ) : (
+            <ScrollView
+              ref={scrollViewRef}
+              testID="agent-chat-scroll"
+              contentContainerStyle={listContentContainerStyle}
+              style={stylesheet.list}
+              onLayout={handleListLayout}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+              onContentSizeChange={handleContentSizeChange}
+              scrollEnabled={streamScrollEnabled}
+              showsVerticalScrollIndicator={!showDesktopWebScrollbar}
             >
-              <View style={stylesheet.scrollToBottomInner}>
-                <Pressable
-                  style={stylesheet.scrollToBottomButton}
-                  onPress={scrollToBottom}
-                >
-                  <ChevronDown
-                    size={24}
-                    color={stylesheet.scrollToBottomIcon.color}
-                  />
-                </Pressable>
-              </View>
-            </Animated.View>
+              {headerEdgeContent ? (
+                <View style={listEdgeSlotProps.ListHeaderComponentStyle}>
+                  {headerEdgeContent}
+                </View>
+              ) : null}
+              {nonVirtualizedItems}
+              {flatListData.length === 0 ? listEmptyComponent : null}
+              {footerEdgeContent ? (
+                <View style={listEdgeSlotProps.ListFooterComponentStyle}>
+                  {footerEdgeContent}
+                </View>
+              ) : null}
+              <View ref={bottomAnchorRef} collapsable={false} />
+            </ScrollView>
           )}
-        </View>
+        </MessageOuterSpacingProvider>
+        <WebDesktopScrollbarOverlay
+          enabled={showDesktopWebScrollbar}
+          metrics={streamScrollbarMetrics}
+          inverted={streamRenderStrategy.getOverlayScrollbarInverted()}
+          onScrollToOffset={(nextOffset) => {
+            streamRenderStrategy.scrollToOffset({
+              refs: streamRenderRefs,
+              offset: nextOffset,
+              animated: false,
+            });
+          }}
+        />
+
+        {/* Scroll to bottom button */}
+        {!isNearBottom && (
+          <Animated.View
+            style={stylesheet.scrollToBottomContainer}
+            entering={scrollIndicatorFadeIn}
+            exiting={scrollIndicatorFadeOut}
+          >
+            <View style={stylesheet.scrollToBottomInner}>
+              <Pressable
+                style={stylesheet.scrollToBottomButton}
+                onPress={scrollToBottom}
+              >
+                <ChevronDown
+                  size={24}
+                  color={stylesheet.scrollToBottomIcon.color}
+                />
+              </Pressable>
+            </View>
+          </Animated.View>
+        )}
+      </View>
     </ToolCallSheetProvider>
   );
 }
@@ -1379,6 +1513,10 @@ const stylesheet = StyleSheet.create((theme) => ({
       xs: theme.spacing[2],
       md: theme.spacing[4],
     },
+  },
+  forwardListContentContainer: {
+    paddingTop: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
   },
   list: {
     flex: 1,

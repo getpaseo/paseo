@@ -23,6 +23,7 @@ import type { AgentStreamEventPayload } from "../../messages.js";
 import type {
   AgentProvider,
   AgentPermissionRequest,
+  AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
@@ -46,6 +47,14 @@ function tmpCwd(): string {
   } catch {
     return dir;
   }
+}
+
+async function closeSessionAndCleanup(
+  session: AgentSession | null | undefined,
+  cwd: string
+): Promise<void> {
+  await session?.close();
+  rmSync(cwd, { recursive: true, force: true });
 }
 
 async function autoApprove(session: Awaited<ReturnType<ClaudeAgentClient["createSession"]>>, event: AgentStreamEvent) {
@@ -288,15 +297,16 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
-      const marker = "CLAUDE_ACK_TOKEN";
-      const result = await session.run(
-        `Reply with the exact text ${marker} and then stop.`
-      );
+      try {
+        const marker = "CLAUDE_ACK_TOKEN";
+        const result = await session.run(
+          `Reply with the exact text ${marker} and then stop.`
+        );
 
-      expect(result.finalText).toContain(marker);
-
-      await session.close();
-      rmSync(cwd, { recursive: true, force: true });
+        expect(result.finalText).toContain(marker);
+      } finally {
+        await closeSessionAndCleanup(session, cwd);
+      }
     },
     120_000
   );
@@ -309,26 +319,27 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
-      const events = session.stream(
-        "Think step by step about the pros and cons of single-file tests, but only share a short plan."
-      );
+      try {
+        const events = session.stream(
+          "Think step by step about the pros and cons of single-file tests, but only share a short plan."
+        );
 
-      let sawReasoning = false;
+        let sawReasoning = false;
 
-      for await (const event of events) {
-        await autoApprove(session, event);
-        if (event.type === "timeline" && event.item.type === "reasoning") {
-          sawReasoning = true;
+        for await (const event of events) {
+          await autoApprove(session, event);
+          if (event.type === "timeline" && event.item.type === "reasoning") {
+            sawReasoning = true;
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
         }
-        if (event.type === "turn_completed" || event.type === "turn_failed") {
-          break;
-        }
+
+        expect(sawReasoning).toBe(true);
+      } finally {
+        await closeSessionAndCleanup(session, cwd);
       }
-
-      expect(sawReasoning).toBe(true);
-
-      await session.close();
-      rmSync(cwd, { recursive: true, force: true });
     },
     120_000
   );
@@ -421,64 +432,65 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
-      const events = session.stream(
-        "First run a Bash command to print the working directory, then use your editor tools (not the shell) to create a file named tool-test.txt in the current directory that contains exactly the text 'hello world'. Report 'done' after the write finishes."
-      );
+      try {
+        const events = session.stream(
+          "First run a Bash command to print the working directory, then use your editor tools (not the shell) to create a file named tool-test.txt in the current directory that contains exactly the text 'hello world'. Report 'done' after the write finishes."
+        );
 
-      const timeline: AgentTimelineItem[] = [];
-      let completed = false;
+        const timeline: AgentTimelineItem[] = [];
+        let completed = false;
 
-      for await (const event of events) {
-        await autoApprove(session, event);
-        if (event.type === "timeline") {
-          timeline.push(event.item);
+        for await (const event of events) {
+          await autoApprove(session, event);
+          if (event.type === "timeline") {
+            timeline.push(event.item);
+          }
+          if (event.type === "turn_completed") {
+            completed = true;
+            break;
+          }
+          if (event.type === "turn_failed") {
+            break;
+          }
         }
-        if (event.type === "turn_completed") {
-          completed = true;
-          break;
-        }
-        if (event.type === "turn_failed") {
-          break;
-        }
+
+        const toolCalls = timeline.filter(
+          (item): item is Extract<AgentTimelineItem, { type: "tool_call" }> =>
+            item.type === "tool_call"
+        );
+        const commandEvents = toolCalls.filter(
+          (item) =>
+            item.name.toLowerCase().includes("bash") &&
+            item.name !== "permission_request"
+        );
+        const fileChangeEvent = toolCalls.find((item) => {
+          if (item.detail.type === "write" || item.detail.type === "edit") {
+            return item.detail.filePath.includes("tool-test.txt");
+          }
+          if (item.detail.type === "unknown") {
+            return (
+              rawContainsText(item.detail.input, "tool-test.txt") ||
+              rawContainsText(item.detail.output, "tool-test.txt")
+            );
+          }
+          return rawContainsText(item.detail, "tool-test.txt");
+        });
+
+        const sawPwdCommand = commandEvents.some(
+          (item) => (extractToolCommand(item.detail) ?? "").toLowerCase().includes("pwd") && item.status === "completed"
+        );
+
+        expect(completed).toBe(true);
+        expect(toolCalls.length).toBeGreaterThan(0);
+        expect(sawPwdCommand).toBe(true);
+        expect(fileChangeEvent).toBeTruthy();
+
+        const filePath = path.join(cwd, "tool-test.txt");
+        expect(existsSync(filePath)).toBe(true);
+        expect(readFileSync(filePath, "utf8")).toContain("hello world");
+      } finally {
+        await closeSessionAndCleanup(session, cwd);
       }
-
-      const toolCalls = timeline.filter(
-        (item): item is Extract<AgentTimelineItem, { type: "tool_call" }> =>
-          item.type === "tool_call"
-      );
-      const commandEvents = toolCalls.filter(
-        (item) =>
-          item.name.toLowerCase().includes("bash") &&
-          item.name !== "permission_request"
-      );
-      const fileChangeEvent = toolCalls.find((item) => {
-        if (item.detail.type === "write" || item.detail.type === "edit") {
-          return item.detail.filePath.includes("tool-test.txt");
-        }
-        if (item.detail.type === "unknown") {
-          return (
-            rawContainsText(item.detail.input, "tool-test.txt") ||
-            rawContainsText(item.detail.output, "tool-test.txt")
-          );
-        }
-        return rawContainsText(item.detail, "tool-test.txt");
-      });
-
-      const sawPwdCommand = commandEvents.some(
-        (item) => (extractToolCommand(item.detail) ?? "").toLowerCase().includes("pwd") && item.status === "completed"
-      );
-
-      expect(completed).toBe(true);
-      expect(toolCalls.length).toBeGreaterThan(0);
-      expect(sawPwdCommand).toBe(true);
-      expect(fileChangeEvent).toBeTruthy();
-
-      const filePath = path.join(cwd, "tool-test.txt");
-      expect(existsSync(filePath)).toBe(true);
-      expect(readFileSync(filePath, "utf8")).toContain("hello world");
-
-      await session.close();
-      rmSync(cwd, { recursive: true, force: true });
     },
     180_000
   );
@@ -775,16 +787,17 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
-      const first = await session.run("Respond only with the word alpha.");
-      expect(first.finalText.toLowerCase()).toContain("alpha");
+      try {
+        const first = await session.run("Respond only with the word alpha.");
+        expect(first.finalText.toLowerCase()).toContain("alpha");
 
-      const second = await session.run(
-        "Without adding any explanations, repeat exactly the same word you just said."
-      );
-      expect(second.finalText.toLowerCase()).toContain("alpha");
-
-      await session.close();
-      rmSync(cwd, { recursive: true, force: true });
+        const second = await session.run(
+          "Without adding any explanations, repeat exactly the same word you just said."
+        );
+        expect(second.finalText.toLowerCase()).toContain("alpha");
+      } finally {
+        await closeSessionAndCleanup(session, cwd);
+      }
     },
     120_000
   );
@@ -853,77 +866,80 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
+      let resumed: AgentSession | null = null;
 
-      // Store a specific word in a file to create history and enable recall
-      const timestamp = Date.now();
-      const secretWord = `XYZZY${timestamp}PLUGH`;
-      const secretFile = path.join(cwd, "secret.txt");
-      const prompt = `Write exactly this word to a file called secret.txt: ${secretWord}. Then respond only with "STORED".`;
+      try {
+        // Store a specific word in a file to create history and enable recall
+        const timestamp = Date.now();
+        const secretWord = `XYZZY${timestamp}PLUGH`;
+        const secretFile = path.join(cwd, "secret.txt");
+        const prompt = `Write exactly this word to a file called secret.txt: ${secretWord}. Then respond only with "STORED".`;
 
-      let storedResponse = "";
-      for await (const event of session.stream(prompt)) {
-        await autoApprove(session, event);
-        if (event.type === "timeline" && event.item.type === "assistant_message") {
-          storedResponse = event.item.text;
+        let storedResponse = "";
+        for await (const event of session.stream(prompt)) {
+          await autoApprove(session, event);
+          if (event.type === "timeline" && event.item.type === "assistant_message") {
+            storedResponse = event.item.text;
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
         }
-        if (event.type === "turn_completed" || event.type === "turn_failed") {
-          break;
+        expect(storedResponse.toLowerCase()).toContain("stored");
+        expect(existsSync(secretFile)).toBe(true);
+
+        await session.close();
+
+        const handle = session.describePersistence();
+        expect(handle).toBeTruthy();
+        expect(handle!.sessionId).toBeTruthy();
+
+        // Wait for history file to be written
+        const historyPaths = getClaudeHistoryPaths(cwd, handle!.sessionId);
+        expect(await waitForHistoryFile(historyPaths)).toBe(true);
+        expect(await waitForHistoryContains(historyPaths, secretWord)).toBe(true);
+
+        // Resume and verify context is preserved
+        resumed = await client.resumeSession(handle!, { cwd });
+
+        // Verify history is emitted on resume
+        const historyEvents: AgentStreamEvent[] = [];
+        for await (const event of resumed.streamHistory()) {
+          historyEvents.push(event);
         }
+
+        // Should have timeline events from previous session
+        const timelineEvents = historyEvents.filter((e) => e.type === "timeline");
+        expect(timelineEvents.length).toBeGreaterThan(0);
+
+        // Should include the user message with the secret word
+        const userMessages = timelineEvents.filter(
+          (e) => e.type === "timeline" && e.item.type === "user_message"
+        );
+        expect(userMessages.length).toBeGreaterThan(0);
+        const hasSecretWord = userMessages.some(
+          (e) =>
+            e.type === "timeline" &&
+            e.item.type === "user_message" &&
+            e.item.text.includes(secretWord)
+        );
+        expect(hasSecretWord).toBe(true);
+
+        // Ask the agent to recall what it wrote - this verifies context is actually preserved
+        const resumedResult = await resumed.run(
+          "What word did you write to secret.txt? Reply with only that exact word."
+        );
+        // The model should recall some part of the unique word we stored
+        // (models sometimes truncate or modify, so we check for any part of our unique token)
+        const recalledSomething =
+          resumedResult.finalText.includes(String(timestamp)) ||
+          resumedResult.finalText.includes("XYZZY") ||
+          resumedResult.finalText.includes("PLUGH");
+        expect(recalledSomething).toBe(true);
+      } finally {
+        await resumed?.close();
+        await closeSessionAndCleanup(session, cwd);
       }
-      expect(storedResponse.toLowerCase()).toContain("stored");
-      expect(existsSync(secretFile)).toBe(true);
-
-      await session.close();
-
-      const handle = session.describePersistence();
-      expect(handle).toBeTruthy();
-      expect(handle!.sessionId).toBeTruthy();
-
-      // Wait for history file to be written
-      const historyPaths = getClaudeHistoryPaths(cwd, handle!.sessionId);
-      expect(await waitForHistoryFile(historyPaths)).toBe(true);
-      expect(await waitForHistoryContains(historyPaths, secretWord)).toBe(true);
-
-      // Resume and verify context is preserved
-      const resumed = await client.resumeSession(handle!, { cwd });
-
-      // Verify history is emitted on resume
-      const historyEvents: AgentStreamEvent[] = [];
-      for await (const event of resumed.streamHistory()) {
-        historyEvents.push(event);
-      }
-
-      // Should have timeline events from previous session
-      const timelineEvents = historyEvents.filter((e) => e.type === "timeline");
-      expect(timelineEvents.length).toBeGreaterThan(0);
-
-      // Should include the user message with the secret word
-      const userMessages = timelineEvents.filter(
-        (e) => e.type === "timeline" && e.item.type === "user_message"
-      );
-      expect(userMessages.length).toBeGreaterThan(0);
-      const hasSecretWord = userMessages.some(
-        (e) =>
-          e.type === "timeline" &&
-          e.item.type === "user_message" &&
-          e.item.text.includes(secretWord)
-      );
-      expect(hasSecretWord).toBe(true);
-
-      // Ask the agent to recall what it wrote - this verifies context is actually preserved
-      const resumedResult = await resumed.run(
-        "What word did you write to secret.txt? Reply with only that exact word."
-      );
-      // The model should recall some part of the unique word we stored
-      // (models sometimes truncate or modify, so we check for any part of our unique token)
-      const recalledSomething =
-        resumedResult.finalText.includes(String(timestamp)) ||
-        resumedResult.finalText.includes("XYZZY") ||
-        resumedResult.finalText.includes("PLUGH");
-      expect(recalledSomething).toBe(true);
-
-      await resumed.close();
-      rmSync(cwd, { recursive: true, force: true });
     },
     180_000
   );
@@ -936,19 +952,20 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
-      const modes = await session.getAvailableModes();
-      expect(modes.map((m) => m.id)).toContain("plan");
+      try {
+        const modes = await session.getAvailableModes();
+        expect(modes.map((m) => m.id)).toContain("plan");
 
-      await session.setMode("plan");
-      expect(await session.getCurrentMode()).toBe("plan");
+        await session.setMode("plan");
+        expect(await session.getCurrentMode()).toBe("plan");
 
-      const result = await session.run(
-        "Just reply with the word PLAN to confirm you're still responsive."
-      );
-      expect(result.finalText.toLowerCase()).toContain("plan");
-
-      await session.close();
-      rmSync(cwd, { recursive: true, force: true });
+        const result = await session.run(
+          "Just reply with the word PLAN to confirm you're still responsive."
+        );
+        expect(result.finalText.toLowerCase()).toContain("plan");
+      } finally {
+        await closeSessionAndCleanup(session, cwd);
+      }
     },
     120_000
   );
@@ -960,42 +977,44 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
-      await session.setMode("plan");
 
-      const events = session.stream(
-        "Devise a plan to create a file named dummy.txt containing the word plan-test. After planning, proceed to execute your plan."
-      );
+      try {
+        await session.setMode("plan");
 
-      let capturedPlan: string | null = null;
-      for await (const event of events) {
-        await autoApprove(session, event);
-        if (event.type === "permission_requested" && event.request.kind === "plan") {
-          const planFromMetadata =
-            typeof event.request.metadata?.planText === "string"
-              ? event.request.metadata.planText
-              : null;
-          const planFromInput =
-            typeof (event.request.input as any)?.plan === "string"
-              ? ((event.request.input as any)?.plan as string)
-              : null;
-          capturedPlan = planFromMetadata ?? planFromInput ?? capturedPlan;
+        const events = session.stream(
+          "Devise a plan to create a file named dummy.txt containing the word plan-test. After planning, proceed to execute your plan."
+        );
+
+        let capturedPlan: string | null = null;
+        for await (const event of events) {
+          await autoApprove(session, event);
+          if (event.type === "permission_requested" && event.request.kind === "plan") {
+            const planFromMetadata =
+              typeof event.request.metadata?.planText === "string"
+                ? event.request.metadata.planText
+                : null;
+            const planFromInput =
+              typeof (event.request.input as any)?.plan === "string"
+                ? ((event.request.input as any)?.plan as string)
+                : null;
+            capturedPlan = planFromMetadata ?? planFromInput ?? capturedPlan;
+          }
+
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
         }
 
-        if (event.type === "turn_completed" || event.type === "turn_failed") {
-          break;
-        }
+        expect(capturedPlan).not.toBeNull();
+        expect(capturedPlan?.includes("dummy.txt")).toBe(true);
+        expect(await session.getCurrentMode()).toBe("acceptEdits");
+
+        const filePath = path.join(cwd, "dummy.txt");
+        expect(existsSync(filePath)).toBe(true);
+        expect(readFileSync(filePath, "utf8")).toContain("plan-test");
+      } finally {
+        await closeSessionAndCleanup(session, cwd);
       }
-
-      expect(capturedPlan).not.toBeNull();
-      expect(capturedPlan?.includes("dummy.txt")).toBe(true);
-      expect(await session.getCurrentMode()).toBe("acceptEdits");
-
-      const filePath = path.join(cwd, "dummy.txt");
-      expect(existsSync(filePath)).toBe(true);
-      expect(readFileSync(filePath, "utf8")).toContain("plan-test");
-
-      await session.close();
-      rmSync(cwd, { recursive: true, force: true });
     },
     180_000
   );
@@ -1008,67 +1027,68 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
-      const prompt = [
-        "You must call the AskUserQuestion tool exactly once and wait for the user's answer.",
-        "Create one question with header 'color', prompt 'Choose a color', and options Blue and Red.",
-        "Set multiSelect to false.",
-        "After receiving the answer, reply with exactly QUESTION_FLOW_DONE.",
-        "Do not use any other tools.",
-      ].join(" ");
+      try {
+        const prompt = [
+          "You must call the AskUserQuestion tool exactly once and wait for the user's answer.",
+          "Create one question with header 'color', prompt 'Choose a color', and options Blue and Red.",
+          "Set multiSelect to false.",
+          "After receiving the answer, reply with exactly QUESTION_FLOW_DONE.",
+          "Do not use any other tools.",
+        ].join(" ");
 
-      let capturedQuestion: AgentPermissionRequest | null = null;
-      let sawResolvedAllow = false;
-      let sawDone = false;
+        let capturedQuestion: AgentPermissionRequest | null = null;
+        let sawResolvedAllow = false;
+        let sawDone = false;
 
-      for await (const event of session.stream(prompt)) {
-        if (
-          event.type === "permission_requested" &&
-          event.request.kind === "question" &&
-          !capturedQuestion
-        ) {
-          capturedQuestion = event.request;
-          const baseInput =
-            typeof capturedQuestion.input === "object" && capturedQuestion.input !== null
-              ? (capturedQuestion.input as Record<string, unknown>)
-              : {};
-          await session.respondToPermission(capturedQuestion.id, {
-            behavior: "allow",
-            updatedInput: {
-              ...baseInput,
-              answers: { color: "Blue" },
-            },
-          });
+        for await (const event of session.stream(prompt)) {
+          if (
+            event.type === "permission_requested" &&
+            event.request.kind === "question" &&
+            !capturedQuestion
+          ) {
+            capturedQuestion = event.request;
+            const baseInput =
+              typeof capturedQuestion.input === "object" && capturedQuestion.input !== null
+                ? (capturedQuestion.input as Record<string, unknown>)
+                : {};
+            await session.respondToPermission(capturedQuestion.id, {
+              behavior: "allow",
+              updatedInput: {
+                ...baseInput,
+                answers: { color: "Blue" },
+              },
+            });
+          }
+
+          if (
+            event.type === "permission_resolved" &&
+            capturedQuestion &&
+            event.requestId === capturedQuestion.id &&
+            event.resolution.behavior === "allow"
+          ) {
+            sawResolvedAllow = true;
+          }
+
+          if (
+            event.type === "timeline" &&
+            event.item.type === "assistant_message" &&
+            event.item.text.includes("QUESTION_FLOW_DONE")
+          ) {
+            sawDone = true;
+          }
+
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
         }
 
-        if (
-          event.type === "permission_resolved" &&
-          capturedQuestion &&
-          event.requestId === capturedQuestion.id &&
-          event.resolution.behavior === "allow"
-        ) {
-          sawResolvedAllow = true;
-        }
-
-        if (
-          event.type === "timeline" &&
-          event.item.type === "assistant_message" &&
-          event.item.text.includes("QUESTION_FLOW_DONE")
-        ) {
-          sawDone = true;
-        }
-
-        if (event.type === "turn_completed" || event.type === "turn_failed") {
-          break;
-        }
+        expect(capturedQuestion).not.toBeNull();
+        expect(sawResolvedAllow).toBe(true);
+        expect(session.getPendingPermissions()).toHaveLength(0);
+        expect(sawDone).toBe(true);
+      } finally {
+        await closeSessionAndCleanup(session, cwd);
       }
-
-      expect(capturedQuestion).not.toBeNull();
-      expect(sawResolvedAllow).toBe(true);
-      expect(session.getPendingPermissions()).toHaveLength(0);
-      expect(sawDone).toBe(true);
-
-      await session.close();
-      rmSync(cwd, { recursive: true, force: true });
     },
     180_000
   );
@@ -1271,50 +1291,51 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
-      const events = session.stream(
-        "Use the Task tool to launch a sub-agent that reads the current directory listing. " +
-        "The sub-agent should run 'ls' in the shell and report the result. " +
-        "Do NOT do the work yourself — delegate it to a sub-agent via the Task tool."
-      );
+      try {
+        const events = session.stream(
+          "Use the Task tool to launch a sub-agent that reads the current directory listing. " +
+          "The sub-agent should run 'ls' in the shell and report the result. " +
+          "Do NOT do the work yourself — delegate it to a sub-agent via the Task tool."
+        );
 
-      const timeline: AgentTimelineItem[] = [];
+        const timeline: AgentTimelineItem[] = [];
 
-      for await (const event of events) {
-        await autoApprove(session, event);
-        if (event.type === "timeline") {
-          timeline.push(event.item);
+        for await (const event of events) {
+          await autoApprove(session, event);
+          if (event.type === "timeline") {
+            timeline.push(event.item);
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
         }
-        if (event.type === "turn_completed" || event.type === "turn_failed") {
-          break;
+
+        const toolCalls = timeline.filter(
+          (item): item is ToolCallItem => item.type === "tool_call"
+        );
+
+        // There should be at least one Task tool call
+        const taskCalls = toolCalls.filter((item) => item.name === "Task");
+        expect(taskCalls.length).toBeGreaterThanOrEqual(1);
+
+        // We can't 100% guarantee Claude won't also use tools directly, but Task detail
+        // updates should exist for the sub-agent activity
+        const taskWithSubAgentDetail = taskCalls.filter(
+          (item) => item.detail.type === "sub_agent"
+        );
+        if (taskCalls.length > 0) {
+          expect(taskWithSubAgentDetail.length).toBeGreaterThanOrEqual(1);
         }
+
+        // Verify the curator produces clean output with collapsed Task entries
+        const curated = curateAgentActivity(timeline);
+        const lines = curated.split("\n");
+        const taskLines = lines.filter((l) => l.includes("[Task]"));
+        // Each Task callId should appear at most once in curated output
+        expect(taskLines.length).toBeLessThanOrEqual(taskCalls.length);
+      } finally {
+        await closeSessionAndCleanup(session, cwd);
       }
-
-      const toolCalls = timeline.filter(
-        (item): item is ToolCallItem => item.type === "tool_call"
-      );
-
-      // There should be at least one Task tool call
-      const taskCalls = toolCalls.filter((item) => item.name === "Task");
-      expect(taskCalls.length).toBeGreaterThanOrEqual(1);
-
-      // We can't 100% guarantee Claude won't also use tools directly, but Task detail
-      // updates should exist for the sub-agent activity
-      const taskWithSubAgentDetail = taskCalls.filter(
-        (item) => item.detail.type === "sub_agent"
-      );
-      if (taskCalls.length > 0) {
-        expect(taskWithSubAgentDetail.length).toBeGreaterThanOrEqual(1);
-      }
-
-      // Verify the curator produces clean output with collapsed Task entries
-      const curated = curateAgentActivity(timeline);
-      const lines = curated.split("\n");
-      const taskLines = lines.filter((l) => l.includes("[Task]"));
-      // Each Task callId should appear at most once in curated output
-      expect(taskLines.length).toBeLessThanOrEqual(taskCalls.length);
-
-      await session.close();
-      rmSync(cwd, { recursive: true, force: true });
     },
     180_000
   );

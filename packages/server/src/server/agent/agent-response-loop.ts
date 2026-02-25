@@ -93,7 +93,7 @@ export interface StructuredAgentGenerationWithFallbackOptions<T> {
 
 export const DEFAULT_STRUCTURED_GENERATION_PROVIDERS: readonly StructuredGenerationProvider[] = [
   { provider: "claude", model: "haiku" },
-  { provider: "codex", model: "gpt-5.1-codex-mini" },
+  { provider: "codex", model: "gpt-5.1-codex-mini", thinkingOptionId: "low" },
   { provider: "opencode", model: "opencode/kimi-k2.5-free" },
 ] as const;
 

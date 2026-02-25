@@ -14,6 +14,39 @@ import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
+const TEST_ENV_DEFAULTS = {
+  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
+  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? '0',
+  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? '0',
+}
+
+function killPidTree(pid: number, signal: NodeJS.Signals): void {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return
+  }
+
+  if (process.platform !== 'win32') {
+    try {
+      process.kill(-pid, signal)
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ESRCH') {
+        return
+      }
+    }
+  }
+
+  try {
+    process.kill(pid, signal)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code !== 'ESRCH') {
+      throw error
+    }
+  }
+}
+
 export interface TestContext {
   /** Random port for test daemon (never 6767) */
   port: number
@@ -72,7 +105,7 @@ export async function startDaemon(
   paseoHome: string
 ): Promise<ProcessPromise> {
   $.verbose = false
-  const daemon = $`PASEO_HOME=${paseoHome} PASEO_LISTEN=127.0.0.1:${port} paseo daemon start --foreground`.nothrow()
+  const daemon = $`PASEO_HOME=${paseoHome} PASEO_LISTEN=127.0.0.1:${port} PASEO_RELAY_ENABLED=false PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${TEST_ENV_DEFAULTS.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${TEST_ENV_DEFAULTS.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${TEST_ENV_DEFAULTS.PASEO_VOICE_MODE_ENABLED} CI=true paseo daemon start --foreground`.nothrow()
   return daemon
 }
 
@@ -86,13 +119,19 @@ export async function createTestContext(): Promise<TestContext> {
   // Helper to run CLI commands against test daemon
   const paseo = (args: string[]): ProcessPromise => {
     $.verbose = false
-    return $`PASEO_HOST=localhost:${port} paseo ${args}`.nothrow()
+    return $`PASEO_HOST=localhost:${port} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${TEST_ENV_DEFAULTS.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${TEST_ENV_DEFAULTS.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${TEST_ENV_DEFAULTS.PASEO_VOICE_MODE_ENABLED} paseo ${args}`.nothrow()
   }
 
   // Cleanup function
   const cleanup = async (): Promise<void> => {
     if (ctx.daemon) {
-      ctx.daemon.kill()
+      if (typeof ctx.daemon.pid === 'number') {
+        killPidTree(ctx.daemon.pid, 'SIGTERM')
+        await sleep(250)
+        killPidTree(ctx.daemon.pid, 'SIGKILL')
+      } else {
+        ctx.daemon.kill()
+      }
     }
     await rm(paseoHome, { recursive: true, force: true })
     await rm(workDir, { recursive: true, force: true })

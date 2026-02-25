@@ -8,7 +8,7 @@
  * - Help and argument parsing
  * - Validation for required update fields
  * - Graceful daemon connection errors
- * - Top-level alias support (`paseo update`)
+ * - Top-level daemon update alias behavior (`paseo update`)
  */
 
 import assert from 'node:assert'
@@ -16,13 +16,14 @@ import { $ } from 'zx'
 import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { getAvailablePort } from './helpers/network.ts'
 
 $.verbose = false
 
 console.log('=== Agent Update Command Tests ===\n')
 
-// Get random port that's definitely not in use (never 6767)
-const port = 10000 + Math.floor(Math.random() * 50000)
+// Resolve an available local port so daemon-not-running checks stay deterministic.
+const port = await getAvailablePort()
 const paseoHome = await mkdtemp(join(tmpdir(), 'paseo-test-home-'))
 
 try {
@@ -104,25 +105,27 @@ try {
     console.log('✓ agent --help shows update subcommand\n')
   }
 
-  // Test 7: top-level update alias --help works
+  // Test 7: top-level update alias --help shows daemon update options
   {
-    console.log('Test 7: top-level update --help works')
+    console.log('Test 7: top-level update --help shows daemon update options')
     const result = await $`npx paseo update --help`.nothrow()
     assert.strictEqual(result.exitCode, 0, 'update --help should exit 0')
-    assert(result.stdout.includes('--name'), 'help should mention --name flag')
-    assert(result.stdout.includes('--label'), 'help should mention --label flag')
-    console.log('✓ top-level update --help works\n')
+    assert(result.stdout.includes('--home'), 'help should mention --home flag')
+    assert(result.stdout.includes('--yes'), 'help should mention --yes flag')
+    assert(result.stdout.includes('daemon update'), 'help should mention daemon update alias')
+    console.log('✓ top-level update --help shows daemon update options\n')
   }
 
-  // Test 8: top-level update alias accepts flags
+  // Test 8: top-level update alias accepts daemon update flags
   {
-    console.log('Test 8: top-level update alias accepts flags')
+    console.log('Test 8: top-level update alias accepts daemon update flags')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo update abc123 --name "Alias Name" --host localhost:${port}`.nothrow()
+      await $`PASEO_HOME=${paseoHome} npx paseo update --home ${paseoHome} --yes --help`.nothrow()
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept top-level update flags')
     assert(!output.includes('error: option'), 'should not have option parsing error')
-    console.log('✓ top-level update alias accepts flags\n')
+    assert.strictEqual(result.exitCode, 0, 'update alias help with flags should exit 0')
+    console.log('✓ top-level update alias accepts daemon update flags\n')
   }
 } finally {
   // Clean up temp directory

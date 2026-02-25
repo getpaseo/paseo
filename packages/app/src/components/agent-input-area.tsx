@@ -36,6 +36,7 @@ import {
   persistAttachmentFromFileUri,
 } from '@/attachments/service'
 import { shouldSkipDraftPersist } from '@/components/agent-input-area.draft-persist-guard'
+import { markScrollInvestigationRender } from '@/utils/scroll-jank-investigation'
 
 type QueuedMessage = {
   id: string
@@ -77,6 +78,7 @@ export function AgentInputArea({
   onAddImages,
   commandDraftConfig,
 }: AgentInputAreaProps) {
+  markScrollInvestigationRender(`AgentInputArea:${serverId}:${agentId}`)
   const { theme } = useUnistyles()
   const insets = useSafeAreaInsets()
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation()

@@ -14,8 +14,6 @@ test("agent details sheet shows IDs and copy toast", async ({ page }) => {
     await createAgent(page, prompt);
 
     await page.getByTestId("agent-overflow-menu").click();
-    await page.getByTestId("agent-menu-details").click();
-
     await expect(page.getByTestId("agent-details-sheet")).toBeVisible();
 
     await expect(page.getByTestId("agent-details-agent-id")).toBeVisible();

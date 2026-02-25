@@ -146,9 +146,7 @@ const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   GIT_OPTIONAL_LOCKS: '0',
 }
 const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>()
-let restartRequested = false
 const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0]
-const RESTART_EXIT_DELAY_MS = 250
 const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150
 const CHECKOUT_DIFF_FALLBACK_REFRESH_MS = 5_000
 const TERMINAL_STREAM_WINDOW_BYTES = 256 * 1024
@@ -346,6 +344,7 @@ export type SessionOptions = {
   clientId: string
   onMessage: (msg: SessionOutboundMessage) => void
   onBinaryMessage?: (frame: BinaryMuxFrame) => void
+  onLifecycleIntent?: (intent: SessionLifecycleIntent) => void
   logger: pino.Logger
   downloadTokenStore: DownloadTokenStore
   pushTokenStore: PushTokenStore
@@ -378,6 +377,19 @@ export type SessionOptions = {
   }
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap
 }
+
+export type SessionLifecycleIntent =
+  | {
+      type: 'shutdown'
+      clientId: string
+      requestId: string
+    }
+  | {
+      type: 'restart'
+      clientId: string
+      requestId: string
+      reason?: string
+    }
 
 type VoiceFeatureUnavailableContext = {
   reasonCode: SpeechReadinessSnapshot['voiceFeature']['reasonCode']
@@ -480,6 +492,7 @@ export class Session {
   private readonly sessionId: string
   private readonly onMessage: (msg: SessionOutboundMessage) => void
   private readonly onBinaryMessage: ((frame: BinaryMuxFrame) => void) | null
+  private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null
   private readonly sessionLogger: pino.Logger
   private readonly paseoHome: string
 
@@ -581,6 +594,7 @@ export class Session {
       clientId,
       onMessage,
       onBinaryMessage,
+      onLifecycleIntent,
       logger,
       downloadTokenStore,
       pushTokenStore,
@@ -600,6 +614,7 @@ export class Session {
     this.sessionId = uuidv4()
     this.onMessage = onMessage
     this.onBinaryMessage = onBinaryMessage ?? null
+    this.onLifecycleIntent = onLifecycleIntent ?? null
     this.downloadTokenStore = downloadTokenStore
     this.pushTokenStore = pushTokenStore
     this.paseoHome = paseoHome
@@ -717,10 +732,6 @@ export class Session {
     }
 
     if (snapshot.lifecycle !== 'running' && !snapshot.pendingRun) {
-      this.sessionLogger.debug(
-        { agentId, lifecycle: snapshot.lifecycle, pendingRun: Boolean(snapshot.pendingRun) },
-        'interruptAgentIfRunning: not running, skipping'
-      )
       return
     }
 
@@ -768,8 +779,6 @@ export class Session {
     prompt: AgentPromptInput,
     runOptions?: AgentRunOptions
   ): { ok: true } | { ok: false; error: string } {
-    this.sessionLogger.info({ agentId }, `Starting agent stream for ${agentId}`)
-
     let iterator: AsyncGenerator<AgentStreamEvent>
     try {
       iterator = this.agentManager.streamAgent(agentId, prompt, runOptions)
@@ -1360,6 +1369,10 @@ export class Session {
           await this.handleRestartServerRequest(msg.requestId, msg.reason)
           break
 
+        case 'shutdown_server_request':
+          await this.handleShutdownServerRequest(msg.requestId)
+          break
+
         case 'fetch_agent_timeline_request':
           await this.handleFetchAgentTimelineRequest(msg)
           break
@@ -1634,12 +1647,6 @@ export class Session {
   }
 
   private async handleRestartServerRequest(requestId: string, reason?: string): Promise<void> {
-    if (restartRequested) {
-      this.sessionLogger.debug('Restart already requested, ignoring duplicate')
-      return
-    }
-
-    restartRequested = true
     const payload: { status: string } & Record<string, unknown> = {
       status: 'restart_requested',
       clientId: this.clientId,
@@ -1655,17 +1662,41 @@ export class Session {
       payload,
     })
 
-    if (typeof process.send === 'function') {
-      process.send({
-        type: 'paseo:restart',
-        ...(reason ? { reason } : {}),
-      })
+    this.emitLifecycleIntent({
+      type: 'restart',
+      clientId: this.clientId,
+      requestId,
+      ...(reason ? { reason } : {}),
+    })
+  }
+
+  private async handleShutdownServerRequest(requestId: string): Promise<void> {
+    this.sessionLogger.warn('Shutdown requested via websocket')
+    this.emit({
+      type: 'status',
+      payload: {
+        status: 'shutdown_requested',
+        clientId: this.clientId,
+        requestId,
+      },
+    })
+
+    this.emitLifecycleIntent({
+      type: 'shutdown',
+      clientId: this.clientId,
+      requestId,
+    })
+  }
+
+  private emitLifecycleIntent(intent: SessionLifecycleIntent): void {
+    if (!this.onLifecycleIntent) {
       return
     }
-
-    setTimeout(() => {
-      process.exit(0)
-    }, RESTART_EXIT_DELAY_MS)
+    try {
+      this.onLifecycleIntent(intent)
+    } catch (error) {
+      this.sessionLogger.error({ err: error, intent }, 'Lifecycle intent handler failed')
+    }
   }
 
   private async handleDeleteAgentRequest(agentId: string, requestId: string): Promise<void> {
@@ -2426,43 +2457,6 @@ export class Session {
       const snapshot = await this.agentManager.createAgent(sessionConfig, undefined, { labels })
       await this.forwardAgentUpdate(snapshot)
 
-      const trimmedPrompt = initialPrompt?.trim()
-      if (trimmedPrompt) {
-        scheduleAgentMetadataGeneration({
-          agentManager: this.agentManager,
-          agentId: snapshot.id,
-          cwd: snapshot.cwd,
-          initialPrompt: trimmedPrompt,
-          explicitTitle: snapshot.config.title,
-          paseoHome: this.paseoHome,
-          logger: this.sessionLogger,
-        })
-
-        try {
-          await this.handleSendAgentMessage(
-            snapshot.id,
-            trimmedPrompt,
-            resolveClientMessageId(clientMessageId),
-            images,
-            outputSchema ? { outputSchema } : undefined
-          )
-        } catch (promptError) {
-          this.sessionLogger.error(
-            { err: promptError, agentId: snapshot.id },
-            `Failed to run initial prompt for agent ${snapshot.id}`
-          )
-          this.emit({
-            type: 'activity_log',
-            payload: {
-              id: uuidv4(),
-              timestamp: new Date(),
-              type: 'error',
-              content: `Initial prompt failed: ${(promptError as Error)?.message ?? promptError}`,
-            },
-          })
-        }
-      }
-
       if (requestId) {
         const agentPayload = await this.getAgentPayloadById(snapshot.id)
         if (!agentPayload) {
@@ -2476,6 +2470,41 @@ export class Session {
             requestId,
             agent: agentPayload,
           },
+        })
+      }
+
+      const trimmedPrompt = initialPrompt?.trim()
+      if (trimmedPrompt) {
+        scheduleAgentMetadataGeneration({
+          agentManager: this.agentManager,
+          agentId: snapshot.id,
+          cwd: snapshot.cwd,
+          initialPrompt: trimmedPrompt,
+          explicitTitle: snapshot.config.title,
+          paseoHome: this.paseoHome,
+          logger: this.sessionLogger,
+        })
+
+        void this.handleSendAgentMessage(
+          snapshot.id,
+          trimmedPrompt,
+          resolveClientMessageId(clientMessageId),
+          images,
+          outputSchema ? { outputSchema } : undefined
+        ).catch((promptError) => {
+          this.sessionLogger.error(
+            { err: promptError, agentId: snapshot.id },
+            `Failed to run initial prompt for agent ${snapshot.id}`
+          )
+          this.emit({
+            type: 'activity_log',
+            payload: {
+              id: uuidv4(),
+              timestamp: new Date(),
+              type: 'error',
+              content: `Initial prompt failed: ${(promptError as Error)?.message ?? promptError}`,
+            },
+          })
         })
       }
 
@@ -3336,10 +3365,6 @@ export class Session {
    */
   private async handleClearAgentAttention(agentId: string | string[]): Promise<void> {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId]
-    this.sessionLogger.debug(
-      { agentIds },
-      `Clearing attention for ${agentIds.length} agent(s): ${agentIds.join(', ')}`
-    )
 
     try {
       await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)))
@@ -4579,11 +4604,6 @@ export class Session {
    */
   private async handleFileExplorerRequest(request: FileExplorerRequest): Promise<void> {
     const { agentId, path: requestedPath = '.', mode, requestId } = request
-
-    this.sessionLogger.debug(
-      { agentId, mode, path: requestedPath },
-      `Handling file explorer request for agent ${agentId} (${mode} ${requestedPath})`
-    )
 
     try {
       const agents = this.agentManager.listAgents()
@@ -6211,7 +6231,6 @@ export class Session {
     if (this.agentMcpClient) {
       try {
         await this.agentMcpClient.close()
-        this.sessionLogger.debug('Agent MCP client closed')
       } catch (error) {
         this.sessionLogger.error({ err: error }, 'Failed to close Agent MCP client')
       }
@@ -6639,7 +6658,10 @@ export class Session {
 
     const existingStreamId = this.terminalStreamByTerminalId.get(msg.terminalId)
     if (typeof existingStreamId === 'number') {
-      this.detachTerminalStream(existingStreamId, { emitExit: false })
+      // Replacing an active stream can happen when multiple UI surfaces attach to the
+      // same terminal. Emit exit for the replaced stream so stale listeners reconnect
+      // instead of continuing to send input to an invalid stream id.
+      this.detachTerminalStream(existingStreamId, { emitExit: true })
     }
 
     const streamId = this.allocateTerminalStreamId()

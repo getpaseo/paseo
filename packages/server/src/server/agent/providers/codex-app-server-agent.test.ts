@@ -244,6 +244,29 @@ describe("Codex app-server provider (integration)", () => {
     }
   });
 
+  test("maps patch notifications with file_path aliases in array-style changes", () => {
+    const item = __codexAppServerInternals.mapCodexPatchNotificationToToolCall({
+      callId: "patch-array-file-path",
+      changes: [
+        {
+          file_path: "/tmp/repo/src/alias-path.ts",
+          type: "modify",
+          diff: "@@\n-before\n+after\n",
+        },
+      ],
+      cwd: "/tmp/repo",
+      running: false,
+    });
+
+    expect(item.detail.type).toBe("edit");
+    if (item.detail.type === "edit") {
+      expect(item.detail.filePath).toBe("src/alias-path.ts");
+      expect(item.detail.unifiedDiff).toContain("-before");
+      expect(item.detail.unifiedDiff).toContain("+after");
+      expect(item.detail.newString).toBeUndefined();
+    }
+  });
+
   test.runIf(isCodexInstalled())("listModels returns live Codex models", async () => {
     const client = new CodexAppServerAgentClient(logger);
     const models = await client.listModels();
@@ -457,6 +480,15 @@ describe("Codex app-server provider (integration)", () => {
         modeId: "read-only",
         model: CODEX_TEST_MODEL,
         thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        extra: {
+          codex: {
+            tools: {
+              shell: false,
+              list_mcp_resources: false,
+              list_mcp_resource_templates: false,
+            },
+          },
+        },
         mcpServers: {
           paseo_test: {
             type: "stdio",
@@ -468,7 +500,7 @@ describe("Codex app-server provider (integration)", () => {
 
       const result = await session.run(
         [
-          "You must call the MCP tool named paseo_test.echo exactly once.",
+          "You must call the MCP tool named paseo_test.paseo_roundtrip_text exactly once.",
           `Call it with text: ${token}`,
           "Do not use shell or any non-MCP tools.",
           "After the tool call, respond with exactly the tool output text.",
@@ -481,9 +513,10 @@ describe("Codex app-server provider (integration)", () => {
           item.type === "tool_call"
       );
       const toolNames = toolCalls.map((item) => item.name);
+      const nonMcpToolNames = toolNames.filter((name) => name !== "paseo_test.paseo_roundtrip_text");
       const distinctMcpCalls = new Map<string, Extract<AgentTimelineItem, { type: "tool_call" }>>();
       for (const call of toolCalls) {
-        if (call.name !== "paseo_test.echo") {
+        if (call.name !== "paseo_test.paseo_roundtrip_text") {
           continue;
         }
         const key = String(call.callId ?? `${call.name}:${JSON.stringify(call.detail)}`);
@@ -494,14 +527,25 @@ describe("Codex app-server provider (integration)", () => {
       }
 
       // Hard assertion: exactly one distinct call of the exact MCP tool.
-      expect(toolNames.every((name) => name === "paseo_test.echo")).toBe(true);
+      if (nonMcpToolNames.length > 0) {
+        const nonMcpCalls = toolCalls
+          .filter((call) => call.name !== "paseo_test.paseo_roundtrip_text")
+          .map((call) => ({
+            name: call.name,
+            status: call.status,
+            detail: call.detail,
+          }));
+        throw new Error(
+          `Unexpected non-MCP tool calls in MCP round-trip: ${JSON.stringify(nonMcpCalls)}; all tool names: ${JSON.stringify(toolNames)}`
+        );
+      }
       expect(distinctMcpCalls.size).toBe(1);
       const mcpToolCall = Array.from(distinctMcpCalls.values())[0]!;
-      expect(mcpToolCall.name).toBe("paseo_test.echo");
+      expect(mcpToolCall.name).toBe("paseo_test.paseo_roundtrip_text");
       expect(mcpToolCall.status).toBe("completed");
 
       // Hard assertion: no non-MCP tools in this run.
-      expect(toolNames.every((name) => name === "paseo_test.echo")).toBe(true);
+      expect(nonMcpToolNames).toEqual([]);
       expect(toolNames.some((name) => name.toLowerCase().includes("shell"))).toBe(false);
 
       // Hard assertion: roundtrip token must be present in the MCP tool I/O.
@@ -521,7 +565,8 @@ describe("Codex app-server provider (integration)", () => {
       const cleanup = useTempCodexSessionDir();
       const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
       const promptsDir = path.join(codexHome, "prompts");
-      const promptPath = path.join(promptsDir, "test.md");
+      const promptName = `paseo-test-${process.pid}-${Date.now().toString(36)}`;
+      const promptPath = path.join(promptsDir, `${promptName}.md`);
       const cwd = tmpCwd("codex-cmd-");
       const token = `PASEO_PROMPT_TOKEN_${Date.now()}`;
 
@@ -549,13 +594,37 @@ describe("Codex app-server provider (integration)", () => {
         });
         try {
           const commands = await session.listCommands?.();
-          expect(commands?.some((cmd) => cmd.name === "prompts:test")).toBe(true);
+          expect(commands?.some((cmd) => cmd.name === `prompts:${promptName}`)).toBe(true);
 
           const executeArgs = "NAME=world extra_value";
           const expectedExpanded = `${token}::name=world::pos1=extra_value::dollar=$`;
-          const rawSlashInput = "/prompts:test NAME=world extra_value";
+          const rawSlashInput = `/prompts:${promptName} ${executeArgs}`;
           const runResult = await session.run(rawSlashInput);
           expect(runResult.finalText).toContain(expectedExpanded);
+
+          const internal = session as unknown as {
+            client?: {
+              request: (method: string, params: unknown) => Promise<unknown>;
+            };
+            currentThreadId?: string | null;
+          };
+          const threadId = internal.currentThreadId;
+          const codexClient = internal.client;
+          if (!threadId || !codexClient) {
+            throw new Error("Codex session did not initialize app-server client/thread");
+          }
+
+          const threadRead = (await codexClient.request("thread/read", {
+            threadId,
+            includeTurns: true,
+          })) as { thread?: { path?: string } };
+          const rolloutPath = threadRead.thread?.path;
+          if (!rolloutPath) {
+            throw new Error("Codex app-server did not return rollout path");
+          }
+
+          const rolloutText = readFileSync(rolloutPath, "utf8");
+          expect(rolloutText).toContain(expectedExpanded);
         } finally {
           await session.close();
         }
@@ -574,7 +643,8 @@ describe("Codex app-server provider (integration)", () => {
       const cleanup = useTempCodexSessionDir();
       const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
       const promptsDir = path.join(codexHome, "prompts");
-      const promptPath = path.join(promptsDir, "stream-test.md");
+      const promptName = `paseo-stream-${process.pid}-${Date.now().toString(36)}`;
+      const promptPath = path.join(promptsDir, `${promptName}.md`);
       const cwd = tmpCwd("codex-cmd-stream-");
       const token = `PASEO_STREAM_TOKEN_${Date.now()}`;
 
@@ -600,7 +670,7 @@ describe("Codex app-server provider (integration)", () => {
           thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
         });
         try {
-          const events = session.stream("/prompts:stream-test");
+          const events = session.stream(`/prompts:${promptName}`);
           const seenTypes = new Set<string>();
           const assistantChunks: string[] = [];
           for await (const event of events) {
@@ -774,12 +844,17 @@ describe("Codex app-server provider (integration)", () => {
 
       expect(sawPermission).toBe(true);
       expect(sawPermissionResolvedDeny).toBe(true);
-      expect(
-        timelineItems.some(
-          (item) =>
-            item.status === "failed" && hasShellCommand(item, "permission-deny.txt")
-        )
-      ).toBe(true);
+      expect(captured).not.toBeNull();
+      const deniedShellCall = timelineItems.find(
+        (item) =>
+          item.name === "shell" &&
+          item.status === "failed" &&
+          typeof item.metadata === "object" &&
+          item.metadata !== null &&
+          (item.metadata as { permissionRequestId?: string }).permissionRequestId === captured?.id
+      );
+      expect(deniedShellCall).toBeDefined();
+      expect(deniedShellCall ? hasShellCommand(deniedShellCall, "permission-deny.txt") : false).toBe(true);
       expect(existsSync(filePath)).toBe(true);
     } finally {
       cleanup();
@@ -796,16 +871,6 @@ describe("Codex app-server provider (integration)", () => {
       const patchFile = path.join(cwd, "patch.txt");
 
       try {
-        const client = new CodexAppServerAgentClient(logger);
-        const session = await client.createSession({
-          provider: "codex",
-          cwd,
-          modeId: "full-access",
-          approvalPolicy: "on-request",
-          model: CODEX_TEST_MODEL,
-          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-        });
-
         let sawAssistantMessage = false;
         let sawShellTool = false;
         let sawPatchTool = false;
@@ -813,33 +878,46 @@ describe("Codex app-server provider (integration)", () => {
         let sawPatchCompleted = false;
         const timelineItems: AgentTimelineItem[] = [];
 
-        const shellEvents = session.stream(
-          "Run the exact shell command `printf \"ok\" > shell.txt`. After it completes, reply SHELL_DONE."
-        );
+        const shellClient = new CodexAppServerAgentClient(logger);
+        const shellSession = await shellClient.createSession({
+          provider: "codex",
+          cwd,
+          modeId: "full-access",
+          approvalPolicy: "on-request",
+          model: CODEX_TEST_MODEL,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        });
         let failure: string | null = null;
-        for await (const event of shellEvents) {
-          if (event.type === "permission_requested") {
-            await session.respondToPermission(event.request.id, { behavior: "allow" });
-          }
-          if (event.type === "timeline") {
-            timelineItems.push(event.item);
-            if (event.item.type === "assistant_message") {
-              sawAssistantMessage = true;
+        try {
+          const shellEvents = shellSession.stream(
+            "Run the exact shell command `printf \"ok\" > shell.txt`. After it completes, reply SHELL_DONE."
+          );
+          for await (const event of shellEvents) {
+            if (event.type === "permission_requested") {
+              await shellSession.respondToPermission(event.request.id, { behavior: "allow" });
             }
-            if (hasShellCommand(event.item, "printf")) {
-              sawShellTool = true;
-              if (event.item.status === "completed") {
-                sawShellCompleted = true;
+            if (event.type === "timeline") {
+              timelineItems.push(event.item);
+              if (event.item.type === "assistant_message") {
+                sawAssistantMessage = true;
+              }
+              if (hasShellCommand(event.item, "printf")) {
+                sawShellTool = true;
+                if (event.item.status === "completed") {
+                  sawShellCompleted = true;
+                }
               }
             }
+            if (event.type === "turn_failed") {
+              failure = event.error;
+              break;
+            }
+            if (event.type === "turn_completed") {
+              break;
+            }
           }
-          if (event.type === "turn_failed") {
-            failure = event.error;
-            break;
-          }
-          if (event.type === "turn_completed") {
-            break;
-          }
+        } finally {
+          await shellSession.close();
         }
 
         if (failure) {
@@ -852,38 +930,49 @@ describe("Codex app-server provider (integration)", () => {
           "+patched",
           "*** End Patch",
         ].join("\n");
-        const patchEvents = session.stream(
-          buildStrictApplyPatchPrompt(patch, "PATCH_DONE", {
-            includePermissionStep: true,
-          })
-        );
+        const patchClient = new CodexAppServerAgentClient(logger);
+        const patchSession = await patchClient.createSession({
+          provider: "codex",
+          cwd,
+          modeId: "full-access",
+          approvalPolicy: "on-request",
+          model: CODEX_TEST_MODEL,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        });
+        try {
+          const patchEvents = patchSession.stream(
+            buildStrictApplyPatchPrompt(patch, "PATCH_DONE", {
+              includePermissionStep: true,
+            })
+          );
 
-        for await (const event of patchEvents) {
-          if (event.type === "permission_requested") {
-            await session.respondToPermission(event.request.id, { behavior: "allow" });
-          }
-          if (event.type === "timeline") {
-            timelineItems.push(event.item);
-            if (event.item.type === "assistant_message") {
-              sawAssistantMessage = true;
+          for await (const event of patchEvents) {
+            if (event.type === "permission_requested") {
+              await patchSession.respondToPermission(event.request.id, { behavior: "allow" });
             }
-            if (hasApplyPatchFile(event.item, "patch.txt")) {
-              sawPatchTool = true;
-              if (event.item.status === "completed") {
-                sawPatchCompleted = true;
+            if (event.type === "timeline") {
+              timelineItems.push(event.item);
+              if (event.item.type === "assistant_message") {
+                sawAssistantMessage = true;
+              }
+              if (hasApplyPatchFile(event.item, "patch.txt")) {
+                sawPatchTool = true;
+                if (event.item.status === "completed") {
+                  sawPatchCompleted = true;
+                }
               }
             }
+            if (event.type === "turn_failed") {
+              failure = event.error;
+              break;
+            }
+            if (event.type === "turn_completed") {
+              break;
+            }
           }
-          if (event.type === "turn_failed") {
-            failure = event.error;
-            break;
-          }
-          if (event.type === "turn_completed") {
-            break;
-          }
+        } finally {
+          await patchSession.close();
         }
-
-        await session.close();
 
         if (failure) {
           throw new Error(failure);
@@ -1294,11 +1383,16 @@ describe("Codex app-server provider (integration)", () => {
           return result.value;
         };
 
-        // Interrupt should be observed quickly; don't allow this test to hang if the stream stalls.
+        // Keep polling until the hard deadline; first-run Codex startup can leave
+        // a quiet gap >10s before the shell tool call appears.
         const hardDeadline = Date.now() + 45_000;
         while (Date.now() < hardDeadline) {
-          const event = await nextEvent(10_000);
-          if (!event) break;
+          const remainingMs = hardDeadline - Date.now();
+          const pollWindowMs = Math.max(250, Math.min(10_000, remainingMs));
+          const event = await nextEvent(pollWindowMs);
+          if (!event) {
+            continue;
+          }
 
           if (event.type === "permission_requested") {
             await session.respondToPermission(event.request.id, { behavior: "allow" });

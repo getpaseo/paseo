@@ -1,8 +1,9 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { closeSync, existsSync, openSync, readFileSync, rmSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { loadConfig, resolvePaseoHome } from '@getpaseo/server'
+import { tryConnectToDaemon } from '../../utils/client.js'
 
 export interface DaemonStartOptions {
   port?: string
@@ -219,17 +220,63 @@ function signalProcess(pid: number, signal: NodeJS.Signals): boolean {
   }
 }
 
-async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
+function signalProcessSafely(pid: number, signal: NodeJS.Signals): boolean {
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) {
+    return false
+  }
 
+  try {
+    return signalProcess(pid, signal)
+  } catch (err) {
+    const code = readNodeErrnoCode(err)
+    if (code === 'EPERM') {
+      return true
+    }
+    throw err
+  }
+}
+
+function signalProcessGroupSafely(pid: number, signal: NodeJS.Signals): boolean {
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) {
+    return false
+  }
+
+  if (process.platform === 'win32') {
+    return signalProcessSafely(pid, signal)
+  }
+
+  try {
+    process.kill(-pid, signal)
+    return true
+  } catch (err) {
+    const code = readNodeErrnoCode(err)
+    if (code === 'ESRCH') {
+      return signalProcessSafely(pid, signal)
+    }
+    if (code === 'EPERM') {
+      return true
+    }
+    throw err
+  }
+}
+
+async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (!isProcessRunning(pid)) {
       return true
     }
     await sleep(PID_POLL_INTERVAL_MS)
   }
-
   return !isProcessRunning(pid)
+}
+
+type LifecycleShutdownAttempt =
+  | { requested: true }
+  | { requested: false; reason: string }
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 export function resolveLocalPaseoHome(home?: string): string {
@@ -384,6 +431,41 @@ export function startLocalDaemonForeground(options: DaemonStartOptions): number 
   return result.status ?? 1
 }
 
+async function requestLifecycleShutdown(
+  state: LocalDaemonState,
+  timeoutMs: number
+): Promise<LifecycleShutdownAttempt> {
+  const host = resolveTcpHostFromListen(state.listen)
+  if (!host) {
+    return {
+      requested: false,
+      reason: 'daemon listen target is not TCP, falling back to owner PID signal',
+    }
+  }
+
+  const client = await tryConnectToDaemon({ host, timeout: Math.min(timeoutMs, 5000) })
+  if (!client) {
+    return {
+      requested: false,
+      reason: `daemon websocket at ${host} is not reachable, falling back to owner PID signal`,
+    }
+  }
+
+  try {
+    await client.shutdownServer()
+    return { requested: true }
+  } catch (error) {
+    return {
+      requested: false,
+      reason: `daemon lifecycle shutdown request failed (${getErrorMessage(
+        error
+      )}), falling back to owner PID signal`,
+    }
+  } finally {
+    await client.close().catch(() => undefined)
+  }
+}
+
 export async function stopLocalDaemon(
   options: StopLocalDaemonOptions = {}
 ): Promise<StopLocalDaemonResult> {
@@ -405,28 +487,28 @@ export async function stopLocalDaemon(
   }
 
   const pid = state.pidInfo.pid
-  const signaled = signalProcess(pid, 'SIGTERM')
-  if (!signaled) {
-    return {
-      action: 'not_running',
-      home: state.home,
-      pid,
-      forced: false,
-      message: 'Daemon process was already stopped',
+  const shutdownAttempt = await requestLifecycleShutdown(state, timeoutMs)
+  const lifecycleRequested = shutdownAttempt.requested
+  const fallbackMessage = shutdownAttempt.requested ? null : shutdownAttempt.reason
+  let forced = false
+  if (!lifecycleRequested) {
+    const signaled = signalProcessSafely(pid, 'SIGTERM')
+    if (!signaled) {
+      return {
+        action: 'not_running',
+        home: state.home,
+        pid,
+        forced: false,
+        message: 'Daemon process was already stopped',
+      }
     }
   }
 
-  let forced = false
-  let stopped = await waitForExit(pid, timeoutMs)
-
+  let stopped = await waitForPidExit(pid, timeoutMs)
   if (!stopped && options.force) {
     forced = true
-    const killSent = signalProcess(pid, 'SIGKILL')
-    if (killSent) {
-      stopped = await waitForExit(pid, KILL_TIMEOUT_MS)
-    } else {
-      stopped = true
-    }
+    signalProcessGroupSafely(pid, 'SIGKILL')
+    stopped = await waitForPidExit(pid, KILL_TIMEOUT_MS)
   }
 
   if (!stopped) {
@@ -435,13 +517,15 @@ export async function stopLocalDaemon(
     )
   }
 
-  rmSync(state.pidPath, { force: true })
-
   return {
     action: 'stopped',
     home: state.home,
     pid,
     forced,
-    message: forced ? 'Daemon was force-stopped' : 'Daemon stopped gracefully',
+    message: forced
+      ? 'Daemon owner process was force-stopped'
+      : lifecycleRequested
+        ? 'Daemon stopped gracefully'
+        : fallbackMessage ?? 'Daemon stopped via owner PID signal',
   }
 }

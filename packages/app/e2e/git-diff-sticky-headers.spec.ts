@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { appendFile } from 'node:fs/promises';
 import { test, expect, type Page } from './fixtures';
-import { ensureHostSelected, gotoHome, setWorkingDirectory } from './helpers/app';
+import { createAgent, ensureHostSelected, gotoHome, setWorkingDirectory } from './helpers/app';
 import { createTempGitRepo } from './helpers/workspace';
 
 test.describe.configure({ timeout: 90000 });
@@ -10,18 +10,31 @@ function getChangesScope(page: Page) {
   return page.locator('[data-testid="explorer-content-area"]:visible').first();
 }
 
+async function ensureExplorerTabsVisible(page: Page) {
+  const changesTab = page.getByTestId('explorer-tab-changes').first();
+  if (await changesTab.isVisible().catch(() => false)) {
+    return;
+  }
+
+  const toggle = page
+    .getByRole('button', { name: /open explorer|close explorer|toggle explorer/i })
+    .first();
+  await expect(toggle).toBeVisible({ timeout: 10000 });
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (await changesTab.isVisible().catch(() => false)) {
+      return;
+    }
+    await toggle.click();
+    await page.waitForTimeout(200);
+  }
+  await expect(changesTab).toBeVisible({ timeout: 30000 });
+}
+
 async function openChangesPanel(page: Page) {
+  await ensureExplorerTabsVisible(page);
   const changesHeader = getChangesScope(page).getByTestId('changes-header');
   if (!(await changesHeader.isVisible())) {
-    const explorerHeader = page.getByTestId('explorer-header');
-    if (await explorerHeader.isVisible()) {
-      await page.getByText('Changes', { exact: true }).click();
-    } else {
-      const overflowMenu = page.getByTestId('agent-overflow-menu').first();
-      await expect(overflowMenu).toBeVisible({ timeout: 10000 });
-      await overflowMenu.click();
-      await page.getByText('View Changes', { exact: true }).click();
-    }
+    await page.getByTestId('explorer-tab-changes').first().click();
   }
   await expect(changesHeader).toBeVisible();
 }
@@ -31,22 +44,29 @@ async function refreshUncommittedMode(page: Page) {
   const toggle = scope.getByTestId('changes-diff-status').first();
   await expect(toggle).toBeVisible({ timeout: 30000 });
 
+  const diffModeBackdrop = page.getByTestId('changes-diff-status-menu-backdrop');
+  if (await diffModeBackdrop.isVisible().catch(() => false)) {
+    await diffModeBackdrop.click({ force: true });
+    await expect(diffModeBackdrop).toHaveCount(0);
+  }
+
   const currentLabel = (await toggle.innerText()).trim();
-  await toggle.click();
+  await toggle.click({ force: true });
+  await expect(page.getByTestId('changes-diff-status-menu')).toBeVisible({ timeout: 10000 });
+  const firstTarget = currentLabel === 'Uncommitted' ? 'changes-diff-mode-committed' : 'changes-diff-mode-uncommitted';
+  await page.getByTestId(firstTarget).click({ force: true });
   await expect.poll(async () => (await toggle.innerText()).trim()).not.toBe(currentLabel);
 
   const nextLabel = (await toggle.innerText()).trim();
-  await toggle.click();
+  await toggle.click({ force: true });
+  await expect(page.getByTestId('changes-diff-status-menu')).toBeVisible({ timeout: 10000 });
+  const secondTarget = nextLabel === 'Uncommitted' ? 'changes-diff-mode-committed' : 'changes-diff-mode-uncommitted';
+  await page.getByTestId(secondTarget).click({ force: true });
   await expect.poll(async () => (await toggle.innerText()).trim()).not.toBe(nextLabel);
 }
 
 async function createAgentAndWait(page: Page, message: string) {
-  const input = page.getByRole('textbox', { name: 'Message agent...' });
-  await expect(input).toBeEditable();
-  await input.fill(message);
-  await input.press('Enter');
-  await expect(page).toHaveURL(/\/agent\//, { timeout: 120000 });
-  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  await createAgent(page, message);
 }
 
 test('keeps file header sticky while scrolling within a long diff', async ({ page }) => {

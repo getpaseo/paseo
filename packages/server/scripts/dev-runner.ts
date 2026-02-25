@@ -1,26 +1,24 @@
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "url";
-import { existsSync } from "node:fs";
 import dotenv from "dotenv";
-import { runSupervisor } from "./supervisor.js";
 
 dotenv.config({
   path: fileURLToPath(new URL("../.env", import.meta.url)),
   quiet: true,
 });
 
-const WORKER_ENTRY = fileURLToPath(new URL("../src/server/index.ts", import.meta.url));
-if (!existsSync(WORKER_ENTRY)) {
-  throw new Error(`Dev worker entry not found: ${WORKER_ENTRY}`);
+const daemonRunnerEntry = fileURLToPath(new URL("./daemon-runner.ts", import.meta.url));
+const result = spawnSync(
+  process.execPath,
+  [...process.execArgv, daemonRunnerEntry, "--dev", ...process.argv.slice(2)],
+  {
+    stdio: "inherit",
+    env: process.env,
+  }
+);
+
+if (result.error) {
+  throw result.error;
 }
 
-runSupervisor({
-  name: "DevRunner",
-  startupMessage: "Starting server worker (crash restarts enabled)",
-  resolveWorkerEntry: () => WORKER_ENTRY,
-  workerArgs: process.argv.slice(2),
-  workerEnv: process.env,
-  // Always run worker with tsx so dev server uses TypeScript sources directly.
-  workerExecArgv: ["--import", "tsx"],
-  restartOnCrash: true,
-  shutdownReasons: ["cli_shutdown"],
-});
+process.exit(result.status ?? 1);

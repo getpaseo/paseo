@@ -7,6 +7,21 @@ import {
 } from "./helpers/app";
 import { createTempGitRepo } from "./helpers/workspace";
 
+function visibleTestId(page: Page, testId: string) {
+  return page.locator(`[data-testid="${testId}"]:visible`).first();
+}
+
+function visibleTestIdPrefix(page: Page, prefix: string) {
+  return page.locator(`[data-testid^="${prefix}"]:visible`);
+}
+
+let terminalMarkerCounter = 0;
+
+function shortTerminalMarker(prefix: string): string {
+  terminalMarkerCounter += 1;
+  return `${prefix.slice(0, 1)}${terminalMarkerCounter.toString(36)}`;
+}
+
 function parseAgentFromUrl(url: string): { serverId: string; agentId: string } {
   const pathname = (() => {
     try {
@@ -60,7 +75,7 @@ async function openNewAgentDraft(page: Page): Promise<void> {
   const newAgentButton = page.getByTestId("sidebar-new-agent").first();
   await expect(newAgentButton).toBeVisible({ timeout: 30000 });
   await newAgentButton.click();
-  await expect(page).toHaveURL(/\/agent\/?$/, { timeout: 30000 });
+  await expect(page).toHaveURL(/\/h\/[^/]+\/agent(\?|$)/, { timeout: 30000 });
   await expect(
     page.locator('[data-testid="working-directory-select"]:visible').first()
   ).toBeVisible({
@@ -68,38 +83,42 @@ async function openNewAgentDraft(page: Page): Promise<void> {
   });
 }
 
-async function openTerminalsPanel(page: Page): Promise<void> {
-  let header = page.locator('[data-testid="explorer-header"]:visible').first();
-  if (!(await header.isVisible().catch(() => false))) {
-    const toggle = page.getByRole("button", {
-      name: /open explorer|close explorer|toggle explorer/i,
-    });
-    if (await toggle.first().isVisible().catch(() => false)) {
-      await toggle.first().click();
-    }
+async function ensureExplorerTabsVisible(page: Page): Promise<void> {
+  const filesTab = visibleTestId(page, "explorer-tab-files");
+  if (await filesTab.isVisible().catch(() => false)) {
+    return;
   }
 
-  header = page.locator('[data-testid="explorer-header"]:visible').first();
-  await expect(header).toBeVisible({ timeout: 30000 });
+  const toggle = page
+    .getByRole("button", { name: /open explorer|close explorer|toggle explorer/i })
+    .first();
+  await expect(toggle).toBeVisible({ timeout: 10000 });
+  await toggle.click();
+  await expect(filesTab).toBeVisible({ timeout: 30000 });
+}
 
-  const terminalsTab = page.getByTestId("explorer-tab-terminals").first();
+async function openTerminalsPanel(page: Page): Promise<void> {
+  await ensureExplorerTabsVisible(page);
+
+  const terminalsTab = visibleTestId(page, "explorer-tab-terminals");
   await expect(terminalsTab).toBeVisible({ timeout: 30000 });
   await terminalsTab.click();
 
-  await expect(page.getByTestId("terminals-header").first()).toBeVisible({
+  await expect(visibleTestId(page, "terminals-header")).toBeVisible({
     timeout: 30000,
   });
 
-  await expect(page.getByTestId("terminal-surface").first()).toBeVisible({
+  await expect(visibleTestId(page, "terminal-surface")).toBeVisible({
     timeout: 30000,
   });
 }
 
 async function openFilesPanel(page: Page): Promise<void> {
-  const filesTab = page.getByTestId("explorer-tab-files").first();
+  await ensureExplorerTabsVisible(page);
+  const filesTab = visibleTestId(page, "explorer-tab-files");
   await expect(filesTab).toBeVisible({ timeout: 30000 });
   await filesTab.click();
-  await expect(page.getByTestId("files-pane-header").first()).toBeVisible({
+  await expect(visibleTestId(page, "files-pane-header")).toBeVisible({
     timeout: 30000,
   });
 }
@@ -124,7 +143,7 @@ async function getDesktopAgentSidebarOpen(page: Page): Promise<boolean | null> {
 
 
 async function selectNewestTerminalTab(page: Page): Promise<void> {
-  const tabs = page.locator('[data-testid^="terminal-tab-"]');
+  const tabs = visibleTestIdPrefix(page, "terminal-tab-");
   await expect(tabs.first()).toBeVisible({ timeout: 30000 });
   await expect
     .poll(async () => await tabs.count(), { timeout: 30000 })
@@ -133,7 +152,7 @@ async function selectNewestTerminalTab(page: Page): Promise<void> {
 }
 
 async function getFirstTerminalTabTestId(page: Page): Promise<string> {
-  const firstTab = page.locator('[data-testid^="terminal-tab-"]').first();
+  const firstTab = visibleTestIdPrefix(page, "terminal-tab-").first();
   await expect(firstTab).toBeVisible({ timeout: 30000 });
   const value = await firstTab.getAttribute("data-testid");
   if (!value) {
@@ -143,7 +162,7 @@ async function getFirstTerminalTabTestId(page: Page): Promise<string> {
 }
 
 async function runTerminalCommand(page: Page, command: string, expectedText: string): Promise<void> {
-  const surface = page.getByTestId("terminal-surface").first();
+  const surface = visibleTestId(page, "terminal-surface");
   await expect(surface).toBeVisible({ timeout: 30000 });
   await surface.click({ force: true });
   await page.keyboard.type(command, { delay: 1 });
@@ -158,7 +177,7 @@ async function runTerminalCommandWithPreEnterEcho(
   command: string,
   expectedText: string
 ): Promise<void> {
-  const surface = page.getByTestId("terminal-surface").first();
+  const surface = visibleTestId(page, "terminal-surface");
   await expect(surface).toBeVisible({ timeout: 30000 });
   await surface.click({ force: true });
   await page.keyboard.type(command, { delay: 1 });
@@ -218,11 +237,11 @@ test("Terminals tab creates multiple terminals and streams command output", asyn
     await createAgent(page, "Reply with exactly: terminal smoke");
 
     await openTerminalsPanel(page);
-    await expect(page.locator('[data-testid^="terminal-tab-"]').first()).toBeVisible({
+    await expect(visibleTestIdPrefix(page, "terminal-tab-").first()).toBeVisible({
       timeout: 30000,
     });
 
-    const preEnterEchoMarker = `typed-echo-${Date.now()}`;
+    const preEnterEchoMarker = shortTerminalMarker("typed");
     await runTerminalCommandWithPreEnterEcho(
       page,
       `echo ${preEnterEchoMarker}`,
@@ -240,7 +259,7 @@ test("Terminals tab creates multiple terminals and streams command output", asyn
     const markerOne = `terminal-smoke-one-${Date.now()}`;
     await runTerminalCommand(page, `echo ${markerOne}`, markerOne);
 
-    await page.getByTestId("terminals-create-button").first().click();
+    await visibleTestId(page, "terminals-create-button").click();
     await selectNewestTerminalTab(page);
 
     const markerTwo = `terminal-smoke-two-${Date.now()}`;
@@ -272,7 +291,7 @@ test("terminal reattaches cleanly after heavy output and tab switches", async ({
       await expect(page.getByText("Terminal stream ended. Reconnecting…")).toHaveCount(0, {
         timeout: 30000,
       });
-      await expect(page.getByTestId("terminal-attach-loading")).toHaveCount(0, {
+      await expect(page.locator('[data-testid="terminal-attach-loading"]:visible')).toHaveCount(0, {
         timeout: 30000,
       });
     }
@@ -295,7 +314,7 @@ test("terminal keeps prompt echo visible after enter and backspace churn", async
 
     await openTerminalsPanel(page);
 
-    const surface = page.getByTestId("terminal-surface").first();
+    const surface = visibleTestId(page, "terminal-surface");
     await expect(surface).toBeVisible({ timeout: 30000 });
     await surface.click({ force: true });
 
@@ -303,7 +322,7 @@ test("terminal keeps prompt echo visible after enter and backspace churn", async
       await page.keyboard.press("Enter");
     }
 
-    const markerAfterEnters = `echo-visible-${Date.now()}`;
+    const markerAfterEnters = shortTerminalMarker("visible");
     await page.keyboard.type(`echo ${markerAfterEnters}`, { delay: 0 });
     await expect(surface).toContainText(`echo ${markerAfterEnters}`, {
       timeout: 30000,
@@ -319,7 +338,7 @@ test("terminal keeps prompt echo visible after enter and backspace churn", async
       await page.keyboard.press("Backspace");
     }
 
-    const markerAfterBackspace = `echo-backspace-${Date.now()}`;
+    const markerAfterBackspace = shortTerminalMarker("backspace");
     await page.keyboard.type(markerAfterBackspace, { delay: 0 });
     await page.keyboard.press("Enter");
     await expect(surface).toContainText(markerAfterBackspace, {
@@ -341,7 +360,7 @@ test("terminal remains interactive after alternate-screen enter/exit", async ({ 
 
     await openTerminalsPanel(page);
 
-    const surface = page.getByTestId("terminal-surface").first();
+    const surface = visibleTestId(page, "terminal-surface");
     await expect(surface).toBeVisible({ timeout: 30000 });
     await surface.click({ force: true });
 
@@ -375,7 +394,7 @@ test("terminal tab is removed when shell exits", async ({ page }) => {
 
     const exitedTabTestId = await getFirstTerminalTabTestId(page);
 
-    const surface = page.getByTestId("terminal-surface").first();
+    const surface = visibleTestId(page, "terminal-surface");
     await expect(surface).toBeVisible({ timeout: 30000 });
     await surface.click({ force: true });
     await page.keyboard.type("exit", { delay: 1 });
@@ -385,7 +404,7 @@ test("terminal tab is removed when shell exits", async ({ page }) => {
       timeout: 30000,
     });
 
-    await expect(page.locator('[data-testid^="terminal-tab-"]').first()).toBeVisible({
+    await expect(visibleTestIdPrefix(page, "terminal-tab-").first()).toBeVisible({
       timeout: 30000,
     });
     const nextTabTestId = await getFirstTerminalTabTestId(page);
@@ -408,7 +427,7 @@ test("closing terminal with running command asks for confirmation", async ({ pag
 
     const tabTestId = await getFirstTerminalTabTestId(page);
     const terminalId = tabTestId.replace("terminal-tab-", "");
-    const tab = page.getByTestId(tabTestId).first();
+    const tab = visibleTestId(page, tabTestId);
     await expect(tab).toBeVisible({ timeout: 30000 });
 
     const runningMarker = `terminal-close-running-${Date.now()}`;
@@ -425,7 +444,7 @@ test("closing terminal with running command asks for confirmation", async ({ pag
         await dialog.dismiss();
       }
     );
-    await page.getByTestId(`terminal-close-${terminalId}`).first().click();
+    await visibleTestId(page, `terminal-close-${terminalId}`).click();
     await dialogPromise;
 
     await expect(tab).toBeVisible({ timeout: 30000 });
@@ -447,7 +466,7 @@ test("confirming terminal close with running command removes the tab", async ({ 
 
     const tabTestId = await getFirstTerminalTabTestId(page);
     const terminalId = tabTestId.replace("terminal-tab-", "");
-    const tab = page.getByTestId(tabTestId).first();
+    const tab = visibleTestId(page, tabTestId);
     await expect(tab).toBeVisible({ timeout: 30000 });
 
     const runningMarker = `terminal-close-running-accept-${Date.now()}`;
@@ -464,7 +483,7 @@ test("confirming terminal close with running command removes the tab", async ({ 
         await dialog.accept();
       }
     );
-    await page.getByTestId(`terminal-close-${terminalId}`).first().click();
+    await visibleTestId(page, `terminal-close-${terminalId}`).click();
     await dialogPromise;
 
     await expect(page.getByTestId(tabTestId)).toHaveCount(0, {
@@ -497,7 +516,7 @@ test("terminals are shared by agents on the same cwd", async ({ page }) => {
 
     await openAgentFromSidebar(page, first.serverId, first.agentId);
     await openTerminalsPanel(page);
-    await page.getByTestId("terminals-create-button").first().click();
+    await visibleTestId(page, "terminals-create-button").click();
     await selectNewestTerminalTab(page);
 
     await openAgentFromSidebar(page, second.serverId, second.agentId);
@@ -510,7 +529,7 @@ test("terminals are shared by agents on the same cwd", async ({ page }) => {
     await openAgentFromSidebar(page, first.serverId, first.agentId);
     await openTerminalsPanel(page);
     await selectNewestTerminalTab(page);
-    await expect(page.getByTestId("terminal-surface").first()).toContainText(sharedMarker, {
+    await expect(visibleTestId(page, "terminal-surface")).toContainText(sharedMarker, {
       timeout: 30000,
     });
   } finally {
@@ -529,7 +548,7 @@ test("terminal captures escape and ctrl+c key input", async ({ page }) => {
 
     await openTerminalsPanel(page);
 
-    const surface = page.getByTestId("terminal-surface").first();
+    const surface = visibleTestId(page, "terminal-surface");
     await expect(surface).toBeVisible({ timeout: 30000 });
     await surface.click({ force: true });
 
@@ -546,7 +565,9 @@ test("terminal captures escape and ctrl+c key input", async ({ page }) => {
     await page.keyboard.press("Control+B");
     await expect(surface).toContainText("^B", { timeout: 30000 });
 
-    const marker = `terminal-key-capture-${Date.now()}`;
+    // Clear any line-editor residue before validating the next shell command.
+    await page.keyboard.press("Enter");
+    const marker = shortTerminalMarker("key-capture");
     await page.keyboard.type(`echo ${marker}`, { delay: 1 });
     await page.keyboard.press("Enter");
     await expect(surface).toContainText(marker, { timeout: 30000 });
@@ -565,7 +586,7 @@ test("Cmd+B toggles sidebar even when terminal is focused", async ({ page }) => 
     await createAgent(page, "Terminal Cmd+B");
 
     await openTerminalsPanel(page);
-    const surface = page.getByTestId("terminal-surface").first();
+    const surface = visibleTestId(page, "terminal-surface");
     await expect(surface).toBeVisible({ timeout: 30000 });
     await surface.click({ force: true });
 
@@ -594,17 +615,28 @@ async function getTerminalRows(page: Page): Promise<number> {
   });
 }
 
-async function setExplorerContentBottomPadding(page: Page, padding: number): Promise<void> {
+async function setTerminalHeightInset(page: Page, inset: number): Promise<void> {
   await page.evaluate((nextPadding) => {
-    const container = document.querySelector<HTMLElement>(
-      '[data-testid="explorer-content-area"]'
+    const surfaces = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="terminal-surface"]')
     );
-    if (!container) {
+    const activeSurface =
+      surfaces.find((surface) => surface.offsetParent !== null) ?? surfaces[0] ?? null;
+    if (!activeSurface) {
       return;
     }
-    container.style.boxSizing = "border-box";
-    container.style.paddingBottom = nextPadding + "px";
-  }, padding);
+    const host = activeSurface.parentElement as HTMLElement | null;
+    if (!host) {
+      return;
+    }
+    if (nextPadding > 0) {
+      host.style.flex = "0 0 auto";
+      host.style.height = `calc(100% - ${nextPadding}px)`;
+      return;
+    }
+    host.style.flex = "1 1 auto";
+    host.style.height = "100%";
+  }, inset);
 }
 
 async function getTerminalScrollbackDistance(page: Page): Promise<number> {
@@ -646,12 +678,12 @@ test("terminal viewport resizes and uses xterm scrollback", async ({ page }) => 
       .toBeGreaterThan(0);
     const initialRows = await getTerminalRows(page);
 
-    await setExplorerContentBottomPadding(page, 220);
+    await setTerminalHeightInset(page, 220);
     await expect
       .poll(() => getTerminalRows(page), { timeout: 30000 })
       .toBeLessThan(initialRows);
 
-    await setExplorerContentBottomPadding(page, 0);
+    await setTerminalHeightInset(page, 0);
     await expect
       .poll(() => getTerminalRows(page), { timeout: 30000 })
       .toBeGreaterThanOrEqual(initialRows);
@@ -679,7 +711,7 @@ test("terminal viewport resizes and uses xterm scrollback", async ({ page }) => 
       `${scrollbackMarker}-180`
     );
 
-    const surface = page.getByTestId("terminal-surface").first();
+    const surface = visibleTestId(page, "terminal-surface");
     await surface.hover();
     await page.mouse.wheel(0, -3000);
 

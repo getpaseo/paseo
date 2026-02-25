@@ -57,6 +57,92 @@ const concatInt16 = (a: Int16Array, b: Int16Array): Int16Array => {
   return out;
 };
 
+const int16ToFloat32 = (input: Int16Array): Float32Array => {
+  const out = new Float32Array(input.length);
+  for (let i = 0; i < input.length; i += 1) {
+    out[i] = input[i]! / 32768;
+  }
+  return out;
+};
+
+type Pcm16Wav = {
+  sampleRate: number;
+  samples: Int16Array;
+};
+
+const parsePcm16Wav = (buffer: ArrayBuffer): Pcm16Wav | null => {
+  if (buffer.byteLength < 44) {
+    return null;
+  }
+
+  const view = new DataView(buffer);
+  const readAscii = (offset: number, length: number): string => {
+    let out = "";
+    for (let i = 0; i < length; i += 1) {
+      out += String.fromCharCode(view.getUint8(offset + i));
+    }
+    return out;
+  };
+
+  if (readAscii(0, 4) !== "RIFF" || readAscii(8, 4) !== "WAVE") {
+    return null;
+  }
+
+  let offset = 12;
+  let channels = 0;
+  let sampleRate = 0;
+  let bitsPerSample = 0;
+  let dataOffset = 0;
+  let dataSize = 0;
+
+  while (offset + 8 <= buffer.byteLength) {
+    const chunkId = readAscii(offset, 4);
+    const chunkSize = view.getUint32(offset + 4, true);
+    const chunkDataOffset = offset + 8;
+    if (chunkDataOffset + chunkSize > buffer.byteLength) {
+      break;
+    }
+
+    if (chunkId === "fmt " && chunkSize >= 16) {
+      const audioFormat = view.getUint16(chunkDataOffset, true);
+      channels = view.getUint16(chunkDataOffset + 2, true);
+      sampleRate = view.getUint32(chunkDataOffset + 4, true);
+      bitsPerSample = view.getUint16(chunkDataOffset + 14, true);
+      if (audioFormat !== 1) {
+        return null;
+      }
+    } else if (chunkId === "data") {
+      dataOffset = chunkDataOffset;
+      dataSize = chunkSize;
+      break;
+    }
+
+    offset = chunkDataOffset + chunkSize + (chunkSize % 2);
+  }
+
+  if (!dataOffset || !dataSize || sampleRate <= 0 || bitsPerSample !== 16 || channels <= 0) {
+    return null;
+  }
+
+  const sampleCount = Math.floor(dataSize / 2);
+  const interleaved = new Int16Array(buffer, dataOffset, sampleCount);
+
+  if (channels === 1) {
+    return { sampleRate, samples: new Int16Array(interleaved) };
+  }
+
+  const frameCount = Math.floor(interleaved.length / channels);
+  const mono = new Int16Array(frameCount);
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    let sum = 0;
+    for (let ch = 0; ch < channels; ch += 1) {
+      sum += interleaved[frame * channels + ch] ?? 0;
+    }
+    mono[frame] = Math.round(sum / channels);
+  }
+  return { sampleRate, samples: mono };
+};
+
 const int16ToBase64 = (pcm: Int16Array): string => {
   const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
   let binary = "";
@@ -359,15 +445,22 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       }
     }
 
-    if (mode === "recorder" && recorder.stoppedPromise && context) {
+    if (mode === "recorder" && recorder.stoppedPromise) {
       try {
         const blob = await recorder.stoppedPromise;
         const arrayBuffer = await blob.arrayBuffer();
         if (arrayBuffer.byteLength > 0) {
-          const decoded = await decodeAudioData(context, arrayBuffer);
-          const floatPcm = decoded.getChannelData(0);
-          const pcm16 = resampleToPcm16(floatPcm, decoded.sampleRate, 16000);
-          emitPcmSegments(pcm16);
+          const parsedWav = parsePcm16Wav(arrayBuffer);
+          if (parsedWav) {
+            const floatPcm = int16ToFloat32(parsedWav.samples);
+            const pcm16 = resampleToPcm16(floatPcm, parsedWav.sampleRate, 16000);
+            emitPcmSegments(pcm16);
+          } else if (context) {
+            const decoded = await decodeAudioData(context, arrayBuffer);
+            const floatPcm = decoded.getChannelData(0);
+            const pcm16 = resampleToPcm16(floatPcm, decoded.sampleRate, 16000);
+            emitPcmSegments(pcm16);
+          }
         }
       } catch (err) {
         onErrorRef.current?.(err instanceof Error ? err : new Error(String(err)));

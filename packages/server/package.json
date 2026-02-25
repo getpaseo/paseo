@@ -45,12 +45,19 @@
     "speech:download": "tsx scripts/download-speech-models.ts",
     "speech:tts:matrix": "tsx scripts/generate-sherpa-tts-matrix.ts",
     "speech:transcribe:local": "tsx scripts/transcribe-local-wav.ts",
-    "test": "vitest run",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "vitest run --exclude \"**/*.e2e.test.ts\"",
+    "test:integration": "vitest run --maxWorkers=1 --minWorkers=1 src/server/daemon-e2e/models.e2e.test.ts src/server/daemon-e2e/live-preferences.e2e.test.ts src/server/agent/model-catalog.e2e.test.ts",
+    "test:integration:all": "npm run test:e2e",
+    "test:integration:real": "vitest run real.e2e.test.ts",
+    "test:integration:local": "vitest run local.e2e.test.ts",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
-    "test:e2e:mobile": "playwright test --project='Mobile Chrome'"
+    "test:e2e": "vitest run e2e.test.ts --maxWorkers=1 --minWorkers=1 --exclude \"**/*.real.e2e.test.ts\" --exclude \"**/*.local.e2e.test.ts\"",
+    "test:e2e:all": "vitest run e2e.test.ts --maxWorkers=1 --minWorkers=1",
+    "test:e2e:real": "npm run test:integration:real",
+    "test:e2e:local": "npm run test:integration:local",
+    "test:e2e:ui": "vitest --ui e2e.test.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "2.0.52",

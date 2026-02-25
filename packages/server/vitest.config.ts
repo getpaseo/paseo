@@ -16,8 +16,9 @@ export default defineConfig({
     pool: "forks",
     poolOptions: {
       forks: {
-        singleFork: false,
-        maxForks: 4,
+        singleFork: true,
+        minForks: 1,
+        maxForks: 1,
       },
     },
     exclude: ["**/node_modules/**", "**/dist/**"],

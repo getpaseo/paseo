@@ -25,7 +25,7 @@ import {
 } from "../shared/binary-mux.js";
 import type { AllowedHostsConfig } from "./allowed-hosts.js";
 import { isHostAllowed } from "./allowed-hosts.js";
-import { Session } from "./session.js";
+import { Session, type SessionLifecycleIntent } from "./session.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { PushTokenStore } from "./push/token-store.js";
@@ -53,6 +53,7 @@ import {
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 export type ExternalSocketMetadata = {
   transport: "relay";
+  externalSessionKey?: string;
 };
 
 type PendingConnection = {
@@ -216,6 +217,7 @@ export class VoiceAssistantWebSocketServer {
   >();
   private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
+  private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private serverCapabilities: ServerCapabilities | undefined;
 
   constructor(
@@ -248,7 +250,8 @@ export class VoiceAssistantWebSocketServer {
       getSpeechReadiness?: () => SpeechReadinessSnapshot;
     },
     agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap,
-    daemonVersion?: string
+    daemonVersion?: string,
+    onLifecycleIntent?: (intent: SessionLifecycleIntent) => void
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -267,6 +270,7 @@ export class VoiceAssistantWebSocketServer {
     this.voice = voice ?? null;
     this.dictation = dictation ?? null;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
+    this.onLifecycleIntent = onLifecycleIntent ?? null;
     this.serverCapabilities = buildServerCapabilities({
       readiness: this.dictation?.getSpeechReadiness?.() ?? null,
     });
@@ -521,6 +525,9 @@ export class VoiceAssistantWebSocketServer {
           return;
         }
         this.sendBinaryToConnection(connection, frame);
+      },
+      onLifecycleIntent: (intent) => {
+        this.onLifecycleIntent?.(intent);
       },
       logger: connectionLogger.child({ module: "session" }),
       downloadTokenStore: this.downloadTokenStore,

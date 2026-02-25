@@ -72,6 +72,7 @@ import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import { parseInlinePathToken, type InlinePathTarget } from "@/utils/inline-path";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { markScrollInvestigationEvent } from "@/utils/scroll-jank-investigation";
 export type { InlinePathTarget } from "@/utils/inline-path";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
@@ -1293,6 +1294,9 @@ const ExpandableBadge = memo(function ExpandableBadge({
   const detailContent =
     hasDetailContent && isExpanded ? renderDetails?.() : null;
   const detailWrapperRef = useRef<View | null>(null);
+  const wheelInvestigationComponentId = `ExpandableBadgeWheel:${
+    testID ?? label
+  }`;
 
   const nativeGradientIdRef = useRef(
     `shimmer-gradient-${Math.random().toString(36).substring(2, 9)}`
@@ -1428,11 +1432,13 @@ const ExpandableBadge = memo(function ExpandableBadge({
       }
     };
 
+    markScrollInvestigationEvent(wheelInvestigationComponentId, "wheelAttach");
     node.addEventListener("wheel", stopWheelPropagation, { passive: true });
     return () => {
+      markScrollInvestigationEvent(wheelInvestigationComponentId, "wheelDetach");
       node.removeEventListener("wheel", stopWheelPropagation);
     };
-  }, [isExpanded, hasDetailContent]);
+  }, [hasDetailContent, isExpanded, wheelInvestigationComponentId]);
 
   const nativeShimmerPeakStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: shimmerTranslateX.value }],

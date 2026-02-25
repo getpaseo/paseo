@@ -324,6 +324,7 @@ export function startRelayTransport({
       attached = true;
       const externalMetadata: ExternalSocketMetadata = {
         transport: "relay",
+        externalSessionKey: `session:${connectionId}`,
       };
       if (daemonKeyPair) {
         void attachEncryptedSocket(

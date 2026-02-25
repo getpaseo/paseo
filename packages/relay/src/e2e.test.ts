@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebSocket } from "ws";
 import net from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
 import { Buffer } from "node:buffer";
 import {
   generateKeyPair,
@@ -14,6 +15,9 @@ import {
 
 const nodeMajor = Number((process.versions.node ?? "0").split(".")[0] ?? "0");
 const shouldRunRelayE2e = process.env.FORCE_RELAY_E2E === "1" || nodeMajor < 25;
+const wranglerCliPath = createRequire(import.meta.url).resolve("wrangler/bin/wrangler.js");
+const STARTUP_HOOK_TIMEOUT_MS = 90_000;
+const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -30,9 +34,43 @@ async function getAvailablePort(): Promise<number> {
   });
 }
 
-async function waitForServer(port: number, timeout = 15000): Promise<void> {
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function spawnRelayDevServer(port: number): ChildProcess {
+  return spawn(
+    process.execPath,
+    [
+      wranglerCliPath,
+      "dev",
+      "--local",
+      "--ip",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      "--live-reload=false",
+      "--show-interactive-dev-session=false",
+    ],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: false,
+    }
+  );
+}
+
+function assertRelayStillRunning(relayProcess: ChildProcess): void {
+  if (relayProcess.exitCode !== null) {
+    throw new Error(`relay process exited before startup completed (code: ${relayProcess.exitCode})`);
+  }
+}
+
+async function waitForServer(port: number, relayProcess: ChildProcess, timeout = 15000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeout) {
+    assertRelayStillRunning(relayProcess);
     try {
       await new Promise<void>((resolve, reject) => {
         const socket = net.connect(port, "127.0.0.1", () => {
@@ -43,15 +81,20 @@ async function waitForServer(port: number, timeout = 15000): Promise<void> {
       });
       return;
     } catch {
-      await new Promise((r) => setTimeout(r, 100));
+      await sleep(100);
     }
   }
   throw new Error(`Server did not start on port ${port} within ${timeout}ms`);
 }
 
-async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promise<void> {
+async function waitForRelayWebSocketReady(
+  port: number,
+  relayProcess: ChildProcess,
+  timeout = 60000
+): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeout) {
+    assertRelayStillRunning(relayProcess);
     const serverId = `probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const probeUrl = `ws://127.0.0.1:${port}/ws?serverId=${serverId}&role=server&v=2`;
     const opened = await new Promise<boolean>((resolve) => {
@@ -73,9 +116,35 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
     if (opened) {
       return;
     }
-    await new Promise((r) => setTimeout(r, 250));
+    await sleep(250);
   }
   throw new Error(`Relay WebSocket endpoint not ready on port ${port} within ${timeout}ms`);
+}
+
+async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
+  if (relayProcess.exitCode !== null) {
+    return;
+  }
+
+  relayProcess.kill("SIGTERM");
+  const start = Date.now();
+  while (relayProcess.exitCode === null && Date.now() - start < SHUTDOWN_TIMEOUT_MS) {
+    await sleep(50);
+  }
+
+  if (relayProcess.exitCode !== null) {
+    return;
+  }
+
+  relayProcess.kill("SIGKILL");
+  const killStart = Date.now();
+  while (relayProcess.exitCode === null && Date.now() - killStart < 2000) {
+    await sleep(50);
+  }
+
+  if (relayProcess.exitCode === null) {
+    throw new Error("relay process did not exit after SIGTERM/SIGKILL");
+  }
 }
 
 (shouldRunRelayE2e ? describe : describe.skip)("E2E Relay with E2EE", () => {
@@ -84,26 +153,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
 
   beforeAll(async () => {
     relayPort = await getAvailablePort();
-    relayProcess = spawn(
-      "npx",
-      [
-        "wrangler",
-        "dev",
-        "--local",
-        "--ip",
-        "127.0.0.1",
-        "--port",
-        String(relayPort),
-        "--live-reload=false",
-        "--show-interactive-dev-session=false",
-      ],
-      {
-        cwd: process.cwd(),
-        env: { ...process.env },
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: false,
-      }
-    );
+    relayProcess = spawnRelayDevServer(relayPort);
 
     relayProcess.stdout?.on("data", (data: Buffer) => {
       const lines = data.toString().split("\n").filter((l) => l.trim());
@@ -120,16 +170,22 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       }
     });
 
-    await waitForServer(relayPort, 30000);
-    await waitForRelayWebSocketReady(relayPort, 60000);
-  });
+    try {
+      await waitForServer(relayPort, relayProcess, 30000);
+      await waitForRelayWebSocketReady(relayPort, relayProcess, 60000);
+    } catch (error) {
+      await stopRelayProcess(relayProcess);
+      relayProcess = null;
+      throw error;
+    }
+  }, STARTUP_HOOK_TIMEOUT_MS);
 
   afterAll(async () => {
     if (relayProcess) {
-      relayProcess.kill("SIGTERM");
+      await stopRelayProcess(relayProcess);
       relayProcess = null;
     }
-  });
+  }, SHUTDOWN_TIMEOUT_MS);
 
   it("full flow: daemon and client exchange encrypted messages through relay", { timeout: 90_000 }, async () => {
     const serverId = "test-session-" + Date.now();

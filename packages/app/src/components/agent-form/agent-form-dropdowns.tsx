@@ -324,6 +324,7 @@ interface ComboSelectProps {
   onSelect: (id: string) => void;
   icon?: ReactElement;
   showLabel?: boolean;
+  testID?: string;
 }
 
 export function ComboSelect({
@@ -338,6 +339,7 @@ export function ComboSelect({
   onSelect,
   icon,
   showLabel = true,
+  testID,
 }: ComboSelectProps): ReactElement {
   const [isOpen, setIsOpen] = useState(false);
   const anchorRef = useRef<View>(null);
@@ -361,6 +363,7 @@ export function ComboSelect({
         controlRef={anchorRef}
         icon={icon}
         showLabel={showLabel}
+        testID={testID}
       />
       <Combobox
         options={options}
@@ -573,6 +576,7 @@ export function AgentConfigRow({
           onSelect={onSelectProvider}
           icon={<Bot size={defaultTheme.iconSize.md} color={defaultTheme.colors.foregroundMuted} />}
           showLabel={false}
+          testID="draft-provider-select"
         />
       </View>
       <View style={styles.agentConfigColumn}>
@@ -587,6 +591,7 @@ export function AgentConfigRow({
           onSelect={onSelectModel}
           icon={<Brain size={defaultTheme.iconSize.md} color={defaultTheme.colors.foregroundMuted} />}
           showLabel={false}
+          testID="draft-model-select"
         />
       </View>
       <View style={styles.agentConfigColumn}>
@@ -600,6 +605,7 @@ export function AgentConfigRow({
           onSelect={onSelectMode}
           icon={<Shield size={defaultTheme.iconSize.md} color={defaultTheme.colors.foregroundMuted} />}
           showLabel={false}
+          testID="draft-mode-select"
         />
       </View>
       {thinkingSelectOptions.length > 0 ? (

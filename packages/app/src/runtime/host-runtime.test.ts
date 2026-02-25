@@ -745,6 +745,7 @@ describe("HostRuntimeStore", () => {
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
       filter: { labels: { ui: "true" } },
       subscribe: { subscriptionId: "app:srv_test" },
+      page: { limit: 200 },
     });
 
     const snapshot = store.getSnapshot(host.serverId);

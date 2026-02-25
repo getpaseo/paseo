@@ -26,26 +26,13 @@ test("project filter dropdown never appears visibly at 0,0 on open", async ({ pa
         });
       };
 
-      const getContainer = (node: HTMLElement): HTMLElement | null => {
-        let current: HTMLElement | null = node;
-        while (current && current !== document.body) {
-          const style = getComputedStyle(current);
-          if (style.position === "absolute" && style.backgroundColor !== "rgba(0, 0, 0, 0)") {
-            return current;
-          }
-          current = current.parentElement;
-        }
-        return null;
-      };
-
       const tryResolveTarget = (root: HTMLElement) => {
         const stack = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))];
         for (const element of stack) {
-          if (!element.textContent?.includes("No projects")) continue;
-          const container = getContainer(element);
-          if (!container) continue;
-          target = container;
-          return true;
+          if (element.dataset?.testid === "combobox-desktop-container") {
+            target = element;
+            return true;
+          }
         }
         return false;
       };

@@ -210,19 +210,7 @@ const CodexFileChangeItemSchema = z
     id: z.string().min(1),
     status: z.string().optional(),
     error: z.unknown().optional(),
-    changes: z
-      .array(
-        z
-          .object({
-            path: z.string().optional(),
-            kind: z.string().optional(),
-            diff: z.string().optional(),
-            patch: z.string().optional(),
-            content: z.string().optional(),
-          })
-          .passthrough()
-      )
-      .optional(),
+    changes: z.unknown().optional(),
   })
   .passthrough();
 
@@ -628,30 +616,122 @@ function mapCommandExecutionItem(
   };
 }
 
+type CodexFileChangeEntry = {
+  path: string;
+  kind?: string;
+  diff?: string;
+};
+
+function parseFileChangePath(
+  entry: Record<string, unknown>,
+  options?: CodexMapperOptions,
+  fallbackPath?: string
+): string | undefined {
+  const rawPath =
+    (typeof entry.path === "string" && entry.path.trim().length > 0
+      ? entry.path.trim()
+      : undefined) ??
+    (typeof entry.file_path === "string" && entry.file_path.trim().length > 0
+      ? entry.file_path.trim()
+      : undefined) ??
+    (typeof entry.filePath === "string" && entry.filePath.trim().length > 0
+      ? entry.filePath.trim()
+      : undefined) ??
+    (typeof fallbackPath === "string" && fallbackPath.trim().length > 0
+      ? fallbackPath.trim()
+      : undefined);
+  if (!rawPath) {
+    return undefined;
+  }
+  return normalizeCodexFilePath(rawPath, options?.cwd);
+}
+
+function parseFileChangeKind(entry: Record<string, unknown>): string | undefined {
+  return (
+    (typeof entry.kind === "string" && entry.kind) ||
+    (typeof entry.type === "string" && entry.type) ||
+    undefined
+  );
+}
+
+function parseFileChangeDiff(entry: Record<string, unknown>): string | undefined {
+  return pickFirstPatchLikeString([
+    entry.diff,
+    entry.patch,
+    entry.unified_diff,
+    entry.unifiedDiff,
+    entry.content,
+    entry.newString,
+  ]);
+}
+
+function toFileChangeEntry(
+  entry: Record<string, unknown>,
+  options?: CodexMapperOptions,
+  fallbackPath?: string
+): CodexFileChangeEntry | null {
+  const path = parseFileChangePath(entry, options, fallbackPath);
+  if (!path) {
+    return null;
+  }
+  return {
+    path,
+    kind: parseFileChangeKind(entry),
+    diff: parseFileChangeDiff(entry),
+  };
+}
+
+function parseFileChangeEntries(
+  changes: unknown,
+  options?: CodexMapperOptions
+): CodexFileChangeEntry[] {
+  if (!changes) {
+    return [];
+  }
+
+  if (Array.isArray(changes)) {
+    return changes
+      .map((entry) =>
+        isRecord(entry) ? toFileChangeEntry(entry, options) : null
+      )
+      .filter((entry): entry is CodexFileChangeEntry => entry !== null);
+  }
+
+  if (!isRecord(changes)) {
+    return [];
+  }
+
+  if (Array.isArray(changes.files)) {
+    return parseFileChangeEntries(changes.files, options);
+  }
+
+  const singleEntry = toFileChangeEntry(changes, options);
+  if (singleEntry) {
+    return [singleEntry];
+  }
+
+  return Object.entries(changes)
+    .map(([path, value]) => {
+      if (isRecord(value)) {
+        return toFileChangeEntry(value, options, path);
+      }
+      if (typeof value === "string") {
+        const normalizedPath = normalizeCodexFilePath(path.trim(), options?.cwd);
+        if (!normalizedPath) {
+          return null;
+        }
+        return { path: normalizedPath, diff: value };
+      }
+      return null;
+    })
+    .filter((entry): entry is CodexFileChangeEntry => entry !== null);
+}
+
 function mapFileChangeItem(
   item: z.infer<typeof CodexFileChangeItemSchema>,
   options?: CodexMapperOptions
 ): CodexNormalizedToolCallEnvelope {
-  const changes = item.changes ?? [];
-
-  const files = changes
-    .map((change) => {
-      const pathValue =
-        typeof change.path === "string"
-          ? normalizeCodexFilePath(change.path.trim(), options?.cwd)
-          : undefined;
-
-      return {
-        path: pathValue,
-        kind: change.kind,
-        diff: pickFirstPatchLikeString([
-          change.diff,
-          change.patch,
-          change.content,
-        ]),
-      };
-    })
-    .filter((change) => change.path !== undefined);
+  const files = parseFileChangeEntries(item.changes, options);
 
   const inputBase = {
     ...(files.length > 0

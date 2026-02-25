@@ -32,6 +32,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<DictationStatus>("idle");
+  const latestPartialTranscriptRef = useRef("");
 
   const onTranscriptRef = useRef(onTranscript);
   useEffect(() => {
@@ -130,6 +131,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   const clearStreamingState = useCallback(() => {
     senderRef.current?.clearAll();
+    latestPartialTranscriptRef.current = "";
     setPartialTranscript("");
   }, []);
 
@@ -181,6 +183,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
         return;
       }
       const next = message.payload.text ?? "";
+      latestPartialTranscriptRef.current = next;
       setPartialTranscript(next);
       onPartialTranscriptRef.current?.(next, { requestId: generateMessageId() });
     });
@@ -203,13 +206,14 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     (text: string, requestId: string) => {
       setIsProcessing(false);
       isProcessingRef.current = false;
-      setPartialTranscript("");
       setDuration(0);
       setStatus("idle");
 
+      const transcriptText = (
+        text.trim().length > 0 ? text.trim() : latestPartialTranscriptRef.current.trim()
+      );
       clearStreamingState();
 
-      const transcriptText = text.trim();
       if (!transcriptText) {
         return;
       }
@@ -261,13 +265,13 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
     try {
       await audio.start();
-      if (client?.isConnected) {
-        await startNewStream("start");
-      }
       isRecordingRef.current = true;
       setIsRecording(true);
       if (enableDuration) {
         startDurationTracking();
+      }
+      if (client?.isConnected) {
+        await startNewStream("start");
       }
     } catch (err) {
       await audio.stop().catch(() => undefined);

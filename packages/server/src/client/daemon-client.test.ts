@@ -206,6 +206,119 @@ describe('DaemonClient', () => {
     expect(client.getConnectionState().status).toBe('disposed')
   })
 
+  test('sends explicit shutdown_server_request via shutdownServer', async () => {
+    const logger = createMockLogger()
+    const mock = createMockTransport()
+
+    const client = new DaemonClient({
+      url: 'ws://test',
+      clientId: 'clsk_unit_test',
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    })
+    clients.push(client)
+
+    const connectPromise = client.connect()
+    mock.triggerOpen()
+    await connectPromise
+
+    const lifecycleClient = client as unknown as {
+      shutdownServer: (requestId?: string) => Promise<{
+        status: 'shutdown_requested'
+        clientId: string
+        requestId: string
+      }>
+    }
+
+    expect(typeof lifecycleClient.shutdownServer).toBe('function')
+    const promise = lifecycleClient.shutdownServer('req-shutdown-1')
+
+    expect(mock.sent).toHaveLength(1)
+    const request = JSON.parse(mock.sent[0]) as {
+      type: 'session'
+      message: {
+        type: string
+        requestId: string
+      }
+    }
+    expect(request.message).toEqual({
+      type: 'shutdown_server_request',
+      requestId: 'req-shutdown-1',
+    })
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: 'status',
+        payload: {
+          status: 'shutdown_requested',
+          clientId: 'clsk_unit_test',
+          requestId: 'req-shutdown-1',
+        },
+      })
+    )
+
+    await expect(promise).resolves.toEqual({
+      status: 'shutdown_requested',
+      clientId: 'clsk_unit_test',
+      requestId: 'req-shutdown-1',
+    })
+  })
+
+  test('restartServer remains restart-only and sends restart_server_request', async () => {
+    const logger = createMockLogger()
+    const mock = createMockTransport()
+
+    const client = new DaemonClient({
+      url: 'ws://test',
+      clientId: 'clsk_unit_test',
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    })
+    clients.push(client)
+
+    const connectPromise = client.connect()
+    mock.triggerOpen()
+    await connectPromise
+
+    const promise = client.restartServer('settings_update', 'req-restart-1')
+
+    expect(mock.sent).toHaveLength(1)
+    const request = JSON.parse(mock.sent[0]) as {
+      type: 'session'
+      message: {
+        type: string
+        reason?: string
+        requestId: string
+      }
+    }
+    expect(request.message).toEqual({
+      type: 'restart_server_request',
+      reason: 'settings_update',
+      requestId: 'req-restart-1',
+    })
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: 'status',
+        payload: {
+          status: 'restart_requested',
+          clientId: 'clsk_unit_test',
+          reason: 'settings_update',
+          requestId: 'req-restart-1',
+        },
+      })
+    )
+
+    await expect(promise).resolves.toEqual({
+      status: 'restart_requested',
+      clientId: 'clsk_unit_test',
+      reason: 'settings_update',
+      requestId: 'req-restart-1',
+    })
+  })
+
   test('transitions out of connecting when connect timeout elapses', async () => {
     vi.useFakeTimers()
     try {

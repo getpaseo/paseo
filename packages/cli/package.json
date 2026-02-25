@@ -17,7 +17,9 @@
     "build": "node -e \"require('node:fs').rmSync('dist',{ recursive: true, force: true })\" && tsc -p tsconfig.json --incremental false",
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "npx zx tests/run-all.ts",
+    "test": "npm run test:local",
+    "test:local": "tsx tests/run-all.ts",
+    "test:e2e": "npm run test:local",
     "test:e2e:lifecycle": "npx tsx tests/e2e/agent-lifecycle.test.ts"
   },
   "dependencies": {

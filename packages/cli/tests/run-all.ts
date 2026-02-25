@@ -8,11 +8,31 @@
  */
 
 import { $ } from 'zx'
-import { readdir } from 'fs/promises'
+import { readdir, writeFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+const args = process.argv.slice(2)
+const testEnvDefaults = {
+  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
+  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? '0',
+  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? '0',
+}
+
+let jsonOutputPath: string | null = null
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i]
+  if (arg === '--json-output') {
+    const value = args[i + 1]
+    if (!value) {
+      throw new Error('--json-output requires a file path')
+    }
+    jsonOutputPath = value
+    i++
+    continue
+  }
+}
 
 $.verbose = false
 
@@ -26,8 +46,29 @@ const testFiles = files
   .sort()
 
 if (testFiles.length === 0) {
-  console.log('⚠️  No test files found')
-  process.exit(0)
+  console.log('❌ No test files found')
+  if (jsonOutputPath) {
+    await writeFile(
+      jsonOutputPath,
+      JSON.stringify(
+        {
+          suite: 'cli-local',
+          command: 'npm run test:local --workspace=@getpaseo/cli',
+          counts: {
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+          },
+          skippedTests: [],
+          failures: [],
+          error: 'No test files found',
+        },
+        null,
+        2
+      ) + '\n'
+    )
+  }
+  process.exit(1)
 }
 
 console.log(`Found ${testFiles.length} test file(s):\n`)
@@ -49,7 +90,7 @@ for (const testFile of testFiles) {
   console.log('─'.repeat(50))
 
   try {
-    const result = await $`npx tsx ${testPath}`.nothrow()
+    const result = await $`PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnvDefaults.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnvDefaults.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnvDefaults.PASEO_VOICE_MODE_ENABLED} npx tsx ${testPath}`.nothrow()
     if (result.exitCode === 0) {
       console.log(`\n✅ ${testName} PASSED`)
       passed++
@@ -89,4 +130,29 @@ if (failures.length > 0) {
 }
 
 console.log()
+
+if (jsonOutputPath) {
+  await writeFile(
+    jsonOutputPath,
+    JSON.stringify(
+      {
+        suite: 'cli-local',
+        command: 'npm run test:local --workspace=@getpaseo/cli',
+        counts: {
+          passed,
+          failed,
+          skipped: 0,
+        },
+        skippedTests: [],
+        failures: failures.map(({ test, error }) => ({
+          test,
+          error: error.split('\n')[0] ?? '',
+        })),
+      },
+      null,
+      2
+    ) + '\n'
+  )
+}
+
 process.exit(failed > 0 ? 1 : 0)

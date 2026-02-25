@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { TerminalManager } from "./terminal-manager.js";
 import { findSessionByName, killSession } from "./tmux.js";
 
-const TEST_SESSION = "test-terminal-manager";
+const TEST_SESSION = `test-terminal-manager-${process.pid}-${Date.now().toString(36)}`;
 
 const ANSI_ESCAPE_REGEX = /\u001B[\[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 

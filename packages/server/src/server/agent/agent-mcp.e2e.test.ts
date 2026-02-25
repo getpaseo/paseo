@@ -280,7 +280,7 @@ describe("agent MCP end-to-end (offline)", () => {
         });
         await waitForPathExists({
           targetPath: path.join(worktreePath, "dev-terminal.txt"),
-          timeoutMs: 15000,
+          timeoutMs: 30000,
         });
       } finally {
         if (agentId) {

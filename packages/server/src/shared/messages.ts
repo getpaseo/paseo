@@ -648,6 +648,11 @@ export const RestartServerRequestMessageSchema = z.object({
   requestId: z.string(),
 })
 
+export const ShutdownServerRequestMessageSchema = z.object({
+  type: z.literal('shutdown_server_request'),
+  requestId: z.string(),
+})
+
 export const AgentTimelineCursorSchema = z.object({
   epoch: z.string(),
   seq: z.number().int().nonnegative(),
@@ -1080,6 +1085,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion('type', [
   ResumeAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
   CancelAgentRequestMessageSchema,
+  ShutdownServerRequestMessageSchema,
   RestartServerRequestMessageSchema,
   FetchAgentTimelineRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
@@ -1351,11 +1357,18 @@ export const RestartRequestedStatusPayloadSchema = z.object({
   requestId: z.string(),
 })
 
+export const ShutdownRequestedStatusPayloadSchema = z.object({
+  status: z.literal('shutdown_requested'),
+  clientId: z.string(),
+  requestId: z.string(),
+})
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion('status', [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
   AgentResumedStatusPayloadSchema,
   AgentRefreshedStatusPayloadSchema,
+  ShutdownRequestedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
 ])
 
@@ -2187,6 +2200,7 @@ export type ProjectIcon = z.infer<typeof ProjectIconSchema>
 export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSchema>
 export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponseSchema>
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>
+export type ShutdownServerRequestMessage = z.infer<typeof ShutdownServerRequestMessageSchema>
 export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessageSchema>
 export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema>
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>

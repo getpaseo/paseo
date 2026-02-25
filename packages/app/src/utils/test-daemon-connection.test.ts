@@ -48,16 +48,25 @@ const daemonClientMock = vi.hoisted(() => {
   };
 });
 
+const clientIdMock = vi.hoisted(() => ({
+  getOrCreateClientId: vi.fn(async () => "cid_shared_probe_test"),
+}));
+
 vi.mock("@server/client/daemon-client", () => ({
   DaemonClient: daemonClientMock.MockDaemonClient,
+}));
+
+vi.mock("./client-id", () => ({
+  getOrCreateClientId: clientIdMock.getOrCreateClientId,
 }));
 
 describe("test-daemon-connection probe client identity", () => {
   beforeEach(() => {
     daemonClientMock.createdConfigs.length = 0;
+    clientIdMock.getOrCreateClientId.mockClear();
   });
 
-  it("uses isolated probe clientId values for direct latency probes", async () => {
+  it("reuses the app clientId for direct latency probes", async () => {
     const mod = await import("./test-daemon-connection");
 
     await mod.measureConnectionLatency({
@@ -72,8 +81,8 @@ describe("test-daemon-connection probe client identity", () => {
     });
 
     const [first, second] = daemonClientMock.createdConfigs;
-    expect(first?.clientId).toMatch(/^cid_probe_/);
-    expect(second?.clientId).toMatch(/^cid_probe_/);
-    expect(first?.clientId).not.toBe(second?.clientId);
+    expect(first?.clientId).toBe("cid_shared_probe_test");
+    expect(second?.clientId).toBe("cid_shared_probe_test");
+    expect(clientIdMock.getOrCreateClientId).toHaveBeenCalledTimes(2);
   });
 });

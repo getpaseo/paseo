@@ -7,6 +7,7 @@ import {
   waitForPermissionPrompt,
   allowPermission,
   denyPermission,
+  waitForAgentFinishUI,
 } from './helpers/app';
 import { createTempGitRepo } from './helpers/workspace';
 
@@ -31,7 +32,7 @@ test.describe('permission prompts', () => {
     try {
       await createAgentWithConfig(page, {
         directory: repo.path,
-        model: 'haiku',
+        provider: 'claude',
         mode: 'Always Ask',
         prompt,
       });
@@ -71,7 +72,7 @@ test.describe('permission prompts', () => {
     try {
       await createAgentWithConfig(page, {
         directory: repo.path,
-        model: 'haiku',
+        provider: 'claude',
         mode: 'Always Ask',
         prompt,
       });
@@ -79,10 +80,8 @@ test.describe('permission prompts', () => {
       await waitForPermissionPrompt(page, 30000);
 
       await denyPermission(page);
-
-      await expect(page.getByText(/denied by the user|permission\/authorization check/i)).toBeVisible({
-        timeout: 30_000,
-      });
+      await waitForAgentFinishUI(page, 30000);
+      await expect(page.getByTestId('permission-request-question')).toHaveCount(0);
 
       expect(existsSync(filePath)).toBe(false);
 

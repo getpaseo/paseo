@@ -162,6 +162,8 @@ export function DictationOverlay({
       <Pressable
         onPress={handleCancel}
         disabled={actionsDisabled && !isFailed}
+        accessibilityRole="button"
+        accessibilityLabel="Cancel dictation"
         style={[
           overlayStyles.cancelButton,
           actionsDisabled && !isFailed && overlayStyles.buttonDisabled,
@@ -213,6 +215,8 @@ export function DictationOverlay({
         ) : isFailed ? (
           <Pressable
             onPress={onRetry}
+            accessibilityRole="button"
+            accessibilityLabel="Retry dictation"
             style={[
               overlayStyles.actionButton,
               { backgroundColor: theme.colors.palette.white },
@@ -228,6 +232,8 @@ export function DictationOverlay({
           <>
             <Pressable
               onPress={onAccept}
+              accessibilityRole="button"
+              accessibilityLabel="Insert transcription"
               style={[
                 overlayStyles.actionButton,
                 { backgroundColor: "rgba(255, 255, 255, 0.25)" },
@@ -241,6 +247,8 @@ export function DictationOverlay({
             </Pressable>
             <Pressable
               onPress={onAcceptAndSend}
+              accessibilityRole="button"
+              accessibilityLabel="Insert transcription and send"
               style={[
                 overlayStyles.actionButton,
                 { backgroundColor: theme.colors.palette.white },

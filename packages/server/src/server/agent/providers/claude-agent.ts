@@ -74,6 +74,34 @@ const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = [
   "user",
   "project",
 ];
+const CLAUDE_MODEL_DISCOVERY_TIMEOUT_MS = 20_000;
+const CLAUDE_MODEL_QUERY_SHUTDOWN_TIMEOUT_MS = 2_000;
+
+type ClaudeFallbackModel = {
+  id: string;
+  label: string;
+  description: string;
+  isDefault?: boolean;
+};
+
+const CLAUDE_FALLBACK_MODELS: readonly ClaudeFallbackModel[] = [
+  {
+    id: "default",
+    label: "Sonnet 4.5",
+    description: "Best for everyday tasks",
+    isDefault: true,
+  },
+  {
+    id: "opus",
+    label: "Opus 4.6",
+    description: "Most capable model for deep analysis and complex code changes",
+  },
+  {
+    id: "haiku",
+    label: "Haiku 4.5",
+    description: "Fastest Claude model for lightweight tasks",
+  },
+];
 
 type TurnState = "idle" | "foreground" | "autonomous";
 
@@ -128,6 +156,66 @@ type ForegroundTurnState = {
 };
 
 type ClaudeModelFamily = "sonnet" | "opus" | "haiku";
+
+function withTimeout<T>(params: {
+  promise: Promise<T>;
+  timeoutMs: number;
+  label: string;
+}): Promise<T> {
+  const { promise, timeoutMs, label } = params;
+  return new Promise<T>((resolve, reject) => {
+    const timeoutHandle = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutHandle);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeoutHandle);
+        reject(error);
+      }
+    );
+  });
+}
+
+function toClaudeModelDefinition(params: {
+  id: string;
+  label: string;
+  description?: string;
+  isDefault?: boolean;
+}): AgentModelDefinition {
+  return {
+    provider: "claude",
+    id: params.id,
+    label: params.label,
+    description: params.description,
+    ...(params.isDefault ? { isDefault: true } : {}),
+    thinkingOptions: [
+      { id: "off", label: "Off", isDefault: true },
+      { id: "on", label: "On" },
+    ],
+    defaultThinkingOptionId: "off",
+    metadata: params.description
+      ? {
+          description: params.description,
+        }
+      : undefined,
+  };
+}
+
+function buildClaudeFallbackModels(): AgentModelDefinition[] {
+  return CLAUDE_FALLBACK_MODELS.map((model) =>
+    toClaudeModelDefinition({
+      id: model.id,
+      label: model.label,
+      description: model.description,
+      isDefault: model.isDefault,
+    })
+  );
+}
 
 function normalizeClaudeModelLabel(model: ModelInfo): string {
   const fallback = model.displayName?.trim() || model.value;
@@ -188,15 +276,6 @@ function inferClaudeModelFamilyFromText(
     return "haiku";
   }
   return null;
-}
-
-function inferClaudeModelFamily(model: ModelInfo): ClaudeModelFamily | null {
-  const descriptionPrefix = model.description?.split(/[·•]/)[0]?.trim() || null;
-  return (
-    inferClaudeModelFamilyFromText(descriptionPrefix) ??
-    inferClaudeModelFamilyFromText(model.displayName) ??
-    inferClaudeModelFamilyFromText(model.value)
-  );
 }
 
 function pickFamilyAliasModelId(
@@ -1468,25 +1547,38 @@ export class ClaudeAgentClient implements AgentClient {
       options: this.applyRuntimeSettings(claudeOptions),
     });
     try {
-      const models: ModelInfo[] = await claudeQuery.supportedModels();
-      return models.map((model) => ({
-        provider: "claude" as const,
-        id: model.value,
-        label: normalizeClaudeModelLabel(model),
-        description: model.description,
-        thinkingOptions: [
-          { id: "off", label: "Off", isDefault: true },
-          { id: "on", label: "On" },
-        ],
-        defaultThinkingOptionId: "off",
-        metadata: {
+      const models: ModelInfo[] = await withTimeout({
+        promise: claudeQuery.supportedModels(),
+        timeoutMs: CLAUDE_MODEL_DISCOVERY_TIMEOUT_MS,
+        label: "Claude model discovery",
+      });
+      if (models.length === 0) {
+        this.logger.warn(
+          "Claude SDK returned an empty model catalog; using fallback Claude model aliases"
+        );
+        return buildClaudeFallbackModels();
+      }
+      return models.map((model) =>
+        toClaudeModelDefinition({
+          id: model.value,
+          label: normalizeClaudeModelLabel(model),
           description: model.description,
-        },
-      }));
+        })
+      );
+    } catch (error) {
+      this.logger.warn(
+        { err: error },
+        "Failed to fetch Claude model catalog from SDK; using fallback Claude model aliases"
+      );
+      return buildClaudeFallbackModels();
     } finally {
       if (typeof claudeQuery.return === "function") {
         try {
-          await claudeQuery.return();
+          await withTimeout({
+            promise: claudeQuery.return(),
+            timeoutMs: CLAUDE_MODEL_QUERY_SHUTDOWN_TIMEOUT_MS,
+            label: "Claude model query shutdown",
+          });
         } catch {
           // ignore shutdown errors
         }
@@ -2262,38 +2354,6 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds.push(messageId);
   }
 
-  private async primeSelectableModelIds(query: Query): Promise<void> {
-    try {
-      const models = await query.supportedModels();
-      const ids: string[] = [];
-      const familyAliases = new Map<ClaudeModelFamily, string>();
-      for (const model of models) {
-        const modelId = normalizeModelIdCandidate(model.value);
-        if (!modelId) {
-          continue;
-        }
-        ids.push(modelId);
-        const family = inferClaudeModelFamily(model);
-        if (family && !familyAliases.has(family)) {
-          familyAliases.set(family, modelId);
-        }
-      }
-      this.selectableModelIds = new Set(ids);
-      this.selectableModelFamilyAliases = familyAliases.size > 0 ? familyAliases : null;
-      this.logger.debug(
-        {
-          modelIds: ids,
-          modelFamilyAliases: Object.fromEntries(familyAliases),
-        },
-        "Primed Claude selectable model IDs"
-      );
-    } catch (error) {
-      this.selectableModelIds = null;
-      this.selectableModelFamilyAliases = null;
-      this.logger.warn({ err: error }, "Failed to prime Claude selectable model IDs");
-    }
-  }
-
   private async ensureQuery(): Promise<Query> {
     if (this.query && !this.queryRestartNeeded) {
       return this.query;
@@ -2315,12 +2375,10 @@ class ClaudeAgentSession implements AgentSession {
     );
     this.input = input;
     this.query = query({ prompt: input, options });
-    // Do not block query readiness on control-plane calls. We need `next()` to
-    // start immediately so autonomous wake events are not missed between turns.
-    void this.awaitWithTimeout(
-      this.primeSelectableModelIds(this.query),
-      "prime selectable model ids"
-    );
+    // Do not kick off background control-plane queries here. Methods like
+    // supportedCommands()/setPermissionMode() may execute immediately after
+    // ensureQuery() (for listCommands()/setMode()), and sharing the same query
+    // control plane can cause those calls to wait behind supportedModels().
     return this.query;
   }
 

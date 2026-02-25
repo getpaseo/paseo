@@ -5,6 +5,7 @@ import {
   AgentRefreshedStatusPayloadSchema,
   AgentResumedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
+  ShutdownRequestedStatusPayloadSchema,
   SessionInboundMessageSchema,
   type WSWelcomeMessage,
   WSOutboundMessageSchema,
@@ -275,6 +276,7 @@ export type FetchAgentTimelineOptions = {
 
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>
 type RestartRequestedStatusPayload = z.infer<typeof RestartRequestedStatusPayloadSchema>
+type ShutdownRequestedStatusPayload = z.infer<typeof ShutdownRequestedStatusPayloadSchema>
 type FetchAgentsPayload = Extract<
   SessionOutboundMessage,
   { type: 'fetch_agents_response' }
@@ -1542,6 +1544,33 @@ export class DaemonClient {
     })
   }
 
+  async shutdownServer(requestId?: string): Promise<ShutdownRequestedStatusPayload> {
+    const resolvedRequestId = this.createRequestId(requestId)
+    const message = SessionInboundMessageSchema.parse({
+      type: 'shutdown_server_request',
+      requestId: resolvedRequestId,
+    })
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== 'status') {
+          return null
+        }
+        const shutdown = ShutdownRequestedStatusPayloadSchema.safeParse(msg.payload)
+        if (!shutdown.success) {
+          return null
+        }
+        if (shutdown.data.requestId !== resolvedRequestId) {
+          return null
+        }
+        return shutdown.data
+      },
+    })
+  }
+
   // ============================================================================
   // Audio / Voice
   // ============================================================================
@@ -2203,7 +2232,8 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: 'list_provider_models_response',
-      timeout: 30000,
+      // Provider SDK cold starts (especially model discovery) can exceed 30s.
+      timeout: 45000,
     })
   }
 

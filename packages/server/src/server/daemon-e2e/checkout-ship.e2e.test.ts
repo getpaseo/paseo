@@ -244,7 +244,9 @@ describe("daemon checkout ship loop", () => {
         expect(existsSync(worktree.worktreePath)).toBe(false);
 
         const remainingAgents = await ctx.client.fetchAgents();
-        expect(remainingAgents.some((entry) => entry.id === agent.id)).toBe(false);
+        expect(
+          remainingAgents.entries.some((entry) => entry.agent.id === agent.id)
+        ).toBe(false);
       } finally {
         if (agentId) {
           await ctx.client.deleteAgent(agentId).catch(() => undefined);

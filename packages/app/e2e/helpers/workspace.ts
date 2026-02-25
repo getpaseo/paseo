@@ -12,7 +12,9 @@ export const createTempGitRepo = async (
   prefix = 'paseo-e2e-',
   options?: { withRemote?: boolean }
 ): Promise<TempRepo> => {
-  const repoPath = await mkdtemp(path.join(tmpdir(), prefix));
+  // Keep E2E repo paths short so terminal prompt + typed commands stay visible without zsh clipping.
+  const tempRoot = process.platform === 'win32' ? tmpdir() : '/tmp';
+  const repoPath = await mkdtemp(path.join(tempRoot, prefix));
   const withRemote = options?.withRemote ?? false;
 
   execSync('git init -b main', { cwd: repoPath, stdio: 'ignore' });

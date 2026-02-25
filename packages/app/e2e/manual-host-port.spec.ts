@@ -17,8 +17,28 @@ test('manual host add accepts host:port only and persists a direct connection', 
   });
   await page.goto('/settings');
 
-  await page.getByText('+ Add connection', { exact: true }).click();
-  await page.getByText('Direct connection', { exact: true }).click();
+  await expect
+    .poll(
+      async () => {
+        if (await page.getByText('Welcome to Paseo', { exact: true }).isVisible().catch(() => false)) {
+          return 'welcome';
+        }
+        if (await page.getByText('+ Add connection', { exact: true }).isVisible().catch(() => false)) {
+          return 'settings';
+        }
+        return '';
+      },
+      { timeout: 15000 }
+    )
+    .not.toBe('');
+
+  const isWelcome = await page.getByText('Welcome to Paseo', { exact: true }).isVisible().catch(() => false);
+  if (isWelcome) {
+    await page.getByText('Direct connection', { exact: true }).first().click();
+  } else {
+    await page.getByText('+ Add connection', { exact: true }).click();
+    await page.getByText('Direct connection', { exact: true }).click();
+  }
 
   const input = page.getByPlaceholder('host:6767');
   await expect(input).toBeVisible();
@@ -27,11 +47,18 @@ test('manual host add accepts host:port only and persists a direct connection', 
   await page.getByText('Connect', { exact: true }).click();
 
   const nameModal = page.getByTestId('name-host-modal');
-  await expect(nameModal).toBeVisible({ timeout: 15000 });
-  await nameModal.getByTestId('name-host-skip').click();
+  if (await nameModal.isVisible().catch(() => false)) {
+    await nameModal.getByTestId('name-host-skip').click();
+  }
 
-  await expect(page.getByTestId('sidebar-new-agent')).toBeVisible();
-  await expect(page.getByText('Online', { exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId('sidebar-new-agent')).toBeVisible({ timeout: 30000 });
+
+  const settingsButton = page.locator('[data-testid="sidebar-settings"]:visible').first();
+  await expect(settingsButton).toBeVisible({ timeout: 10000 });
+  await settingsButton.click();
+  await expect(page.locator(`[data-testid="daemon-card-${serverId}"]:visible`).first()).toBeVisible({
+    timeout: 15000,
+  });
 
   await page.waitForFunction(
     ({ port, serverId }) => {

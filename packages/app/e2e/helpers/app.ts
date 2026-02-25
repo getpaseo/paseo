@@ -71,10 +71,10 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
         '@paseo:create-agent-preferences',
         JSON.stringify({
           serverId: expectedServerId,
-          provider: 'claude',
+          provider: 'codex',
           providerPreferences: {
             claude: { model: 'haiku' },
-            codex: { model: 'gpt-5.1-codex-mini' },
+            codex: { model: 'gpt-5.1-codex-mini', thinkingOptionId: 'low' },
           },
         })
       );
@@ -183,7 +183,7 @@ export const setWorkingDirectory = async (page: Page, directory: string) => {
   const legacyInput = page.getByRole('textbox', { name: '/path/to/project' }).first();
   const directorySearchInput = page.getByRole('textbox', { name: /search directories/i }).first();
   const worktreePicker = page.getByTestId('worktree-attach-picker');
-  const worktreeSheetTitle = page.getByText('Select worktree', { exact: true });
+  const worktreeSheetTitle = page.getByText('Select worktree', { exact: true }).first();
   const closeBottomSheet = async () => {
     const bottomSheetBackdrop = page
       .getByRole('button', { name: 'Bottom sheet backdrop' })
@@ -362,15 +362,82 @@ export const ensureHostSelected = async (page: Page) => {
 export const createAgent = async (page: Page, message: string) => {
   const input = page.getByRole('textbox', { name: 'Message agent...' });
   await expect(input).toBeEditable();
+  await preferFastThinkingOption(page);
   await input.fill(message);
   await input.press('Enter');
 
-  // Expo Router navigations can be "same-document" updates, so avoid waiting for a full `load`.
-  await page.waitForURL(/\/agent\//, { waitUntil: 'commit' });
+  // Router updates can be same-document transitions; assert URL state instead of waiting for a commit event.
+  await expect(page).toHaveURL(/\/agent\//, { timeout: 30000 });
   await expect(page.getByText(message, { exact: true }).first()).toBeVisible({
     timeout: 30000,
   });
 };
+
+async function preferFastThinkingOption(page: Page): Promise<void> {
+  const providerTrigger = page.getByTestId('draft-provider-select').first();
+  if (await providerTrigger.isVisible().catch(() => false)) {
+    const providerText = ((await providerTrigger.innerText().catch(() => '')) ?? '').trim();
+    if (!/codex/i.test(providerText)) {
+      return;
+    }
+  }
+
+  const thinkingTrigger = page.getByTestId('agent-thinking-selector').first();
+  if (!(await thinkingTrigger.isVisible().catch(() => false))) {
+    return;
+  }
+
+  const currentThinkingLabel = ((await thinkingTrigger.innerText().catch(() => '')) ?? '')
+    .trim()
+    .toLowerCase();
+  if (/\b(low|minimal|off)\b/.test(currentThinkingLabel)) {
+    return;
+  }
+
+  await thinkingTrigger.click();
+  const menu = page.getByTestId('agent-thinking-menu').first();
+  if (!(await menu.isVisible().catch(() => false))) {
+    return;
+  }
+
+  const preferredLabels = ['low', 'minimal', 'off', 'medium'];
+  let selected = false;
+  for (const label of preferredLabels) {
+    const option = menu
+      .getByRole('button', { name: new RegExp(`^${escapeRegex(label)}$`, 'i') })
+      .first();
+    if (await option.isVisible().catch(() => false)) {
+      await option.click({ force: true });
+      selected = true;
+      break;
+    }
+  }
+
+  if (!selected) {
+    const options = menu.getByRole('button');
+    const count = await options.count();
+    for (let index = 0; index < count; index += 1) {
+      const option = options.nth(index);
+      const label = ((await option.innerText().catch(() => '')) ?? '').trim();
+      if (!label) {
+        continue;
+      }
+      if (label.toLowerCase() === currentThinkingLabel) {
+        continue;
+      }
+      await option.click({ force: true });
+      selected = true;
+      break;
+    }
+  }
+
+  if (!selected) {
+    await page.keyboard.press('Escape').catch(() => undefined);
+    return;
+  }
+
+  await expect(menu).not.toBeVisible({ timeout: 5000 });
+}
 
 export interface AgentConfig {
   directory: string;
@@ -381,42 +448,104 @@ export interface AgentConfig {
 }
 
 export const selectProvider = async (page: Page, provider: string) => {
-  const providerLabel = page.getByText('PROVIDER', { exact: true }).first();
-  await expect(providerLabel).toBeVisible();
-  await providerLabel.click();
+  const normalizedProvider = provider.trim();
+  if (!normalizedProvider) {
+    throw new Error('Provider must be a non-empty string.');
+  }
 
-  const option = page.getByText(provider, { exact: true }).first();
+  const providerTrigger = page.getByTestId('draft-provider-select').first();
+  if (
+    await providerTrigger
+      .getByText(new RegExp(`^${escapeRegex(normalizedProvider)}$`, 'i'))
+      .first()
+      .isVisible()
+      .catch(() => false)
+  ) {
+    return;
+  }
+
+  if (await providerTrigger.isVisible().catch(() => false)) {
+    await providerTrigger.click();
+  } else {
+    const providerLabel = page.getByText('PROVIDER', { exact: true }).first();
+    await expect(providerLabel).toBeVisible();
+    await providerLabel.click();
+  }
+
+  const dialog = page.getByRole('dialog').last();
+  const searchInput = dialog.getByRole('textbox', { name: /search provider/i }).first();
+  if (await searchInput.isVisible().catch(() => false)) {
+    await searchInput.fill(normalizedProvider);
+  }
+
+  const option = dialog
+    .getByText(new RegExp(`^${escapeRegex(normalizedProvider)}$`, 'i'))
+    .first();
   await expect(option).toBeVisible();
   await option.click();
 };
 
 export const selectModel = async (page: Page, model: string) => {
-  const modelLabel = page.getByText('MODEL', { exact: true }).first();
-  await expect(modelLabel).toBeVisible();
-  await modelLabel.click();
+  const normalizedModel = model.trim();
+  if (!normalizedModel) {
+    throw new Error('Model must be a non-empty string.');
+  }
+
+  const modelTrigger = page.getByTestId('draft-model-select').first();
+  if (
+    await modelTrigger
+      .getByText(new RegExp(`^${escapeRegex(normalizedModel)}$`, 'i'))
+      .first()
+      .isVisible()
+      .catch(() => false)
+  ) {
+    return;
+  }
+
+  if (await modelTrigger.isVisible().catch(() => false)) {
+    await modelTrigger.click();
+  } else {
+    const modelLabel = page.getByText('MODEL', { exact: true }).first();
+    await expect(modelLabel).toBeVisible();
+    await modelLabel.click();
+  }
 
   // Wait for the model dropdown to open
   const searchInput = page.getByRole('textbox', { name: /search model/i });
   await expect(searchInput).toBeVisible({ timeout: 10000 });
 
   // Type to search/filter models
-  await searchInput.fill(model);
+  await searchInput.fill(normalizedModel);
 
   const dialog = page.getByRole('dialog');
-  const option = dialog
-    .getByText(new RegExp(`^${escapeRegex(model)}$`, 'i'))
+  const exactOption = dialog
+    .getByText(new RegExp(`^${escapeRegex(normalizedModel)}$`, 'i'))
     .first();
-  await expect(option).toBeVisible({ timeout: 30000 });
-  await option.click({ force: true });
+  const exactVisible = await exactOption.isVisible().catch(() => false);
+  if (exactVisible) {
+    await exactOption.click({ force: true });
+  } else {
+    // Modern labels include version suffixes (for example "Haiku 4.5"), so
+    // select the first filtered result using keyboard confirm.
+    await searchInput.press('Enter');
+  }
 
   // Wait for dropdown to close
+  if (await searchInput.isVisible().catch(() => false)) {
+    await page.keyboard.press('Escape').catch(() => undefined);
+  }
   await expect(searchInput).not.toBeVisible({ timeout: 5000 });
 };
 
 export const selectMode = async (page: Page, mode: string) => {
-  const modeLabel = page.getByText('MODE', { exact: true }).first();
-  await expect(modeLabel).toBeVisible();
-  await modeLabel.click();
+  const modeTrigger = page.getByTestId('draft-mode-select').first();
+  if (await modeTrigger.isVisible().catch(() => false)) {
+    await modeTrigger.click();
+  } else {
+    const modeLabel = page.getByText('MODE', { exact: true }).first();
+    await expect(modeLabel).toBeVisible();
+    await modeLabel.click();
+  }
 
   // Wait for the mode dropdown to open
   const searchInput = page.getByRole('textbox', { name: /search mode/i });

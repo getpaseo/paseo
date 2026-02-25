@@ -45,6 +45,24 @@ describe('shared messages stream parsing', () => {
     expect(parsed.payload.entries[0]?.item.type).toBe('assistant_message')
   })
 
+  it('parses explicit shutdown and restart lifecycle request payloads as distinct message types', () => {
+    const shutdownParsed = SessionInboundMessageSchema.safeParse({
+      type: 'shutdown_server_request',
+      requestId: 'req-shutdown-1',
+    })
+    expect(shutdownParsed.success).toBe(true)
+
+    const restartParsed = SessionInboundMessageSchema.safeParse({
+      type: 'restart_server_request',
+      requestId: 'req-restart-1',
+      reason: 'settings_changed',
+    })
+    expect(restartParsed.success).toBe(true)
+
+    expect(shutdownParsed.success && shutdownParsed.data.type).toBe('shutdown_server_request')
+    expect(restartParsed.success && restartParsed.data.type).toBe('restart_server_request')
+  })
+
   it('parses representative agent_stream tool_call event', () => {
     const parsed = AgentStreamMessageSchema.parse({
       type: 'agent_stream',

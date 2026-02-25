@@ -8,57 +8,83 @@
  * the Claude Agent SDK's command capabilities.
  */
 
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { ClaudeAgentClient } from "./claude-agent.js";
 import type { AgentSession, AgentSessionConfig, AgentSlashCommand } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { useTempClaudeConfigDir } from "../../test-utils/claude-config.js";
 
 const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
 
 (hasClaudeCredentials ? describe : describe.skip)("ClaudeAgentSession Commands", () => {
   let client: ClaudeAgentClient;
-  let session: AgentSession;
+  let session: AgentSession | null = null;
+  let commands: AgentSlashCommand[] = [];
+  let restoreClaudeConfigDir: (() => void) | null = null;
+  let tempCwd: string | null = null;
 
-  // Mock config for testing - uses plan mode to avoid actual tool execution
-  const testConfig: AgentSessionConfig = {
+  const buildTestConfig = (cwd: string): AgentSessionConfig => ({
     provider: "claude",
-    cwd: process.cwd(),
+    cwd,
     modeId: "plan",
-  };
+  });
 
   beforeAll(async () => {
+    restoreClaudeConfigDir = useTempClaudeConfigDir();
+    const rawTempDir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-commands-"));
+    try {
+      tempCwd = realpathSync(rawTempDir);
+    } catch {
+      tempCwd = rawTempDir;
+    }
     client = new ClaudeAgentClient({ logger: createTestLogger() });
+    session = await client.createSession(buildTestConfig(tempCwd));
+    if (typeof session.listCommands !== "function") {
+      throw new Error("Claude test session does not expose listCommands");
+    }
+    commands = await session.listCommands();
   });
 
   afterAll(async () => {
-    if (session) {
-      await session.close();
+    try {
+      if (session) {
+        await session.close();
+      }
+    } finally {
+      session = null;
+      if (tempCwd) {
+        rmSync(tempCwd, { recursive: true, force: true });
+        tempCwd = null;
+      }
+      restoreClaudeConfigDir?.();
+      restoreClaudeConfigDir = null;
     }
   });
 
   describe("listCommands()", () => {
     it("should return an array of AgentSlashCommand objects", async () => {
-      session = await client.createSession(testConfig);
+      if (!session) {
+        throw new Error("Claude test session not initialized");
+      }
 
       // The session should have a listCommands method
       expect(typeof session.listCommands).toBe("function");
-
-      const commands = await session.listCommands!();
 
       // Should be an array
       expect(Array.isArray(commands)).toBe(true);
 
       // Should have at least some built-in commands
       expect(commands.length).toBeGreaterThan(0);
-
-      await session.close();
     }, 30000);
 
     it("should have valid AgentSlashCommand structure for all commands", async () => {
-      session = await client.createSession(testConfig);
-
-      const commands = await session.listCommands!();
+      if (!session) {
+        throw new Error("Claude test session not initialized");
+      }
 
       // Verify all commands have valid structure
       for (const cmd of commands) {
@@ -72,22 +98,19 @@ const hasClaudeCredentials =
         // Names should NOT have the / prefix (that's added when executing)
         expect(cmd.name.startsWith("/")).toBe(false);
       }
-
-      await session.close();
     }, 30000);
 
     it("should include user-defined skills", async () => {
-      session = await client.createSession(testConfig);
+      if (!session) {
+        throw new Error("Claude test session not initialized");
+      }
 
-      const commands = await session.listCommands!();
       const commandNames = commands.map((cmd) => cmd.name);
 
       // Should have at least one command (skills are loaded from user/project settings)
       // The exact commands depend on what skills are configured
       expect(commands.length).toBeGreaterThan(0);
       expect(commandNames).toContain("rewind");
-
-      await session.close();
     }, 30000);
   });
 

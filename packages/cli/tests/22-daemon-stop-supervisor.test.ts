@@ -11,10 +11,16 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { $ } from 'zx'
+import { getAvailablePort } from './helpers/network.ts'
 
 $.verbose = false
 
 const pollIntervalMs = 100
+const testEnv = {
+  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
+  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? '0',
+  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? '0',
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -68,7 +74,7 @@ type DaemonStatus = {
 
 async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
   const result =
-    await $`PASEO_HOME=${paseoHome} npx paseo daemon status --home ${paseoHome} --json`.nothrow()
+    await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon status --home ${paseoHome} --json`.nothrow()
   if (result.exitCode !== 0) {
     return { status: null, pid: null }
   }
@@ -104,7 +110,7 @@ async function waitFor(
 
 console.log('=== Daemon Stop (supervisor regression) ===\n')
 
-const port = 10000 + Math.floor(Math.random() * 50000)
+const port = await getAvailablePort()
 const paseoHome = await mkdtemp(join(tmpdir(), 'paseo-stop-supervisor-'))
 const cliRoot = join(import.meta.dirname, '..')
 
@@ -118,6 +124,7 @@ try {
     cwd: cliRoot,
     env: {
       ...process.env,
+      ...testEnv,
       PASEO_HOME: paseoHome,
       PASEO_LISTEN: `127.0.0.1:${port}`,
       PASEO_RELAY_ENABLED: 'false',
@@ -159,7 +166,7 @@ try {
 
   console.log('Test 2: `paseo daemon stop` should stop without respawn')
   const stopResult =
-    await $`PASEO_HOME=${paseoHome} npx paseo daemon stop --home ${paseoHome} --json`.nothrow()
+    await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon stop --home ${paseoHome} --json`.nothrow()
   assert.strictEqual(stopResult.exitCode, 0, `stop should succeed: ${stopResult.stderr}`)
   const stopJson = JSON.parse(stopResult.stdout) as { action?: unknown }
   assert.strictEqual(stopJson.action, 'stopped', 'stop should report stopped action')
@@ -189,6 +196,14 @@ try {
 
   const statusAfterStop = await readDaemonStatus(paseoHome)
   assert.strictEqual(statusAfterStop.status, 'stopped', 'daemon should remain stopped after stop command')
+  assert(
+    recentSupervisorLogs.includes('Shutdown requested by worker. Stopping worker...'),
+    `stop should request lifecycle shutdown from daemon worker, logs:\n${recentSupervisorLogs}`
+  )
+  assert(
+    !recentSupervisorLogs.includes('cli_shutdown'),
+    `supervisor logs should not route shutdown by reason string:\n${recentSupervisorLogs}`
+  )
   console.log('✓ stop leaves supervised daemon stopped (no respawn)\n')
 } finally {
   if (supervisorProcess?.pid && isProcessRunning(supervisorProcess.pid)) {
@@ -200,7 +215,7 @@ try {
     )
   }
 
-  await $`PASEO_HOME=${paseoHome} npx paseo daemon stop --home ${paseoHome} --force`.nothrow()
+  await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon stop --home ${paseoHome} --force`.nothrow()
   await rm(paseoHome, { recursive: true, force: true })
 }
 

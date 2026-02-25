@@ -10,6 +10,15 @@ function encodeBase64Url(input: string): string {
 }
 
 test('pairing flow accepts #offer=ConnectionOfferV2 and stores relay-only host', async ({ page }) => {
+  const relayPort = process.env.E2E_RELAY_PORT;
+  const serverId = process.env.E2E_SERVER_ID;
+  const daemonPublicKeyB64 = process.env.E2E_RELAY_DAEMON_PUBLIC_KEY;
+  if (!relayPort || !serverId || !daemonPublicKeyB64) {
+    throw new Error(
+      'E2E_RELAY_PORT, E2E_SERVER_ID, or E2E_RELAY_DAEMON_PUBLIC_KEY is not set (expected from globalSetup).'
+    );
+  }
+
   // Override the default fixture seeding for this test.
   await page.goto('/settings');
   await page.evaluate(() => {
@@ -18,27 +27,39 @@ test('pairing flow accepts #offer=ConnectionOfferV2 and stores relay-only host',
     localStorage.setItem('@paseo:daemon-registry', JSON.stringify([]));
     localStorage.removeItem('@paseo:settings');
   });
-  await page.reload();
+  await page.goto('/');
+
+  const relayEndpoint = `127.0.0.1:${relayPort}`;
 
   const offer = {
     v: 2 as const,
-    serverId: 'e2e-server-123',
-    daemonPublicKeyB64: Buffer.from('e2e-public-key', 'utf8').toString('base64'),
-    relay: { endpoint: 'relay.local:443' },
+    serverId,
+    daemonPublicKeyB64,
+    relay: { endpoint: relayEndpoint },
   };
 
   const offerUrl = `https://app.paseo.sh/#offer=${encodeBase64Url(JSON.stringify(offer))}`;
 
-  await page.getByText('+ Add connection', { exact: true }).click();
-  await page.getByText('Paste pairing link', { exact: true }).click();
+  const welcomeTitle = page.getByText('Welcome to Paseo', { exact: true });
+  if (await welcomeTitle.isVisible().catch(() => false)) {
+    await page.getByTestId('welcome-paste-pairing-link').click();
+  } else {
+    await page.getByText('+ Add connection', { exact: true }).click();
+    await page.getByText('Paste pairing link', { exact: true }).click();
+  }
 
   const input = page.getByPlaceholder('https://app.paseo.sh/#offer=...');
   await expect(input).toBeVisible();
   await input.fill(offerUrl);
 
-  await page.getByText('Pair', { exact: true }).click();
+  await page.getByTestId('pair-link-submit').click();
 
-  await expect(page.getByTestId('sidebar-new-agent')).toBeVisible();
+  const nameHostModal = page.getByTestId('name-host-modal');
+  if (await nameHostModal.isVisible().catch(() => false)) {
+    await nameHostModal.getByTestId('name-host-skip').click();
+  }
+
+  await expect(page.getByTestId('sidebar-new-agent')).toBeVisible({ timeout: 30000 });
 
   await page.waitForFunction(
     ({ expected }) => {

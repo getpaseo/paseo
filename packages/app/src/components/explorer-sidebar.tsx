@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { View, Text, Pressable, Platform, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useIsFocused } from "@react-navigation/native";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -52,6 +53,7 @@ interface ExplorerSidebarProps {
 
 export function ExplorerSidebar({ serverId, agentId, cwd, isGit }: ExplorerSidebarProps) {
   const { theme } = useUnistyles();
+  const isScreenFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
@@ -266,6 +268,12 @@ export function ExplorerSidebar({ serverId, agentId, cwd, isGit }: ExplorerSideb
   // Mobile: full-screen overlay with gesture.
   // On web, keep it interactive only while open so closed sidebars don't eat taps.
   const overlayPointerEvents = Platform.OS === "web" ? (isOpen ? "auto" : "none") : "box-none";
+
+  // Navigation stacks can keep previous screens mounted; hide sidebars for unfocused
+  // screens so only the active screen exposes explorer/terminal surfaces.
+  if (!isScreenFocused) {
+    return null;
+  }
 
   if (isMobile) {
     return (
