@@ -53,6 +53,7 @@ const DEFAULT_MODES: AgentMode[] = [
 ];
 
 type OpenCodeAgentConfig = AgentSessionConfig & { provider: "opencode" };
+type OpenCodeMessageRole = "user" | "assistant";
 
 type OpenCodeMcpConfig =
   | {
@@ -212,6 +213,21 @@ async function findAvailablePort(): Promise<number> {
     });
     server.on("error", reject);
   });
+}
+
+function resolvePartDedupeKey(
+  part: AgentMetadata,
+  partType: "text" | "reasoning"
+): string | null {
+  const partId = part.id;
+  if (typeof partId === "string" && partId.trim().length > 0) {
+    return `${partType}:${partId}`;
+  }
+  const messageId = part.messageID;
+  if (typeof messageId === "string" && messageId.trim().length > 0) {
+    return `${partType}:message:${messageId}`;
+  }
+  return null;
 }
 
 export class OpenCodeServerManager {
@@ -523,6 +539,211 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 }
 
+export type OpenCodeEventTranslationState = {
+  sessionId: string;
+  messageRoles: Map<string, OpenCodeMessageRole>;
+  accumulatedUsage: AgentUsage;
+  streamedPartKeys: Set<string>;
+};
+
+export function translateOpenCodeEvent(
+  event: unknown,
+  state: OpenCodeEventTranslationState
+): AgentStreamEvent[] {
+  const events: AgentStreamEvent[] = [];
+
+  if (!event || typeof event !== "object") {
+    return events;
+  }
+
+  const e = event as { type?: string; properties?: AgentMetadata };
+  const type = e.type;
+  const props = e.properties ?? {};
+
+  switch (type) {
+    case "session.created":
+    case "session.updated": {
+      const sessionId = props.id as string | undefined;
+      if (sessionId === state.sessionId) {
+        events.push({
+          type: "thread_started",
+          sessionId: state.sessionId,
+          provider: "opencode",
+        });
+      }
+      break;
+    }
+
+    case "message.updated": {
+      const info = props.info as AgentMetadata | undefined;
+      if (!info) {
+        break;
+      }
+      const messageId = info.id as string | undefined;
+      const messageSessionId = info.sessionID as string | undefined;
+      const role = info.role as OpenCodeMessageRole | undefined;
+
+      if (messageId && messageSessionId === state.sessionId && role) {
+        state.messageRoles.set(messageId, role);
+      }
+      break;
+    }
+
+    case "message.part.updated": {
+      const part = props.part as AgentMetadata | undefined;
+      const delta = props.delta as string | undefined;
+      if (!part) {
+        break;
+      }
+
+      const partSessionId = part.sessionID as string | undefined;
+      if (partSessionId !== state.sessionId) {
+        break;
+      }
+
+      const messageId = part.messageID as string | undefined;
+      const messageRole = messageId ? state.messageRoles.get(messageId) : undefined;
+      const partType = part.type as string | undefined;
+      const partTime = part.time as { start?: number; end?: number } | undefined;
+
+      if (partType === "text") {
+        const partKey = resolvePartDedupeKey(part, "text");
+        if (messageRole === "user") {
+          break;
+        }
+        if (!messageRole && !delta) {
+          break;
+        }
+        if (delta) {
+          if (partKey) {
+            state.streamedPartKeys.add(partKey);
+          }
+          events.push({
+            type: "timeline",
+            provider: "opencode",
+            item: { type: "assistant_message", text: delta },
+          });
+        } else if (partTime?.end) {
+          if (partKey && state.streamedPartKeys.delete(partKey)) {
+            break;
+          }
+          const text = part.text as string | undefined;
+          if (text) {
+            events.push({
+              type: "timeline",
+              provider: "opencode",
+              item: { type: "assistant_message", text },
+            });
+          }
+        }
+      } else if (partType === "reasoning") {
+        const partKey = resolvePartDedupeKey(part, "reasoning");
+        if (delta) {
+          if (partKey) {
+            state.streamedPartKeys.add(partKey);
+          }
+          events.push({
+            type: "timeline",
+            provider: "opencode",
+            item: { type: "reasoning", text: delta },
+          });
+        } else if (partTime?.end) {
+          if (partKey && state.streamedPartKeys.delete(partKey)) {
+            break;
+          }
+          const text = part.text as string | undefined;
+          if (text) {
+            events.push({
+              type: "timeline",
+              provider: "opencode",
+              item: { type: "reasoning", text },
+            });
+          }
+        }
+      } else if (partType === "tool") {
+        const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
+        if (parsedToolPart.success && parsedToolPart.data) {
+          events.push({
+            type: "timeline",
+            provider: "opencode",
+            item: parsedToolPart.data,
+          });
+        }
+      } else if (partType === "step-finish") {
+        const tokens = part.tokens as { input?: number; output?: number; reasoning?: number } | undefined;
+        const cost = part.cost as number | undefined;
+
+        if (tokens) {
+          state.accumulatedUsage.inputTokens = (state.accumulatedUsage.inputTokens ?? 0) + (tokens.input ?? 0);
+          state.accumulatedUsage.outputTokens = (state.accumulatedUsage.outputTokens ?? 0) + (tokens.output ?? 0);
+        }
+        if (cost !== undefined) {
+          state.accumulatedUsage.totalCostUsd = (state.accumulatedUsage.totalCostUsd ?? 0) + cost;
+        }
+      }
+      break;
+    }
+
+    case "permission.asked": {
+      const sessionId = props.sessionID as string | undefined;
+      if (sessionId !== state.sessionId) {
+        break;
+      }
+
+      const requestId = props.id as string;
+      const permission = props.permission as string;
+      const metadata = props.metadata as AgentMetadata | undefined;
+      const patterns = props.patterns as string[] | undefined;
+
+      const permRequest: AgentPermissionRequest = {
+        id: requestId,
+        provider: "opencode",
+        name: permission,
+        kind: "tool",
+        title: permission,
+        description: patterns?.join(", "),
+        input: metadata,
+      };
+
+      events.push({
+        type: "permission_requested",
+        provider: "opencode",
+        request: permRequest,
+      });
+      break;
+    }
+
+    case "session.idle": {
+      const sessionId = props.sessionID as string | undefined;
+      if (sessionId === state.sessionId) {
+        state.streamedPartKeys.clear();
+        events.push({
+          type: "turn_completed",
+          provider: "opencode",
+          usage: undefined,
+        });
+      }
+      break;
+    }
+
+    case "session.error": {
+      const sessionId = props.sessionID as string | undefined;
+      if (sessionId === state.sessionId) {
+        state.streamedPartKeys.clear();
+        const error = props.error as string | undefined;
+        events.push({
+          type: "turn_failed",
+          provider: "opencode",
+          error: error ?? "Unknown error",
+        });
+      }
+      break;
+    }
+  }
+
+  return events;
+}
+
 class OpenCodeAgentSession implements AgentSession {
   readonly provider: "opencode" = "opencode";
   readonly capabilities = OPENCODE_CAPABILITIES;
@@ -537,7 +758,9 @@ class OpenCodeAgentSession implements AgentSession {
   private mcpConfigured = false;
   private mcpSetupPromise: Promise<void> | null = null;
   /** Tracks the role of each message by ID to distinguish user from assistant messages */
-  private messageRoles = new Map<string, "user" | "assistant">();
+  private messageRoles = new Map<string, OpenCodeMessageRole>();
+  /** Tracks streamed textual part IDs to suppress final full-text echoes from OpenCode. */
+  private streamedPartKeys = new Set<string>();
 
   constructor(
     config: OpenCodeAgentConfig,
@@ -886,197 +1109,23 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private translateEvent(event: unknown): AgentStreamEvent[] {
-    const events: AgentStreamEvent[] = [];
+    const translated = translateOpenCodeEvent(event, {
+      sessionId: this.sessionId,
+      messageRoles: this.messageRoles,
+      accumulatedUsage: this.accumulatedUsage,
+      streamedPartKeys: this.streamedPartKeys,
+    });
 
-    if (!event || typeof event !== "object") {
-      return events;
-    }
-
-    const e = event as { type?: string; properties?: AgentMetadata };
-    const type = e.type;
-    const props = e.properties ?? {};
-
-    switch (type) {
-      case "session.created":
-      case "session.updated": {
-        const sessionId = props.id as string | undefined;
-        if (sessionId === this.sessionId) {
-          events.push({
-            type: "thread_started",
-            sessionId: this.sessionId,
-            provider: "opencode",
-          });
-        }
-        break;
+    for (const translatedEvent of translated) {
+      if (translatedEvent.type === "permission_requested") {
+        this.pendingPermissions.set(translatedEvent.request.id, translatedEvent.request);
       }
-
-      case "message.updated": {
-        // Track message roles by ID so we can distinguish user from assistant parts
-        const info = props.info as AgentMetadata | undefined;
-        if (!info) {
-          break;
-        }
-        const messageId = info.id as string | undefined;
-        const messageSessionId = info.sessionID as string | undefined;
-        const role = info.role as "user" | "assistant" | undefined;
-
-        if (messageId && messageSessionId === this.sessionId && role) {
-          this.messageRoles.set(messageId, role);
-        }
-        break;
-      }
-
-      case "message.part.updated": {
-        // Structure: { part: { id, sessionID, messageID, type, text?, ... }, delta?: string }
-        const part = props.part as AgentMetadata | undefined;
-        const delta = props.delta as string | undefined;
-        if (!part) {
-          break;
-        }
-
-        const partSessionId = part.sessionID as string | undefined;
-        if (partSessionId !== this.sessionId) {
-          break;
-        }
-
-        const messageId = part.messageID as string | undefined;
-        const messageRole = messageId ? this.messageRoles.get(messageId) : undefined;
-        const partType = part.type as string | undefined;
-        const partTime = part.time as { start?: number; end?: number } | undefined;
-
-        if (partType === "text") {
-          // Skip user messages - agent-manager emits user_message via recordUserMessage
-          if (messageRole === "user") {
-            break;
-          }
-          // Skip if role unknown AND no delta (likely user message before role is known)
-          if (!messageRole && !delta) {
-            break;
-          }
-          // Emit delta for streaming, or full text only when complete (has time.end)
-          if (delta) {
-            events.push({
-              type: "timeline",
-              provider: "opencode",
-              item: { type: "assistant_message", text: delta },
-            });
-          } else if (partTime?.end) {
-            // Final complete text - only emit if we haven't been streaming deltas
-            // (In practice, if delta was present, we've already streamed it all)
-            const text = part.text as string | undefined;
-            if (text) {
-              events.push({
-                type: "timeline",
-                provider: "opencode",
-                item: { type: "assistant_message", text },
-              });
-            }
-          }
-        } else if (partType === "reasoning") {
-          // Emit delta for streaming reasoning
-          if (delta) {
-            events.push({
-              type: "timeline",
-              provider: "opencode",
-              item: { type: "reasoning", text: delta },
-            });
-          } else if (partTime?.end) {
-            const text = part.text as string | undefined;
-            if (text) {
-              events.push({
-                type: "timeline",
-                provider: "opencode",
-                item: { type: "reasoning", text },
-              });
-            }
-          }
-        } else if (partType === "tool") {
-          // Tool parts: { tool: string, state: { status, input, output?, error? } }
-          const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
-          if (parsedToolPart.success) {
-            if (parsedToolPart.data) {
-              events.push({
-                type: "timeline",
-                provider: "opencode",
-                item: parsedToolPart.data,
-              });
-            }
-          }
-        } else if (partType === "step-finish") {
-          // Extract usage from step-finish parts
-          const tokens = part.tokens as { input?: number; output?: number; reasoning?: number } | undefined;
-          const cost = part.cost as number | undefined;
-
-          if (tokens) {
-            this.accumulatedUsage.inputTokens = (this.accumulatedUsage.inputTokens ?? 0) + (tokens.input ?? 0);
-            this.accumulatedUsage.outputTokens = (this.accumulatedUsage.outputTokens ?? 0) + (tokens.output ?? 0);
-          }
-          if (cost !== undefined) {
-            this.accumulatedUsage.totalCostUsd = (this.accumulatedUsage.totalCostUsd ?? 0) + cost;
-          }
-        }
-        break;
-      }
-
-      case "permission.asked": {
-        // props IS the PermissionRequest directly
-        const sessionId = props.sessionID as string | undefined;
-        if (sessionId !== this.sessionId) {
-          break;
-        }
-
-        const requestId = props.id as string;
-        const permission = props.permission as string;
-        const metadata = props.metadata as AgentMetadata | undefined;
-        const patterns = props.patterns as string[] | undefined;
-
-        const permRequest: AgentPermissionRequest = {
-          id: requestId,
-          provider: "opencode",
-          name: permission,
-          kind: "tool",
-          title: permission,
-          description: patterns?.join(", "),
-          input: metadata,
-        };
-
-        this.pendingPermissions.set(requestId, permRequest);
-        events.push({
-          type: "permission_requested",
-          provider: "opencode",
-          request: permRequest,
-        });
-        break;
-      }
-
-      case "session.idle": {
-        const sessionId = props.sessionID as string | undefined;
-        if (sessionId === this.sessionId) {
-          const usage = this.extractAndResetUsage();
-          events.push({
-            type: "turn_completed",
-            provider: "opencode",
-            usage,
-          });
-        }
-        break;
-      }
-
-      case "session.error": {
-        const sessionId = props.sessionID as string | undefined;
-        if (sessionId === this.sessionId) {
-          const error = props.error as string | undefined;
-          events.push({
-            type: "turn_failed",
-            provider: "opencode",
-            error: error ?? "Unknown error",
-          });
-        }
-        break;
+      if (translatedEvent.type === "turn_completed") {
+        translatedEvent.usage = this.extractAndResetUsage();
       }
     }
 
-    return events;
+    return translated;
   }
 
   private extractAndResetUsage(): AgentUsage | undefined {
