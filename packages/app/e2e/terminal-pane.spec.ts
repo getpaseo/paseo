@@ -190,6 +190,80 @@ async function runTerminalCommandWithPreEnterEcho(
   });
 }
 
+async function readCurrentTerminalBuffer(page: Page): Promise<string> {
+  const bufferText = await page.evaluate(() => {
+    try {
+      const terminal = (window as {
+        __paseoTerminal?: {
+          buffer?: {
+            active?: {
+              length?: number;
+              getLine?: (
+                line: number
+              ) =>
+                | {
+                    translateToString: (trimRight?: boolean) => string;
+                  }
+                | null;
+            };
+          };
+        };
+      }).__paseoTerminal;
+
+      const lineCount = terminal?.buffer?.active?.length ?? 0;
+      const getLine = terminal?.buffer?.active?.getLine;
+      if (!getLine || lineCount <= 0) {
+        return "";
+      }
+
+      const lines: string[] = [];
+      for (let index = 0; index < lineCount; index += 1) {
+        let line: { translateToString: (trimRight?: boolean) => string } | null = null;
+        try {
+          line = getLine(index);
+        } catch {
+          return "";
+        }
+        if (!line) {
+          continue;
+        }
+        lines.push(line.translateToString(true));
+      }
+      return lines.join("\n");
+    } catch {
+      return "";
+    }
+  });
+
+  if (bufferText.length > 0) {
+    return bufferText;
+  }
+
+  try {
+    return await visibleTestId(page, "terminal-surface").innerText();
+  } catch {
+    return "";
+  }
+}
+
+async function expectCurrentTerminalBufferToContain(page: Page, marker: string): Promise<void> {
+  await expect
+    .poll(async () => await readCurrentTerminalBuffer(page), { timeout: 30000 })
+    .toContain(marker);
+}
+
+async function expectCurrentTerminalBufferNotToContain(page: Page, marker: string): Promise<void> {
+  await expect
+    .poll(async () => await readCurrentTerminalBuffer(page), { timeout: 5000 })
+    .not.toContain(marker);
+}
+
+async function waitForTerminalAttachToSettle(page: Page): Promise<void> {
+  await expect(page.locator('[data-testid="terminal-attach-loading"]:visible')).toHaveCount(0, {
+    timeout: 30000,
+  });
+}
+
 async function expectAnsiColorApplied(page: Page, marker: string): Promise<void> {
   await expect
     .poll(
@@ -298,6 +372,70 @@ test("terminal reattaches cleanly after heavy output and tab switches", async ({
 
     const marker = `reattach-health-${Date.now()}`;
     await runTerminalCommand(page, `echo ${marker}`, marker);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test("mobile terminal tab switch keeps command input routed to the selected tab", async ({ page }) => {
+  const repo = await createTempGitRepo("paseo-e2e-terminal-mobile-routing-");
+
+  try {
+    await openNewAgentDraft(page);
+    await setWorkingDirectory(page, repo.path);
+    await ensureHostSelected(page);
+    await createAgent(page, "Reply with exactly: terminal routing");
+    const createdAgentUrl = page.url();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(createdAgentUrl);
+
+    await ensureExplorerTabsVisible(page);
+    const terminalsTab = visibleTestId(page, "explorer-tab-terminals");
+    await expect(terminalsTab).toBeVisible({ timeout: 30000 });
+    await terminalsTab.click({ force: true });
+    await expect(visibleTestId(page, "terminals-header")).toBeVisible({
+      timeout: 30000,
+    });
+    await expect(visibleTestId(page, "terminal-surface")).toBeVisible({
+      timeout: 30000,
+    });
+    await waitForTerminalAttachToSettle(page);
+
+    await visibleTestId(page, "terminals-create-button").click();
+    const tabs = visibleTestIdPrefix(page, "terminal-tab-");
+    await expect
+      .poll(async () => await tabs.count(), { timeout: 30000 })
+      .toBeGreaterThanOrEqual(2);
+
+    const firstTab = tabs.first();
+    const secondTab = tabs.nth(1);
+    const firstTabId = await firstTab.getAttribute("data-testid");
+    const secondTabId = await secondTab.getAttribute("data-testid");
+    if (!firstTabId || !secondTabId) {
+      throw new Error("Expected terminal tab IDs");
+    }
+
+    const firstMarker = `mobile-route-one-${Date.now()}`;
+    await firstTab.click();
+    await visibleTestId(page, "terminal-surface").click({ force: true });
+    await page.keyboard.type(`echo ${firstMarker}`, { delay: 1 });
+    await page.keyboard.press("Enter");
+
+    const secondMarker = `mobile-route-two-${Date.now()}`;
+    await secondTab.click();
+    await visibleTestId(page, "terminal-surface").click({ force: true });
+    await page.keyboard.type(`echo ${secondMarker}`, { delay: 1 });
+    await page.keyboard.press("Enter");
+
+    await page.locator(`[data-testid="${firstTabId}"]:visible`).first().click();
+    await waitForTerminalAttachToSettle(page);
+    await expectCurrentTerminalBufferToContain(page, firstMarker);
+    await expectCurrentTerminalBufferNotToContain(page, secondMarker);
+
+    await page.locator(`[data-testid="${secondTabId}"]:visible`).first().click();
+    await waitForTerminalAttachToSettle(page);
+    await expectCurrentTerminalBufferToContain(page, secondMarker);
+    await expectCurrentTerminalBufferNotToContain(page, firstMarker);
   } finally {
     await repo.cleanup();
   }

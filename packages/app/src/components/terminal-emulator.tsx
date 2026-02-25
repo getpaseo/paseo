@@ -57,6 +57,7 @@ export default function TerminalEmulator({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalEmulatorRuntime | null>(null);
+  const appliedInitialOutputRef = useRef<string | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -86,14 +87,33 @@ export default function TerminalEmulator({
         cursorColor,
       },
     });
+    appliedInitialOutputRef.current = initialOutputText;
 
     return () => {
       runtime.unmount();
       if (runtimeRef.current === runtime) {
         runtimeRef.current = null;
       }
+      appliedInitialOutputRef.current = null;
     };
   }, [backgroundColor, cursorColor, foregroundColor, streamKey]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) {
+      return;
+    }
+
+    if (appliedInitialOutputRef.current === initialOutputText) {
+      return;
+    }
+
+    appliedInitialOutputRef.current = initialOutputText;
+    runtime.clear();
+    if (initialOutputText.length > 0) {
+      runtime.write({ text: initialOutputText });
+    }
+  }, [initialOutputText]);
 
   useEffect(() => {
     runtimeRef.current?.setCallbacks({

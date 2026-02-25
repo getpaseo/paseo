@@ -169,6 +169,24 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   const selectedTerminalIdRef = useRef<string | null>(selectedTerminalId);
   const pendingTerminalInputRef = useRef<PendingTerminalInput[]>([]);
 
+  const updateSelectedTerminalId = useCallback(
+    (
+      next:
+        | string
+        | null
+        | ((current: string | null) => string | null)
+    ) => {
+      const current = selectedTerminalIdRef.current;
+      const resolved =
+        typeof next === "function"
+          ? (next as (value: string | null) => string | null)(current)
+          : next;
+      selectedTerminalIdRef.current = resolved;
+      setSelectedTerminalId(resolved);
+    },
+    []
+  );
+
   useEffect(() => {
     selectedTerminalIdRef.current = selectedTerminalId;
   }, [selectedTerminalId]);
@@ -377,7 +395,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
           };
         });
         selectedTerminalByScopeRef.current.set(scopeKey, createdTerminal.id);
-        setSelectedTerminalId(createdTerminal.id);
+        updateSelectedTerminalId(createdTerminal.id);
         requestTerminalFocus();
       }
       void queryClient.invalidateQueries({
@@ -401,7 +419,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
       setHoveredTerminalId((current) => (current === terminalId ? null : current));
       outputPumpRef.current?.clearTerminal({ terminalId });
       if (selectedTerminalIdRef.current === terminalId) {
-        setSelectedTerminalId((current) =>
+        updateSelectedTerminalId((current) =>
           current === terminalId ? null : current
         );
         setModifiers({ ...EMPTY_MODIFIERS });
@@ -417,9 +435,9 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
   });
 
   useEffect(() => {
-    setSelectedTerminalId(selectedTerminalByScopeRef.current.get(scopeKey) ?? null);
+    updateSelectedTerminalId(selectedTerminalByScopeRef.current.get(scopeKey) ?? null);
     lastReportedSizeRef.current = null;
-  }, [scopeKey]);
+  }, [scopeKey, updateSelectedTerminalId]);
 
   useEffect(() => {
     if (selectedTerminalId) {
@@ -429,7 +447,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
 
   useEffect(() => {
     if (terminals.length === 0) {
-      setSelectedTerminalId(null);
+      updateSelectedTerminalId(null);
       return;
     }
 
@@ -442,16 +460,16 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
 
     const stored = selectedTerminalByScopeRef.current.get(scopeKey);
     if (has(stored)) {
-      setSelectedTerminalId(stored!);
+      updateSelectedTerminalId(stored!);
       return;
     }
 
     const fallback = terminals[0]?.id ?? null;
     if (fallback) {
       selectedTerminalByScopeRef.current.set(scopeKey, fallback);
-      setSelectedTerminalId(fallback);
+      updateSelectedTerminalId(fallback);
     }
-  }, [scopeKey, terminals, selectedTerminalId]);
+  }, [scopeKey, terminals, selectedTerminalId, updateSelectedTerminalId]);
 
   useEffect(() => {
     const terminalIds = terminals.map((terminal) => terminal.id);
@@ -917,7 +935,7 @@ export function TerminalPane({ serverId, cwd }: TerminalPaneProps) {
               <Pressable
                 key={terminal.id}
                 testID={`terminal-tab-${terminal.id}`}
-                onPress={() => setSelectedTerminalId(terminal.id)}
+                onPress={() => updateSelectedTerminalId(terminal.id)}
                 onHoverIn={() => handleTerminalTabHoverIn(terminal.id)}
                 onHoverOut={() => handleTerminalTabHoverOut(terminal.id)}
                 style={({ pressed, hovered }) => [
