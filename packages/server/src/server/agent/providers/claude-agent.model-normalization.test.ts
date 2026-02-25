@@ -1,75 +1,84 @@
 import { describe, expect, test } from "vitest";
 import { normalizeClaudeRuntimeModelId } from "./claude-agent.js";
+import { CLAUDE_MODEL_CATALOG } from "./claude/model-catalog.js";
 
 describe("normalizeClaudeRuntimeModelId", () => {
-  const supportedModelIds = new Set(["default", "opus", "haiku"]);
-  const fallbackCatalogIds = new Set(["default", "sonnet", "haiku"]);
+  function latestModelId(family: "sonnet" | "opus" | "haiku"): string {
+    const latest = CLAUDE_MODEL_CATALOG.find(
+      (model) => model.family === family && model.isLatestInFamily
+    );
+    if (latest) {
+      return latest.modelId;
+    }
+    const fallback = CLAUDE_MODEL_CATALOG.find((model) => model.family === family);
+    if (!fallback) {
+      throw new Error(`Missing Claude model family in catalog: ${family}`);
+    }
+    return fallback.modelId;
+  }
 
-  test("maps runtime Sonnet IDs to default alias", () => {
+  const SONNET = latestModelId("sonnet");
+  const OPUS = latestModelId("opus");
+  const HAIKU = latestModelId("haiku");
+  const supportedModelIds = new Set([SONNET, OPUS, HAIKU]);
+  const supportedModelFamilyAliases = new Map([
+    ["sonnet", SONNET],
+    ["opus", OPUS],
+    ["haiku", HAIKU],
+  ] as const);
+
+  test("preserves runtime model when it already exists in the supported catalog", () => {
     const normalized = normalizeClaudeRuntimeModelId({
-      runtimeModelId: "claude-sonnet-4-5-20250929",
+      runtimeModelId: SONNET,
       supportedModelIds,
     });
-    expect(normalized).toBe("default");
+    expect(normalized).toBe(SONNET);
   });
 
-  test("prefers alias even when runtime versioned Sonnet ID appears in supported list", () => {
+  test("maps unknown runtime Sonnet versions to the catalog Sonnet model ID", () => {
     const normalized = normalizeClaudeRuntimeModelId({
-      runtimeModelId: "claude-sonnet-4-5-20250929",
-      supportedModelIds: new Set([
-        "default",
-        "opus",
-        "haiku",
-        "claude-sonnet-4-5-20250929",
-      ]),
+      runtimeModelId: "claude-sonnet-4-6-20260101",
+      supportedModelIds,
+      supportedModelFamilyAliases,
     });
-    expect(normalized).toBe("default");
+    expect(normalized).toBe(SONNET);
   });
 
-  test("maps runtime Opus IDs to opus alias", () => {
+  test("maps unknown runtime Opus versions to the catalog Opus model ID", () => {
     const normalized = normalizeClaudeRuntimeModelId({
       runtimeModelId: "claude-opus-4-5-20251101",
       supportedModelIds,
+      supportedModelFamilyAliases,
     });
-    expect(normalized).toBe("opus");
+    expect(normalized).toBe(OPUS);
   });
 
-  test("maps runtime Opus IDs to catalog-derived family alias when explicit alias is absent", () => {
+  test("maps unknown runtime Haiku versions to the catalog Haiku model ID", () => {
     const normalized = normalizeClaudeRuntimeModelId({
-      runtimeModelId: "claude-opus-4-6",
-      supportedModelIds: fallbackCatalogIds,
-      supportedModelFamilyAliases: new Map([
-        ["sonnet", "sonnet"],
-        ["opus", "default"],
-        ["haiku", "haiku"],
-      ]),
-    });
-    expect(normalized).toBe("default");
-  });
-
-  test("falls back to default for known runtime families when no explicit alias exists", () => {
-    const normalized = normalizeClaudeRuntimeModelId({
-      runtimeModelId: "claude-opus-4-6",
-      supportedModelIds: fallbackCatalogIds,
-    });
-    expect(normalized).toBe("default");
-  });
-
-  test("maps runtime Haiku IDs to haiku alias", () => {
-    const normalized = normalizeClaudeRuntimeModelId({
-      runtimeModelId: "claude-haiku-4-5-20251001",
+      runtimeModelId: "claude-haiku-4-6-20260101",
       supportedModelIds,
+      supportedModelFamilyAliases,
     });
-    expect(normalized).toBe("haiku");
+    expect(normalized).toBe(HAIKU);
   });
 
   test("uses configured model when runtime ID is unknown", () => {
     const normalized = normalizeClaudeRuntimeModelId({
       runtimeModelId: "claude-custom-unknown",
       supportedModelIds,
-      configuredModelId: "opus",
+      configuredModelId: OPUS,
     });
-    expect(normalized).toBe("opus");
+    expect(normalized).toBe(OPUS);
+  });
+
+  test("uses current model when runtime and configured IDs are unknown", () => {
+    const normalized = normalizeClaudeRuntimeModelId({
+      runtimeModelId: "claude-custom-unknown",
+      supportedModelIds,
+      configuredModelId: "claude-unknown",
+      currentModelId: HAIKU,
+    });
+    expect(normalized).toBe(HAIKU);
   });
 
   test("preserves runtime model when mapping is not possible", () => {
@@ -80,10 +89,10 @@ describe("normalizeClaudeRuntimeModelId", () => {
     expect(normalized).toBe("claude-custom-unknown");
   });
 
-  test("does not force default fallback for unknown runtime families", () => {
+  test("does not force family fallback for unknown runtime families", () => {
     const normalized = normalizeClaudeRuntimeModelId({
       runtimeModelId: "claude-custom-unknown",
-      supportedModelIds: fallbackCatalogIds,
+      supportedModelIds,
     });
     expect(normalized).toBe("claude-custom-unknown");
   });

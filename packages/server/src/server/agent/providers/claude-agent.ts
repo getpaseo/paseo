@@ -9,7 +9,6 @@ import {
   type AgentDefinition,
   type CanUseTool,
   type McpServerConfig as ClaudeSdkMcpServerConfig,
-  type ModelInfo,
   type Options,
   type PermissionMode,
   type PermissionResult,
@@ -34,6 +33,12 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
 } from "./claude/task-notification-tool-call.js";
+import {
+  buildClaudeModelFamilyAliases,
+  buildClaudeSelectableModelIds,
+  listClaudeCatalogModels,
+  type ClaudeModelFamily,
+} from "./claude/model-catalog.js";
 import { buildToolCallDisplayModel } from "../../../shared/tool-call-display.js";
 
 import type {
@@ -73,34 +78,6 @@ const fsPromises = promises;
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = [
   "user",
   "project",
-];
-const CLAUDE_MODEL_DISCOVERY_TIMEOUT_MS = 20_000;
-const CLAUDE_MODEL_QUERY_SHUTDOWN_TIMEOUT_MS = 2_000;
-
-type ClaudeFallbackModel = {
-  id: string;
-  label: string;
-  description: string;
-  isDefault?: boolean;
-};
-
-const CLAUDE_FALLBACK_MODELS: readonly ClaudeFallbackModel[] = [
-  {
-    id: "default",
-    label: "Sonnet 4.5",
-    description: "Best for everyday tasks",
-    isDefault: true,
-  },
-  {
-    id: "opus",
-    label: "Opus 4.6",
-    description: "Most capable model for deep analysis and complex code changes",
-  },
-  {
-    id: "haiku",
-    label: "Haiku 4.5",
-    description: "Fastest Claude model for lightweight tasks",
-  },
 ];
 
 type TurnState = "idle" | "foreground" | "autonomous";
@@ -154,83 +131,6 @@ type ForegroundTurnState = {
   runId: string;
   queue: Pushable<AgentStreamEvent>;
 };
-
-type ClaudeModelFamily = "sonnet" | "opus" | "haiku";
-
-function withTimeout<T>(params: {
-  promise: Promise<T>;
-  timeoutMs: number;
-  label: string;
-}): Promise<T> {
-  const { promise, timeoutMs, label } = params;
-  return new Promise<T>((resolve, reject) => {
-    const timeoutHandle = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    promise.then(
-      (value) => {
-        clearTimeout(timeoutHandle);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timeoutHandle);
-        reject(error);
-      }
-    );
-  });
-}
-
-function toClaudeModelDefinition(params: {
-  id: string;
-  label: string;
-  description?: string;
-  isDefault?: boolean;
-}): AgentModelDefinition {
-  return {
-    provider: "claude",
-    id: params.id,
-    label: params.label,
-    description: params.description,
-    ...(params.isDefault ? { isDefault: true } : {}),
-    thinkingOptions: [
-      { id: "off", label: "Off", isDefault: true },
-      { id: "on", label: "On" },
-    ],
-    defaultThinkingOptionId: "off",
-    metadata: params.description
-      ? {
-          description: params.description,
-        }
-      : undefined,
-  };
-}
-
-function buildClaudeFallbackModels(): AgentModelDefinition[] {
-  return CLAUDE_FALLBACK_MODELS.map((model) =>
-    toClaudeModelDefinition({
-      id: model.id,
-      label: model.label,
-      description: model.description,
-      isDefault: model.isDefault,
-    })
-  );
-}
-
-function normalizeClaudeModelLabel(model: ModelInfo): string {
-  const fallback = model.displayName?.trim() || model.value;
-  const prefix = model.description?.split(/[·•]/)[0]?.trim() || "";
-  if (!prefix) return fallback;
-
-  // Prefer concrete versioned labels from description (e.g. "Opus 4.6",
-  // "Sonnet 4.5"), especially when displayName is generic like
-  // "Default (recommended)".
-  if (/\d/.test(prefix)) {
-    return prefix;
-  }
-
-  return fallback;
-}
 
 type NormalizeClaudeRuntimeModelIdOptions = {
   runtimeModelId: string;
@@ -301,6 +201,10 @@ export function normalizeClaudeRuntimeModelId(
     return runtimeModel;
   }
 
+  if (supportedModelIds.has(runtimeModel)) {
+    return runtimeModel;
+  }
+
   const runtimeFamily = inferClaudeModelFamilyFromText(runtimeModel);
   const familyAlias = runtimeFamily
     ? pickFamilyAliasModelId(options.supportedModelFamilyAliases, runtimeFamily)
@@ -335,10 +239,6 @@ export function normalizeClaudeRuntimeModelId(
     if (familyAlias && supportedModelIds.has(familyAlias)) {
       return familyAlias;
     }
-  }
-
-  if (supportedModelIds.has(runtimeModel)) {
-    return runtimeModel;
   }
 
   const configuredModelId = pickSupportedModelId(
@@ -1495,13 +1395,6 @@ export class ClaudeAgentClient implements AgentClient {
     }
   }
 
-  private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
-    return applyRuntimeSettingsToClaudeOptions(
-      options,
-      this.runtimeSettings
-    );
-  }
-
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const claudeConfig = this.assertConfig(config);
     return new ClaudeAgentSession(claudeConfig, {
@@ -1532,58 +1425,8 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const prompt = (async function* empty() {})();
-    const claudeOptions: Options = {
-      cwd: options?.cwd ?? process.cwd(),
-      permissionMode: "plan",
-      includePartialMessages: false,
-      settingSources: CLAUDE_SETTING_SOURCES,
-      ...(this.claudePath ? { pathToClaudeCodeExecutable: this.claudePath } : {}),
-    };
-
-    const claudeQuery = query({
-      prompt,
-      options: this.applyRuntimeSettings(claudeOptions),
-    });
-    try {
-      const models: ModelInfo[] = await withTimeout({
-        promise: claudeQuery.supportedModels(),
-        timeoutMs: CLAUDE_MODEL_DISCOVERY_TIMEOUT_MS,
-        label: "Claude model discovery",
-      });
-      if (models.length === 0) {
-        this.logger.warn(
-          "Claude SDK returned an empty model catalog; using fallback Claude model aliases"
-        );
-        return buildClaudeFallbackModels();
-      }
-      return models.map((model) =>
-        toClaudeModelDefinition({
-          id: model.value,
-          label: normalizeClaudeModelLabel(model),
-          description: model.description,
-        })
-      );
-    } catch (error) {
-      this.logger.warn(
-        { err: error },
-        "Failed to fetch Claude model catalog from SDK; using fallback Claude model aliases"
-      );
-      return buildClaudeFallbackModels();
-    } finally {
-      if (typeof claudeQuery.return === "function") {
-        try {
-          await withTimeout({
-            promise: claudeQuery.return(),
-            timeoutMs: CLAUDE_MODEL_QUERY_SHUTDOWN_TIMEOUT_MS,
-            label: "Claude model query shutdown",
-          });
-        } catch {
-          // ignore shutdown errors
-        }
-      }
-    }
+  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    return listClaudeCatalogModels();
   }
 
   async listPersistedAgents(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]> {
@@ -1659,8 +1502,9 @@ class ClaudeAgentSession implements AgentSession {
   private activeTurnPromise: Promise<void> | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
-  private selectableModelIds: Set<string> | null = null;
-  private selectableModelFamilyAliases: Map<ClaudeModelFamily, string> | null = null;
+  private selectableModelIds: Set<string> | null = buildClaudeSelectableModelIds();
+  private selectableModelFamilyAliases: Map<ClaudeModelFamily, string> | null =
+    buildClaudeModelFamilyAliases();
   private activeSidechains = new Map<string, SubAgentActivityState>();
   private compacting = false;
   private queryPumpPromise: Promise<void> | null = null;
