@@ -31,7 +31,7 @@ import {
 import { MenuHeader } from "@/components/headers/menu-header";
 import { BackHeader } from "@/components/headers/back-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
-import { AgentStreamView } from "@/components/agent-stream-view";
+import { AgentStreamView, type AgentStreamViewHandle } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
 import { FileDropZone } from "@/components/file-drop-zone";
@@ -240,6 +240,7 @@ function AgentScreenContent({
   const resolvedAgentId = agentId;
   const { isArchivingAgent } = useArchiveAgent();
 
+  const streamViewRef = useRef<AgentStreamViewHandle>(null);
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
 
   const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
@@ -1235,6 +1236,7 @@ function AgentScreenContent({
               style={[styles.content, animatedKeyboardStyle]}
             >
               <AgentStreamView
+                ref={streamViewRef}
                 agentId={effectiveAgent.id}
                 serverId={serverId}
                 agent={effectiveAgent}
@@ -1254,6 +1256,7 @@ function AgentScreenContent({
               autoFocus
               isSubmitLoading={showPendingCreateSubmitLoading}
               onAddImages={handleAddImagesCallback}
+              onMessageSent={() => streamViewRef.current?.scrollToBottom()}
             />
           )}
 

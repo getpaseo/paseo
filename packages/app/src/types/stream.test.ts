@@ -522,4 +522,93 @@ describe("stream reducer canonical tool calls", () => {
       authoritativeTimestamp.getTime()
     );
   });
+
+  it("keeps canonical assistant/user/assistant order during replay", () => {
+    const state: StreamItem[] = [
+      {
+        kind: "assistant_message",
+        id: "a1",
+        text: "Saved that preference. ",
+        timestamp: new Date("2025-01-01T11:20:00Z"),
+      },
+      {
+        kind: "user_message",
+        id: "u1",
+        text: "the other qeustion is i mgiht be thinking that its winner takes it all",
+        timestamp: new Date("2025-01-01T11:20:01Z"),
+      },
+    ];
+
+    const event: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "assistant_message",
+        text: "Right. And it probably isn't.",
+      },
+    };
+
+    const next = reduceStreamUpdate(
+      state,
+      event,
+      new Date("2025-01-01T11:20:02Z"),
+      { source: "canonical" }
+    );
+
+    assert.deepStrictEqual(next.map((item) => item.kind), [
+      "assistant_message",
+      "user_message",
+      "assistant_message",
+    ]);
+    assert.strictEqual(
+      next[0]?.kind === "assistant_message" ? next[0].text : null,
+      "Saved that preference. "
+    );
+    assert.strictEqual(
+      next[2]?.kind === "assistant_message" ? next[2].text : null,
+      "Right. And it probably isn't."
+    );
+  });
+
+  it("keeps live optimistic assistant merge behavior", () => {
+    const state: StreamItem[] = [
+      {
+        kind: "assistant_message",
+        id: "a1",
+        text: "Saved that preference. ",
+        timestamp: new Date("2025-01-01T11:21:00Z"),
+      },
+      {
+        kind: "user_message",
+        id: "u1",
+        text: "the other qeustion is i mgiht be thinking that its winner takes it all",
+        timestamp: new Date("2025-01-01T11:21:01Z"),
+      },
+    ];
+
+    const event: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "assistant_message",
+        text: "Right. And it probably isn't.",
+      },
+    };
+
+    const next = reduceStreamUpdate(
+      state,
+      event,
+      new Date("2025-01-01T11:21:02Z"),
+      { source: "live" }
+    );
+
+    assert.deepStrictEqual(next.map((item) => item.kind), [
+      "assistant_message",
+      "user_message",
+    ]);
+    assert.strictEqual(
+      next[0]?.kind === "assistant_message" ? next[0].text : null,
+      "Saved that preference. Right. And it probably isn't."
+    );
+  });
 });

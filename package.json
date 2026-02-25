@@ -64,7 +64,7 @@
     "mcp"
   ],
   "author": "moboudra",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "overrides": {
     "lightningcss": "1.30.1"
   },

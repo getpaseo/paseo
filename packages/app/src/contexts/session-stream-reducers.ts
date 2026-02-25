@@ -153,7 +153,9 @@ export function processTimelineResponse(
     // ----------------------------------------------------------------
     // Replace path: full hydration from scratch
     // ----------------------------------------------------------------
-    nextTail = hydrateStreamState(toHydratedEvents(timelineUnits));
+    nextTail = hydrateStreamState(toHydratedEvents(timelineUnits), {
+      source: "canonical",
+    });
     nextHead = [];
 
     if (payload.startCursor && payload.endCursor) {
@@ -222,7 +224,9 @@ export function processTimelineResponse(
     if (acceptedUnits.length > 0) {
       nextTail = acceptedUnits.reduce<StreamItem[]>(
         (state, { event, timestamp }) =>
-          reduceStreamUpdate(state, event, timestamp),
+          reduceStreamUpdate(state, event, timestamp, {
+            source: "canonical",
+          }),
         currentTail
       );
     }
@@ -385,6 +389,7 @@ export function processAgentStreamEvent(
         head: currentHead,
         event,
         timestamp,
+        source: "live",
       })
     : {
         tail: currentTail,

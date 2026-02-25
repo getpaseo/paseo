@@ -160,6 +160,8 @@ export interface TodoListItem {
   items: TodoEntry[];
 }
 
+export type StreamUpdateSource = "live" | "canonical";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -230,7 +232,8 @@ function appendUserMessage(
 function appendAssistantMessage(
   state: StreamItem[],
   text: string,
-  timestamp: Date
+  timestamp: Date,
+  source: StreamUpdateSource
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
@@ -250,7 +253,11 @@ function appendAssistantMessage(
   // If the last item is a user_message (optimistic append to head during
   // interrupt), look one further back for the streaming assistant_message.
   const secondLast = state[state.length - 2];
-  if (last?.kind === "user_message" && secondLast?.kind === "assistant_message") {
+  if (
+    source === "live" &&
+    last?.kind === "user_message" &&
+    secondLast?.kind === "assistant_message"
+  ) {
     const updated: AssistantMessageItem = {
       ...secondLast,
       text: `${secondLast.text}${chunk}`,
@@ -525,8 +532,10 @@ function formatErrorMessage(message: string): string {
 export function reduceStreamUpdate(
   state: StreamItem[],
   event: AgentStreamEventPayload,
-  timestamp: Date
+  timestamp: Date,
+  options?: { source?: StreamUpdateSource }
 ): StreamItem[] {
+  const source = options?.source ?? "live";
   switch (event.type) {
     case "timeline": {
       const item = event.item;
@@ -541,7 +550,12 @@ export function reduceStreamUpdate(
           );
           break;
         case "assistant_message":
-          nextState = appendAssistantMessage(state, item.text, timestamp);
+          nextState = appendAssistantMessage(
+            state,
+            item.text,
+            timestamp,
+            source
+          );
           break;
         case "reasoning":
           return appendThought(state, item.text, timestamp);
@@ -691,11 +705,12 @@ export function reduceStreamUpdate(
  * Hydrate stream state from a batch of AgentManager stream events
  */
 export function hydrateStreamState(
-  events: Array<{ event: AgentStreamEventPayload; timestamp: Date }>
+  events: Array<{ event: AgentStreamEventPayload; timestamp: Date }>,
+  options?: { source?: StreamUpdateSource }
 ): StreamItem[] {
   const hydrated = events.reduce<StreamItem[]>(
     (state, { event, timestamp }) => {
-      return reduceStreamUpdate(state, event, timestamp);
+      return reduceStreamUpdate(state, event, timestamp, options);
     },
     []
   );
@@ -853,8 +868,10 @@ export function applyStreamEvent(params: {
   head: StreamItem[];
   event: AgentStreamEventPayload;
   timestamp: Date;
+  source?: StreamUpdateSource;
 }): ApplyStreamEventResult {
   const { tail, head, event, timestamp } = params;
+  const source = params.source ?? "live";
   let nextTail = tail;
   let nextHead = head;
   let changedTail = false;
@@ -894,7 +911,7 @@ export function applyStreamEvent(params: {
 
   // For streamable kinds, apply to head
   if (incomingKind !== null && isStreamableKind(incomingKind)) {
-    const reduced = reduceStreamUpdate(nextHead, event, timestamp);
+    const reduced = reduceStreamUpdate(nextHead, event, timestamp, { source });
     if (reduced !== nextHead) {
       nextHead = reduced;
       changedHead = true;
@@ -903,7 +920,7 @@ export function applyStreamEvent(params: {
   }
 
   // For non-streamable kinds or non-timeline events, apply to tail
-  const reduced = reduceStreamUpdate(nextTail, event, timestamp);
+  const reduced = reduceStreamUpdate(nextTail, event, timestamp, { source });
   if (reduced !== nextTail) {
     nextTail = reduced;
     changedTail = true;

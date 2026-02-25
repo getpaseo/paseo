@@ -242,7 +242,6 @@ type LiveEventStreamingSession = AgentSession & {
   streamLiveEvents: () => AsyncGenerator<AgentStreamEvent>;
 };
 
-const DEFAULT_MAX_TIMELINE_ITEMS = 2000;
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 const LIVE_BACKLOG_TERMINAL_REPLAY_DELAY_MS = 300;
 const BUSY_STATUSES: AgentLifecycleStatus[] = [
@@ -307,7 +306,7 @@ export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly agents = new Map<string, ActiveManagedAgent>();
   private readonly subscribers = new Set<SubscriptionRecord>();
-  private readonly maxTimelineItems: number;
+  private readonly maxTimelineItems: number | null;
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
@@ -322,8 +321,13 @@ export class AgentManager {
   private logger: Logger;
 
   constructor(options: AgentManagerOptions) {
+    const maxTimelineItems = options?.maxTimelineItems;
     this.maxTimelineItems =
-      options?.maxTimelineItems ?? DEFAULT_MAX_TIMELINE_ITEMS;
+      typeof maxTimelineItems === "number" &&
+      Number.isFinite(maxTimelineItems) &&
+      maxTimelineItems >= 0
+        ? Math.floor(maxTimelineItems)
+        : null;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.onAgentAttention = options?.onAgentAttention;
@@ -1852,7 +1856,10 @@ export class AgentManager {
     agent.timelineNextSeq = timelineState.nextSeq + 1;
     agent.timeline.push(item);
     timelineState.rows.push(row);
-    if (agent.timeline.length > this.maxTimelineItems) {
+    if (
+      typeof this.maxTimelineItems === "number" &&
+      agent.timeline.length > this.maxTimelineItems
+    ) {
       const removeCount = agent.timeline.length - this.maxTimelineItems;
       agent.timeline.splice(0, removeCount);
       timelineState.rows.splice(0, removeCount);

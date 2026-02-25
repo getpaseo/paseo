@@ -9,6 +9,7 @@ export type TimelineSeqRange = {
 };
 
 export type TimelineProjectionKind = "assistant_merge" | "tool_lifecycle";
+export type TimelineLimitDirection = "tail" | "before" | "after";
 
 export type TimelineProjectionEntry = {
   provider: AgentProvider;
@@ -21,6 +22,12 @@ export type TimelineProjectionEntry = {
 };
 
 type WorkingEntry = TimelineProjectionEntry;
+type ProjectedWindowSelection = {
+  projectedEntries: TimelineProjectionEntry[];
+  selectedRows: AgentTimelineRow[];
+  minSeq: number | null;
+  maxSeq: number | null;
+};
 
 function appendSeqToRanges(ranges: TimelineSeqRange[], seq: number): TimelineSeqRange[] {
   if (ranges.length === 0) {
@@ -206,4 +213,99 @@ export function projectTimelineRows(
 
   const toolCollapsed = collapseToolLifecycle(canonical);
   return mergeAssistantChunks(toolCollapsed);
+}
+
+/**
+ * Select a timeline window based on projected-entry count, then map it back to
+ * contiguous canonical rows. This avoids cutting through merged assistant
+ * chunks when callers request canonical rows with a bounded limit.
+ */
+export function selectTimelineWindowByProjectedLimit(input: {
+  rows: readonly AgentTimelineRow[];
+  provider: AgentProvider;
+  direction: TimelineLimitDirection;
+  limit: number;
+  collapseToolLifecycle?: boolean;
+}): ProjectedWindowSelection {
+  const { rows, provider, direction } = input;
+  const limit = Math.max(0, Math.floor(input.limit));
+  const collapseTools = input.collapseToolLifecycle ?? true;
+  const canonical = makeCanonicalEntries(rows, provider);
+  const projectedAll = mergeAssistantChunks(
+    collapseTools ? collapseToolLifecycle(canonical) : canonical
+  );
+
+  if (projectedAll.length === 0) {
+    return {
+      projectedEntries: [],
+      selectedRows: [],
+      minSeq: null,
+      maxSeq: null,
+    };
+  }
+
+  const projectedEntries =
+    limit === 0 || limit >= projectedAll.length
+      ? projectedAll
+      : direction === "after"
+        ? projectedAll.slice(0, limit)
+        : projectedAll.slice(projectedAll.length - limit);
+
+  if (projectedEntries.length === 0) {
+    return {
+      projectedEntries: [],
+      selectedRows: [],
+      minSeq: null,
+      maxSeq: null,
+    };
+  }
+
+  const computeWindowBounds = (entries: readonly TimelineProjectionEntry[]) => {
+    let minSeq = Number.POSITIVE_INFINITY;
+    let maxSeq = Number.NEGATIVE_INFINITY;
+    for (const entry of entries) {
+      if (entry.seqStart < minSeq) {
+        minSeq = entry.seqStart;
+      }
+      if (entry.seqEnd > maxSeq) {
+        maxSeq = entry.seqEnd;
+      }
+    }
+    return { minSeq, maxSeq };
+  };
+
+  let { minSeq, maxSeq } = computeWindowBounds(projectedEntries);
+  let expandedEntries = projectedEntries;
+
+  if (collapseTools) {
+    // Expand to include any projected entries that overlap the selected
+    // canonical range. Tool lifecycle collapse can produce non-monotonic
+    // seqEnd values, which would otherwise create cursor gaps.
+    for (let iteration = 0; iteration < projectedAll.length + 1; iteration += 1) {
+      const overlapping = projectedAll.filter(
+        (entry) => entry.seqStart <= maxSeq && entry.seqEnd >= minSeq
+      );
+      const nextBounds = computeWindowBounds(overlapping);
+      if (
+        overlapping.length === expandedEntries.length &&
+        nextBounds.minSeq === minSeq &&
+        nextBounds.maxSeq === maxSeq
+      ) {
+        expandedEntries = overlapping;
+        break;
+      }
+      expandedEntries = overlapping;
+      minSeq = nextBounds.minSeq;
+      maxSeq = nextBounds.maxSeq;
+    }
+  }
+
+  const selectedRows = rows.filter((row) => row.seq >= minSeq && row.seq <= maxSeq);
+
+  return {
+    projectedEntries: expandedEntries,
+    selectedRows,
+    minSeq: Number.isFinite(minSeq) ? minSeq : null,
+    maxSeq: Number.isFinite(maxSeq) ? maxSeq : null,
+  };
 }

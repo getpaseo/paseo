@@ -137,6 +137,82 @@ function scrollAnchorIntoView(params: {
   return true;
 }
 
+function forceScrollContainerToBottom(
+  refs: StreamRenderRefs,
+  fallbackOffset: number
+): void {
+  const resolveNode = (
+    input: unknown
+  ): HTMLElement | null => {
+    if (!(input instanceof HTMLElement)) {
+      return null;
+    }
+    if (input.scrollHeight - input.clientHeight > 1) {
+      return input;
+    }
+    let node: HTMLElement | null = input.parentElement;
+    while (node) {
+      if (node.scrollHeight - node.clientHeight > 1) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  const scrollViewHandle = refs.scrollViewRef.current as
+    | {
+        getNativeScrollRef?: () => unknown;
+        getScrollableNode?: () => unknown;
+        getInnerViewNode?: () => unknown;
+        getNativeRef?: () => unknown;
+      }
+    | null;
+  const anchorHandle = refs.bottomAnchorRef.current as
+    | ({ getNativeRef?: () => unknown } & object)
+    | null;
+
+  const candidates: unknown[] = [
+    scrollViewHandle?.getNativeScrollRef?.(),
+    scrollViewHandle?.getScrollableNode?.(),
+    scrollViewHandle?.getInnerViewNode?.(),
+    scrollViewHandle?.getNativeRef?.(),
+    scrollViewHandle,
+    typeof anchorHandle?.getNativeRef === "function"
+      ? anchorHandle.getNativeRef()
+      : anchorHandle,
+  ];
+
+  let scrollNode: HTMLElement | null = null;
+  for (const candidate of candidates) {
+    scrollNode = resolveNode(candidate);
+    if (scrollNode) {
+      break;
+    }
+  }
+
+  if (!scrollNode && typeof document !== "undefined") {
+    scrollNode = resolveNode(
+      document.querySelector("[data-testid='agent-chat-scroll']")
+    );
+  }
+
+  if (!scrollNode) {
+    return;
+  }
+
+  const snap = () => {
+    scrollNode.scrollTop = Math.max(
+      fallbackOffset,
+      scrollNode.scrollHeight - scrollNode.clientHeight
+    );
+  };
+  snap();
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(snap);
+  }
+}
+
 function createStreamRenderStrategy(
   config: StreamRenderStrategyConfig
 ): StreamRenderStrategy {
@@ -255,14 +331,20 @@ function createForwardStreamStrategy(): StreamRenderStrategy {
     getBottomOffset: (metrics) =>
       Math.max(0, metrics.contentHeight - metrics.viewportHeight),
     scrollToBottom: ({ refs, metrics, animated }) => {
-      if (scrollAnchorIntoView({ refs, animated })) {
-        return;
+      const bottomOffset = Math.max(
+        0,
+        metrics.contentHeight - metrics.viewportHeight
+      );
+      const usedAnchor = scrollAnchorIntoView({ refs, animated });
+      if (!usedAnchor) {
+        refs.scrollViewRef.current?.scrollToEnd?.({ animated });
       }
-      refs.scrollViewRef.current?.scrollToEnd?.({ animated });
+      // Always apply deterministic bottom offset to avoid partial anchors.
       refs.scrollViewRef.current?.scrollTo?.({
-        y: Math.max(0, metrics.contentHeight - metrics.viewportHeight),
+        y: bottomOffset,
         animated,
       });
+      forceScrollContainerToBottom(refs, bottomOffset);
     },
     scrollToOffset: ({ refs, offset, animated }) => {
       refs.scrollViewRef.current?.scrollTo({ y: offset, animated });

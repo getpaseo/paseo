@@ -118,10 +118,10 @@ function Hero() {
   return (
     <div className="space-y-6">
       <h1 className="text-3xl md:text-5xl font-medium tracking-tight">
-        Run Codex and Claude Code on your machine from your phone and desktop
+        Orchestrate coding agents from anywhere
       </h1>
       <p className="text-white/70 text-lg leading-relaxed">
-        Bring your dev environment anywhere, with voice support built in.
+        Run Claude Code, Codex, and OpenCode. From your phone, desktop and CLI, with voice support built-in.
       </p>
     </div>
   )

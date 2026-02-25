@@ -61,6 +61,8 @@ interface AgentInputAreaProps {
   onAddImages?: (addImages: (images: ImageAttachment[]) => void) => void
   /** Optional draft context for listing commands before an agent exists. */
   commandDraftConfig?: DraftCommandConfig
+  /** Called when a message is about to be sent (any path: keyboard, dictation, queued). */
+  onMessageSent?: () => void
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = []
@@ -77,6 +79,7 @@ export function AgentInputArea({
   autoFocus = false,
   onAddImages,
   commandDraftConfig,
+  onMessageSent,
 }: AgentInputAreaProps) {
   markScrollInvestigationRender(`AgentInputArea:${serverId}:${agentId}`)
   const { theme } = useUnistyles()
@@ -169,6 +172,7 @@ export function AgentInputArea({
   }, [addImages, onAddImages])
 
   const submitMessage = useCallback(async (text: string, images?: ImageAttachment[]) => {
+    onMessageSent?.()
     if (onSubmitMessageRef.current) {
       await onSubmitMessageRef.current({ text, images })
       return
@@ -177,7 +181,7 @@ export function AgentInputArea({
       throw new Error('Host is not connected')
     }
     await sendAgentMessageRef.current(agentIdRef.current, text, images)
-  }, [])
+  }, [onMessageSent])
 
   useEffect(() => {
     agentIdRef.current = agentId

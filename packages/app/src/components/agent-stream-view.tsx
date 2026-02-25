@@ -1,12 +1,14 @@
 import {
   Fragment,
   createElement,
+  forwardRef,
   isValidElement,
+  useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
-  useCallback,
 } from "react";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 import {
@@ -104,6 +106,10 @@ function renderStreamEdgeComponent(
   return createElement(component);
 }
 
+export interface AgentStreamViewHandle {
+  scrollToBottom(): void;
+}
+
 export interface AgentStreamViewProps {
   agentId: string;
   serverId?: string;
@@ -112,13 +118,13 @@ export interface AgentStreamViewProps {
   pendingPermissions: Map<string, PendingPermission>;
 }
 
-export function AgentStreamView({
+export const AgentStreamView = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(function AgentStreamView({
   agentId,
   serverId,
   agent,
   streamItems,
   pendingPermissions,
-}: AgentStreamViewProps) {
+}, ref) {
   const flatListRef = useRef<FlatList<StreamItem>>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   const bottomAnchorRef = useRef<View>(null);
@@ -139,6 +145,7 @@ export function AgentStreamView({
   const hasScrolledInitially = useRef(false);
   const hasAutoScrolledOnce = useRef(false);
   const isNearBottomRef = useRef(true);
+  const pendingAnchorRequestRef = useRef(false);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollAnimatedRef = useRef(false);
   const scrollOffsetYRef = useRef(0);
@@ -182,6 +189,7 @@ export function AgentStreamView({
     hasScrolledInitially.current = false;
     hasAutoScrolledOnce.current = false;
     isNearBottomRef.current = true;
+    pendingAnchorRequestRef.current = false;
     setExpandedInlineToolCallIds(new Set());
   }, [agentId]);
 
@@ -224,14 +232,29 @@ export function AgentStreamView({
     ]
   );
 
+  const updateNearBottom = useCallback((value: boolean) => {
+    if (isNearBottomRef.current === value) return;
+    isNearBottomRef.current = value;
+    setIsNearBottom(value);
+  }, []);
+
+  const requestAnchorToBottom = useCallback(() => {
+    pendingAnchorRequestRef.current = true;
+  }, []);
+
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      const previousOffsetY = scrollOffsetYRef.current;
+      const previousContentHeight = streamViewportMetricsRef.current.contentHeight;
       scrollOffsetYRef.current = contentOffset.y;
       streamViewportMetricsRef.current = {
         contentHeight: Math.max(0, contentSize.height),
         viewportHeight: Math.max(0, layoutMeasurement.height),
       };
+      const offsetDelta = contentOffset.y - previousOffsetY;
+      const contentHeightDelta =
+        streamViewportMetricsRef.current.contentHeight - previousContentHeight;
       const threshold = Math.max(insets.bottom, 32);
       const nearBottom = isNearBottomForStreamRenderStrategy({
         strategy: streamRenderStrategy,
@@ -241,9 +264,22 @@ export function AgentStreamView({
         viewportHeight: streamViewportMetricsRef.current.viewportHeight,
       });
 
-      if (isNearBottomRef.current !== nearBottom) {
-        isNearBottomRef.current = nearBottom;
-        setIsNearBottom(nearBottom);
+      const pendingAnchorBefore = pendingAnchorRequestRef.current;
+      const shouldSuppressFalseNearBottom =
+        pendingAnchorBefore &&
+        !nearBottom &&
+        Math.abs(offsetDelta) <= 1 &&
+        contentHeightDelta > 0;
+      if (shouldSuppressFalseNearBottom) {
+        updateNearBottom(true);
+      } else {
+        updateNearBottom(nearBottom);
+      }
+
+      const shouldClearPendingAnchor =
+        pendingAnchorBefore && !nearBottom && Math.abs(offsetDelta) > 1;
+      if (shouldClearPendingAnchor) {
+        pendingAnchorRequestRef.current = false;
       }
 
       if (showDesktopWebScrollbar) {
@@ -255,6 +291,7 @@ export function AgentStreamView({
       showDesktopWebScrollbar,
       streamRenderStrategy,
       streamScrollbarMetrics,
+      updateNearBottom,
     ]
   );
 
@@ -282,11 +319,16 @@ export function AgentStreamView({
         animated,
       });
       scrollOffsetYRef.current = targetOffset;
-      isNearBottomRef.current = true;
-      setIsNearBottom(true);
+      updateNearBottom(true);
     },
-    [streamRenderRefs, streamRenderStrategy]
+    [updateNearBottom, streamRenderRefs, streamRenderStrategy]
   );
+
+  useImperativeHandle(ref, () => ({
+    scrollToBottom() {
+      requestAnchorToBottom();
+    },
+  }), [requestAnchorToBottom]);
 
   const handleContentSizeChange = useCallback(
     (width: number, height: number) => {
@@ -310,7 +352,11 @@ export function AgentStreamView({
           scrollToBottomInternal({ animated: false });
           hasAutoScrolledOnce.current = true;
           hasScrolledInitially.current = true;
-        } else if (wasNearBottom || isNearBottomRef.current) {
+        } else if (
+          wasNearBottom ||
+          isNearBottomRef.current ||
+          pendingAnchorRequestRef.current
+        ) {
           scrollToBottomInternal({ animated: false });
         }
       }
@@ -376,7 +422,7 @@ export function AgentStreamView({
       return () => handle.cancel();
     }
 
-    if (!isNearBottomRef.current) {
+    if (!isNearBottomRef.current && !pendingAnchorRequestRef.current) {
       return;
     }
 
@@ -393,8 +439,6 @@ export function AgentStreamView({
   function scrollToBottom() {
     const animated = streamRenderStrategy.shouldAnimateManualScrollToBottom();
     scrollToBottomInternal({ animated });
-    isNearBottomRef.current = true;
-    setIsNearBottom(true);
   }
 
   const flatListData = useMemo(() => {
@@ -982,7 +1026,7 @@ export function AgentStreamView({
       </View>
     </ToolCallSheetProvider>
   );
-}
+});
 
 function normalizeInlinePath(
   rawPath: string,

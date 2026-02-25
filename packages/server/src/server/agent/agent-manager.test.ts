@@ -789,6 +789,46 @@ describe("AgentManager", () => {
     expect(result.rows[1]?.seq).toBe(4);
   });
 
+  test("does not trim timeline by default", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-unbounded-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000120",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "assistant_message",
+      text: "first",
+    });
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "assistant_message",
+      text: "second",
+    });
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "assistant_message",
+      text: "third",
+    });
+
+    const fetched = manager.fetchTimeline(snapshot.id, {
+      direction: "tail",
+      limit: 0,
+    });
+    expect(fetched.rows).toHaveLength(3);
+    expect(fetched.window.minSeq).toBe(1);
+    expect(fetched.window.maxSeq).toBe(3);
+  });
+
   test("createAgent fails when generated agent ID is not a UUID", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");

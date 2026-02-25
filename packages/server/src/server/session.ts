@@ -68,7 +68,11 @@ import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
 } from './agent/timeline-append.js'
-import { projectTimelineRows, type TimelineProjectionMode } from './agent/timeline-projection.js'
+import {
+  projectTimelineRows,
+  selectTimelineWindowByProjectedLimit,
+  type TimelineProjectionMode,
+} from './agent/timeline-projection.js'
 import {
   DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
   StructuredAgentFallbackError,
@@ -5279,7 +5283,13 @@ export class Session {
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? 'after' : 'tail')
     const projection: TimelineProjectionMode = msg.projection ?? 'projected'
-    const limit = msg.limit ?? (direction === 'after' ? 0 : undefined)
+    const requestedLimit = msg.limit
+    const limit = requestedLimit ?? (direction === 'after' ? 0 : undefined)
+    const shouldLimitByProjectedWindow =
+      projection === 'canonical' &&
+      direction === 'tail' &&
+      typeof requestedLimit === 'number' &&
+      requestedLimit > 0
     const cursor: AgentTimelineCursor | undefined = msg.cursor
       ? {
           epoch: msg.cursor.epoch,
@@ -5290,18 +5300,89 @@ export class Session {
     try {
       const snapshot = await this.ensureAgentLoaded(msg.agentId)
 
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      let timeline = this.agentManager.fetchTimeline(msg.agentId, {
         direction,
         cursor,
-        limit,
+        limit:
+          shouldLimitByProjectedWindow && typeof requestedLimit === 'number'
+            ? Math.max(1, Math.floor(requestedLimit))
+            : limit,
       })
 
-      const projected = projectTimelineRows(timeline.rows, snapshot.provider, projection)
+      let hasOlder = timeline.hasOlder
+      let hasNewer = timeline.hasNewer
+      let startCursor: { epoch: string; seq: number } | null = null
+      let endCursor: { epoch: string; seq: number } | null = null
+      let entries: ReturnType<typeof projectTimelineRows>
 
-      const firstRow = timeline.rows[0]
-      const lastRow = timeline.rows[timeline.rows.length - 1]
-      const startCursor = firstRow ? { epoch: timeline.epoch, seq: firstRow.seq } : null
-      const endCursor = lastRow ? { epoch: timeline.epoch, seq: lastRow.seq } : null
+      if (shouldLimitByProjectedWindow) {
+        const projectedLimit = Math.max(1, Math.floor(requestedLimit))
+        let fetchLimit = projectedLimit
+        let projectedWindow = selectTimelineWindowByProjectedLimit({
+          rows: timeline.rows,
+          provider: snapshot.provider,
+          direction,
+          limit: projectedLimit,
+          collapseToolLifecycle: false,
+        })
+
+        while (timeline.hasOlder) {
+          const needsMoreProjectedEntries =
+            projectedWindow.projectedEntries.length < projectedLimit
+          const firstLoadedRow = timeline.rows[0]
+          const firstSelectedRow = projectedWindow.selectedRows[0]
+          const startsAtLoadedBoundary =
+            firstLoadedRow != null &&
+            firstSelectedRow != null &&
+            firstSelectedRow.seq === firstLoadedRow.seq
+          const boundaryIsAssistantChunk =
+            startsAtLoadedBoundary && firstLoadedRow.item.type === 'assistant_message'
+
+          if (!needsMoreProjectedEntries && !boundaryIsAssistantChunk) {
+            break
+          }
+
+          const maxRows = Math.max(
+            0,
+            timeline.window.maxSeq - timeline.window.minSeq + 1
+          )
+          const nextFetchLimit = Math.min(maxRows, fetchLimit * 2)
+          if (nextFetchLimit <= fetchLimit) {
+            break
+          }
+
+          fetchLimit = nextFetchLimit
+          timeline = this.agentManager.fetchTimeline(msg.agentId, {
+            direction,
+            cursor,
+            limit: fetchLimit,
+          })
+          projectedWindow = selectTimelineWindowByProjectedLimit({
+            rows: timeline.rows,
+            provider: snapshot.provider,
+            direction,
+            limit: projectedLimit,
+            collapseToolLifecycle: false,
+          })
+        }
+
+        const selectedRows = projectedWindow.selectedRows
+
+        entries = projectTimelineRows(selectedRows, snapshot.provider, projection)
+
+        if (projectedWindow.minSeq !== null && projectedWindow.maxSeq !== null) {
+          startCursor = { epoch: timeline.epoch, seq: projectedWindow.minSeq }
+          endCursor = { epoch: timeline.epoch, seq: projectedWindow.maxSeq }
+          hasOlder = projectedWindow.minSeq > timeline.window.minSeq
+          hasNewer = false
+        }
+      } else {
+        const firstRow = timeline.rows[0]
+        const lastRow = timeline.rows[timeline.rows.length - 1]
+        startCursor = firstRow ? { epoch: timeline.epoch, seq: firstRow.seq } : null
+        endCursor = lastRow ? { epoch: timeline.epoch, seq: lastRow.seq } : null
+        entries = projectTimelineRows(timeline.rows, snapshot.provider, projection)
+      }
 
       this.emit({
         type: 'fetch_agent_timeline_response',
@@ -5317,9 +5398,9 @@ export class Session {
           window: timeline.window,
           startCursor,
           endCursor,
-          hasOlder: timeline.hasOlder,
-          hasNewer: timeline.hasNewer,
-          entries: projected,
+          hasOlder,
+          hasNewer,
+          entries,
           error: null,
         },
       })
