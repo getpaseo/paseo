@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "setup": "bash scripts/conductor-setup.sh",
+    "run": "npm run local"
+  },
+  "runScriptMode": "nonconcurrent"
+}
