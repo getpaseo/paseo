@@ -2766,6 +2766,10 @@ class ClaudeAgentSession implements AgentSession {
       let next: IteratorResult<SDKMessage, void>;
       try {
         next = await q.next();
+        this.logger.info(
+          { claudeSessionId: this.claudeSessionId, next },
+          "Claude query pump raw next()"
+        );
       } catch (error) {
         this.logger.warn({ err: error }, "Claude query pump next() failed");
         for (const run of this.runTracker.listActiveRuns()) {
