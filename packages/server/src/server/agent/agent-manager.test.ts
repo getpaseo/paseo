@@ -1853,6 +1853,137 @@ describe("AgentManager", () => {
     expect(attentionReasons).toEqual(["error", "error"]);
   });
 
+  test("turn_failed emits a system error assistant timeline message and keeps error lifecycle", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-failed-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class TurnFailedSession extends TestAgentSession {
+      async *stream(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: "turn_started", provider: this.provider };
+        yield { type: "turn_failed", provider: this.provider, error: "invalid model id" };
+      }
+    }
+
+    class TurnFailedClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new TurnFailedSession(config);
+      }
+
+      async resumeSession(config?: Partial<AgentSessionConfig>): Promise<AgentSession> {
+        return new TurnFailedSession({
+          provider: "codex",
+          cwd: config?.cwd ?? process.cwd(),
+        });
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: {
+        codex: new TurnFailedClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000131",
+    });
+
+    const agent = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Turn failed test",
+    });
+
+    await expect(manager.runAgent(agent.id, "hello")).rejects.toThrow("invalid model id");
+
+    const snapshot = manager.getAgent(agent.id);
+    expect(snapshot?.lifecycle).toBe("error");
+    expect(snapshot?.lastError).toBe("invalid model id");
+
+    const systemErrors = manager
+      .getTimeline(agent.id)
+      .filter(
+        (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
+          item.type === "assistant_message" && item.text.includes("[System Error]")
+      );
+    expect(systemErrors).toHaveLength(1);
+    expect(systemErrors[0]?.text).toContain("invalid model id");
+  });
+
+  test("turn_failed surfaces provider code and diagnostic in system error message", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-failed-detail-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class DetailedFailureSession extends TestAgentSession {
+      async *stream(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: "turn_started", provider: this.provider };
+        yield {
+          type: "turn_failed",
+          provider: this.provider,
+          error: "Provider execution failed",
+          code: "126",
+          diagnostic: "No preset version installed for command claude",
+        };
+      }
+    }
+
+    class DetailedFailureClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new DetailedFailureSession(config);
+      }
+
+      async resumeSession(config?: Partial<AgentSessionConfig>): Promise<AgentSession> {
+        return new DetailedFailureSession({
+          provider: "codex",
+          cwd: config?.cwd ?? process.cwd(),
+        });
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: {
+        codex: new DetailedFailureClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000132",
+    });
+
+    const agent = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Detailed failure test",
+    });
+
+    await expect(manager.runAgent(agent.id, "hello")).rejects.toThrow(
+      "Provider execution failed"
+    );
+
+    const systemError = manager
+      .getTimeline(agent.id)
+      .find(
+        (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
+          item.type === "assistant_message" && item.text.includes("[System Error]")
+      );
+    expect(systemError?.text).toContain("Provider execution failed");
+    expect(systemError?.text).toContain("code: 126");
+    expect(systemError?.text).toContain("No preset version installed for command claude");
+  });
+
   test("permission request notifies once without forcing unread attention state", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-permission-"));
     const storagePath = join(workdir, "agents");

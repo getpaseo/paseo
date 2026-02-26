@@ -432,6 +432,8 @@ type ClaudeOptionsLogSummary = {
   hasStderrHandler: boolean;
 };
 
+const MAX_RECENT_STDERR_CHARS = 4000;
+
 function summarizeClaudeOptionsForLog(options: ClaudeOptions): ClaudeOptionsLogSummary {
   const systemPromptRaw = options.systemPrompt;
   const systemPromptSummary = (() => {
@@ -1512,6 +1514,7 @@ class ClaudeAgentSession implements AgentSession {
   private userMessageIds: string[] = [];
   private readonly localUserMessageIds = new Set<string>();
   private suppressLocalReplayActivity = false;
+  private recentStderr = "";
   private closed = false;
 
   constructor(
@@ -1650,6 +1653,7 @@ class ClaudeAgentSession implements AgentSession {
     this.activeForegroundTurn = foregroundTurn;
     this.preReplayMetadataSeen = false;
     this.transitionTurnState("foreground", "foreground stream started");
+    this.clearRecentStderr();
 
     let finishedNaturally = false;
     let cancelIssued = false;
@@ -2281,6 +2285,7 @@ class ClaudeAgentSession implements AgentSession {
       },
       settingSources: CLAUDE_SETTING_SOURCES,
       stderr: (data: string) => {
+        this.captureStderr(data);
         this.logger.error({ stderr: data.trim() }, "Claude Agent SDK stderr");
       },
       env: {
@@ -2413,11 +2418,41 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private failRun(run: RunRecord, errorMessage: string): void {
-    this.emitRunEvent(run, {
+    this.emitRunEvent(run, this.buildTurnFailedEvent(errorMessage));
+  }
+
+  private buildTurnFailedEvent(
+    errorMessage: string
+  ): Extract<AgentStreamEvent, { type: "turn_failed" }> {
+    const normalized = errorMessage.trim() || "Claude run failed";
+    const exitCodeMatch = normalized.match(/\bcode\s+(\d+)\b/i);
+    const code = exitCodeMatch ? exitCodeMatch[1] : undefined;
+    const diagnostic = this.getRecentStderrDiagnostic();
+    return {
       type: "turn_failed",
       provider: "claude",
-      error: errorMessage,
-    });
+      error: normalized,
+      ...(code ? { code } : {}),
+      ...(diagnostic ? { diagnostic } : {}),
+    };
+  }
+
+  private captureStderr(data: string): void {
+    const text = data.trim();
+    if (!text) {
+      return;
+    }
+    const combined = this.recentStderr ? `${this.recentStderr}\n${text}` : text;
+    this.recentStderr = combined.slice(-MAX_RECENT_STDERR_CHARS);
+  }
+
+  private clearRecentStderr(): void {
+    this.recentStderr = "";
+  }
+
+  private getRecentStderrDiagnostic(): string | undefined {
+    const text = this.recentStderr.trim();
+    return text.length > 0 ? text : undefined;
   }
 
   private cancelRun(
@@ -3421,7 +3456,7 @@ class ClaudeAgentSession implements AgentSession {
             "errors" in message && Array.isArray(message.errors) && message.errors.length > 0
               ? message.errors.join("\n")
               : "Claude run failed";
-          events.push({ type: "turn_failed", provider: "claude", error: errorMessage });
+          events.push(this.buildTurnFailedEvent(errorMessage));
         }
         break;
       }

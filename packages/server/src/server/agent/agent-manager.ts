@@ -217,6 +217,8 @@ type ActiveManagedAgent =
   | ManagedAgentRunning
   | ManagedAgentError;
 
+const SYSTEM_ERROR_PREFIX = "[System Error]";
+
 function attachPersistenceCwd(
   handle: AgentPersistenceHandle | null,
   cwd: string
@@ -917,7 +919,7 @@ export class AgentManager {
       } else if (event.type === "turn_completed") {
         usage = event.usage;
       } else if (event.type === "turn_failed") {
-        throw new Error(event.error);
+        throw new Error(this.formatTurnFailedMessage(event));
       } else if (event.type === "turn_canceled") {
         canceled = true;
       }
@@ -1027,8 +1029,9 @@ export class AgentManager {
 
       const mutableAgent = agent as ActiveManagedAgent;
       mutableAgent.pendingRun = null;
-      mutableAgent.lifecycle = error ? "error" : "idle";
-      mutableAgent.lastError = error;
+      const terminalError = error ?? mutableAgent.lastError;
+      mutableAgent.lifecycle = terminalError ? "error" : "idle";
+      mutableAgent.lastError = terminalError;
       const persistenceHandle =
         mutableAgent.session.describePersistence() ??
         (mutableAgent.runtimeInfo?.sessionId
@@ -1056,6 +1059,11 @@ export class AgentManager {
       } catch (error) {
         finalizeError =
           error instanceof Error ? error.message : "Agent stream failed";
+        self.handleStreamEvent(agent, {
+          type: "turn_failed",
+          provider: agent.provider,
+          error: finalizeError,
+        });
         throw error;
       } finally {
         await self.refreshRuntimeInfo(agent);
@@ -1744,10 +1752,14 @@ export class AgentManager {
         void this.refreshRuntimeInfo(agent);
         break;
       case "turn_failed":
-        if (!agent.pendingRun) {
-          agent.lifecycle = "error";
-        }
+        agent.lifecycle = "error";
         agent.lastError = event.error;
+        this.appendSystemErrorTimelineMessage(
+          agent,
+          event.provider,
+          this.formatTurnFailedMessage(event),
+          options
+        );
         for (const [requestId] of agent.pendingPermissions) {
           agent.pendingPermissions.delete(requestId);
           if (!options?.fromHistory) {
@@ -1812,6 +1824,62 @@ export class AgentManager {
           }
         : undefined);
     }
+  }
+
+  private appendSystemErrorTimelineMessage(
+    agent: ActiveManagedAgent,
+    provider: AgentProvider,
+    message: string,
+    options?: {
+      fromHistory?: boolean;
+      canonicalUserMessagesById?: ReadonlyMap<string, string>;
+    }
+  ): void {
+    if (options?.fromHistory) {
+      return;
+    }
+
+    const normalized = message.trim();
+    if (!normalized) {
+      return;
+    }
+
+    const text = `${SYSTEM_ERROR_PREFIX} ${normalized}`;
+    const lastItem = agent.timelineRows[agent.timelineRows.length - 1]?.item;
+    if (lastItem?.type === "assistant_message" && lastItem.text === text) {
+      return;
+    }
+
+    const item: AgentTimelineItem = { type: "assistant_message", text };
+    const row = this.recordTimeline(agent, item);
+    this.dispatchStream(
+      agent.id,
+      {
+        type: "timeline",
+        item,
+        provider,
+      },
+      {
+        seq: row.seq,
+        epoch: this.ensureTimelineState(agent).epoch,
+      }
+    );
+  }
+
+  private formatTurnFailedMessage(
+    event: Extract<AgentStreamEvent, { type: "turn_failed" }>
+  ): string {
+    const base = event.error.trim();
+    const parts = [base.length > 0 ? base : "Provider run failed"];
+    const code = event.code?.trim();
+    if (code) {
+      parts.push(`code: ${code}`);
+    }
+    const diagnostic = event.diagnostic?.trim();
+    if (diagnostic && diagnostic !== base) {
+      parts.push(diagnostic);
+    }
+    return parts.join("\n\n");
   }
 
   private shouldSuppressLiveUserMessageEcho(
