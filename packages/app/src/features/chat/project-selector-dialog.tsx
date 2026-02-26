@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { useDirectorySuggestions } from "./use-directory-suggestions"
 import { DirectoryBrowserPopover } from "./directory-browser-popover"
-import { Folder, GitBranch, Loader2 } from "lucide-react"
+import { Folder, FolderOpen, GitBranch, ChevronRight, ChevronLeft, Loader2 } from "lucide-react"
 import { cn } from "@/lib/cn"
 
 interface ProjectSelectorDialogProps {
@@ -96,12 +96,109 @@ function OpenProjectTab({
   client: DaemonClient | null
   onSelect: (path: string) => void
 }) {
+  const [mode, setMode] = useState<"search" | "browse">("search")
   const [query, setQuery] = useState("")
+  const [browsePath, setBrowsePath] = useState("~/")
 
-  const { results, loading } = useDirectorySuggestions(client, {
-    query: query || "~/",
-    onlyGitRepos: true,
-  })
+  const { results: searchResults, loading: searchLoading } =
+    useDirectorySuggestions(client, {
+      query: mode === "search" ? query || "~/" : "",
+      onlyGitRepos: true,
+    })
+
+  const { results: browseResults, loading: browseLoading } =
+    useDirectorySuggestions(client, {
+      query: mode === "browse" ? browsePath : "",
+    })
+
+  function handleBrowseBack() {
+    const parent = browsePath.replace(/\/+$/, "").replace(/\/[^/]+$/, "") || "~"
+    setBrowsePath(parent + "/")
+  }
+
+  if (mode === "browse") {
+    return (
+      <div className="px-2 pb-2">
+        <div className="flex items-center gap-1 px-2 py-2">
+          <button
+            type="button"
+            onClick={handleBrowseBack}
+            className="p-1 rounded hover:bg-muted text-muted-foreground"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          <span className="text-[11px] font-mono text-muted-foreground truncate flex-1">
+            {shortenPath(browsePath.replace(/\/+$/, "") || "~")}
+          </span>
+          <button
+            type="button"
+            onClick={() => setMode("search")}
+            className="text-[10px] text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted"
+          >
+            Search
+          </button>
+        </div>
+        <div className="max-h-[240px] overflow-y-auto py-1">
+          {browseLoading && browseResults.length === 0 && (
+            <div className="py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Loading...
+            </div>
+          )}
+          {!browseLoading && browseResults.length === 0 && (
+            <div className="py-6 text-center text-xs text-muted-foreground">
+              No directories found.
+            </div>
+          )}
+          {browseResults
+            .filter((e) => e.kind === "directory")
+            .map((entry) => (
+              <div
+                key={entry.path}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-1.5 rounded-md mx-1 text-xs cursor-pointer",
+                  "hover:bg-accent hover:text-accent-foreground",
+                )}
+              >
+                {entry.isGitRepo ? (
+                  <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                ) : (
+                  <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                )}
+                <span
+                  className="truncate font-medium flex-1"
+                  onClick={() => {
+                    if (entry.isGitRepo) {
+                      onSelect(entry.path)
+                    } else {
+                      setBrowsePath(entry.path + "/")
+                    }
+                  }}
+                >
+                  {getBasename(entry.path)}
+                </span>
+                {entry.isGitRepo ? (
+                  <span
+                    className="shrink-0 text-[10px] text-primary cursor-pointer px-1"
+                    onClick={() => onSelect(entry.path)}
+                  >
+                    Open
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="shrink-0 p-0.5 rounded hover:bg-muted"
+                    onClick={() => setBrowsePath(entry.path + "/")}
+                  >
+                    <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                  </button>
+                )}
+              </div>
+            ))}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="px-2 pb-2">
@@ -112,21 +209,21 @@ function OpenProjectTab({
           onValueChange={setQuery}
         />
         <CommandList className="max-h-[240px]">
-          {!loading && results.length === 0 && query && (
+          {!searchLoading && searchResults.length === 0 && query && (
             <CommandEmpty>No repositories found.</CommandEmpty>
           )}
-          {!loading && results.length === 0 && !query && (
+          {!searchLoading && searchResults.length === 0 && !query && (
             <div className="py-6 text-center text-xs text-muted-foreground">
               Type to search for Git repositories
             </div>
           )}
-          {loading && results.length === 0 && (
+          {searchLoading && searchResults.length === 0 && (
             <div className="py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
               <Loader2 className="h-3 w-3 animate-spin" />
               Searching...
             </div>
           )}
-          {results.map((entry) => (
+          {searchResults.map((entry) => (
             <CommandItem
               key={entry.path}
               value={entry.path}
@@ -146,6 +243,19 @@ function OpenProjectTab({
           ))}
         </CommandList>
       </Command>
+      <div className="flex justify-center pt-2 pb-1">
+        <button
+          type="button"
+          onClick={() => setMode("browse")}
+          className={cn(
+            "flex items-center gap-1.5 text-[11px] text-muted-foreground",
+            "hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-muted",
+          )}
+        >
+          <FolderOpen className="h-3 w-3" />
+          Browse directories
+        </button>
+      </div>
     </div>
   )
 }

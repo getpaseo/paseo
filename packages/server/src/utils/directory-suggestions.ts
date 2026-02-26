@@ -905,7 +905,7 @@ function pruneWorkspaceEntryListCache(): void {
   }
 }
 
-async function checkIsGitRepo(dirPath: string): Promise<boolean> {
+export async function checkIsGitRepo(dirPath: string): Promise<boolean> {
   try {
     await stat(path.join(dirPath, '.git'))
     return true

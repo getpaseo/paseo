@@ -115,7 +115,7 @@ import {
 } from '../utils/checkout-git.js'
 import { getProjectIcon } from '../utils/project-icon.js'
 import { expandTilde } from '../utils/path.js'
-import { searchHomeDirectories, searchWorkspaceEntries, searchGitRepositories } from '../utils/directory-suggestions.js'
+import { searchHomeDirectories, searchWorkspaceEntries, searchGitRepositories, checkIsGitRepo } from '../utils/directory-suggestions.js'
 import { cloneRepository } from '../utils/git-clone.js'
 import { initRepository } from '../utils/git-init.js'
 import type pino from 'pino'
@@ -2835,13 +2835,18 @@ export class Session {
           limit,
         })
       } else {
-        entries = (
-          await searchHomeDirectories({
-            homeDir: process.env.HOME ?? homedir(),
-            query,
-            limit,
-          })
-        ).map((path) => ({ path, kind: 'directory' as const }))
+        const dirs = await searchHomeDirectories({
+          homeDir: process.env.HOME ?? homedir(),
+          query,
+          limit,
+        })
+        entries = await Promise.all(
+          dirs.map(async (dirPath) => ({
+            path: dirPath,
+            kind: 'directory' as const,
+            isGitRepo: await checkIsGitRepo(dirPath),
+          }))
+        )
       }
 
       const directories = entries
