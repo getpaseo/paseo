@@ -18,7 +18,7 @@ Junction is a mobile app for monitoring and controlling your local AI coding age
 
 ## Monorepo Structure
 
-This is an npm workspace monorepo:
+This is a pnpm workspace monorepo:
 
 - **packages/server**: The Junction daemon that runs on your machine. Manages agent processes, provides WebSocket API for real-time streaming, and exposes an MCP server for agent control.
 - **packages/app**: Cross-platform client (Expo). Connects to one or more servers, displays agent output, handles voice input, and sends push notifications.
@@ -27,12 +27,12 @@ This is an npm workspace monorepo:
 
 ## Development Server
 
-The `npm run dev` script automatically picks an available port for the development server.
+The `pnpm run dev` script automatically picks an available port for the development server.
 
 When running in a worktree or alongside the main checkout, set `JUNCTION_HOME` to isolate state:
 
 ```bash
-JUNCTION_HOME=~/.junction-blue npm run dev
+JUNCTION_HOME=~/.junction-blue pnpm run dev
 ```
 
 - `JUNCTION_HOME` – path for runtime state (agent data, sockets, etc.). Defaults to `~/.junction`; set this to a unique directory when running a secondary server instance.
@@ -50,9 +50,9 @@ The Junction daemon communicates via WebSocket. In the main checkout:
 - Expo app at `localhost:8081`
 - State lives in `$JUNCTION_HOME`
 
-In worktrees or when running `npm run dev`, ports and home directories may differ. Never assume the defaults.
+In worktrees or when running `pnpm run dev`, ports and home directories may differ. Never assume the defaults.
 
-Use `npm run cli` to run the local CLI (instead of the globally linked `junction` which points to the main checkout). Always run `npm run cli -- --help` or load the `/junction` skill before using it - do not guess commands.
+Use `pnpm run cli` to run the local CLI (instead of the globally linked `junction` which points to the main checkout). Always run `pnpm run cli -- --help` or load the `/junction` skill before using it - do not guess commands.
 
 Use `--host <host:port>` to point the CLI at a different daemon (e.g., `--host localhost:7777`).
 
@@ -61,7 +61,7 @@ Use `--host <host:port>` to point the CLI at a different daemon (e.g., `--host l
 When changing `packages/relay/src/*`, rebuild relay before running/debugging the daemon:
 
 ```bash
-npm run build --workspace=@junction/relay
+pnpm --filter @junction/relay run build
 ```
 
 Reason: Node daemon imports `@junction/relay` from `packages/relay/dist/*` (`node` export path), not directly from `src/*`.
@@ -71,7 +71,7 @@ Reason: Node daemon imports `@junction/relay` from `packages/relay/dist/*` (`nod
 When changing `packages/server/src/client/*` (especially `daemon-client.ts`) or shared WS protocol types, rebuild server before running/debugging CLI commands:
 
 ```bash
-npm run build --workspace=@junction/server
+pnpm --filter @junction/server run build
 ```
 
 Reason: local CLI imports `@junction/server` via package exports that resolve to `packages/server/dist/*` first. If `dist` is stale, CLI can speak an old protocol (for example, sending `session` before `hello`) and fail with handshake warnings/timeouts.
@@ -79,11 +79,11 @@ Reason: local CLI imports `@junction/server` via package exports that resolve to
 ### Quick reference CLI commands
 
 ```bash
-npm run cli -- ls -a -g              # List all agents globally
-npm run cli -- ls -a -g --json       # Same, as JSON
-npm run cli -- inspect <id>          # Show detailed agent info
-npm run cli -- logs <id>             # View agent timeline
-npm run cli -- daemon status         # Check daemon status
+pnpm run cli -- ls -a -g              # List all agents globally
+pnpm run cli -- ls -a -g --json       # Same, as JSON
+pnpm run cli -- inspect <id>          # Show detailed agent info
+pnpm run cli -- logs <id>             # View agent timeline
+pnpm run cli -- daemon status         # Check daemon status
 ```
 
 ### Agent state
@@ -139,22 +139,22 @@ From `packages/app`:
 
 ```bash
 # development (debug)
-APP_VARIANT=development npx expo prebuild --platform android --clean --non-interactive
-APP_VARIANT=development npx expo run:android --variant=debug
+APP_VARIANT=development pnpm exec expo prebuild --platform android --clean --non-interactive
+APP_VARIANT=development pnpm exec expo run:android --variant=debug
 
 # production (release)
-APP_VARIANT=production npx expo prebuild --platform android --clean --non-interactive
-APP_VARIANT=production npx expo run:android --variant=release
+APP_VARIANT=production pnpm exec expo prebuild --platform android --clean --non-interactive
+APP_VARIANT=production pnpm exec expo run:android --variant=release
 ```
 
 From repo root:
 
 ```bash
-npm run android:development
-npm run android:production
+pnpm run android:development
+pnpm run android:production
 ```
 
-`npm run android:prod` and `npm run android:release` are aliases for `npm run android:production`.
+`pnpm run android:prod` and `pnpm run android:release` are aliases for `pnpm run android:production`.
 
 ### Cloud build + submit (EAS Workflows)
 
@@ -170,13 +170,13 @@ Useful commands:
 
 ```bash
 # List recent mobile workflow runs
-cd packages/app && npx eas workflow:runs --workflow release-mobile.yml --limit 10
+cd packages/app && pnpm exec eas workflow:runs --workflow release-mobile.yml --limit 10
 
 # Inspect one run (jobs, status, outputs)
-cd packages/app && npx eas workflow:view <run-id>
+cd packages/app && pnpm exec eas workflow:view <run-id>
 
 # Stream logs for all steps in one failed job
-cd packages/app && npx eas workflow:logs <job-id> --non-interactive --all-steps
+cd packages/app && pnpm exec eas workflow:logs <job-id> --non-interactive --all-steps
 ```
 
 ## Testing with Playwright MCP
@@ -189,7 +189,7 @@ Use the Playwright MCP to test the app in Metro web. Navigate to `http://localho
 
 ## Expo troubleshooting
 
-Run `npx expo-doctor` to diagnose version mismatches and native module issues.
+Run `pnpm exec expo-doctor` to diagnose version mismatches and native module issues.
 
 ## Release playbook
 
@@ -197,20 +197,20 @@ Use the scripted release flow from repo root. Avoid manual version bumps, manual
 
 ```bash
 # Recommended: full patch release (bump, check, publish, push branch+tag)
-npm run release:patch
+pnpm run release:patch
 
 # Manual, step-by-step fallback:
-npm run version:all:patch  # npm version across all workspaces (creates commit + local tag)
-npm run release:check
-npm run release:publish
-npm run release:push       # pushes HEAD and current version tag (triggers desktop + Android APK + EAS mobile workflows)
+pnpm run version:all:patch  # bumps root version, syncs workspaces (creates commit + local tag)
+pnpm run release:check
+pnpm run release:publish
+pnpm run release:push       # pushes HEAD and current version tag (triggers desktop + Android APK + EAS mobile workflows)
 ```
 
 Notes:
 - `version:all:*` bumps the root package version and runs the root `version` lifecycle script to sync workspace versions and internal `@junction/*` dependency versions before the release commit/tag is created.
 - `release:prepare` refreshes workspace `node_modules` links to prevent stale local package types during release checks.
-- If `release:publish` fails after a successful publish of one workspace, re-run `npm run release:publish`; npm will skip already-published versions and continue where possible.
-- If a user asks to "release junction" (without specifying major/minor), treat it as a patch release and run `npm run release:patch`.
+- If `release:publish` fails after a successful publish of one workspace, re-run `pnpm run release:publish`; pnpm will skip already-published versions and continue where possible.
+- If a user asks to "release junction" (without specifying major/minor), treat it as a patch release and run `pnpm run release:patch`.
 - All workspaces share one version by design. Keep versions synchronized and release together.
 - The website Mac download CTA URL is derived from `packages/website/package.json` version at build time, so no manual update is required after release.
 
@@ -219,7 +219,7 @@ Release completion checklist:
     - Ask yourself, what do Junction users want to know about?
     - Include: New features, bug fixes
     - Don't include: Refactors or code changes that are not noticeable by users
-- `npm run release:patch` completes successfully.
+- `pnpm run release:patch` completes successfully.
 - GitHub `Desktop Release` workflow for the new `v*` tag is green.
 - GitHub `Android APK Release` workflow for the same tag is green.
 - EAS `release-mobile.yml` workflow for the same tag is green (Expo queues can take longer on the free plan).

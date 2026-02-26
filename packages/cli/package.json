@@ -15,17 +15,17 @@
   },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{ recursive: true, force: true })\" && tsc -p tsconfig.json --incremental false",
-    "prepack": "npm run build",
+    "prepack": "pnpm run build",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:local",
+    "test": "pnpm run test:local",
     "test:local": "tsx tests/run-all.ts",
-    "test:e2e": "npm run test:local",
-    "test:e2e:lifecycle": "npx tsx tests/e2e/agent-lifecycle.test.ts"
+    "test:e2e": "pnpm run test:local",
+    "test:e2e:lifecycle": "pnpm exec tsx tests/e2e/agent-lifecycle.test.ts"
   },
   "dependencies": {
     "@clack/prompts": "^1.0.0",
-    "@junction/relay": "0.1.16",
-    "@junction/server": "0.1.16",
+    "@junction/relay": "workspace:*",
+    "@junction/server": "workspace:*",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
     "mime-types": "^2.1.35",

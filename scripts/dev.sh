@@ -37,5 +37,5 @@ export JUNCTION_CORS_ORIGINS="${CORS_ORIGINS}"
 concurrently \
   --names "daemon,metro" \
   --prefix-colors "cyan,magenta" \
-  "npm run dev:server" \
-  "BROWSER=none EXPO_PUBLIC_LOCAL_DAEMON='${LOCAL_DAEMON}' npm run start --workspace=@junction/app -- --port ${METRO_PORT}"
+  "pnpm run dev:server" \
+  "BROWSER=none EXPO_PUBLIC_LOCAL_DAEMON='${LOCAL_DAEMON}' pnpm --filter @junction/app run start -- --port ${METRO_PORT}"

@@ -98,14 +98,14 @@ echo "  packages/app/.env.local"
 echo ""
 echo "→ Installing dependencies..."
 cd "$REPO_ROOT"
-npm install
+pnpm install
 
 # ------------------------------------------------------------------
 # 5. Build relay (required before daemon can start)
 # ------------------------------------------------------------------
 echo ""
 echo "→ Building @junction/relay..."
-npm run build --workspace=@junction/relay
+pnpm --filter @junction/relay run build
 
 # ------------------------------------------------------------------
 # 6. Prisma generate + migrate
@@ -113,10 +113,10 @@ npm run build --workspace=@junction/relay
 echo ""
 echo "→ Running Prisma generate..."
 cd "$REPO_ROOT/packages/api"
-DATABASE_URL="$DATABASE_URL" npx prisma generate
+DATABASE_URL="$DATABASE_URL" pnpm exec prisma generate
 
 echo "→ Pushing Prisma schema to database..."
-DATABASE_URL="$DATABASE_URL" npx prisma db push
+DATABASE_URL="$DATABASE_URL" pnpm exec prisma db push
 cd "$REPO_ROOT"
 
 # ------------------------------------------------------------------
@@ -124,7 +124,7 @@ cd "$REPO_ROOT"
 # ------------------------------------------------------------------
 echo ""
 echo "→ Building @junction/server..."
-NODE_OPTIONS="--max-old-space-size=4096" npm run build --workspace=@junction/server
+NODE_OPTIONS="--max-old-space-size=4096" pnpm --filter @junction/server run build
 
 echo ""
 echo "══════════════════════════════════════════════════════"

@@ -31,11 +31,15 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
+          cache: 'pnpm'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@boudra'
 
@@ -45,12 +49,12 @@ jobs:
           targets: aarch64-apple-darwin
 
       - name: Install JS dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build web app for Tauri
-        run: npm run build:web --workspace=@junction/app
+        run: pnpm --filter @junction/app run build:web
 
       - name: Set desktop version from tag
         shell: bash

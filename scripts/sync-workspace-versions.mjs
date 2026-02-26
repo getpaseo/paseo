@@ -150,6 +150,10 @@ for (const workspacePath of workspacePaths) {
       if (name === pkg.name) {
         continue
       }
+      // pnpm workspace:* deps are resolved at publish time — leave them as-is
+      if (deps[name].startsWith('workspace:')) {
+        continue
+      }
       if (deps[name] !== rootVersion) {
         deps[name] = rootVersion
         changed = true

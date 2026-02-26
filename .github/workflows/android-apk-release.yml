@@ -31,16 +31,20 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "npm"
+          cache: "pnpm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@boudra"
 
       - name: Install JS dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -57,7 +61,7 @@ jobs:
           set -euo pipefail
           cd packages/app
 
-          build_json="$(npx eas build --platform android --profile production-apk --non-interactive --wait --json)"
+          build_json="$(pnpm exec eas build --platform android --profile production-apk --non-interactive --wait --json)"
           echo "$build_json" > "$RUNNER_TEMP/eas-build.json"
 
           build_id="$(jq -r 'if type == "array" then .[0].id // empty else .id // empty end' "$RUNNER_TEMP/eas-build.json")"
@@ -76,7 +80,7 @@ jobs:
           set -euo pipefail
           cd packages/app
 
-          build_view_json="$(npx eas build:view '${{ steps.eas_build.outputs.build_id }}' --json)"
+          build_view_json="$(pnpm exec eas build:view '${{ steps.eas_build.outputs.build_id }}' --json)"
           echo "$build_view_json" > "$RUNNER_TEMP/eas-build-view.json"
 
           artifact_url="$(jq -r '.artifacts.buildUrl // .artifacts.applicationArchiveUrl // empty' "$RUNNER_TEMP/eas-build-view.json")"

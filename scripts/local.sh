@@ -1,7 +1,7 @@
 #!/bin/bash
 # local.sh — manual dev startup for Junction
 #
-# Usage: npm run local
+# Usage: pnpm run local
 #
 # Runs setup (DB, env, builds) then starts all 3 services with concurrently.
 # Handles port conflicts gracefully — shows what's using the port and offers
@@ -141,6 +141,6 @@ exec concurrently \
   --prefix "[{name}]" \
   --kill-others-on-fail \
   --handle-input \
-  "JUNCTION_LISTEN=0.0.0.0:${DAEMON_PORT} JUNCTION_CORS_ORIGINS='${CORS_ORIGINS}' JUNCTION_HOME='${JUNCTION_HOME}' npm run dev:server" \
-  "PORT=${API_PORT} DATABASE_URL='postgresql://postgres:postgres@localhost:5435/${WORKSPACE_NAME}' CORS_ORIGINS='${CORS_ORIGINS}' npm run dev:api" \
-  "BROWSER=none VITE_API_URL='http://localhost:${API_PORT}' EXPO_PUBLIC_LOCAL_DAEMON='${LOCAL_DAEMON}' npx vite --port ${APP_PORT} --host --config packages/app/vite.config.ts"
+  "JUNCTION_LISTEN=0.0.0.0:${DAEMON_PORT} JUNCTION_CORS_ORIGINS='${CORS_ORIGINS}' JUNCTION_HOME='${JUNCTION_HOME}' pnpm run dev:server" \
+  "PORT=${API_PORT} DATABASE_URL='postgresql://postgres:postgres@localhost:5435/${WORKSPACE_NAME}' CORS_ORIGINS='${CORS_ORIGINS}' pnpm run dev:api" \
+  "BROWSER=none VITE_API_URL='http://localhost:${API_PORT}' EXPO_PUBLIC_LOCAL_DAEMON='${LOCAL_DAEMON}' pnpm exec vite --port ${APP_PORT} --host --config packages/app/vite.config.ts"

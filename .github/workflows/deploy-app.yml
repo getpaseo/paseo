@@ -13,23 +13,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
+          cache: 'pnpm'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@boudra'
 
       - name: Install dependencies
-        run: npm install --workspace=@junction/app --include-workspace-root
+        run: pnpm install --frozen-lockfile
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Typecheck
-        run: npm run typecheck --workspace=@junction/app
+        run: pnpm --filter @junction/app run typecheck
 
       - name: Build and deploy to Cloudflare Pages
-        run: npm run deploy:web --workspace=@junction/app
+        run: pnpm --filter @junction/app run deploy:web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 10ed39a1dbf316e30abd0c409bed40d6

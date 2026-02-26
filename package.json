@@ -12,26 +12,26 @@
   "scripts": {
     "local": "bash scripts/local.sh",
     "dev:server": "NODE_ENV=development tsx packages/server/scripts/daemon-runner.ts --dev",
-    "dev:api": "npm run dev --workspace=@junction/api",
-    "dev:app": "npm run dev --workspace=@junction/app",
+    "dev:api": "pnpm --filter @junction/api run dev",
+    "dev:app": "pnpm --filter @junction/app run dev",
     "postinstall": "node scripts/postinstall-patches.mjs",
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "start": "npm run start --workspace=@junction/server",
-    "cli": "npx tsx packages/cli/src/index.js",
-    "version": "npm run version:sync-internal && npm run release:prepare && git add -A",
+    "start": "pnpm --filter @junction/server run start",
+    "cli": "pnpm exec tsx packages/cli/src/index.js",
+    "version": "pnpm run version:sync-internal && pnpm run release:prepare && git add -A",
     "version:sync-internal": "node scripts/sync-workspace-versions.mjs",
-    "release:prepare": "npm install --workspaces --include-workspace-root",
-    "version:all:patch": "npm version patch --include-workspace-root --message \"chore(release): cut %s\"",
-    "version:all:minor": "npm version minor --include-workspace-root --message \"chore(release): cut %s\"",
-    "version:all:major": "npm version major --include-workspace-root --message \"chore(release): cut %s\"",
-    "release:check": "npm run release:prepare && npm run typecheck --workspace=@junction/relay && npm run typecheck --workspace=@junction/server && npm run typecheck --workspace=@junction/cli && npm run build --workspace=@junction/relay && npm run build --workspace=@junction/server && npm run build --workspace=@junction/cli && npm pack --dry-run --workspace=@junction/relay && npm pack --dry-run --workspace=@junction/server && npm pack --dry-run --workspace=@junction/cli",
-    "release:publish": "npm publish --workspace=@junction/relay --access public && npm publish --workspace=@junction/server --access public && npm publish --workspace=@junction/cli --access public",
+    "release:prepare": "pnpm install",
+    "version:all:patch": "pnpm version patch --message \"chore(release): cut %s\"",
+    "version:all:minor": "pnpm version minor --message \"chore(release): cut %s\"",
+    "version:all:major": "pnpm version major --message \"chore(release): cut %s\"",
+    "release:check": "pnpm run release:prepare && pnpm --filter @junction/relay run typecheck && pnpm --filter @junction/server run typecheck && pnpm --filter @junction/cli run typecheck && pnpm --filter @junction/relay run build && pnpm --filter @junction/server run build && pnpm --filter @junction/cli run build && pnpm --filter @junction/relay pack && pnpm --filter @junction/server pack && pnpm --filter @junction/cli pack",
+    "release:publish": "pnpm --filter @junction/relay publish --access public --no-git-checks && pnpm --filter @junction/server publish --access public --no-git-checks && pnpm --filter @junction/cli publish --access public --no-git-checks",
     "release:push": "node scripts/push-current-release-tag.mjs",
-    "release:patch": "npm run version:all:patch && npm run release:check && npm run release:publish && npm run release:push"
+    "release:patch": "pnpm run version:all:patch && pnpm run release:check && pnpm run release:publish && pnpm run release:push"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
@@ -52,12 +52,22 @@
   ],
   "author": "",
   "license": "AGPL-3.0-or-later",
-  "overrides": {
-    "lightningcss": "1.30.1",
-    "react": "19.1.0",
-    "react-dom": "19.1.0"
-  },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.11"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "better-sqlite3",
+      "esbuild",
+      "node-pty",
+      "prisma"
+    ],
+    "overrides": {
+      "lightningcss": "1.30.1",
+      "react": "19.1.0",
+      "react-dom": "19.1.0"
+    }
   }
 }

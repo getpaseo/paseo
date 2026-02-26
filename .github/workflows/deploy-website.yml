@@ -6,7 +6,7 @@ on:
     paths:
       - 'packages/website/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
       - 'patches/**'
       - '.github/workflows/deploy-website.yml'
   workflow_dispatch:
@@ -18,18 +18,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: npm install --workspace=@junction/website --include-workspace-root
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: npm run typecheck --workspace=@junction/website
+        run: pnpm --filter @junction/website run typecheck
 
       - name: Deploy to Cloudflare Workers
-        run: npm run deploy --workspace=@junction/website
+        run: pnpm --filter @junction/website run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
