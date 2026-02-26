@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/command"
 import { Button } from "@/components/ui/button"
 import { useDirectorySuggestions } from "./use-directory-suggestions"
-import { DirectoryBrowserPopover } from "./directory-browser-popover"
 import { Folder, FolderOpen, GitBranch, ChevronRight, ChevronLeft, Loader2 } from "lucide-react"
 import { cn } from "@/lib/cn"
 
@@ -271,6 +270,148 @@ function OpenProjectTab({
   )
 }
 
+// ─── Inline Directory Browser ──────────────────────────────────────────────────
+
+function InlineDirectoryBrowser({
+  client,
+  value,
+  onChange,
+  label,
+}: {
+  client: DaemonClient | null
+  value: string
+  onChange: (path: string) => void
+  label: string
+}) {
+  const [browsing, setBrowsing] = useState(false)
+  const [browsePath, setBrowsePath] = useState("~/")
+
+  const { results, loading } = useDirectorySuggestions(client, {
+    query: browsing ? browsePath : "",
+  })
+
+  function toTildePath(absolutePath: string): string {
+    return absolutePath.replace(/^\/Users\/[^/]+/, "~")
+  }
+
+  function drillInto(absolutePath: string) {
+    setBrowsePath(toTildePath(absolutePath) + "/")
+  }
+
+  function handleBrowseBack() {
+    const trimmed = browsePath.replace(/\/+$/, "")
+    const parent = trimmed.replace(/\/[^/]+$/, "") || "~"
+    setBrowsePath(parent + "/")
+  }
+
+  function handleSelect(absolutePath: string) {
+    onChange(toTildePath(absolutePath))
+    setBrowsing(false)
+  }
+
+  if (browsing) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium">{label}</label>
+        </div>
+        <div className="border border-border rounded-md overflow-hidden">
+          <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border bg-muted/30">
+            <button
+              type="button"
+              onClick={handleBrowseBack}
+              className="p-0.5 rounded hover:bg-muted text-muted-foreground"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="text-[11px] font-mono text-muted-foreground truncate flex-1">
+              {browsePath.replace(/\/+$/, "") || "~"}
+            </span>
+            <button
+              type="button"
+              onClick={() => setBrowsing(false)}
+              className="text-[10px] text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted"
+            >
+              Cancel
+            </button>
+          </div>
+          <div className="max-h-[160px] overflow-y-auto py-1">
+            {loading && results.length === 0 && (
+              <div className="py-4 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Loading...
+              </div>
+            )}
+            {!loading && results.length === 0 && (
+              <div className="py-4 text-center text-xs text-muted-foreground">
+                No directories found.
+              </div>
+            )}
+            {results
+              .filter((e) => e.kind === "directory")
+              .map((entry) => (
+                <div
+                  key={entry.path}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 mx-1 rounded text-xs cursor-pointer",
+                    "hover:bg-accent hover:text-accent-foreground",
+                  )}
+                  onClick={() => handleSelect(entry.path)}
+                >
+                  <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="truncate font-medium flex-1">
+                    {getBasename(entry.path)}
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 p-0.5 rounded hover:bg-muted"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      drillInto(entry.path)
+                    }}
+                  >
+                    <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                  </button>
+                </div>
+              ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <label className="text-xs font-medium">{label}</label>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="~/"
+          className={cn(
+            "flex-1 px-3 py-2 text-xs font-mono border border-border rounded-md bg-background",
+            "focus:outline-none focus:ring-2 focus:ring-ring",
+            "placeholder:text-muted-foreground/50",
+          )}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="text-xs font-normal"
+          onClick={() => {
+            setBrowsePath(value.endsWith("/") ? value || "~/" : value + "/")
+            setBrowsing(true)
+          }}
+        >
+          Browse...
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Clone from URL Tab ────────────────────────────────────────────────────────
 
 function CloneFromUrlTab({
@@ -335,35 +476,17 @@ function CloneFromUrlTab({
         />
       </div>
 
-      <div className="space-y-2">
-        <label className="text-xs font-medium" htmlFor="clone-location">
-          Clone location
-        </label>
-        <div className="flex gap-2">
-          <input
-            id="clone-location"
-            type="text"
-            value={targetDir}
-            onChange={(e) => setTargetDir(e.target.value)}
-            placeholder="~/"
-            className={cn(
-              "flex-1 px-3 py-2 text-xs font-mono border border-border rounded-md bg-background",
-              "focus:outline-none focus:ring-2 focus:ring-ring",
-              "placeholder:text-muted-foreground/50",
-            )}
-          />
-          <DirectoryBrowserPopover
-            client={client}
-            value={targetDir}
-            onChange={setTargetDir}
-          />
-        </div>
-        {repoName && (
-          <p className="text-[10px] text-muted-foreground font-mono">
-            Will clone to: {fullTarget}
-          </p>
-        )}
-      </div>
+      <InlineDirectoryBrowser
+        client={client}
+        value={targetDir}
+        onChange={setTargetDir}
+        label="Clone location"
+      />
+      {repoName && (
+        <p className="text-[10px] text-muted-foreground font-mono">
+          Will clone to: {fullTarget}
+        </p>
+      )}
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
@@ -446,35 +569,17 @@ function QuickStartTab({
         />
       </div>
 
-      <div className="space-y-2">
-        <label className="text-xs font-medium" htmlFor="project-location">
-          Location
-        </label>
-        <div className="flex gap-2">
-          <input
-            id="project-location"
-            type="text"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-            placeholder="~/"
-            className={cn(
-              "flex-1 px-3 py-2 text-xs font-mono border border-border rounded-md bg-background",
-              "focus:outline-none focus:ring-2 focus:ring-ring",
-              "placeholder:text-muted-foreground/50",
-            )}
-          />
-          <DirectoryBrowserPopover
-            client={client}
-            value={location}
-            onChange={setLocation}
-          />
-        </div>
-        {name && (
-          <p className="text-[10px] text-muted-foreground font-mono">
-            Will create: {location.endsWith("/") ? location : location + "/"}{name}
-          </p>
-        )}
-      </div>
+      <InlineDirectoryBrowser
+        client={client}
+        value={location}
+        onChange={setLocation}
+        label="Location"
+      />
+      {name && (
+        <p className="text-[10px] text-muted-foreground font-mono">
+          Will create: {location.endsWith("/") ? location : location + "/"}{name}
+        </p>
+      )}
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
