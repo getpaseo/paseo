@@ -34,6 +34,7 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "src"),
       "@server": path.resolve(__dirname, "../server/src"),
+      "@api": path.resolve(__dirname, "../api/src"),
     },
   },
   server: {

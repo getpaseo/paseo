@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import { useSetAtom } from "jotai"
 import type { DaemonClient } from "@server/client/daemon-client"
 import type { AgentSnapshotPayload } from "@server/shared/messages"
-import { selectedAgentIdAtom } from "@/lib/atoms"
+import { selectedAgentAtom } from "@/lib/atoms"
 import { useAgentChat } from "./use-agent-chat"
 import { ChatMessageList } from "./chat-message-list"
 import { ChatInput } from "./chat-input"
@@ -51,6 +51,7 @@ function ChatHeader({
 export function ChatView({
   client,
   agentId,
+  daemonId,
   provider,
   cwd,
   initialPrompt,
@@ -58,6 +59,7 @@ export function ChatView({
 }: {
   client: DaemonClient
   agentId?: string
+  daemonId: string
   provider?: "claude" | "codex" | "opencode"
   cwd?: string
   initialPrompt?: string
@@ -65,7 +67,7 @@ export function ChatView({
 }) {
   const chat = useAgentChat({ client, agentId, provider, cwd })
   const [agent, setAgent] = useState<AgentSnapshotPayload | null>(null)
-  const setSelectedAgentId = useSetAtom(selectedAgentIdAtom)
+  const setSelectedAgent = useSetAtom(selectedAgentAtom)
   const autoSentRef = useRef(false)
 
   // Auto-send initial prompt (from NewChatForm)
@@ -79,7 +81,7 @@ export function ChatView({
   // When agent is created, update the selected agent ID
   useEffect(() => {
     if (chat.agentId && !agentId) {
-      setSelectedAgentId(chat.agentId)
+      setSelectedAgent({ agentId: chat.agentId, daemonId })
       onAgentCreated?.(chat.agentId)
     }
   }, [chat.agentId])
