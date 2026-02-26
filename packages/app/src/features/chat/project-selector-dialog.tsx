@@ -37,7 +37,7 @@ export function ProjectSelectorDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px] p-0 gap-0 overflow-hidden">
         <Tabs defaultValue="open" className="w-full">
-          <DialogHeader className="px-6 pt-5 pb-0">
+          <DialogHeader className="px-6 pt-5 pb-4">
             <DialogTitle className="text-base mb-3">Select project</DialogTitle>
             <TabsList className="w-full">
               <TabsTrigger value="open" className="flex-1 text-xs">
