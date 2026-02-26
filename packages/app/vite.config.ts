@@ -38,6 +38,6 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: parseInt(process.env.VITE_APP_PORT ?? "5173", 10),
   },
 })

@@ -10,6 +10,7 @@
     "packages/app"
   ],
   "scripts": {
+    "local": "bash scripts/local.sh",
     "dev:server": "NODE_ENV=development tsx packages/server/scripts/daemon-runner.ts --dev",
     "dev:api": "npm run dev --workspace=@junction/api",
     "dev:app": "npm run dev --workspace=@junction/app",
