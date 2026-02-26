@@ -111,8 +111,19 @@ function OpenProjectTab({
       query: mode === "browse" ? browsePath : "",
     })
 
+  // Convert absolute paths to ~/relative so the server correctly interprets
+  // them as "list this directory" rather than a fuzzy search query.
+  function toTildePath(absolutePath: string): string {
+    return absolutePath.replace(/^\/Users\/[^/]+/, "~")
+  }
+
+  function drillInto(absolutePath: string) {
+    setBrowsePath(toTildePath(absolutePath) + "/")
+  }
+
   function handleBrowseBack() {
-    const parent = browsePath.replace(/\/+$/, "").replace(/\/[^/]+$/, "") || "~"
+    const trimmed = browsePath.replace(/\/+$/, "")
+    const parent = trimmed.replace(/\/[^/]+$/, "") || "~"
     setBrowsePath(parent + "/")
   }
 
@@ -128,7 +139,7 @@ function OpenProjectTab({
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
           <span className="text-[11px] font-mono text-muted-foreground truncate flex-1">
-            {shortenPath(browsePath.replace(/\/+$/, "") || "~")}
+            {browsePath.replace(/\/+$/, "") || "~"}
           </span>
           <button
             type="button"
@@ -171,7 +182,7 @@ function OpenProjectTab({
                     if (entry.isGitRepo) {
                       onSelect(entry.path)
                     } else {
-                      setBrowsePath(entry.path + "/")
+                      drillInto(entry.path)
                     }
                   }}
                 >
@@ -188,7 +199,7 @@ function OpenProjectTab({
                   <button
                     type="button"
                     className="shrink-0 p-0.5 rounded hover:bg-muted"
-                    onClick={() => setBrowsePath(entry.path + "/")}
+                    onClick={() => drillInto(entry.path)}
                   >
                     <ChevronRight className="h-3 w-3 text-muted-foreground" />
                   </button>
