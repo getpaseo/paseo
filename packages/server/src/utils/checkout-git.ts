@@ -5,8 +5,8 @@ import { realpathSync } from "fs";
 import { open as openFile, stat as statFile } from "fs/promises";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
-import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
-import { requirePaseoWorktreeBaseRefName } from "./worktree-metadata.js";
+import { isJunctionOwnedWorktreeCwd } from "./worktree.js";
+import { requireJunctionWorktreeBaseRefName } from "./worktree-metadata.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -433,7 +433,7 @@ export interface CheckoutStatus {
   isGit: false;
 }
 
-export type CheckoutStatusGitNonPaseo = {
+export type CheckoutStatusGitNonJunction = {
   isGit: true;
   repoRoot: string;
   currentBranch: string | null;
@@ -444,10 +444,10 @@ export type CheckoutStatusGitNonPaseo = {
   behindOfOrigin: number | null;
   hasRemote: boolean;
   remoteUrl: string | null;
-  isPaseoOwnedWorktree: false;
+  isJunctionOwnedWorktree: false;
 };
 
-export type CheckoutStatusGitPaseo = {
+export type CheckoutStatusGitJunction = {
   isGit: true;
   repoRoot: string;
   mainRepoRoot: string;
@@ -459,10 +459,10 @@ export type CheckoutStatusGitPaseo = {
   behindOfOrigin: number | null;
   hasRemote: boolean;
   remoteUrl: string | null;
-  isPaseoOwnedWorktree: true;
+  isJunctionOwnedWorktree: true;
 };
 
-export type CheckoutStatusGit = CheckoutStatusGitNonPaseo | CheckoutStatusGitPaseo;
+export type CheckoutStatusGit = CheckoutStatusGitNonJunction | CheckoutStatusGitJunction;
 
 export type CheckoutStatusResult = CheckoutStatus | CheckoutStatusGit;
 
@@ -470,30 +470,30 @@ export type CheckoutStatusLiteNotGit = {
   isGit: false;
   currentBranch: null;
   remoteUrl: null;
-  isPaseoOwnedWorktree: false;
+  isJunctionOwnedWorktree: false;
   mainRepoRoot: null;
 };
 
-export type CheckoutStatusLiteGitNonPaseo = {
+export type CheckoutStatusLiteGitNonJunction = {
   isGit: true;
   currentBranch: string | null;
   remoteUrl: string | null;
-  isPaseoOwnedWorktree: false;
+  isJunctionOwnedWorktree: false;
   mainRepoRoot: null;
 };
 
-export type CheckoutStatusLiteGitPaseo = {
+export type CheckoutStatusLiteGitJunction = {
   isGit: true;
   currentBranch: string | null;
   remoteUrl: string | null;
-  isPaseoOwnedWorktree: true;
+  isJunctionOwnedWorktree: true;
   mainRepoRoot: string;
 };
 
 export type CheckoutStatusLiteResult =
   | CheckoutStatusLiteNotGit
-  | CheckoutStatusLiteGitNonPaseo
-  | CheckoutStatusLiteGitPaseo;
+  | CheckoutStatusLiteGitNonJunction
+  | CheckoutStatusLiteGitJunction;
 
 export interface CheckoutDiffResult {
   diff: string;
@@ -518,7 +518,7 @@ export interface MergeFromBaseOptions {
 }
 
 export type CheckoutContext = {
-  paseoHome?: string;
+  junctionHome?: string;
 };
 
 function isGitError(error: unknown): boolean {
@@ -575,14 +575,14 @@ async function getMainRepoRoot(cwd: string): Promise<string> {
     env: READ_ONLY_GIT_ENV,
   });
   const worktrees = parseWorktreeList(worktreeOut);
-  const nonBareNonPaseo = worktrees.filter(
-    (wt) => !wt.isBare && !wt.path.includes("/.paseo/worktrees/")
+  const nonBareNonJunction = worktrees.filter(
+    (wt) => !wt.isBare && !wt.path.includes("/.junction/worktrees/")
   );
-  const childrenOfBareRepo = nonBareNonPaseo.filter((wt) =>
+  const childrenOfBareRepo = nonBareNonJunction.filter((wt) =>
     wt.path.startsWith(normalized + "/")
   );
   const mainChild = childrenOfBareRepo.find((wt) => basename(wt.path) === "main");
-  return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonPaseo[0]?.path ?? normalized;
+  return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonJunction[0]?.path ?? normalized;
 }
 
 type GitWorktreeEntry = {
@@ -658,8 +658,8 @@ export async function renameCurrentBranch(
 }
 
 type ConfiguredBaseRefForCwd =
-  | { baseRef: null; isPaseoOwnedWorktree: false }
-  | { baseRef: string; isPaseoOwnedWorktree: true };
+  | { baseRef: null; isJunctionOwnedWorktree: false }
+  | { baseRef: string; isJunctionOwnedWorktree: true };
 
 async function getConfiguredBaseRefForCwd(
   cwd: string,
@@ -667,18 +667,18 @@ async function getConfiguredBaseRefForCwd(
 ): Promise<ConfiguredBaseRefForCwd> {
   // Fast-path reject: non-worktree paths do not need expensive ownership checks.
   if (!/[\\/]worktrees[\\/]/.test(cwd)) {
-    return { baseRef: null, isPaseoOwnedWorktree: false };
+    return { baseRef: null, isJunctionOwnedWorktree: false };
   }
 
-  const ownership = await isPaseoOwnedWorktreeCwd(cwd, { paseoHome: context?.paseoHome });
+  const ownership = await isJunctionOwnedWorktreeCwd(cwd, { junctionHome: context?.junctionHome });
   if (!ownership.allowed) {
-    return { baseRef: null, isPaseoOwnedWorktree: false };
+    return { baseRef: null, isJunctionOwnedWorktree: false };
   }
 
   const worktreeRoot = (await getWorktreeRoot(cwd)) ?? cwd;
   return {
-    baseRef: requirePaseoWorktreeBaseRefName(worktreeRoot),
-    isPaseoOwnedWorktree: true,
+    baseRef: requireJunctionWorktreeBaseRefName(worktreeRoot),
+    isJunctionOwnedWorktree: true,
   };
 }
 
@@ -1020,7 +1020,7 @@ export async function getCheckoutStatus(
     hasRemote && currentBranch ? getBehindOfOrigin(cwd, currentBranch) : Promise.resolve(null),
   ]);
 
-  if (configured.isPaseoOwnedWorktree) {
+  if (configured.isJunctionOwnedWorktree) {
     const mainRepoRoot = await getMainRepoRoot(cwd);
     return {
       isGit: true,
@@ -1034,7 +1034,7 @@ export async function getCheckoutStatus(
       behindOfOrigin,
       hasRemote,
       remoteUrl,
-      isPaseoOwnedWorktree: true,
+      isJunctionOwnedWorktree: true,
     };
   }
 
@@ -1049,7 +1049,7 @@ export async function getCheckoutStatus(
     behindOfOrigin,
     hasRemote,
     remoteUrl,
-    isPaseoOwnedWorktree: false,
+    isJunctionOwnedWorktree: false,
   };
 }
 
@@ -1063,17 +1063,17 @@ export async function getCheckoutStatusLite(
       isGit: false,
       currentBranch: null,
       remoteUrl: null,
-      isPaseoOwnedWorktree: false,
+      isJunctionOwnedWorktree: false,
       mainRepoRoot: null,
     };
   }
 
-  if (inspected.configured.isPaseoOwnedWorktree) {
+  if (inspected.configured.isJunctionOwnedWorktree) {
     return {
       isGit: true,
       currentBranch: inspected.currentBranch,
       remoteUrl: inspected.remoteUrl,
-      isPaseoOwnedWorktree: true,
+      isJunctionOwnedWorktree: true,
       mainRepoRoot: await getMainRepoRoot(cwd),
     };
   }
@@ -1082,7 +1082,7 @@ export async function getCheckoutStatusLite(
     isGit: true,
     currentBranch: inspected.currentBranch,
     remoteUrl: inspected.remoteUrl,
-    isPaseoOwnedWorktree: false,
+    isJunctionOwnedWorktree: false,
     mainRepoRoot: null,
   };
 }
@@ -1104,7 +1104,7 @@ export async function getCheckoutDiff(
     if (!baseRef) {
       return { diff: "" };
     }
-    if (configured.isPaseoOwnedWorktree && compare.baseRef && compare.baseRef !== baseRef) {
+    if (configured.isJunctionOwnedWorktree && compare.baseRef && compare.baseRef !== baseRef) {
       throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
     }
 
@@ -1324,7 +1324,7 @@ export async function mergeToBase(
   if (!baseRef) {
     throw new Error("Unable to determine base branch for merge");
   }
-  if (configured.isPaseoOwnedWorktree && options.baseRef && options.baseRef !== baseRef) {
+  if (configured.isJunctionOwnedWorktree && options.baseRef && options.baseRef !== baseRef) {
     throw new Error(`Base ref mismatch: expected ${baseRef}, got ${options.baseRef}`);
   }
   if (!currentBranch) {
@@ -1434,7 +1434,7 @@ export async function mergeFromBase(
   if (!baseRef) {
     throw new Error("Unable to determine base branch for merge");
   }
-  if (configured.isPaseoOwnedWorktree && options.baseRef && options.baseRef !== baseRef) {
+  if (configured.isJunctionOwnedWorktree && options.baseRef && options.baseRef !== baseRef) {
     throw new Error(`Base ref mismatch: expected ${baseRef}, got ${options.baseRef}`);
   }
 
@@ -1691,7 +1691,7 @@ export async function createPullRequest(
     throw new Error("Unable to determine base branch for PR");
   }
   const normalizedBase = normalizeLocalBranchRefName(base);
-  if (configured.isPaseoOwnedWorktree && options.base && options.base !== base) {
+  if (configured.isJunctionOwnedWorktree && options.base && options.base !== base) {
     throw new Error(`Base ref mismatch: expected ${base}, got ${options.base}`);
   }
 

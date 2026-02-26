@@ -25,7 +25,7 @@ import assert from 'node:assert'
 import { createE2ETestContext, type TestDaemonContext } from '../helpers/test-daemon.ts'
 
 interface E2EContext extends TestDaemonContext {
-  paseo: (args: string[], opts?: { timeout?: number; cwd?: string }) => Promise<{
+  junction: (args: string[], opts?: { timeout?: number; cwd?: string }) => Promise<{
     exitCode: number
     stdout: string
     stderr: string
@@ -41,7 +41,7 @@ async function setup(): Promise<void> {
   try {
     ctx = await createE2ETestContext({ timeout: 45000 })
     console.log(`Test daemon started on port ${ctx.port}`)
-    console.log(`PASEO_HOME: ${ctx.paseoHome}`)
+    console.log(`JUNCTION_HOME: ${ctx.junctionHome}`)
     console.log(`Work directory: ${ctx.workDir}`)
   } catch (err) {
     console.error('Failed to start test daemon:', err)
@@ -66,7 +66,7 @@ async function test_create_agent_with_permissions(): Promise<string> {
 
   // Create agent WITHOUT bypassPermissions - it will need to request permissions
   // Use a task that is very likely to trigger a tool use (and thus permission request)
-  const result = await ctx.paseo(
+  const result = await ctx.junction(
     [
       '-q',
       'agent',
@@ -107,7 +107,7 @@ async function test_wait_for_permission_request(agentId: string): Promise<void> 
   const startTime = Date.now()
 
   while (Date.now() - startTime < maxWait) {
-    const result = await ctx.paseo(['permit', 'ls', '--json'])
+    const result = await ctx.junction(['permit', 'ls', '--json'])
 
     if (result.exitCode === 0) {
       try {
@@ -132,7 +132,7 @@ async function test_wait_for_permission_request(agentId: string): Promise<void> 
   }
 
   // If we get here, check agent status - it might have already completed
-  const statusResult = await ctx.paseo(['inspect', agentId])
+  const statusResult = await ctx.junction(['inspect', agentId])
   console.log('Agent status:', statusResult.stdout)
 
   // It's possible the agent completed without needing permissions (e.g., haiku might not use tools)
@@ -148,7 +148,7 @@ async function test_wait_for_permission_request(agentId: string): Promise<void> 
 async function test_permit_ls(): Promise<{ agentShortId: string; requestId: string }> {
   console.log('\n--- Test: List pending permissions with permit ls ---')
 
-  const result = await ctx.paseo(['permit', 'ls', '--json'])
+  const result = await ctx.junction(['permit', 'ls', '--json'])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)
@@ -179,7 +179,7 @@ async function test_permit_ls(): Promise<{ agentShortId: string; requestId: stri
 async function test_permit_allow(agentShortId: string, requestId: string): Promise<void> {
   console.log('\n--- Test: Allow permission with permit allow ---')
 
-  const result = await ctx.paseo(['permit', 'allow', agentShortId, requestId])
+  const result = await ctx.junction(['permit', 'allow', agentShortId, requestId])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)
@@ -198,7 +198,7 @@ async function test_agent_continues(agentId: string): Promise<void> {
   console.log('\n--- Test: Verify agent continues after permission granted ---')
 
   // Wait for agent to become idle (should continue after permission)
-  const result = await ctx.paseo(['wait', '--timeout', '120s', agentId], { timeout: 130000 })
+  const result = await ctx.junction(['wait', '--timeout', '120s', agentId], { timeout: 130000 })
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)
@@ -207,7 +207,7 @@ async function test_agent_continues(agentId: string): Promise<void> {
   assert.strictEqual(result.exitCode, 0, 'agent wait should succeed after permission granted')
 
   // Verify agent status
-  const inspectResult = await ctx.paseo(['inspect', agentId])
+  const inspectResult = await ctx.junction(['inspect', agentId])
   console.log('Final agent status:', inspectResult.stdout)
 
   assert(inspectResult.stdout.includes('idle') || inspectResult.stdout.includes('completed'), 'Agent should be idle after completing')
@@ -218,7 +218,7 @@ async function test_agent_continues(agentId: string): Promise<void> {
 async function test_agent_stop(agentId: string): Promise<void> {
   console.log('\n--- Test: Stop agent ---')
 
-  const result = await ctx.paseo(['stop', agentId])
+  const result = await ctx.junction(['stop', agentId])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)

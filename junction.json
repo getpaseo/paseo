@@ -1,0 +1,15 @@
+{
+  "worktree": {
+    "setup": [
+      "npm ci",
+      "npm run build --workspace=@junction/relay",
+      "cp \"$JUNCTION_SOURCE_CHECKOUT_PATH/packages/server/.env\" \"$JUNCTION_WORKTREE_PATH/packages/server/.env\""
+    ],
+    "terminals": [
+      {
+        "name": "dev",
+        "command": "SESSION_NAME=\"${PWD##*/}\"; if ! tmux has-session -t \"$SESSION_NAME\" 2>/dev/null; then tmux new-session -d -s \"$SESSION_NAME\" -c \"$PWD\" \"npm run dev\"; fi"
+      }
+    ]
+  }
+}

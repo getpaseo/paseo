@@ -414,20 +414,8 @@ export type AgentStreamEventPayload = z.infer<typeof AgentStreamEventPayloadSche
 // Session Inbound Messages (Session receives these)
 // ============================================================================
 
-export const VoiceAudioChunkMessageSchema = z.object({
-  type: z.literal('voice_audio_chunk'),
-  audio: z.string(), // base64 encoded
-  format: z.string(),
-  isLast: z.boolean(),
-})
-
 export const AbortRequestMessageSchema = z.object({
   type: z.literal('abort_request'),
-})
-
-export const AudioPlayedMessageSchema = z.object({
-  type: z.literal('audio_played'),
-  id: z.string(),
 })
 
 const AgentDirectoryFilterSchema = z.object({
@@ -457,13 +445,6 @@ export const UpdateAgentRequestMessageSchema = z.object({
   name: z.string().optional(),
   labels: z.record(z.string()).optional(),
   requestId: z.string(),
-})
-
-export const SetVoiceModeMessageSchema = z.object({
-  type: z.literal('set_voice_mode'),
-  enabled: z.boolean(),
-  agentId: z.string().optional(),
-  requestId: z.string().optional(),
 })
 
 export const SendAgentMessageSchema = z.object({
@@ -543,34 +524,6 @@ export const WaitForFinishRequestSchema = z.object({
 })
 
 // ============================================================================
-// Dictation Streaming (lossless, resumable)
-// ============================================================================
-
-export const DictationStreamStartMessageSchema = z.object({
-  type: z.literal('dictation_stream_start'),
-  dictationId: z.string(),
-  format: z.string(), // e.g. "audio/pcm;rate=16000;bits=16"
-})
-
-export const DictationStreamChunkMessageSchema = z.object({
-  type: z.literal('dictation_stream_chunk'),
-  dictationId: z.string(),
-  seq: z.number().int().nonnegative(),
-  audio: z.string(), // base64 encoded chunk
-  format: z.string(), // e.g. "audio/pcm;rate=16000;bits=16"
-})
-
-export const DictationStreamFinishMessageSchema = z.object({
-  type: z.literal('dictation_stream_finish'),
-  dictationId: z.string(),
-  finalSeq: z.number().int().nonnegative(),
-})
-
-export const DictationStreamCancelMessageSchema = z.object({
-  type: z.literal('dictation_stream_cancel'),
-  dictationId: z.string(),
-})
-
 const GitSetupOptionsSchema = z.object({
   baseBranch: z.string().optional(),
   createNewBranch: z.boolean().optional(),
@@ -610,17 +563,6 @@ export const ListProviderModelsRequestMessageSchema = z.object({
 
 export const ListAvailableProvidersRequestMessageSchema = z.object({
   type: z.literal('list_available_providers_request'),
-  requestId: z.string(),
-})
-
-export const SpeechModelsListRequestSchema = z.object({
-  type: z.literal('speech_models_list_request'),
-  requestId: z.string(),
-})
-
-export const SpeechModelsDownloadRequestSchema = z.object({
-  type: z.literal('speech_models_download_request'),
-  modelIds: z.array(z.string()).optional(),
   requestId: z.string(),
 })
 
@@ -728,20 +670,6 @@ export const UpdateAgentResponseMessageSchema = z.object({
     agentId: z.string(),
     accepted: z.boolean(),
     error: z.string().nullable(),
-  }),
-})
-
-export const SetVoiceModeResponseMessageSchema = z.object({
-  type: z.literal('set_voice_mode_response'),
-  payload: z.object({
-    requestId: z.string(),
-    enabled: z.boolean(),
-    agentId: z.string().nullable(),
-    accepted: z.boolean(),
-    error: z.string().nullable(),
-    reasonCode: z.string().optional(),
-    retryable: z.boolean().optional(),
-    missingModelIds: z.array(z.string()).optional(),
   }),
 })
 
@@ -854,15 +782,15 @@ export const DirectorySuggestionsRequestSchema = z.object({
   requestId: z.string(),
 })
 
-export const PaseoWorktreeListRequestSchema = z.object({
-  type: z.literal('paseo_worktree_list_request'),
+export const JunctionWorktreeListRequestSchema = z.object({
+  type: z.literal('junction_worktree_list_request'),
   cwd: z.string().optional(),
   repoRoot: z.string().optional(),
   requestId: z.string(),
 })
 
-export const PaseoWorktreeArchiveRequestSchema = z.object({
-  type: z.literal('paseo_worktree_archive_request'),
+export const JunctionWorktreeArchiveRequestSchema = z.object({
+  type: z.literal('junction_worktree_archive_request'),
   worktreePath: z.string().optional(),
   repoRoot: z.string().optional(),
   branchName: z.string().optional(),
@@ -979,11 +907,6 @@ export const ListCommandsRequestSchema = z.object({
   requestId: z.string(),
 })
 
-export const RegisterPushTokenMessageSchema = z.object({
-  type: z.literal('register_push_token'),
-  token: z.string(),
-})
-
 // ============================================================================
 // Terminal Messages
 // ============================================================================
@@ -1062,26 +985,17 @@ export const DetachTerminalStreamRequestSchema = z.object({
 })
 
 export const SessionInboundMessageSchema = z.discriminatedUnion('type', [
-  VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
-  AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
   ArchiveAgentRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
-  SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
-  DictationStreamStartMessageSchema,
-  DictationStreamChunkMessageSchema,
-  DictationStreamFinishMessageSchema,
-  DictationStreamCancelMessageSchema,
   CreateAgentRequestMessageSchema,
   ListProviderModelsRequestMessageSchema,
   ListAvailableProvidersRequestMessageSchema,
-  SpeechModelsListRequestSchema,
-  SpeechModelsDownloadRequestSchema,
   ResumeAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
   CancelAgentRequestMessageSchema,
@@ -1104,8 +1018,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion('type', [
   ValidateBranchRequestSchema,
   BranchSuggestionsRequestSchema,
   DirectorySuggestionsRequestSchema,
-  PaseoWorktreeListRequestSchema,
-  PaseoWorktreeArchiveRequestSchema,
+  JunctionWorktreeListRequestSchema,
+  JunctionWorktreeArchiveRequestSchema,
   FileExplorerRequestSchema,
   ProjectIconRequestSchema,
   FileDownloadTokenRequestSchema,
@@ -1113,7 +1027,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion('type', [
   ClientHeartbeatMessageSchema,
   PingMessageSchema,
   ListCommandsRequestSchema,
-  RegisterPushTokenMessageSchema,
   ListTerminalsRequestSchema,
   SubscribeTerminalsRequestSchema,
   UnsubscribeTerminalsRequestSchema,
@@ -1152,93 +1065,13 @@ export const AssistantChunkMessageSchema = z.object({
   }),
 })
 
-export const AudioOutputMessageSchema = z.object({
-  type: z.literal('audio_output'),
-  payload: z.object({
-    audio: z.string(), // base64 encoded
-    format: z.string(),
-    id: z.string(),
-    isVoiceMode: z.boolean(), // Mode when audio was generated (for drift protection)
-    groupId: z.string().optional(), // Logical utterance id
-    chunkIndex: z.number().int().nonnegative().optional(),
-    isLastChunk: z.boolean().optional(),
-  }),
-})
-
-export const TranscriptionResultMessageSchema = z.object({
-  type: z.literal('transcription_result'),
-  payload: z.object({
-    text: z.string(),
-    language: z.string().optional(),
-    duration: z.number().optional(),
-    requestId: z.string(), // Echoed back from request for tracking
-    avgLogprob: z.number().optional(),
-    isLowConfidence: z.boolean().optional(),
-    byteLength: z.number().optional(),
-    format: z.string().optional(),
-    debugRecordingPath: z.string().optional(),
-  }),
-})
-
-export const DictationStreamAckMessageSchema = z.object({
-  type: z.literal('dictation_stream_ack'),
-  payload: z.object({
-    dictationId: z.string(),
-    ackSeq: z.number().int(),
-  }),
-})
-
-export const DictationStreamFinishAcceptedMessageSchema = z.object({
-  type: z.literal('dictation_stream_finish_accepted'),
-  payload: z.object({
-    dictationId: z.string(),
-    timeoutMs: z.number().int().positive(),
-  }),
-})
-
-export const DictationStreamPartialMessageSchema = z.object({
-  type: z.literal('dictation_stream_partial'),
-  payload: z.object({
-    dictationId: z.string(),
-    text: z.string(),
-  }),
-})
-
-export const DictationStreamFinalMessageSchema = z.object({
-  type: z.literal('dictation_stream_final'),
-  payload: z.object({
-    dictationId: z.string(),
-    text: z.string(),
-    debugRecordingPath: z.string().optional(),
-  }),
-})
-
-export const DictationStreamErrorMessageSchema = z.object({
-  type: z.literal('dictation_stream_error'),
-  payload: z.object({
-    dictationId: z.string(),
-    error: z.string(),
-    retryable: z.boolean(),
-    reasonCode: z.string().optional(),
-    missingModelIds: z.array(z.string()).optional(),
-    debugRecordingPath: z.string().optional(),
-  }),
-})
-
 export const ServerCapabilityStateSchema = z.object({
   enabled: z.boolean(),
   reason: z.string(),
 })
 
-export const ServerVoiceCapabilitiesSchema = z.object({
-  dictation: ServerCapabilityStateSchema,
-  voice: ServerCapabilityStateSchema,
-})
-
 export const ServerCapabilitiesSchema = z
-  .object({
-    voice: ServerVoiceCapabilitiesSchema.optional(),
-  })
+  .object({})
   .passthrough()
 
 const ServerInfoHostnameSchema = z.unknown().transform((value): string | null => {
@@ -1390,32 +1223,32 @@ export const ProjectCheckoutLiteNotGitPayloadSchema = z.object({
   isGit: z.literal(false),
   currentBranch: z.null(),
   remoteUrl: z.null(),
-  isPaseoOwnedWorktree: z.literal(false),
+  isJunctionOwnedWorktree: z.literal(false),
   mainRepoRoot: z.null(),
 })
 
-export const ProjectCheckoutLiteGitNonPaseoPayloadSchema = z.object({
+export const ProjectCheckoutLiteGitNonJunctionPayloadSchema = z.object({
   cwd: z.string(),
   isGit: z.literal(true),
   currentBranch: z.string().nullable(),
   remoteUrl: z.string().nullable(),
-  isPaseoOwnedWorktree: z.literal(false),
+  isJunctionOwnedWorktree: z.literal(false),
   mainRepoRoot: z.null(),
 })
 
-export const ProjectCheckoutLiteGitPaseoPayloadSchema = z.object({
+export const ProjectCheckoutLiteGitJunctionPayloadSchema = z.object({
   cwd: z.string(),
   isGit: z.literal(true),
   currentBranch: z.string().nullable(),
   remoteUrl: z.string().nullable(),
-  isPaseoOwnedWorktree: z.literal(true),
+  isJunctionOwnedWorktree: z.literal(true),
   mainRepoRoot: z.string(),
 })
 
 export const ProjectCheckoutLitePayloadSchema = z.union([
   ProjectCheckoutLiteNotGitPayloadSchema,
-  ProjectCheckoutLiteGitNonPaseoPayloadSchema,
-  ProjectCheckoutLiteGitPaseoPayloadSchema,
+  ProjectCheckoutLiteGitNonJunctionPayloadSchema,
+  ProjectCheckoutLiteGitJunctionPayloadSchema,
 ])
 
 export const ProjectPlacementPayloadSchema = z.object({
@@ -1604,7 +1437,7 @@ const CheckoutStatusCommonSchema = z.object({
 
 const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({
   isGit: z.literal(false),
-  isPaseoOwnedWorktree: z.literal(false),
+  isJunctionOwnedWorktree: z.literal(false),
   repoRoot: z.null(),
   currentBranch: z.null(),
   isDirty: z.null(),
@@ -1616,9 +1449,9 @@ const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({
   remoteUrl: z.null(),
 })
 
-const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
+const CheckoutStatusGitNonJunctionSchema = CheckoutStatusCommonSchema.extend({
   isGit: z.literal(true),
-  isPaseoOwnedWorktree: z.literal(false),
+  isJunctionOwnedWorktree: z.literal(false),
   repoRoot: z.string(),
   currentBranch: z.string().nullable(),
   isDirty: z.boolean(),
@@ -1630,9 +1463,9 @@ const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
   remoteUrl: z.string().nullable(),
 })
 
-const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
+const CheckoutStatusGitJunctionSchema = CheckoutStatusCommonSchema.extend({
   isGit: z.literal(true),
-  isPaseoOwnedWorktree: z.literal(true),
+  isJunctionOwnedWorktree: z.literal(true),
   repoRoot: z.string(),
   mainRepoRoot: z.string(),
   currentBranch: z.string().nullable(),
@@ -1649,8 +1482,8 @@ export const CheckoutStatusResponseSchema = z.object({
   type: z.literal('checkout_status_response'),
   payload: z.union([
     CheckoutStatusNotGitSchema,
-    CheckoutStatusGitNonPaseoSchema,
-    CheckoutStatusGitPaseoSchema,
+    CheckoutStatusGitNonJunctionSchema,
+    CheckoutStatusGitJunctionSchema,
   ]),
 })
 
@@ -1782,23 +1615,23 @@ export const DirectorySuggestionsResponseSchema = z.object({
   }),
 })
 
-const PaseoWorktreeSchema = z.object({
+const JunctionWorktreeSchema = z.object({
   worktreePath: z.string(),
   branchName: z.string().nullable().optional(),
   head: z.string().nullable().optional(),
 })
 
-export const PaseoWorktreeListResponseSchema = z.object({
-  type: z.literal('paseo_worktree_list_response'),
+export const JunctionWorktreeListResponseSchema = z.object({
+  type: z.literal('junction_worktree_list_response'),
   payload: z.object({
-    worktrees: z.array(PaseoWorktreeSchema),
+    worktrees: z.array(JunctionWorktreeSchema),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),
 })
 
-export const PaseoWorktreeArchiveResponseSchema = z.object({
-  type: z.literal('paseo_worktree_archive_response'),
+export const JunctionWorktreeArchiveResponseSchema = z.object({
+  type: z.literal('junction_worktree_archive_response'),
   payload: z.object({
     success: z.boolean(),
     removedAgents: z.array(z.string()).optional(),
@@ -1872,34 +1705,6 @@ export const ListAvailableProvidersResponseSchema = z.object({
     providers: z.array(ProviderAvailabilitySchema),
     error: z.string().nullable().optional(),
     fetchedAt: z.string(),
-    requestId: z.string(),
-  }),
-})
-
-export const SpeechModelsListResponseSchema = z.object({
-  type: z.literal('speech_models_list_response'),
-  payload: z.object({
-    modelsDir: z.string(),
-    models: z.array(
-      z.object({
-        id: z.string(),
-        kind: z.string(),
-        description: z.string(),
-        modelDir: z.string(),
-        isDownloaded: z.boolean(),
-        missingFiles: z.array(z.string()).optional(),
-      })
-    ),
-    requestId: z.string(),
-  }),
-})
-
-export const SpeechModelsDownloadResponseSchema = z.object({
-  type: z.literal('speech_models_download_response'),
-  payload: z.object({
-    modelsDir: z.string(),
-    downloadedModelIds: z.array(z.string()),
-    error: z.string().nullable(),
     requestId: z.string(),
   }),
 })
@@ -2036,13 +1841,6 @@ export const TerminalStreamExitSchema = z.object({
 export const SessionOutboundMessageSchema = z.discriminatedUnion('type', [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
-  AudioOutputMessageSchema,
-  TranscriptionResultMessageSchema,
-  DictationStreamAckMessageSchema,
-  DictationStreamFinishAcceptedMessageSchema,
-  DictationStreamPartialMessageSchema,
-  DictationStreamFinalMessageSchema,
-  DictationStreamErrorMessageSchema,
   StatusMessageSchema,
   PongMessageSchema,
   RpcErrorMessageSchema,
@@ -2054,7 +1852,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion('type', [
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
   SendAgentMessageResponseMessageSchema,
-  SetVoiceModeResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
@@ -2076,15 +1873,13 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion('type', [
   ValidateBranchResponseSchema,
   BranchSuggestionsResponseSchema,
   DirectorySuggestionsResponseSchema,
-  PaseoWorktreeListResponseSchema,
-  PaseoWorktreeArchiveResponseSchema,
+  JunctionWorktreeListResponseSchema,
+  JunctionWorktreeArchiveResponseSchema,
   FileExplorerResponseSchema,
   ProjectIconResponseSchema,
   FileDownloadTokenResponseSchema,
   ListProviderModelsResponseMessageSchema,
   ListAvailableProvidersResponseSchema,
-  SpeechModelsListResponseSchema,
-  SpeechModelsDownloadResponseSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,
@@ -2102,11 +1897,8 @@ export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema
 // Type exports for individual message types
 export type ActivityLogMessage = z.infer<typeof ActivityLogMessageSchema>
 export type AssistantChunkMessage = z.infer<typeof AssistantChunkMessageSchema>
-export type AudioOutputMessage = z.infer<typeof AudioOutputMessageSchema>
-export type TranscriptionResultMessage = z.infer<typeof TranscriptionResultMessageSchema>
 export type StatusMessage = z.infer<typeof StatusMessageSchema>
 export type ServerCapabilityState = z.infer<typeof ServerCapabilityStateSchema>
-export type ServerVoiceCapabilities = z.infer<typeof ServerVoiceCapabilitiesSchema>
 export type ServerCapabilities = z.infer<typeof ServerCapabilitiesSchema>
 export type ServerInfoStatusPayload = z.infer<typeof ServerInfoStatusPayloadSchema>
 export type RpcErrorMessage = z.infer<typeof RpcErrorMessageSchema>
@@ -2122,7 +1914,6 @@ export type FetchAgentTimelineResponseMessage = z.infer<
   typeof FetchAgentTimelineResponseMessageSchema
 >
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>
-export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>
 export type WaitForFinishResponseMessage = z.infer<typeof WaitForFinishResponseMessageSchema>
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>
@@ -2132,22 +1923,14 @@ export type ListProviderModelsResponseMessage = z.infer<
   typeof ListProviderModelsResponseMessageSchema
 >
 export type ListAvailableProvidersResponse = z.infer<typeof ListAvailableProvidersResponseSchema>
-export type SpeechModelsListResponse = z.infer<typeof SpeechModelsListResponseSchema>
-export type SpeechModelsDownloadResponse = z.infer<typeof SpeechModelsDownloadResponseSchema>
-
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>
 
 // Type exports for inbound message types
-export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>
-export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMessageSchema>
-export type DictationStreamChunkMessage = z.infer<typeof DictationStreamChunkMessageSchema>
-export type DictationStreamFinishMessage = z.infer<typeof DictationStreamFinishMessageSchema>
-export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelMessageSchema>
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>
 export type ListProviderModelsRequestMessage = z.infer<
   typeof ListProviderModelsRequestMessageSchema
@@ -2155,8 +1938,6 @@ export type ListProviderModelsRequestMessage = z.infer<
 export type ListAvailableProvidersRequestMessage = z.infer<
   typeof ListAvailableProvidersRequestMessageSchema
 >
-export type SpeechModelsListRequestMessage = z.infer<typeof SpeechModelsListRequestSchema>
-export type SpeechModelsDownloadRequestMessage = z.infer<typeof SpeechModelsDownloadRequestSchema>
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>
@@ -2188,10 +1969,10 @@ export type BranchSuggestionsRequest = z.infer<typeof BranchSuggestionsRequestSc
 export type BranchSuggestionsResponse = z.infer<typeof BranchSuggestionsResponseSchema>
 export type DirectorySuggestionsRequest = z.infer<typeof DirectorySuggestionsRequestSchema>
 export type DirectorySuggestionsResponse = z.infer<typeof DirectorySuggestionsResponseSchema>
-export type PaseoWorktreeListRequest = z.infer<typeof PaseoWorktreeListRequestSchema>
-export type PaseoWorktreeListResponse = z.infer<typeof PaseoWorktreeListResponseSchema>
-export type PaseoWorktreeArchiveRequest = z.infer<typeof PaseoWorktreeArchiveRequestSchema>
-export type PaseoWorktreeArchiveResponse = z.infer<typeof PaseoWorktreeArchiveResponseSchema>
+export type JunctionWorktreeListRequest = z.infer<typeof JunctionWorktreeListRequestSchema>
+export type JunctionWorktreeListResponse = z.infer<typeof JunctionWorktreeListResponseSchema>
+export type JunctionWorktreeArchiveRequest = z.infer<typeof JunctionWorktreeArchiveRequestSchema>
+export type JunctionWorktreeArchiveResponse = z.infer<typeof JunctionWorktreeArchiveResponseSchema>
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>
 export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>
@@ -2205,7 +1986,6 @@ export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessa
 export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema>
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>
 export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>
-export type RegisterPushTokenMessage = z.infer<typeof RegisterPushTokenMessageSchema>
 
 // Terminal message types
 export type ListTerminalsRequest = z.infer<typeof ListTerminalsRequestSchema>
@@ -2246,11 +2026,9 @@ export const WSHelloMessageSchema = z.object({
   clientId: z.string().min(1),
   clientType: z.enum(['mobile', 'browser', 'cli', 'mcp']),
   protocolVersion: z.number().int(),
+  token: z.string().optional(),
   capabilities: z
-    .object({
-      voice: z.boolean().optional(),
-      pushNotifications: z.boolean().optional(),
-    })
+    .object({})
     .passthrough()
     .optional(),
 })
@@ -2262,11 +2040,6 @@ export const WSWelcomeMessageSchema = z.object({
   version: z.string().nullable(),
   resumed: z.boolean(),
   capabilities: ServerCapabilitiesSchema.optional(),
-})
-
-export const WSRecordingStateMessageSchema = z.object({
-  type: z.literal('recording_state'),
-  isRecording: z.boolean(),
 })
 
 // Wrapped session message
@@ -2284,7 +2057,6 @@ export const WSSessionOutboundSchema = z.object({
 export const WSInboundMessageSchema = z.discriminatedUnion('type', [
   WSPingMessageSchema,
   WSHelloMessageSchema,
-  WSRecordingStateMessageSchema,
   WSSessionInboundSchema,
 ])
 
@@ -2311,7 +2083,7 @@ export function extractSessionMessage(wsMsg: WSInboundMessage): SessionInboundMe
   if (wsMsg.type === 'session') {
     return wsMsg.message
   }
-  // Ping and recording_state are WS-level only
+  // Ping is WS-level only
   return null
 }
 

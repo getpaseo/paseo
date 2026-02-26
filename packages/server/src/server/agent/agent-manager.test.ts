@@ -295,29 +295,29 @@ describe("AgentManager", () => {
       cwd: workdir,
       systemPrompt: "new prompt",
       mcpServers: {
-        paseo: {
+        junction: {
           type: "stdio",
           command: "node",
-          args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
+          args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/junction.sock"],
         },
       },
     });
 
     expect(resumed.config.systemPrompt).toBe("new prompt");
     expect(resumed.config.mcpServers).toEqual({
-      paseo: {
+      junction: {
         type: "stdio",
         command: "node",
-        args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
+        args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/junction.sock"],
       },
     });
     expect(client.lastResumeOverrides).toMatchObject({
       systemPrompt: "new prompt",
       mcpServers: {
-        paseo: {
+        junction: {
           type: "stdio",
           command: "node",
-          args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
+          args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/junction.sock"],
         },
       },
     });

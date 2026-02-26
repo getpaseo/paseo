@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestJunctionDaemon } from "../test-utils/junction-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
 import { getFullAccessConfig } from "./agent-configs.js";
@@ -21,7 +21,7 @@ describe("daemon E2E (real codex) - send while running recovery", () => {
     async () => {
       const logger = pino({ level: "silent" });
       const cwd = tmpCwd();
-      const daemon = await createTestPaseoDaemon({
+      const daemon = await createTestJunctionDaemon({
         agentClients: { codex: new CodexAppServerAgentClient(logger) },
         logger,
       });

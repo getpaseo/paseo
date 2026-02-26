@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
 import { AgentProviderRuntimeSettingsMapSchema } from "./agent/provider-launch-config.js";
 
 const LogConfigSchema = z
@@ -19,66 +18,9 @@ const ProviderCredentialsSchema = z
   })
   .strict();
 
-const LocalSpeechProviderSchema = z
-  .object({
-    modelsDir: z.string().min(1).optional(),
-  })
-  .strict();
-
 const ProvidersSchema = z
   .object({
     openai: ProviderCredentialsSchema.optional(),
-    local: LocalSpeechProviderSchema.optional(),
-  })
-  .strict();
-
-const SpeechProviderIdSchema = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .pipe(z.enum(["openai", "local"]));
-
-const FeatureDictationSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    stt: z
-      .object({
-        provider: SpeechProviderIdSchema.optional(),
-        model: z.string().min(1).optional(),
-        confidenceThreshold: z.number().optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-
-const FeatureVoiceModeSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    llm: z
-      .object({
-        provider: z.enum(AGENT_PROVIDER_IDS as [string, ...string[]]).optional(),
-        model: z.string().min(1).optional(),
-      })
-      .strict()
-      .optional(),
-    stt: z
-      .object({
-        provider: SpeechProviderIdSchema.optional(),
-        model: z.string().min(1).optional(),
-      })
-      .strict()
-      .optional(),
-    tts: z
-      .object({
-        provider: SpeechProviderIdSchema.optional(),
-        model: z.string().min(1).optional(),
-        voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).optional(),
-        speakerId: z.number().int().optional(),
-        speed: z.number().optional(),
-      })
-      .strict()
-      .optional(),
   })
   .strict();
 
@@ -130,13 +72,6 @@ export const PersistedConfigSchema = z
       })
       .strict()
       .optional(),
-    features: z
-      .object({
-        dictation: FeatureDictationSchema.optional(),
-        voiceMode: FeatureVoiceModeSchema.optional(),
-      })
-      .strict()
-      .optional(),
 
     log: LogConfigSchema.optional(),
   })
@@ -150,14 +85,14 @@ const DEFAULT_PERSISTED_CONFIG: PersistedConfig = PersistedConfigSchema.parse({
   daemon: {
     listen: "127.0.0.1:6767",
     cors: {
-      allowedOrigins: ["https://app.paseo.sh"],
+      allowedOrigins: ["https://app.junction.sh"],
     },
     relay: {
       enabled: true,
     },
   },
   app: {
-    baseUrl: "https://app.paseo.sh",
+    baseUrl: "https://app.junction.sh",
   },
 });
 
@@ -166,48 +101,20 @@ type LoggerLike = {
   info(...args: any[]): void;
 };
 
-function getConfigPath(paseoHome: string): string {
-  return path.join(paseoHome, CONFIG_FILENAME);
+function getConfigPath(junctionHome: string): string {
+  return path.join(junctionHome, CONFIG_FILENAME);
 }
 
 function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
   return logger?.child({ module: "config" });
 }
 
-function stripDeprecatedLocalSpeechConfigFields(parsed: unknown): unknown {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return parsed;
-  }
-
-  const root = { ...(parsed as Record<string, unknown>) };
-  const providers = root.providers;
-  if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
-    return root;
-  }
-
-  const providersRecord = { ...(providers as Record<string, unknown>) };
-  const local = providersRecord.local;
-  if (!local || typeof local !== "object" || Array.isArray(local)) {
-    root.providers = providersRecord;
-    return root;
-  }
-
-  const localRecord = { ...(local as Record<string, unknown>) };
-  if ("autoDownload" in localRecord) {
-    delete localRecord.autoDownload;
-  }
-
-  providersRecord.local = localRecord;
-  root.providers = providersRecord;
-  return root;
-}
-
 export function loadPersistedConfig(
-  paseoHome: string,
+  junctionHome: string,
   logger?: LoggerLike
 ): PersistedConfig {
   const log = getLogger(logger);
-  const configPath = getConfigPath(paseoHome);
+  const configPath = getConfigPath(junctionHome);
 
   if (!existsSync(configPath)) {
     try {
@@ -236,8 +143,7 @@ export function loadPersistedConfig(
     throw new Error(`[Config] Invalid JSON in ${configPath}: ${message}`);
   }
 
-  const migrated = stripDeprecatedLocalSpeechConfigFields(parsed);
-  const result = PersistedConfigSchema.safeParse(migrated);
+  const result = PersistedConfigSchema.safeParse(parsed);
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
@@ -250,12 +156,12 @@ export function loadPersistedConfig(
 }
 
 export function savePersistedConfig(
-  paseoHome: string,
+  junctionHome: string,
   config: PersistedConfig,
   logger?: LoggerLike
 ): void {
   const log = getLogger(logger);
-  const configPath = getConfigPath(paseoHome);
+  const configPath = getConfigPath(junctionHome);
 
   const result = PersistedConfigSchema.safeParse(config);
   if (!result.success) {

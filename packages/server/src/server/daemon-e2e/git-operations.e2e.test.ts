@@ -385,7 +385,7 @@ describe("daemon E2E", () => {
 
   describe("worktree setup", () => {
     test(
-      "runs paseo.json setup asynchronously and reports status via timeline tool_call",
+      "runs junction.json setup asynchronously and reports status via timeline tool_call",
       async () => {
         const repoRoot = tmpCwd();
 
@@ -406,13 +406,13 @@ describe("daemon E2E", () => {
         execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
 
         const setupCommand =
-          'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"';
+          'while [ ! -f "$JUNCTION_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$JUNCTION_WORKTREE_PATH/setup-done.txt"';
         writeFileSync(
-          path.join(repoRoot, "paseo.json"),
+          path.join(repoRoot, "junction.json"),
           JSON.stringify({ worktree: { setup: [setupCommand] } })
         );
-        execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
-        execSync("git -c commit.gpgsign=false commit -m 'add paseo.json'", {
+        execSync("git add junction.json", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'add junction.json'", {
           cwd: repoRoot,
           stdio: "pipe",
         });
@@ -436,7 +436,7 @@ describe("daemon E2E", () => {
           label: "createAgent should not block on setup",
         });
 
-        expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
+        expect(agent.cwd).toContain(path.join(".junction", "worktrees"));
         expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(false);
 
         writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
@@ -444,7 +444,7 @@ describe("daemon E2E", () => {
         const completed = await waitForTimelineToolCall(
           collector.messages,
           agent.id,
-          (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
+          (item) => item.name === "junction_worktree_setup" && item.status === "completed",
           20000
         );
 
@@ -485,9 +485,9 @@ describe("daemon E2E", () => {
           execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
 
           const setupCommand =
-            'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"; echo "$PASEO_WORKTREE_PORT" > "$PASEO_WORKTREE_PATH/setup-port.txt"';
+            'while [ ! -f "$JUNCTION_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$JUNCTION_WORKTREE_PATH/setup-done.txt"; echo "$JUNCTION_WORKTREE_PORT" > "$JUNCTION_WORKTREE_PATH/setup-port.txt"';
           writeFileSync(
-            path.join(repoRoot, "paseo.json"),
+            path.join(repoRoot, "junction.json"),
             JSON.stringify({
               worktree: {
                 setup: [setupCommand],
@@ -503,7 +503,7 @@ describe("daemon E2E", () => {
               },
             })
           );
-          execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+          execSync("git add junction.json", { cwd: repoRoot, stdio: "pipe" });
           execSync("git -c commit.gpgsign=false commit -m 'add setup and terminals'", {
             cwd: repoRoot,
             stdio: "pipe",
@@ -528,7 +528,7 @@ describe("daemon E2E", () => {
             label: "createAgent should not block on setup",
           });
 
-          expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
+          expect(agent.cwd).toContain(path.join(".junction", "worktrees"));
           expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(false);
           expect(existsSync(path.join(agent.cwd, "dev-terminal.txt"))).toBe(false);
           expect(existsSync(path.join(agent.cwd, "lint-terminal.txt"))).toBe(false);
@@ -538,13 +538,13 @@ describe("daemon E2E", () => {
           await waitForTimelineToolCall(
             collector.messages,
             agent.id,
-            (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
+            (item) => item.name === "junction_worktree_setup" && item.status === "completed",
             20000
           );
           const terminalsBootstrapToolCall = await waitForTimelineToolCall(
             collector.messages,
             agent.id,
-            (item) => item.name === "paseo_worktree_terminals" && item.status === "completed",
+            (item) => item.name === "junction_worktree_terminals" && item.status === "completed",
             30000
           );
           const bootstrappedTerminals = getWorktreeTerminalBootstrapEntries(
@@ -579,7 +579,7 @@ describe("daemon E2E", () => {
           }
           ctx.client.sendTerminalInput(manualTerminalId, {
             type: "input",
-            data: 'echo "$PASEO_WORKTREE_PORT" > "$PASEO_WORKTREE_PATH/manual-terminal-port.txt"\r',
+            data: 'echo "$JUNCTION_WORKTREE_PORT" > "$JUNCTION_WORKTREE_PATH/manual-terminal-port.txt"\r',
           });
           await waitForPathExists({
             targetPath: path.join(agent.cwd, "manual-terminal-port.txt"),
@@ -621,9 +621,9 @@ describe("daemon E2E", () => {
         execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
 
         const setupCommand =
-          'echo "started" > "$PASEO_WORKTREE_PATH/setup-start.txt"; sleep 0.1; echo "boom" 1>&2; exit 7';
+          'echo "started" > "$JUNCTION_WORKTREE_PATH/setup-start.txt"; sleep 0.1; echo "boom" 1>&2; exit 7';
         writeFileSync(
-          path.join(repoRoot, "paseo.json"),
+          path.join(repoRoot, "junction.json"),
           JSON.stringify({
             worktree: {
               setup: [setupCommand],
@@ -636,7 +636,7 @@ describe("daemon E2E", () => {
             },
           })
         );
-        execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git add junction.json", { cwd: repoRoot, stdio: "pipe" });
         execSync("git -c commit.gpgsign=false commit -m 'add failing setup'", {
           cwd: repoRoot,
           stdio: "pipe",
@@ -661,13 +661,13 @@ describe("daemon E2E", () => {
           label: "createAgent should not block on failing setup",
         });
 
-        expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
+        expect(agent.cwd).toContain(path.join(".junction", "worktrees"));
         expect(existsSync(agent.cwd)).toBe(true);
 
         const started = await waitForTimelineToolCall(
           collector.messages,
           agent.id,
-          (item) => item.name === "paseo_worktree_setup" && item.status === "running",
+          (item) => item.name === "junction_worktree_setup" && item.status === "running",
           10000
         );
 
@@ -675,7 +675,7 @@ describe("daemon E2E", () => {
           collector.messages,
           agent.id,
           (item) =>
-            item.name === "paseo_worktree_setup" &&
+            item.name === "junction_worktree_setup" &&
             item.callId === started.callId &&
             item.status === "failed",
           20000
@@ -700,7 +700,7 @@ describe("daemon E2E", () => {
 
   describe("createAgent with worktree", () => {
     test(
-      "creates agent in ~/.paseo/worktrees/{hash} when worktree is requested",
+      "creates agent in ~/.junction/worktrees/{hash} when worktree is requested",
       async () => {
         const cwd = tmpCwd();
         const projectHash = await deriveWorktreeProjectHash(cwd);
@@ -738,7 +738,7 @@ describe("daemon E2E", () => {
         expect(realpathSync(agent.cwd)).toBe(
           realpathSync(
             path.join(
-              ctx.daemon.paseoHome,
+              ctx.daemon.junctionHome,
               "worktrees",
               projectHash,
               "worktree-test"
@@ -754,7 +754,7 @@ describe("daemon E2E", () => {
     );
   });
 
-  describe("archivePaseoWorktree", () => {
+  describe("archiveJunctionWorktree", () => {
     test(
       "archives worktree by running destroy commands and shutting down worktree terminals",
       async () => {
@@ -778,7 +778,7 @@ describe("daemon E2E", () => {
 
         const destroyMarkerPath = path.join(repoRoot, "destroy-marker.txt");
         writeFileSync(
-          path.join(repoRoot, "paseo.json"),
+          path.join(repoRoot, "junction.json"),
           JSON.stringify({
             worktree: {
               terminals: [
@@ -788,12 +788,12 @@ describe("daemon E2E", () => {
                 },
               ],
               destroy: [
-                `echo "$PASEO_WORKTREE_PATH" > "${destroyMarkerPath}"`,
+                `echo "$JUNCTION_WORKTREE_PATH" > "${destroyMarkerPath}"`,
               ],
             },
           })
         );
-        execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git add junction.json", { cwd: repoRoot, stdio: "pipe" });
         execSync("git -c commit.gpgsign=false commit -m 'add worktree terminal + destroy'", {
           cwd: repoRoot,
           stdio: "pipe",
@@ -827,7 +827,7 @@ describe("daemon E2E", () => {
         const beforeArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
         expect(beforeArchiveDirectories).toContain(agent.cwd);
 
-        const archive = await ctx.client.archivePaseoWorktree({
+        const archive = await ctx.client.archiveJunctionWorktree({
           worktreePath: agent.cwd,
         });
         expect(archive.error).toBeNull();

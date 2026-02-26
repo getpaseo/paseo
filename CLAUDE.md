@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Paseo is a mobile app for monitoring and controlling your local AI coding agents from anywhere. Your dev environment, in your pocket.
+Junction is a mobile app for monitoring and controlling your local AI coding agents from anywhere. Your dev environment, in your pocket.
 
 **Key features:**
 - Real-time streaming of agent output
@@ -12,7 +12,7 @@ Paseo is a mobile app for monitoring and controlling your local AI coding agents
 - Push notifications when tasks complete
 - Multi-agent orchestration across projects
 
-**Not a cloud sandbox** - Paseo connects directly to your actual development environment. Your code stays on your machine.
+**Not a cloud sandbox** - Junction connects directly to your actual development environment. Your code stays on your machine.
 
 **Supported agents:** Claude Code, Codex, and OpenCode.
 
@@ -20,22 +20,22 @@ Paseo is a mobile app for monitoring and controlling your local AI coding agents
 
 This is an npm workspace monorepo:
 
-- **packages/server**: The Paseo daemon that runs on your machine. Manages agent processes, provides WebSocket API for real-time streaming, and exposes an MCP server for agent control.
+- **packages/server**: The Junction daemon that runs on your machine. Manages agent processes, provides WebSocket API for real-time streaming, and exposes an MCP server for agent control.
 - **packages/app**: Cross-platform client (Expo). Connects to one or more servers, displays agent output, handles voice input, and sends push notifications.
-- **packages/cli**: The `paseo` CLI that is used to manage the deamon, and acts as a client to it with  Docker-style commands like `paseo run/ls/logs/wait`
-- **packages/website**: Marketing site at paseo.sh (TanStack Router + Cloudflare Workers).
+- **packages/cli**: The `junction` CLI that is used to manage the deamon, and acts as a client to it with  Docker-style commands like `junction run/ls/logs/wait`
+- **packages/website**: Marketing site at junction.sh (TanStack Router + Cloudflare Workers).
 
 ## Development Server
 
 The `npm run dev` script automatically picks an available port for the development server.
 
-When running in a worktree or alongside the main checkout, set `PASEO_HOME` to isolate state:
+When running in a worktree or alongside the main checkout, set `JUNCTION_HOME` to isolate state:
 
 ```bash
-PASEO_HOME=~/.paseo-blue npm run dev
+JUNCTION_HOME=~/.junction-blue npm run dev
 ```
 
-- `PASEO_HOME` – path for runtime state (agent data, sockets, etc.). Defaults to `~/.paseo`; set this to a unique directory when running a secondary server instance.
+- `JUNCTION_HOME` – path for runtime state (agent data, sockets, etc.). Defaults to `~/.junction`; set this to a unique directory when running a secondary server instance.
 
 ## Running and checking logs
 
@@ -45,14 +45,14 @@ Both the server and Expo app are running in a Tmux session. See CLAUDE.local.md 
 
 ### Daemon and CLI
 
-The Paseo daemon communicates via WebSocket. In the main checkout:
+The Junction daemon communicates via WebSocket. In the main checkout:
 - Daemon runs at `localhost:6767`
 - Expo app at `localhost:8081`
-- State lives in `$PASEO_HOME`
+- State lives in `$JUNCTION_HOME`
 
 In worktrees or when running `npm run dev`, ports and home directories may differ. Never assume the defaults.
 
-Use `npm run cli` to run the local CLI (instead of the globally linked `paseo` which points to the main checkout). Always run `npm run cli -- --help` or load the `/paseo` skill before using it - do not guess commands.
+Use `npm run cli` to run the local CLI (instead of the globally linked `junction` which points to the main checkout). Always run `npm run cli -- --help` or load the `/junction` skill before using it - do not guess commands.
 
 Use `--host <host:port>` to point the CLI at a different daemon (e.g., `--host localhost:7777`).
 
@@ -61,20 +61,20 @@ Use `--host <host:port>` to point the CLI at a different daemon (e.g., `--host l
 When changing `packages/relay/src/*`, rebuild relay before running/debugging the daemon:
 
 ```bash
-npm run build --workspace=@getpaseo/relay
+npm run build --workspace=@junction/relay
 ```
 
-Reason: Node daemon imports `@getpaseo/relay` from `packages/relay/dist/*` (`node` export path), not directly from `src/*`.
+Reason: Node daemon imports `@junction/relay` from `packages/relay/dist/*` (`node` export path), not directly from `src/*`.
 
 ### Server build sync for CLI (important)
 
 When changing `packages/server/src/client/*` (especially `daemon-client.ts`) or shared WS protocol types, rebuild server before running/debugging CLI commands:
 
 ```bash
-npm run build --workspace=@getpaseo/server
+npm run build --workspace=@junction/server
 ```
 
-Reason: local CLI imports `@getpaseo/server` via package exports that resolve to `packages/server/dist/*` first. If `dist` is stale, CLI can speak an old protocol (for example, sending `session` before `hello`) and fail with handshake warnings/timeouts.
+Reason: local CLI imports `@junction/server` via package exports that resolve to `packages/server/dist/*` first. If `dist` is stale, CLI can speak an old protocol (for example, sending `session` before `hello`) and fail with handshake warnings/timeouts.
 
 ### Quick reference CLI commands
 
@@ -90,18 +90,18 @@ npm run cli -- daemon status         # Check daemon status
 
 Agent data is stored at:
 ```
-$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json
+$JUNCTION_HOME/agents/{cwd-with-dashes}/{agent-id}.json
 ```
 
 To find an agent by ID:
 ```bash
-find $PASEO_HOME/agents -name "{agent-id}.json"
+find $JUNCTION_HOME/agents -name "{agent-id}.json"
 ```
 
 To find an agent by title or other content:
 ```bash
-rg -l "some title text" $PASEO_HOME/agents/
-rg -l "spiteful-toad" $PASEO_HOME/agents/
+rg -l "some title text" $JUNCTION_HOME/agents/
+rg -l "spiteful-toad" $JUNCTION_HOME/agents/
 ```
 
 ### Provider session files
@@ -126,8 +126,8 @@ Take screenshots like this: `adb exec-out screencap -p > screenshot.png`
 
 Use `APP_VARIANT` in `packages/app/app.config.js` to control app name + package ID (no custom Gradle flavor plugin):
 
-- `production` -> app name `Paseo`, package `sh.paseo`
-- `development` -> app name `Paseo Debug`, package `sh.paseo.debug`
+- `production` -> app name `Junction`, package `sh.junction`
+- `development` -> app name `Junction Debug`, package `sh.junction.debug`
 
 EAS profiles live in `packages/app/eas.json` as `development`, `production`, and `production-apk`.
 
@@ -207,16 +207,16 @@ npm run release:push       # pushes HEAD and current version tag (triggers deskt
 ```
 
 Notes:
-- `version:all:*` bumps the root package version and runs the root `version` lifecycle script to sync workspace versions and internal `@getpaseo/*` dependency versions before the release commit/tag is created.
+- `version:all:*` bumps the root package version and runs the root `version` lifecycle script to sync workspace versions and internal `@junction/*` dependency versions before the release commit/tag is created.
 - `release:prepare` refreshes workspace `node_modules` links to prevent stale local package types during release checks.
 - If `release:publish` fails after a successful publish of one workspace, re-run `npm run release:publish`; npm will skip already-published versions and continue where possible.
-- If a user asks to "release paseo" (without specifying major/minor), treat it as a patch release and run `npm run release:patch`.
+- If a user asks to "release junction" (without specifying major/minor), treat it as a patch release and run `npm run release:patch`.
 - All workspaces share one version by design. Keep versions synchronized and release together.
 - The website Mac download CTA URL is derived from `packages/website/package.json` version at build time, so no manual update is required after release.
 
 Release completion checklist:
 - Manually update CHANGELOG.md with release notes, between current release vs previous one, use Git commands to figure out what changed. The notes are user-facing:
-    - Ask yourself, what do Paseo users want to know about?
+    - Ask yourself, what do Junction users want to know about?
     - Include: New features, bug fixes
     - Don't include: Refactors or code changes that are not noticeable by users
 - `npm run release:patch` completes successfully.
@@ -235,12 +235,12 @@ Release completion checklist:
 
 ## Agent Authentication
 
-All agent providers (Claude, Codex, OpenCode) handle their own authentication outside of environment variables. They are authenticated without providing any extra configuration—Paseo does not manage API keys or tokens for agents.
+All agent providers (Claude, Codex, OpenCode) handle their own authentication outside of environment variables. They are authenticated without providing any extra configuration—Junction does not manage API keys or tokens for agents.
 
 **Do not add auth checks to tests.** If auth fails for whatever reason, let the user know instead of patching the code or adding conditional skips.
 
 ## NEVER DO THESE THINGS
 
-- **NEVER restart the main Paseo daemon on port 6767 without permission** - This is the production daemon that launches and manages agents. If you are reading this, you are probably running as an agent under it. Restarting it will kill your own process and all other running agents. The daemon is managed by the user in Tmux.
+- **NEVER restart the main Junction daemon on port 6767 without permission** - This is the production daemon that launches and manages agents. If you are reading this, you are probably running as an agent under it. Restarting it will kill your own process and all other running agents. The daemon is managed by the user in Tmux.
 - **NEVER assume a timeout means the service needs restarting** - Timeouts can be transient network issues, not service failures
 - **NEVER add authentication checks to tests** - Agent providers handle their own auth. If tests fail due to auth issues, report it rather than adding conditional skips or env var checks

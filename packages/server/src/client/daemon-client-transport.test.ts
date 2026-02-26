@@ -11,7 +11,7 @@ import {
 
 const createClientChannelMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@getpaseo/relay/e2ee", () => ({
+vi.mock("@junction/relay/e2ee", () => ({
   createClientChannel: createClientChannelMock,
 }));
 

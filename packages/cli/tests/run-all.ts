@@ -1,7 +1,7 @@
 #!/usr/bin/env npx zx
 
 /**
- * Test runner for Paseo CLI E2E tests
+ * Test runner for Junction CLI E2E tests
  *
  * Runs all test phases in sequence and reports results.
  * Each test is a separate .ts file that can also be run independently.
@@ -15,9 +15,9 @@ import { fileURLToPath } from 'url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const args = process.argv.slice(2)
 const testEnvDefaults = {
-  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
-  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? '0',
-  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? '0',
+  JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
+  JUNCTION_DICTATION_ENABLED: process.env.JUNCTION_DICTATION_ENABLED ?? '0',
+  JUNCTION_VOICE_MODE_ENABLED: process.env.JUNCTION_VOICE_MODE_ENABLED ?? '0',
 }
 
 let jsonOutputPath: string | null = null
@@ -36,7 +36,7 @@ for (let i = 0; i < args.length; i++) {
 
 $.verbose = false
 
-console.log('🧪 Paseo CLI E2E Test Runner\n')
+console.log('🧪 Junction CLI E2E Test Runner\n')
 console.log('='.repeat(50))
 
 // Discover all test files
@@ -53,7 +53,7 @@ if (testFiles.length === 0) {
       JSON.stringify(
         {
           suite: 'cli-local',
-          command: 'npm run test:local --workspace=@getpaseo/cli',
+          command: 'npm run test:local --workspace=@junction/cli',
           counts: {
             passed: 0,
             failed: 0,
@@ -90,7 +90,7 @@ for (const testFile of testFiles) {
   console.log('─'.repeat(50))
 
   try {
-    const result = await $`PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnvDefaults.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnvDefaults.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnvDefaults.PASEO_VOICE_MODE_ENABLED} npx tsx ${testPath}`.nothrow()
+    const result = await $`JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnvDefaults.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD} JUNCTION_DICTATION_ENABLED=${testEnvDefaults.JUNCTION_DICTATION_ENABLED} JUNCTION_VOICE_MODE_ENABLED=${testEnvDefaults.JUNCTION_VOICE_MODE_ENABLED} npx tsx ${testPath}`.nothrow()
     if (result.exitCode === 0) {
       console.log(`\n✅ ${testName} PASSED`)
       passed++
@@ -137,7 +137,7 @@ if (jsonOutputPath) {
     JSON.stringify(
       {
         suite: 'cli-local',
-        command: 'npm run test:local --workspace=@getpaseo/cli',
+        command: 'npm run test:local --workspace=@junction/cli',
         counts: {
           passed,
           failed,

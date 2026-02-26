@@ -29,7 +29,7 @@ export type AgentMetadataGenerationOptions = {
   cwd: string;
   initialPrompt?: string | null;
   explicitTitle?: string | null;
-  paseoHome?: string;
+  junctionHome?: string;
   logger: Logger;
   deps?: AgentMetadataGeneratorDeps;
 };
@@ -54,17 +54,17 @@ function normalizeAutoTitle(title: string): string | null {
 
 async function canRenameBranch(
   cwd: string,
-  paseoHome: string | undefined,
+  junctionHome: string | undefined,
   getCheckoutStatusImpl: typeof getCheckoutStatus
 ): Promise<boolean> {
   let status: CheckoutStatusResult;
   try {
-    status = await getCheckoutStatusImpl(cwd, { paseoHome });
+    status = await getCheckoutStatusImpl(cwd, { junctionHome });
   } catch {
     return false;
   }
 
-  if (!status.isGit || !status.isPaseoOwnedWorktree) {
+  if (!status.isGit || !status.isJunctionOwnedWorktree) {
     return false;
   }
 
@@ -77,7 +77,7 @@ async function canRenameBranch(
 }
 
 export async function determineAgentMetadataNeeds(
-  options: Pick<AgentMetadataGenerationOptions, "initialPrompt" | "explicitTitle" | "cwd" | "paseoHome" | "deps">
+  options: Pick<AgentMetadataGenerationOptions, "initialPrompt" | "explicitTitle" | "cwd" | "junctionHome" | "deps">
 ): Promise<AgentMetadataNeeds> {
   const prompt = options.initialPrompt?.trim();
   if (!prompt) {
@@ -88,7 +88,7 @@ export async function determineAgentMetadataNeeds(
   const getCheckoutStatusImpl = options.deps?.getCheckoutStatus ?? getCheckoutStatus;
   const needsBranch = await canRenameBranch(
     options.cwd,
-    options.paseoHome,
+    options.junctionHome,
     getCheckoutStatusImpl
   );
 
@@ -217,7 +217,7 @@ export async function generateAndApplyAgentMetadata(
 
     let status: CheckoutStatusResult;
     try {
-      status = await getCheckoutStatusImpl(options.cwd, { paseoHome: options.paseoHome });
+      status = await getCheckoutStatusImpl(options.cwd, { junctionHome: options.junctionHome });
     } catch (error) {
       options.logger.warn(
         { err: error, agentId: options.agentId },
@@ -226,7 +226,7 @@ export async function generateAndApplyAgentMetadata(
       return;
     }
 
-    if (!status.isGit || !status.isPaseoOwnedWorktree || !status.currentBranch) {
+    if (!status.isGit || !status.isJunctionOwnedWorktree || !status.currentBranch) {
       return;
     }
 

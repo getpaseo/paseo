@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { createRootLogger } from "../src/server/logger.js";
-import { resolvePaseoHome } from "../src/server/paseo-home.js";
+import { resolveJunctionHome } from "../src/server/junction-home.js";
 import { float32ToPcm16le, parsePcmRateFromFormat } from "../src/server/speech/audio.js";
 import {
   ensureLocalSpeechModels,
@@ -17,7 +17,7 @@ import {
 import { loadSherpaOnnxNode } from "../src/server/speech/providers/local/sherpa/sherpa-onnx-node-loader.js";
 
 const DEFAULT_SAMPLE_TEXT =
-  "Paseo keeps your coding agents in your pocket, with fast local speech and reliable remote control.";
+  "Junction keeps your coding agents in your pocket, with fast local speech and reliable remote control.";
 
 type ScriptOptions = {
   modelsDir: string;
@@ -61,13 +61,13 @@ function parsePositiveNumber(raw: string, flag: string): number {
 }
 
 function parseArgs(argv: string[]): ScriptOptions {
-  const paseoHome = resolvePaseoHome();
+  const junctionHome = resolveJunctionHome();
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 
-  let modelsDir = process.env.PASEO_LOCAL_MODELS_DIR ?? `${paseoHome}/models/local-speech`;
+  let modelsDir = process.env.JUNCTION_LOCAL_MODELS_DIR ?? `${junctionHome}/models/local-speech`;
   let outputDir = path.resolve(process.cwd(), ".debug", "sherpa-tts-matrix", timestamp);
   let text = DEFAULT_SAMPLE_TEXT;
-  let speed = parsePositiveNumber(process.env.PASEO_VOICE_LOCAL_TTS_SPEED ?? "1.0", "--speed");
+  let speed = parsePositiveNumber(process.env.JUNCTION_VOICE_LOCAL_TTS_SPEED ?? "1.0", "--speed");
   const requestedModelIds: LocalTtsModelId[] = [];
 
   for (let i = 0; i < argv.length; i += 1) {

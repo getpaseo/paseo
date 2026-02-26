@@ -513,12 +513,12 @@ describe("codex tool-call mapper", () => {
     }
   });
 
-  it("normalizes codex paseo speak mcp calls and extracts spoken text", () => {
+  it("normalizes codex junction speak mcp calls and extracts spoken text", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "mcpToolCall",
       id: "codex-speak-thread-1",
       status: "completed",
-      server: "paseo",
+      server: "junction",
       tool: "speak",
       arguments: { text: "Voice response from Codex." },
       result: { ok: true },
@@ -533,11 +533,11 @@ describe("codex tool-call mapper", () => {
     });
   });
 
-  it("normalizes codex paseo speak rollout names and extracts spoken text", () => {
+  it("normalizes codex junction speak rollout names and extracts spoken text", () => {
     const item = expectMapped(
       mapCodexRolloutToolCall({
         callId: "codex-speak-rollout-1",
-        name: "paseo.speak",
+        name: "junction.speak",
         input: { text: "Rollout speech text." },
         output: { ok: true },
       })

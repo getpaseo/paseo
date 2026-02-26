@@ -7,8 +7,8 @@ describe("resolveLogConfig", () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    delete process.env.PASEO_LOG;
-    delete process.env.PASEO_LOG_FORMAT;
+    delete process.env.JUNCTION_LOG;
+    delete process.env.JUNCTION_LOG_FORMAT;
   });
 
   afterEach(() => {
@@ -31,8 +31,8 @@ describe("resolveLogConfig", () => {
     expect(result).toEqual({ level: "debug", format: "json" });
   });
 
-  it("uses env PASEO_LOG over config.json level", () => {
-    process.env.PASEO_LOG = "warn";
+  it("uses env JUNCTION_LOG over config.json level", () => {
+    process.env.JUNCTION_LOG = "warn";
     const config: PersistedConfig = {
       log: {
         level: "debug",
@@ -43,8 +43,8 @@ describe("resolveLogConfig", () => {
     expect(result).toEqual({ level: "warn", format: "json" });
   });
 
-  it("uses env PASEO_LOG_FORMAT over config.json format", () => {
-    process.env.PASEO_LOG_FORMAT = "pretty";
+  it("uses env JUNCTION_LOG_FORMAT over config.json format", () => {
+    process.env.JUNCTION_LOG_FORMAT = "pretty";
     const config: PersistedConfig = {
       log: {
         level: "debug",
@@ -56,8 +56,8 @@ describe("resolveLogConfig", () => {
   });
 
   it("env vars override both config.json and defaults", () => {
-    process.env.PASEO_LOG = "error";
-    process.env.PASEO_LOG_FORMAT = "json";
+    process.env.JUNCTION_LOG = "error";
+    process.env.JUNCTION_LOG_FORMAT = "json";
     const config: PersistedConfig = {
       log: {
         level: "info",
@@ -101,7 +101,7 @@ describe("resolveLogConfig", () => {
       ["trace", "debug", "info", "warn", "error", "fatal"];
 
     for (const level of levels) {
-      process.env.PASEO_LOG = level;
+      process.env.JUNCTION_LOG = level;
       const result = resolveLogConfig(undefined);
       expect(result.level).toBe(level);
     }

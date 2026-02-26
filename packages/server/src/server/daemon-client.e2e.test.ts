@@ -20,8 +20,8 @@ import {
 const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
 
 const localModelsDir =
-  process.env.PASEO_LOCAL_MODELS_DIR ??
-  path.join(homedir(), ".paseo", "models", "local-speech");
+  process.env.JUNCTION_LOCAL_MODELS_DIR ??
+  path.join(homedir(), ".junction", "models", "local-speech");
 
 function hasSherpaZipformerModels(modelsDir: string): boolean {
   return (
@@ -113,13 +113,13 @@ describe("daemon client E2E", () => {
                 modelsDir: localModelsDir,
                 models: {
                   dictationStt:
-                    process.env.PASEO_DICTATION_LOCAL_STT_MODEL ??
+                    process.env.JUNCTION_DICTATION_LOCAL_STT_MODEL ??
                     "zipformer-bilingual-zh-en-2023-02-20",
                   voiceStt:
-                    process.env.PASEO_VOICE_LOCAL_STT_MODEL ??
+                    process.env.JUNCTION_VOICE_LOCAL_STT_MODEL ??
                     "zipformer-bilingual-zh-en-2023-02-20",
                   voiceTts:
-                    process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
+                    process.env.JUNCTION_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
                 },
               },
             }
@@ -256,8 +256,8 @@ describe("daemon client E2E", () => {
   }, 30000);
 
   test("returns home-scoped directory suggestions", async () => {
-    const insideHomeDir = mkdtempSync(path.join(homedir(), "paseo-dir-suggestion-"));
-    const outsideHomeDir = mkdtempSync(path.join(tmpdir(), "paseo-dir-suggestion-outside-"));
+    const insideHomeDir = mkdtempSync(path.join(homedir(), "junction-dir-suggestion-"));
+    const outsideHomeDir = mkdtempSync(path.join(tmpdir(), "junction-dir-suggestion-outside-"));
 
     try {
       const insideQuery = path.basename(insideHomeDir);

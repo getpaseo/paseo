@@ -4,7 +4,6 @@ import { createAgentCommand } from './commands/agent/index.js'
 import { createDaemonCommand } from './commands/daemon/index.js'
 import { createPermitCommand } from './commands/permit/index.js'
 import { createProviderCommand } from './commands/provider/index.js'
-import { createSpeechCommand } from './commands/speech/index.js'
 import { createWorktreeCommand } from './commands/worktree/index.js'
 import { startCommand as daemonStartCommand } from './commands/daemon/start.js'
 import { runStatusCommand as runDaemonStatusCommand } from './commands/daemon/status.js'
@@ -32,7 +31,7 @@ function resolveCliVersion(): string {
   if (typeof packageJson.version === 'string' && packageJson.version.trim().length > 0) {
     return packageJson.version.trim()
   }
-  throw new Error('Unable to resolve @getpaseo/cli version from package.json.')
+  throw new Error('Unable to resolve @junction/cli version from package.json.')
 }
 
 const VERSION = resolveCliVersion()
@@ -46,8 +45,8 @@ export function createCli(): Command {
   const program = new Command()
 
   program
-    .name('paseo')
-    .description('Paseo CLI - control your AI coding agents from the command line')
+    .name('junction')
+    .description('Junction CLI - control your AI coding agents from the command line')
     .version(VERSION, '-v, --version', 'output the version number')
     // Global output options
     .option('-o, --format <format>', 'output format: table, json, yaml', 'table')
@@ -151,8 +150,8 @@ export function createCli(): Command {
 
   program
     .command('update')
-    .description('Update local daemon package (alias for "paseo daemon update")')
-    .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
+    .description('Update local daemon package (alias for "junction daemon update")')
+    .option('--home <path>', 'Junction home directory (default: ~/.junction)')
     .option('-y, --yes', 'Restart automatically after update')
     .action(async (options: { home?: string; yes?: boolean }) => {
       await runDaemonUpdateCommandOrExit(options)
@@ -160,16 +159,16 @@ export function createCli(): Command {
 
   program
     .command('status')
-    .description('Show local daemon status (alias for "paseo daemon status")')
+    .description('Show local daemon status (alias for "junction daemon status")')
     .option('--json', 'Output in JSON format')
-    .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
+    .option('--home <path>', 'Junction home directory (default: ~/.junction)')
     .action(withOutput(runDaemonStatusCommand))
 
   program
     .command('restart')
-    .description('Restart local daemon (alias for "paseo daemon restart")')
+    .description('Restart local daemon (alias for "junction daemon restart")')
     .option('--json', 'Output in JSON format')
-    .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
+    .option('--home <path>', 'Junction home directory (default: ~/.junction)')
     .option('--timeout <seconds>', 'Wait timeout before force step (default: 15)')
     .option('--force', 'Send SIGKILL if graceful stop times out')
     .option('--listen <listen>', 'Listen target for restarted daemon (host:port, port, or unix socket)')
@@ -193,9 +192,6 @@ export function createCli(): Command {
 
   // Provider commands
   program.addCommand(createProviderCommand())
-
-  // Speech model commands
-  program.addCommand(createSpeechCommand())
 
   // Worktree commands
   program.addCommand(createWorktreeCommand())

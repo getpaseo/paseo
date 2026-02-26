@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { STTManager } from "../src/server/agent/stt-manager.js";
 import { createRootLogger } from "../src/server/logger.js";
-import { resolvePaseoHome } from "../src/server/paseo-home.js";
+import { resolveJunctionHome } from "../src/server/junction-home.js";
 import {
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
@@ -29,7 +29,7 @@ function usage(): string {
     "  npm run speech:transcribe:local -- ./sample.wav --out ./tmp/sample.transcript.txt",
     "",
     "Env fallbacks:",
-    "  PASEO_LOCAL_MODELS_DIR, PASEO_LOCAL_STT_MODEL",
+    "  JUNCTION_LOCAL_MODELS_DIR, JUNCTION_LOCAL_STT_MODEL",
   ].join("\n");
 }
 
@@ -43,13 +43,13 @@ function parseArgs(argv: string[]): CliOptions {
     throw new Error(`Missing <wavPath>\n\n${usage()}`);
   }
 
-  const paseoHome = resolvePaseoHome();
+  const junctionHome = resolveJunctionHome();
   const defaultModelsDir =
-    process.env.PASEO_LOCAL_MODELS_DIR ?? path.join(paseoHome, "models", "local-speech");
+    process.env.JUNCTION_LOCAL_MODELS_DIR ?? path.join(junctionHome, "models", "local-speech");
 
   const positional: string[] = [];
   let outPath: string | undefined;
-  let model = LocalSttModelIdSchema.parse(process.env.PASEO_LOCAL_STT_MODEL ?? DEFAULT_LOCAL_STT_MODEL);
+  let model = LocalSttModelIdSchema.parse(process.env.JUNCTION_LOCAL_STT_MODEL ?? DEFAULT_LOCAL_STT_MODEL);
   let modelsDir = defaultModelsDir;
 
   for (let i = 0; i < argv.length; i++) {

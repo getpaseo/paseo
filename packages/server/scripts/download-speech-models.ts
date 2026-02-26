@@ -1,4 +1,4 @@
-import { resolvePaseoHome } from "../src/server/paseo-home.js";
+import { resolveJunctionHome } from "../src/server/junction-home.js";
 import { createRootLogger } from "../src/server/logger.js";
 import {
   DEFAULT_LOCAL_STT_MODEL,
@@ -8,8 +8,8 @@ import {
 } from "../src/server/speech/providers/local/models.js";
 
 function parseArgs(argv: string[]): { modelsDir: string; modelIds: LocalSpeechModelId[] } {
-  const home = resolvePaseoHome();
-  let modelsDir = process.env.PASEO_LOCAL_MODELS_DIR || `${home}/models/local-speech`;
+  const home = resolveJunctionHome();
+  let modelsDir = process.env.JUNCTION_LOCAL_MODELS_DIR || `${home}/models/local-speech`;
   const modelIds: LocalSpeechModelId[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -31,8 +31,8 @@ function parseArgs(argv: string[]): { modelsDir: string; modelIds: LocalSpeechMo
   }
 
   if (modelIds.length === 0) {
-    const stt = (process.env.PASEO_LOCAL_STT_MODEL || DEFAULT_LOCAL_STT_MODEL) as LocalSpeechModelId;
-    const tts = (process.env.PASEO_LOCAL_TTS_MODEL || DEFAULT_LOCAL_TTS_MODEL) as LocalSpeechModelId;
+    const stt = (process.env.JUNCTION_LOCAL_STT_MODEL || DEFAULT_LOCAL_STT_MODEL) as LocalSpeechModelId;
+    const tts = (process.env.JUNCTION_LOCAL_TTS_MODEL || DEFAULT_LOCAL_TTS_MODEL) as LocalSpeechModelId;
     modelIds.push(stt, tts);
   }
 

@@ -32,13 +32,13 @@ describe("codex agent commands E2E", () => {
     mkdirSync(skillsDir, { recursive: true });
     writeFileSync(
       path.join(promptsDir, "hello.md"),
-      ["---", "description: Test prompt", "argument-hint: NAME=<name>", "---", "", "Say hello to $NAME and then output exactly PASEO_OK.", ""].join("\n"),
+      ["---", "description: Test prompt", "argument-hint: NAME=<name>", "---", "", "Say hello to $NAME and then output exactly JUNCTION_OK.", ""].join("\n"),
       "utf8"
     );
     mkdirSync(path.join(skillsDir, "my-skill"), { recursive: true });
     writeFileSync(
       path.join(skillsDir, "my-skill", "SKILL.md"),
-      ["---", "name: my-skill", "description: Test skill", "user-invocable: true", "---", "", "When invoked, respond with exactly PASEO_SKILL_OK.", ""].join("\n"),
+      ["---", "name: my-skill", "description: Test skill", "user-invocable: true", "---", "", "When invoked, respond with exactly JUNCTION_SKILL_OK.", ""].join("\n"),
       "utf8"
     );
     process.env.CODEX_HOME = codexHome;
@@ -82,10 +82,10 @@ describe("codex agent commands E2E", () => {
 
     const promptsDir = path.join(codexHome, "prompts");
     mkdirSync(promptsDir, { recursive: true });
-    const promptPath = path.join(promptsDir, "paseo-test-sayok.md");
+    const promptPath = path.join(promptsDir, "junction-test-sayok.md");
     writeFileSync(
       promptPath,
-      ["---", "description: Say OK", "argument-hint: NAME=<name>", "---", "", "Output exactly: PASEO_OK $NAME", ""].join("\n"),
+      ["---", "description: Say OK", "argument-hint: NAME=<name>", "---", "", "Output exactly: JUNCTION_OK $NAME", ""].join("\n"),
       "utf8"
     );
 
@@ -97,12 +97,12 @@ describe("codex agent commands E2E", () => {
 
     await ctx.client.sendMessage(
       agent.id,
-      "/prompts:paseo-test-sayok NAME=world"
+      "/prompts:junction-test-sayok NAME=world"
     );
     const state = await ctx.client.waitForFinish(agent.id, 30_000);
 
     expect(state.status).toBe("idle");
-    expect(state.lastMessage).toContain("PASEO_OK");
+    expect(state.lastMessage).toContain("JUNCTION_OK");
 
     rmSync(promptPath, { force: true });
   }, 30_000);
@@ -113,8 +113,8 @@ describe("codex agent commands E2E", () => {
     const promptsDir = path.join(codexHome, "prompts");
     mkdirSync(promptsDir, { recursive: true });
     writeFileSync(
-      path.join(promptsDir, "paseo-test-sayok.md"),
-      ["---", "description: Say OK", "---", "", "Output exactly: PASEO_OK", ""].join("\n"),
+      path.join(promptsDir, "junction-test-sayok.md"),
+      ["---", "description: Say OK", "---", "", "Output exactly: JUNCTION_OK", ""].join("\n"),
       "utf8"
     );
     process.env.CODEX_HOME = codexHome;
@@ -126,11 +126,11 @@ describe("codex agent commands E2E", () => {
         title: "Codex Command Route Test",
       });
 
-      await ctx.client.sendMessage(agent.id, "/prompts:paseo-test-sayok NAME=world");
+      await ctx.client.sendMessage(agent.id, "/prompts:junction-test-sayok NAME=world");
       const state = await ctx.client.waitForFinish(agent.id, 30_000);
 
       expect(state.status).toBe("idle");
-      expect(state.lastMessage).toContain("PASEO_OK paseo-test-sayok");
+      expect(state.lastMessage).toContain("JUNCTION_OK junction-test-sayok");
     } finally {
       if (prevCodexHome === undefined) {
         delete process.env.CODEX_HOME;
@@ -157,7 +157,7 @@ describe("codex agent commands E2E", () => {
 
     expect(state.status).toBe("idle");
     expect(state.lastMessage).toContain(token);
-    expect(state.lastMessage).not.toContain("PASEO_SKILL_OK");
+    expect(state.lastMessage).not.toContain("JUNCTION_SKILL_OK");
   }, 30_000);
 
   test("returns error for non-existent agent", async () => {

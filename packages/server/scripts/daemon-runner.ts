@@ -2,9 +2,9 @@ import { fileURLToPath } from "url";
 import { existsSync } from "node:fs";
 import { loadConfig } from "../src/server/config.js";
 import { acquirePidLock, PidLockError, releasePidLock } from "../src/server/pid-lock.js";
-import { resolvePaseoHome } from "../src/server/paseo-home.js";
+import { resolveJunctionHome } from "../src/server/junction-home.js";
 import { runSupervisor } from "./supervisor.js";
-import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
+
 
 type DaemonRunnerConfig = {
   devMode: boolean;
@@ -60,16 +60,14 @@ async function main(): Promise<void> {
   const workerEntry = config.devMode ? resolveDevWorkerEntry() : resolveWorkerEntry();
   const workerEnv: NodeJS.ProcessEnv = {
     ...process.env,
-    PASEO_PID_LOCK_MODE: "external",
+    JUNCTION_PID_LOCK_MODE: "external",
   };
 
-  applySherpaLoaderEnv(workerEnv);
-
-  const paseoHome = resolvePaseoHome(workerEnv);
-  const daemonConfig = loadConfig(paseoHome, { env: workerEnv });
+  const junctionHome = resolveJunctionHome(workerEnv);
+  const daemonConfig = loadConfig(junctionHome, { env: workerEnv });
 
   try {
-    await acquirePidLock(paseoHome, daemonConfig.listen, {
+    await acquirePidLock(junctionHome, daemonConfig.listen, {
       ownerPid: process.pid,
     });
   } catch (error) {
@@ -87,7 +85,7 @@ async function main(): Promise<void> {
       return;
     }
     lockReleased = true;
-    await releasePidLock(paseoHome, {
+    await releasePidLock(junctionHome, {
       ownerPid: process.pid,
     });
   };

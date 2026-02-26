@@ -6,8 +6,8 @@ import type {
   DaemonClient,
   AgentStreamMessage,
   AgentTimelineItem,
-} from '@getpaseo/server'
-import { curateAgentActivity } from '@getpaseo/server'
+} from '@junction/server'
+import { curateAgentActivity } from '@junction/server'
 
 export interface AgentLogsOptions extends CommandOptions {
   follow?: boolean
@@ -84,7 +84,7 @@ export async function runLogsCommand(
 
   if (!id) {
     console.error('Error: Agent ID required')
-    console.error('Usage: paseo agent logs <id>')
+    console.error('Usage: junction agent logs <id>')
     process.exit(1)
   }
 
@@ -94,7 +94,7 @@ export async function runLogsCommand(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`Error: Cannot connect to daemon at ${host}: ${message}`)
-    console.error('Start the daemon with: paseo daemon start')
+    console.error('Start the daemon with: junction daemon start')
     process.exit(1)
   }
 
@@ -102,7 +102,7 @@ export async function runLogsCommand(
     const fetchResult = await client.fetchAgent(id)
     if (!fetchResult) {
       console.error(`Error: No agent found matching: ${id}`)
-      console.error('Use `paseo ls` to list available agents')
+      console.error('Use `junction ls` to list available agents')
       await client.close()
       process.exit(1)
     }

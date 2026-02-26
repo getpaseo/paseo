@@ -41,7 +41,7 @@ export async function runDaemonUpdateCommand(options: DaemonUpdateOptions): Prom
     fallbackNodePath: process.execPath,
   })
   const npm: NpmInvocation = resolveNpmInvocationFromNode(resolvedNode.nodePath)
-  const args = [...npm.argsPrefix, 'install', '-g', '@getpaseo/cli@latest']
+  const args = [...npm.argsPrefix, 'install', '-g', '@junction/cli@latest']
 
   const exitCode = await runCommand(npm.command, args)
   if (exitCode !== 0) {
@@ -52,7 +52,7 @@ export async function runDaemonUpdateCommand(options: DaemonUpdateOptions): Prom
   if (!shouldRestart) {
     if (!process.stdin.isTTY || !process.stdout.isTTY) {
       console.log(chalk.yellow('Update complete. Restart skipped (non-interactive terminal).'))
-      console.log(chalk.dim('Run `paseo daemon restart` when ready.'))
+      console.log(chalk.dim('Run `junction daemon restart` when ready.'))
       return
     }
 
@@ -97,7 +97,7 @@ export async function runDaemonUpdateCommandOrExit(options: DaemonUpdateOptions)
 export function updateCommand(): Command {
   return new Command('update')
     .description('Update local daemon package')
-    .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
+    .option('--home <path>', 'Junction home directory (default: ~/.junction)')
     .option('-y, --yes', 'Restart automatically after update')
     .action(async (options: DaemonUpdateOptions) => {
       await runDaemonUpdateCommandOrExit(options)

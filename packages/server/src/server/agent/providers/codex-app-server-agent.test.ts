@@ -490,7 +490,7 @@ describe("Codex app-server provider (integration)", () => {
           },
         },
         mcpServers: {
-          paseo_test: {
+          junction_test: {
             type: "stdio",
             command: process.execPath,
             args: [mcpScriptPath],
@@ -500,7 +500,7 @@ describe("Codex app-server provider (integration)", () => {
 
       const result = await session.run(
         [
-          "You must call the MCP tool named paseo_test.paseo_roundtrip_text exactly once.",
+          "You must call the MCP tool named junction_test.junction_roundtrip_text exactly once.",
           `Call it with text: ${token}`,
           "Do not use shell or any non-MCP tools.",
           "After the tool call, respond with exactly the tool output text.",
@@ -513,10 +513,10 @@ describe("Codex app-server provider (integration)", () => {
           item.type === "tool_call"
       );
       const toolNames = toolCalls.map((item) => item.name);
-      const nonMcpToolNames = toolNames.filter((name) => name !== "paseo_test.paseo_roundtrip_text");
+      const nonMcpToolNames = toolNames.filter((name) => name !== "junction_test.junction_roundtrip_text");
       const distinctMcpCalls = new Map<string, Extract<AgentTimelineItem, { type: "tool_call" }>>();
       for (const call of toolCalls) {
-        if (call.name !== "paseo_test.paseo_roundtrip_text") {
+        if (call.name !== "junction_test.junction_roundtrip_text") {
           continue;
         }
         const key = String(call.callId ?? `${call.name}:${JSON.stringify(call.detail)}`);
@@ -529,7 +529,7 @@ describe("Codex app-server provider (integration)", () => {
       // Hard assertion: exactly one distinct call of the exact MCP tool.
       if (nonMcpToolNames.length > 0) {
         const nonMcpCalls = toolCalls
-          .filter((call) => call.name !== "paseo_test.paseo_roundtrip_text")
+          .filter((call) => call.name !== "junction_test.junction_roundtrip_text")
           .map((call) => ({
             name: call.name,
             status: call.status,
@@ -541,7 +541,7 @@ describe("Codex app-server provider (integration)", () => {
       }
       expect(distinctMcpCalls.size).toBe(1);
       const mcpToolCall = Array.from(distinctMcpCalls.values())[0]!;
-      expect(mcpToolCall.name).toBe("paseo_test.paseo_roundtrip_text");
+      expect(mcpToolCall.name).toBe("junction_test.junction_roundtrip_text");
       expect(mcpToolCall.status).toBe("completed");
 
       // Hard assertion: no non-MCP tools in this run.
@@ -565,10 +565,10 @@ describe("Codex app-server provider (integration)", () => {
       const cleanup = useTempCodexSessionDir();
       const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
       const promptsDir = path.join(codexHome, "prompts");
-      const promptName = `paseo-test-${process.pid}-${Date.now().toString(36)}`;
+      const promptName = `junction-test-${process.pid}-${Date.now().toString(36)}`;
       const promptPath = path.join(promptsDir, `${promptName}.md`);
       const cwd = tmpCwd("codex-cmd-");
-      const token = `PASEO_PROMPT_TOKEN_${Date.now()}`;
+      const token = `JUNCTION_PROMPT_TOKEN_${Date.now()}`;
 
       mkdirSync(promptsDir, { recursive: true });
       writeFileSync(
@@ -643,10 +643,10 @@ describe("Codex app-server provider (integration)", () => {
       const cleanup = useTempCodexSessionDir();
       const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
       const promptsDir = path.join(codexHome, "prompts");
-      const promptName = `paseo-stream-${process.pid}-${Date.now().toString(36)}`;
+      const promptName = `junction-stream-${process.pid}-${Date.now().toString(36)}`;
       const promptPath = path.join(promptsDir, `${promptName}.md`);
       const cwd = tmpCwd("codex-cmd-stream-");
-      const token = `PASEO_STREAM_TOKEN_${Date.now()}`;
+      const token = `JUNCTION_STREAM_TOKEN_${Date.now()}`;
 
       mkdirSync(promptsDir, { recursive: true });
       writeFileSync(
@@ -1287,7 +1287,7 @@ describe("Codex app-server provider (integration)", () => {
           originalHandler?.(method, params);
         });
 
-        const marker = "PASEO_COMMAND_DEDUPE_CHECK_4D0E96C8";
+        const marker = "JUNCTION_COMMAND_DEDUPE_CHECK_4D0E96C8";
         const shellCalls: Array<{
           callId: string;
           status: string;

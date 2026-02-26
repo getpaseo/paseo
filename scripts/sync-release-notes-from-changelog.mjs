@@ -148,7 +148,7 @@ function main() {
     );
   }
 
-  const tempDir = mkdtempSync(path.join(tmpdir(), "paseo-release-notes-"));
+  const tempDir = mkdtempSync(path.join(tmpdir(), "junction-release-notes-"));
   const notesPath = path.join(tempDir, `${targetTag}-notes.md`);
   writeFileSync(notesPath, targetEntry.notes);
 
@@ -182,7 +182,7 @@ function main() {
         "--repo",
         args.repo,
         "--title",
-        `Paseo ${targetTag}`,
+        `Junction ${targetTag}`,
         "--notes-file",
         notesPath,
         "--verify-tag",

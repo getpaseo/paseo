@@ -1,9 +1,9 @@
 /**
  * Agent Management MCP Server
  *
- * Purpose: Managing agents from the UI/voice assistant LLM
- * Transport: In-memory (runs in-process with the voice assistant LLM)
- * Server name: "paseo-agent-management"
+ * Purpose: Managing agents from the UI or orchestrator LLM
+ * Transport: In-memory (runs in-process with the orchestrator LLM)
+ * Server name: "junction-agent-management"
  *
  * Tools:
  * - create_agent
@@ -18,7 +18,7 @@
  * - list_pending_permissions
  * - respond_to_permission
  *
- * No callerAgentId needed - voice assistant is not an agent.
+ * No callerAgentId needed - orchestrator is not an agent.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -64,7 +64,7 @@ export interface AgentManagementMcpOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager?: TerminalManager | null;
-  paseoHome?: string;
+  junctionHome?: string;
   logger: Logger;
 }
 
@@ -226,7 +226,7 @@ export async function createAgentManagementMcpServer(
   const waitTracker = new WaitForAgentTracker(logger);
 
   const server = new McpServer({
-    name: "paseo-agent-management",
+    name: "junction-agent-management",
     version: "1.0.0",
   });
 
@@ -334,7 +334,7 @@ export async function createAgentManagementMcpServer(
           cwd: resolvedCwd,
           baseBranch,
           worktreeSlug: worktreeName,
-          paseoHome: options.paseoHome,
+          junctionHome: options.junctionHome,
         });
         resolvedCwd = worktree.worktreePath;
         worktreeConfig = worktree;
@@ -378,7 +378,7 @@ export async function createAgentManagementMcpServer(
           cwd: snapshot.cwd,
           initialPrompt: trimmedPrompt,
           explicitTitle: normalizedTitle ?? undefined,
-          paseoHome: options.paseoHome,
+          junctionHome: options.junctionHome,
           logger: childLogger,
         });
 

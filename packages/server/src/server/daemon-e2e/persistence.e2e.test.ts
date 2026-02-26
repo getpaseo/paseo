@@ -82,11 +82,11 @@ describe("daemon E2E - persistence", () => {
     "timeline survives daemon restart",
     async () => {
       const cwd = tmpCwd();
-      const paseoHomeRoot = mkdtempSync(path.join(tmpdir(), "paseo-home-root-"));
+      const junctionHomeRoot = mkdtempSync(path.join(tmpdir(), "junction-home-root-"));
       try {
         // Start daemon with a stable on-disk home so "restart" can observe persisted timeline.
         await ctx.cleanup();
-        ctx = await createDaemonTestContext({ paseoHomeRoot, cleanup: false });
+        ctx = await createDaemonTestContext({ junctionHomeRoot, cleanup: false });
         unsubscribe?.();
         messages = [];
         unsubscribe = ctx.client.subscribeRawMessages((message) => {
@@ -108,7 +108,7 @@ describe("daemon E2E - persistence", () => {
         expect(afterMessage.final?.persistence).toBeTruthy();
 
         await ctx.cleanup();
-        ctx = await createDaemonTestContext({ paseoHomeRoot, cleanup: false });
+        ctx = await createDaemonTestContext({ junctionHomeRoot, cleanup: false });
         unsubscribe?.();
         messages = [];
         unsubscribe = ctx.client.subscribeRawMessages((message) => {
@@ -127,7 +127,7 @@ describe("daemon E2E - persistence", () => {
         await ctx.cleanup();
         cleaned = true;
         rmSync(cwd, { recursive: true, force: true });
-        rmSync(paseoHomeRoot, { recursive: true, force: true });
+        rmSync(junctionHomeRoot, { recursive: true, force: true });
       }
     },
     30_000

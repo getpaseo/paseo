@@ -8,7 +8,7 @@ import { Writable } from "node:stream";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestJunctionDaemon } from "../test-utils/junction-daemon.js";
 
 function createCapturingLogger() {
   const lines: string[] = [];
@@ -70,11 +70,11 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
   });
 
   test("emits relay-only offer URL with stable serverId", async () => {
-    process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+    process.env.JUNCTION_PRIMARY_LAN_IP = "192.168.1.12";
 
     const { logger, lines } = createCapturingLogger();
 
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestJunctionDaemon({
       listen: "0.0.0.0",
       logger,
       relayEnabled: true,
@@ -82,7 +82,7 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
 
     try {
       const offerUrl = parseOfferUrlFromLogs(lines);
-      expect(offerUrl.startsWith("https://app.paseo.sh/#offer=")).toBe(true);
+      expect(offerUrl.startsWith("https://app.junction.sh/#offer=")).toBe(true);
 
       const offer = decodeOfferFromFragmentUrl(offerUrl) as {
         v: number;
@@ -95,7 +95,7 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
       expect(typeof offer.serverId).toBe("string");
       expect(offer.serverId.length).toBeGreaterThan(0);
       expect(offer.serverId.startsWith("srv_")).toBe(true);
-      expect(offer.relay.endpoint).toBe("relay.paseo.sh:443");
+      expect(offer.relay.endpoint).toBe("relay.junction.sh:443");
       expect(typeof offer.daemonPublicKeyB64).toBe("string");
       expect(offer.daemonPublicKeyB64.length).toBeGreaterThan(0);
       expect(() => Buffer.from(offer.daemonPublicKeyB64, "base64")).not.toThrow();
@@ -107,16 +107,16 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
   });
 
   test("persists serverId and daemon keypair across daemon restarts", async () => {
-    process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+    process.env.JUNCTION_PRIMARY_LAN_IP = "192.168.1.12";
 
-    const tempHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-offer-home-"));
+    const tempHomeRoot = await mkdtemp(path.join(os.tmpdir(), "junction-offer-home-"));
 
     const { logger: logger1, lines: lines1 } = createCapturingLogger();
-    const daemon1 = await createTestPaseoDaemon({
+    const daemon1 = await createTestJunctionDaemon({
       listen: "0.0.0.0",
       logger: logger1,
       relayEnabled: true,
-      paseoHomeRoot: tempHomeRoot,
+      junctionHomeRoot: tempHomeRoot,
       cleanup: false,
     });
 
@@ -134,11 +134,11 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
       await daemon1.close();
 
       const { logger: logger2, lines: lines2 } = createCapturingLogger();
-      const daemon2 = await createTestPaseoDaemon({
+      const daemon2 = await createTestJunctionDaemon({
         listen: "0.0.0.0",
         logger: logger2,
         relayEnabled: true,
-        paseoHomeRoot: tempHomeRoot,
+        junctionHomeRoot: tempHomeRoot,
         cleanup: false,
       });
       staticDir2 = daemon2.staticDir;
@@ -173,9 +173,9 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
   test(
     "respects --no-relay (CLI) by not emitting a pairing offer",
     async () => {
-      process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+      process.env.JUNCTION_PRIMARY_LAN_IP = "192.168.1.12";
 
-      const tempHome = await mkdtemp(path.join(os.tmpdir(), "paseo-offer-e2e-"));
+      const tempHome = await mkdtemp(path.join(os.tmpdir(), "junction-offer-e2e-"));
       const port = await getAvailablePort();
 
       const indexPath = fileURLToPath(new URL("../index.ts", import.meta.url));
@@ -183,12 +183,12 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
 
       const env = {
         ...process.env,
-        PASEO_HOME: tempHome,
-        PASEO_LISTEN: `0.0.0.0:${port}`,
+        JUNCTION_HOME: tempHome,
+        JUNCTION_LISTEN: `0.0.0.0:${port}`,
         OPENAI_API_KEY: "",
-        PASEO_DICTATION_ENABLED: "0",
-        PASEO_VOICE_MODE_ENABLED: "0",
-        PASEO_LOG_FORMAT: "json",
+        JUNCTION_DICTATION_ENABLED: "0",
+        JUNCTION_VOICE_MODE_ENABLED: "0",
+        JUNCTION_LOG_FORMAT: "json",
       };
 
       const stdoutLines: string[] = [];

@@ -1,9 +1,8 @@
 import { v4 as uuidv4 } from 'uuid'
 import { watch, type FSWatcher } from 'node:fs'
-import { stat } from 'fs/promises'
 import { exec } from 'child_process'
 import { promisify } from 'util'
-import { join, resolve, sep } from 'path'
+import { resolve, sep } from 'path'
 import { homedir } from 'node:os'
 import { z } from 'zod'
 import type { ToolSet } from 'ai'
@@ -39,19 +38,9 @@ import {
   TerminalBinaryMessageType,
   type BinaryMuxFrame,
 } from '../shared/binary-mux.js'
-import { TTSManager } from './agent/tts-manager.js'
-import { STTManager } from './agent/stt-manager.js'
-import type { SpeechToTextProvider, TextToSpeechProvider } from './speech/speech-provider.js'
-import { maybePersistTtsDebugAudio } from './agent/tts-debug.js'
-import { isPaseoDictationDebugEnabled } from './agent/recordings-debug.js'
-import {
-  DictationStreamManager,
-  type DictationStreamOutboundMessage,
-} from './dictation/dictation-stream-manager.js'
 import { buildConfigOverrides, buildSessionConfig, extractTimestamps } from './persistence-hooks.js'
 import { experimental_createMCPClient } from 'ai'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import type { VoiceCallerContext, VoiceMcpStdioConfig, VoiceSpeakHandler } from './voice-types.js'
 
 export type AgentMcpTransportFactory = () => Promise<Transport>
 import { buildProviderRegistry } from './agent/provider-registry.js'
@@ -84,7 +73,6 @@ import type {
   AgentPromptContentBlock,
   AgentPromptInput,
   AgentRunOptions,
-  McpServerConfig,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentProvider,
@@ -93,26 +81,19 @@ import type {
 import { AgentStorage, type StoredAgentRecord } from './agent/agent-storage.js'
 import { isValidAgentProvider, AGENT_PROVIDER_IDS } from './agent/provider-manifest.js'
 import {
-  buildVoiceAgentMcpServerConfig,
-  buildVoiceModeSystemPrompt,
-  stripVoiceModeSystemPrompt,
-} from './voice-config.js'
-import { isVoicePermissionAllowed } from './voice-permission-policy.js'
-import {
   listDirectoryEntries,
   readExplorerFile,
   getDownloadableFileInfo,
 } from './file-explorer/service.js'
 import { DownloadTokenStore } from './file-download/token-store.js'
-import { PushTokenStore } from './push/token-store.js'
 import {
   type WorktreeConfig,
   slugify,
   validateBranchSlug,
-  listPaseoWorktrees,
-  deletePaseoWorktree,
-  isPaseoOwnedWorktreeCwd,
-  resolvePaseoWorktreeRootForCwd,
+  listJunctionWorktrees,
+  deleteJunctionWorktree,
+  isJunctionOwnedWorktreeCwd,
+  resolveJunctionWorktreeRootForCwd,
 } from '../utils/worktree.js'
 import { createAgentWorktree, runAsyncWorktreeBootstrap } from './worktree-bootstrap.js'
 import {
@@ -133,14 +114,6 @@ import {
 import { getProjectIcon } from '../utils/project-icon.js'
 import { expandTilde } from '../utils/path.js'
 import { searchHomeDirectories, searchWorkspaceEntries } from '../utils/directory-suggestions.js'
-import {
-  ensureLocalSpeechModels,
-  getLocalSpeechModelDir,
-  listLocalSpeechModels,
-  type LocalSpeechModelId,
-} from './speech/providers/local/models.js'
-import type { Resolvable } from './speech/provider-resolver.js'
-import type { SpeechReadinessSnapshot, SpeechReadinessState } from './speech/speech-runtime.js'
 import type pino from 'pino'
 import { resolveClientMessageId } from './client-message-id.js'
 
@@ -210,7 +183,7 @@ function deriveProjectGroupingKey(options: { cwd: string; remoteUrl: string | nu
     return remoteKey
   }
 
-  const worktreeMarker = '.paseo/worktrees/'
+  const worktreeMarker = '.junction/worktrees/'
   const idx = options.cwd.indexOf(worktreeMarker)
   if (idx !== -1) {
     return options.cwd.slice(0, idx).replace(/\/$/, '')
@@ -228,8 +201,6 @@ function deriveProjectGroupingName(projectKey: string): string {
   const segments = projectKey.split(/[\\/]/).filter(Boolean)
   return segments[segments.length - 1] || projectKey
 }
-
-type ProcessingPhase = 'idle' | 'transcribing'
 
 type CheckoutDiffCompareInput = SubscribeCheckoutDiffRequest['compare']
 
@@ -308,77 +279,21 @@ class SessionRequestError extends Error {
   }
 }
 
-const PCM_SAMPLE_RATE = 16000
-const PCM_CHANNELS = 1
-const PCM_BITS_PER_SAMPLE = 16
-const PCM_BYTES_PER_MS = (PCM_SAMPLE_RATE * PCM_CHANNELS * (PCM_BITS_PER_SAMPLE / 8)) / 1000
-const MIN_STREAMING_SEGMENT_DURATION_MS = 1000
-const MIN_STREAMING_SEGMENT_BYTES = Math.round(PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS)
-const VOICE_MODE_INACTIVITY_FLUSH_MS = 4500
-const VOICE_INTERNAL_DICTATION_ID_PREFIX = '__voice_turn__:'
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/
-const AgentIdSchema = z.string().uuid()
-const VOICE_MCP_SERVER_NAME = 'paseo_voice'
-
-type VoiceModeBaseConfig = {
-  systemPrompt?: string
-  mcpServers?: Record<string, McpServerConfig>
-}
-
-interface AudioBufferState {
-  chunks: Buffer[]
-  format: string
-  isPCM: boolean
-  totalPCMBytes: number
-}
-
-type VoiceTranscriptionResultPayload = {
-  text: string
-  requestId: string
-  language?: string
-  duration?: number
-  avgLogprob?: number
-  isLowConfidence?: boolean
-  byteLength?: number
-  format?: string
-  debugRecordingPath?: string
-}
 
 export type SessionOptions = {
   clientId: string
+  userId?: string
   onMessage: (msg: SessionOutboundMessage) => void
   onBinaryMessage?: (frame: BinaryMuxFrame) => void
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void
   logger: pino.Logger
   downloadTokenStore: DownloadTokenStore
-  pushTokenStore: PushTokenStore
-  paseoHome: string
+  junctionHome: string
   agentManager: AgentManager
   agentStorage: AgentStorage
   createAgentMcpTransport: AgentMcpTransportFactory
-  stt: Resolvable<SpeechToTextProvider | null>
-  tts: Resolvable<TextToSpeechProvider | null>
   terminalManager: TerminalManager | null
-  voice?: {
-    voiceAgentMcpStdio?: VoiceMcpStdioConfig | null
-  }
-  voiceBridge?: {
-    registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void
-    unregisterVoiceSpeakHandler?: (agentId: string) => void
-    registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void
-    unregisterVoiceCallerContext?: (agentId: string) => void
-    ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>
-    removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>
-  }
-  dictation?: {
-    finalTimeoutMs?: number
-    stt?: Resolvable<SpeechToTextProvider | null>
-    localModels?: {
-      modelsDir: string
-      defaultModelIds: LocalSpeechModelId[]
-    }
-    getSpeechReadiness?: () => SpeechReadinessSnapshot
-  }
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap
 }
 
@@ -394,62 +309,6 @@ export type SessionLifecycleIntent =
       requestId: string
       reason?: string
     }
-
-type VoiceFeatureUnavailableContext = {
-  reasonCode: SpeechReadinessSnapshot['voiceFeature']['reasonCode']
-  message: string
-  retryable: boolean
-  missingModelIds: LocalSpeechModelId[]
-}
-
-type VoiceFeatureUnavailableResponseMetadata = {
-  reasonCode?: SpeechReadinessSnapshot['voiceFeature']['reasonCode']
-  retryable?: boolean
-  missingModelIds?: LocalSpeechModelId[]
-}
-
-class VoiceFeatureUnavailableError extends Error {
-  readonly reasonCode: SpeechReadinessSnapshot['voiceFeature']['reasonCode']
-  readonly retryable: boolean
-  readonly missingModelIds: LocalSpeechModelId[]
-
-  constructor(context: VoiceFeatureUnavailableContext) {
-    super(context.message)
-    this.name = 'VoiceFeatureUnavailableError'
-    this.reasonCode = context.reasonCode
-    this.retryable = context.retryable
-    this.missingModelIds = [...context.missingModelIds]
-  }
-}
-
-function convertPCMToWavBuffer(
-  pcmBuffer: Buffer,
-  sampleRate: number,
-  channels: number,
-  bitsPerSample: number
-): Buffer {
-  const headerSize = 44
-  const wavBuffer = Buffer.alloc(headerSize + pcmBuffer.length)
-  const byteRate = (sampleRate * channels * bitsPerSample) / 8
-  const blockAlign = (channels * bitsPerSample) / 8
-
-  wavBuffer.write('RIFF', 0)
-  wavBuffer.writeUInt32LE(36 + pcmBuffer.length, 4)
-  wavBuffer.write('WAVE', 8)
-  wavBuffer.write('fmt ', 12)
-  wavBuffer.writeUInt32LE(16, 16)
-  wavBuffer.writeUInt16LE(1, 20)
-  wavBuffer.writeUInt16LE(channels, 22)
-  wavBuffer.writeUInt32LE(sampleRate, 24)
-  wavBuffer.writeUInt32LE(byteRate, 28)
-  wavBuffer.writeUInt16LE(blockAlign, 32)
-  wavBuffer.writeUInt16LE(bitsPerSample, 34)
-  wavBuffer.write('data', 36)
-  wavBuffer.writeUInt32LE(pcmBuffer.length, 40)
-  pcmBuffer.copy(wavBuffer, 44)
-
-  return wavBuffer
-}
 
 function coerceAgentProvider(logger: pino.Logger, value: string, agentId?: string): AgentProvider {
   if (isValidAgentProvider(value)) {
@@ -493,49 +352,16 @@ function toAgentPersistenceHandle(
  */
 export class Session {
   private readonly clientId: string
+  readonly userId: string | undefined
   private readonly sessionId: string
   private readonly onMessage: (msg: SessionOutboundMessage) => void
   private readonly onBinaryMessage: ((frame: BinaryMuxFrame) => void) | null
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null
   private readonly sessionLogger: pino.Logger
-  private readonly paseoHome: string
+  private readonly junctionHome: string
 
   // State machine
   private abortController: AbortController
-  private processingPhase: ProcessingPhase = 'idle'
-
-  // Voice mode state
-  private isVoiceMode = false
-  private speechInProgress = false
-
-  private readonly dictationStreamManager: DictationStreamManager
-  private readonly voiceStreamManager: DictationStreamManager
-
-  // Audio buffering for interruption handling
-  private pendingAudioSegments: Array<{ audio: Buffer; format: string }> = []
-  private bufferTimeout: NodeJS.Timeout | null = null
-  private voiceModeInactivityTimeout: NodeJS.Timeout | null = null
-  private audioBuffer: AudioBufferState | null = null
-  private activeVoiceDictationId: string | null = null
-  private activeVoiceDictationFormat: string | null = null
-  private activeVoiceDictationNextSeq = 0
-  private activeVoiceDictationStartPromise: Promise<void> | null = null
-  private activeVoiceDictationFinalizePromise: Promise<void> | null = null
-  private activeVoiceDictationResultPromise: Promise<{
-    text: string
-    debugRecordingPath?: string
-  }> | null = null
-  private activeVoiceDictationResolve:
-    | ((value: { text: string; debugRecordingPath?: string }) => void)
-    | null = null
-  private activeVoiceDictationReject: ((error: Error) => void) | null = null
-
-  // Optional TTS debug capture (persisted per utterance)
-  private readonly ttsDebugStreams = new Map<string, { format: string; chunks: Buffer[] }>()
-
-  // Per-session managers
-  private readonly ttsManager: TTSManager
-  private readonly sttManager: STTManager
 
   // Per-session MCP client and tools
   private agentMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null
@@ -544,7 +370,6 @@ export class Session {
   private readonly agentStorage: AgentStorage
   private readonly createAgentMcpTransport: AgentMcpTransportFactory
   private readonly downloadTokenStore: DownloadTokenStore
-  private readonly pushTokenStore: PushTokenStore
   private readonly providerRegistry: ReturnType<typeof buildProviderRegistry>
   private unsubscribeAgentEvents: (() => void) | null = null
   private agentUpdatesSubscription: AgentUpdatesSubscriptionState | null = null
@@ -576,52 +401,32 @@ export class Session {
   private nextTerminalStreamId = 1
   private readonly checkoutDiffSubscriptions = new Map<string, { targetKey: string }>()
   private readonly checkoutDiffTargets = new Map<string, CheckoutDiffWatchTarget>()
-  private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null
-  private readonly localSpeechModelsDir: string
-  private readonly defaultLocalSpeechModelIds: LocalSpeechModelId[]
-  private readonly registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void
-  private readonly unregisterVoiceSpeakHandler?: (agentId: string) => void
-  private readonly registerVoiceCallerContext?: (
-    agentId: string,
-    context: VoiceCallerContext
-  ) => void
-  private readonly unregisterVoiceCallerContext?: (agentId: string) => void
-  private readonly ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>
-  private readonly removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>
-  private readonly getSpeechReadiness?: () => SpeechReadinessSnapshot
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined
-  private voiceModeAgentId: string | null = null
-  private voiceModeBaseConfig: VoiceModeBaseConfig | null = null
 
   constructor(options: SessionOptions) {
     const {
       clientId,
+      userId,
       onMessage,
       onBinaryMessage,
       onLifecycleIntent,
       logger,
       downloadTokenStore,
-      pushTokenStore,
-      paseoHome,
+      junctionHome,
       agentManager,
       agentStorage,
       createAgentMcpTransport,
-      stt,
-      tts,
       terminalManager,
-      voice,
-      voiceBridge,
-      dictation,
       agentProviderRuntimeSettings,
     } = options
     this.clientId = clientId
+    this.userId = userId
     this.sessionId = uuidv4()
     this.onMessage = onMessage
     this.onBinaryMessage = onBinaryMessage ?? null
     this.onLifecycleIntent = onLifecycleIntent ?? null
     this.downloadTokenStore = downloadTokenStore
-    this.pushTokenStore = pushTokenStore
-    this.paseoHome = paseoHome
+    this.junctionHome = junctionHome
     this.agentManager = agentManager
     this.agentStorage = agentStorage
     this.createAgentMcpTransport = createAgentMcpTransport
@@ -631,23 +436,6 @@ export class Session {
         this.handleTerminalsChanged(event)
       )
     }
-    this.voiceAgentMcpStdio = voice?.voiceAgentMcpStdio ?? null
-    const configuredModelsDir = dictation?.localModels?.modelsDir?.trim()
-    this.localSpeechModelsDir =
-      configuredModelsDir && configuredModelsDir.length > 0
-        ? configuredModelsDir
-        : join(this.paseoHome, 'models', 'local-speech')
-    this.defaultLocalSpeechModelIds =
-      dictation?.localModels?.defaultModelIds && dictation.localModels.defaultModelIds.length > 0
-        ? [...new Set(dictation.localModels.defaultModelIds)]
-        : ['parakeet-tdt-0.6b-v2-int8', 'kokoro-en-v0_19']
-    this.registerVoiceSpeakHandler = voiceBridge?.registerVoiceSpeakHandler
-    this.unregisterVoiceSpeakHandler = voiceBridge?.unregisterVoiceSpeakHandler
-    this.registerVoiceCallerContext = voiceBridge?.registerVoiceCallerContext
-    this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext
-    this.ensureVoiceMcpSocketForAgent = voiceBridge?.ensureVoiceMcpSocketForAgent
-    this.removeVoiceMcpSocketForAgent = voiceBridge?.removeVoiceMcpSocketForAgent
-    this.getSpeechReadiness = dictation?.getSpeechReadiness
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings
     this.abortController = new AbortController()
     this.sessionLogger = logger.child({
@@ -657,24 +445,6 @@ export class Session {
     })
     this.providerRegistry = buildProviderRegistry(this.sessionLogger, {
       runtimeSettings: this.agentProviderRuntimeSettings,
-    })
-
-    // Initialize per-session managers
-    this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts)
-    this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt)
-    this.dictationStreamManager = new DictationStreamManager({
-      logger: this.sessionLogger,
-      sessionId: this.sessionId,
-      emit: (msg) => this.handleDictationManagerMessage(msg),
-      stt: dictation?.stt ?? null,
-      finalTimeoutMs: dictation?.finalTimeoutMs,
-    })
-    this.voiceStreamManager = new DictationStreamManager({
-      logger: this.sessionLogger.child({ stream: 'voice-internal' }),
-      sessionId: this.sessionId,
-      emit: (msg) => this.handleDictationManagerMessage(msg),
-      stt: stt,
-      finalTimeoutMs: dictation?.finalTimeoutMs,
     })
 
     // Initialize agent MCP client asynchronously
@@ -762,19 +532,6 @@ export class Session {
     }
   }
 
-  private hasActiveAgentRun(agentId: string | null): boolean {
-    if (!agentId) {
-      return false
-    }
-
-    const snapshot = this.agentManager.getAgent(agentId)
-    if (!snapshot) {
-      return false
-    }
-
-    return snapshot.lifecycle === 'running' || Boolean(snapshot.pendingRun)
-  }
-
   /**
    * Start streaming an agent run and forward results via the websocket broadcast
    */
@@ -857,29 +614,6 @@ export class Session {
         if (event.type === 'agent_state') {
           void this.forwardAgentUpdate(event.agent)
           return
-        }
-
-        if (
-          this.isVoiceMode &&
-          this.voiceModeAgentId === event.agentId &&
-          event.event.type === 'permission_requested' &&
-          isVoicePermissionAllowed(event.event.request)
-        ) {
-          const requestId = event.event.request.id
-          void this.agentManager
-            .respondToPermission(event.agentId, requestId, {
-              behavior: 'allow',
-            })
-            .catch((error) => {
-              this.sessionLogger.warn(
-                {
-                  err: error,
-                  agentId: event.agentId,
-                  requestId,
-                },
-                'Failed to auto-allow speak tool permission in voice mode'
-              )
-            })
         }
 
         // Reduce bandwidth/CPU on mobile: only forward high-frequency agent stream events
@@ -1184,7 +918,7 @@ export class Session {
       isGit: false,
       currentBranch: null,
       remoteUrl: null,
-      isPaseoOwnedWorktree: false,
+      isJunctionOwnedWorktree: false,
       mainRepoRoot: null,
     }
   }
@@ -1197,13 +931,13 @@ export class Session {
       return this.buildFallbackProjectCheckout(cwd)
     }
 
-    if (status.isPaseoOwnedWorktree) {
+    if (status.isJunctionOwnedWorktree) {
       return {
         cwd,
         isGit: true,
         currentBranch: status.currentBranch,
         remoteUrl: status.remoteUrl,
-        isPaseoOwnedWorktree: true,
+        isJunctionOwnedWorktree: true,
         mainRepoRoot: status.mainRepoRoot,
       }
     }
@@ -1213,13 +947,13 @@ export class Session {
       isGit: true,
       currentBranch: status.currentBranch,
       remoteUrl: status.remoteUrl,
-      isPaseoOwnedWorktree: false,
+      isJunctionOwnedWorktree: false,
       mainRepoRoot: null,
     }
   }
 
   private async buildProjectPlacement(cwd: string): Promise<ProjectPlacementPayload> {
-    const checkout = await getCheckoutStatusLite(cwd, { paseoHome: this.paseoHome })
+    const checkout = await getCheckoutStatusLite(cwd, { junctionHome: this.junctionHome })
       .then((status) => this.toProjectCheckoutLite(cwd, status))
       .catch(() => this.buildFallbackProjectCheckout(cwd))
     const projectKey = deriveProjectGroupingKey({
@@ -1272,16 +1006,8 @@ export class Session {
   public async handleMessage(msg: SessionInboundMessage): Promise<void> {
     try {
       switch (msg.type) {
-        case 'voice_audio_chunk':
-          await this.handleAudioChunk(msg)
-          break
-
         case 'abort_request':
           await this.handleAbort()
-          break
-
-        case 'audio_played':
-          this.handleAudioPlayed(msg.id)
           break
 
         case 'fetch_agents_request':
@@ -1304,53 +1030,12 @@ export class Session {
           await this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId)
           break
 
-        case 'set_voice_mode':
-          await this.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId)
-          break
-
         case 'send_agent_message_request':
           await this.handleSendAgentMessageRequest(msg)
           break
 
         case 'wait_for_finish_request':
           await this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs)
-          break
-
-        case 'dictation_stream_start':
-          {
-            const unavailable = this.resolveVoiceFeatureUnavailableContext('dictation')
-            if (unavailable) {
-              this.emit({
-                type: 'dictation_stream_error',
-                payload: {
-                  dictationId: msg.dictationId,
-                  error: unavailable.message,
-                  retryable: unavailable.retryable,
-                  reasonCode: unavailable.reasonCode,
-                  missingModelIds: unavailable.missingModelIds,
-                },
-              })
-              break
-            }
-          }
-          await this.dictationStreamManager.handleStart(msg.dictationId, msg.format)
-          break
-
-        case 'dictation_stream_chunk':
-          await this.dictationStreamManager.handleChunk({
-            dictationId: msg.dictationId,
-            seq: msg.seq,
-            audioBase64: msg.audio,
-            format: msg.format,
-          })
-          break
-
-        case 'dictation_stream_finish':
-          await this.dictationStreamManager.handleFinish(msg.dictationId, msg.finalSeq)
-          break
-
-        case 'dictation_stream_cancel':
-          this.dictationStreamManager.handleCancel(msg.dictationId)
           break
 
         case 'create_agent_request':
@@ -1445,12 +1130,12 @@ export class Session {
           await this.handleCheckoutPrStatusRequest(msg)
           break
 
-        case 'paseo_worktree_list_request':
-          await this.handlePaseoWorktreeListRequest(msg)
+        case 'junction_worktree_list_request':
+          await this.handleJunctionWorktreeListRequest(msg)
           break
 
-        case 'paseo_worktree_archive_request':
-          await this.handlePaseoWorktreeArchiveRequest(msg)
+        case 'junction_worktree_archive_request':
+          await this.handleJunctionWorktreeArchiveRequest(msg)
           break
 
         case 'file_explorer_request':
@@ -1471,14 +1156,6 @@ export class Session {
 
         case 'list_available_providers_request':
           await this.handleListAvailableProvidersRequest(msg)
-          break
-
-        case 'speech_models_list_request':
-          await this.handleSpeechModelsListRequest(msg)
-          break
-
-        case 'speech_models_download_request':
-          await this.handleSpeechModelsDownloadRequest(msg)
           break
 
         case 'clear_agent_attention':
@@ -1505,10 +1182,6 @@ export class Session {
 
         case 'list_commands_request':
           await this.handleListCommandsRequest(msg)
-          break
-
-        case 'register_push_token':
-          this.handleRegisterPushToken(msg.token)
           break
 
         case 'subscribe_terminals_request':
@@ -1881,491 +1554,6 @@ export class Session {
     }
   }
 
-  private toVoiceFeatureUnavailableContext(
-    state: SpeechReadinessState
-  ): VoiceFeatureUnavailableContext {
-    return {
-      reasonCode: state.reasonCode,
-      message: state.message,
-      retryable: state.retryable,
-      missingModelIds: [...state.missingModelIds],
-    }
-  }
-
-  private resolveModeReadinessState(
-    readiness: SpeechReadinessSnapshot,
-    mode: 'voice_mode' | 'dictation'
-  ): SpeechReadinessState {
-    if (mode === 'voice_mode') {
-      return readiness.realtimeVoice
-    }
-    return readiness.dictation
-  }
-
-  private getVoiceFeatureUnavailableResponseMetadata(
-    error: unknown
-  ): VoiceFeatureUnavailableResponseMetadata {
-    if (!(error instanceof VoiceFeatureUnavailableError)) {
-      return {}
-    }
-    return {
-      reasonCode: error.reasonCode,
-      retryable: error.retryable,
-      missingModelIds: error.missingModelIds,
-    }
-  }
-
-  private resolveVoiceFeatureUnavailableContext(
-    mode: 'voice_mode' | 'dictation'
-  ): VoiceFeatureUnavailableContext | null {
-    const readiness = this.getSpeechReadiness?.()
-    if (!readiness) {
-      return null
-    }
-
-    const modeReadiness = this.resolveModeReadinessState(readiness, mode)
-    if (!modeReadiness.enabled) {
-      return this.toVoiceFeatureUnavailableContext(modeReadiness)
-    }
-    if (!readiness.voiceFeature.available) {
-      return this.toVoiceFeatureUnavailableContext(readiness.voiceFeature)
-    }
-    if (!modeReadiness.available) {
-      return this.toVoiceFeatureUnavailableContext(modeReadiness)
-    }
-    return null
-  }
-
-  /**
-   * Handle voice mode toggle
-   */
-  private async handleSetVoiceMode(
-    enabled: boolean,
-    agentId?: string,
-    requestId?: string
-  ): Promise<void> {
-    try {
-      if (enabled) {
-        const unavailable = this.resolveVoiceFeatureUnavailableContext('voice_mode')
-        if (unavailable) {
-          throw new VoiceFeatureUnavailableError(unavailable)
-        }
-
-        const normalizedAgentId = this.parseVoiceTargetAgentId(agentId ?? '', 'set_voice_mode')
-
-        if (
-          this.isVoiceMode &&
-          this.voiceModeAgentId &&
-          this.voiceModeAgentId !== normalizedAgentId
-        ) {
-          await this.disableVoiceModeForActiveAgent(true)
-        }
-
-        if (!this.isVoiceMode || this.voiceModeAgentId !== normalizedAgentId) {
-          const refreshedAgentId = await this.enableVoiceModeForAgent(normalizedAgentId)
-          this.voiceModeAgentId = refreshedAgentId
-        }
-
-        this.isVoiceMode = true
-        this.sessionLogger.info(
-          {
-            agentId: this.voiceModeAgentId,
-          },
-          'Voice mode enabled for existing agent'
-        )
-        if (requestId) {
-          this.emit({
-            type: 'set_voice_mode_response',
-            payload: {
-              requestId,
-              enabled: true,
-              agentId: this.voiceModeAgentId,
-              accepted: true,
-              error: null,
-            },
-          })
-        }
-        return
-      }
-
-      await this.disableVoiceModeForActiveAgent(true)
-      this.isVoiceMode = false
-      this.sessionLogger.info('Voice mode disabled')
-      if (requestId) {
-        this.emit({
-          type: 'set_voice_mode_response',
-          payload: {
-            requestId,
-            enabled: false,
-            agentId: null,
-            accepted: true,
-            error: null,
-          },
-        })
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to set voice mode'
-      const unavailable = this.getVoiceFeatureUnavailableResponseMetadata(error)
-      this.sessionLogger.error(
-        {
-          err: error,
-          enabled,
-          requestedAgentId: agentId ?? null,
-        },
-        'set_voice_mode failed'
-      )
-      if (requestId) {
-        this.emit({
-          type: 'set_voice_mode_response',
-          payload: {
-            requestId,
-            enabled: this.isVoiceMode,
-            agentId: this.voiceModeAgentId,
-            accepted: false,
-            error: errorMessage,
-            ...unavailable,
-          },
-        })
-        return
-      }
-      throw error
-    }
-  }
-
-  private parseVoiceTargetAgentId(rawId: string, source: string): string {
-    const parsed = AgentIdSchema.safeParse(rawId.trim())
-    if (!parsed.success) {
-      throw new Error(`${source}: agentId must be a UUID`)
-    }
-    return parsed.data
-  }
-
-  private cloneMcpServers(
-    servers: Record<string, McpServerConfig> | undefined
-  ): Record<string, McpServerConfig> | undefined {
-    if (!servers) {
-      return undefined
-    }
-    return JSON.parse(JSON.stringify(servers)) as Record<string, McpServerConfig>
-  }
-
-  private buildVoiceModeMcpServers(
-    existing: Record<string, McpServerConfig> | undefined,
-    socketPath: string
-  ): Record<string, McpServerConfig> {
-    const mcpStdio = this.voiceAgentMcpStdio
-    if (!mcpStdio) {
-      throw new Error('Voice MCP stdio bridge is not configured')
-    }
-    return {
-      ...(existing ?? {}),
-      [VOICE_MCP_SERVER_NAME]: buildVoiceAgentMcpServerConfig({
-        command: mcpStdio.command,
-        baseArgs: mcpStdio.baseArgs,
-        socketPath,
-        env: mcpStdio.env,
-      }),
-    }
-  }
-
-  private async enableVoiceModeForAgent(agentId: string): Promise<string> {
-    const ensureVoiceSocket = this.ensureVoiceMcpSocketForAgent
-    if (!ensureVoiceSocket) {
-      throw new Error('Voice MCP socket bridge is not configured')
-    }
-
-    const existing = await this.ensureAgentLoaded(agentId)
-
-    const socketPath = await ensureVoiceSocket(agentId)
-    this.registerVoiceBridgeForAgent(agentId)
-
-    const baseConfig: VoiceModeBaseConfig = {
-      systemPrompt: stripVoiceModeSystemPrompt(existing.config.systemPrompt),
-      mcpServers: this.cloneMcpServers(existing.config.mcpServers),
-    }
-    this.voiceModeBaseConfig = baseConfig
-    const refreshOverrides: Partial<AgentSessionConfig> = {
-      systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true),
-      mcpServers: this.buildVoiceModeMcpServers(baseConfig.mcpServers, socketPath),
-    }
-
-    try {
-      const refreshed = await this.agentManager.reloadAgentSession(agentId, refreshOverrides)
-      return refreshed.id
-    } catch (error) {
-      this.unregisterVoiceSpeakHandler?.(agentId)
-      this.unregisterVoiceCallerContext?.(agentId)
-      await this.removeVoiceMcpSocketForAgent?.(agentId).catch(() => undefined)
-      this.voiceModeBaseConfig = null
-      throw error
-    }
-  }
-
-  private async disableVoiceModeForActiveAgent(restoreAgentConfig: boolean): Promise<void> {
-    this.clearVoiceModeInactivityTimeout()
-    this.cancelActiveVoiceDictationStream('voice mode disabled')
-
-    const agentId = this.voiceModeAgentId
-    if (!agentId) {
-      this.voiceModeBaseConfig = null
-      return
-    }
-
-    this.unregisterVoiceSpeakHandler?.(agentId)
-    this.unregisterVoiceCallerContext?.(agentId)
-    await this.removeVoiceMcpSocketForAgent?.(agentId).catch((error) => {
-      this.sessionLogger.warn(
-        { err: error, agentId },
-        'Failed to remove voice MCP socket bridge on disable'
-      )
-    })
-
-    if (restoreAgentConfig && this.voiceModeBaseConfig) {
-      const baseConfig = this.voiceModeBaseConfig
-      try {
-        await this.agentManager.reloadAgentSession(agentId, {
-          systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
-          mcpServers: this.cloneMcpServers(baseConfig.mcpServers),
-        })
-      } catch (error) {
-        this.sessionLogger.warn(
-          { err: error, agentId },
-          'Failed to restore agent config while disabling voice mode'
-        )
-      }
-    }
-
-    this.voiceModeBaseConfig = null
-    this.voiceModeAgentId = null
-  }
-
-  private isInternalVoiceDictationId(dictationId: string): boolean {
-    return dictationId.startsWith(VOICE_INTERNAL_DICTATION_ID_PREFIX)
-  }
-
-  private handleDictationManagerMessage(msg: DictationStreamOutboundMessage): void {
-    if (msg.type === 'activity_log') {
-      const metadata = msg.payload.metadata as { dictationId?: unknown } | undefined
-      const dictationId =
-        metadata && typeof metadata.dictationId === 'string' ? metadata.dictationId : null
-      if (dictationId && this.isInternalVoiceDictationId(dictationId)) {
-        return
-      }
-      this.emit(msg as unknown as SessionOutboundMessage)
-      return
-    }
-
-    const payloadWithDictationId = msg.payload as { dictationId?: unknown }
-    const dictationId =
-      payloadWithDictationId && typeof payloadWithDictationId.dictationId === 'string'
-        ? payloadWithDictationId.dictationId
-        : null
-
-    if (!dictationId || !this.isInternalVoiceDictationId(dictationId)) {
-      this.emit(msg as unknown as SessionOutboundMessage)
-      return
-    }
-
-    if (msg.type === 'dictation_stream_final') {
-      if (dictationId !== this.activeVoiceDictationId || !this.activeVoiceDictationResolve) {
-        return
-      }
-      this.activeVoiceDictationResolve({
-        text: msg.payload.text,
-        ...(msg.payload.debugRecordingPath
-          ? { debugRecordingPath: msg.payload.debugRecordingPath }
-          : {}),
-      })
-      return
-    }
-
-    if (msg.type === 'dictation_stream_error') {
-      if (dictationId !== this.activeVoiceDictationId || !this.activeVoiceDictationReject) {
-        return
-      }
-      this.activeVoiceDictationReject(new Error(msg.payload.error))
-      return
-    }
-
-    // Ack/partial messages for internal voice dictation are consumed server-side.
-  }
-
-  private resetActiveVoiceDictationState(): void {
-    this.activeVoiceDictationId = null
-    this.activeVoiceDictationFormat = null
-    this.activeVoiceDictationNextSeq = 0
-    this.activeVoiceDictationStartPromise = null
-    this.activeVoiceDictationFinalizePromise = null
-    this.activeVoiceDictationResultPromise = null
-    this.activeVoiceDictationResolve = null
-    this.activeVoiceDictationReject = null
-  }
-
-  private cancelActiveVoiceDictationStream(reason: string): void {
-    const dictationId = this.activeVoiceDictationId
-    if (!dictationId) {
-      return
-    }
-
-    this.sessionLogger.debug(
-      { dictationId, reason },
-      'Cancelling active internal voice dictation stream'
-    )
-    if (this.activeVoiceDictationReject) {
-      this.activeVoiceDictationReject(new Error(`Voice dictation cancelled: ${reason}`))
-    }
-    this.voiceStreamManager.handleCancel(dictationId)
-    this.resetActiveVoiceDictationState()
-  }
-
-  private async ensureActiveVoiceDictationStream(format: string): Promise<void> {
-    if (this.activeVoiceDictationId && this.activeVoiceDictationFormat === format) {
-      if (this.activeVoiceDictationStartPromise) {
-        await this.activeVoiceDictationStartPromise
-      }
-      return
-    }
-
-    if (this.activeVoiceDictationId) {
-      await this.finalizeActiveVoiceDictationStream('voice format changed')
-    }
-
-    const dictationId = `${VOICE_INTERNAL_DICTATION_ID_PREFIX}${uuidv4()}`
-    let resolve: ((value: { text: string; debugRecordingPath?: string }) => void) | null = null
-    let reject: ((error: Error) => void) | null = null
-    const resultPromise = new Promise<{ text: string; debugRecordingPath?: string }>(
-      (resolveFn, rejectFn) => {
-        resolve = resolveFn
-        reject = rejectFn
-      }
-    )
-    // Prevent process-level unhandled rejection warnings when cancellation races are resolved later.
-    void resultPromise.catch(() => undefined)
-
-    this.activeVoiceDictationId = dictationId
-    this.activeVoiceDictationFormat = format
-    this.activeVoiceDictationNextSeq = 0
-    this.activeVoiceDictationFinalizePromise = null
-    this.activeVoiceDictationResultPromise = resultPromise
-    this.activeVoiceDictationResolve = resolve
-    this.activeVoiceDictationReject = reject
-    this.setPhase('transcribing')
-    this.emit({
-      type: 'activity_log',
-      payload: {
-        id: uuidv4(),
-        timestamp: new Date(),
-        type: 'system',
-        content: 'Transcribing audio...',
-      },
-    })
-
-    const startPromise = this.voiceStreamManager.handleStart(dictationId, format)
-    this.activeVoiceDictationStartPromise = startPromise
-    try {
-      await startPromise
-    } catch (error) {
-      this.resetActiveVoiceDictationState()
-      throw error
-    } finally {
-      if (this.activeVoiceDictationId === dictationId) {
-        this.activeVoiceDictationStartPromise = null
-      }
-    }
-  }
-
-  private async appendToActiveVoiceDictationStream(
-    audioBase64: string,
-    format: string
-  ): Promise<void> {
-    if (this.activeVoiceDictationFinalizePromise) {
-      await this.activeVoiceDictationFinalizePromise.catch(() => undefined)
-    }
-    await this.ensureActiveVoiceDictationStream(format)
-    const dictationId = this.activeVoiceDictationId
-    if (!dictationId) {
-      throw new Error('Voice dictation stream did not initialize')
-    }
-
-    const seq = this.activeVoiceDictationNextSeq
-    this.activeVoiceDictationNextSeq += 1
-    await this.voiceStreamManager.handleChunk({
-      dictationId,
-      seq,
-      audioBase64,
-      format,
-    })
-  }
-
-  private async finalizeActiveVoiceDictationStream(reason: string): Promise<void> {
-    const dictationId = this.activeVoiceDictationId
-    if (!dictationId) {
-      return
-    }
-    this.clearVoiceModeInactivityTimeout()
-    if (this.activeVoiceDictationStartPromise) {
-      await this.activeVoiceDictationStartPromise
-    }
-
-    if (this.activeVoiceDictationFinalizePromise) {
-      await this.activeVoiceDictationFinalizePromise
-      return
-    }
-
-    const finalSeq = this.activeVoiceDictationNextSeq - 1
-    const resultPromise = this.activeVoiceDictationResultPromise
-    if (!resultPromise) {
-      this.resetActiveVoiceDictationState()
-      return
-    }
-
-    this.activeVoiceDictationFinalizePromise = (async () => {
-      this.sessionLogger.debug(
-        { dictationId, finalSeq, reason },
-        'Finalizing internal voice dictation stream'
-      )
-      await this.voiceStreamManager.handleFinish(dictationId, finalSeq)
-      const result = await resultPromise
-      this.resetActiveVoiceDictationState()
-      const requestId = uuidv4()
-      const transcriptText = result.text.trim()
-      this.sessionLogger.info(
-        {
-          requestId,
-          isVoiceMode: this.isVoiceMode,
-          transcriptLength: transcriptText.length,
-          transcript: transcriptText,
-        },
-        'Transcription result'
-      )
-      await this.handleTranscriptionResultPayload({
-        text: result.text,
-        requestId,
-        ...(result.debugRecordingPath
-          ? { debugRecordingPath: result.debugRecordingPath, format: 'audio/wav' }
-          : {}),
-      })
-    })()
-
-    try {
-      await this.activeVoiceDictationFinalizePromise
-    } catch (error) {
-      this.resetActiveVoiceDictationState()
-      this.setPhase('idle')
-      this.clearSpeechInProgress('transcription error')
-      this.emit({
-        type: 'activity_log',
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: 'error',
-          content: `Transcription error: ${error instanceof Error ? error.message : String(error)}`,
-        },
-      })
-      throw error
-    }
-  }
-
   /**
    * Handle text message to agent (with optional image attachments)
    */
@@ -2485,7 +1673,7 @@ export class Session {
           cwd: snapshot.cwd,
           initialPrompt: trimmedPrompt,
           explicitTitle: snapshot.config.title,
-          paseoHome: this.paseoHome,
+          junctionHome: this.junctionHome,
           logger: this.sessionLogger,
         })
 
@@ -2734,7 +1922,7 @@ export class Session {
         cwd,
         baseBranch: normalized.baseBranch!,
         worktreeSlug: normalized.worktreeSlug ?? targetBranch,
-        paseoHome: this.paseoHome,
+        junctionHome: this.junctionHome,
       })
       cwd = createdWorktree.worktreePath
       worktreeConfig = createdWorktree
@@ -2815,104 +2003,6 @@ export class Session {
           providers: [],
           error: (error as Error)?.message ?? String(error),
           fetchedAt,
-          requestId: msg.requestId,
-        },
-      })
-    }
-  }
-
-  private async handleSpeechModelsListRequest(
-    msg: Extract<SessionInboundMessage, { type: 'speech_models_list_request' }>
-  ): Promise<void> {
-    const modelsDir = this.localSpeechModelsDir
-
-    const models = await Promise.all(
-      listLocalSpeechModels().map(async (model) => {
-        const modelDir = getLocalSpeechModelDir(modelsDir, model.id)
-        const missingFiles: string[] = []
-        for (const rel of model.requiredFiles) {
-          const filePath = join(modelDir, rel)
-          try {
-            const fileStat = await stat(filePath)
-            if (fileStat.isDirectory()) {
-              continue
-            }
-            if (!fileStat.isFile() || fileStat.size <= 0) {
-              missingFiles.push(rel)
-            }
-          } catch {
-            missingFiles.push(rel)
-          }
-        }
-
-        return {
-          id: model.id,
-          kind: model.kind,
-          description: model.description,
-          modelDir,
-          isDownloaded: missingFiles.length === 0,
-          ...(missingFiles.length > 0 ? { missingFiles } : {}),
-        }
-      })
-    )
-
-    this.emit({
-      type: 'speech_models_list_response',
-      payload: {
-        modelsDir,
-        models,
-        requestId: msg.requestId,
-      },
-    })
-  }
-
-  private async handleSpeechModelsDownloadRequest(
-    msg: Extract<SessionInboundMessage, { type: 'speech_models_download_request' }>
-  ): Promise<void> {
-    const modelsDir = this.localSpeechModelsDir
-
-    const modelIdsRaw =
-      msg.modelIds && msg.modelIds.length > 0 ? msg.modelIds : this.defaultLocalSpeechModelIds
-
-    const allModelIds = new Set(listLocalSpeechModels().map((m) => m.id))
-    const invalid = modelIdsRaw.filter((id) => !allModelIds.has(id as LocalSpeechModelId))
-    if (invalid.length > 0) {
-      this.emit({
-        type: 'speech_models_download_response',
-        payload: {
-          modelsDir,
-          downloadedModelIds: [],
-          error: `Unknown speech model id(s): ${invalid.join(', ')}`,
-          requestId: msg.requestId,
-        },
-      })
-      return
-    }
-
-    const modelIds = modelIdsRaw as LocalSpeechModelId[]
-    try {
-      await ensureLocalSpeechModels({
-        modelsDir,
-        modelIds,
-        logger: this.sessionLogger,
-      })
-      this.emit({
-        type: 'speech_models_download_response',
-        payload: {
-          modelsDir,
-          downloadedModelIds: modelIds,
-          error: null,
-          requestId: msg.requestId,
-        },
-      })
-    } catch (error) {
-      this.sessionLogger.error({ err: error, modelIds }, 'Failed to download speech models')
-      this.emit({
-        type: 'speech_models_download_response',
-        payload: {
-          modelsDir,
-          downloadedModelIds: [],
-          error: error instanceof Error ? error.message : String(error),
           requestId: msg.requestId,
         },
       })
@@ -3021,7 +2111,7 @@ export class Session {
     const diff = await getCheckoutDiff(
       cwd,
       { mode: 'uncommitted', includeStructured: true },
-      { paseoHome: this.paseoHome }
+      { junctionHome: this.junctionHome }
     )
     const schema = z.object({
       message: z
@@ -3094,7 +2184,7 @@ export class Session {
         baseRef,
         includeStructured: true,
       },
-      { paseoHome: this.paseoHome }
+      { junctionHome: this.junctionHome }
     )
     const schema = z.object({
       title: z.string().min(1).max(72),
@@ -3145,7 +2235,7 @@ export class Session {
       ) {
         return {
           title: 'Update changes',
-          body: 'Automated PR generated by Paseo.',
+          body: 'Automated PR generated by Junction.',
         }
       }
       throw error
@@ -3401,14 +2491,6 @@ export class Session {
   }
 
   /**
-   * Handle push token registration
-   */
-  private handleRegisterPushToken(token: string): void {
-    this.pushTokenStore.addToken(token)
-    this.sessionLogger.info('Registered push token')
-  }
-
-  /**
    * Handle list commands request for an agent
    */
   private async handleListCommandsRequest(
@@ -3526,7 +2608,7 @@ export class Session {
     const resolvedCwd = expandTilde(cwd)
 
     try {
-      const status = await getCheckoutStatus(resolvedCwd, { paseoHome: this.paseoHome })
+      const status = await getCheckoutStatus(resolvedCwd, { junctionHome: this.junctionHome })
       if (!status.isGit) {
         this.emit({
           type: 'checkout_status_response',
@@ -3542,7 +2624,7 @@ export class Session {
             behindOfOrigin: null,
             hasRemote: false,
             remoteUrl: null,
-            isPaseoOwnedWorktree: false,
+            isJunctionOwnedWorktree: false,
             error: null,
             requestId,
           },
@@ -3550,7 +2632,7 @@ export class Session {
         return
       }
 
-      if (status.isPaseoOwnedWorktree) {
+      if (status.isJunctionOwnedWorktree) {
         this.emit({
           type: 'checkout_status_response',
           payload: {
@@ -3566,7 +2648,7 @@ export class Session {
             behindOfOrigin: status.behindOfOrigin ?? null,
             hasRemote: status.hasRemote,
             remoteUrl: status.remoteUrl,
-            isPaseoOwnedWorktree: true,
+            isJunctionOwnedWorktree: true,
             error: null,
             requestId,
           },
@@ -3588,7 +2670,7 @@ export class Session {
           behindOfOrigin: status.behindOfOrigin ?? null,
           hasRemote: status.hasRemote,
           remoteUrl: status.remoteUrl,
-          isPaseoOwnedWorktree: false,
+          isJunctionOwnedWorktree: false,
           error: null,
           requestId,
         },
@@ -3608,7 +2690,7 @@ export class Session {
           behindOfOrigin: null,
           hasRemote: false,
           remoteUrl: null,
-          isPaseoOwnedWorktree: false,
+          isJunctionOwnedWorktree: false,
           error: this.toCheckoutError(error),
           requestId,
         },
@@ -3887,7 +2969,7 @@ export class Session {
           baseRef: compare.baseRef,
           includeStructured: true,
         },
-        { paseoHome: this.paseoHome }
+        { junctionHome: this.junctionHome }
       )
       const files = [...(diffResult.structured ?? [])]
       files.sort((a, b) => {
@@ -4139,7 +3221,7 @@ export class Session {
     const { cwd, requestId } = msg
 
     try {
-      const status = await getCheckoutStatus(cwd, { paseoHome: this.paseoHome })
+      const status = await getCheckoutStatus(cwd, { junctionHome: this.junctionHome })
       if (!status.isGit) {
         try {
           await execAsync('git rev-parse --is-inside-work-tree', {
@@ -4181,7 +3263,7 @@ export class Session {
           baseRef,
           mode: msg.strategy === 'squash' ? 'squash' : 'merge',
         },
-        { paseoHome: this.paseoHome }
+        { junctionHome: this.junctionHome }
       )
       this.scheduleCheckoutDiffRefreshForCwd(cwd)
 
@@ -4356,14 +3438,14 @@ export class Session {
     }
   }
 
-  private async handlePaseoWorktreeListRequest(
-    msg: Extract<SessionInboundMessage, { type: 'paseo_worktree_list_request' }>
+  private async handleJunctionWorktreeListRequest(
+    msg: Extract<SessionInboundMessage, { type: 'junction_worktree_list_request' }>
   ): Promise<void> {
     const { requestId } = msg
     const cwd = msg.repoRoot ?? msg.cwd
     if (!cwd) {
       this.emit({
-        type: 'paseo_worktree_list_response',
+        type: 'junction_worktree_list_response',
         payload: {
           worktrees: [],
           error: { code: 'UNKNOWN', message: 'cwd or repoRoot is required' },
@@ -4374,9 +3456,9 @@ export class Session {
     }
 
     try {
-      const worktrees = await listPaseoWorktrees({ cwd, paseoHome: this.paseoHome })
+      const worktrees = await listJunctionWorktrees({ cwd, junctionHome: this.junctionHome })
       this.emit({
-        type: 'paseo_worktree_list_response',
+        type: 'junction_worktree_list_response',
         payload: {
           worktrees: worktrees.map((entry) => ({
             worktreePath: entry.path,
@@ -4389,7 +3471,7 @@ export class Session {
       })
     } catch (error) {
       this.emit({
-        type: 'paseo_worktree_list_response',
+        type: 'junction_worktree_list_response',
         payload: {
           worktrees: [],
           error: this.toCheckoutError(error),
@@ -4405,15 +3487,15 @@ export class Session {
     requestId: string
   }): Promise<void> {
     try {
-      const ownership = await isPaseoOwnedWorktreeCwd(options.archivedAgentCwd, {
-        paseoHome: this.paseoHome,
+      const ownership = await isJunctionOwnedWorktreeCwd(options.archivedAgentCwd, {
+        junctionHome: this.junctionHome,
       })
       if (!ownership.allowed) {
         return
       }
 
-      const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(options.archivedAgentCwd, {
-        paseoHome: this.paseoHome,
+      const resolvedWorktree = await resolveJunctionWorktreeRootForCwd(options.archivedAgentCwd, {
+        junctionHome: this.junctionHome,
       })
       if (!resolvedWorktree) {
         return
@@ -4454,7 +3536,7 @@ export class Session {
         return
       }
 
-      await this.archivePaseoWorktree({
+      await this.archiveJunctionWorktree({
         targetPath,
         repoRoot,
         requestId: options.requestId,
@@ -4467,14 +3549,14 @@ export class Session {
     }
   }
 
-  private async archivePaseoWorktree(options: {
+  private async archiveJunctionWorktree(options: {
     targetPath: string
     repoRoot: string
     requestId: string
   }): Promise<string[]> {
     let targetPath = options.targetPath
-    const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
-      paseoHome: this.paseoHome,
+    const resolvedWorktree = await resolveJunctionWorktreeRootForCwd(targetPath, {
+      junctionHome: this.junctionHome,
     })
     if (resolvedWorktree) {
       targetPath = resolvedWorktree.worktreePath
@@ -4512,10 +3594,10 @@ export class Session {
 
     await this.killTerminalsUnderPath(targetPath)
 
-    await deletePaseoWorktree({
+    await deleteJunctionWorktree({
       cwd: options.repoRoot,
       worktreePath: targetPath,
-      paseoHome: this.paseoHome,
+      junctionHome: this.junctionHome,
     })
 
     for (const agentId of removedAgents) {
@@ -4531,8 +3613,8 @@ export class Session {
     return Array.from(removedAgents)
   }
 
-  private async handlePaseoWorktreeArchiveRequest(
-    msg: Extract<SessionInboundMessage, { type: 'paseo_worktree_archive_request' }>
+  private async handleJunctionWorktreeArchiveRequest(
+    msg: Extract<SessionInboundMessage, { type: 'junction_worktree_archive_request' }>
   ): Promise<void> {
     const { requestId } = msg
     let targetPath = msg.worktreePath
@@ -4543,26 +3625,26 @@ export class Session {
         if (!repoRoot || !msg.branchName) {
           throw new Error('worktreePath or repoRoot+branchName is required')
         }
-        const worktrees = await listPaseoWorktrees({ cwd: repoRoot, paseoHome: this.paseoHome })
+        const worktrees = await listJunctionWorktrees({ cwd: repoRoot, junctionHome: this.junctionHome })
         const match = worktrees.find((entry) => entry.branchName === msg.branchName)
         if (!match) {
-          throw new Error(`Paseo worktree not found for branch ${msg.branchName}`)
+          throw new Error(`Junction worktree not found for branch ${msg.branchName}`)
         }
         targetPath = match.path
       }
 
-      const ownership = await isPaseoOwnedWorktreeCwd(targetPath, {
-        paseoHome: this.paseoHome,
+      const ownership = await isJunctionOwnedWorktreeCwd(targetPath, {
+        junctionHome: this.junctionHome,
       })
       if (!ownership.allowed) {
         this.emit({
-          type: 'paseo_worktree_archive_response',
+          type: 'junction_worktree_archive_response',
           payload: {
             success: false,
             removedAgents: [],
             error: {
               code: 'NOT_ALLOWED',
-              message: 'Worktree is not a Paseo-owned worktree',
+              message: 'Worktree is not a Junction-owned worktree',
             },
             requestId,
           },
@@ -4575,14 +3657,14 @@ export class Session {
         throw new Error('Unable to resolve repo root for worktree')
       }
 
-      const removedAgents = await this.archivePaseoWorktree({
+      const removedAgents = await this.archiveJunctionWorktree({
         targetPath,
         repoRoot,
         requestId,
       })
 
       this.emit({
-        type: 'paseo_worktree_archive_response',
+        type: 'junction_worktree_archive_response',
         payload: {
           success: true,
           removedAgents,
@@ -4592,7 +3674,7 @@ export class Session {
       })
     } catch (error) {
       this.emit({
-        type: 'paseo_worktree_archive_response',
+        type: 'junction_worktree_archive_response',
         payload: {
           success: false,
           removedAgents: [],
@@ -5187,6 +4269,11 @@ export class Session {
     }
   }
 
+  private async handleAbort(): Promise<void> {
+    this.sessionLogger.info('Abort request')
+    this.abortController.abort()
+  }
+
   private async handleFetchAgents(
     request: Extract<SessionInboundMessage, { type: 'fetch_agents_request' }>
   ): Promise<void> {
@@ -5663,608 +4750,9 @@ export class Session {
   }
 
   /**
-   * Handle audio chunk for buffering and transcription
-   */
-  private async handleAudioChunk(
-    msg: Extract<SessionInboundMessage, { type: 'voice_audio_chunk' }>
-  ): Promise<void> {
-    if (!this.isVoiceMode) {
-      this.sessionLogger.warn(
-        'Received voice_audio_chunk while voice mode is disabled; transcript will be emitted but voice assistant turn is skipped'
-      )
-    }
-
-    await this.handleVoiceSpeechStart()
-
-    const chunkFormat = msg.format || 'audio/wav'
-
-    if (this.isVoiceMode) {
-      await this.appendToActiveVoiceDictationStream(msg.audio, chunkFormat)
-      if (!msg.isLast) {
-        this.setVoiceModeInactivityTimeout()
-        this.sessionLogger.debug('Voice mode: streaming chunk, waiting for speech end')
-        return
-      }
-
-      this.clearVoiceModeInactivityTimeout()
-      this.sessionLogger.debug('Voice mode: speech ended, finalizing streaming transcription')
-      await this.finalizeActiveVoiceDictationStream('speech ended')
-      return
-    }
-
-    const chunkBuffer = Buffer.from(msg.audio, 'base64')
-    const isPCMChunk = chunkFormat.toLowerCase().includes('pcm')
-
-    if (!this.audioBuffer) {
-      this.audioBuffer = {
-        chunks: [],
-        format: chunkFormat,
-        isPCM: isPCMChunk,
-        totalPCMBytes: 0,
-      }
-    }
-
-    // If the format changes mid-stream, flush what we have first
-    if (this.audioBuffer.isPCM !== isPCMChunk) {
-      this.sessionLogger.debug(
-        {
-          oldFormat: this.audioBuffer.isPCM ? 'pcm' : this.audioBuffer.format,
-          newFormat: chunkFormat,
-        },
-        `Audio format changed mid-stream, flushing current buffer`
-      )
-      const finalized = this.finalizeBufferedAudio()
-      if (finalized) {
-        await this.processCompletedAudio(finalized.audio, finalized.format)
-      }
-      this.audioBuffer = {
-        chunks: [],
-        format: chunkFormat,
-        isPCM: isPCMChunk,
-        totalPCMBytes: 0,
-      }
-    } else if (!this.audioBuffer.isPCM) {
-      // Keep latest format info for non-PCM blobs
-      this.audioBuffer.format = chunkFormat
-    }
-
-    this.audioBuffer.chunks.push(chunkBuffer)
-    if (this.audioBuffer.isPCM) {
-      this.audioBuffer.totalPCMBytes += chunkBuffer.length
-    }
-
-    // In non-voice mode, use streaming threshold to process chunks
-    const reachedStreamingThreshold =
-      !this.isVoiceMode &&
-      this.audioBuffer.isPCM &&
-      this.audioBuffer.totalPCMBytes >= MIN_STREAMING_SEGMENT_BYTES
-
-    if (!msg.isLast && reachedStreamingThreshold) {
-      return
-    }
-
-    const bufferedState = this.audioBuffer
-    const finalized = this.finalizeBufferedAudio()
-    if (!finalized) {
-      return
-    }
-
-    if (!msg.isLast && reachedStreamingThreshold) {
-      this.sessionLogger.debug(
-        {
-          minDuration: MIN_STREAMING_SEGMENT_DURATION_MS,
-          pcmBytes: bufferedState?.totalPCMBytes ?? 0,
-        },
-        `Minimum chunk duration reached (~${MIN_STREAMING_SEGMENT_DURATION_MS}ms, ${
-          bufferedState?.totalPCMBytes ?? 0
-        } PCM bytes) – triggering STT`
-      )
-    } else {
-      this.sessionLogger.debug(
-        { audioBytes: finalized.audio.length, chunks: bufferedState?.chunks.length ?? 0 },
-        `Complete audio segment (${finalized.audio.length} bytes, ${bufferedState?.chunks.length ?? 0} chunk(s))`
-      )
-    }
-
-    await this.processCompletedAudio(finalized.audio, finalized.format)
-  }
-
-  private finalizeBufferedAudio(): { audio: Buffer; format: string } | null {
-    if (!this.audioBuffer) {
-      return null
-    }
-
-    const bufferState = this.audioBuffer
-    this.audioBuffer = null
-
-    if (bufferState.isPCM) {
-      const pcmBuffer = Buffer.concat(bufferState.chunks)
-      const wavBuffer = convertPCMToWavBuffer(
-        pcmBuffer,
-        PCM_SAMPLE_RATE,
-        PCM_CHANNELS,
-        PCM_BITS_PER_SAMPLE
-      )
-      return {
-        audio: wavBuffer,
-        format: 'audio/wav',
-      }
-    }
-
-    return {
-      audio: Buffer.concat(bufferState.chunks),
-      format: bufferState.format,
-    }
-  }
-
-  private async processCompletedAudio(audio: Buffer, format: string): Promise<void> {
-    const shouldBuffer =
-      this.processingPhase === 'transcribing' && this.pendingAudioSegments.length === 0
-
-    if (shouldBuffer) {
-      this.sessionLogger.debug(
-        { phase: this.processingPhase },
-        `Buffering audio segment (phase: ${this.processingPhase})`
-      )
-      this.pendingAudioSegments.push({
-        audio,
-        format,
-      })
-      this.setBufferTimeout()
-      return
-    }
-
-    if (this.pendingAudioSegments.length > 0) {
-      this.pendingAudioSegments.push({
-        audio,
-        format,
-      })
-      this.sessionLogger.debug(
-        { segmentCount: this.pendingAudioSegments.length },
-        `Processing ${this.pendingAudioSegments.length} buffered segments together`
-      )
-
-      const pendingSegments = [...this.pendingAudioSegments]
-      this.pendingAudioSegments = []
-      this.clearBufferTimeout()
-
-      const combinedAudio = Buffer.concat(pendingSegments.map((segment) => segment.audio))
-      const combinedFormat = pendingSegments[pendingSegments.length - 1].format
-
-      await this.processAudio(combinedAudio, combinedFormat)
-      return
-    }
-
-    await this.processAudio(audio, format)
-  }
-
-  /**
-   * Process audio through STT and then LLM
-   */
-  private async processAudio(audio: Buffer, format: string): Promise<void> {
-    this.setPhase('transcribing')
-
-    this.emit({
-      type: 'activity_log',
-      payload: {
-        id: uuidv4(),
-        timestamp: new Date(),
-        type: 'system',
-        content: 'Transcribing audio...',
-      },
-    })
-
-    try {
-      const requestId = uuidv4()
-      const result = await this.sttManager.transcribe(audio, format, {
-        requestId,
-        label: this.isVoiceMode ? 'voice' : 'buffered',
-      })
-
-      const transcriptText = result.text.trim()
-      this.sessionLogger.info(
-        {
-          requestId,
-          isVoiceMode: this.isVoiceMode,
-          transcriptLength: transcriptText.length,
-          transcript: transcriptText,
-        },
-        'Transcription result'
-      )
-
-      await this.handleTranscriptionResultPayload({
-        text: result.text,
-        language: result.language,
-        duration: result.duration,
-        requestId,
-        avgLogprob: result.avgLogprob,
-        isLowConfidence: result.isLowConfidence,
-        byteLength: result.byteLength,
-        format: result.format,
-        debugRecordingPath: result.debugRecordingPath,
-      })
-    } catch (error: any) {
-      this.setPhase('idle')
-      this.clearSpeechInProgress('transcription error')
-      this.emit({
-        type: 'activity_log',
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: 'error',
-          content: `Transcription error: ${error.message}`,
-        },
-      })
-      throw error
-    }
-  }
-
-  private async handleTranscriptionResultPayload(
-    result: VoiceTranscriptionResultPayload
-  ): Promise<void> {
-    const transcriptText = result.text.trim()
-
-    this.emit({
-      type: 'transcription_result',
-      payload: {
-        text: result.text,
-        ...(result.language ? { language: result.language } : {}),
-        ...(result.duration !== undefined ? { duration: result.duration } : {}),
-        requestId: result.requestId,
-        ...(result.avgLogprob !== undefined ? { avgLogprob: result.avgLogprob } : {}),
-        ...(result.isLowConfidence !== undefined
-          ? { isLowConfidence: result.isLowConfidence }
-          : {}),
-        ...(result.byteLength !== undefined ? { byteLength: result.byteLength } : {}),
-        ...(result.format ? { format: result.format } : {}),
-        ...(result.debugRecordingPath ? { debugRecordingPath: result.debugRecordingPath } : {}),
-      },
-    })
-
-    if (!transcriptText) {
-      this.sessionLogger.debug('Empty transcription (false positive), not aborting')
-      this.setPhase('idle')
-      this.clearSpeechInProgress('empty transcription')
-      return
-    }
-
-    // Has content - abort any in-progress stream now
-    this.createAbortController()
-
-    if (result.debugRecordingPath) {
-      this.emit({
-        type: 'activity_log',
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: 'system',
-          content: `Saved input audio: ${result.debugRecordingPath}`,
-          metadata: {
-            recordingPath: result.debugRecordingPath,
-            ...(result.format ? { format: result.format } : {}),
-            requestId: result.requestId,
-          },
-        },
-      })
-    }
-
-    this.emit({
-      type: 'activity_log',
-      payload: {
-        id: uuidv4(),
-        timestamp: new Date(),
-        type: 'transcript',
-        content: result.text,
-        metadata: {
-          ...(result.language ? { language: result.language } : {}),
-          ...(result.duration !== undefined ? { duration: result.duration } : {}),
-        },
-      },
-    })
-
-    this.clearSpeechInProgress('transcription complete')
-    this.setPhase('idle')
-    if (!this.isVoiceMode) {
-      this.sessionLogger.debug(
-        { requestId: result.requestId },
-        'Skipping voice agent processing because voice mode is disabled'
-      )
-      return
-    }
-
-    const agentId = this.voiceModeAgentId
-    if (!agentId) {
-      this.sessionLogger.warn(
-        { requestId: result.requestId },
-        'Skipping voice agent processing because no agent is currently voice-enabled'
-      )
-      return
-    }
-
-    // Route voice utterances through the same send path as regular text input:
-    // interrupt-if-running, record message, then start a new stream.
-    await this.handleSendAgentMessage(agentId, result.text)
-  }
-
-  private registerVoiceBridgeForAgent(agentId: string): void {
-    this.registerVoiceSpeakHandler?.(agentId, async ({ text, signal }) => {
-      this.sessionLogger.info(
-        {
-          agentId,
-          textLength: text.length,
-          preview: text.slice(0, 160),
-        },
-        'Voice speak tool call received by session handler'
-      )
-      const abortSignal = signal ?? this.abortController.signal
-      await this.ttsManager.generateAndWaitForPlayback(
-        text,
-        (msg) => this.emit(msg),
-        abortSignal,
-        true
-      )
-      this.sessionLogger.info(
-        { agentId, textLength: text.length },
-        'Voice speak tool call finished playback'
-      )
-      this.emit({
-        type: 'activity_log',
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: 'assistant',
-          content: text,
-        },
-      })
-    })
-
-    this.registerVoiceCallerContext?.(agentId, {
-      childAgentDefaultLabels: { ui: 'true' },
-      allowCustomCwd: false,
-      enableVoiceTools: true,
-    })
-  }
-
-  /**
-   * Handle abort request from client
-   */
-  private async handleAbort(): Promise<void> {
-    this.sessionLogger.info(
-      { phase: this.processingPhase },
-      `Abort request, phase: ${this.processingPhase}`
-    )
-
-    this.abortController.abort()
-    this.ttsManager.cancelPendingPlaybacks('abort request')
-
-    // Voice abort should always interrupt active agent output immediately.
-    if (this.isVoiceMode && this.voiceModeAgentId) {
-      try {
-        await this.interruptAgentIfRunning(this.voiceModeAgentId)
-      } catch (error) {
-        this.sessionLogger.warn(
-          { err: error, agentId: this.voiceModeAgentId },
-          'Failed to interrupt active voice-mode agent on abort'
-        )
-      }
-    }
-
-    if (this.processingPhase === 'transcribing') {
-      // Still in STT phase - we'll buffer the next audio
-      this.sessionLogger.debug('Will buffer next audio (currently transcribing)')
-      // Phase stays as 'transcribing', handleAudioChunk will handle buffering
-      return
-    }
-
-    // Reset phase to idle and clear pending non-voice buffers.
-    this.setPhase('idle')
-    this.pendingAudioSegments = []
-    this.clearBufferTimeout()
-  }
-
-  /**
-   * Handle audio playback confirmation from client
-   */
-  private handleAudioPlayed(id: string): void {
-    this.ttsManager.confirmAudioPlayed(id)
-  }
-
-  /**
-   * Mark speech detection start and abort any active playback/agent run.
-   */
-  private async handleVoiceSpeechStart(): Promise<void> {
-    if (this.speechInProgress) {
-      return
-    }
-
-    const chunkReceivedAt = Date.now()
-    const phaseBeforeAbort = this.processingPhase
-    const hadActiveStream = this.hasActiveAgentRun(this.voiceModeAgentId)
-
-    this.speechInProgress = true
-    this.sessionLogger.debug('Voice speech detected – aborting playback and active agent run')
-
-    if (this.pendingAudioSegments.length > 0) {
-      this.sessionLogger.debug(
-        { segmentCount: this.pendingAudioSegments.length },
-        `Dropping ${this.pendingAudioSegments.length} buffered audio segment(s) due to voice speech`
-      )
-      this.pendingAudioSegments = []
-    }
-
-    if (this.audioBuffer) {
-      this.sessionLogger.debug(
-        { chunks: this.audioBuffer.chunks.length, pcmBytes: this.audioBuffer.totalPCMBytes },
-        `Clearing partial audio buffer (${this.audioBuffer.chunks.length} chunk(s)${
-          this.audioBuffer.isPCM ? `, ${this.audioBuffer.totalPCMBytes} PCM bytes` : ''
-        })`
-      )
-      this.audioBuffer = null
-    }
-
-    this.cancelActiveVoiceDictationStream('new speech turn started')
-    this.clearVoiceModeInactivityTimeout()
-    this.clearBufferTimeout()
-
-    this.abortController.abort()
-    await this.handleAbort()
-
-    const latencyMs = Date.now() - chunkReceivedAt
-    this.sessionLogger.debug(
-      { latencyMs, phaseBeforeAbort, hadActiveStream },
-      '[Telemetry] barge_in.llm_abort_latency'
-    )
-  }
-
-  /**
-   * Clear speech-in-progress flag once the user turn has completed
-   */
-  private clearSpeechInProgress(reason: string): void {
-    if (!this.speechInProgress) {
-      return
-    }
-
-    this.speechInProgress = false
-    this.sessionLogger.debug({ reason }, `Speech turn complete (${reason}) – resuming TTS`)
-  }
-
-  /**
-   * Create new AbortController, aborting the previous one
-   */
-  private createAbortController(): AbortController {
-    this.abortController.abort()
-    this.abortController = new AbortController()
-    this.ttsDebugStreams.clear()
-    return this.abortController
-  }
-
-  /**
-   * Set the processing phase
-   */
-  private setPhase(phase: ProcessingPhase): void {
-    this.processingPhase = phase
-    this.sessionLogger.debug({ phase }, `Phase: ${phase}`)
-  }
-
-  /**
-   * Set timeout to process buffered audio segments
-   */
-  private setBufferTimeout(): void {
-    this.clearBufferTimeout()
-
-    this.bufferTimeout = setTimeout(async () => {
-      this.sessionLogger.debug('Buffer timeout reached, processing pending segments')
-
-      if (this.pendingAudioSegments.length > 0) {
-        const segments = [...this.pendingAudioSegments]
-        this.pendingAudioSegments = []
-        this.bufferTimeout = null
-
-        const combined = Buffer.concat(segments.map((s) => s.audio))
-        await this.processAudio(combined, segments[0].format)
-      }
-    }, 10000) // 10 second timeout
-  }
-
-  private setVoiceModeInactivityTimeout(): void {
-    if (!this.isVoiceMode) {
-      return
-    }
-
-    this.clearVoiceModeInactivityTimeout()
-    this.voiceModeInactivityTimeout = setTimeout(() => {
-      this.voiceModeInactivityTimeout = null
-      if (!this.isVoiceMode || !this.activeVoiceDictationId) {
-        return
-      }
-
-      this.sessionLogger.warn(
-        {
-          timeoutMs: VOICE_MODE_INACTIVITY_FLUSH_MS,
-          dictationId: this.activeVoiceDictationId,
-          nextSeq: this.activeVoiceDictationNextSeq,
-        },
-        'Voice mode inactivity timeout reached without isLast; finalizing active voice dictation stream'
-      )
-
-      void this.finalizeActiveVoiceDictationStream('inactivity timeout').catch((error) => {
-        this.sessionLogger.error(
-          { err: error },
-          'Failed to finalize voice dictation stream after inactivity timeout'
-        )
-      })
-    }, VOICE_MODE_INACTIVITY_FLUSH_MS)
-  }
-
-  private clearVoiceModeInactivityTimeout(): void {
-    if (this.voiceModeInactivityTimeout) {
-      clearTimeout(this.voiceModeInactivityTimeout)
-      this.voiceModeInactivityTimeout = null
-    }
-  }
-
-  /**
-   * Clear buffer timeout
-   */
-  private clearBufferTimeout(): void {
-    if (this.bufferTimeout) {
-      clearTimeout(this.bufferTimeout)
-      this.bufferTimeout = null
-    }
-  }
-
-  /**
    * Emit a message to the client
    */
   private emit(msg: SessionOutboundMessage): void {
-    if (
-      msg.type === 'audio_output' &&
-      (process.env.TTS_DEBUG_AUDIO_DIR || isPaseoDictationDebugEnabled()) &&
-      msg.payload.groupId &&
-      typeof msg.payload.audio === 'string'
-    ) {
-      const groupId = msg.payload.groupId
-      const existing =
-        this.ttsDebugStreams.get(groupId) ??
-        ({ format: msg.payload.format, chunks: [] } satisfies {
-          format: string
-          chunks: Buffer[]
-        })
-
-      try {
-        existing.chunks.push(Buffer.from(msg.payload.audio, 'base64'))
-        existing.format = msg.payload.format
-        this.ttsDebugStreams.set(groupId, existing)
-      } catch {
-        // ignore malformed base64
-      }
-
-      if (msg.payload.isLastChunk) {
-        const final = this.ttsDebugStreams.get(groupId)
-        this.ttsDebugStreams.delete(groupId)
-        if (final && final.chunks.length > 0) {
-          void (async () => {
-            const recordingPath = await maybePersistTtsDebugAudio(
-              Buffer.concat(final.chunks),
-              { sessionId: this.sessionId, groupId, format: final.format },
-              this.sessionLogger
-            )
-            if (recordingPath) {
-              this.onMessage({
-                type: 'activity_log',
-                payload: {
-                  id: uuidv4(),
-                  timestamp: new Date(),
-                  type: 'system',
-                  content: `Saved TTS audio: ${recordingPath}`,
-                  metadata: { recordingPath, format: final.format, groupId },
-                },
-              })
-            }
-          })()
-        }
-      }
-    }
     this.onMessage(msg)
   }
 
@@ -6293,21 +4781,6 @@ export class Session {
     // Abort any ongoing operations
     this.abortController.abort()
 
-    // Clear timeouts
-    this.clearVoiceModeInactivityTimeout()
-    this.clearBufferTimeout()
-
-    // Clear buffers
-    this.cancelActiveVoiceDictationStream('session cleanup')
-    this.pendingAudioSegments = []
-    this.audioBuffer = null
-
-    // Cleanup managers
-    this.ttsManager.cleanup()
-    this.sttManager.cleanup()
-    this.voiceStreamManager.cleanupAll()
-    this.dictationStreamManager.cleanupAll()
-
     // Close MCP clients
     if (this.agentMcpClient) {
       try {
@@ -6318,9 +4791,6 @@ export class Session {
       this.agentMcpClient = null
       this.agentTools = null
     }
-
-    await this.disableVoiceModeForActiveAgent(true)
-    this.isVoiceMode = false
 
     // Unsubscribe from all terminals
     if (this.unsubscribeTerminalsChanged) {

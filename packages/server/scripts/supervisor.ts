@@ -2,10 +2,10 @@ import { fork, type ChildProcess } from "child_process";
 
 type WorkerLifecycleMessage =
   | {
-      type: "paseo:shutdown";
+      type: "junction:shutdown";
     }
   | {
-      type: "paseo:restart";
+      type: "junction:restart";
       reason?: string;
     };
 
@@ -29,13 +29,13 @@ function parseLifecycleMessage(msg: unknown): WorkerLifecycleMessage | null {
     return null;
   }
   const type = (msg as { type?: unknown }).type;
-  if (type === "paseo:shutdown") {
-    return { type: "paseo:shutdown" };
+  if (type === "junction:shutdown") {
+    return { type: "junction:shutdown" };
   }
-  if (type === "paseo:restart") {
+  if (type === "junction:restart") {
     const reason = (msg as { reason?: unknown }).reason;
     return {
-      type: "paseo:restart",
+      type: "junction:restart",
       ...(typeof reason === "string" && reason.trim().length > 0 ? { reason } : {}),
     };
   }
@@ -96,7 +96,7 @@ export function runSupervisor(options: SupervisorOptions): void {
         return;
       }
 
-      if (lifecycleMessage.type === "paseo:shutdown") {
+      if (lifecycleMessage.type === "junction:shutdown") {
         requestShutdown("Shutdown requested by worker");
         return;
       }

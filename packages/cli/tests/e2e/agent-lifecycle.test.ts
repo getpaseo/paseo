@@ -8,11 +8,11 @@
  *
  * Test flow:
  * 1. Start daemon on random port
- * 2. Create agent with `paseo run "say hello" --provider claude`
- * 3. List agents with `paseo ls`
- * 4. Wait for agent with `paseo wait <id>`
- * 5. Inspect agent with `paseo inspect <id>`
- * 6. Stop agent with `paseo stop <id>`
+ * 2. Create agent with `junction run "say hello" --provider claude`
+ * 3. List agents with `junction ls`
+ * 4. Wait for agent with `junction wait <id>`
+ * 5. Inspect agent with `junction inspect <id>`
+ * 6. Stop agent with `junction stop <id>`
  * 7. Cleanup: stop daemon, remove temp dirs
  *
  * CRITICAL RULES:
@@ -25,7 +25,7 @@ import assert from 'node:assert'
 import { createE2ETestContext, type TestDaemonContext } from '../helpers/test-daemon.ts'
 
 interface E2EContext extends TestDaemonContext {
-  paseo: (args: string[], opts?: { timeout?: number; cwd?: string }) => Promise<{
+  junction: (args: string[], opts?: { timeout?: number; cwd?: string }) => Promise<{
     exitCode: number
     stdout: string
     stderr: string
@@ -41,7 +41,7 @@ async function setup(): Promise<void> {
   try {
     ctx = await createE2ETestContext({ timeout: 45000 })
     console.log(`Test daemon started on port ${ctx.port}`)
-    console.log(`PASEO_HOME: ${ctx.paseoHome}`)
+    console.log(`JUNCTION_HOME: ${ctx.junctionHome}`)
     console.log(`Work directory: ${ctx.workDir}`)
   } catch (err) {
     console.error('Failed to start test daemon:', err)
@@ -60,7 +60,7 @@ async function cleanup(): Promise<void> {
 async function test_agent_ls_empty(): Promise<void> {
   console.log('\n--- Test: agent ls with empty list ---')
 
-  const result = await ctx.paseo(['ls', '--json'])
+  const result = await ctx.junction(['ls', '--json'])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)
@@ -81,7 +81,7 @@ async function test_agent_run_detached(): Promise<string> {
   // Use quiet mode to get just the agent ID
   // CRITICAL: Use haiku model for fast, cheap tests
   // CRITICAL: Use bypassPermissions mode so agent doesn't wait for permission approvals
-  const result = await ctx.paseo(
+  const result = await ctx.junction(
     [
       '-q',
       'run',
@@ -116,7 +116,7 @@ async function test_agent_run_detached(): Promise<string> {
 async function test_agent_ls_shows_agent(agentId: string): Promise<void> {
   console.log('\n--- Test: agent ls shows created agent ---')
 
-  const result = await ctx.paseo(['ls', '--json'])
+  const result = await ctx.junction(['ls', '--json'])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)
@@ -139,7 +139,7 @@ async function test_agent_wait(agentId: string): Promise<void> {
   console.log('\n--- Test: agent wait ---')
 
   // Wait for agent to become idle (with generous timeout for haiku model)
-  const result = await ctx.paseo(['wait', '--timeout', '120s', agentId], { timeout: 130000 })
+  const result = await ctx.junction(['wait', '--timeout', '120s', agentId], { timeout: 130000 })
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)
@@ -153,7 +153,7 @@ async function test_agent_wait(agentId: string): Promise<void> {
 async function test_agent_inspect(agentId: string): Promise<void> {
   console.log('\n--- Test: agent inspect ---')
 
-  const result = await ctx.paseo(['inspect', agentId])
+  const result = await ctx.junction(['inspect', agentId])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)
@@ -173,7 +173,7 @@ async function test_agent_inspect(agentId: string): Promise<void> {
 async function test_agent_logs(agentId: string): Promise<void> {
   console.log('\n--- Test: agent logs ---')
 
-  const result = await ctx.paseo(['logs', '--tail', '20', agentId])
+  const result = await ctx.junction(['logs', '--tail', '20', agentId])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout length:', result.stdout.length)
@@ -189,7 +189,7 @@ async function test_agent_logs(agentId: string): Promise<void> {
 async function test_agent_stop(agentId: string): Promise<void> {
   console.log('\n--- Test: agent stop ---')
 
-  const result = await ctx.paseo(['stop', agentId])
+  const result = await ctx.junction(['stop', agentId])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)
@@ -198,7 +198,7 @@ async function test_agent_stop(agentId: string): Promise<void> {
   assert.strictEqual(result.exitCode, 0, 'agent stop should succeed')
 
   // Verify agent is no longer in running list
-  const psResult = await ctx.paseo(['ls', '--json'])
+  const psResult = await ctx.junction(['ls', '--json'])
   const agents = JSON.parse(psResult.stdout.trim()) as Array<{ id: string; status?: string }>
 
   // Agent might still be in list but should not be running

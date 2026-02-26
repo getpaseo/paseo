@@ -10,7 +10,7 @@ describe("relay websocket URL versioning", () => {
   test("defaults relay URLs to v2", () => {
     const url = new URL(
       buildRelayWebSocketUrl({
-        endpoint: "relay.paseo.sh:443",
+        endpoint: "relay.junction.sh:443",
         serverId: "srv_test",
         role: "client",
       })
@@ -23,7 +23,7 @@ describe("relay websocket URL versioning", () => {
   test("includes connectionId when provided (server data sockets)", () => {
     const url = new URL(
       buildRelayWebSocketUrl({
-        endpoint: "relay.paseo.sh:443",
+        endpoint: "relay.junction.sh:443",
         serverId: "srv_test",
         role: "server",
         connectionId: "conn_abc123",
@@ -36,7 +36,7 @@ describe("relay websocket URL versioning", () => {
   test("allows explicitly requesting v1 relay URLs", () => {
     const url = new URL(
       buildRelayWebSocketUrl({
-        endpoint: "relay.paseo.sh:443",
+        endpoint: "relay.junction.sh:443",
         serverId: "srv_test",
         role: "server",
         version: "1",

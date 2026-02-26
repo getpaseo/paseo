@@ -1,0 +1,417 @@
+@import "streamdown/styles.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 228 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --input-background: 240 4.8% 95.9%;
+    --ring: 228 100% 50%;
+    --selection: 228 100% 50% / 0.25;
+    --radius: 0.5rem;
+    --plan-mode: 33 83% 67%;
+    --plan-mode-foreground: 0 0% 8%;
+    --tl-background: 0 0% 98%;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 240 4.8% 95.9%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 228 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 5.9% 10%;
+    --muted-foreground: 240 4.4% 58%;
+    --accent: 240 5.9% 10%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --input-background: 60 2% 18%;
+    --ring: 228 100% 50%;
+    --selection: 228 100% 50% / 0.3;
+    --plan-mode: 33 83% 67%;
+    --plan-mode-foreground: 0 0% 8%;
+    --tl-background: 60 2% 18%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Search highlight styles */
+.search-highlight {
+  background-color: rgb(250 204 21 / 0.35) !important;
+  color: inherit !important;
+  border-radius: 2px;
+}
+
+.search-highlight-current {
+  background-color: rgb(250 204 21 / 0.85) !important;
+  color: hsl(0 0% 5%) !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Chroma gradient animation */
+@keyframes chroma-slide {
+  0% { background-position: 100% 0; }
+  40% { background-position: 0% 0; }
+  45% { background-position: 0% 0; }
+  46% { background-position: 100% 0; }
+  100% { background-position: 100% 0; }
+}
+
+.chroma-text {
+  background-image: linear-gradient(90deg, #0a0a0a 0%, #0a0a0a 30%, #6366f1 42%, #8b5cf6 50%, #a855f7 58%, #0a0a0a 70%, #0a0a0a 100%);
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.chroma-text-animate {
+  animation: chroma-slide 2s ease-out infinite;
+}
+
+.dark .chroma-text {
+  background-image: linear-gradient(90deg, #fafafa 0%, #fafafa 30%, #818cf8 42%, #a78bfa 50%, #c084fc 58%, #fafafa 70%, #fafafa 100%);
+}
+
+/* Sonner Toast Styling */
+[data-sonner-toaster] {
+  --normal-bg: hsl(var(--popover)) !important;
+  --normal-text: hsl(var(--popover-foreground)) !important;
+  --normal-border: hsl(var(--border)) !important;
+  --border-radius: var(--radius) !important;
+  --success-bg: hsl(var(--popover)) !important;
+  --success-border: hsl(var(--border)) !important;
+  --success-text: hsl(var(--popover-foreground)) !important;
+  --info-bg: hsl(var(--popover)) !important;
+  --info-border: hsl(var(--border)) !important;
+  --info-text: hsl(var(--popover-foreground)) !important;
+  --warning-bg: hsl(var(--popover)) !important;
+  --warning-border: hsl(var(--border)) !important;
+  --warning-text: hsl(var(--popover-foreground)) !important;
+  --error-bg: hsl(var(--popover)) !important;
+  --error-border: hsl(var(--border)) !important;
+  --error-text: hsl(var(--popover-foreground)) !important;
+}
+
+[data-sonner-toast][data-styled="true"] {
+  padding: 12px 16px;
+  padding-right: 32px;
+  gap: 8px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+[data-sonner-toast] [data-icon] {
+  margin-top: 1px;
+  color: hsl(var(--muted-foreground));
+  width: 16px;
+  height: 16px;
+}
+
+[data-sonner-toast] [data-icon] svg {
+  width: 16px;
+  height: 16px;
+}
+
+[data-sonner-toast] [data-content] {
+  flex: 1;
+  min-width: 0;
+}
+
+[data-sonner-toast] [data-title] {
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+[data-sonner-toast] [data-description] {
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+[data-sonner-toast] [data-close-button] {
+  position: absolute !important;
+  top: 8px !important;
+  right: 8px !important;
+  left: unset !important;
+  transform: none !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 4px !important;
+  color: hsl(var(--muted-foreground));
+  width: 20px;
+  height: 20px;
+}
+
+[data-sonner-toast] [data-close-button]:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--accent)) !important;
+}
+
+/* Agents page theme overrides */
+[data-agents-page] {
+  --muted: 0 0% 94%;
+  --muted-foreground: 0 0% 45%;
+  --selection-bg: var(--selection, var(--primary));
+  --sidebar-width: 240px;
+  position: relative;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-weight: 400;
+}
+
+.dark [data-agents-page] {
+  --muted: 0 0% 14%;
+  --muted-foreground: 0 0% 55%;
+  --selection-bg: var(--selection, var(--primary));
+}
+
+/* Text selection */
+[data-agents-page] .allow-text-selection,
+[data-agents-page] .allow-text-selection * {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+[data-agents-page] ::selection {
+  background-color: hsl(var(--selection-bg));
+}
+
+/* Thin scrollbar for agents */
+[data-agents-page] {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+}
+
+[data-agents-page] ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+[data-agents-page] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-agents-page] ::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 3px;
+}
+
+[data-agents-page] ::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Focus styles */
+[data-agents-page] button:focus-visible,
+[data-agents-page] [role="button"]:focus-visible,
+[data-agents-page] a:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+
+/* Animations */
+@keyframes agents-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes agents-slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+[data-agents-page] .animate-fade-in {
+  animation: agents-fade-in 200ms ease-out;
+}
+
+[data-agents-page] .animate-slide-up {
+  animation: agents-slide-up 200ms ease-out;
+}
+
+/* Touch optimizations */
+[data-agents-page] button,
+[data-agents-page] [role="button"],
+[data-agents-page] a {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  [data-agents-page] button:active,
+  [data-agents-page] [role="button"]:active {
+    transform: scale(0.98);
+    transition: transform 100ms ease-out;
+  }
+}
+
+/* Dialog styles */
+body:has([data-agents-page]) [data-canvas-dialog],
+[data-agents-page] [data-canvas-dialog] {
+  --tw-ring-opacity: 1;
+  --tw-ring-color: rgb(229 231 235 / 0.8);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), 0 0 0 4px var(--tw-ring-color) !important;
+}
+
+.dark body:has([data-agents-page]) [data-canvas-dialog],
+.dark [data-agents-page] [data-canvas-dialog] {
+  --tw-ring-color: rgb(38 38 38 / 0.8);
+}
+
+.dark body:has([data-agents-page]) [data-radix-portal],
+.dark body:has([data-agents-page]) [role="dialog"] {
+  --popover: 0 0% 9%;
+  --muted: 0 0% 14%;
+  --muted-foreground: 0 0% 55%;
+}
+
+/* Git diff view */
+.agent-diff-wrapper {
+  --diff-font-size--: 12px;
+  --diff-line-height--: 1.5;
+  font-size: 12px;
+  line-height: 1.5;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.agent-diff-wrapper code,
+.agent-diff-wrapper pre {
+  font-size: 12px;
+  font-family: "Monaco", "Menlo", "Consolas", monospace;
+}
+
+/* Streamdown spacing overrides */
+.prose > .space-y-4 {
+  margin: 0;
+  padding: 0;
+}
+
+.prose > .space-y-4 > * + * {
+  margin-top: 0;
+}
+
+.prose > .space-y-4:has(> p) {
+  margin-top: 1px;
+  margin-bottom: 1px;
+}
+
+.prose > .space-y-4:has(> h1) {
+  margin-top: 2em;
+  margin-bottom: 4px;
+}
+
+.prose > .space-y-4:has(> h2) {
+  margin-top: 1.4em;
+  margin-bottom: 1px;
+}
+
+.prose > .space-y-4:has(> h3) {
+  margin-top: 1em;
+  margin-bottom: 1px;
+}
+
+.prose > .space-y-4:has(> h4),
+.prose > .space-y-4:has(> h5),
+.prose > .space-y-4:has(> h6) {
+  margin-top: 1em;
+  margin-bottom: 1px;
+}
+
+.prose > .space-y-4:first-child {
+  margin-top: 0 !important;
+}
+
+.prose > .space-y-4:has(> ul),
+.prose > .space-y-4:has(> ol) {
+  margin-top: 1px;
+  margin-bottom: 1px;
+}
+
+.prose > .space-y-4:has(> blockquote) {
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.prose > .space-y-4:has(> div) {
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6,
+.prose p, .prose ul, .prose ol, .prose blockquote, .prose hr, .prose table {
+  margin-top: 0;
+  margin-bottom: 0;
+}

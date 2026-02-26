@@ -2,11 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ensureValidJson } from "../json-utils.js";
 import type { Logger } from "pino";
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type {
-  ServerNotification,
-  ServerRequest,
-} from "@modelcontextprotocol/sdk/types.js";
 
 import type {
   AgentPromptInput,
@@ -35,11 +30,8 @@ import {
 import { type WorktreeConfig } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
-import type {
-  VoiceCallerContext,
-  VoiceSpeakHandler,
-} from "../voice-types.js";
 import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
+
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import {
   createAgentWorktree,
@@ -50,24 +42,12 @@ export interface AgentMcpServerOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager?: TerminalManager | null;
-  paseoHome?: string;
+  junctionHome?: string;
   /**
    * ID of the agent that is connecting to this MCP server.
    * Used for cwd/mode inheritance when agents spawn child agents.
    */
   callerAgentId?: string;
-  /**
-   * Optional resolver for session-bound speak handlers.
-   * Used by hidden voice agents to narrate through daemon-managed TTS.
-   */
-  resolveSpeakHandler?: (
-    callerAgentId: string
-  ) => VoiceSpeakHandler | null;
-  resolveCallerContext?: (
-    callerAgentId: string
-  ) => VoiceCallerContext | null;
-  enableVoiceTools?: boolean;
-  voiceOnly?: boolean;
   logger: Logger;
 }
 
@@ -130,19 +110,13 @@ const AgentStatusEnum = z.enum([
 // 50 seconds - surface friendly message before SDK tool timeout (~60s)
 const AGENT_WAIT_TIMEOUT_MS = 50000;
 
-type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
+
 
 function resolveChildAgentCwd(params: {
   parentCwd: string;
   requestedCwd?: string;
-  lockedCwd?: string;
   allowCustomCwd: boolean;
 }): string {
-  const lockedCwd = params.lockedCwd?.trim();
-  if (lockedCwd) {
-    return expandUserPath(lockedCwd);
-  }
-
   const requestedCwd = params.requestedCwd?.trim();
   if (!requestedCwd || !params.allowCustomCwd) {
     return params.parentCwd;
@@ -301,13 +275,10 @@ export async function createAgentMcpServer(
     agentStorage,
     terminalManager,
     callerAgentId,
-    resolveSpeakHandler,
-    resolveCallerContext,
     logger,
   } = options;
   const childLogger = logger.child({ module: "agent", component: "mcp-server" });
   const waitTracker = new WaitForAgentTracker(logger);
-  const callerContext = callerAgentId ? resolveCallerContext?.(callerAgentId) ?? null : null;
 
   const server = new McpServer({
     name: "agent-mcp",
@@ -405,49 +376,6 @@ export async function createAgentMcpServer(
     initialMode: topLevelInputSchema.initialMode.optional(),
   });
 
-  if (options.voiceOnly || options.enableVoiceTools || callerContext?.enableVoiceTools) {
-    server.registerTool(
-      "speak",
-      {
-        title: "Speak",
-        description:
-          "Speak text to the user via daemon-managed voice output. Blocks until playback completes.",
-        inputSchema: {
-          text: z
-            .string()
-            .trim()
-            .min(1, "text is required")
-            .max(4000, "text must be 4000 characters or fewer"),
-        },
-        outputSchema: {
-          ok: z.boolean(),
-        },
-      },
-      async (args, context?: McpToolContext) => {
-        if (!callerAgentId) {
-          throw new Error("speak is only available to agent-scoped MCP sessions");
-        }
-        const handler = resolveSpeakHandler?.(callerAgentId) ?? null;
-        if (!handler) {
-          throw new Error(`No speak handler registered for caller agent '${callerAgentId}'`);
-        }
-        await handler({
-          text: args.text,
-          callerAgentId,
-          signal: context?.signal,
-        });
-        return {
-          content: [],
-          structuredContent: ensureValidJson({ ok: true }),
-        };
-      }
-    );
-  }
-
-  if (options.voiceOnly) {
-    return server;
-  }
-
   server.registerTool(
     "create_agent",
     {
@@ -496,8 +424,7 @@ export async function createAgentMcpServer(
         resolvedCwd = resolveChildAgentCwd({
           parentCwd: parentAgent.cwd,
           requestedCwd: callerArgs.cwd,
-          lockedCwd: callerContext?.lockedCwd,
-          allowCustomCwd: callerContext?.allowCustomCwd ?? true,
+          allowCustomCwd: true,
         });
         const parentMode = parentAgent.currentModeId;
         if (parentMode) {
@@ -531,7 +458,7 @@ export async function createAgentMcpServer(
             cwd: resolvedCwd,
             baseBranch,
             worktreeSlug: worktreeName,
-            paseoHome: options.paseoHome,
+            junctionHome: options.junctionHome,
           });
           resolvedCwd = worktree.worktreePath;
           worktreeConfig = worktree;
@@ -540,19 +467,13 @@ export async function createAgentMcpServer(
         resolvedMode = initialMode;
       }
 
-      const childAgentDefaultLabels =
-        callerAgentId && callerContext?.childAgentDefaultLabels
-          ? callerContext.childAgentDefaultLabels
-          : undefined;
       const snapshot = await agentManager.createAgent(
         {
           provider,
           cwd: resolvedCwd,
           modeId: resolvedMode,
           title: normalizedTitle ?? undefined,
-        },
-        undefined,
-        childAgentDefaultLabels ? { labels: childAgentDefaultLabels } : undefined
+        }
       );
 
       if (worktreeConfig) {
@@ -583,7 +504,7 @@ export async function createAgentMcpServer(
         cwd: snapshot.cwd,
         initialPrompt: trimmedPrompt,
         explicitTitle: snapshot.config.title,
-        paseoHome: options.paseoHome,
+        junctionHome: options.junctionHome,
         logger: childLogger,
       });
 

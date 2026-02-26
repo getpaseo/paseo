@@ -158,7 +158,7 @@ function resolveOpenCodeBinary(): string {
     // fall through
   }
   throw new Error(
-    "OpenCode CLI not found. Please install opencode globally so Paseo can launch the provider."
+    "OpenCode CLI not found. Please install opencode globally so Junction can launch the provider."
   );
 }
 

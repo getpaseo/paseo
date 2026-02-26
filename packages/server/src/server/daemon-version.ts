@@ -3,7 +3,7 @@ import {
   resolvePackageVersion,
 } from "./package-version.js";
 
-const SERVER_PACKAGE_NAME = "@getpaseo/server";
+const SERVER_PACKAGE_NAME = "@junction/server";
 
 export class DaemonVersionResolutionError extends PackageVersionResolutionError {}
 

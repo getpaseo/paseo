@@ -26,16 +26,16 @@ function extractWorktreeName(path: string): string {
   return basename(path)
 }
 
-export function resolvePaseoHomePath(): string {
-  return process.env.PASEO_HOME ?? join(homedir(), '.paseo')
+export function resolveJunctionHomePath(): string {
+  return process.env.JUNCTION_HOME ?? join(homedir(), '.junction')
 }
 
-export function resolvePaseoWorktreesDir(): string {
-  return join(resolvePaseoHomePath(), 'worktrees')
+export function resolveJunctionWorktreesDir(): string {
+  return join(resolveJunctionHomePath(), 'worktrees')
 }
 
 function isAgentInManagedWorktree(agentCwd: string): boolean {
-  const worktreesDir = resolvePaseoWorktreesDir()
+  const worktreesDir = resolveJunctionWorktreesDir()
   return agentCwd === worktreesDir || agentCwd.startsWith(worktreesDir + sep)
 }
 
@@ -70,7 +70,7 @@ export async function runLsCommand(
     const error: CommandError = {
       code: 'DAEMON_NOT_RUNNING',
       message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: 'Start the daemon with: paseo daemon start',
+      details: 'Start the daemon with: junction daemon start',
     }
     throw error
   }
@@ -80,7 +80,7 @@ export async function runLsCommand(
     const agents = agentsPayload.entries.map((entry) => entry.agent)
 
     // Get worktree list from daemon
-    const response = await client.getPaseoWorktreeList({})
+    const response = await client.getJunctionWorktreeList({})
 
     await client.close()
 

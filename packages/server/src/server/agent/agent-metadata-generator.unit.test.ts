@@ -12,7 +12,7 @@ const logger = createTestLogger();
 
 const NON_GIT_CHECKOUT_STATUS = {
   isGit: false,
-  isPaseoOwnedWorktree: false,
+  isJunctionOwnedWorktree: false,
   currentBranch: null,
   repoRoot: "/tmp/repo",
 } as Awaited<
@@ -31,7 +31,7 @@ const ELIGIBLE_WORKTREE_CHECKOUT_STATUS = {
   behindOfOrigin: null,
   hasRemote: false,
   remoteUrl: null,
-  isPaseoOwnedWorktree: true,
+  isJunctionOwnedWorktree: true,
 } as Awaited<
   ReturnType<NonNullable<AgentMetadataGeneratorDeps["getCheckoutStatus"]>>
 >;
@@ -128,7 +128,7 @@ describe("agent metadata generator auto-title", () => {
       cwd: "/tmp/repo/metadata-worktree",
       initialPrompt: "Rename this worktree branch.",
       explicitTitle: "Keep explicit title",
-      paseoHome: "/tmp/paseo-home",
+      junctionHome: "/tmp/junction-home",
       logger,
       deps: {
         generateStructuredAgentResponseWithFallback: generateStructured,

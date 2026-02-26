@@ -22,11 +22,11 @@ function tmpCwd(prefix: string): string {
 
 function initGitRepo(repoDir: string): void {
   execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.email 'paseo-test@example.com'", {
+  execSync("git config user.email 'junction-test@example.com'", {
     cwd: repoDir,
     stdio: "pipe",
   });
-  execSync("git config user.name 'Paseo Test'", {
+  execSync("git config user.name 'Junction Test'", {
     cwd: repoDir,
     stdio: "pipe",
   });
@@ -41,7 +41,7 @@ function initGitRepo(repoDir: string): void {
 (shouldRun ? describe : describe.skip)("agent metadata generation (real agents)", () => {
   const logger = pino({ level: "silent" });
   let repoDir: string;
-  let paseoHome: string;
+  let junctionHome: string;
   let storagePath: string;
   let manager: AgentManager;
   let storage: AgentStorage;
@@ -51,8 +51,8 @@ function initGitRepo(repoDir: string): void {
   beforeEach(() => {
     repoDir = tmpCwd("metadata-repo-");
     initGitRepo(repoDir);
-    paseoHome = tmpCwd("metadata-paseo-home-");
-    storagePath = path.join(paseoHome, "agents");
+    junctionHome = tmpCwd("metadata-junction-home-");
+    storagePath = path.join(junctionHome, "agents");
     storage = new AgentStorage(storagePath, logger);
     manager = new AgentManager({
       clients: createAllClients(logger),
@@ -68,7 +68,7 @@ function initGitRepo(repoDir: string): void {
     process.env.CODEX_SESSION_DIR = previousCodexSessionDir;
     await shutdownProviders(logger);
     rmSync(repoDir, { recursive: true, force: true });
-    rmSync(paseoHome, { recursive: true, force: true });
+    rmSync(junctionHome, { recursive: true, force: true });
     rmSync(codexSessionDir, { recursive: true, force: true });
   }, 60000);
 
@@ -90,7 +90,7 @@ function initGitRepo(repoDir: string): void {
         cwd: repoDir,
         initialPrompt: "Use the exact title 'Metadata Title E2E'.",
         explicitTitle: null,
-        paseoHome,
+        junctionHome,
         logger,
       });
 
@@ -112,7 +112,7 @@ function initGitRepo(repoDir: string): void {
         cwd: repoDir,
         baseBranch: "main",
         worktreeSlug,
-        paseoHome,
+        junctionHome,
       });
 
       const agent = await manager.createAgent({
@@ -130,7 +130,7 @@ function initGitRepo(repoDir: string): void {
         cwd: worktree.worktreePath,
         initialPrompt: "Use the exact branch 'feat/metadata-worktree'.",
         explicitTitle: "Explicit Title",
-        paseoHome,
+        junctionHome,
         logger,
       });
 

@@ -192,7 +192,7 @@ class FakeAgentSession implements AgentSession {
     this.memoryMarker = memoryMarker ?? null;
     this.historyPath = path.join(
       tmpdir(),
-      "paseo-fake-provider-history",
+      "junction-fake-provider-history",
       this.providerName,
       `${this.id}.jsonl`
     );
@@ -601,15 +601,15 @@ class FakeAgentSession implements AgentSession {
     if (this.providerName === "codex" && fullName.startsWith("prompts:")) {
       const promptId = fullName.slice("prompts:".length);
       return {
-        text: `PASEO_OK ${args ?? ""}`.trim(),
-        timeline: [{ type: "assistant_message", text: `PASEO_OK ${promptId}` }],
+        text: `JUNCTION_OK ${args ?? ""}`.trim(),
+        timeline: [{ type: "assistant_message", text: `JUNCTION_OK ${promptId}` }],
         usage: { inputTokens: 1, outputTokens: 1 },
       };
     }
 
     return {
-      text: "PASEO_SKILL_OK",
-      timeline: [{ type: "assistant_message", text: "PASEO_SKILL_OK" }],
+      text: "JUNCTION_SKILL_OK",
+      timeline: [{ type: "assistant_message", text: "JUNCTION_SKILL_OK" }],
       usage: { inputTokens: 1, outputTokens: 1 },
     };
   }

@@ -30,14 +30,12 @@ import type {
   ValidateBranchResponse,
   BranchSuggestionsResponse,
   DirectorySuggestionsResponse,
-  PaseoWorktreeListResponse,
-  PaseoWorktreeArchiveResponse,
+  JunctionWorktreeListResponse,
+  JunctionWorktreeArchiveResponse,
   ProjectIconResponse,
   ListCommandsResponse,
   ListProviderModelsResponseMessage,
   ListAvailableProvidersResponse,
-  SpeechModelsListResponse,
-  SpeechModelsDownloadResponse,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -158,6 +156,7 @@ export type DaemonClientConfig = {
   clientType?: 'mobile' | 'browser' | 'cli' | 'mcp'
   runtimeGeneration?: number | null
   authHeader?: string
+  token?: string
   suppressSendErrors?: boolean
   transportFactory?: DaemonTransportFactory
   webSocketFactory?: WebSocketFactory
@@ -228,14 +227,12 @@ type CheckoutPrStatusPayload = CheckoutPrStatusResponse['payload']
 type ValidateBranchPayload = ValidateBranchResponse['payload']
 type BranchSuggestionsPayload = BranchSuggestionsResponse['payload']
 type DirectorySuggestionsPayload = DirectorySuggestionsResponse['payload']
-type PaseoWorktreeListPayload = PaseoWorktreeListResponse['payload']
-type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse['payload']
+type JunctionWorktreeListPayload = JunctionWorktreeListResponse['payload']
+type JunctionWorktreeArchivePayload = JunctionWorktreeArchiveResponse['payload']
 type FileExplorerPayload = FileExplorerResponse['payload']
 type FileDownloadTokenPayload = FileDownloadTokenResponse['payload']
 type ListProviderModelsPayload = ListProviderModelsResponseMessage['payload']
 type ListAvailableProvidersPayload = ListAvailableProvidersResponse['payload']
-type SpeechModelsListPayload = SpeechModelsListResponse['payload']
-type SpeechModelsDownloadPayload = SpeechModelsDownloadResponse['payload']
 type ListCommandsPayload = ListCommandsResponse['payload']
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
@@ -245,14 +242,6 @@ type ListCommandsOptions = {
   requestId?: string
   draftConfig?: ListCommandsDraftConfig
 }
-type SetVoiceModePayload = Extract<
-  SessionOutboundMessage,
-  { type: 'set_voice_mode_response' }
->['payload']
-type DictationFinishAcceptedPayload = Extract<
-  SessionOutboundMessage,
-  { type: 'dictation_stream_finish_accepted' }
->['payload']
 type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage['payload']
 type ListTerminalsPayload = ListTerminalsResponse['payload']
 type CreateTerminalPayload = CreateTerminalResponse['payload']
@@ -340,13 +329,6 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 15000
 
 /** Default timeout for waiting for connection before sending queued messages */
 const DEFAULT_SEND_QUEUE_TIMEOUT_MS = 10000
-const DEFAULT_DICTATION_FINISH_ACCEPT_TIMEOUT_MS = 15000
-const DEFAULT_DICTATION_FINISH_FALLBACK_TIMEOUT_MS = 5 * 60 * 1000
-const DEFAULT_DICTATION_FINISH_TIMEOUT_GRACE_MS = 5000
-
-function isWaiterTimeoutError(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith('Timeout waiting for message')
-}
 
 function normalizeClientId(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -994,17 +976,6 @@ export class DaemonClient {
     })
   }
 
-  private sendSessionMessageStrict(message: SessionInboundMessage): void {
-    if (!this.transport || this.connectionState.status !== 'connected') {
-      throw new Error('Transport not connected')
-    }
-    const payload = SessionInboundMessageSchema.parse(message)
-    try {
-      this.transport.send(JSON.stringify({ type: 'session', message: payload }))
-    } catch (error) {
-      throw error instanceof Error ? error : new Error(String(error))
-    }
-  }
 
   clearAgentAttention(agentId: string | string[]): void {
     this.sendSessionMessage({ type: 'clear_agent_attention', agentId })
@@ -1024,13 +995,6 @@ export class DaemonClient {
       lastActivityAt: params.lastActivityAt,
       appVisible: params.appVisible,
       appVisibilityChangedAt: params.appVisibilityChangedAt,
-    })
-  }
-
-  registerPushToken(token: string): void {
-    this.sendSessionMessage({
-      type: 'register_push_token',
-      token,
     })
   }
 
@@ -1571,257 +1535,8 @@ export class DaemonClient {
     })
   }
 
-  // ============================================================================
-  // Audio / Voice
-  // ============================================================================
-
-  async setVoiceMode(enabled: boolean, agentId?: string): Promise<SetVoiceModePayload> {
-    const requestId = this.createRequestId()
-    const message = SessionInboundMessageSchema.parse({
-      type: 'set_voice_mode',
-      enabled,
-      ...(agentId ? { agentId } : {}),
-      requestId,
-    })
-    const response = await this.sendRequest({
-      requestId,
-      message,
-      timeout: 10000,
-      select: (msg) => {
-        if (msg.type !== 'set_voice_mode_response') {
-          return null
-        }
-        if (msg.payload.requestId !== requestId) {
-          return null
-        }
-        return msg.payload
-      },
-    })
-    if (!response.accepted) {
-      const codeSuffix =
-        typeof response.reasonCode === 'string' && response.reasonCode.trim().length > 0
-          ? ` (${response.reasonCode})`
-          : ''
-      throw new Error((response.error ?? 'Failed to set voice mode') + codeSuffix)
-    }
-    return response
-  }
-
-  async sendVoiceAudioChunk(audio: string, format: string, isLast: boolean): Promise<void> {
-    this.sendSessionMessage({ type: 'voice_audio_chunk', audio, format, isLast })
-  }
-
-  async startDictationStream(dictationId: string, format: string): Promise<void> {
-    const ack = this.waitForWithCancel(
-      (msg) => {
-        if (msg.type !== 'dictation_stream_ack') {
-          return null
-        }
-        if (msg.payload.dictationId !== dictationId) {
-          return null
-        }
-        if (msg.payload.ackSeq !== -1) {
-          return null
-        }
-        return msg.payload
-      },
-      30000,
-      { skipQueue: true }
-    )
-    const ackPromise = ack.promise.then(() => undefined)
-
-    const streamError = this.waitForWithCancel(
-      (msg) => {
-        if (msg.type !== 'dictation_stream_error') {
-          return null
-        }
-        if (msg.payload.dictationId !== dictationId) {
-          return null
-        }
-        return msg.payload
-      },
-      30000,
-      { skipQueue: true }
-    )
-    const errorPromise = streamError.promise.then((payload) => {
-      throw new Error(payload.error)
-    })
-
-    const cleanupError = new Error('Cancelled dictation start waiter')
-    try {
-      this.sendSessionMessageStrict({ type: 'dictation_stream_start', dictationId, format })
-      await Promise.race([ackPromise, errorPromise])
-    } finally {
-      ack.cancel(cleanupError)
-      streamError.cancel(cleanupError)
-      void ackPromise.catch(() => undefined)
-      void errorPromise.catch(() => undefined)
-    }
-  }
-
-  sendDictationStreamChunk(dictationId: string, seq: number, audio: string, format: string): void {
-    this.sendSessionMessageStrict({
-      type: 'dictation_stream_chunk',
-      dictationId,
-      seq,
-      audio,
-      format,
-    })
-  }
-
-  async finishDictationStream(
-    dictationId: string,
-    finalSeq: number
-  ): Promise<{ dictationId: string; text: string }> {
-    const final = this.waitForWithCancel(
-      (msg) => {
-        if (msg.type !== 'dictation_stream_final') {
-          return null
-        }
-        if (msg.payload.dictationId !== dictationId) {
-          return null
-        }
-        return msg.payload
-      },
-      0,
-      { skipQueue: true }
-    )
-
-    const streamError = this.waitForWithCancel(
-      (msg) => {
-        if (msg.type !== 'dictation_stream_error') {
-          return null
-        }
-        if (msg.payload.dictationId !== dictationId) {
-          return null
-        }
-        return msg.payload
-      },
-      0,
-      { skipQueue: true }
-    )
-
-    const finishAccepted = this.waitForWithCancel<DictationFinishAcceptedPayload>(
-      (msg) => {
-        if (msg.type !== 'dictation_stream_finish_accepted') {
-          return null
-        }
-        if (msg.payload.dictationId !== dictationId) {
-          return null
-        }
-        return msg.payload
-      },
-      DEFAULT_DICTATION_FINISH_ACCEPT_TIMEOUT_MS,
-      { skipQueue: true }
-    )
-
-    const finalPromise = final.promise
-    const errorPromise = streamError.promise.then((payload) => {
-      throw new Error(payload.error)
-    })
-    const finishAcceptedPromise = finishAccepted.promise
-
-    const finalOutcomePromise = finalPromise.then((payload) => ({
-      kind: 'final' as const,
-      payload,
-    }))
-    const errorOutcomePromise = errorPromise.then(
-      () => ({
-        kind: 'error' as const,
-        error: new Error('Unexpected dictation stream error state'),
-      }),
-      (error) => ({
-        kind: 'error' as const,
-        error: error instanceof Error ? error : new Error(String(error)),
-      })
-    )
-    const finishAcceptedOutcomePromise = finishAcceptedPromise.then(
-      (payload) => ({ kind: 'accepted' as const, payload }),
-      (error) => {
-        if (isWaiterTimeoutError(error)) {
-          return { kind: 'accepted_timeout' as const }
-        }
-        return {
-          kind: 'accepted_error' as const,
-          error: error instanceof Error ? error : new Error(String(error)),
-        }
-      }
-    )
-
-    const waitForFinalResult = async (
-      timeoutMs: number
-    ): Promise<{ dictationId: string; text: string }> => {
-      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-        const outcome = await Promise.race([finalOutcomePromise, errorOutcomePromise])
-        if (outcome.kind === 'error') {
-          throw outcome.error
-        }
-        return outcome.payload
-      }
-
-      let timeoutHandle: ReturnType<typeof setTimeout> | null = null
-      const timeoutPromise = new Promise<{ kind: 'timeout' }>((resolve) => {
-        timeoutHandle = setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs)
-      })
-
-      const outcome = await Promise.race([finalOutcomePromise, errorOutcomePromise, timeoutPromise])
-
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle)
-      }
-
-      if (outcome.kind === 'timeout') {
-        throw new Error(`Timeout waiting for dictation finalization (${timeoutMs}ms)`)
-      }
-      if (outcome.kind === 'error') {
-        throw outcome.error
-      }
-      return outcome.payload
-    }
-
-    const cleanupError = new Error('Cancelled dictation finish waiter')
-    try {
-      this.sendSessionMessageStrict({ type: 'dictation_stream_finish', dictationId, finalSeq })
-      const firstOutcome = await Promise.race([
-        finalOutcomePromise,
-        errorOutcomePromise,
-        finishAcceptedOutcomePromise,
-      ])
-
-      if (firstOutcome.kind === 'final') {
-        return firstOutcome.payload
-      }
-      if (firstOutcome.kind === 'error') {
-        throw firstOutcome.error
-      }
-
-      if (firstOutcome.kind === 'accepted') {
-        return await waitForFinalResult(
-          firstOutcome.payload.timeoutMs + DEFAULT_DICTATION_FINISH_TIMEOUT_GRACE_MS
-        )
-      }
-
-      return await waitForFinalResult(DEFAULT_DICTATION_FINISH_FALLBACK_TIMEOUT_MS)
-    } finally {
-      final.cancel(cleanupError)
-      streamError.cancel(cleanupError)
-      finishAccepted.cancel(cleanupError)
-      void finalPromise.catch(() => undefined)
-      void errorPromise.catch(() => undefined)
-      void finishAcceptedPromise.catch(() => undefined)
-    }
-  }
-
-  cancelDictationStream(dictationId: string): void {
-    this.sendSessionMessageStrict({ type: 'dictation_stream_cancel', dictationId })
-  }
-
   async abortRequest(): Promise<void> {
     this.sendSessionMessage({ type: 'abort_request' })
-  }
-
-  async audioPlayed(id: string): Promise<void> {
-    this.sendSessionMessage({ type: 'audio_played', id })
   }
 
   // ============================================================================
@@ -2070,35 +1785,35 @@ export class DaemonClient {
     })
   }
 
-  async getPaseoWorktreeList(
+  async getJunctionWorktreeList(
     input: { cwd?: string; repoRoot?: string },
     requestId?: string
-  ): Promise<PaseoWorktreeListPayload> {
+  ): Promise<JunctionWorktreeListPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
-        type: 'paseo_worktree_list_request',
+        type: 'junction_worktree_list_request',
         cwd: input.cwd,
         repoRoot: input.repoRoot,
       },
-      responseType: 'paseo_worktree_list_response',
+      responseType: 'junction_worktree_list_response',
       timeout: 60000,
     })
   }
 
-  async archivePaseoWorktree(
+  async archiveJunctionWorktree(
     input: { worktreePath?: string; repoRoot?: string; branchName?: string },
     requestId?: string
-  ): Promise<PaseoWorktreeArchivePayload> {
+  ): Promise<JunctionWorktreeArchivePayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
-        type: 'paseo_worktree_archive_request',
+        type: 'junction_worktree_archive_request',
         worktreePath: input.worktreePath,
         repoRoot: input.repoRoot,
         branchName: input.branchName,
       },
-      responseType: 'paseo_worktree_archive_response',
+      responseType: 'junction_worktree_archive_response',
       timeout: 20000,
     })
   }
@@ -2247,32 +1962,6 @@ export class DaemonClient {
       },
       responseType: 'list_available_providers_response',
       timeout: 30000,
-    })
-  }
-
-  async listSpeechModels(requestId?: string): Promise<SpeechModelsListPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: 'speech_models_list_request',
-      },
-      responseType: 'speech_models_list_response',
-      timeout: 30000,
-    })
-  }
-
-  async downloadSpeechModels(options?: {
-    modelIds?: string[]
-    requestId?: string
-  }): Promise<SpeechModelsDownloadPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId: options?.requestId,
-      message: {
-        type: 'speech_models_download_request',
-        modelIds: options?.modelIds,
-      },
-      responseType: 'speech_models_download_response',
-      timeout: 30 * 60 * 1000,
     })
   }
 
@@ -2742,14 +2431,16 @@ export class DaemonClient {
     }
 
     try {
-      this.transport.send(
-        JSON.stringify({
+      const hello: Record<string, unknown> = {
           type: 'hello',
           clientId: this.config.clientId,
           clientType: this.config.clientType ?? 'cli',
           protocolVersion: 1,
-        })
-      )
+        }
+      if (this.config.token) {
+        hello.token = this.config.token
+      }
+      this.transport.send(JSON.stringify(hello))
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Failed to send hello message'

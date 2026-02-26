@@ -1,27 +1,10 @@
-// CLI exports for @getpaseo/server
-export { createPaseoDaemon, type PaseoDaemon, type PaseoDaemonConfig } from "./bootstrap.js";
+// CLI exports for @junction/server
+export { createJunctionDaemon, type JunctionDaemon, type JunctionDaemonConfig } from "./bootstrap.js";
 export { loadConfig, type CliConfigOverrides } from "./config.js";
-export { resolvePaseoHome } from "./paseo-home.js";
+export { resolveJunctionHome } from "./junction-home.js";
 export { createRootLogger, type LogLevel, type LogFormat } from "./logger.js";
 export { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
-export { generateLocalPairingOffer, type LocalPairingOffer } from "./pairing-offer.js";
 export { DaemonClient, type DaemonClientConfig, type ConnectionState, type DaemonEvent } from "../client/daemon-client.js";
-export {
-  ensureLocalSpeechModels,
-  listLocalSpeechModels,
-  type LocalSpeechModelId,
-  type LocalSttModelId,
-  type LocalTtsModelId,
-} from "./speech/providers/local/models.js";
-export {
-  applySherpaLoaderEnv,
-  resolveSherpaLoaderEnv,
-  sherpaLoaderEnvKey,
-  sherpaPlatformArch,
-  sherpaPlatformPackageName,
-  type SherpaLoaderEnvKey,
-  type SherpaLoaderEnvResolution,
-} from "./speech/providers/local/sherpa/sherpa-runtime-env.js";
 
 // Agent SDK types for CLI commands
 export type {

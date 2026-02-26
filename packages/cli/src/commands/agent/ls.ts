@@ -1,5 +1,5 @@
 import type { Command } from 'commander'
-import type { AgentSnapshotPayload } from '@getpaseo/server'
+import type { AgentSnapshotPayload } from '@junction/server'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from '../../output/index.js'
 
@@ -101,8 +101,8 @@ export interface AgentLsOptions extends CommandOptions {
 
 /**
  * Agent ls command semantics:
- * - `paseo agent ls`    → all non-archived agents
- * - `paseo agent ls -a` → include archived agents
+ * - `junction agent ls`    → all non-archived agents
+ * - `junction agent ls -a` → include archived agents
  */
 export async function runLsCommand(
   options: AgentLsOptions,
@@ -118,7 +118,7 @@ export async function runLsCommand(
     const error: CommandError = {
       code: 'DAEMON_NOT_RUNNING',
       message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: 'Start the daemon with: paseo daemon start',
+      details: 'Start the daemon with: junction daemon start',
     }
     throw error
   }

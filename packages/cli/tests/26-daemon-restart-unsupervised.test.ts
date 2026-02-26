@@ -18,9 +18,9 @@ $.verbose = false
 
 const pollIntervalMs = 100
 const testEnv = {
-  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
-  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? '0',
-  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? '0',
+  JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
+  JUNCTION_DICTATION_ENABLED: process.env.JUNCTION_DICTATION_ENABLED ?? '0',
+  JUNCTION_VOICE_MODE_ENABLED: process.env.JUNCTION_VOICE_MODE_ENABLED ?? '0',
 }
 
 function sleep(ms: number): Promise<void> {
@@ -45,9 +45,9 @@ type DaemonStatus = {
   pid: number | null
 }
 
-async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
+async function readDaemonStatus(junctionHome: string): Promise<DaemonStatus> {
   const result =
-    await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon status --home ${paseoHome} --json`.nothrow()
+    await $`JUNCTION_HOME=${junctionHome} JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD} JUNCTION_DICTATION_ENABLED=${testEnv.JUNCTION_DICTATION_ENABLED} JUNCTION_VOICE_MODE_ENABLED=${testEnv.JUNCTION_VOICE_MODE_ENABLED} npx junction daemon status --home ${junctionHome} --json`.nothrow()
   if (result.exitCode !== 0) {
     return { status: null, pid: null }
   }
@@ -99,8 +99,8 @@ function waitForProcessExit(processRef: ChildProcess, timeoutMs: number): Promis
   })
 }
 
-async function readPidLockPid(paseoHome: string): Promise<number | null> {
-  const pidPath = join(paseoHome, 'paseo.pid')
+async function readPidLockPid(junctionHome: string): Promise<number | null> {
+  const pidPath = join(junctionHome, 'junction.pid')
   try {
     const content = await readFile(pidPath, 'utf-8')
     const parsed = JSON.parse(content) as { pid?: unknown }
@@ -116,7 +116,7 @@ async function readPidLockPid(paseoHome: string): Promise<number | null> {
 console.log('=== Daemon Restart (unsupervised regression) ===\n')
 
 const port = await getAvailablePort()
-const paseoHome = await mkdtemp(join(tmpdir(), 'paseo-restart-unsupervised-'))
+const junctionHome = await mkdtemp(join(tmpdir(), 'junction-restart-unsupervised-'))
 const cliRoot = join(import.meta.dirname, '..')
 const host = `127.0.0.1:${port}`
 
@@ -134,13 +134,13 @@ try {
       ...process.env,
       ...testEnv,
       // This test validates direct unsupervised worker ownership semantics.
-      // Agent-orchestrated shells may export PASEO_PID_LOCK_MODE=external,
+      // Agent-orchestrated shells may export JUNCTION_PID_LOCK_MODE=external,
       // which would delegate lock ownership away from this process and make
       // daemon status checks fail to observe a running owner PID.
-      PASEO_PID_LOCK_MODE: 'self',
-      PASEO_HOME: paseoHome,
-      PASEO_LISTEN: host,
-      PASEO_RELAY_ENABLED: 'false',
+      JUNCTION_PID_LOCK_MODE: 'self',
+      JUNCTION_HOME: junctionHome,
+      JUNCTION_LISTEN: host,
+      JUNCTION_RELAY_ENABLED: 'false',
       CI: 'true',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -149,18 +149,18 @@ try {
 
   await waitFor(
     async () => {
-      const status = await readDaemonStatus(paseoHome)
+      const status = await readDaemonStatus(junctionHome)
       return status.status === 'running' && status.pid !== null && isProcessRunning(status.pid)
     },
     120000,
     'daemon did not become running in time'
   )
 
-  const statusBeforeRestart = await readDaemonStatus(paseoHome)
+  const statusBeforeRestart = await readDaemonStatus(junctionHome)
   assert.strictEqual(statusBeforeRestart.status, 'running', 'daemon should be running before restart')
   assert(daemonProcess.pid, 'unsupervised daemon process pid should exist')
   assert.strictEqual(statusBeforeRestart.pid, daemonProcess.pid, 'status pid should match daemon process pid')
-  const lockPid = await readPidLockPid(paseoHome)
+  const lockPid = await readPidLockPid(junctionHome)
   assert.strictEqual(lockPid, daemonProcess.pid, 'unsupervised worker should own pid lock')
   console.log(`✓ unsupervised daemon started with pid ${daemonProcess.pid}\n`)
 
@@ -181,7 +181,7 @@ try {
   assert.strictEqual(exit.code, 0, `daemon should exit with status 0, got code=${exit.code}`)
 
   await waitFor(async () => {
-    const status = await readDaemonStatus(paseoHome)
+    const status = await readDaemonStatus(junctionHome)
     return status.status === 'stopped'
   }, 15000, 'daemon status did not transition to stopped after unsupervised restart request')
 
@@ -196,7 +196,7 @@ try {
     )
   }
 
-  await rm(paseoHome, { recursive: true, force: true })
+  await rm(junctionHome, { recursive: true, force: true })
 }
 
 console.log('=== Unsupervised restart regression test passed ===')

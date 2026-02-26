@@ -174,11 +174,11 @@ describe("ClaudeAgentSession redesign invariants", () => {
   });
 
   test("logs redacted query summary and never leaks sentinel secrets", async () => {
-    const envSecret = "PASEO_ENV_SENTINEL_SECRET";
-    const runtimeSecret = "PASEO_RUNTIME_SENTINEL_SECRET";
-    const systemSecret = "PASEO_SYSTEM_PROMPT_SENTINEL_SECRET";
-    const previousEnv = process.env.PASEO_TEST_SENTINEL_SECRET;
-    process.env.PASEO_TEST_SENTINEL_SECRET = envSecret;
+    const envSecret = "JUNCTION_ENV_SENTINEL_SECRET";
+    const runtimeSecret = "JUNCTION_RUNTIME_SENTINEL_SECRET";
+    const systemSecret = "JUNCTION_SYSTEM_PROMPT_SENTINEL_SECRET";
+    const previousEnv = process.env.JUNCTION_TEST_SENTINEL_SECRET;
+    process.env.JUNCTION_TEST_SENTINEL_SECRET = envSecret;
 
     sdkMocks.query.mockImplementation(() => {
       let step = 0;
@@ -229,7 +229,7 @@ describe("ClaudeAgentSession redesign invariants", () => {
       logger: spy.logger,
       runtimeSettings: {
         env: {
-          PASEO_RUNTIME_SENTINEL_SECRET: runtimeSecret,
+          JUNCTION_RUNTIME_SENTINEL_SECRET: runtimeSecret,
         },
       },
     });
@@ -266,9 +266,9 @@ describe("ClaudeAgentSession redesign invariants", () => {
     } finally {
       await session.close();
       if (previousEnv === undefined) {
-        delete process.env.PASEO_TEST_SENTINEL_SECRET;
+        delete process.env.JUNCTION_TEST_SENTINEL_SECRET;
       } else {
-        process.env.PASEO_TEST_SENTINEL_SECRET = previousEnv;
+        process.env.JUNCTION_TEST_SENTINEL_SECRET = previousEnv;
       }
     }
   });

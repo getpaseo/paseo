@@ -9,7 +9,7 @@ import {
   decrypt,
 } from "./crypto.js";
 
-const RELAY_BASE_URL = "wss://relay.paseo.sh";
+const RELAY_BASE_URL = "wss://relay.junction.sh";
 
 async function withRetry<T>(
   fn: () => Promise<T>,
@@ -29,7 +29,7 @@ async function withRetry<T>(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-describe("Live relay (relay.paseo.sh) E2E", () => {
+describe("Live relay (relay.junction.sh) E2E", () => {
   const liveIt = process.env.RUN_LIVE_RELAY_E2E === "1" ? it : it.skip;
 
   liveIt("bridges encrypted traffic end-to-end", { timeout: 45_000 }, async () => {

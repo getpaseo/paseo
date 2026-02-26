@@ -30,8 +30,8 @@ function isPidRunning(pid: number): boolean {
   }
 }
 
-function getPidFilePath(paseoHome: string): string {
-  return join(paseoHome, "paseo.pid");
+function getPidFilePath(junctionHome: string): string {
+  return join(junctionHome, "junction.pid");
 }
 
 function resolveOwnerPid(ownerPid?: number): number {
@@ -42,15 +42,15 @@ function resolveOwnerPid(ownerPid?: number): number {
 }
 
 export async function acquirePidLock(
-  paseoHome: string,
+  junctionHome: string,
   sockPath: string,
   options?: { ownerPid?: number }
 ): Promise<void> {
-  const pidPath = getPidFilePath(paseoHome);
+  const pidPath = getPidFilePath(junctionHome);
 
-  // Ensure paseoHome directory exists
-  if (!existsSync(paseoHome)) {
-    await mkdir(paseoHome, { recursive: true });
+  // Ensure junctionHome directory exists
+  if (!existsSync(junctionHome)) {
+    await mkdir(junctionHome, { recursive: true });
   }
 
   // Try to read existing lock
@@ -71,7 +71,7 @@ export async function acquirePidLock(
       }
 
       throw new PidLockError(
-        `Another Paseo daemon is already running (PID ${existingLock.pid}, started ${existingLock.startedAt})`,
+        `Another Junction daemon is already running (PID ${existingLock.pid}, started ${existingLock.startedAt})`,
         existingLock
       );
     }
@@ -100,7 +100,7 @@ export async function acquirePidLock(
         const content = await readFile(pidPath, "utf-8");
         const raceLock = JSON.parse(content) as PidLockInfo;
         throw new PidLockError(
-          `Another Paseo daemon is already running (PID ${raceLock.pid})`,
+          `Another Junction daemon is already running (PID ${raceLock.pid})`,
           raceLock
         );
       } catch (innerErr) {
@@ -115,10 +115,10 @@ export async function acquirePidLock(
 }
 
 export async function releasePidLock(
-  paseoHome: string,
+  junctionHome: string,
   options?: { ownerPid?: number }
 ): Promise<void> {
-  const pidPath = getPidFilePath(paseoHome);
+  const pidPath = getPidFilePath(junctionHome);
   const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
   try {
     // Only remove if it's our lock
@@ -133,9 +133,9 @@ export async function releasePidLock(
 }
 
 export async function getPidLockInfo(
-  paseoHome: string
+  junctionHome: string
 ): Promise<PidLockInfo | null> {
-  const pidPath = getPidFilePath(paseoHome);
+  const pidPath = getPidFilePath(junctionHome);
   try {
     const content = await readFile(pidPath, "utf-8");
     return JSON.parse(content) as PidLockInfo;
@@ -145,9 +145,9 @@ export async function getPidLockInfo(
 }
 
 export async function isLocked(
-  paseoHome: string
+  junctionHome: string
 ): Promise<{ locked: boolean; info?: PidLockInfo }> {
-  const info = await getPidLockInfo(paseoHome);
+  const info = await getPidLockInfo(junctionHome);
   if (!info) {
     return { locked: false };
   }

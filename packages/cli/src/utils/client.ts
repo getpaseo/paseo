@@ -1,4 +1,4 @@
-import { DaemonClient } from '@getpaseo/server'
+import { DaemonClient } from '@junction/server'
 import WebSocket from 'ws'
 import { getOrCreateCliClientId } from './client-id.js'
 
@@ -14,7 +14,7 @@ const DEFAULT_TIMEOUT = 5000
  * Get the daemon host from environment or options
  */
 export function getDaemonHost(options?: ConnectOptions): string {
-  return options?.host ?? process.env.PASEO_HOST ?? DEFAULT_HOST
+  return options?.host ?? process.env.JUNCTION_HOST ?? DEFAULT_HOST
 }
 
 /**

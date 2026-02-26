@@ -110,7 +110,7 @@ describe("curateAgentActivity", () => {
     const timeline: AgentTimelineItem[] = [
       toolCallItem({
         callId: "mcp-1",
-        name: "paseo__create_agent",
+        name: "junction__create_agent",
         input: { cwd: "/tmp/repo", initialPrompt: "do the thing" },
       }),
     ];
@@ -118,7 +118,7 @@ describe("curateAgentActivity", () => {
     const result = curateAgentActivity(timeline);
 
     expect(result).toBe(
-      '[paseo__create_agent] {"cwd":"/tmp/repo","initialPrompt":"do the thing"}'
+      '[junction__create_agent] {"cwd":"/tmp/repo","initialPrompt":"do the thing"}'
     );
   });
 

@@ -50,7 +50,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build web app for Tauri
-        run: npm run build:web --workspace=@getpaseo/app
+        run: npm run build:web --workspace=@junction/app
 
       - name: Set desktop version from tag
         shell: bash
@@ -106,7 +106,7 @@ jobs:
         with:
           projectPath: packages/desktop
           tagName: ${{ env.RELEASE_TAG }}
-          releaseName: Paseo ${{ env.RELEASE_TAG }}
+          releaseName: Junction ${{ env.RELEASE_TAG }}
           releaseBody: See the assets to download and install this version.
           releaseDraft: false
           prerelease: false

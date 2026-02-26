@@ -10,7 +10,7 @@ async function createTempDir(prefix: string): Promise<string> {
 
 describe("file explorer service", () => {
   it("lists directory entries even when a dangling symlink exists", async () => {
-    const root = await createTempDir("paseo-file-explorer-");
+    const root = await createTempDir("junction-file-explorer-");
 
     try {
       await mkdir(path.join(root, "packages", "server"), { recursive: true });

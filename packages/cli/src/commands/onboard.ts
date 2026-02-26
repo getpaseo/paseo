@@ -1,16 +1,12 @@
-import { cancel, confirm, intro, isCancel, log, note, outro, spinner } from '@clack/prompts'
+import { cancel, intro, log, note, outro, spinner } from '@clack/prompts'
 import { Command } from 'commander'
-import { writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
-  generateLocalPairingOffer,
   loadConfig,
-  loadPersistedConfig,
   type CliConfigOverrides,
-  type PersistedConfig,
-} from '@getpaseo/server'
+} from '@junction/server'
 import {
-  resolveLocalPaseoHome,
+  resolveLocalJunctionHome,
   resolveLocalDaemonState,
   resolveTcpHostFromListen,
   startLocalDaemonDetached,
@@ -21,23 +17,9 @@ import { tryConnectToDaemon } from '../utils/client.js'
 
 interface OnboardOptions extends DaemonStartOptions {
   timeout?: string
-  voice?: 'ask' | 'enable' | 'disable'
-}
-
-type OnboardPersistedConfig = PersistedConfig & {
-  features?: PersistedConfig['features'] & {
-    dictation?: PersistedConfig['features'] extends { dictation?: infer T }
-      ? T & { enabled?: boolean }
-      : { enabled?: boolean }
-    voiceMode?: PersistedConfig['features'] extends { voiceMode?: infer T }
-      ? T & { enabled?: boolean }
-      : { enabled?: boolean }
-  }
 }
 
 const DEFAULT_READY_TIMEOUT_MS = 10 * 60 * 1000
-
-class OnboardCancelledError extends Error {}
 
 const plainNoteFormat = (line: string): string => line
 
@@ -92,105 +74,6 @@ function toCliOverrides(options: DaemonStartOptions): CliConfigOverrides {
   return cliOverrides
 }
 
-function savePersistedConfig(paseoHome: string, config: OnboardPersistedConfig): void {
-  const configPath = path.join(paseoHome, 'config.json')
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
-}
-
-function applyVoiceSelection(config: OnboardPersistedConfig, enabled: boolean): OnboardPersistedConfig {
-  return {
-    ...config,
-    features: {
-      ...config.features,
-      dictation: {
-        ...config.features?.dictation,
-        enabled,
-      },
-      voiceMode: {
-        ...config.features?.voiceMode,
-        enabled,
-      },
-    },
-  }
-}
-
-function resolvePersistedVoiceSelection(config: OnboardPersistedConfig): boolean | null {
-  const voiceModeEnabled = config.features?.voiceMode?.enabled
-  if (typeof voiceModeEnabled === 'boolean') {
-    return voiceModeEnabled
-  }
-
-  const dictationEnabled = config.features?.dictation?.enabled
-  if (typeof dictationEnabled === 'boolean') {
-    return dictationEnabled
-  }
-
-  return null
-}
-
-async function resolveVoiceSelection(mode: OnboardOptions['voice']): Promise<boolean> {
-  if (mode === 'enable') {
-    return true
-  }
-  if (mode === 'disable') {
-    return false
-  }
-
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    log.message('Non-interactive terminal detected; voice setup defaults to disabled.')
-    return false
-  }
-
-  const answer = await confirm({
-    message: 'Enable voice features? (downloads local STT/TTS models in background)',
-    active: 'Yes',
-    inactive: 'No',
-    initialValue: false,
-  })
-
-  if (isCancel(answer)) {
-    throw new OnboardCancelledError('Onboarding cancelled by user.')
-  }
-
-  return answer
-}
-
-type DownloadProgress = {
-  modelId: string | null
-  pct: number | null
-}
-
-function parseDownloadProgress(logTail: string): DownloadProgress | null {
-  const lines = logTail.split('\n').filter(Boolean)
-
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index]
-    if (!line || !line.includes('Downloading model artifact')) {
-      continue
-    }
-
-    const pctMatch = line.match(/"pct"\s*:\s*(\d{1,3})|\bpct[=:]\s*(\d{1,3})/)
-    const modelMatch = line.match(
-      /"modelId"\s*:\s*"([^"]+)"|\bmodelId[=:]\s*"?([^\s",}]+)/
-    )
-
-    return {
-      modelId: modelMatch?.[1] ?? modelMatch?.[2] ?? null,
-      pct: pctMatch ? Number(pctMatch[1] ?? pctMatch[2]) : null,
-    }
-  }
-
-  return null
-}
-
-function renderProgressLine(progress: DownloadProgress): string {
-  const modelSuffix = progress.modelId ? ` (${progress.modelId})` : ''
-  if (progress.pct === null) {
-    return `Downloading speech model${modelSuffix}...`
-  }
-  return `Downloading speech model${modelSuffix}: ${progress.pct}%`
-}
-
 async function waitForDaemonReady(args: {
   home: string
   timeoutMs: number
@@ -220,9 +103,7 @@ async function waitForDaemonReady(args: {
       return { listen: state.listen, host: null }
     }
 
-    const progress = parseDownloadProgress(tailDaemonLog(args.home, 120) ?? '')
-    const progressLine = progress ? renderProgressLine(progress) : null
-    const statusMessage = progressLine ?? 'Waiting for daemon to become ready...'
+    const statusMessage = 'Waiting for daemon to become ready...'
 
     if (statusMessage !== lastStatus) {
       args.onStatus?.(statusMessage)
@@ -247,22 +128,18 @@ async function waitForDaemonReady(args: {
   )
 }
 
-function printNextSteps(pairingUrl: string | null, paseoHome: string, richUi: boolean): void {
-  const daemonLogPath = path.join(paseoHome, 'daemon.log')
+function printNextSteps(junctionHome: string, richUi: boolean): void {
+  const daemonLogPath = path.join(junctionHome, 'daemon.log')
   const nextStepsLines = [
-    pairingUrl
-      ? '1. Open Paseo and scan the QR code above, or paste the pairing link.'
-      : '1. Open Paseo and connect to your daemon.',
-    '2. Web app: https://app.paseo.sh',
-    '3. Desktop app: https://github.com/getpaseo/paseo/releases/latest',
-    '4. Docs: https://paseo.sh/docs',
-    '5. Example: paseo run --output-schema schema.json "extract fields"',
+    '1. Connect to your daemon from the Junction web app.',
+    '2. Docs: https://junction.dev/docs',
+    '3. Example: junction run "your prompt"',
   ]
   const quickReferenceLines = [
-    '1. paseo --help',
-    '2. paseo ls',
-    '3. paseo run "your prompt"',
-    '4. paseo status',
+    '1. junction --help',
+    '2. junction ls',
+    '3. junction run "your prompt"',
+    '4. junction status',
     `5. Daemon logs: ${daemonLogPath}`,
   ]
 
@@ -286,10 +163,10 @@ function printNextSteps(pairingUrl: string | null, paseoHome: string, richUi: bo
 
 export function onboardCommand(): Command {
   return new Command('onboard')
-    .description('Run first-time setup, start daemon, and print pairing instructions')
+    .description('Run first-time setup and start the daemon')
     .option('--listen <listen>', 'Listen target (host:port, port, or unix socket path)')
     .option('--port <port>', 'Port to listen on (default: 6767)')
-    .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
+    .option('--home <path>', 'Home directory (default: ~/.junction)')
     .option('--no-relay', 'Disable relay connection')
     .option('--no-mcp', 'Disable the Agent MCP HTTP endpoint')
     .option(
@@ -297,7 +174,6 @@ export function onboardCommand(): Command {
       'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")'
     )
     .option('--timeout <seconds>', 'Max time to wait for daemon readiness (default: 600)')
-    .option('--voice <mode>', 'Voice setup mode: ask, enable, disable', 'ask')
     .action(async (options: OnboardOptions) => {
       await runOnboard(options)
     })
@@ -306,7 +182,7 @@ export function onboardCommand(): Command {
 export async function runOnboard(options: OnboardOptions): Promise<void> {
   const richUi = process.stdin.isTTY && process.stdout.isTTY
   if (richUi) {
-    intro('Welcome to Paseo')
+    intro('Welcome to Junction')
   }
 
   if (options.listen && options.port) {
@@ -323,42 +199,12 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
     process.exit(1)
   }
 
-  const paseoHome = resolveLocalPaseoHome(options.home)
+  const junctionHome = resolveLocalJunctionHome(options.home)
   if (richUi) {
-    renderNote(paseoHome, 'Paseo home')
+    renderNote(junctionHome, 'Junction home')
   }
 
-  let persisted = loadPersistedConfig(paseoHome) as OnboardPersistedConfig
-  const persistedVoiceSelection = resolvePersistedVoiceSelection(persisted)
-  const shouldPrompt = options.voice === 'ask' || options.voice === undefined
-  let voiceEnabled: boolean
-  try {
-    voiceEnabled =
-      shouldPrompt && persistedVoiceSelection !== null
-        ? persistedVoiceSelection
-        : await resolveVoiceSelection(options.voice)
-  } catch (error) {
-    if (error instanceof OnboardCancelledError) {
-      cancel('Onboarding cancelled.')
-      process.exit(0)
-      return
-    }
-    throw error
-  }
-
-  if (shouldPrompt && persistedVoiceSelection !== null) {
-    log.message(`Using saved voice setup from config (${voiceEnabled ? 'enabled' : 'disabled'}).`)
-  }
-
-  persisted = applyVoiceSelection(persisted, voiceEnabled)
-  savePersistedConfig(paseoHome, persisted)
-
-  const config = loadConfig(paseoHome, { cli: toCliOverrides(options) })
-
-  const voiceStatus = voiceEnabled
-    ? 'Voice features enabled. Local speech models will be downloaded automatically if missing.'
-    : 'Voice features disabled. Local speech models will not be downloaded.'
-  log.message(voiceStatus)
+  loadConfig(junctionHome, { cli: toCliOverrides(options) })
 
   const stateBeforeStart = resolveLocalDaemonState({ home: options.home })
   const startSpinner = richUi ? spinner() : null
@@ -390,7 +236,6 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
     log.message(`Daemon already running (PID ${stateBeforeStart.pidInfo?.pid ?? 'unknown'}).`)
   }
 
-  let readyState: { listen: string; host: string | null }
   const readySpinner = richUi ? spinner() : null
   try {
     if (readySpinner) {
@@ -398,8 +243,8 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
     } else {
       log.message('Waiting for daemon to become ready...')
     }
-    readyState = await waitForDaemonReady({
-      home: options.home ?? paseoHome,
+    const readyState = await waitForDaemonReady({
+      home: options.home ?? junctionHome,
       timeoutMs,
       onStatus: readySpinner ? (message) => readySpinner.message(message) : undefined,
     })
@@ -419,40 +264,8 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
     return
   }
 
-  if (config.relayEnabled === false) {
-    log.warn('Relay is disabled; pairing offer is unavailable for this daemon.')
-    printNextSteps(null, paseoHome, richUi)
-    if (richUi) {
-      outro('Paseo daemon is running.')
-    }
-    return
-  }
-
-  const pairing = await generateLocalPairingOffer({
-    paseoHome,
-    relayEnabled: config.relayEnabled,
-    relayEndpoint: config.relayEndpoint,
-    relayPublicEndpoint: config.relayPublicEndpoint,
-    appBaseUrl: config.appBaseUrl,
-    includeQr: true,
-  })
-
-  if (!pairing.url) {
-    log.warn('Relay pairing URL is unavailable for this daemon configuration.')
-    printNextSteps(null, paseoHome, richUi)
-    if (richUi) {
-      outro('Paseo daemon is running.')
-    }
-    return
-  }
-
-  renderNote(
-    pairing.qr ?? 'QR is unavailable in this terminal. Use the pairing link below.',
-    'Scan to pair'
-  )
-  renderNote(pairing.url, 'Pairing link')
-  printNextSteps(pairing.url, paseoHome, richUi)
+  printNextSteps(junctionHome, richUi)
   if (richUi) {
-    outro('Paseo is ready!')
+    outro('Junction daemon is running.')
   }
 }

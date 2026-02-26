@@ -174,7 +174,7 @@ describe("create_agent MCP tool", () => {
 
   it("allows caller agents to override cwd and applies caller context labels", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    const baseDir = await mkdtemp(join(tmpdir(), "paseo-mcp-test-"));
+    const baseDir = await mkdtemp(join(tmpdir(), "junction-mcp-test-"));
     const subdir = join(baseDir, "subdir");
     await mkdir(subdir, { recursive: true });
     spies.agentManager.getAgent.mockReturnValue({
@@ -195,11 +195,7 @@ describe("create_agent MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
-      callerAgentId: "voice-agent",
-      resolveCallerContext: () => ({
-        childAgentDefaultLabels: { ui: "true" },
-        allowCustomCwd: true,
-      }),
+      callerAgentId: "parent-agent",
       logger,
     });
 
@@ -215,64 +211,7 @@ describe("create_agent MCP tool", () => {
       expect.objectContaining({
         cwd: subdir,
       }),
-      undefined,
-      { labels: { ui: "true" } }
     );
     await rm(baseDir, { recursive: true, force: true });
-  });
-});
-
-describe("speak MCP tool", () => {
-  const logger = createTestLogger();
-
-  it("invokes registered speak handler for caller agent", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const speak = vi.fn().mockResolvedValue(undefined);
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      callerAgentId: "voice-agent-1",
-      enableVoiceTools: true,
-      resolveSpeakHandler: () => speak,
-      logger,
-    });
-    const tool = (server as any)._registeredTools["speak"];
-    expect(tool).toBeDefined();
-
-    await tool.callback({ text: "Hello from voice agent." });
-    expect(speak).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: "Hello from voice agent.",
-        callerAgentId: "voice-agent-1",
-      })
-    );
-  });
-
-  it("fails when no speak handler exists", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      callerAgentId: "voice-agent-2",
-      enableVoiceTools: true,
-      resolveSpeakHandler: () => null,
-      logger,
-    });
-    const tool = (server as any)._registeredTools["speak"];
-    await expect(tool.callback({ text: "Hello." })).rejects.toThrow(
-      "No speak handler registered for caller agent"
-    );
-  });
-
-  it("does not register speak tool unless voice tools are enabled", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      callerAgentId: "agent-no-voice",
-      logger,
-    });
-    const tool = (server as any)._registeredTools["speak"];
-    expect(tool).toBeUndefined();
   });
 });

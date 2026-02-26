@@ -131,7 +131,7 @@ function compareSemver(left: string, right: string): number | null {
 function fetchLatestCliVersion(npm: NpmInvocation): LatestCliVersionResult {
   const result = spawnSync(
     npm.command,
-    [...npm.argsPrefix, 'view', '@getpaseo/cli', 'version', '--json'],
+    [...npm.argsPrefix, 'view', '@junction/cli', 'version', '--json'],
     {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],

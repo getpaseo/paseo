@@ -7,8 +7,8 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
 
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
+import { createTestJunctionDaemon } from "../test-utils/junction-daemon.js";
+import { createClientChannel, type Transport } from "@junction/relay/e2ee";
 import { buildRelayWebSocketUrl } from "../../shared/daemon-endpoints.js";
 
 const nodeMajor = Number((process.versions.node ?? "0").split(".")[0] ?? "0");
@@ -182,12 +182,12 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
   test(
     "daemon connects to relay and client ping/pong works through relay",
     async () => {
-      process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+      process.env.JUNCTION_PRIMARY_LAN_IP = "192.168.1.12";
 
       const { logger, lines } = createCapturingLogger();
       await startRelay();
 
-      const daemon = await createTestPaseoDaemon({
+      const daemon = await createTestJunctionDaemon({
         listen: "127.0.0.1",
         logger,
         relayEnabled: true,
@@ -300,12 +300,12 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
   test(
     "daemon keeps relay socket open while idle (no handshake timeout loop)",
     async () => {
-      process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+      process.env.JUNCTION_PRIMARY_LAN_IP = "192.168.1.12";
 
       const { logger, lines } = createCapturingLogger();
       await startRelay();
 
-      const daemon = await createTestPaseoDaemon({
+      const daemon = await createTestJunctionDaemon({
         listen: "127.0.0.1",
         logger,
         relayEnabled: true,
