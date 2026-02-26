@@ -10,6 +10,12 @@ export interface SearchHomeDirectoriesOptions {
   maxDirectoriesScanned?: number
 }
 
+export interface GitRepoEntry {
+  path: string
+  kind: 'directory'
+  isGitRepo: true
+}
+
 export type WorkspaceSuggestionKind = 'file' | 'directory'
 
 export interface WorkspaceSuggestionEntry {
@@ -897,4 +903,32 @@ function pruneWorkspaceEntryListCache(): void {
     }
     workspaceEntryListCache.delete(oldestKey)
   }
+}
+
+async function checkIsGitRepo(dirPath: string): Promise<boolean> {
+  try {
+    await stat(path.join(dirPath, '.git'))
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function searchGitRepositories(
+  options: SearchHomeDirectoriesOptions
+): Promise<GitRepoEntry[]> {
+  const directories = await searchHomeDirectories(options)
+  const results: GitRepoEntry[] = []
+  const checks = await Promise.all(
+    directories.map(async (dir) => ({
+      dir,
+      isGit: await checkIsGitRepo(dir),
+    }))
+  )
+  for (const { dir, isGit } of checks) {
+    if (isGit) {
+      results.push({ path: dir, kind: 'directory', isGitRepo: true })
+    }
+  }
+  return results
 }

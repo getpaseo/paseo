@@ -30,6 +30,8 @@ import type {
   ValidateBranchResponse,
   BranchSuggestionsResponse,
   DirectorySuggestionsResponse,
+  GitCloneResponse,
+  GitInitResponse,
   JunctionWorktreeListResponse,
   JunctionWorktreeArchiveResponse,
   ProjectIconResponse,
@@ -227,6 +229,8 @@ type CheckoutPrStatusPayload = CheckoutPrStatusResponse['payload']
 type ValidateBranchPayload = ValidateBranchResponse['payload']
 type BranchSuggestionsPayload = BranchSuggestionsResponse['payload']
 type DirectorySuggestionsPayload = DirectorySuggestionsResponse['payload']
+type GitClonePayload = GitCloneResponse['payload']
+type GitInitPayload = GitInitResponse['payload']
 type JunctionWorktreeListPayload = JunctionWorktreeListResponse['payload']
 type JunctionWorktreeArchivePayload = JunctionWorktreeArchiveResponse['payload']
 type FileExplorerPayload = FileExplorerResponse['payload']
@@ -1858,6 +1862,7 @@ export class DaemonClient {
       cwd?: string
       includeFiles?: boolean
       includeDirectories?: boolean
+      onlyGitRepos?: boolean
     },
     requestId?: string
   ): Promise<DirectorySuggestionsPayload> {
@@ -1869,10 +1874,47 @@ export class DaemonClient {
         cwd: options.cwd,
         includeFiles: options.includeFiles,
         includeDirectories: options.includeDirectories,
+        onlyGitRepos: options.onlyGitRepos,
         limit: options.limit,
       },
       responseType: 'directory_suggestions_response',
       timeout: 10000,
+    })
+  }
+
+  // ============================================================================
+  // Git Operations
+  // ============================================================================
+
+  async gitClone(
+    options: { url: string; targetDirectory: string },
+    requestId?: string
+  ): Promise<GitClonePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: 'git_clone_request',
+        url: options.url,
+        targetDirectory: options.targetDirectory,
+      },
+      responseType: 'git_clone_response',
+      timeout: 180_000,
+    })
+  }
+
+  async gitInit(
+    options: { targetDirectory: string; projectName: string },
+    requestId?: string
+  ): Promise<GitInitPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: 'git_init_request',
+        targetDirectory: options.targetDirectory,
+        projectName: options.projectName,
+      },
+      responseType: 'git_init_response',
+      timeout: 15_000,
     })
   }
 

@@ -778,7 +778,22 @@ export const DirectorySuggestionsRequestSchema = z.object({
   cwd: z.string().optional(),
   includeFiles: z.boolean().optional(),
   includeDirectories: z.boolean().optional(),
+  onlyGitRepos: z.boolean().optional(),
   limit: z.number().int().min(1).max(100).optional(),
+  requestId: z.string(),
+})
+
+export const GitCloneRequestSchema = z.object({
+  type: z.literal('git_clone_request'),
+  url: z.string(),
+  targetDirectory: z.string(),
+  requestId: z.string(),
+})
+
+export const GitInitRequestSchema = z.object({
+  type: z.literal('git_init_request'),
+  targetDirectory: z.string(),
+  projectName: z.string(),
   requestId: z.string(),
 })
 
@@ -1018,6 +1033,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion('type', [
   ValidateBranchRequestSchema,
   BranchSuggestionsRequestSchema,
   DirectorySuggestionsRequestSchema,
+  GitCloneRequestSchema,
+  GitInitRequestSchema,
   JunctionWorktreeListRequestSchema,
   JunctionWorktreeArchiveRequestSchema,
   FileExplorerRequestSchema,
@@ -1606,10 +1623,29 @@ export const DirectorySuggestionsResponseSchema = z.object({
         z.object({
           path: z.string(),
           kind: z.enum(['file', 'directory']),
+          isGitRepo: z.boolean().optional(),
         })
       )
       .optional()
       .default([]),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+})
+
+export const GitCloneResponseSchema = z.object({
+  type: z.literal('git_clone_response'),
+  payload: z.object({
+    clonedPath: z.string().nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+})
+
+export const GitInitResponseSchema = z.object({
+  type: z.literal('git_init_response'),
+  payload: z.object({
+    createdPath: z.string().nullable(),
     error: z.string().nullable(),
     requestId: z.string(),
   }),
@@ -1873,6 +1909,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion('type', [
   ValidateBranchResponseSchema,
   BranchSuggestionsResponseSchema,
   DirectorySuggestionsResponseSchema,
+  GitCloneResponseSchema,
+  GitInitResponseSchema,
   JunctionWorktreeListResponseSchema,
   JunctionWorktreeArchiveResponseSchema,
   FileExplorerResponseSchema,
@@ -1969,6 +2007,10 @@ export type BranchSuggestionsRequest = z.infer<typeof BranchSuggestionsRequestSc
 export type BranchSuggestionsResponse = z.infer<typeof BranchSuggestionsResponseSchema>
 export type DirectorySuggestionsRequest = z.infer<typeof DirectorySuggestionsRequestSchema>
 export type DirectorySuggestionsResponse = z.infer<typeof DirectorySuggestionsResponseSchema>
+export type GitCloneRequest = z.infer<typeof GitCloneRequestSchema>
+export type GitCloneResponse = z.infer<typeof GitCloneResponseSchema>
+export type GitInitRequest = z.infer<typeof GitInitRequestSchema>
+export type GitInitResponse = z.infer<typeof GitInitResponseSchema>
 export type JunctionWorktreeListRequest = z.infer<typeof JunctionWorktreeListRequestSchema>
 export type JunctionWorktreeListResponse = z.infer<typeof JunctionWorktreeListResponseSchema>
 export type JunctionWorktreeArchiveRequest = z.infer<typeof JunctionWorktreeArchiveRequestSchema>

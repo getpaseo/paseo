@@ -27,6 +27,8 @@ import {
   type SubscribeCheckoutDiffRequest,
   type UnsubscribeCheckoutDiffRequest,
   type DirectorySuggestionsRequest,
+  type GitCloneRequest,
+  type GitInitRequest,
   type ProjectCheckoutLitePayload,
   type ProjectPlacementPayload,
 } from './messages.js'
@@ -113,7 +115,9 @@ import {
 } from '../utils/checkout-git.js'
 import { getProjectIcon } from '../utils/project-icon.js'
 import { expandTilde } from '../utils/path.js'
-import { searchHomeDirectories, searchWorkspaceEntries } from '../utils/directory-suggestions.js'
+import { searchHomeDirectories, searchWorkspaceEntries, searchGitRepositories } from '../utils/directory-suggestions.js'
+import { cloneRepository } from '../utils/git-clone.js'
+import { initRepository } from '../utils/git-init.js'
 import type pino from 'pino'
 import { resolveClientMessageId } from './client-message-id.js'
 
@@ -1096,6 +1100,14 @@ export class Session {
 
         case 'directory_suggestions_request':
           await this.handleDirectorySuggestionsRequest(msg)
+          break
+
+        case 'git_clone_request':
+          await this.handleGitCloneRequest(msg)
+          break
+
+        case 'git_init_request':
+          await this.handleGitInitRequest(msg)
           break
 
         case 'subscribe_checkout_diff_request':
@@ -2802,25 +2814,36 @@ export class Session {
   }
 
   private async handleDirectorySuggestionsRequest(msg: DirectorySuggestionsRequest): Promise<void> {
-    const { query, limit, requestId, cwd, includeFiles, includeDirectories } = msg
+    const { query, limit, requestId, cwd, includeFiles, includeDirectories, onlyGitRepos } = msg
 
     try {
       const workspaceCwd = cwd?.trim()
-      const entries = workspaceCwd
-        ? await searchWorkspaceEntries({
-            cwd: expandTilde(workspaceCwd),
+      let entries: Array<{ path: string; kind: 'file' | 'directory'; isGitRepo?: boolean }>
+
+      if (workspaceCwd) {
+        entries = await searchWorkspaceEntries({
+          cwd: expandTilde(workspaceCwd),
+          query,
+          limit,
+          includeFiles,
+          includeDirectories,
+        })
+      } else if (onlyGitRepos) {
+        entries = await searchGitRepositories({
+          homeDir: process.env.HOME ?? homedir(),
+          query,
+          limit,
+        })
+      } else {
+        entries = (
+          await searchHomeDirectories({
+            homeDir: process.env.HOME ?? homedir(),
             query,
             limit,
-            includeFiles,
-            includeDirectories,
           })
-        : (
-            await searchHomeDirectories({
-              homeDir: process.env.HOME ?? homedir(),
-              query,
-              limit,
-            })
-          ).map((path) => ({ path, kind: 'directory' as const }))
+        ).map((path) => ({ path, kind: 'directory' as const }))
+      }
+
       const directories = entries
         .filter((entry) => entry.kind === 'directory')
         .map((entry) => entry.path)
@@ -2839,6 +2862,64 @@ export class Session {
         payload: {
           directories: [],
           entries: [],
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+        },
+      })
+    }
+  }
+
+  private async handleGitCloneRequest(msg: GitCloneRequest): Promise<void> {
+    const { url, targetDirectory, requestId } = msg
+
+    try {
+      const result = await cloneRepository({
+        url,
+        targetDirectory: expandTilde(targetDirectory),
+        homeDir: process.env.HOME ?? homedir(),
+      })
+      this.emit({
+        type: 'git_clone_response',
+        payload: {
+          clonedPath: result.clonedPath,
+          error: null,
+          requestId,
+        },
+      })
+    } catch (error) {
+      this.emit({
+        type: 'git_clone_response',
+        payload: {
+          clonedPath: null,
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+        },
+      })
+    }
+  }
+
+  private async handleGitInitRequest(msg: GitInitRequest): Promise<void> {
+    const { targetDirectory, projectName, requestId } = msg
+
+    try {
+      const result = await initRepository({
+        targetDirectory: expandTilde(targetDirectory),
+        projectName,
+        homeDir: process.env.HOME ?? homedir(),
+      })
+      this.emit({
+        type: 'git_init_response',
+        payload: {
+          createdPath: result.createdPath,
+          error: null,
+          requestId,
+        },
+      })
+    } catch (error) {
+      this.emit({
+        type: 'git_init_response',
+        payload: {
+          createdPath: null,
           error: error instanceof Error ? error.message : String(error),
           requestId,
         },
