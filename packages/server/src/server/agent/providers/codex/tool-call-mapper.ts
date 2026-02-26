@@ -78,7 +78,7 @@ const CodexEditToolNameSchema = z.union([
   z.literal("apply_diff"),
 ]);
 const CodexSearchToolNameSchema = z.union([z.literal("search"), z.literal("web_search")]);
-const CodexSpeakToolNameSchema = z.literal("paseo.speak");
+const CodexSpeakToolNameSchema = z.literal("junction.speak");
 
 const CodexToolKindSchema = z.enum(["shell", "read", "write", "edit", "search", "speak", "unknown"]);
 

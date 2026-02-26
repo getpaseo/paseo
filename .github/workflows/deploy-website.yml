@@ -24,12 +24,12 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install --workspace=@getpaseo/website --include-workspace-root
+        run: npm install --workspace=@junction/website --include-workspace-root
 
       - name: Typecheck
-        run: npm run typecheck --workspace=@getpaseo/website
+        run: npm run typecheck --workspace=@junction/website
 
       - name: Deploy to Cloudflare Workers
-        run: npm run deploy --workspace=@getpaseo/website
+        run: npm run deploy --workspace=@junction/website
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

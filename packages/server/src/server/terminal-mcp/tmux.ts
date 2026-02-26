@@ -49,7 +49,7 @@ let shellConfig: { type: ShellType } = { type: "bash" };
 const ANSI_ESCAPE_REGEX =
   /\u001B[\[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 
-const EXIT_CODE_MARKER = "__PASEO_EXIT_CODE__:";
+const EXIT_CODE_MARKER = "__JUNCTION_EXIT_CODE__:";
 
 function stripAnsiSequences(value: string): string {
   if (!value) {

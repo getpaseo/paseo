@@ -6,9 +6,9 @@ import {
   afterEach,
 } from "vitest";
 import {
-  createTestPaseoDaemon,
-  type TestPaseoDaemon,
-} from "./test-utils/paseo-daemon.js";
+  createTestJunctionDaemon,
+  type TestJunctionDaemon,
+} from "./test-utils/junction-daemon.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import type { AgentStreamEventPayload } from "../shared/messages.js";
 import type { AgentSnapshotPayload } from "./messages.js";
@@ -36,12 +36,12 @@ describe("client activity tracking", () => {
   const TEST_PROVIDER = "claude";
   const TEST_MODEL = "claude-haiku-4-5";
   const TEST_CWD = "/tmp";
-  let daemon: TestPaseoDaemon;
+  let daemon: TestJunctionDaemon;
   let client1: DaemonClient;
   let client2: DaemonClient;
 
   beforeEach(async () => {
-    daemon = await createTestPaseoDaemon();
+    daemon = await createTestJunctionDaemon();
   });
 
   afterEach(async () => {

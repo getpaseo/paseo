@@ -86,7 +86,7 @@ jobs:
             exit 1
           fi
 
-          asset_name="paseo-${RELEASE_TAG}-android.apk"
+          asset_name="junction-${RELEASE_TAG}-android.apk"
           asset_path="$RUNNER_TEMP/$asset_name"
 
           curl --fail --location --output "$asset_path" "$artifact_url"

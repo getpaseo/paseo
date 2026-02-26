@@ -12,8 +12,8 @@ export interface ResolvedLogConfig {
 export function resolveLogConfig(
   persistedConfig: PersistedConfig | undefined
 ): ResolvedLogConfig {
-  const envLevel = process.env.PASEO_LOG as LogLevel | undefined;
-  const envFormat = process.env.PASEO_LOG_FORMAT as LogFormat | undefined;
+  const envLevel = process.env.JUNCTION_LOG as LogLevel | undefined;
+  const envFormat = process.env.JUNCTION_LOG_FORMAT as LogFormat | undefined;
 
   const level: LogLevel =
     envLevel ?? persistedConfig?.log?.level ?? "debug";

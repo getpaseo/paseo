@@ -49,7 +49,7 @@ import {
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const CODEX_PROVIDER = "codex" as const;
-const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
+const CODEX_IMAGE_ATTACHMENT_DIR = "junction-attachments";
 
 const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -1815,8 +1815,8 @@ class CodexAppServerAgentSession implements AgentSession {
 
     await this.client.request("initialize", {
       clientInfo: {
-        name: "paseo",
-        title: "Paseo",
+        name: "junction",
+        title: "Junction",
         version: "0.0.0",
       },
     });
@@ -3078,7 +3078,7 @@ export class CodexAppServerAgentClient implements AgentClient {
 
     try {
       await client.request("initialize", {
-        clientInfo: { name: "paseo", title: "Paseo", version: "0.0.0" },
+        clientInfo: { name: "junction", title: "Junction", version: "0.0.0" },
       });
       client.notify("initialized", {});
 
@@ -3154,8 +3154,8 @@ export class CodexAppServerAgentClient implements AgentClient {
     try {
       await client.request("initialize", {
         clientInfo: {
-          name: "paseo",
-          title: "Paseo",
+          name: "junction",
+          title: "Junction",
           version: "0.0.0",
         },
       });

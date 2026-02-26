@@ -1,5 +1,5 @@
 import type { Command } from 'commander'
-import type { AgentPermissionRequest, AgentSnapshotPayload } from '@getpaseo/server'
+import type { AgentPermissionRequest, AgentSnapshotPayload } from '@junction/server'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from '../../output/index.js'
 
@@ -51,7 +51,7 @@ export async function runLsCommand(options: PermitLsOptions, _command: Command):
     const error: CommandError = {
       code: 'DAEMON_NOT_RUNNING',
       message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: 'Start the daemon with: paseo daemon start',
+      details: 'Start the daemon with: junction daemon start',
     }
     throw error
   }

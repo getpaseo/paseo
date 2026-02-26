@@ -1,36 +1,24 @@
 {
-  "name": "paseo",
+  "name": "junction",
   "version": "0.1.16",
   "private": true,
   "workspaces": [
     "packages/server",
-    "packages/app",
     "packages/relay",
-    "packages/website",
-    "packages/desktop",
-    "packages/cli"
+    "packages/cli",
+    "packages/auth",
+    "packages/app"
   ],
   "scripts": {
-    "dev": "./scripts/dev.sh",
     "dev:server": "NODE_ENV=development tsx packages/server/scripts/daemon-runner.ts --dev",
-    "dev:app": "npm run start --workspace=@getpaseo/app",
-    "dev:website": "npm run dev --workspace=@getpaseo/website",
+    "dev:app": "npm run dev --workspace=@junction/app",
     "postinstall": "node scripts/postinstall-patches.mjs",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "start": "npm run start --workspace=@getpaseo/server",
-    "android": "npm run android --workspace=@getpaseo/app",
-    "android:development": "npm run android:development --workspace=@getpaseo/app",
-    "android:prod": "npm run android:prod --workspace=@getpaseo/app",
-    "android:production": "npm run android:production --workspace=@getpaseo/app",
-    "android:release": "npm run android:prod --workspace=@getpaseo/app",
-    "ios": "npm run ios --workspace=@getpaseo/app",
-    "web": "npm run web --workspace=@getpaseo/app",
-    "dev:desktop": "npm run dev --workspace=@getpaseo/desktop",
-    "build:desktop": "npm run version:sync-internal && npm run build:web --workspace=@getpaseo/app && npm run build --workspace=@getpaseo/desktop",
+    "start": "npm run start --workspace=@junction/server",
     "cli": "npx tsx packages/cli/src/index.js",
     "version": "npm run version:sync-internal && npm run release:prepare && git add -A",
     "version:sync-internal": "node scripts/sync-workspace-versions.mjs",
@@ -38,13 +26,10 @@
     "version:all:patch": "npm version patch --include-workspace-root --message \"chore(release): cut %s\"",
     "version:all:minor": "npm version minor --include-workspace-root --message \"chore(release): cut %s\"",
     "version:all:major": "npm version major --include-workspace-root --message \"chore(release): cut %s\"",
-    "release:check": "npm run release:prepare && npm run typecheck --workspace=@getpaseo/relay && npm run typecheck --workspace=@getpaseo/server && npm run typecheck --workspace=@getpaseo/cli && npm run build --workspace=@getpaseo/relay && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli && npm pack --dry-run --workspace=@getpaseo/relay && npm pack --dry-run --workspace=@getpaseo/server && npm pack --dry-run --workspace=@getpaseo/cli",
-    "release:publish:dry-run": "npm publish --dry-run --workspace=@getpaseo/relay --access public && npm publish --dry-run --workspace=@getpaseo/server --access public && npm publish --dry-run --workspace=@getpaseo/cli --access public",
-    "release:publish": "npm publish --workspace=@getpaseo/relay --access public && npm publish --workspace=@getpaseo/server --access public && npm publish --workspace=@getpaseo/cli --access public",
+    "release:check": "npm run release:prepare && npm run typecheck --workspace=@junction/relay && npm run typecheck --workspace=@junction/server && npm run typecheck --workspace=@junction/cli && npm run build --workspace=@junction/relay && npm run build --workspace=@junction/server && npm run build --workspace=@junction/cli && npm pack --dry-run --workspace=@junction/relay && npm pack --dry-run --workspace=@junction/server && npm pack --dry-run --workspace=@junction/cli",
+    "release:publish": "npm publish --workspace=@junction/relay --access public && npm publish --workspace=@junction/server --access public && npm publish --workspace=@junction/cli --access public",
     "release:push": "node scripts/push-current-release-tag.mjs",
-    "release:patch": "npm run version:all:patch && npm run release:check && npm run release:publish && npm run release:push",
-    "release:minor": "npm run version:all:minor && npm run release:check && npm run release:publish && npm run release:push",
-    "release:major": "npm run version:all:major && npm run release:check && npm run release:publish && npm run release:push"
+    "release:patch": "npm run version:all:patch && npm run release:check && npm run release:publish && npm run release:push"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
@@ -54,16 +39,16 @@
     "patch-package": "^8.0.1",
     "typescript": "^5.9.3"
   },
-  "description": "Paseo: voice-controlled development environment with OpenAI Realtime API",
+  "description": "Junction: distributed AI agent platform",
   "keywords": [
-    "openai",
-    "realtime",
-    "voice",
-    "voice-assistant",
-    "development",
-    "mcp"
+    "ai",
+    "agents",
+    "distributed",
+    "claude",
+    "codex",
+    "development"
   ],
-  "author": "moboudra",
+  "author": "",
   "license": "AGPL-3.0-or-later",
   "overrides": {
     "lightningcss": "1.30.1"

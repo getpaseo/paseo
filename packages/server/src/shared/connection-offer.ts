@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * Relay-only pairing offer.
  *
- * `serverId` is a stable daemon identifier scoped to `PASEO_HOME`, and is also
+ * `serverId` is a stable daemon identifier scoped to `JUNCTION_HOME`, and is also
  * used as the relay session identifier.
  */
 export const ConnectionOfferV2Schema = z.object({

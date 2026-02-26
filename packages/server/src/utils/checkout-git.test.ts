@@ -18,7 +18,7 @@ import {
   pushCurrentBranch,
 } from "./checkout-git.js";
 import { createWorktree } from "./worktree.js";
-import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
+import { getJunctionWorktreeMetadataPath } from "./worktree-metadata.js";
 
 function initRepo(): { tempDir: string; repoDir: string } {
   const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "checkout-git-test-")));
@@ -36,13 +36,13 @@ function initRepo(): { tempDir: string; repoDir: string } {
 describe("checkout git utilities", () => {
   let tempDir: string;
   let repoDir: string;
-  let paseoHome: string;
+  let junctionHome: string;
 
   beforeEach(() => {
     const setup = initRepo();
     tempDir = setup.tempDir;
     repoDir = setup.repoDir;
-    paseoHome = join(tempDir, "paseo-home");
+    junctionHome = join(tempDir, "junction-home");
   });
 
   afterEach(() => {
@@ -85,7 +85,7 @@ describe("checkout git utilities", () => {
     const status = await getCheckoutStatusLite(repoDir);
     expect(status.isGit).toBe(true);
     expect(status.currentBranch).toBe("main");
-    expect(status.isPaseoOwnedWorktree).toBe(false);
+    expect(status.isJunctionOwnedWorktree).toBe(false);
     expect(status.mainRepoRoot).toBeNull();
   });
 
@@ -231,31 +231,31 @@ describe("checkout git utilities", () => {
     expect(diff.diff).toContain("# untracked-large.txt: diff too large omitted");
   });
 
-  it("handles status/diff/commit in a .paseo worktree", async () => {
+  it("handles status/diff/commit in a .junction worktree", async () => {
     const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "alpha",
-      paseoHome,
+      junctionHome,
     });
 
     writeFileSync(join(result.worktreePath, "file.txt"), "worktree change\n");
 
-    const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
+    const status = await getCheckoutStatus(result.worktreePath, { junctionHome });
     expect(status.isGit).toBe(true);
     expect(status.repoRoot).toBe(result.worktreePath);
     expect(status.isDirty).toBe(true);
-    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.isJunctionOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(repoDir);
 
-    const diff = await getCheckoutDiff(result.worktreePath, { mode: "uncommitted" }, { paseoHome });
+    const diff = await getCheckoutDiff(result.worktreePath, { mode: "uncommitted" }, { junctionHome });
     expect(diff.diff).toContain("-hello");
     expect(diff.diff).toContain("+worktree change");
 
     await commitAll(result.worktreePath, "worktree update");
 
-    const cleanStatus = await getCheckoutStatus(result.worktreePath, { paseoHome });
+    const cleanStatus = await getCheckoutStatus(result.worktreePath, { junctionHome });
     expect(cleanStatus.isDirty).toBe(false);
     const message = execSync("git log -1 --pretty=%B", {
       cwd: result.worktreePath,
@@ -265,18 +265,18 @@ describe("checkout git utilities", () => {
     expect(message).toBe("worktree update");
   });
 
-  it("returns lightweight checkout status for .paseo worktrees", async () => {
+  it("returns lightweight checkout status for .junction worktrees", async () => {
     const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "lite-alpha",
-      paseoHome,
+      junctionHome,
     });
 
-    const status = await getCheckoutStatusLite(result.worktreePath, { paseoHome });
+    const status = await getCheckoutStatusLite(result.worktreePath, { junctionHome });
     expect(status.isGit).toBe(true);
-    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.isJunctionOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(repoDir);
   });
 
@@ -294,12 +294,12 @@ describe("checkout git utilities", () => {
       cwd: mainCheckoutDir,
       baseBranch: "main",
       worktreeSlug: "feature-worktree",
-      paseoHome,
+      junctionHome,
     });
 
-    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    const status = await getCheckoutStatus(worktree.worktreePath, { junctionHome });
     expect(status.isGit).toBe(true);
-    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.isJunctionOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(mainCheckoutDir);
   });
 
@@ -309,7 +309,7 @@ describe("checkout git utilities", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "merge",
-      paseoHome,
+      junctionHome,
     });
 
     writeFileSync(join(worktree.worktreePath, "merge.txt"), "feature\n");
@@ -322,7 +322,7 @@ describe("checkout git utilities", () => {
       .toString()
       .trim();
 
-    await mergeToBase(worktree.worktreePath, { baseRef: "main" }, { paseoHome });
+    await mergeToBase(worktree.worktreePath, { baseRef: "main" }, { junctionHome });
 
     const baseContainsFeature = execSync(`git merge-base --is-ancestor ${featureCommit} main`, {
       cwd: repoDir,
@@ -330,7 +330,7 @@ describe("checkout git utilities", () => {
     });
     expect(baseContainsFeature).toBeDefined();
 
-    const statusAfterMerge = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    const statusAfterMerge = await getCheckoutStatus(worktree.worktreePath, { junctionHome });
     expect(statusAfterMerge.isGit).toBe(true);
     if (statusAfterMerge.isGit) {
       expect(statusAfterMerge.aheadBehind?.ahead ?? 0).toBe(0);
@@ -486,7 +486,7 @@ describe("checkout git utilities", () => {
   });
 
   it("disables GitHub features when gh is unavailable", async () => {
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/junction/junction.git", { cwd: repoDir });
 
     const fakeBinDir = join(tempDir, "fake-bin");
     mkdirSync(fakeBinDir);
@@ -510,7 +510,7 @@ describe("checkout git utilities", () => {
 
   it("returns merged PR status when no open PR exists for the current branch", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/junction/junction.git", { cwd: repoDir });
 
     const fakeBinDir = join(tempDir, "fake-bin-gh-merged");
     mkdirSync(fakeBinDir);
@@ -531,7 +531,7 @@ describe("checkout git utilities", () => {
         "  exit 0",
         "fi",
         "if [[ \"$args\" == *\"state=closed\"* ]]; then",
-        "  echo '[{\"html_url\":\"https://github.com/getpaseo/paseo/pull/123\",\"title\":\"Ship feature\",\"state\":\"closed\",\"merged_at\":\"2026-02-18T00:00:00Z\",\"base\":{\"ref\":\"main\"},\"head\":{\"ref\":\"feature\"}}]'",
+        "  echo '[{\"html_url\":\"https://github.com/junction/junction/pull/123\",\"title\":\"Ship feature\",\"state\":\"closed\",\"merged_at\":\"2026-02-18T00:00:00Z\",\"base\":{\"ref\":\"main\"},\"head\":{\"ref\":\"feature\"}}]'",
         "  exit 0",
         "fi",
         "echo \"unexpected gh args: $args\" >&2",
@@ -564,7 +564,7 @@ describe("checkout git utilities", () => {
 
   it("does not treat closed-unmerged PRs as shipped status", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/junction/junction.git", { cwd: repoDir });
 
     const fakeBinDir = join(tempDir, "fake-bin-gh-closed");
     mkdirSync(fakeBinDir);
@@ -585,7 +585,7 @@ describe("checkout git utilities", () => {
         "  exit 0",
         "fi",
         "if [[ \"$args\" == *\"state=closed\"* ]]; then",
-        "  echo '[{\"html_url\":\"https://github.com/getpaseo/paseo/pull/999\",\"title\":\"Closed without merge\",\"state\":\"closed\",\"merged_at\":null,\"base\":{\"ref\":\"main\"},\"head\":{\"ref\":\"feature\"}}]'",
+        "  echo '[{\"html_url\":\"https://github.com/junction/junction/pull/999\",\"title\":\"Closed without merge\",\"state\":\"closed\",\"merged_at\":null,\"base\":{\"ref\":\"main\"},\"head\":{\"ref\":\"feature\"}}]'",
         "  exit 0",
         "fi",
         "echo \"unexpected gh args: $args\" >&2",
@@ -640,7 +640,7 @@ describe("checkout git utilities", () => {
     ).rejects.toBeInstanceOf(MergeConflictError);
   });
 
-  it("uses stored baseRefName for Paseo worktrees (no heuristics)", async () => {
+  it("uses stored baseRefName for Junction worktrees (no heuristics)", async () => {
     // Create a non-default base branch with a unique commit.
     execSync("git checkout -b develop", { cwd: repoDir });
     writeFileSync(join(repoDir, "file.txt"), "develop\n");
@@ -654,7 +654,7 @@ describe("checkout git utilities", () => {
       cwd: repoDir,
       baseBranch: "develop",
       worktreeSlug: "feature",
-      paseoHome,
+      junctionHome,
     });
 
     writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
@@ -663,12 +663,12 @@ describe("checkout git utilities", () => {
       cwd: worktree.worktreePath,
     });
 
-    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    const status = await getCheckoutStatus(worktree.worktreePath, { junctionHome });
     expect(status.isGit).toBe(true);
     expect(status.baseRef).toBe("develop");
     expect(status.aheadBehind?.ahead).toBe(1);
 
-    const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome });
+    const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { junctionHome });
     expect(baseDiff.diff).toContain("feature.txt");
     expect(baseDiff.diff).not.toContain("file.txt");
   });
@@ -681,13 +681,13 @@ describe("checkout git utilities", () => {
     execSync("git -c commit.gpgsign=false commit -m 'develop change'", { cwd: repoDir });
     execSync("git checkout main", { cwd: repoDir });
 
-    // Create a Paseo worktree configured to use develop as base.
+    // Create a Junction worktree configured to use develop as base.
     const worktree = await createWorktree({
       branchName: "feature",
       cwd: repoDir,
       baseBranch: "develop",
       worktreeSlug: "merge-to-develop",
-      paseoHome,
+      junctionHome,
     });
 
     writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
@@ -700,7 +700,7 @@ describe("checkout git utilities", () => {
       .trim();
 
     // No baseRef passed: should merge into the configured base (develop), not default/main.
-    await mergeToBase(worktree.worktreePath, {}, { paseoHome });
+    await mergeToBase(worktree.worktreePath, {}, { junctionHome });
 
     execSync(`git merge-base --is-ancestor ${featureCommit} develop`, {
       cwd: repoDir,
@@ -714,24 +714,24 @@ describe("checkout git utilities", () => {
     ).toThrow();
   });
 
-  it("throws if Paseo worktree base metadata is missing", async () => {
+  it("throws if Junction worktree base metadata is missing", async () => {
     const worktree = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "missing-metadata",
-      paseoHome,
+      junctionHome,
     });
 
-    const metadataPath = getPaseoWorktreeMetadataPath(worktree.worktreePath);
+    const metadataPath = getJunctionWorktreeMetadataPath(worktree.worktreePath);
     rmSync(metadataPath, { force: true });
 
-    await expect(getCheckoutStatus(worktree.worktreePath, { paseoHome })).rejects.toThrow(
+    await expect(getCheckoutStatus(worktree.worktreePath, { junctionHome })).rejects.toThrow(
       /base/i
     );
-    await expect(getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome })).rejects.toThrow(
+    await expect(getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { junctionHome })).rejects.toThrow(
       /base/i
     );
-    await expect(mergeToBase(worktree.worktreePath, {}, { paseoHome })).rejects.toThrow(/base/i);
+    await expect(mergeToBase(worktree.worktreePath, {}, { junctionHome })).rejects.toThrow(/base/i);
   });
 });

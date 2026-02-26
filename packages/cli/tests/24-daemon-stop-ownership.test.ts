@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 
 /**
- * Regression: `paseo daemon stop` must only act on daemon ownership state and
+ * Regression: `junction daemon stop` must only act on daemon ownership state and
  * must not discover/kill processes via home-scoped `ps` command heuristics.
  */
 
@@ -15,9 +15,9 @@ import { $ } from 'zx'
 $.verbose = false
 
 const testEnv = {
-  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
-  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? '0',
-  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? '0',
+  JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
+  JUNCTION_DICTATION_ENABLED: process.env.JUNCTION_DICTATION_ENABLED ?? '0',
+  JUNCTION_VOICE_MODE_ENABLED: process.env.JUNCTION_VOICE_MODE_ENABLED ?? '0',
 }
 
 function sleep(ms: number): Promise<void> {
@@ -50,7 +50,7 @@ async function waitForRunning(pid: number, timeoutMs: number): Promise<void> {
 
 console.log('=== Daemon Stop Ownership Regression ===\n')
 
-const paseoHome = await mkdtemp(join(tmpdir(), 'paseo-stop-ownership-'))
+const junctionHome = await mkdtemp(join(tmpdir(), 'junction-stop-ownership-'))
 let decoyProcess: ChildProcess | null = null
 
 try {
@@ -67,7 +67,7 @@ try {
     {
       env: {
         ...process.env,
-        PASEO_HOME: paseoHome,
+        JUNCTION_HOME: junctionHome,
       },
       stdio: 'ignore',
       detached: process.platform !== 'win32',
@@ -83,7 +83,7 @@ try {
   console.log('Test 2: daemon stop should report not_running and leave decoy untouched')
 
   const stopResult =
-    await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon stop --home ${paseoHome} --json`.nothrow()
+    await $`JUNCTION_HOME=${junctionHome} JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD} JUNCTION_DICTATION_ENABLED=${testEnv.JUNCTION_DICTATION_ENABLED} JUNCTION_VOICE_MODE_ENABLED=${testEnv.JUNCTION_VOICE_MODE_ENABLED} npx junction daemon stop --home ${junctionHome} --json`.nothrow()
   assert.strictEqual(stopResult.exitCode, 0, `stop should succeed: ${stopResult.stderr}`)
 
   const parsed = JSON.parse(stopResult.stdout) as { action?: unknown }
@@ -108,8 +108,8 @@ try {
     }
   }
 
-  await $`PASEO_HOME=${paseoHome} npx paseo daemon stop --home ${paseoHome} --force`.nothrow()
-  await rm(paseoHome, { recursive: true, force: true })
+  await $`JUNCTION_HOME=${junctionHome} npx junction daemon stop --home ${junctionHome} --force`.nothrow()
+  await rm(junctionHome, { recursive: true, force: true })
 }
 
 console.log('=== Daemon stop ownership regression test passed ===')

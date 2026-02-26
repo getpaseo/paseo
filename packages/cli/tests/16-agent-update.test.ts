@@ -8,7 +8,7 @@
  * - Help and argument parsing
  * - Validation for required update fields
  * - Graceful daemon connection errors
- * - Top-level daemon update alias behavior (`paseo update`)
+ * - Top-level daemon update alias behavior (`junction update`)
  */
 
 import assert from 'node:assert'
@@ -24,13 +24,13 @@ console.log('=== Agent Update Command Tests ===\n')
 
 // Resolve an available local port so daemon-not-running checks stay deterministic.
 const port = await getAvailablePort()
-const paseoHome = await mkdtemp(join(tmpdir(), 'paseo-test-home-'))
+const junctionHome = await mkdtemp(join(tmpdir(), 'junction-test-home-'))
 
 try {
   // Test 1: agent update --help shows options
   {
     console.log('Test 1: agent update --help shows options')
-    const result = await $`npx paseo agent update --help`.nothrow()
+    const result = await $`npx junction agent update --help`.nothrow()
     assert.strictEqual(result.exitCode, 0, 'agent update --help should exit 0')
     assert(result.stdout.includes('--name'), 'help should mention --name flag')
     assert(result.stdout.includes('--label'), 'help should mention --label flag')
@@ -43,7 +43,7 @@ try {
   {
     console.log('Test 2: agent update requires ID argument')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo agent update --name "New Name"`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction agent update --name "New Name"`.nothrow()
     assert.notStrictEqual(result.exitCode, 0, 'should fail without id')
     const output = result.stdout + result.stderr
     const hasError =
@@ -59,7 +59,7 @@ try {
   {
     console.log('Test 3: agent update requires update field')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo agent update abc123`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction agent update abc123`.nothrow()
     assert.notStrictEqual(result.exitCode, 0, 'should fail without --name/--label')
     const output = result.stdout + result.stderr
     const hasError =
@@ -74,7 +74,7 @@ try {
   {
     console.log('Test 4: agent update handles daemon not running')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo agent update abc123 --name "Renamed Agent"`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction agent update abc123 --name "Renamed Agent"`.nothrow()
     assert.notStrictEqual(result.exitCode, 0, 'should fail when daemon not running')
     const output = result.stdout + result.stderr
     const hasError =
@@ -89,7 +89,7 @@ try {
   {
     console.log('Test 5: agent update accepts multi-label syntax')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo agent update abc123 --label ui=true,area=frontend --label priority=high`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction agent update abc123 --label ui=true,area=frontend --label priority=high`.nothrow()
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept --label flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
@@ -99,7 +99,7 @@ try {
   // Test 6: agent --help shows update subcommand
   {
     console.log('Test 6: agent --help shows update subcommand')
-    const result = await $`npx paseo agent --help`.nothrow()
+    const result = await $`npx junction agent --help`.nothrow()
     assert.strictEqual(result.exitCode, 0, 'agent --help should exit 0')
     assert(result.stdout.includes('update'), 'help should mention update subcommand')
     console.log('✓ agent --help shows update subcommand\n')
@@ -108,7 +108,7 @@ try {
   // Test 7: top-level update alias --help shows daemon update options
   {
     console.log('Test 7: top-level update --help shows daemon update options')
-    const result = await $`npx paseo update --help`.nothrow()
+    const result = await $`npx junction update --help`.nothrow()
     assert.strictEqual(result.exitCode, 0, 'update --help should exit 0')
     assert(result.stdout.includes('--home'), 'help should mention --home flag')
     assert(result.stdout.includes('--yes'), 'help should mention --yes flag')
@@ -120,7 +120,7 @@ try {
   {
     console.log('Test 8: top-level update alias accepts daemon update flags')
     const result =
-      await $`PASEO_HOME=${paseoHome} npx paseo update --home ${paseoHome} --yes --help`.nothrow()
+      await $`JUNCTION_HOME=${junctionHome} npx junction update --home ${junctionHome} --yes --help`.nothrow()
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept top-level update flags')
     assert(!output.includes('error: option'), 'should not have option parsing error')
@@ -129,7 +129,7 @@ try {
   }
 } finally {
   // Clean up temp directory
-  await rm(paseoHome, { recursive: true, force: true })
+  await rm(junctionHome, { recursive: true, force: true })
 }
 
 console.log('=== All agent update tests passed ===')

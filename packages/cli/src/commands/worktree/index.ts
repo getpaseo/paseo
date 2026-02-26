@@ -4,11 +4,11 @@ import { runArchiveCommand } from './archive.js'
 import { withOutput } from '../../output/index.js'
 
 export function createWorktreeCommand(): Command {
-  const worktree = new Command('worktree').description('Manage Paseo-managed git worktrees')
+  const worktree = new Command('worktree').description('Manage Junction-managed git worktrees')
 
   worktree
     .command('ls')
-    .description('List Paseo-managed git worktrees')
+    .description('List Junction-managed git worktrees')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runLsCommand))

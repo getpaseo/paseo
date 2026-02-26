@@ -130,7 +130,7 @@ describe("relay-transport control lifecycle", () => {
     const controller = startRelayTransport({
       logger: logger as any,
       attachSocket: async () => {},
-      relayEndpoint: "relay.paseo.sh:443",
+      relayEndpoint: "relay.junction.sh:443",
       serverId: "srv_test",
     });
     controllers.push(controller);
@@ -152,7 +152,7 @@ describe("relay-transport control lifecycle", () => {
     const controller = startRelayTransport({
       logger: logger as any,
       attachSocket: async () => {},
-      relayEndpoint: "relay.paseo.sh:443",
+      relayEndpoint: "relay.junction.sh:443",
       serverId: "srv_test",
     });
     controllers.push(controller);
@@ -174,7 +174,7 @@ describe("relay-transport control lifecycle", () => {
     const controller = startRelayTransport({
       logger: logger as any,
       attachSocket: async () => {},
-      relayEndpoint: "relay.paseo.sh:443",
+      relayEndpoint: "relay.junction.sh:443",
       serverId: "srv_test",
     });
     controllers.push(controller);
@@ -195,7 +195,7 @@ describe("relay-transport control lifecycle", () => {
     const controller = startRelayTransport({
       logger: logger as any,
       attachSocket,
-      relayEndpoint: "relay.paseo.sh:443",
+      relayEndpoint: "relay.junction.sh:443",
       serverId: "srv_test",
     });
     controllers.push(controller);

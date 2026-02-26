@@ -38,7 +38,7 @@ export async function runArchiveCommand(
     const error: CommandError = {
       code: 'MISSING_AGENT_ID',
       message: 'Agent ID is required',
-      details: 'Usage: paseo agent archive <id>',
+      details: 'Usage: junction agent archive <id>',
     }
     throw error
   }
@@ -51,7 +51,7 @@ export async function runArchiveCommand(
     const error: CommandError = {
       code: 'DAEMON_NOT_RUNNING',
       message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: 'Start the daemon with: paseo daemon start',
+      details: 'Start the daemon with: junction daemon start',
     }
     throw error
   }
@@ -62,7 +62,7 @@ export async function runArchiveCommand(
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo ls" to list available agents',
+        details: 'Use "junction ls" to list available agents',
       }
       throw error
     }
@@ -85,7 +85,7 @@ export async function runArchiveCommand(
         code: 'AGENT_RUNNING',
         message: `Agent ${agentId.slice(0, 7)} is currently running`,
         details:
-          'Use --force to archive a running agent (it will interrupt the active run), or stop it first with: paseo agent stop',
+          'Use --force to archive a running agent (it will interrupt the active run), or stop it first with: junction agent stop',
       }
       throw error
     }

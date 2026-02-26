@@ -128,13 +128,13 @@ describe("TerminalManager", () => {
 
         manager.registerCwdEnv({
           cwd,
-          env: { PASEO_WORKTREE_PORT: "45678" },
+          env: { JUNCTION_WORKTREE_PORT: "45678" },
         });
         const session = await manager.createTerminal({ cwd });
         for (let attempt = 0; attempt < 10 && !existsSync(markerPath); attempt++) {
           session.send({
             type: "input",
-            data: `printf '%s' \"$PASEO_WORKTREE_PORT\" > ${JSON.stringify(markerPath)}\r`,
+            data: `printf '%s' \"$JUNCTION_WORKTREE_PORT\" > ${JSON.stringify(markerPath)}\r`,
           });
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
@@ -155,13 +155,13 @@ describe("TerminalManager", () => {
 
         manager.registerCwdEnv({
           cwd: rootCwd,
-          env: { PASEO_WORKTREE_PORT: "45679" },
+          env: { JUNCTION_WORKTREE_PORT: "45679" },
         });
         const session = await manager.createTerminal({ cwd: subdirCwd });
         for (let attempt = 0; attempt < 10 && !existsSync(markerPath); attempt++) {
           session.send({
             type: "input",
-            data: `printf '%s' \"$PASEO_WORKTREE_PORT\" > ${JSON.stringify(markerPath)}\r`,
+            data: `printf '%s' \"$JUNCTION_WORKTREE_PORT\" > ${JSON.stringify(markerPath)}\r`,
           });
           await new Promise((resolve) => setTimeout(resolve, 100));
         }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestJunctionDaemon } from "../test-utils/junction-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
 import { isCommandAvailable } from "../agent/provider-launch-config.js";
@@ -19,7 +19,7 @@ describe("daemon E2E (real claude) - runtime model reconciliation", () => {
     async () => {
       const logger = pino({ level: "silent" });
       const cwd = tmpCwd();
-      const daemon = await createTestPaseoDaemon({
+      const daemon = await createTestJunctionDaemon({
         agentClients: { claude: new ClaudeAgentClient({ logger }) },
         logger,
       });

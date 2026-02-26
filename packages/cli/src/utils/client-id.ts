@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 const CLIENT_SESSION_KEY_FILE = join(
-  process.env.PASEO_HOME ?? join(homedir(), ".paseo"),
+  process.env.JUNCTION_HOME ?? join(homedir(), ".junction"),
   "cli-client-id"
 );
 

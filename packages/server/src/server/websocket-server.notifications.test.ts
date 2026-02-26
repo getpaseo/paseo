@@ -73,7 +73,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     agentManager as any,
     {} as any,
     {} as any,
-    "/tmp/paseo-test",
+    "/tmp/junction-test",
     async () => ({} as any),
     { allowedOrigins: new Set() },
     undefined,

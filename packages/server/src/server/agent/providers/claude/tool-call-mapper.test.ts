@@ -231,7 +231,7 @@ describe("claude tool-call mapper", () => {
       mapClaudeCompletedToolCall({
         callId: "claude-glob-1",
         name: "Glob",
-        input: { pattern: "**/.claude/commands/paseo*" },
+        input: { pattern: "**/.claude/commands/junction*" },
         output: { output: "No files found" },
       })
     );
@@ -241,7 +241,7 @@ describe("claude tool-call mapper", () => {
     expect(item.name).toBe("Glob");
     expect(item.detail).toEqual({
       type: "search",
-      query: "**/.claude/commands/paseo*",
+      query: "**/.claude/commands/junction*",
     });
   });
 
@@ -249,7 +249,7 @@ describe("claude tool-call mapper", () => {
     const item = expectMapped(
       mapClaudeCompletedToolCall({
         callId: "claude-speak-1",
-        name: "mcp__paseo__speak",
+        name: "mcp__junction__speak",
         input: { text: "Voice response from Claude." },
         output: { ok: true },
       })
@@ -267,7 +267,7 @@ describe("claude tool-call mapper", () => {
     const item = expectMapped(
       mapClaudeCompletedToolCall({
         callId: "claude-speak-2",
-        name: "mcp__paseo_voice__speak",
+        name: "mcp__junction_voice__speak",
         input: { text: "Hey! I can hear you." },
         output: { ok: true },
       })

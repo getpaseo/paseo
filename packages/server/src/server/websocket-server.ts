@@ -1,7 +1,6 @@
-import { WebSocketServer } from "ws";
+import { WebSocketServer as WebSocketServer_WS } from "ws";
 import type { Server as HTTPServer } from "http";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { join } from "path";
 import { hostname as getHostname } from "node:os";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -9,12 +8,9 @@ import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import {
-  type ServerInfoStatusPayload,
   type WSHelloMessage,
   type WSWelcomeMessage,
   WSInboundMessageSchema,
-  type ServerCapabilityState,
-  type ServerCapabilities,
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
@@ -28,20 +24,8 @@ import { isHostAllowed } from "./allowed-hosts.js";
 import { Session, type SessionLifecycleIntent } from "./session.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
-import { PushTokenStore } from "./push/token-store.js";
-import { PushService } from "./push/push-service.js";
-import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
-import type { Resolvable } from "./speech/provider-resolver.js";
-import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
-import type { LocalSpeechModelId } from "./speech/providers/local/models.js";
-import type {
-  VoiceCallerContext,
-  VoiceMcpStdioConfig,
-  VoiceSpeakHandler,
-} from "./voice-types.js";
 import {
   computeShouldNotifyClient,
-  computeShouldSendPush,
   type ClientAttentionState,
 } from "./agent-attention-policy.js";
 import {
@@ -65,73 +49,6 @@ type WebSocketServerConfig = {
   allowedOrigins: Set<string>;
   allowedHosts?: AllowedHostsConfig;
 };
-
-function toServerCapabilityState(
-  params: {
-    state: SpeechReadinessSnapshot["dictation"];
-    reason: string;
-  }
-): ServerCapabilityState {
-  const { state, reason } = params;
-  return {
-    enabled: state.enabled,
-    reason,
-  };
-}
-
-function resolveCapabilityReason(params: {
-  state: SpeechReadinessSnapshot["dictation"];
-  readiness: SpeechReadinessSnapshot;
-}): string {
-  const { state, readiness } = params;
-  if (state.available) {
-    return "";
-  }
-
-  if (readiness.voiceFeature.reasonCode === "model_download_in_progress") {
-    const baseMessage = readiness.voiceFeature.message.trim();
-    if (baseMessage.includes("Try again in a few minutes")) {
-      return baseMessage;
-    }
-    return `${baseMessage} Try again in a few minutes.`;
-  }
-
-  return state.message;
-}
-
-function buildServerCapabilities(params: {
-  readiness: SpeechReadinessSnapshot | null;
-}): ServerCapabilities | undefined {
-  const readiness = params.readiness;
-  if (!readiness) {
-    return undefined;
-  }
-  return {
-    voice: {
-      dictation: toServerCapabilityState({
-        state: readiness.dictation,
-        reason: resolveCapabilityReason({
-          state: readiness.dictation,
-          readiness,
-        }),
-      }),
-      voice: toServerCapabilityState({
-        state: readiness.realtimeVoice,
-        reason: resolveCapabilityReason({
-          state: readiness.realtimeVoice,
-          readiness,
-        }),
-      }),
-    },
-  };
-}
-
-function areServerCapabilitiesEqual(
-  current: ServerCapabilities | undefined,
-  next: ServerCapabilities | undefined
-): boolean {
-  return JSON.stringify(current ?? null) === JSON.stringify(next ?? null);
-}
 
 function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffer {
   if (typeof data === "string") return Buffer.from(data, "utf8");
@@ -167,11 +84,15 @@ const HELLO_TIMEOUT_MS = 15_000;
 const WS_CLOSE_HELLO_TIMEOUT = 4001;
 const WS_CLOSE_INVALID_HELLO = 4002;
 const WS_CLOSE_INCOMPATIBLE_PROTOCOL = 4003;
+const WS_CLOSE_AUTH_REQUIRED = 4004;
 const WS_PROTOCOL_VERSION = 1;
+
+export type JwtValidatorResult = { sub: string; username: string; role: string } | null;
+export type JwtValidator = (token: string) => JwtValidatorResult;
 
 export class MissingDaemonVersionError extends Error {
   constructor() {
-    super("VoiceAssistantWebSocketServer requires a non-empty daemonVersion.");
+    super("WebSocketServer requires a non-empty daemonVersion.");
     this.name = "MissingDaemonVersionError";
   }
 }
@@ -179,9 +100,9 @@ export class MissingDaemonVersionError extends Error {
 /**
  * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
  */
-export class VoiceAssistantWebSocketServer {
+export class WebSocketServer {
   private readonly logger: pino.Logger;
-  private readonly wss: WebSocketServer;
+  private readonly wss: WebSocketServer_WS;
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly externalSessionsByKey: Map<string, SessionConnection> = new Map();
@@ -190,35 +111,12 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly downloadTokenStore: DownloadTokenStore;
-  private readonly paseoHome: string;
-  private readonly pushTokenStore: PushTokenStore;
-  private readonly pushService: PushService;
+  private readonly junctionHome: string;
   private readonly createAgentMcpTransport: AgentMcpTransportFactory;
-  private readonly stt: Resolvable<SpeechToTextProvider | null>;
-  private readonly tts: Resolvable<TextToSpeechProvider | null>;
   private readonly terminalManager: TerminalManager | null;
-  private readonly dictation: {
-    finalTimeoutMs?: number;
-    stt?: Resolvable<SpeechToTextProvider | null>;
-    localModels?: {
-      modelsDir: string;
-      defaultModelIds: LocalSpeechModelId[];
-    };
-    getSpeechReadiness?: () => SpeechReadinessSnapshot;
-  } | null;
-  private readonly voice: {
-    voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
-    ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
-    removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
-  } | null;
-  private readonly voiceSpeakHandlers = new Map<
-    string,
-    VoiceSpeakHandler
-  >();
-  private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
-  private serverCapabilities: ServerCapabilities | undefined;
+  private readonly jwtValidator: JwtValidator | null;
 
   constructor(
     server: HTTPServer,
@@ -227,31 +125,14 @@ export class VoiceAssistantWebSocketServer {
     agentManager: AgentManager,
     agentStorage: AgentStorage,
     downloadTokenStore: DownloadTokenStore,
-    paseoHome: string,
+    junctionHome: string,
     createAgentMcpTransport: AgentMcpTransportFactory,
     wsConfig: WebSocketServerConfig,
-    speech?: {
-      stt: Resolvable<SpeechToTextProvider | null>;
-      tts: Resolvable<TextToSpeechProvider | null>;
-    },
     terminalManager?: TerminalManager | null,
-    voice?: {
-      voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
-      ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
-      removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
-    },
-    dictation?: {
-      finalTimeoutMs?: number;
-      stt?: Resolvable<SpeechToTextProvider | null>;
-      localModels?: {
-        modelsDir: string;
-        defaultModelIds: LocalSpeechModelId[];
-      };
-      getSpeechReadiness?: () => SpeechReadinessSnapshot;
-    },
     agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap,
     daemonVersion?: string,
-    onLifecycleIntent?: (intent: SessionLifecycleIntent) => void
+    onLifecycleIntent?: (intent: SessionLifecycleIntent) => void,
+    jwtValidator?: JwtValidator | null
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -262,32 +143,19 @@ export class VoiceAssistantWebSocketServer {
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.downloadTokenStore = downloadTokenStore;
-    this.paseoHome = paseoHome;
+    this.junctionHome = junctionHome;
     this.createAgentMcpTransport = createAgentMcpTransport;
-    this.stt = speech?.stt ?? null;
-    this.tts = speech?.tts ?? null;
     this.terminalManager = terminalManager ?? null;
-    this.voice = voice ?? null;
-    this.dictation = dictation ?? null;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.onLifecycleIntent = onLifecycleIntent ?? null;
-    this.serverCapabilities = buildServerCapabilities({
-      readiness: this.dictation?.getSpeechReadiness?.() ?? null,
-    });
-
-    const pushLogger = this.logger.child({ module: "push" });
-    this.pushTokenStore = new PushTokenStore(
-      pushLogger,
-      join(paseoHome, "push-tokens.json")
-    );
-    this.pushService = new PushService(pushLogger, this.pushTokenStore);
+    this.jwtValidator = jwtValidator ?? null;
 
     this.agentManager.setAgentAttentionCallback((params) => {
       this.broadcastAgentAttention(params);
     });
 
     const { allowedOrigins, allowedHosts } = wsConfig;
-    this.wss = new WebSocketServer({
+    this.wss = new WebSocketServer_WS({
       server,
       path: "/ws",
       verifyClient: ({ req }, callback) => {
@@ -334,21 +202,6 @@ export class VoiceAssistantWebSocketServer {
         ws.send(payload);
       }
     }
-  }
-
-  public publishSpeechReadiness(readiness: SpeechReadinessSnapshot | null): void {
-    this.updateServerCapabilities(buildServerCapabilities({ readiness }));
-  }
-
-  public updateServerCapabilities(
-    capabilities: ServerCapabilities | null | undefined
-  ): void {
-    const next = capabilities ?? undefined;
-    if (areServerCapabilitiesEqual(this.serverCapabilities, next)) {
-      return;
-    }
-    this.serverCapabilities = next;
-    this.broadcastCapabilitiesUpdate();
   }
 
   public async attachExternalSocket(
@@ -507,13 +360,15 @@ export class VoiceAssistantWebSocketServer {
   private createSessionConnection(params: {
     ws: WebSocketLike;
     clientId: string;
+    userId?: string;
     connectionLogger: pino.Logger;
   }): SessionConnection {
-    const { ws, clientId, connectionLogger } = params;
+    const { ws, clientId, userId, connectionLogger } = params;
     let connection: SessionConnection | null = null;
 
     const session = new Session({
       clientId,
+      userId,
       onMessage: (msg) => {
         if (!connection) {
           return;
@@ -531,32 +386,11 @@ export class VoiceAssistantWebSocketServer {
       },
       logger: connectionLogger.child({ module: "session" }),
       downloadTokenStore: this.downloadTokenStore,
-      pushTokenStore: this.pushTokenStore,
-      paseoHome: this.paseoHome,
+      junctionHome: this.junctionHome,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       createAgentMcpTransport: this.createAgentMcpTransport,
-      stt: this.stt,
-      tts: this.tts,
       terminalManager: this.terminalManager,
-      voice: this.voice ?? undefined,
-      voiceBridge: {
-        registerVoiceSpeakHandler: (agentId, handler) => {
-          this.voiceSpeakHandlers.set(agentId, handler);
-        },
-        unregisterVoiceSpeakHandler: (agentId) => {
-          this.voiceSpeakHandlers.delete(agentId);
-        },
-        registerVoiceCallerContext: (agentId, context) => {
-          this.voiceCallerContexts.set(agentId, context);
-        },
-        unregisterVoiceCallerContext: (agentId) => {
-          this.voiceCallerContexts.delete(agentId);
-        },
-        ensureVoiceMcpSocketForAgent: this.voice?.ensureVoiceMcpSocketForAgent,
-        removeVoiceMcpSocketForAgent: this.voice?.removeVoiceMcpSocketForAgent,
-      },
-      dictation: this.dictation ?? undefined,
       agentProviderRuntimeSettings: this.agentProviderRuntimeSettings,
     });
 
@@ -590,7 +424,6 @@ export class VoiceAssistantWebSocketServer {
       hostname: getHostname(),
       version: this.daemonVersion,
       resumed: params.resumed,
-      ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
     };
   }
 
@@ -630,6 +463,31 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
+    // Validate JWT if auth is enabled
+    let userId: string | undefined;
+    if (this.jwtValidator) {
+      if (!message.token) {
+        pending.connectionLogger.warn("Rejected hello: authentication required but no token provided");
+        try {
+          ws.close(WS_CLOSE_AUTH_REQUIRED, "Authentication required");
+        } catch {
+          // ignore close errors
+        }
+        return;
+      }
+      const payload = this.jwtValidator(message.token);
+      if (!payload) {
+        pending.connectionLogger.warn("Rejected hello: invalid or expired token");
+        try {
+          ws.close(WS_CLOSE_AUTH_REQUIRED, "Invalid token");
+        } catch {
+          // ignore close errors
+        }
+        return;
+      }
+      userId = payload.sub;
+    }
+
     this.clearPendingConnection(ws);
     const existing = this.externalSessionsByKey.get(clientId);
     if (existing) {
@@ -655,6 +513,7 @@ export class VoiceAssistantWebSocketServer {
     const connection = this.createSessionConnection({
       ws,
       clientId,
+      userId,
       connectionLogger,
     });
     this.sessions.set(ws, connection);
@@ -667,25 +526,6 @@ export class VoiceAssistantWebSocketServer {
         totalSessions: this.sessions.size,
       },
       "Client connected via hello"
-    );
-  }
-
-  private buildServerInfoStatusPayload(): ServerInfoStatusPayload {
-    return {
-      status: "server_info",
-      serverId: this.serverId,
-      hostname: getHostname(),
-      version: this.daemonVersion,
-      ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
-    };
-  }
-
-  private broadcastCapabilitiesUpdate(): void {
-    this.broadcast(
-      wrapSessionMessage({
-        type: "status",
-        payload: this.buildServerInfoStatusPayload(),
-      })
     );
   }
 
@@ -709,18 +549,6 @@ export class VoiceAssistantWebSocketServer {
       log.error({ err }, "Client error");
       await this.detachSocket(ws, { error: err });
     });
-  }
-
-  public resolveVoiceSpeakHandler(
-    callerAgentId: string
-  ): VoiceSpeakHandler | null {
-    return this.voiceSpeakHandlers.get(callerAgentId) ?? null;
-  }
-
-  public resolveVoiceCallerContext(
-    callerAgentId: string
-  ): VoiceCallerContext | null {
-    return this.voiceCallerContexts.get(callerAgentId) ?? null;
   }
 
   private async detachSocket(
@@ -919,10 +747,6 @@ export class VoiceAssistantWebSocketServer {
         return;
       }
 
-      if (message.type === "recording_state") {
-        return;
-      }
-
       if (pendingConnection) {
         if (message.type === "hello") {
           this.handleHello({
@@ -1095,21 +919,6 @@ export class VoiceAssistantWebSocketServer {
         ? findLatestPermissionRequest(agent.pendingPermissions)
         : null,
     });
-
-    // Push is only a fallback when the user is away from desktop/web.
-    // Also suppress push if they're actively using the mobile app.
-    const shouldSendPush = computeShouldSendPush({
-      reason: params.reason,
-      allClientStates: allStates,
-    });
-
-    if (shouldSendPush) {
-      const tokens = this.pushTokenStore.getAllTokens();
-      this.logger.info({ tokenCount: tokens.length }, "Sending push notification");
-      if (tokens.length > 0) {
-        void this.pushService.sendPush(tokens, notification);
-      }
-    }
 
     for (const { ws, state } of clientEntries) {
       const shouldNotify = computeShouldNotifyClient({

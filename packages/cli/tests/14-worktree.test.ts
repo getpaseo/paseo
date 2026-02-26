@@ -3,7 +3,7 @@
 /**
  * Phase 14: Worktree Command Tests
  *
- * Tests the worktree commands for managing Paseo-managed git worktrees.
+ * Tests the worktree commands for managing Junction-managed git worktrees.
  * Since daemon may not be running, we test both:
  * - Help and argument parsing
  * - Graceful error handling when daemon not running
@@ -30,13 +30,13 @@ console.log('=== Worktree Command Tests ===\n')
 
 // Get random port that's definitely not in use (never 6767)
 const port = 10000 + Math.floor(Math.random() * 50000)
-const paseoHome = await mkdtemp(join(tmpdir(), 'paseo-test-home-'))
+const junctionHome = await mkdtemp(join(tmpdir(), 'junction-test-home-'))
 
 try {
   // Test 1: worktree --help shows subcommands
   {
     console.log('Test 1: worktree --help shows subcommands')
-    const result = await $`npx paseo worktree --help`.nothrow()
+    const result = await $`npx junction worktree --help`.nothrow()
     assert.strictEqual(result.exitCode, 0, 'worktree --help should exit 0')
     assert(result.stdout.includes('ls'), 'help should mention ls subcommand')
     assert(result.stdout.includes('archive'), 'help should mention archive subcommand')
@@ -46,7 +46,7 @@ try {
   // Test 2: worktree ls --help shows options
   {
     console.log('Test 2: worktree ls --help shows options')
-    const result = await $`npx paseo worktree ls --help`.nothrow()
+    const result = await $`npx junction worktree ls --help`.nothrow()
     assert.strictEqual(result.exitCode, 0, 'worktree ls --help should exit 0')
     assert(result.stdout.includes('--host'), 'help should mention --host option')
     console.log('✓ worktree ls --help shows options\n')
@@ -56,7 +56,7 @@ try {
   {
     console.log('Test 3: worktree ls handles daemon not running')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo worktree ls`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction worktree ls`.nothrow()
     // Should fail because daemon not running
     assert.notStrictEqual(result.exitCode, 0, 'should fail when daemon not running')
     const output = result.stdout + result.stderr
@@ -72,7 +72,7 @@ try {
   {
     console.log('Test 4: worktree ls with --host flag is accepted')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo worktree ls --host localhost:${port}`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction worktree ls --host localhost:${port}`.nothrow()
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept --host flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
@@ -82,7 +82,7 @@ try {
   // Test 5: worktree archive --help shows options
   {
     console.log('Test 5: worktree archive --help shows options')
-    const result = await $`npx paseo worktree archive --help`.nothrow()
+    const result = await $`npx junction worktree archive --help`.nothrow()
     assert.strictEqual(result.exitCode, 0, 'worktree archive --help should exit 0')
     assert(result.stdout.includes('--host'), 'help should mention --host option')
     assert(result.stdout.includes('<name>'), 'help should mention required name argument')
@@ -93,7 +93,7 @@ try {
   {
     console.log('Test 6: worktree archive requires name argument')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo worktree archive`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction worktree archive`.nothrow()
     assert.notStrictEqual(result.exitCode, 0, 'should fail without name')
     const output = result.stdout + result.stderr
     const hasError =
@@ -108,7 +108,7 @@ try {
   {
     console.log('Test 7: worktree archive handles daemon not running')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo worktree archive test-worktree`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction worktree archive test-worktree`.nothrow()
     // Should fail because daemon not running
     assert.notStrictEqual(result.exitCode, 0, 'should fail when daemon not running')
     const output = result.stdout + result.stderr
@@ -124,7 +124,7 @@ try {
   {
     console.log('Test 8: worktree archive with name and --host flag is accepted')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo worktree archive test-worktree --host localhost:${port}`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction worktree archive test-worktree --host localhost:${port}`.nothrow()
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept --host flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
@@ -135,7 +135,7 @@ try {
   {
     console.log('Test 9: -q (quiet) flag is accepted with worktree ls')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo -q worktree ls`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction -q worktree ls`.nothrow()
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept -q flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
@@ -146,24 +146,24 @@ try {
   {
     console.log('Test 10: --json flag is accepted with worktree ls')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo worktree ls --json`.nothrow()
+      await $`JUNCTION_HOST=localhost:${port} JUNCTION_HOME=${junctionHome} npx junction worktree ls --json`.nothrow()
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept --json flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
     console.log('✓ --json flag is accepted with worktree ls\n')
   }
 
-  // Test 11: paseo --help shows worktree subcommand
+  // Test 11: junction --help shows worktree subcommand
   {
-    console.log('Test 11: paseo --help shows worktree subcommand')
-    const result = await $`npx paseo --help`.nothrow()
-    assert.strictEqual(result.exitCode, 0, 'paseo --help should exit 0')
+    console.log('Test 11: junction --help shows worktree subcommand')
+    const result = await $`npx junction --help`.nothrow()
+    assert.strictEqual(result.exitCode, 0, 'junction --help should exit 0')
     assert(result.stdout.includes('worktree'), 'help should mention worktree subcommand')
-    console.log('✓ paseo --help shows worktree subcommand\n')
+    console.log('✓ junction --help shows worktree subcommand\n')
   }
 } finally {
   // Clean up temp directory
-  await rm(paseoHome, { recursive: true, force: true })
+  await rm(junctionHome, { recursive: true, force: true })
 }
 
 console.log('=== All worktree tests passed ===')

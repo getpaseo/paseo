@@ -6,7 +6,7 @@ import type {
   AgentStreamMessage,
   AgentStreamEventPayload,
   AgentTimelineItem,
-} from '@getpaseo/server'
+} from '@junction/server'
 
 export interface AgentAttachOptions {
   host?: string
@@ -103,7 +103,7 @@ export async function runAttachCommand(
 
   if (!id) {
     console.error('Error: Agent ID required')
-    console.error('Usage: paseo attach <id>')
+    console.error('Usage: junction attach <id>')
     process.exit(1)
   }
 
@@ -113,7 +113,7 @@ export async function runAttachCommand(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`Error: Cannot connect to daemon at ${host}: ${message}`)
-    console.error('Start the daemon with: paseo daemon start')
+    console.error('Start the daemon with: junction daemon start')
     process.exit(1)
   }
 
@@ -121,7 +121,7 @@ export async function runAttachCommand(
     const fetchResult = await client.fetchAgent(id)
     if (!fetchResult) {
       console.error(`Error: No agent found matching: ${id}`)
-      console.error('Use `paseo ls` to list available agents')
+      console.error('Use `junction ls` to list available agents')
       await client.close()
       process.exit(1)
     }

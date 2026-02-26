@@ -10,7 +10,7 @@ import {
   importPublicKey,
   importSecretKey,
   type KeyPair,
-} from "@getpaseo/relay/e2ee";
+} from "@junction/relay/e2ee";
 
 const KeyPairSchema = z.object({
   v: z.literal(2),
@@ -28,11 +28,11 @@ export type DaemonKeyPairBundle = {
 };
 
 export async function loadOrCreateDaemonKeyPair(
-  paseoHome: string,
+  junctionHome: string,
   logger?: pino.Logger
 ): Promise<DaemonKeyPairBundle> {
   const log = logger?.child({ module: "daemon-keypair" });
-  const filePath = path.join(paseoHome, KEYPAIR_FILENAME);
+  const filePath = path.join(junctionHome, KEYPAIR_FILENAME);
 
   if (existsSync(filePath)) {
     try {

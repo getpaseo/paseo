@@ -5,7 +5,7 @@ import { buildDaemonWebSocketUrl } from "../packages/server/src/shared/daemon-en
 const OFFER = {
   serverId: "srv_ETXtcjYRGrCI",
   daemonPublicKeyB64: "12yCG8sqNumkwHMOQyRM/vMXfPc6nb430pj27sfARBc=",
-  relay: { endpoint: "relay.paseo.sh:443" },
+  relay: { endpoint: "relay.junction.sh:443" },
 };
 
 const DIRECT_ENDPOINT = "localhost:6767";
@@ -109,7 +109,7 @@ async function main() {
     },
   });
 
-  await measurePings("Relay (relay.paseo.sh:443)", relayClient, PING_COUNT, WARMUP_COUNT);
+  await measurePings("Relay (relay.junction.sh:443)", relayClient, PING_COUNT, WARMUP_COUNT);
 
   // Measure raw WebSocket to relay (no E2EE, no daemon, just WS open+close timing)
   console.log("\nMeasuring raw WebSocket connect time to relay...");
@@ -117,7 +117,7 @@ async function main() {
   for (let i = 0; i < 5; i++) {
     const start = Date.now();
     const { WebSocket } = await import("ws");
-    const ws = new WebSocket(`wss://relay.paseo.sh/ws?serverId=latency_probe_${Date.now()}&role=client&clientId=probe_${i}`);
+    const ws = new WebSocket(`wss://relay.junction.sh/ws?serverId=latency_probe_${Date.now()}&role=client&clientId=probe_${i}`);
     await new Promise<void>((resolve, reject) => {
       ws.on("open", () => {
         wsConnectTimes.push(Date.now() - start);

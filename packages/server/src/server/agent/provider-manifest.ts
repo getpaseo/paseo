@@ -7,11 +7,6 @@ export interface AgentProviderDefinition {
   description: string;
   defaultModeId: string | null;
   modes: AgentMode[];
-  voice?: {
-    enabled: boolean;
-    defaultModeId: string;
-    defaultModel?: string;
-  };
 }
 
 const CLAUDE_MODES: AgentMode[] = [
@@ -73,11 +68,6 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
       "Anthropic's multi-tool assistant with MCP support, streaming, and deep reasoning",
     defaultModeId: "default",
     modes: CLAUDE_MODES,
-    voice: {
-      enabled: true,
-      defaultModeId: "default",
-      defaultModel: "haiku",
-    },
   },
   {
     id: "codex",
@@ -86,11 +76,6 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
       "OpenAI's Codex workspace agent with sandbox controls and optional network access",
     defaultModeId: "auto",
     modes: CODEX_MODES,
-    voice: {
-      enabled: true,
-      defaultModeId: "read-only",
-      defaultModel: "gpt-5.1-codex-mini",
-    },
   },
   {
     id: "opencode",
@@ -99,10 +84,6 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
       "Open-source coding assistant with multi-provider model support",
     defaultModeId: "default",
     modes: OPENCODE_MODES,
-    voice: {
-      enabled: true,
-      defaultModeId: "default",
-    },
   },
 ];
 

@@ -4,7 +4,7 @@ import assert from 'node:assert'
 import { createE2ETestContext, type TestDaemonContext } from '../helpers/test-daemon.ts'
 
 interface E2EContext extends TestDaemonContext {
-  paseo: (args: string[], opts?: { timeout?: number; cwd?: string }) => Promise<{
+  junction: (args: string[], opts?: { timeout?: number; cwd?: string }) => Promise<{
     exitCode: number
     stdout: string
     stderr: string
@@ -49,7 +49,7 @@ async function runProviderCase(input: {
   mode: string
   model: string
 }): Promise<void> {
-  const result = await ctx.paseo(
+  const result = await ctx.junction(
     [
       'run',
       '--provider',
@@ -99,7 +99,7 @@ async function test_all_providers_return_structured_output(): Promise<void> {
 }
 
 async function test_schema_validation_is_enforced(): Promise<void> {
-  const result = await ctx.paseo(
+  const result = await ctx.junction(
     [
       'run',
       '--provider',

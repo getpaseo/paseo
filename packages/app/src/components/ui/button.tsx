@@ -1,129 +1,63 @@
-import type { PropsWithChildren, ReactElement } from "react";
-import { Pressable, Text, View } from "react-native";
-import type { PressableProps, StyleProp, TextStyle, ViewStyle } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { Slot } from "@radix-ui/react-slot"
+import { cva, type VariantProps } from "class-variance-authority"
+import * as React from "react"
 
-type ButtonVariant = "default" | "secondary" | "outline" | "ghost" | "destructive";
-type ButtonSize = "sm" | "md" | "lg";
+import { cn } from "@/lib/cn"
 
-const styles = StyleSheet.create((theme) => ({
-  base: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: "transparent",
+// The outer border for the default button variant is always pure black (rgb(23,23,23)),
+// and does not change in dark mode. The inner shadow remains theme-dependent.
+const buttonVariants = cva(
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary/70 disabled:opacity-50 disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  {
+    variants: {
+      variant: {
+        default:
+          // Outer border always black, inner shadow is theme-dependent
+          "bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(255,255,255,0.14)] dark:shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(0,0,0,0.14)]",
+        brand:
+          "relative cursor-pointer space-x-2 font-regular dark:text-foreground ease-out duration-200 outline-0 focus-visible:outline-4 focus-visible:outline-offset-1 border bg-gradient-to-b from-[hsl(var(--primary-gradient-start))] to-[hsl(var(--primary-gradient-end))] hover:opacity-90 text-primary-foreground border-[hsl(var(--primary-gradient-start))] focus-visible:outline-[hsl(var(--primary-gradient-start))] data-[state=open]:opacity-90 data-[state=open]:outline-[hsl(var(--primary-gradient-start))] disabled:border-transparent",
+        destructive:
+          "bg-destructive text-destructive-foreground shadow-sm shadow-black/5 hover:bg-destructive/90",
+        outline:
+          "border border-input bg-background shadow-sm shadow-black/5 hover:bg-accent hover:text-accent-foreground",
+        secondary:
+          "bg-secondary text-secondary-foreground border border-input shadow-sm shadow-black/5 hover:bg-secondary/80",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        sm: "h-7 rounded-md px-3",
+        // default: "h-9 px-4 py-2",
+        default: "h-7 rounded-md px-3",
+        lg: "h-10 rounded-md px-8",
+        icon: "h-7 w-7",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
   },
-  md: {
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-  },
-  sm: {
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-  },
-  lg: {
-    paddingVertical: theme.spacing[4],
-    paddingHorizontal: theme.spacing[6],
-    borderRadius: theme.borderRadius.xl,
-  },
-  default: {
-    backgroundColor: theme.colors.accent,
-    borderColor: theme.colors.accent,
-  },
-  secondary: {
-    backgroundColor: theme.colors.surface2,
-    borderColor: theme.colors.border,
-  },
-  outline: {
-    backgroundColor: "transparent",
-    borderColor: theme.colors.border,
-  },
-  ghost: {
-    backgroundColor: "transparent",
-    borderColor: "transparent",
-  },
-  destructive: {
-    backgroundColor: theme.colors.destructive,
-    borderColor: theme.colors.destructive,
-  },
-  pressed: {
-    opacity: 0.85,
-  },
-  disabled: {
-    opacity: theme.opacity[50],
-  },
-  text: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
-  },
-  textDefault: {
-    color: theme.colors.palette.white,
-  },
-  textDestructive: {
-    color: theme.colors.palette.white,
-  },
-}));
+)
 
-export function Button({
-  children,
-  variant = "secondary",
-  size = "md",
-  leftIcon,
-  style,
-  textStyle,
-  disabled,
-  accessibilityRole,
-  ...props
-}: PropsWithChildren<
-  Omit<PressableProps, "style"> & {
-    variant?: ButtonVariant;
-    size?: ButtonSize;
-    leftIcon?: ReactElement | null;
-    style?: StyleProp<ViewStyle>;
-    textStyle?: StyleProp<TextStyle>;
-  }
->) {
-  const variantStyle =
-    variant === "default"
-      ? styles.default
-      : variant === "secondary"
-        ? styles.secondary
-        : variant === "outline"
-          ? styles.outline
-          : variant === "ghost"
-            ? styles.ghost
-            : styles.destructive;
-
-  const sizeStyle = size === "sm" ? styles.sm : size === "lg" ? styles.lg : styles.md;
-
-  const resolvedTextStyle = [
-    styles.text,
-    variant === "default" ? styles.textDefault : null,
-    variant === "destructive" ? styles.textDestructive : null,
-    textStyle,
-  ];
-
-  return (
-    <Pressable
-      {...props}
-      accessibilityRole={accessibilityRole ?? "button"}
-      disabled={disabled}
-      style={({ pressed }) => [
-        styles.base,
-        sizeStyle,
-        variantStyle,
-        pressed ? styles.pressed : null,
-        disabled ? styles.disabled : null,
-        style,
-      ]}
-    >
-      {leftIcon ? <View>{leftIcon}</View> : null}
-      <Text style={resolvedTextStyle}>{children}</Text>
-    </Pressable>
-  );
+export interface ButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {
+  asChild?: boolean
 }
+
+const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, asChild = false, ...props }, ref) => {
+    const Comp = asChild ? Slot : "button"
+    return (
+      <Comp
+        className={cn(buttonVariants({ variant, size, className }))}
+        ref={ref}
+        {...props}
+      />
+    )
+  },
+)
+Button.displayName = "Button"
+
+export { Button, buttonVariants }

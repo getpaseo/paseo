@@ -1,5 +1,5 @@
 import type { Command } from 'commander'
-import type { AgentPermissionRequest } from '@getpaseo/server'
+import type { AgentPermissionRequest } from '@junction/server'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from '../../output/index.js'
 
@@ -73,7 +73,7 @@ export async function runAllowCommand(
     const error: CommandError = {
       code: 'DAEMON_NOT_RUNNING',
       message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: 'Start the daemon with: paseo daemon start',
+      details: 'Start the daemon with: junction daemon start',
     }
     throw error
   }
@@ -85,7 +85,7 @@ export async function runAllowCommand(
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `Agent not found: ${agentIdOrPrefix}`,
-        details: 'Use "paseo ls" to list available agents',
+        details: 'Use "junction ls" to list available agents',
       }
       throw error
     }

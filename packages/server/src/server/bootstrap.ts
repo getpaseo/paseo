@@ -3,7 +3,6 @@ import { createServer as createHTTPServer } from "http";
 import { createReadStream, unlinkSync, existsSync } from "fs";
 import { stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -39,12 +38,8 @@ function parseListenString(listen: string): ListenTarget {
   throw new Error(`Invalid listen string: ${listen}`);
 }
 
-import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
+import { WebSocketServer } from "./websocket-server.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
-import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
-import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
-import type { RequestedSpeechProviders } from "./speech/speech-types.js";
-import { initializeSpeechRuntime } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -66,38 +61,7 @@ import type {
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { acquirePidLock, releasePidLock } from "./pid-lock.js";
 import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
-import {
-  createVoiceMcpSocketBridgeManager,
-  type VoiceMcpSocketBridgeManager,
-} from "./voice-mcp-bridge.js";
-import { resolveVoiceMcpBridgeFromRuntime } from "./voice-mcp-bridge-command.js";
-
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
-
-function resolveVoiceMcpBridgeCommand(logger: Logger): { command: string; baseArgs: string[] } {
-  const decision = resolveVoiceMcpBridgeFromRuntime({
-    bootstrapModuleUrl: import.meta.url,
-    execPath: process.execPath,
-    explicitScriptPath: process.env.PASEO_MCP_STDIO_SOCKET_BRIDGE_SCRIPT,
-  });
-  logger.info(
-    {
-      source: decision.source,
-      command: decision.resolved.command,
-      baseArgs: decision.resolved.baseArgs,
-    },
-    "Resolved voice MCP bridge command"
-  );
-  return decision.resolved;
-}
-
-export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
-export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
-
-export type PaseoSpeechConfig = {
-  providers: RequestedSpeechProviders;
-  local?: PaseoLocalSpeechConfig;
-};
 
 export type DaemonLifecycleIntent =
   | {
@@ -112,9 +76,9 @@ export type DaemonLifecycleIntent =
       reason?: string;
     };
 
-export type PaseoDaemonConfig = {
+export type JunctionDaemonConfig = {
   listen: string;
-  paseoHome: string;
+  junctionHome: string;
   corsAllowedOrigins: string[];
   allowedHosts?: AllowedHostsConfig;
   mcpEnabled?: boolean;
@@ -126,12 +90,6 @@ export type PaseoDaemonConfig = {
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
   appBaseUrl?: string;
-  openai?: PaseoOpenAIConfig;
-  speech?: PaseoSpeechConfig;
-  voiceLlmProvider?: AgentProvider | null;
-  voiceLlmProviderExplicit?: boolean;
-  voiceLlmModel?: string | null;
-  dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
@@ -141,8 +99,8 @@ export type PaseoDaemonConfig = {
   };
 };
 
-export interface PaseoDaemon {
-  config: PaseoDaemonConfig;
+export interface JunctionDaemon {
+  config: JunctionDaemonConfig;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager: TerminalManager;
@@ -150,10 +108,10 @@ export interface PaseoDaemon {
   stop(): Promise<void>;
 }
 
-export async function createPaseoDaemon(
-  config: PaseoDaemonConfig,
+export async function createJunctionDaemon(
+  config: JunctionDaemonConfig,
   rootLogger: Logger
-): Promise<PaseoDaemon> {
+): Promise<JunctionDaemon> {
   const logger = rootLogger.child({ module: "bootstrap" });
   const daemonVersion = resolveDaemonVersion(import.meta.url);
   const pidLockMode = config.pidLock?.mode ?? "self";
@@ -162,14 +120,14 @@ export async function createPaseoDaemon(
 
   // Acquire PID lock before expensive bootstrap work so duplicate starts fail immediately.
   if (ownsPidLock) {
-    await acquirePidLock(config.paseoHome, config.listen, {
+    await acquirePidLock(config.junctionHome, config.listen, {
       ownerPid: pidLockOwnerPid,
     });
   }
 
   try {
-    const serverId = getOrCreateServerId(config.paseoHome, { logger });
-    const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
+    const serverId = getOrCreateServerId(config.junctionHome, { logger });
+    const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.junctionHome, logger);
     let relayTransport: RelayTransportController | null = null;
 
     const staticDir = config.staticDir;
@@ -197,15 +155,15 @@ export async function createPaseoDaemon(
   // CORS - allow same-origin + configured origins
   const allowedOrigins = new Set([
     ...config.corsAllowedOrigins,
-    // Tauri desktop app WebView origin (used for fetch/WebSocket in production builds).
-    // This origin can't be produced by normal websites, so it's safe to allow by default.
-    "tauri://localhost",
-    // For TCP, add localhost variants
+    // For TCP, add localhost variants (daemon port + common dev server ports)
     ...(listenTarget.type === "tcp"
       ? [
           `http://${listenTarget.host}:${listenTarget.port}`,
           `http://localhost:${listenTarget.port}`,
           `http://127.0.0.1:${listenTarget.port}`,
+          // Vite dev server
+          "http://localhost:5173",
+          "http://127.0.0.1:5173",
         ]
       : []),
   ]);
@@ -311,23 +269,15 @@ export async function createPaseoDaemon(
   logger.info(
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`
   );
-  logger.info(
-    "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)"
-  );
-  let wsServer: VoiceAssistantWebSocketServer | null = null;
-  let voiceMcpBridgeManager: VoiceMcpSocketBridgeManager | null = null;
-  let unsubscribeSpeechReadiness: (() => void) | null = null;
+  let wsServer: WebSocketServer | null = null;
 
-  // Create in-memory transport for Session's Agent MCP client (voice assistant tools)
+  // Create in-memory transport for Session's Agent MCP client
   const createInMemoryAgentMcpTransport = async (): Promise<InMemoryTransport> => {
     const agentMcpServer = await createAgentMcpServer({
       agentManager,
       agentStorage,
       terminalManager,
-      paseoHome: config.paseoHome,
-      enableVoiceTools: false,
-      resolveSpeakHandler: (callerAgentId) => wsServer?.resolveVoiceSpeakHandler(callerAgentId) ?? null,
-      resolveCallerContext: (callerAgentId) => wsServer?.resolveVoiceCallerContext(callerAgentId) ?? null,
+      junctionHome: config.junctionHome,
       logger,
     });
 
@@ -348,11 +298,8 @@ export async function createPaseoDaemon(
         agentManager,
         agentStorage,
         terminalManager,
-        paseoHome: config.paseoHome,
+        junctionHome: config.junctionHome,
         callerAgentId,
-        enableVoiceTools: false,
-        resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
-        resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
         logger,
       });
 
@@ -458,71 +405,17 @@ export async function createPaseoDaemon(
     logger.info("Agent MCP HTTP endpoint disabled");
   }
 
-  const voiceMcpSocketDir = path.join(config.paseoHome, "runtime", "voice-mcp");
-  const voiceMcpBridgeCommand = resolveVoiceMcpBridgeCommand(logger);
-  voiceMcpBridgeManager = createVoiceMcpSocketBridgeManager({
-    runtimeDir: voiceMcpSocketDir,
-    logger,
-    createAgentMcpServerForCaller: async (callerAgentId) => {
-      return createAgentMcpServer({
-        agentManager,
-        agentStorage,
-        terminalManager,
-        paseoHome: config.paseoHome,
-        callerAgentId,
-        voiceOnly: true,
-        resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
-        resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
-        logger,
-      });
-    },
-  });
-  const {
-    resolveVoiceStt,
-    resolveVoiceTts,
-    resolveDictationStt,
-    getSpeechReadiness,
-    subscribeSpeechReadiness,
-    cleanup: cleanupSpeechRuntime,
-    localModelConfig,
-  } = await initializeSpeechRuntime({
-    logger,
-    openaiConfig: config.openai,
-    speechConfig: config.speech,
-  });
-
-  wsServer = new VoiceAssistantWebSocketServer(
+  wsServer = new WebSocketServer(
     httpServer,
     logger,
     serverId,
     agentManager,
     agentStorage,
     downloadTokenStore,
-    config.paseoHome,
+    config.junctionHome,
     createInMemoryAgentMcpTransport,
     { allowedOrigins, allowedHosts: config.allowedHosts },
-    { stt: resolveVoiceStt, tts: resolveVoiceTts },
     terminalManager,
-    {
-      voiceAgentMcpStdio: {
-        command: voiceMcpBridgeCommand.command,
-        baseArgs: [...voiceMcpBridgeCommand.baseArgs],
-        env: {
-          PASEO_HOME: config.paseoHome,
-        },
-      },
-      ensureVoiceMcpSocketForAgent: (agentId) =>
-        voiceMcpBridgeManager?.ensureBridgeForCaller(agentId) ??
-        Promise.reject(new Error("Voice MCP bridge manager is not initialized")),
-      removeVoiceMcpSocketForAgent: (agentId) =>
-        voiceMcpBridgeManager?.removeBridgeForCaller(agentId) ?? Promise.resolve(),
-    },
-    {
-      finalTimeoutMs: config.dictationFinalTimeoutMs,
-      stt: resolveDictationStt,
-      localModels: localModelConfig ?? undefined,
-      getSpeechReadiness,
-    },
     config.agentProviderSettings,
     daemonVersion,
     (intent) => {
@@ -533,9 +426,6 @@ export async function createPaseoDaemon(
       }
     }
   );
-  unsubscribeSpeechReadiness = subscribeSpeechReadiness((snapshot) => {
-    wsServer?.publishSpeechReadiness(snapshot);
-  });
 
     const start = async () => {
       // Start main HTTP server
@@ -554,9 +444,9 @@ export async function createPaseoDaemon(
             );
 
             const relayEnabled = config.relayEnabled ?? true;
-            const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
+            const relayEndpoint = config.relayEndpoint ?? "relay.junction.sh:443";
             const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
-            const appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
+            const appBaseUrl = config.appBaseUrl ?? "https://app.junction.sh";
 
             if (relayEnabled) {
               const offer = await createConnectionOfferV2({
@@ -615,15 +505,9 @@ export async function createPaseoDaemon(
         runtimeSettings: config.agentProviderSettings,
       });
       terminalManager.killAll();
-      unsubscribeSpeechReadiness?.();
-      unsubscribeSpeechReadiness = null;
-      cleanupSpeechRuntime();
       await relayTransport?.stop().catch(() => undefined);
       if (wsServer) {
         await wsServer.close();
-      }
-      if (voiceMcpBridgeManager) {
-        await voiceMcpBridgeManager.stop().catch(() => undefined);
       }
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
@@ -634,7 +518,7 @@ export async function createPaseoDaemon(
       }
       // Release PID lock
       if (ownsPidLock) {
-        await releasePidLock(config.paseoHome, {
+        await releasePidLock(config.junctionHome, {
           ownerPid: pidLockOwnerPid,
         });
       }
@@ -650,7 +534,7 @@ export async function createPaseoDaemon(
     };
   } catch (err) {
     if (ownsPidLock) {
-      await releasePidLock(config.paseoHome, {
+      await releasePidLock(config.junctionHome, {
         ownerPid: pidLockOwnerPid,
       }).catch(() => undefined);
     }

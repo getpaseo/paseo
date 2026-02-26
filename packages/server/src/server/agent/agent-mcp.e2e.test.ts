@@ -8,7 +8,7 @@ import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import pino from "pino";
 
-import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
+import { createJunctionDaemon, type JunctionDaemonConfig } from "../bootstrap.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
 type StructuredContent = { [key: string]: unknown };
@@ -111,24 +111,24 @@ describe("agent MCP end-to-end (offline)", () => {
   test(
     "create_agent runs initial prompt and affects filesystem",
     async () => {
-      const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
-      const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
-      const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+      const junctionHome = await mkdtemp(path.join(os.tmpdir(), "junction-home-"));
+      const staticDir = await mkdtemp(path.join(os.tmpdir(), "junction-static-"));
+      const agentCwd = await mkdtemp(path.join(os.tmpdir(), "junction-agent-cwd-"));
       const port = await getAvailablePort();
 
-      const daemonConfig: PaseoDaemonConfig = {
+      const daemonConfig: JunctionDaemonConfig = {
         listen: `127.0.0.1:${port}`,
-        paseoHome,
+        junctionHome,
         corsAllowedOrigins: [],
         allowedHosts: true,
         mcpEnabled: true,
         staticDir,
         mcpDebug: false,
         agentClients: createTestAgentClients(),
-        agentStoragePath: path.join(paseoHome, "agents"),
+        agentStoragePath: path.join(junctionHome, "agents"),
       };
 
-      const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+      const daemon = await createJunctionDaemon(daemonConfig, pino({ level: "silent" }));
       await daemon.start();
 
       const transport = new StreamableHTTPClientTransport(
@@ -177,7 +177,7 @@ describe("agent MCP end-to-end (offline)", () => {
         }
         await client.close();
         await daemon.stop();
-        await rm(paseoHome, { recursive: true, force: true });
+        await rm(junctionHome, { recursive: true, force: true });
         await rm(staticDir, { recursive: true, force: true });
         await rm(agentCwd, { recursive: true, force: true });
       }
@@ -188,24 +188,24 @@ describe("agent MCP end-to-end (offline)", () => {
   test(
     "create_agent with worktree is async and boots terminals only after setup success",
     async () => {
-      const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
-      const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
-      const repoRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-worktree-repo-"));
+      const junctionHome = await mkdtemp(path.join(os.tmpdir(), "junction-home-"));
+      const staticDir = await mkdtemp(path.join(os.tmpdir(), "junction-static-"));
+      const repoRoot = await mkdtemp(path.join(os.tmpdir(), "junction-worktree-repo-"));
       const port = await getAvailablePort();
 
-      const daemonConfig: PaseoDaemonConfig = {
+      const daemonConfig: JunctionDaemonConfig = {
         listen: `127.0.0.1:${port}`,
-        paseoHome,
+        junctionHome,
         corsAllowedOrigins: [],
         allowedHosts: true,
         mcpEnabled: true,
         staticDir,
         mcpDebug: false,
         agentClients: createTestAgentClients(),
-        agentStoragePath: path.join(paseoHome, "agents"),
+        agentStoragePath: path.join(junctionHome, "agents"),
       };
 
-      const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+      const daemon = await createJunctionDaemon(daemonConfig, pino({ level: "silent" }));
       await daemon.start();
 
       const transport = new StreamableHTTPClientTransport(
@@ -224,9 +224,9 @@ describe("agent MCP end-to-end (offline)", () => {
         execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoRoot, stdio: "pipe" });
 
         const setupCommand =
-          'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"';
+          'while [ ! -f "$JUNCTION_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$JUNCTION_WORKTREE_PATH/setup-done.txt"';
         await writeFile(
-          path.join(repoRoot, "paseo.json"),
+          path.join(repoRoot, "junction.json"),
           JSON.stringify({
             worktree: {
               setup: [setupCommand],
@@ -240,7 +240,7 @@ describe("agent MCP end-to-end (offline)", () => {
           }),
           "utf8"
         );
-        execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+        execSync("git add junction.json", { cwd: repoRoot, stdio: "pipe" });
         execSync("git -c commit.gpgsign=false commit -m 'add worktree config'", {
           cwd: repoRoot,
           stdio: "pipe",
@@ -288,7 +288,7 @@ describe("agent MCP end-to-end (offline)", () => {
         }
         await client.close();
         await daemon.stop();
-        await rm(paseoHome, { recursive: true, force: true });
+        await rm(junctionHome, { recursive: true, force: true });
         await rm(staticDir, { recursive: true, force: true });
         await rm(repoRoot, { recursive: true, force: true });
       }

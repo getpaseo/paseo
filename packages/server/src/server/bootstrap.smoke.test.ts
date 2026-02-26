@@ -4,13 +4,13 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
-import { createPaseoDaemon, type PaseoDaemonConfig } from "./bootstrap.js";
-import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { createJunctionDaemon, type JunctionDaemonConfig } from "./bootstrap.js";
+import { createTestJunctionDaemon } from "./test-utils/junction-daemon.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 
-describe("paseo daemon bootstrap", () => {
+describe("junction daemon bootstrap", () => {
   test("starts and serves health endpoint", async () => {
-    const daemonHandle = await createTestPaseoDaemon({
+    const daemonHandle = await createTestJunctionDaemon({
       openai: { apiKey: "test-openai-api-key" },
       speech: {
         providers: {
@@ -39,23 +39,23 @@ describe("paseo daemon bootstrap", () => {
   });
 
   test("fails fast when OpenAI speech provider is configured without credentials", async () => {
-    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-openai-config-"));
-    const paseoHome = path.join(paseoHomeRoot, ".paseo");
-    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
-    await mkdir(paseoHome, { recursive: true });
+    const junctionHomeRoot = await mkdtemp(path.join(os.tmpdir(), "junction-openai-config-"));
+    const junctionHome = path.join(junctionHomeRoot, ".junction");
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "junction-static-"));
+    await mkdir(junctionHome, { recursive: true });
 
-    const config: PaseoDaemonConfig = {
+    const config: JunctionDaemonConfig = {
       listen: "127.0.0.1:0",
-      paseoHome,
+      junctionHome,
       corsAllowedOrigins: [],
       allowedHosts: true,
       mcpEnabled: false,
       staticDir,
       mcpDebug: false,
       agentClients: createTestAgentClients(),
-      agentStoragePath: path.join(paseoHome, "agents"),
+      agentStoragePath: path.join(junctionHome, "agents"),
       relayEnabled: false,
-      appBaseUrl: "https://app.paseo.sh",
+      appBaseUrl: "https://app.junction.sh",
       openai: undefined,
       speech: {
         providers: {
@@ -67,11 +67,11 @@ describe("paseo daemon bootstrap", () => {
     };
 
     try {
-      await expect(createPaseoDaemon(config, pino({ level: "silent" }))).rejects.toThrow(
+      await expect(createJunctionDaemon(config, pino({ level: "silent" }))).rejects.toThrow(
         "Missing OpenAI credentials"
       );
     } finally {
-      await rm(paseoHomeRoot, { recursive: true, force: true });
+      await rm(junctionHomeRoot, { recursive: true, force: true });
       await rm(staticDir, { recursive: true, force: true });
     }
   });

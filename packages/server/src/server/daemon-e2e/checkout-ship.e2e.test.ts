@@ -30,11 +30,11 @@ const testWithGitHubCliAuth = hasGitHubCliAuth() ? test : test.skip;
 
 function initGitRepo(repoDir: string): void {
   execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.email 'paseo-test@example.com'", {
+  execSync("git config user.email 'junction-test@example.com'", {
     cwd: repoDir,
     stdio: "pipe",
   });
-  execSync("git config user.name 'Paseo Test'", {
+  execSync("git config user.name 'Junction Test'", {
     cwd: repoDir,
     stdio: "pipe",
   });
@@ -48,7 +48,7 @@ function initGitRepo(repoDir: string): void {
 
 function createTempRepoName(): string {
   const rand = Math.random().toString(16).slice(2, 8);
-  return `paseo-checkout-ship-${Date.now()}-${rand}`;
+  return `junction-checkout-ship-${Date.now()}-${rand}`;
 }
 
 function getGhLogin(): string {
@@ -119,7 +119,7 @@ describe("daemon checkout ship loop", () => {
           cwd: repoDir,
           baseBranch: "main",
           worktreeSlug: "ship-loop",
-          paseoHome: ctx.daemon.paseoHome,
+          junctionHome: ctx.daemon.junctionHome,
         });
 
         const agent = await ctx.client.createAgent({
@@ -133,7 +133,7 @@ describe("daemon checkout ship loop", () => {
 
         const status = await ctx.client.getCheckoutStatus(worktree.worktreePath);
         expect(status.isGit).toBe(true);
-        expect(status.isPaseoOwnedWorktree).toBe(true);
+        expect(status.isJunctionOwnedWorktree).toBe(true);
         expect(realpathSync(status.repoRoot)).toBe(realpathSync(worktree.worktreePath));
         if (status.isGit) {
           expect(status.baseRef).toBe("main");
@@ -215,7 +215,7 @@ describe("daemon checkout ship loop", () => {
         });
         expect(baseDiffAfterMerge.files.length).toBe(0);
 
-        const worktreeList = await ctx.client.getPaseoWorktreeList({
+        const worktreeList = await ctx.client.getJunctionWorktreeList({
           cwd: repoDir,
         });
         expect(worktreeList.error).toBeNull();
@@ -227,13 +227,13 @@ describe("daemon checkout ship loop", () => {
           )
         ).toBe(true);
 
-        const archiveResult = await ctx.client.archivePaseoWorktree({
+        const archiveResult = await ctx.client.archiveJunctionWorktree({
           worktreePath: worktree.worktreePath,
         });
         expect(archiveResult.error).toBeNull();
         expect(archiveResult.success).toBe(true);
 
-        const worktreeListAfter = await ctx.client.getPaseoWorktreeList({
+        const worktreeListAfter = await ctx.client.getJunctionWorktreeList({
           cwd: repoDir,
         });
         expect(
@@ -277,7 +277,7 @@ describe("daemon checkout ship loop", () => {
 					cwd: repoDir,
 					baseBranch: "main",
 					worktreeSlug: "merge-from-base",
-					paseoHome: ctx.daemon.paseoHome,
+					junctionHome: ctx.daemon.junctionHome,
 				});
 
 				const agent = await ctx.client.createAgent({

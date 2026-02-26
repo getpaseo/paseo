@@ -41,7 +41,7 @@ async function runProviderModelsJson(
   const transientNeedles = ['transport closed', 'timed out', 'timeout', 'socket', 'econn']
 
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const result = await ctx.paseo(['provider', 'models', provider, '--json'])
+    const result = await ctx.junction(['provider', 'models', provider, '--json'])
     if (result.exitCode === 0) {
       return JSON.parse(result.stdout.trim()) as ProviderModel[]
     }
@@ -64,7 +64,7 @@ try {
   // Test 1: provider --help shows subcommands
   {
     console.log('Test 1: provider --help shows subcommands')
-    const result = await ctx.paseo(['provider', '--help'])
+    const result = await ctx.junction(['provider', '--help'])
     assert.strictEqual(result.exitCode, 0, 'provider --help should exit 0')
     assert(result.stdout.includes('ls'), 'help should mention ls')
     assert(result.stdout.includes('models'), 'help should mention models')
@@ -74,7 +74,7 @@ try {
   // Test 2: provider ls lists all providers
   {
     console.log('Test 2: provider ls lists all providers')
-    const result = await ctx.paseo(['provider', 'ls'])
+    const result = await ctx.junction(['provider', 'ls'])
     assert.strictEqual(result.exitCode, 0, 'provider ls should exit 0')
     assert(result.stdout.includes('claude'), 'output should include claude')
     assert(result.stdout.includes('codex'), 'output should include codex')
@@ -86,7 +86,7 @@ try {
   // Test 3: provider ls --json outputs valid JSON
   {
     console.log('Test 3: provider ls --json outputs valid JSON')
-    const result = await ctx.paseo(['provider', 'ls', '--json'])
+    const result = await ctx.junction(['provider', 'ls', '--json'])
     assert.strictEqual(result.exitCode, 0, 'should exit 0')
     const data = JSON.parse(result.stdout.trim())
     assert(Array.isArray(data), 'output should be an array')
@@ -100,7 +100,7 @@ try {
   // Test 4: provider ls --quiet outputs provider names only
   {
     console.log('Test 4: provider ls --quiet outputs provider names only')
-    const result = await ctx.paseo(['provider', 'ls', '--quiet'])
+    const result = await ctx.junction(['provider', 'ls', '--quiet'])
     assert.strictEqual(result.exitCode, 0, 'should exit 0')
     const lines = result.stdout.trim().split('\n')
     assert.strictEqual(lines.length, 3, 'should have 3 lines')
@@ -169,7 +169,7 @@ try {
   // Test 8: provider models unknown fails with error
   {
     console.log('Test 8: provider models unknown fails with error')
-    const result = await ctx.paseo(['provider', 'models', 'unknown'])
+    const result = await ctx.junction(['provider', 'models', 'unknown'])
     assert.notStrictEqual(result.exitCode, 0, 'should fail for unknown provider')
     const output = result.stdout + result.stderr
     assert(
@@ -201,7 +201,7 @@ try {
   {
     console.log('Test 10: provider models --quiet outputs model IDs only')
     assert(claudeModelIdsFromJson.length > 0, 'claude model IDs should be captured from --json output')
-    const result = await ctx.paseo(['provider', 'models', 'claude', '--quiet'])
+    const result = await ctx.junction(['provider', 'models', 'claude', '--quiet'])
     assert.strictEqual(result.exitCode, 0, 'should exit 0')
     const lines = result.stdout.trim().split('\n').filter(Boolean)
     assert.strictEqual(lines.length, 3, 'should have 3 lines')

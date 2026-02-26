@@ -12,12 +12,12 @@ function main() {
   const repoRoot = path.resolve(__dirname, "../../..");
   const outPath = path.join(
     repoRoot,
-    "packages/website/public/schemas/paseo.config.v1.json"
+    "packages/website/public/schemas/junction.config.v1.json"
   );
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
   const schema = zodToJsonSchema(PersistedConfigSchema, {
-    name: "PaseoConfigV1",
+    name: "JunctionConfigV1",
   });
 
   fs.writeFileSync(outPath, JSON.stringify(schema, null, 2) + "\n", "utf8");

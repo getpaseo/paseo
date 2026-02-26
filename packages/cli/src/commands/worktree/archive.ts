@@ -40,7 +40,7 @@ export async function runArchiveCommand(
     const error: CommandError = {
       code: 'MISSING_WORKTREE_NAME',
       message: 'Worktree name is required',
-      details: 'Usage: paseo worktree archive <name>',
+      details: 'Usage: junction worktree archive <name>',
     }
     throw error
   }
@@ -53,14 +53,14 @@ export async function runArchiveCommand(
     const error: CommandError = {
       code: 'DAEMON_NOT_RUNNING',
       message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: 'Start the daemon with: paseo daemon start',
+      details: 'Start the daemon with: junction daemon start',
     }
     throw error
   }
 
   try {
     // Get the list of worktrees first to resolve the name
-    const listResponse = await client.getPaseoWorktreeList({})
+    const listResponse = await client.getJunctionWorktreeList({})
 
     if (listResponse.error) {
       const error: CommandError = {
@@ -80,13 +80,13 @@ export async function runArchiveCommand(
       const error: CommandError = {
         code: 'WORKTREE_NOT_FOUND',
         message: `Worktree not found: ${nameArg}`,
-        details: 'Use "paseo worktree ls" to list available worktrees',
+        details: 'Use "junction worktree ls" to list available worktrees',
       }
       throw error
     }
 
     // Archive the worktree
-    const response = await client.archivePaseoWorktree({
+    const response = await client.archiveJunctionWorktree({
       worktreePath: worktree.worktreePath,
     })
 

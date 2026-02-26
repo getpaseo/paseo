@@ -7,14 +7,14 @@ import { createHash } from "node:crypto";
 import { createNameId } from "mnemonic-id";
 import {
   normalizeBaseRefName,
-  readPaseoWorktreeMetadata,
-  readPaseoWorktreeRuntimePort,
-  writePaseoWorktreeMetadata,
-  writePaseoWorktreeRuntimeMetadata,
+  readJunctionWorktreeMetadata,
+  readJunctionWorktreeRuntimePort,
+  writeJunctionWorktreeMetadata,
+  writeJunctionWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
-import { resolvePaseoHome } from "../server/paseo-home.js";
+import { resolveJunctionHome } from "../server/junction-home.js";
 
-interface PaseoConfig {
+interface JunctionConfig {
   worktree?: {
     setup?: string[];
     destroy?: string[];
@@ -34,11 +34,11 @@ export interface WorktreeConfig {
 }
 
 export type WorktreeRuntimeEnv = {
-  PASEO_SOURCE_CHECKOUT_PATH: string;
-  PASEO_ROOT_PATH: string;
-  PASEO_WORKTREE_PATH: string;
-  PASEO_BRANCH_NAME: string;
-  PASEO_WORKTREE_PORT: string;
+  JUNCTION_SOURCE_CHECKOUT_PATH: string;
+  JUNCTION_ROOT_PATH: string;
+  JUNCTION_WORKTREE_PATH: string;
+  JUNCTION_BRANCH_NAME: string;
+  JUNCTION_WORKTREE_PORT: string;
 };
 
 export type WorktreeSetupCommandResult = {
@@ -106,13 +106,13 @@ export class WorktreeDestroyError extends Error {
   }
 }
 
-export interface PaseoWorktreeInfo {
+export interface JunctionWorktreeInfo {
   path: string;
   branchName?: string;
   head?: string;
 }
 
-export type PaseoWorktreeOwnership = {
+export type JunctionWorktreeOwnership = {
   allowed: boolean;
   repoRoot?: string;
   worktreeRoot?: string;
@@ -125,23 +125,23 @@ interface CreateWorktreeOptions {
   baseBranch: string;
   worktreeSlug?: string;
   runSetup?: boolean;
-  paseoHome?: string;
+  junctionHome?: string;
 }
 
-function readPaseoConfig(repoRoot: string): PaseoConfig | null {
-  const paseoConfigPath = join(repoRoot, "paseo.json");
-  if (!existsSync(paseoConfigPath)) {
+function readJunctionConfig(repoRoot: string): JunctionConfig | null {
+  const junctionConfigPath = join(repoRoot, "junction.json");
+  if (!existsSync(junctionConfigPath)) {
     return null;
   }
   try {
-    return JSON.parse(readFileSync(paseoConfigPath, "utf8"));
+    return JSON.parse(readFileSync(junctionConfigPath, "utf8"));
   } catch {
-    throw new Error(`Failed to parse paseo.json`);
+    throw new Error(`Failed to parse junction.json`);
   }
 }
 
 export function getWorktreeSetupCommands(repoRoot: string): string[] {
-  const config = readPaseoConfig(repoRoot);
+  const config = readJunctionConfig(repoRoot);
   const setupCommands = config?.worktree?.setup;
   if (!setupCommands || setupCommands.length === 0) {
     return [];
@@ -150,7 +150,7 @@ export function getWorktreeSetupCommands(repoRoot: string): string[] {
 }
 
 export function getWorktreeDestroyCommands(repoRoot: string): string[] {
-  const config = readPaseoConfig(repoRoot);
+  const config = readJunctionConfig(repoRoot);
   const destroyCommands = config?.worktree?.destroy;
   if (!destroyCommands || destroyCommands.length === 0) {
     return [];
@@ -159,7 +159,7 @@ export function getWorktreeDestroyCommands(repoRoot: string): string[] {
 }
 
 export function getWorktreeTerminalSpecs(repoRoot: string): WorktreeTerminalConfig[] {
-  const config = readPaseoConfig(repoRoot);
+  const config = readJunctionConfig(repoRoot);
   const terminals = config?.worktree?.terminals;
   if (!Array.isArray(terminals) || terminals.length === 0) {
     return [];
@@ -401,7 +401,7 @@ export async function runWorktreeSetupCommands(options: {
   runtimeEnv?: WorktreeRuntimeEnv;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult[]> {
-  // Read paseo.json from the worktree (it will have the same content as the source repo)
+  // Read junction.json from the worktree (it will have the same content as the source repo)
   const setupCommands = getWorktreeSetupCommands(options.worktreePath);
   if (setupCommands.length === 0) {
     return [];
@@ -483,12 +483,12 @@ export async function resolveWorktreeRuntimeEnv(options: {
   const branchName =
     options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
 
-  let worktreePort = readPaseoWorktreeRuntimePort(options.worktreePath);
+  let worktreePort = readJunctionWorktreeRuntimePort(options.worktreePath);
   if (worktreePort === null) {
     worktreePort = await getAvailablePort();
-    const metadata = readPaseoWorktreeMetadata(options.worktreePath);
+    const metadata = readJunctionWorktreeMetadata(options.worktreePath);
     if (metadata) {
-      writePaseoWorktreeRuntimeMetadata(options.worktreePath, { worktreePort });
+      writeJunctionWorktreeRuntimeMetadata(options.worktreePath, { worktreePort });
     }
   } else {
     await assertPortAvailable(worktreePort);
@@ -498,12 +498,12 @@ export async function resolveWorktreeRuntimeEnv(options: {
     // Source checkout path is the original git repo root (shared across worktrees), not the
     // worktree itself. This allows setup scripts to copy local files (e.g. .env) from the
     // source checkout.
-    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+    JUNCTION_SOURCE_CHECKOUT_PATH: repoRootPath,
     // Backward-compatible alias.
-    PASEO_ROOT_PATH: repoRootPath,
-    PASEO_WORKTREE_PATH: options.worktreePath,
-    PASEO_BRANCH_NAME: branchName,
-    PASEO_WORKTREE_PORT: String(worktreePort),
+    JUNCTION_ROOT_PATH: repoRootPath,
+    JUNCTION_WORKTREE_PATH: options.worktreePath,
+    JUNCTION_BRANCH_NAME: branchName,
+    JUNCTION_WORKTREE_PORT: String(worktreePort),
   };
 }
 
@@ -512,7 +512,7 @@ export async function runWorktreeDestroyCommands(options: {
   branchName?: string;
   repoRootPath?: string;
 }): Promise<WorktreeDestroyCommandResult[]> {
-  // Read paseo.json from the worktree (it will have the same content as the source repo)
+  // Read junction.json from the worktree (it will have the same content as the source repo)
   const destroyCommands = getWorktreeDestroyCommands(options.worktreePath);
   if (destroyCommands.length === 0) {
     return [];
@@ -528,11 +528,11 @@ export async function runWorktreeDestroyCommands(options: {
     // Source checkout path is the original git repo root (shared across worktrees), not the
     // worktree itself. This allows destroy scripts to clean resources using paths from the
     // source checkout.
-    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+    JUNCTION_SOURCE_CHECKOUT_PATH: repoRootPath,
     // Backward-compatible alias.
-    PASEO_ROOT_PATH: repoRootPath,
-    PASEO_WORKTREE_PATH: options.worktreePath,
-    PASEO_BRANCH_NAME: branchName,
+    JUNCTION_ROOT_PATH: repoRootPath,
+    JUNCTION_WORKTREE_PATH: options.worktreePath,
+    JUNCTION_BRANCH_NAME: branchName,
   };
 
   const results: WorktreeDestroyCommandResult[] = [];
@@ -667,8 +667,8 @@ export async function deriveWorktreeProjectHash(cwd: string): Promise<string> {
   }
 }
 
-async function getPaseoWorktreesRoot(cwd: string, paseoHome?: string): Promise<string> {
-  const home = paseoHome ? resolve(paseoHome) : resolvePaseoHome();
+async function getJunctionWorktreesRoot(cwd: string, junctionHome?: string): Promise<string> {
+  const home = junctionHome ? resolve(junctionHome) : resolveJunctionHome();
   const projectHash = await deriveWorktreeProjectHash(cwd);
   return join(home, "worktrees", projectHash);
 }
@@ -688,10 +688,10 @@ function resolveRepoRootFromGitCommonDir(commonDir: string): string {
     : normalizedCommonDir;
 }
 
-export async function isPaseoOwnedWorktreeCwd(
+export async function isJunctionOwnedWorktreeCwd(
   cwd: string,
-  options?: { paseoHome?: string }
-): Promise<PaseoWorktreeOwnership> {
+  options?: { junctionHome?: string }
+): Promise<JunctionWorktreeOwnership> {
   let gitCommonDir: string;
   try {
     gitCommonDir = await getGitCommonDir(cwd);
@@ -702,7 +702,7 @@ export async function isPaseoOwnedWorktreeCwd(
     };
   }
   const repoRoot = resolveRepoRootFromGitCommonDir(gitCommonDir);
-  const worktreesRoot = await getPaseoWorktreesRoot(cwd, options?.paseoHome);
+  const worktreesRoot = await getJunctionWorktreesRoot(cwd, options?.junctionHome);
   const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
   const resolvedCwd = normalizePathForOwnership(cwd);
 
@@ -715,7 +715,7 @@ export async function isPaseoOwnedWorktreeCwd(
     };
   }
 
-  const worktrees = await listPaseoWorktrees({ cwd, paseoHome: options?.paseoHome });
+  const worktrees = await listJunctionWorktrees({ cwd, junctionHome: options?.junctionHome });
   const allowed = worktrees.some((entry) => {
     const worktreePath = resolve(entry.path);
     return resolvedCwd === worktreePath || resolvedCwd.startsWith(worktreePath + sep);
@@ -728,9 +728,9 @@ export async function isPaseoOwnedWorktreeCwd(
   };
 }
 
-function parseWorktreeList(output: string): PaseoWorktreeInfo[] {
-  const entries: PaseoWorktreeInfo[] = [];
-  let current: PaseoWorktreeInfo | null = null;
+function parseWorktreeList(output: string): JunctionWorktreeInfo[] {
+  const entries: JunctionWorktreeInfo[] = [];
+  let current: JunctionWorktreeInfo | null = null;
 
   for (const line of output.split("\n")) {
     if (line.startsWith("worktree ")) {
@@ -767,14 +767,14 @@ function parseWorktreeList(output: string): PaseoWorktreeInfo[] {
   return entries;
 }
 
-export async function listPaseoWorktrees({
+export async function listJunctionWorktrees({
   cwd,
-  paseoHome,
+  junctionHome,
 }: {
   cwd: string;
-  paseoHome?: string;
-}): Promise<PaseoWorktreeInfo[]> {
-  const worktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome);
+  junctionHome?: string;
+}): Promise<JunctionWorktreeInfo[]> {
+  const worktreesRoot = await getJunctionWorktreesRoot(cwd, junctionHome);
   const { stdout } = await execAsync("git worktree list --porcelain", {
     cwd,
     env: READ_ONLY_GIT_ENV,
@@ -786,9 +786,9 @@ export async function listPaseoWorktrees({
     .filter((entry) => entry.path.startsWith(rootPrefix));
 }
 
-export async function resolvePaseoWorktreeRootForCwd(
+export async function resolveJunctionWorktreeRootForCwd(
   cwd: string,
-  options?: { paseoHome?: string }
+  options?: { junctionHome?: string }
 ): Promise<{ repoRoot: string; worktreeRoot: string; worktreePath: string } | null> {
   let gitCommonDir: string;
   try {
@@ -797,7 +797,7 @@ export async function resolvePaseoWorktreeRootForCwd(
     return null;
   }
 
-  const worktreesRoot = await getPaseoWorktreesRoot(cwd, options?.paseoHome);
+  const worktreesRoot = await getJunctionWorktreesRoot(cwd, options?.junctionHome);
   const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
 
   let worktreeRoot: string | null = null;
@@ -821,9 +821,9 @@ export async function resolvePaseoWorktreeRootForCwd(
     return null;
   }
 
-  const knownWorktrees = await listPaseoWorktrees({
+  const knownWorktrees = await listJunctionWorktrees({
     cwd,
-    paseoHome: options?.paseoHome,
+    junctionHome: options?.junctionHome,
   });
   const match = knownWorktrees.find((entry) => entry.path === resolvedWorktreeRoot);
   if (!match) {
@@ -837,31 +837,31 @@ export async function resolvePaseoWorktreeRootForCwd(
   };
 }
 
-export async function deletePaseoWorktree({
+export async function deleteJunctionWorktree({
   cwd,
   worktreePath,
   worktreeSlug,
-  paseoHome,
+  junctionHome,
 }: {
   cwd: string;
   worktreePath?: string;
   worktreeSlug?: string;
-  paseoHome?: string;
+  junctionHome?: string;
 }): Promise<void> {
   if (!worktreePath && !worktreeSlug) {
     throw new Error("worktreePath or worktreeSlug is required");
   }
 
-  const worktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome);
+  const worktreesRoot = await getJunctionWorktreesRoot(cwd, junctionHome);
   const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
   const requestedPath = worktreePath ?? join(worktreesRoot, worktreeSlug!);
   const resolvedRequested = normalizePathForOwnership(requestedPath);
   const resolvedWorktree =
-    (await resolvePaseoWorktreeRootForCwd(requestedPath, { paseoHome }))?.worktreePath ??
+    (await resolveJunctionWorktreeRootForCwd(requestedPath, { junctionHome }))?.worktreePath ??
     resolvedRequested;
 
   if (!resolvedWorktree.startsWith(resolvedRoot)) {
-    throw new Error("Refusing to delete non-Paseo worktree");
+    throw new Error("Refusing to delete non-Junction worktree");
   }
 
   await runWorktreeDestroyCommands({
@@ -887,7 +887,7 @@ export async function createWorktree({
   baseBranch,
   worktreeSlug,
   runSetup = true,
-  paseoHome,
+  junctionHome,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> {
   // Validate branch name
   const validation = validateBranchSlug(branchName);
@@ -897,10 +897,10 @@ export async function createWorktree({
 
   const normalizedBaseBranch = baseBranch ? normalizeBaseRefName(baseBranch) : "";
   if (!normalizedBaseBranch) {
-    throw new Error("Base branch is required when creating a Paseo worktree");
+    throw new Error("Base branch is required when creating a Junction worktree");
   }
   if (normalizedBaseBranch === "HEAD") {
-    throw new Error("Base branch cannot be HEAD when creating a Paseo worktree");
+    throw new Error("Base branch cannot be HEAD when creating a Junction worktree");
   }
 
   // Resolve the base branch - try local first, then remote
@@ -920,7 +920,7 @@ export async function createWorktree({
   let worktreePath: string;
   const desiredSlug = worktreeSlug || generateWorktreeSlug();
 
-  worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome), desiredSlug);
+  worktreePath = join(await getJunctionWorktreesRoot(cwd, junctionHome), desiredSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
   // Check if branch already exists
@@ -970,7 +970,7 @@ export async function createWorktree({
   await execAsync(command, { cwd });
   worktreePath = normalizePathForOwnership(finalWorktreePath);
 
-  writePaseoWorktreeMetadata(worktreePath, { baseRefName: normalizedBaseBranch });
+  writeJunctionWorktreeMetadata(worktreePath, { baseRefName: normalizedBaseBranch });
 
   if (runSetup) {
     await runWorktreeSetupCommands({

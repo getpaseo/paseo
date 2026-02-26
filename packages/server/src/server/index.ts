@@ -1,6 +1,6 @@
-import { createPaseoDaemon } from "./bootstrap.js";
+import { createJunctionDaemon } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
-import { resolvePaseoHome } from "./paseo-home.js";
+import { resolveJunctionHome } from "./junction-home.js";
 import { createRootLogger } from "./logger.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { PidLockError } from "./pid-lock.js";
@@ -8,26 +8,26 @@ import type { DaemonLifecycleIntent } from "./bootstrap.js";
 
 type SupervisorLifecycleMessage =
   | {
-      type: "paseo:shutdown";
+      type: "junction:shutdown";
     }
   | {
-      type: "paseo:restart";
+      type: "junction:restart";
       reason?: string;
     };
 
 async function main() {
-  let paseoHome: string;
+  let junctionHome: string;
   let logger: ReturnType<typeof createRootLogger>;
   let config: ReturnType<typeof loadConfig>;
-  let daemon: Awaited<ReturnType<typeof createPaseoDaemon>> | null = null;
+  let daemon: Awaited<ReturnType<typeof createJunctionDaemon>> | null = null;
   let shutdownPromise: Promise<number> | null = null;
   let exitHookInstalled = false;
 
   try {
-    paseoHome = resolvePaseoHome();
-    const persistedConfig = loadPersistedConfig(paseoHome);
+    junctionHome = resolveJunctionHome();
+    const persistedConfig = loadPersistedConfig(junctionHome);
     logger = createRootLogger(persistedConfig);
-    config = loadConfig(paseoHome);
+    config = loadConfig(junctionHome);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`${message}\n`);
@@ -108,7 +108,7 @@ async function main() {
         { clientId: intent.clientId, requestId: intent.requestId },
         "Shutdown requested via websocket"
       );
-      if (sendSupervisorLifecycleMessage({ type: "paseo:shutdown" })) {
+      if (sendSupervisorLifecycleMessage({ type: "junction:shutdown" })) {
         return;
       }
       beginShutdown("shutdown lifecycle intent");
@@ -121,7 +121,7 @@ async function main() {
     );
     if (
       sendSupervisorLifecycleMessage({
-        type: "paseo:restart",
+        type: "junction:restart",
         ...(intent.reason ? { reason: intent.reason } : {}),
       })
     ) {
@@ -131,8 +131,8 @@ async function main() {
   };
 
   try {
-    const pidLockMode = process.env.PASEO_PID_LOCK_MODE === "external" ? "external" : "self";
-    daemon = await createPaseoDaemon(
+    const pidLockMode = process.env.JUNCTION_PID_LOCK_MODE === "external" ? "external" : "self";
+    daemon = await createJunctionDaemon(
       {
         ...config,
         onLifecycleIntent: handleLifecycleIntent,
@@ -165,7 +165,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  if (process.env.PASEO_DEBUG === "1") {
+  if (process.env.JUNCTION_DEBUG === "1") {
     process.stderr.write(`${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
   } else {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);

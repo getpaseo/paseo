@@ -11,13 +11,13 @@ $.verbose = false
 
 console.log('=== Onboarding Command ===\n')
 
-const paseoHome = await mkdtemp(join(tmpdir(), 'paseo-onboard-home-'))
+const junctionHome = await mkdtemp(join(tmpdir(), 'junction-onboard-home-'))
 const port = await getAvailablePort()
 
 try {
-  console.log('Test 1: `paseo` runs blocking onboarding and prints pairing info')
+  console.log('Test 1: `junction` runs blocking onboarding and prints pairing info')
   const onboard =
-    await $`PASEO_HOME=${paseoHome} PASEO_LISTEN=127.0.0.1:${port} PASEO_PAIRING_QR=0 npx paseo`.nothrow()
+    await $`JUNCTION_HOME=${junctionHome} JUNCTION_LISTEN=127.0.0.1:${port} JUNCTION_PAIRING_QR=0 npx junction`.nothrow()
 
   assert.strictEqual(
     onboard.exitCode,
@@ -28,20 +28,20 @@ try {
   assert(onboard.stdout.includes('Pairing link'), 'onboard output should include pairing link header')
   assert(onboard.stdout.includes('#offer='), 'onboard output should include pairing offer URL')
   assert(onboard.stdout.includes('CLI quick reference'), 'onboard output should include CLI quick reference')
-  assert(onboard.stdout.includes('paseo --help'), 'onboard output should include --help shortcut')
-  assert(onboard.stdout.includes('paseo ls'), 'onboard output should include ls shortcut')
-  assert(onboard.stdout.includes('paseo run "your prompt"'), 'onboard output should include run shortcut')
-  assert(onboard.stdout.includes('paseo status'), 'onboard output should include status shortcut')
-  assert(onboard.stdout.includes(join(paseoHome, 'daemon.log')), 'onboard output should include daemon log path')
+  assert(onboard.stdout.includes('junction --help'), 'onboard output should include --help shortcut')
+  assert(onboard.stdout.includes('junction ls'), 'onboard output should include ls shortcut')
+  assert(onboard.stdout.includes('junction run "your prompt"'), 'onboard output should include run shortcut')
+  assert(onboard.stdout.includes('junction status'), 'onboard output should include status shortcut')
+  assert(onboard.stdout.includes(join(junctionHome, 'daemon.log')), 'onboard output should include daemon log path')
 
   const status =
-    await $`PASEO_HOME=${paseoHome} npx paseo daemon status --home ${paseoHome}`.nothrow()
+    await $`JUNCTION_HOME=${junctionHome} npx junction daemon status --home ${junctionHome}`.nothrow()
   assert.strictEqual(status.exitCode, 0, `daemon status should succeed: ${status.stderr}`)
   assert(status.stdout.includes('running'), 'daemon should be running when onboarding exits')
   console.log('✓ onboarding prints pairing info and waits for daemon readiness\n')
 
   console.log('Test 2: non-interactive onboarding persists voice disabled config')
-  const configRaw = await readFile(join(paseoHome, 'config.json'), 'utf-8')
+  const configRaw = await readFile(join(junctionHome, 'config.json'), 'utf-8')
   const config = JSON.parse(configRaw) as {
     features?: {
       dictation?: { enabled?: boolean }
@@ -51,15 +51,15 @@ try {
 
   assert.strictEqual(config.features?.dictation?.enabled, false, 'dictation.enabled should be false')
   assert.strictEqual(config.features?.voiceMode?.enabled, false, 'voiceMode.enabled should be false')
-  const daemonLog = await readFile(join(paseoHome, 'daemon.log'), 'utf-8')
+  const daemonLog = await readFile(join(junctionHome, 'daemon.log'), 'utf-8')
   assert(
     !daemonLog.includes('Ensuring local speech models'),
     'daemon should not attempt local speech model setup when voice is disabled'
   )
   console.log('✓ non-interactive run persisted voice disabled choices\n')
 } finally {
-  await $`PASEO_HOME=${paseoHome} npx paseo daemon stop --home ${paseoHome} --force`.nothrow()
-  await rm(paseoHome, { recursive: true, force: true })
+  await $`JUNCTION_HOME=${junctionHome} npx junction daemon stop --home ${junctionHome} --force`.nothrow()
+  await rm(junctionHome, { recursive: true, force: true })
 }
 
 console.log('=== Onboarding tests passed ===')

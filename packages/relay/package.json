@@ -1,7 +1,7 @@
 {
-  "name": "@getpaseo/relay",
+  "name": "@junction/relay",
   "version": "0.1.16",
-  "description": "Paseo relay for bridging daemon and client connections",
+  "description": "Junction relay for bridging daemon and client connections",
   "type": "module",
   "publishConfig": {
     "access": "public"

@@ -8,7 +8,7 @@ import { updateCommand } from './update.js'
 import { withOutput } from '../../output/index.js'
 
 export function createDaemonCommand(): Command {
-  const daemon = new Command('daemon').description('Manage the Paseo daemon')
+  const daemon = new Command('daemon').description('Manage the Junction daemon')
 
   daemon.addCommand(startCommand())
   daemon.addCommand(pairCommand())
@@ -18,14 +18,14 @@ export function createDaemonCommand(): Command {
     .command('status')
     .description('Show local daemon status')
     .option('--json', 'Output in JSON format')
-    .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
+    .option('--home <path>', 'Junction home directory (default: ~/.junction)')
     .action(withOutput(runStatusCommand))
 
   daemon
     .command('stop')
     .description('Stop the local daemon')
     .option('--json', 'Output in JSON format')
-    .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
+    .option('--home <path>', 'Junction home directory (default: ~/.junction)')
     .option('--timeout <seconds>', 'Wait timeout before failing (default: 15)')
     .option('--force', 'Send SIGKILL if graceful stop times out')
     .action(withOutput(runStopCommand))
@@ -34,7 +34,7 @@ export function createDaemonCommand(): Command {
     .command('restart')
     .description('Restart the local daemon')
     .option('--json', 'Output in JSON format')
-    .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
+    .option('--home <path>', 'Junction home directory (default: ~/.junction)')
     .option('--timeout <seconds>', 'Wait timeout before force step (default: 15)')
     .option('--force', 'Send SIGKILL if graceful stop times out')
     .option('--listen <listen>', 'Listen target for restarted daemon (host:port, port, or unix socket)')

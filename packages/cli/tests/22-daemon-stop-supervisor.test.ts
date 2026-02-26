@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 
 /**
- * Regression: `paseo daemon stop` must stop supervised dev daemons
+ * Regression: `junction daemon stop` must stop supervised dev daemons
  * without allowing daemon-runner to respawn a new worker process.
  */
 
@@ -17,9 +17,9 @@ $.verbose = false
 
 const pollIntervalMs = 100
 const testEnv = {
-  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
-  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? '0',
-  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? '0',
+  JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
+  JUNCTION_DICTATION_ENABLED: process.env.JUNCTION_DICTATION_ENABLED ?? '0',
+  JUNCTION_VOICE_MODE_ENABLED: process.env.JUNCTION_VOICE_MODE_ENABLED ?? '0',
 }
 
 function sleep(ms: number): Promise<void> {
@@ -43,8 +43,8 @@ type PidLockState = {
   pid: number | null
 }
 
-async function readPidLockState(paseoHome: string): Promise<PidLockState> {
-  const pidPath = join(paseoHome, 'paseo.pid')
+async function readPidLockState(junctionHome: string): Promise<PidLockState> {
+  const pidPath = join(junctionHome, 'junction.pid')
 
   try {
     const content = await readFile(pidPath, 'utf-8')
@@ -72,9 +72,9 @@ type DaemonStatus = {
   pid: number | null
 }
 
-async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
+async function readDaemonStatus(junctionHome: string): Promise<DaemonStatus> {
   const result =
-    await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon status --home ${paseoHome} --json`.nothrow()
+    await $`JUNCTION_HOME=${junctionHome} JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD} JUNCTION_DICTATION_ENABLED=${testEnv.JUNCTION_DICTATION_ENABLED} JUNCTION_VOICE_MODE_ENABLED=${testEnv.JUNCTION_VOICE_MODE_ENABLED} npx junction daemon status --home ${junctionHome} --json`.nothrow()
   if (result.exitCode !== 0) {
     return { status: null, pid: null }
   }
@@ -111,23 +111,23 @@ async function waitFor(
 console.log('=== Daemon Stop (supervisor regression) ===\n')
 
 const port = await getAvailablePort()
-const paseoHome = await mkdtemp(join(tmpdir(), 'paseo-stop-supervisor-'))
+const junctionHome = await mkdtemp(join(tmpdir(), 'junction-stop-supervisor-'))
 const cliRoot = join(import.meta.dirname, '..')
 
 let supervisorProcess: ChildProcess | null = null
 let recentSupervisorLogs = ''
 
 try {
-  console.log('Test 1: start daemon-runner in dev mode with isolated PASEO_HOME')
+  console.log('Test 1: start daemon-runner in dev mode with isolated JUNCTION_HOME')
 
   supervisorProcess = spawn('npx', ['tsx', '../server/scripts/daemon-runner.ts', '--dev'], {
     cwd: cliRoot,
     env: {
       ...process.env,
       ...testEnv,
-      PASEO_HOME: paseoHome,
-      PASEO_LISTEN: `127.0.0.1:${port}`,
-      PASEO_RELAY_ENABLED: 'false',
+      JUNCTION_HOME: junctionHome,
+      JUNCTION_LISTEN: `127.0.0.1:${port}`,
+      JUNCTION_RELAY_ENABLED: 'false',
       CI: 'true',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -142,19 +142,19 @@ try {
 
   await waitFor(
     async () => {
-      const status = await readDaemonStatus(paseoHome)
+      const status = await readDaemonStatus(junctionHome)
       return status.status === 'running' && status.pid !== null && isProcessRunning(status.pid)
     },
     120000,
     'daemon did not become running in time'
   )
 
-  const statusBeforeStop = await readDaemonStatus(paseoHome)
+  const statusBeforeStop = await readDaemonStatus(junctionHome)
   const daemonPid = statusBeforeStop.pid
   assert.strictEqual(statusBeforeStop.status, 'running', 'daemon should be running before stop')
   assert(daemonPid !== null, 'daemon pid should exist once daemon starts')
   assert(isProcessRunning(daemonPid), 'daemon process should be running')
-  const pidLockBeforeStop = await readPidLockState(paseoHome)
+  const pidLockBeforeStop = await readPidLockState(junctionHome)
   assert.strictEqual(pidLockBeforeStop.pid, daemonPid, 'pid lock should match status pid')
   const command = readProcessCommand(daemonPid)
   assert(command !== null, 'pid lock pid should resolve to a running process command')
@@ -164,15 +164,15 @@ try {
   )
   console.log(`✓ dev daemon started with daemon pid ${daemonPid}\n`)
 
-  console.log('Test 2: `paseo daemon stop` should stop without respawn')
+  console.log('Test 2: `junction daemon stop` should stop without respawn')
   const stopResult =
-    await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon stop --home ${paseoHome} --json`.nothrow()
+    await $`JUNCTION_HOME=${junctionHome} JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD} JUNCTION_DICTATION_ENABLED=${testEnv.JUNCTION_DICTATION_ENABLED} JUNCTION_VOICE_MODE_ENABLED=${testEnv.JUNCTION_VOICE_MODE_ENABLED} npx junction daemon stop --home ${junctionHome} --json`.nothrow()
   assert.strictEqual(stopResult.exitCode, 0, `stop should succeed: ${stopResult.stderr}`)
   const stopJson = JSON.parse(stopResult.stdout) as { action?: unknown }
   assert.strictEqual(stopJson.action, 'stopped', 'stop should report stopped action')
 
   await waitFor(async () => {
-    const status = await readDaemonStatus(paseoHome)
+    const status = await readDaemonStatus(junctionHome)
     return status.status === 'stopped'
   }, 15000, 'daemon status did not transition to stopped after stop')
 
@@ -186,7 +186,7 @@ try {
 
   await sleep(1000)
 
-  const pidAfterStop = await readPidLockState(paseoHome)
+  const pidAfterStop = await readPidLockState(junctionHome)
   const respawned = pidAfterStop.pid !== null && isProcessRunning(pidAfterStop.pid)
   assert.strictEqual(
     respawned,
@@ -194,7 +194,7 @@ try {
     `daemon respawned after stop (pid: ${pidAfterStop.pid ?? 'unknown'})`
   )
 
-  const statusAfterStop = await readDaemonStatus(paseoHome)
+  const statusAfterStop = await readDaemonStatus(junctionHome)
   assert.strictEqual(statusAfterStop.status, 'stopped', 'daemon should remain stopped after stop command')
   assert(
     recentSupervisorLogs.includes('Shutdown requested by worker. Stopping worker...'),
@@ -215,8 +215,8 @@ try {
     )
   }
 
-  await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon stop --home ${paseoHome} --force`.nothrow()
-  await rm(paseoHome, { recursive: true, force: true })
+  await $`JUNCTION_HOME=${junctionHome} JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD} JUNCTION_DICTATION_ENABLED=${testEnv.JUNCTION_DICTATION_ENABLED} JUNCTION_VOICE_MODE_ENABLED=${testEnv.JUNCTION_VOICE_MODE_ENABLED} npx junction daemon stop --home ${junctionHome} --force`.nothrow()
+  await rm(junctionHome, { recursive: true, force: true })
 }
 
 if (recentSupervisorLogs.trim().length === 0) {

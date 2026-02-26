@@ -13,7 +13,7 @@ import {
 describe("runAsyncWorktreeBootstrap", () => {
   let tempDir: string;
   let repoDir: string;
-  let paseoHome: string;
+  let junctionHome: string;
 
   async function waitForPathExists(targetPath: string, timeoutMs = 10000): Promise<void> {
     const startedAt = Date.now();
@@ -29,7 +29,7 @@ describe("runAsyncWorktreeBootstrap", () => {
   beforeEach(() => {
     tempDir = realpathSync(mkdtempSync(join(tmpdir(), "worktree-bootstrap-test-")));
     repoDir = join(tempDir, "repo");
-    paseoHome = join(tempDir, "paseo-home");
+    junctionHome = join(tempDir, "junction-home");
 
     execSync(`mkdir -p ${repoDir}`);
     execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
@@ -46,14 +46,14 @@ describe("runAsyncWorktreeBootstrap", () => {
 
   it("streams running setup updates live and persists only a final setup timeline row", async () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "junction.json"),
       JSON.stringify({
         worktree: {
           setup: ['echo "line-one"; echo "line-two" 1>&2', 'echo "line-three"'],
         },
       })
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
+    execSync("git add junction.json", { cwd: repoDir, stdio: "pipe" });
     execSync("git -c commit.gpgsign=false commit -m 'add setup'", {
       cwd: repoDir,
       stdio: "pipe",
@@ -64,7 +64,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       branchName: "feature-streaming-setup",
       baseBranch: "main",
       worktreeSlug: "feature-streaming-setup",
-      paseoHome,
+      junctionHome,
     });
 
     const persisted: AgentTimelineItem[] = [];
@@ -87,13 +87,13 @@ describe("runAsyncWorktreeBootstrap", () => {
     const liveSetupItems = live.filter(
       (item) =>
         item.type === "tool_call" &&
-        item.name === "paseo_worktree_setup" &&
+        item.name === "junction_worktree_setup" &&
         item.status === "running"
     );
     expect(liveSetupItems.length).toBeGreaterThan(0);
 
     const persistedSetupItems = persisted.filter(
-      (item) => item.type === "tool_call" && item.name === "paseo_worktree_setup"
+      (item) => item.type === "tool_call" && item.name === "junction_worktree_setup"
     );
     expect(persistedSetupItems).toHaveLength(1);
     expect(persistedSetupItems[0]?.type).toBe("tool_call");
@@ -149,14 +149,14 @@ describe("runAsyncWorktreeBootstrap", () => {
 
   it("does not fail setup when live timeline emission throws", async () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "junction.json"),
       JSON.stringify({
         worktree: {
           setup: ['echo "ok"'],
         },
       })
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
+    execSync("git add junction.json", { cwd: repoDir, stdio: "pipe" });
     execSync("git -c commit.gpgsign=false commit -m 'add setup'", {
       cwd: repoDir,
       stdio: "pipe",
@@ -167,7 +167,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       branchName: "feature-live-failure",
       baseBranch: "main",
       worktreeSlug: "feature-live-failure",
-      paseoHome,
+      junctionHome,
     });
 
     const persisted: AgentTimelineItem[] = [];
@@ -187,7 +187,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     ).resolves.toBeUndefined();
 
     const persistedSetupItems = persisted.filter(
-      (item) => item.type === "tool_call" && item.name === "paseo_worktree_setup"
+      (item) => item.type === "tool_call" && item.name === "junction_worktree_setup"
     );
     expect(persistedSetupItems).toHaveLength(1);
     if (persistedSetupItems[0]?.type === "tool_call") {
@@ -199,14 +199,14 @@ describe("runAsyncWorktreeBootstrap", () => {
     const largeOutputCommand =
       "node -e \"process.stdout.write('prefix-'); process.stdout.write('x'.repeat(70000)); process.stdout.write('-suffix')\"";
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "junction.json"),
       JSON.stringify({
         worktree: {
           setup: [largeOutputCommand],
         },
       })
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
+    execSync("git add junction.json", { cwd: repoDir, stdio: "pipe" });
     execSync("git -c commit.gpgsign=false commit -m 'add large output setup'", {
       cwd: repoDir,
       stdio: "pipe",
@@ -217,7 +217,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       branchName: "feature-large-output",
       baseBranch: "main",
       worktreeSlug: "feature-large-output",
-      paseoHome,
+      junctionHome,
     });
 
     const persisted: AgentTimelineItem[] = [];
@@ -234,7 +234,7 @@ describe("runAsyncWorktreeBootstrap", () => {
 
     const persistedSetupItem = persisted.find(
       (item): item is Extract<AgentTimelineItem, { type: "tool_call" }> =>
-        item.type === "tool_call" && item.name === "paseo_worktree_setup"
+        item.type === "tool_call" && item.name === "junction_worktree_setup"
     );
     expect(persistedSetupItem).toBeDefined();
     expect(persistedSetupItem?.detail.type).toBe("worktree_setup");
@@ -250,7 +250,7 @@ describe("runAsyncWorktreeBootstrap", () => {
 
   it("waits for terminal output before sending bootstrap commands", async () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "junction.json"),
       JSON.stringify({
         worktree: {
           terminals: [
@@ -262,7 +262,7 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       })
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
+    execSync("git add junction.json", { cwd: repoDir, stdio: "pipe" });
     execSync("git -c commit.gpgsign=false commit -m 'add terminal bootstrap config'", {
       cwd: repoDir,
       stdio: "pipe",
@@ -273,7 +273,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       branchName: "feature-terminal-readiness",
       baseBranch: "main",
       worktreeSlug: "feature-terminal-readiness",
-      paseoHome,
+      junctionHome,
     });
 
     let readyAt = 0;
@@ -354,10 +354,10 @@ describe("runAsyncWorktreeBootstrap", () => {
 
   it("shares the same worktree runtime port across setup and bootstrap terminals", async () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "junction.json"),
       JSON.stringify({
         worktree: {
-          setup: ['echo "$PASEO_WORKTREE_PORT" > setup-port.txt'],
+          setup: ['echo "$JUNCTION_WORKTREE_PORT" > setup-port.txt'],
           terminals: [
             {
               name: "Port Terminal",
@@ -367,7 +367,7 @@ describe("runAsyncWorktreeBootstrap", () => {
         },
       })
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
+    execSync("git add junction.json", { cwd: repoDir, stdio: "pipe" });
     execSync("git -c commit.gpgsign=false commit -m 'add port setup and terminals'", {
       cwd: repoDir,
       stdio: "pipe",
@@ -378,7 +378,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       branchName: "feature-shared-runtime-port",
       baseBranch: "main",
       worktreeSlug: "feature-shared-runtime-port",
-      paseoHome,
+      junctionHome,
     });
 
     const registeredEnvs: Array<{ cwd: string; env: Record<string, string> }> = [];
@@ -447,14 +447,14 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(setupPort.length).toBeGreaterThan(0);
     expect(registeredEnvs).toHaveLength(1);
     expect(registeredEnvs[0]?.cwd).toBe(worktree.worktreePath);
-    expect(registeredEnvs[0]?.env.PASEO_WORKTREE_PORT).toBe(setupPort);
+    expect(registeredEnvs[0]?.env.JUNCTION_WORKTREE_PORT).toBe(setupPort);
     expect(createTerminalEnvs.length).toBeGreaterThan(0);
-    expect(createTerminalEnvs[0]?.PASEO_WORKTREE_PORT).toBe(setupPort);
+    expect(createTerminalEnvs[0]?.JUNCTION_WORKTREE_PORT).toBe(setupPort);
 
     const terminalToolCall = persisted.find(
       (item): item is Extract<AgentTimelineItem, { type: "tool_call" }> =>
         item.type === "tool_call" &&
-        item.name === "paseo_worktree_terminals" &&
+        item.name === "junction_worktree_terminals" &&
         item.status === "completed"
     );
     expect(terminalToolCall?.status).toBe("completed");

@@ -18,9 +18,9 @@ $.verbose = false
 
 const pollIntervalMs = 100
 const testEnv = {
-  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
-  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? '0',
-  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? '0',
+  JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD ?? '0',
+  JUNCTION_DICTATION_ENABLED: process.env.JUNCTION_DICTATION_ENABLED ?? '0',
+  JUNCTION_VOICE_MODE_ENABLED: process.env.JUNCTION_VOICE_MODE_ENABLED ?? '0',
 }
 
 function sleep(ms: number): Promise<void> {
@@ -74,9 +74,9 @@ type DaemonStatus = {
   pid: number | null
 }
 
-async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
+async function readDaemonStatus(junctionHome: string): Promise<DaemonStatus> {
   const result =
-    await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon status --home ${paseoHome} --json`.nothrow()
+    await $`JUNCTION_HOME=${junctionHome} JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD} JUNCTION_DICTATION_ENABLED=${testEnv.JUNCTION_DICTATION_ENABLED} JUNCTION_VOICE_MODE_ENABLED=${testEnv.JUNCTION_VOICE_MODE_ENABLED} npx junction daemon status --home ${junctionHome} --json`.nothrow()
   if (result.exitCode !== 0) {
     return { status: null, pid: null }
   }
@@ -113,7 +113,7 @@ async function waitFor(
 console.log('=== Daemon Restart (supervisor regression) ===\n')
 
 const port = await getAvailablePort()
-const paseoHome = await mkdtemp(join(tmpdir(), 'paseo-restart-supervisor-'))
+const junctionHome = await mkdtemp(join(tmpdir(), 'junction-restart-supervisor-'))
 const cliRoot = join(import.meta.dirname, '..')
 const host = `127.0.0.1:${port}`
 
@@ -121,16 +121,16 @@ let supervisorProcess: ChildProcess | null = null
 let recentSupervisorLogs = ''
 
 try {
-  console.log('Test 1: start daemon-runner in dev mode with isolated PASEO_HOME')
+  console.log('Test 1: start daemon-runner in dev mode with isolated JUNCTION_HOME')
 
   supervisorProcess = spawn('npx', ['tsx', '../server/scripts/daemon-runner.ts', '--dev'], {
     cwd: cliRoot,
     env: {
       ...process.env,
       ...testEnv,
-      PASEO_HOME: paseoHome,
-      PASEO_LISTEN: host,
-      PASEO_RELAY_ENABLED: 'false',
+      JUNCTION_HOME: junctionHome,
+      JUNCTION_LISTEN: host,
+      JUNCTION_RELAY_ENABLED: 'false',
       CI: 'true',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -145,14 +145,14 @@ try {
 
   await waitFor(
     async () => {
-      const status = await readDaemonStatus(paseoHome)
+      const status = await readDaemonStatus(junctionHome)
       return status.status === 'running' && status.pid !== null && isProcessRunning(status.pid)
     },
     120000,
     'daemon did not become running in time'
   )
 
-  const statusBeforeRestart = await readDaemonStatus(paseoHome)
+  const statusBeforeRestart = await readDaemonStatus(junctionHome)
   const supervisorPid = statusBeforeRestart.pid
   assert.strictEqual(statusBeforeRestart.status, 'running', 'daemon should be running before restart')
   assert(supervisorPid !== null, 'supervisor pid should exist once daemon starts')
@@ -185,7 +185,7 @@ try {
     'worker pid should change after restart'
   )
 
-  const statusAfterRestart = await readDaemonStatus(paseoHome)
+  const statusAfterRestart = await readDaemonStatus(junctionHome)
   assert.strictEqual(statusAfterRestart.status, 'running', 'daemon should stay running after restart')
   assert.strictEqual(statusAfterRestart.pid, supervisorPid, 'supervisor pid should remain stable across restart')
   assert(
@@ -203,8 +203,8 @@ try {
     )
   }
 
-  await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon stop --home ${paseoHome} --force`.nothrow()
-  await rm(paseoHome, { recursive: true, force: true })
+  await $`JUNCTION_HOME=${junctionHome} JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.JUNCTION_LOCAL_SPEECH_AUTO_DOWNLOAD} JUNCTION_DICTATION_ENABLED=${testEnv.JUNCTION_DICTATION_ENABLED} JUNCTION_VOICE_MODE_ENABLED=${testEnv.JUNCTION_VOICE_MODE_ENABLED} npx junction daemon stop --home ${junctionHome} --force`.nothrow()
+  await rm(junctionHome, { recursive: true, force: true })
 }
 
 if (recentSupervisorLogs.trim().length === 0) {

@@ -27,8 +27,8 @@ console.log('=== Local Daemon Utility Helpers ===\n')
 
 {
   console.log('Test 3: rejects unix socket listen values')
-  assert.strictEqual(resolveTcpHostFromListen('/tmp/paseo.sock'), null)
-  assert.strictEqual(resolveTcpHostFromListen('unix:///tmp/paseo.sock'), null)
+  assert.strictEqual(resolveTcpHostFromListen('/tmp/junction.sock'), null)
+  assert.strictEqual(resolveTcpHostFromListen('unix:///tmp/junction.sock'), null)
   console.log('✓ rejects unix socket listen values\n')
 }
 
