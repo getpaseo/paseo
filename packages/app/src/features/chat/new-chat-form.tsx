@@ -13,7 +13,8 @@ import {
   PromptInputActions,
 } from "@/components/ui/prompt-input"
 import { Button } from "@/components/ui/button"
-import { ArrowUp } from "lucide-react"
+import { ProjectSelectorDialog } from "./project-selector-dialog"
+import { ArrowUp, FolderGit2 } from "lucide-react"
 import { cn } from "@/lib/cn"
 
 type AgentProvider = "claude" | "codex" | "opencode"
@@ -39,10 +40,16 @@ function getStoredProvider(): AgentProvider {
   return "claude"
 }
 
+function getBasename(p: string): string {
+  const segments = p.replace(/\/+$/, "").split("/")
+  return segments[segments.length - 1] || p
+}
+
 export function NewChatForm({ client }: { client: DaemonClient }) {
   const [prompt, setPrompt] = useState("")
   const [provider, setProvider] = useState<AgentProvider>(getStoredProvider)
   const [cwd, setCwd] = useState(getStoredCwd)
+  const [showProjectSelector, setShowProjectSelector] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const setSelectedAgent = useSetAtom(selectedAgentAtom)
@@ -61,7 +68,7 @@ export function NewChatForm({ client }: { client: DaemonClient }) {
     } catch {}
   }
 
-  const handleCwdChange = (value: string) => {
+  const handleCwdSelect = (value: string) => {
     setCwd(value)
     try {
       localStorage.setItem(CWD_STORAGE_KEY, value)
@@ -123,18 +130,22 @@ export function NewChatForm({ client }: { client: DaemonClient }) {
                 <option value="opencode">OpenCode</option>
               </select>
 
-              <input
-                type="text"
-                value={cwd}
-                onChange={(e) => handleCwdChange(e.target.value)}
-                placeholder="Working directory"
+              <button
+                type="button"
+                onClick={() => setShowProjectSelector(true)}
                 className={cn(
-                  "px-2 py-1 text-[11px] font-mono rounded-md w-48",
+                  "flex items-center gap-1.5 px-2 py-1 text-[11px] rounded-md max-w-[200px]",
                   "border border-border/50 bg-foreground/5",
-                  "placeholder:text-muted-foreground/50",
+                  "hover:bg-foreground/10 transition-colors",
                   "focus:outline-none focus:ring-1 focus:ring-ring",
+                  cwd ? "text-foreground" : "text-muted-foreground/50",
                 )}
-              />
+              >
+                <FolderGit2 className="h-3 w-3 shrink-0" />
+                <span className="truncate font-mono">
+                  {cwd ? getBasename(cwd) : "Select project..."}
+                </span>
+              </button>
             </div>
 
             <Button
@@ -148,6 +159,13 @@ export function NewChatForm({ client }: { client: DaemonClient }) {
           </PromptInputActions>
         </PromptInput>
       </div>
+
+      <ProjectSelectorDialog
+        open={showProjectSelector}
+        onOpenChange={setShowProjectSelector}
+        client={client}
+        onSelect={handleCwdSelect}
+      />
     </div>
   )
 }
