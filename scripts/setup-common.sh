@@ -24,6 +24,35 @@ PG_USER="postgres"
 PG_PASS="postgres"
 DATABASE_URL="postgresql://${PG_USER}:${PG_PASS}@${PG_HOST}:${PG_PORT}/${WORKSPACE_NAME}"
 
+# ------------------------------------------------------------------
+# 0. Load shared secrets (.env.shared)
+# ------------------------------------------------------------------
+SHARED_ENV="$REPO_ROOT/.env.shared"
+if [ ! -f "$SHARED_ENV" ]; then
+  # In a worktree, try to copy from the main worktree
+  MAIN_WT=$(git -C "$REPO_ROOT" worktree list 2>/dev/null | head -1 | awk '{print $1}')
+  if [ -n "$MAIN_WT" ] && [ -f "$MAIN_WT/.env.shared" ]; then
+    echo "  Copying .env.shared from main worktree..."
+    cp "$MAIN_WT/.env.shared" "$SHARED_ENV"
+  fi
+fi
+
+if [ -f "$SHARED_ENV" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${line// }" ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    value="${value#\"}" ; value="${value%\"}"
+    value="${value#\'}" ; value="${value%\'}"
+    export "$key=$value" 2>/dev/null || true
+  done < "$SHARED_ENV"
+  echo "  Loaded secrets from .env.shared"
+else
+  echo "  WARNING: .env.shared not found. GitHub OAuth will not work."
+  echo "  Copy .env.shared.example to .env.shared and fill in real values."
+fi
+
 echo "══════════════════════════════════════════════════════"
 echo "  Junction Setup"
 echo "══════════════════════════════════════════════════════"
@@ -81,6 +110,8 @@ DATABASE_URL=${DATABASE_URL}
 CORS_ORIGINS=http://localhost:${APP_PORT},http://127.0.0.1:${APP_PORT}
 BETTER_AUTH_SECRET=junction-dev-secret-$(echo -n "$WORKSPACE_NAME" | md5 2>/dev/null || echo -n "$WORKSPACE_NAME" | md5sum 2>/dev/null | cut -d' ' -f1 || echo "default-dev-secret")
 BETTER_AUTH_URL=http://localhost:${API_PORT}
+GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
 EOF
 echo "  packages/api/.env.local"
 
@@ -118,8 +149,6 @@ DATABASE_URL="$DATABASE_URL" pnpm exec prisma generate
 echo "→ Pushing Prisma schema to database..."
 DATABASE_URL="$DATABASE_URL" pnpm exec prisma db push
 
-echo "→ Seeding dev user..."
-DATABASE_URL="$DATABASE_URL" BETTER_AUTH_URL="http://localhost:${API_PORT}" BETTER_AUTH_SECRET="junction-dev-secret" pnpm run db:seed
 cd "$REPO_ROOT"
 
 # ------------------------------------------------------------------
