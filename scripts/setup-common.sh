@@ -124,7 +124,7 @@ cd "$REPO_ROOT"
 # ------------------------------------------------------------------
 echo ""
 echo "→ Building @junction/server..."
-npm run build --workspace=@junction/server
+NODE_OPTIONS="--max-old-space-size=4096" npm run build --workspace=@junction/server
 
 echo ""
 echo "══════════════════════════════════════════════════════"
