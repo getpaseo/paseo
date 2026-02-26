@@ -2,10 +2,11 @@ import { useState, useRef, useEffect } from "react"
 import { useSetAtom } from "jotai"
 import type { DaemonClient } from "@server/client/daemon-client"
 import {
-  selectedAgentIdAtom,
+  selectedAgentAtom,
   showNewChatFormAtom,
   pendingNewChatAtom,
 } from "@/lib/atoms"
+import { useDaemonStore } from "@/stores/daemon-store"
 import {
   PromptInput,
   PromptInputTextarea,
@@ -44,9 +45,10 @@ export function NewChatForm({ client }: { client: DaemonClient }) {
   const [cwd, setCwd] = useState(getStoredCwd)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const setSelectedAgentId = useSetAtom(selectedAgentIdAtom)
+  const setSelectedAgent = useSetAtom(selectedAgentAtom)
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
   const setPendingNewChat = useSetAtom(pendingNewChatAtom)
+  const activeConnectionId = useDaemonStore((s) => s.activeConnectionId)
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -71,8 +73,13 @@ export function NewChatForm({ client }: { client: DaemonClient }) {
     if (!text) return
 
     // Store config for ChatView to pick up
-    setPendingNewChat({ provider, cwd, initialPrompt: text })
-    setSelectedAgentId(null)
+    setPendingNewChat({
+      provider,
+      cwd,
+      initialPrompt: text,
+      daemonId: activeConnectionId ?? "",
+    })
+    setSelectedAgent(null)
     setShowNewChatForm(false)
   }
 

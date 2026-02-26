@@ -6,11 +6,12 @@
     "packages/server",
     "packages/relay",
     "packages/cli",
-    "packages/auth",
+    "packages/api",
     "packages/app"
   ],
   "scripts": {
     "dev:server": "NODE_ENV=development tsx packages/server/scripts/daemon-runner.ts --dev",
+    "dev:api": "npm run dev --workspace=@junction/api",
     "dev:app": "npm run dev --workspace=@junction/app",
     "postinstall": "node scripts/postinstall-patches.mjs",
     "build": "npm run build --workspaces --if-present",

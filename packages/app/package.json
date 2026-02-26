@@ -10,16 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "react": "19.1.0",
-    "react-dom": "19.1.0",
-
     "@ai-sdk/react": "^3.0.14",
-    "ai": "^6.0.14",
-
-    "jotai": "^2.11.1",
-    "zustand": "^5.0.3",
-    "@tanstack/react-query": "^5.90.10",
-
     "@radix-ui/react-accordion": "^1.2.0",
     "@radix-ui/react-alert-dialog": "^1.1.0",
     "@radix-ui/react-checkbox": "^1.1.0",
@@ -37,23 +28,33 @@
     "@radix-ui/react-switch": "^1.1.0",
     "@radix-ui/react-tabs": "^1.1.0",
     "@radix-ui/react-tooltip": "^1.1.0",
-
+    "@tanstack/react-query": "^5.90.10",
+    "@trpc/client": "^11.10.0",
+    "@trpc/react-query": "^11.10.0",
+    "ai": "^6.0.14",
+    "better-auth": "^1.4.19",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.0.0",
+    "jotai": "^2.11.1",
     "lucide-react": "^0.468.0",
     "motion": "^11.15.0",
-    "sonner": "^1.7.1",
-    "clsx": "^2.1.1",
-    "tailwind-merge": "^2.6.0",
-    "class-variance-authority": "^0.7.1",
-    "date-fns": "^4.0.0",
     "nanoid": "^5.0.0",
-    "zod": "^3.23.8",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
     "react-hotkeys-hook": "^4.0.0",
-    "streamdown": "^2.0.1",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.0",
-    "shiki": "^1.24.4"
+    "shiki": "^1.24.4",
+    "sonner": "^1.7.1",
+    "streamdown": "^2.0.1",
+    "tailwind-merge": "^2.6.0",
+    "zod": "^3.23.8",
+    "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@tailwindcss/container-queries": "^0.1.1",
+    "@tailwindcss/typography": "^0.5.15",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
@@ -61,8 +62,6 @@
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tailwindcss-animate": "^1.0.7",
-    "@tailwindcss/typography": "^0.5.15",
-    "@tailwindcss/container-queries": "^0.1.1",
     "typescript": "^5.9.3",
     "vite": "^6.0.0",
     "vite-plugin-pwa": "^0.21.0"

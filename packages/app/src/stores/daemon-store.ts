@@ -32,10 +32,63 @@ interface DaemonState {
 
   // Actions
   addConnection: (url: string, label?: string) => Promise<string>
+  reconnect: (profileId: string) => Promise<void>
+  reconnectAll: () => Promise<void>
   removeConnection: (id: string) => void
   setActiveConnection: (id: string) => void
   getActiveClient: () => DaemonClient | null
   getClient: (id: string) => DaemonClient | null
+}
+
+function connectProfile(
+  id: string,
+  url: string,
+  get: () => DaemonState,
+  set: (partial: Partial<DaemonState> | ((state: DaemonState) => Partial<DaemonState>)) => void,
+): { client: DaemonClient; connectPromise: Promise<void> } {
+  const clientId = `junction-web-${nanoid(8)}`
+  const client = new DaemonClient({ url, clientId, clientType: "browser" })
+
+  // Set initial connecting state
+  const connections = new Map(get().connections)
+  connections.set(id, { status: "connecting", client })
+  set({ connections })
+
+  // Subscribe to connection status changes
+  const unsubscribeStatus = client.subscribeConnectionStatus((connState) => {
+    const newStatus: ConnectionStatus =
+      connState.status === "connected"
+        ? "connected"
+        : connState.status === "connecting"
+          ? "connecting"
+          : "disconnected"
+
+    const current = get().connections.get(id)
+    if (current && current.status !== newStatus) {
+      const conns = new Map(get().connections)
+      conns.set(id, { ...current, status: newStatus })
+      set({ connections: conns })
+    }
+  })
+
+  // Store the unsubscribe function
+  {
+    const conns = new Map(get().connections)
+    const conn = conns.get(id)
+    if (conn) {
+      conns.set(id, { ...conn, unsubscribe: unsubscribeStatus })
+      set({ connections: conns })
+    }
+  }
+
+  const connectPromise = client.connect().catch((e) => {
+    const conns = new Map(get().connections)
+    conns.set(id, { status: "error", client, unsubscribe: unsubscribeStatus })
+    set({ connections: conns })
+    throw e
+  })
+
+  return { client, connectPromise }
 }
 
 export const useDaemonStore = create<DaemonState>()(
@@ -57,65 +110,42 @@ export const useDaemonStore = create<DaemonState>()(
           url,
         }
 
-        const clientId = `junction-web-${nanoid(8)}`
-        const client = new DaemonClient({
-          url,
-          clientId,
-          clientType: "browser",
-        })
-
-        // Add profile and set up initial connection state
-        const connections = new Map(get().connections)
-        connections.set(id, { status: "connecting", client })
+        // Add profile first
         set((state) => ({
           profiles: [...state.profiles, profile],
           activeConnectionId: state.activeConnectionId ?? id,
-          connections,
         }))
 
-        // Subscribe to connection status changes
-        const unsubscribeStatus = client.subscribeConnectionStatus(
-          (connState) => {
-            const newStatus: ConnectionStatus =
-              connState.status === "connected"
-                ? "connected"
-                : connState.status === "connecting"
-                  ? "connecting"
-                  : connState.status === "disconnected"
-                    ? "disconnected"
-                    : "disconnected"
+        const { connectPromise } = connectProfile(id, url, get, set)
+        await connectPromise
+        return id
+      },
 
-            const current = get().connections.get(id)
-            if (current && current.status !== newStatus) {
-              const connections = new Map(get().connections)
-              connections.set(id, { ...current, status: newStatus })
-              set({ connections })
-            }
-          },
+      reconnect: async (profileId: string) => {
+        const profile = get().profiles.find((p) => p.id === profileId)
+        if (!profile) return
+
+        // Already connected or connecting — skip
+        const existing = get().connections.get(profileId)
+        if (existing && (existing.status === "connected" || existing.status === "connecting")) {
+          return
+        }
+
+        // Clean up stale connection if any
+        if (existing) {
+          existing.unsubscribe?.()
+          existing.client.close().catch(() => {})
+        }
+
+        const { connectPromise } = connectProfile(profileId, profile.url, get, set)
+        await connectPromise
+      },
+
+      reconnectAll: async () => {
+        const { profiles } = get()
+        await Promise.allSettled(
+          profiles.map((p) => get().reconnect(p.id)),
         )
-
-        // Store the unsubscribe function
-        const conn = get().connections.get(id)
-        if (conn) {
-          const connections = new Map(get().connections)
-          connections.set(id, { ...conn, unsubscribe: unsubscribeStatus })
-          set({ connections })
-        }
-
-        // Connect and wait for welcome
-        try {
-          await client.connect()
-          return id
-        } catch (e) {
-          const connections = new Map(get().connections)
-          connections.set(id, {
-            status: "error",
-            client,
-            unsubscribe: unsubscribeStatus,
-          })
-          set({ connections })
-          throw e
-        }
       },
 
       removeConnection: (id: string) => {
@@ -159,4 +189,3 @@ export const useDaemonStore = create<DaemonState>()(
     },
   ),
 )
-
