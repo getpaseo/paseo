@@ -24,7 +24,7 @@ app.use(
 )
 
 // Better Auth handles /api/auth/* routes
-app.all("/api/auth/*splat", toNodeHandler(auth))
+app.all("/api/auth/*", toNodeHandler(auth))
 
 // tRPC handles /api/trpc/* routes
 app.use(

@@ -35,10 +35,12 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
-    "prettier": "^3.5.3",
     "get-port-cli": "^3.0.0",
     "knip": "^5.82.1",
+    "mprocs": "^0.8.3",
     "patch-package": "^8.0.1",
+    "prettier": "^3.5.3",
+    "tsx": "^4.6.0",
     "typescript": "^5.9.3"
   },
   "description": "Junction: distributed AI agent platform",

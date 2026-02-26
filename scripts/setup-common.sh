@@ -117,6 +117,9 @@ DATABASE_URL="$DATABASE_URL" pnpm exec prisma generate
 
 echo "→ Pushing Prisma schema to database..."
 DATABASE_URL="$DATABASE_URL" pnpm exec prisma db push
+
+echo "→ Seeding dev user..."
+DATABASE_URL="$DATABASE_URL" BETTER_AUTH_URL="http://localhost:${API_PORT}" BETTER_AUTH_SECRET="junction-dev-secret" pnpm run db:seed
 cd "$REPO_ROOT"
 
 # ------------------------------------------------------------------

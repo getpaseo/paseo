@@ -133,14 +133,9 @@ echo "════════════════════════�
 echo ""
 
 # ------------------------------------------------------------------
-# Start all services with concurrently (TUI-style)
+# Start all services with mprocs (interactive TUI)
 # ------------------------------------------------------------------
-exec concurrently \
-  --names "daemon,api,app" \
-  --prefix-colors "cyan,yellow,magenta" \
-  --prefix "[{name}]" \
-  --kill-others-on-fail \
-  --handle-input \
+exec mprocs \
   "JUNCTION_LISTEN=0.0.0.0:${DAEMON_PORT} JUNCTION_CORS_ORIGINS='${CORS_ORIGINS}' JUNCTION_HOME='${JUNCTION_HOME}' pnpm run dev:server" \
   "PORT=${API_PORT} DATABASE_URL='postgresql://postgres:postgres@localhost:5435/${WORKSPACE_NAME}' CORS_ORIGINS='${CORS_ORIGINS}' pnpm run dev:api" \
-  "BROWSER=none VITE_API_URL='http://localhost:${API_PORT}' EXPO_PUBLIC_LOCAL_DAEMON='${LOCAL_DAEMON}' pnpm exec vite --port ${APP_PORT} --host --config packages/app/vite.config.ts"
+  "BROWSER=none VITE_API_URL='http://localhost:${API_PORT}' EXPO_PUBLIC_LOCAL_DAEMON='${LOCAL_DAEMON}' pnpm --filter @junction/app exec vite --port ${APP_PORT} --host"
