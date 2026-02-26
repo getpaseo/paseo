@@ -161,9 +161,9 @@ export async function createJunctionDaemon(
           `http://${listenTarget.host}:${listenTarget.port}`,
           `http://localhost:${listenTarget.port}`,
           `http://127.0.0.1:${listenTarget.port}`,
-          // Vite dev server
-          "http://localhost:5173",
-          "http://127.0.0.1:5173",
+          // Vite dev server (may use fallback ports when 5173 is occupied)
+          ...Array.from({ length: 11 }, (_, i) => `http://localhost:${5173 + i}`),
+          ...Array.from({ length: 11 }, (_, i) => `http://127.0.0.1:${5173 + i}`),
         ]
       : []),
   ]);

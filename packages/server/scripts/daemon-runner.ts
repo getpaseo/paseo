@@ -4,7 +4,7 @@ import { loadConfig } from "../src/server/config.js";
 import { acquirePidLock, PidLockError, releasePidLock } from "../src/server/pid-lock.js";
 import { resolveJunctionHome } from "../src/server/junction-home.js";
 import { runSupervisor } from "./supervisor.js";
-import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
+
 
 type DaemonRunnerConfig = {
   devMode: boolean;
@@ -62,8 +62,6 @@ async function main(): Promise<void> {
     ...process.env,
     JUNCTION_PID_LOCK_MODE: "external",
   };
-
-  applySherpaLoaderEnv(workerEnv);
 
   const junctionHome = resolveJunctionHome(workerEnv);
   const daemonConfig = loadConfig(junctionHome, { env: workerEnv });
