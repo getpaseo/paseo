@@ -19,6 +19,8 @@ export function createDaemonCommand(): Command {
     .description('Show local daemon status')
     .option('--json', 'Output in JSON format')
     .option('--home <path>', 'Junction home directory (default: ~/.junction)')
+    .option('--all', 'Show status of all running daemons')
+    .option('--port <port>', 'Show status of daemon on specific port')
     .action(withOutput(runStatusCommand))
 
   daemon
@@ -28,6 +30,9 @@ export function createDaemonCommand(): Command {
     .option('--home <path>', 'Junction home directory (default: ~/.junction)')
     .option('--timeout <seconds>', 'Wait timeout before failing (default: 15)')
     .option('--force', 'Send SIGKILL if graceful stop times out')
+    .option('--all', 'Stop all running daemons')
+    .option('--port <port>', 'Stop daemon on specific port')
+    .option('--listen <listen>', 'Stop daemon on specific listen address')
     .action(withOutput(runStopCommand))
 
   daemon

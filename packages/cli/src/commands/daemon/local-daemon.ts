@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { loadConfig, resolveJunctionHome } from '@junction/server'
@@ -40,6 +40,9 @@ export interface DetachedStartResult {
 
 export interface StopLocalDaemonOptions {
   home?: string
+  listen?: string
+  port?: string
+  all?: boolean
   timeoutMs?: number
   force?: boolean
 }
@@ -67,6 +70,7 @@ const PID_POLL_INTERVAL_MS = 100
 const KILL_TIMEOUT_MS = 3000
 const DAEMON_LOG_FILENAME = 'daemon.log'
 const DAEMON_PID_FILENAME = 'junction.pid'
+const DAEMON_PIDS_DIR = 'pids'
 
 export const DEFAULT_STOP_TIMEOUT_MS = 15_000
 
@@ -145,10 +149,6 @@ function resolveDaemonRunnerEntry(): string {
   }
 
   throw new Error('Unable to resolve @junction/server package root for daemon runner')
-}
-
-function pidFilePath(junctionHome: string): string {
-  return path.join(junctionHome, DAEMON_PID_FILENAME)
 }
 
 function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
@@ -304,7 +304,67 @@ export function resolveTcpHostFromListen(listen: string): string | null {
   return null
 }
 
-export function resolveLocalDaemonState(options: { home?: string } = {}): LocalDaemonState {
+function scanPidFiles(home: string): LocalDaemonState[] {
+  const logPath = path.join(home, DAEMON_LOG_FILENAME)
+  const states: LocalDaemonState[] = []
+  const seenPids = new Set<number>()
+
+  // Scan pids/ directory
+  const pidsDir = path.join(home, DAEMON_PIDS_DIR)
+  if (existsSync(pidsDir)) {
+    try {
+      const entries = readdirSync(pidsDir)
+      for (const entry of entries) {
+        if (!entry.endsWith('.pid')) continue
+        const pidPath = path.join(pidsDir, entry)
+        const pidInfo = readPidFile(pidPath)
+        if (!pidInfo) continue
+        const running = isProcessRunning(pidInfo.pid)
+        seenPids.add(pidInfo.pid)
+        states.push({
+          home,
+          listen: pidInfo.sockPath ?? 'unknown',
+          logPath,
+          pidPath,
+          pidInfo,
+          running,
+          stalePidFile: !running,
+        })
+      }
+    } catch {
+      // pids dir read failed
+    }
+  }
+
+  // Check legacy junction.pid
+  const legacyPath = path.join(home, DAEMON_PID_FILENAME)
+  if (existsSync(legacyPath)) {
+    const pidInfo = readPidFile(legacyPath)
+    if (pidInfo && !seenPids.has(pidInfo.pid)) {
+      const running = isProcessRunning(pidInfo.pid)
+      states.push({
+        home,
+        listen: pidInfo.sockPath ?? 'unknown',
+        logPath,
+        pidPath: legacyPath,
+        pidInfo,
+        running,
+        stalePidFile: !running,
+      })
+    }
+  }
+
+  return states
+}
+
+export function resolveAllLocalDaemonStates(options: { home?: string } = {}): LocalDaemonState[] {
+  const home = resolveLocalJunctionHome(options.home)
+  return scanPidFiles(home)
+}
+
+export function resolveLocalDaemonState(
+  options: { home?: string; listen?: string; port?: string } = {}
+): LocalDaemonState {
   const env: NodeJS.ProcessEnv = {
     ...envWithHome(options.home),
     // Status should reflect local persisted config + pid file, not inherited daemon env overrides.
@@ -313,20 +373,51 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
   }
   const home = resolveJunctionHome(env)
   const config = loadConfig(home, { env })
-  const pidPath = pidFilePath(home)
   const logPath = path.join(home, DAEMON_LOG_FILENAME)
-  const pidInfo = existsSync(pidPath) ? readPidFile(pidPath) : null
-  const running = pidInfo ? isProcessRunning(pidInfo.pid) : false
-  const listen = pidInfo?.sockPath ?? config.listen
 
+  // If targeting a specific listen address
+  const targetListen = options.listen ?? (options.port ? `127.0.0.1:${options.port}` : undefined)
+  if (targetListen) {
+    const allStates = scanPidFiles(home)
+    const match = allStates.find((s) => s.listen === targetListen)
+    if (match) return match
+
+    // No match found — return a "not running" state for the target
+    return {
+      home,
+      listen: targetListen,
+      logPath,
+      pidPath: path.join(home, DAEMON_PIDS_DIR, 'none'),
+      pidInfo: null,
+      running: false,
+      stalePidFile: false,
+    }
+  }
+
+  // Default: scan all PID files, prefer the one matching config's default listen
+  const allStates = scanPidFiles(home)
+
+  // Try to find daemon matching config's default listen address
+  const configMatch = allStates.find((s) => s.listen === config.listen && s.running)
+  if (configMatch) return configMatch
+
+  // Fall back to any running daemon
+  const anyRunning = allStates.find((s) => s.running)
+  if (anyRunning) return anyRunning
+
+  // Fall back to any stale daemon
+  const anyStale = allStates.find((s) => s.stalePidFile)
+  if (anyStale) return anyStale
+
+  // No daemons found at all
   return {
     home,
-    listen,
+    listen: config.listen,
     logPath,
-    pidPath,
-    pidInfo,
-    running,
-    stalePidFile: Boolean(pidInfo) && !running,
+    pidPath: path.join(home, DAEMON_PIDS_DIR, 'none'),
+    pidInfo: null,
+    running: false,
+    stalePidFile: false,
   }
 }
 
@@ -466,12 +557,10 @@ async function requestLifecycleShutdown(
   }
 }
 
-export async function stopLocalDaemon(
-  options: StopLocalDaemonOptions = {}
+async function stopSingleDaemon(
+  state: LocalDaemonState,
+  options: { timeoutMs: number; force?: boolean }
 ): Promise<StopLocalDaemonResult> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_STOP_TIMEOUT_MS
-  const state = resolveLocalDaemonState({ home: options.home })
-
   if (!state.pidInfo || !state.running) {
     const staleSuffix =
       state.stalePidFile && state.pidInfo
@@ -487,7 +576,7 @@ export async function stopLocalDaemon(
   }
 
   const pid = state.pidInfo.pid
-  const shutdownAttempt = await requestLifecycleShutdown(state, timeoutMs)
+  const shutdownAttempt = await requestLifecycleShutdown(state, options.timeoutMs)
   const lifecycleRequested = shutdownAttempt.requested
   const fallbackMessage = shutdownAttempt.requested ? null : shutdownAttempt.reason
   let forced = false
@@ -504,7 +593,7 @@ export async function stopLocalDaemon(
     }
   }
 
-  let stopped = await waitForPidExit(pid, timeoutMs)
+  let stopped = await waitForPidExit(pid, options.timeoutMs)
   if (!stopped && options.force) {
     forced = true
     signalProcessGroupSafely(pid, 'SIGKILL')
@@ -513,7 +602,7 @@ export async function stopLocalDaemon(
 
   if (!stopped) {
     throw new Error(
-      `Timed out waiting for daemon PID ${pid} to stop after ${Math.ceil(timeoutMs / 1000)}s`
+      `Timed out waiting for daemon PID ${pid} to stop after ${Math.ceil(options.timeoutMs / 1000)}s`
     )
   }
 
@@ -528,4 +617,35 @@ export async function stopLocalDaemon(
         ? 'Daemon stopped gracefully'
         : fallbackMessage ?? 'Daemon stopped via owner PID signal',
   }
+}
+
+export async function stopLocalDaemon(
+  options: StopLocalDaemonOptions = {}
+): Promise<StopLocalDaemonResult | StopLocalDaemonResult[]> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_STOP_TIMEOUT_MS
+
+  if (options.all) {
+    const allStates = resolveAllLocalDaemonStates({ home: options.home })
+    const running = allStates.filter((s) => s.running)
+    if (running.length === 0) {
+      return {
+        action: 'not_running',
+        home: resolveLocalJunctionHome(options.home),
+        pid: null,
+        forced: false,
+        message: 'No running daemons found',
+      }
+    }
+    const results = await Promise.all(
+      running.map((state) => stopSingleDaemon(state, { timeoutMs, force: options.force }))
+    )
+    return results.length === 1 ? results[0]! : results
+  }
+
+  const state = resolveLocalDaemonState({
+    home: options.home,
+    listen: options.listen,
+    port: options.port,
+  })
+  return stopSingleDaemon(state, { timeoutMs, force: options.force })
 }

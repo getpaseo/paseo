@@ -1,6 +1,6 @@
 import type { Command } from 'commander'
-import { stopLocalDaemon, DEFAULT_STOP_TIMEOUT_MS } from './local-daemon.js'
-import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
+import { stopLocalDaemon, DEFAULT_STOP_TIMEOUT_MS, type StopLocalDaemonResult } from './local-daemon.js'
+import type { CommandOptions, SingleResult, ListResult, OutputSchema, CommandError } from '../../output/index.js'
 
 interface StopResult {
   action: 'stopped' | 'not_running'
@@ -23,7 +23,7 @@ const stopResultSchema: OutputSchema<StopResult> = {
   ],
 }
 
-export type StopCommandResult = SingleResult<StopResult>
+export type StopCommandResult = SingleResult<StopResult> | ListResult<StopResult>
 
 function parseTimeoutMs(raw: unknown): number {
   if (typeof raw !== 'string' || raw.trim().length === 0) {
@@ -43,6 +43,15 @@ function parseTimeoutMs(raw: unknown): number {
   return Math.ceil(seconds * 1000)
 }
 
+function toStopResult(result: StopLocalDaemonResult): StopResult {
+  return {
+    action: result.action,
+    home: result.home,
+    pid: result.pid === null ? '-' : String(result.pid),
+    message: result.message,
+  }
+}
+
 export async function runStopCommand(
   options: CommandOptions,
   _command: Command
@@ -50,17 +59,24 @@ export async function runStopCommand(
   const home = typeof options.home === 'string' ? options.home : undefined
   const force = options.force === true
   const timeoutMs = parseTimeoutMs(options.timeout)
+  const all = options.all === true
+  const listen = typeof options.listen === 'string' ? options.listen : undefined
+  const port = typeof options.port === 'string' ? options.port : undefined
 
   try {
-    const result = await stopLocalDaemon({ home, force, timeoutMs })
+    const result = await stopLocalDaemon({ home, force, timeoutMs, all, listen, port })
+
+    if (Array.isArray(result)) {
+      return {
+        type: 'list',
+        data: result.map(toStopResult),
+        schema: stopResultSchema,
+      }
+    }
+
     return {
       type: 'single',
-      data: {
-        action: result.action,
-        home: result.home,
-        pid: result.pid === null ? '-' : String(result.pid),
-        message: result.message,
-      },
+      data: toStopResult(result),
       schema: stopResultSchema,
     }
   } catch (err) {

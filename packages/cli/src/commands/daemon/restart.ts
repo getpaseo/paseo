@@ -4,6 +4,7 @@ import {
   stopLocalDaemon,
   DEFAULT_STOP_TIMEOUT_MS,
   type DaemonStartOptions,
+  type StopLocalDaemonResult,
 } from './local-daemon.js'
 import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
 
@@ -78,18 +79,22 @@ export async function runRestartCommand(
   const startOptions = toStartOptions(options)
 
   try {
-    let stopResult: Awaited<ReturnType<typeof stopLocalDaemon>>
+    let rawStopResult: StopLocalDaemonResult | StopLocalDaemonResult[]
     try {
-      stopResult = await stopLocalDaemon({
+      rawStopResult = await stopLocalDaemon({
         home: startOptions.home,
+        listen: startOptions.listen,
+        port: startOptions.port,
         timeoutMs,
         force,
       })
     } catch (err) {
       const isTimeout = err instanceof Error && err.message.includes('Timed out waiting for daemon PID')
       if (!force && isTimeout) {
-        stopResult = await stopLocalDaemon({
+        rawStopResult = await stopLocalDaemon({
           home: startOptions.home,
+          listen: startOptions.listen,
+          port: startOptions.port,
           timeoutMs,
           force: true,
         })
@@ -98,6 +103,7 @@ export async function runRestartCommand(
       }
     }
 
+    const stopResult = Array.isArray(rawStopResult) ? rawStopResult[0]! : rawStopResult
     const startup = await startLocalDaemonDetached(startOptions)
     const before = stopResult.pid === null ? 'not running' : `PID ${stopResult.pid}`
     const after = startup.pid === null ? 'unknown PID' : `PID ${startup.pid}`

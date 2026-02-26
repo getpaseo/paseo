@@ -7,7 +7,7 @@
 
 import assert from 'node:assert'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { $ } from 'zx'
@@ -44,8 +44,25 @@ type PidLockState = {
 }
 
 async function readPidLockState(junctionHome: string): Promise<PidLockState> {
-  const pidPath = join(junctionHome, 'junction.pid')
+  // Check pids/ directory first (new format)
+  const pidsDir = join(junctionHome, 'pids')
+  try {
+    const entries = await readdir(pidsDir)
+    for (const entry of entries) {
+      if (!entry.endsWith('.pid')) continue
+      const content = await readFile(join(pidsDir, entry), 'utf-8')
+      const parsed = JSON.parse(content) as { pid?: unknown }
+      const pid = typeof parsed.pid === 'number' && Number.isInteger(parsed.pid) && parsed.pid > 0
+        ? parsed.pid
+        : null
+      if (pid !== null) return { pid }
+    }
+  } catch {
+    // pids dir may not exist yet
+  }
 
+  // Fall back to legacy junction.pid
+  const pidPath = join(junctionHome, 'junction.pid')
   try {
     const content = await readFile(pidPath, 'utf-8')
     const parsed = JSON.parse(content) as { pid?: unknown }

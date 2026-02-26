@@ -3,7 +3,12 @@ import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { tryConnectToDaemon } from '../../utils/client.js'
 import type { CommandOptions, ListResult, OutputSchema } from '../../output/index.js'
-import { resolveLocalDaemonState, resolveTcpHostFromListen } from './local-daemon.js'
+import {
+  resolveLocalDaemonState,
+  resolveAllLocalDaemonStates,
+  resolveTcpHostFromListen,
+  type LocalDaemonState,
+} from './local-daemon.js'
 import {
   formatNpmInvocation,
   resolveNpmInvocationFromNode,
@@ -238,6 +243,83 @@ function resolveOwnerLabel(uid: number | undefined, hostname: string | undefined
   return `${uidPart}@${hostPart}`
 }
 
+function createAllStatusSchema(statuses: DaemonStatus[]): OutputSchema<StatusRow> {
+  return {
+    idField: 'key',
+    columns: [
+      { header: 'KEY', field: 'key' },
+      {
+        header: 'VALUE',
+        field: 'value',
+        color: (_, item) => {
+          if (item.key !== 'Status') return undefined
+          if (item.value === 'running') return 'green'
+          if (item.value === 'unresponsive') return 'yellow'
+          return 'red'
+        },
+      },
+    ],
+    serialize: () => statuses,
+  }
+}
+
+async function probeDaemonState(state: LocalDaemonState): Promise<{
+  status: DaemonStatus['status']
+  runningAgents: number | null
+  idleAgents: number | null
+  note?: string
+}> {
+  if (!state.running) {
+    return {
+      status: 'stopped',
+      runningAgents: null,
+      idleAgents: null,
+      note: state.stalePidFile && state.pidInfo
+        ? `Stale PID file found for PID ${state.pidInfo.pid}`
+        : undefined,
+    }
+  }
+
+  const host = resolveTcpHostFromListen(state.listen)
+  if (!host) {
+    return {
+      status: 'running',
+      runningAgents: null,
+      idleAgents: null,
+      note: 'Daemon is configured for unix socket listen; API probe skipped',
+    }
+  }
+
+  const client = await tryConnectToDaemon({ host, timeout: 1500 })
+  if (!client) {
+    return {
+      status: 'unresponsive',
+      runningAgents: null,
+      idleAgents: null,
+      note: `Daemon PID is running but websocket at ${host} is not reachable`,
+    }
+  }
+
+  try {
+    const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } })
+    const agents = agentsPayload.entries.map((entry) => entry.agent)
+    return {
+      status: 'running',
+      runningAgents: agents.filter(a => a.status === 'running').length,
+      idleAgents: agents.filter(a => a.status === 'idle').length,
+    }
+  } catch {
+    return {
+      status: 'unresponsive',
+      runningAgents: null,
+      idleAgents: null,
+      note: `Daemon PID is running but API requests to ${host} failed`,
+    }
+  } finally {
+    await client.close().catch(() => {})
+  }
+}
+
 export type StatusResult = ListResult<StatusRow>
 
 export async function runStatusCommand(
@@ -245,7 +327,61 @@ export async function runStatusCommand(
   _command: Command
 ): Promise<StatusResult> {
   const home = typeof options.home === 'string' ? options.home : undefined
-  const state = resolveLocalDaemonState({ home })
+  const port = typeof options.port === 'string' ? options.port : undefined
+
+  if (options.all) {
+    const allStates = resolveAllLocalDaemonStates({ home })
+    const statuses: DaemonStatus[] = []
+    const rows: StatusRow[] = []
+
+    for (let i = 0; i < allStates.length; i++) {
+      const state = allStates[i]!
+      const probe = await probeDaemonState(state)
+      const daemonStatus: DaemonStatus = {
+        status: probe.status,
+        home: state.home,
+        listen: state.listen,
+        pid: state.pidInfo?.pid ?? null,
+        startedAt: state.pidInfo?.startedAt ?? null,
+        owner: resolveOwnerLabel(state.pidInfo?.uid, state.pidInfo?.hostname),
+        logPath: state.logPath,
+        runningAgents: probe.runningAgents,
+        idleAgents: probe.idleAgents,
+        runtimeNode: '-',
+        runtimeNpm: '-',
+        cliVersion: '-',
+        latestCliVersion: '-',
+        updateStatus: '-',
+        note: probe.note,
+      }
+      statuses.push(daemonStatus)
+
+      if (i > 0) {
+        rows.push({ key: '---', value: '---' })
+      }
+      rows.push(
+        { key: 'Listen', value: state.listen },
+        { key: 'Status', value: probe.status },
+        { key: 'PID', value: state.pidInfo?.pid == null ? '-' : String(state.pidInfo.pid) },
+        { key: 'Started', value: state.pidInfo?.startedAt ?? '-' },
+      )
+      if (probe.note) {
+        rows.push({ key: 'Note', value: probe.note })
+      }
+    }
+
+    if (rows.length === 0) {
+      rows.push({ key: 'Status', value: 'No daemons found' })
+    }
+
+    return {
+      type: 'list',
+      data: rows,
+      schema: createAllStatusSchema(statuses),
+    }
+  }
+
+  const state = resolveLocalDaemonState({ home, port })
 
   const owner = resolveOwnerLabel(state.pidInfo?.uid, state.pidInfo?.hostname)
   const resolvedNode = resolvePreferredNodePath({

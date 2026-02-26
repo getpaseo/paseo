@@ -80,12 +80,13 @@ async function main(): Promise<void> {
   }
 
   let lockReleased = false;
+  const listenAddress = daemonConfig.listen;
   const releaseLock = async (): Promise<void> => {
     if (lockReleased) {
       return;
     }
     lockReleased = true;
-    await releasePidLock(junctionHome, {
+    await releasePidLock(junctionHome, listenAddress, {
       ownerPid: process.pid,
     });
   };

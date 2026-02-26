@@ -518,7 +518,7 @@ export async function createJunctionDaemon(
       }
       // Release PID lock
       if (ownsPidLock) {
-        await releasePidLock(config.junctionHome, {
+        await releasePidLock(config.junctionHome, config.listen, {
           ownerPid: pidLockOwnerPid,
         });
       }
@@ -534,7 +534,7 @@ export async function createJunctionDaemon(
     };
   } catch (err) {
     if (ownsPidLock) {
-      await releasePidLock(config.junctionHome, {
+      await releasePidLock(config.junctionHome, config.listen, {
         ownerPid: pidLockOwnerPid,
       }).catch(() => undefined);
     }
