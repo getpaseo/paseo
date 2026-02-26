@@ -1,75 +1,105 @@
-import { useEffect, useRef } from "react"
+import React, { useEffect, useRef, memo, useState } from "react"
 import type { ChatMessage, PermissionRequest } from "./use-agent-chat"
 import { ToolCallItem } from "./tool-call-item"
 import { ChatMarkdown } from "@/components/chat-markdown"
+import { TextShimmer } from "@/components/ui/text-shimmer"
 import { cn } from "@/lib/cn"
+import { Copy, Check } from "lucide-react"
 
-function UserMessage({ message }: { message: ChatMessage }) {
+const UserMessage = memo(function UserMessage({
+  message,
+}: {
+  message: ChatMessage
+}) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-3.5 py-2 text-sm">
+      <div className="max-w-[85%] bg-input-background rounded-2xl px-4 py-2.5 text-sm">
         {message.content}
       </div>
     </div>
   )
-}
+})
 
-function AssistantMessage({
-  message,
-  isStreaming,
-}: {
-  message: ChatMessage
-  isStreaming: boolean
-}) {
-  const hasContent = message.content.length > 0
-  const hasToolCalls = (message.toolCalls?.length ?? 0) > 0
-  const isActive = isStreaming && !hasContent && !hasToolCalls
+const AssistantMessage = memo(
+  function AssistantMessage({
+    message,
+    isStreaming,
+  }: {
+    message: ChatMessage
+    isStreaming: boolean
+  }) {
+    const [copied, setCopied] = useState(false)
+    const hasContent = message.content.length > 0
+    const hasToolCalls = (message.toolCalls?.length ?? 0) > 0
+    const isThinking = isStreaming && !hasContent && !hasToolCalls
 
-  return (
-    <div className="max-w-[95%]">
-      {isActive && (
-        <div className="flex items-center gap-2 py-2">
-          <div className="flex gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-foreground/30 animate-bounce [animation-delay:0ms]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-foreground/30 animate-bounce [animation-delay:150ms]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-foreground/30 animate-bounce [animation-delay:300ms]" />
+    function handleCopy() {
+      if (!message.content) return
+      navigator.clipboard.writeText(message.content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+
+    return (
+      <div className="group relative w-full">
+        {isThinking && (
+          <div className="py-2">
+            <TextShimmer className="text-sm" duration={1.5}>
+              Thinking...
+            </TextShimmer>
           </div>
-          <span className="text-xs text-muted-foreground">Thinking...</span>
-        </div>
-      )}
+        )}
 
-      {hasContent && (
-        <ChatMarkdown
-          content={message.content}
-          isStreaming={isStreaming && !hasToolCalls}
-          className="text-sm"
-        />
-      )}
+        {hasContent && (
+          <ChatMarkdown
+            content={message.content}
+            isStreaming={isStreaming && !hasToolCalls}
+            className="text-sm"
+          />
+        )}
 
-      {hasToolCalls && (
-        <div className="mt-2 space-y-1">
-          {message.toolCalls!.map((tc) => (
+        {hasToolCalls &&
+          message.toolCalls!.map((tc) => (
             <ToolCallItem key={tc.toolCallId} toolCall={tc} />
           ))}
-        </div>
-      )}
 
-      {message.usage && !isStreaming && (
-        <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground">
-          {message.usage.inputTokens != null && (
-            <span>{message.usage.inputTokens.toLocaleString()} in</span>
-          )}
-          {message.usage.outputTokens != null && (
-            <span>{message.usage.outputTokens.toLocaleString()} out</span>
-          )}
-          {message.usage.totalCostUsd != null && (
-            <span>${message.usage.totalCostUsd.toFixed(4)}</span>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
+        {hasContent && !isStreaming && (
+          <button
+            onClick={handleCopy}
+            className="absolute top-0 right-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent opacity-0 group-hover:opacity-100 transition-opacity"
+            aria-label="Copy message"
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
+
+        {message.usage && !isStreaming && (
+          <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground">
+            {message.usage.inputTokens != null && (
+              <span>{message.usage.inputTokens.toLocaleString()} in</span>
+            )}
+            {message.usage.outputTokens != null && (
+              <span>{message.usage.outputTokens.toLocaleString()} out</span>
+            )}
+            {message.usage.totalCostUsd != null && (
+              <span>${message.usage.totalCostUsd.toFixed(4)}</span>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  },
+  (prev, next) =>
+    prev.message.id === next.message.id &&
+    prev.message.content.length === next.message.content.length &&
+    (prev.message.toolCalls?.length ?? 0) ===
+      (next.message.toolCalls?.length ?? 0) &&
+    prev.isStreaming === next.isStreaming,
+)
 
 function PermissionBanner({
   permission,
@@ -79,7 +109,7 @@ function PermissionBanner({
   onResolve: (requestId: string, allow: boolean) => void
 }) {
   return (
-    <div className="border border-yellow-500/30 bg-yellow-500/5 rounded-lg p-3 my-2">
+    <div className="border-l-2 border-yellow-500 bg-yellow-500/5 rounded-r-lg p-3 my-2">
       <div className="flex items-start gap-2">
         <span className="text-yellow-500 text-sm mt-0.5">!</span>
         <div className="flex-1 min-w-0">
@@ -131,13 +161,11 @@ export function ChatMessageList({
   onResolvePermission: (requestId: string, allow: boolean) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const isLastMessageIndex = messages.length - 1
+  const lastMessageIndex = messages.length - 1
 
-  // Auto-scroll to bottom on new messages
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    // Only auto-scroll if already near bottom
     const isNearBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight < 150
     if (isNearBottom) {
@@ -150,7 +178,7 @@ export function ChatMessageList({
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center text-muted-foreground">
           <p className="text-lg font-medium">Junction</p>
-          <p className="text-sm mt-1">Send a message to get started.</p>
+          <p className="text-sm mt-1">Send a message to get started</p>
         </div>
       </div>
     )
@@ -171,7 +199,7 @@ export function ChatMessageList({
             ) : (
               <AssistantMessage
                 message={message}
-                isStreaming={isStreaming && i === isLastMessageIndex}
+                isStreaming={isStreaming && i === lastMessageIndex}
               />
             )}
           </div>

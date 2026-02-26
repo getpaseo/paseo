@@ -1,6 +1,8 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import { useSetAtom } from "jotai"
 import type { DaemonClient } from "@server/client/daemon-client"
 import type { AgentSnapshotPayload } from "@server/shared/messages"
+import { selectedAgentIdAtom } from "@/lib/atoms"
 import { useAgentChat } from "./use-agent-chat"
 import { ChatMessageList } from "./chat-message-list"
 import { ChatInput } from "./chat-input"
@@ -25,7 +27,7 @@ function ChatHeader({
   const dotClass = statusColor[agent.status] ?? "bg-muted-foreground"
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-background/80 backdrop-blur-sm">
+    <div className="flex items-center gap-3 px-4 h-10 border-b border-border bg-background flex-shrink-0">
       <span
         className={cn("w-2 h-2 rounded-full flex-shrink-0", dotClass)}
         title={agent.status}
@@ -51,35 +53,57 @@ export function ChatView({
   agentId,
   provider,
   cwd,
+  initialPrompt,
+  onAgentCreated,
 }: {
   client: DaemonClient
   agentId?: string
   provider?: "claude" | "codex" | "opencode"
   cwd?: string
+  initialPrompt?: string
+  onAgentCreated?: (agentId: string) => void
 }) {
   const chat = useAgentChat({ client, agentId, provider, cwd })
   const [agent, setAgent] = useState<AgentSnapshotPayload | null>(null)
+  const setSelectedAgentId = useSetAtom(selectedAgentIdAtom)
+  const autoSentRef = useRef(false)
+
+  // Auto-send initial prompt (from NewChatForm)
+  useEffect(() => {
+    if (initialPrompt && !autoSentRef.current) {
+      autoSentRef.current = true
+      chat.send(initialPrompt)
+    }
+  }, [initialPrompt])
+
+  // When agent is created, update the selected agent ID
+  useEffect(() => {
+    if (chat.agentId && !agentId) {
+      setSelectedAgentId(chat.agentId)
+      onAgentCreated?.(chat.agentId)
+    }
+  }, [chat.agentId])
 
   // Fetch agent snapshot when viewing an existing agent
   useEffect(() => {
-    if (!agentId) return
+    const id = agentId ?? chat.agentId
+    if (!id) return
     let cancelled = false
 
     client
-      .fetchAgent(agentId)
+      .fetchAgent(id)
       .then((result) => {
         if (cancelled || !result) return
         setAgent(result.agent)
       })
       .catch(() => {})
 
-    // Listen for updates to this agent
     const off = client.on("agent_update", (msg) => {
       if (msg.type !== "agent_update") return
       const payload = msg.payload as
         | { kind: "upsert"; agent: AgentSnapshotPayload }
         | { kind: "remove"; agentId: string }
-      if (payload.kind === "upsert" && payload.agent.id === agentId) {
+      if (payload.kind === "upsert" && payload.agent.id === id) {
         setAgent(payload.agent)
       }
     })
@@ -88,7 +112,7 @@ export function ChatView({
       cancelled = true
       off()
     }
-  }, [agentId, client])
+  }, [agentId, chat.agentId, client])
 
   return (
     <div className="flex flex-col h-full">
