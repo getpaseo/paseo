@@ -1,31 +1,9 @@
-import { auth } from "./auth.js"
 import { prisma } from "./db.js"
 
-const DEV_USER = {
-  email: "test@gmail.com",
-  password: "Test123!@#",
-  name: "Test User",
-}
-
 async function seed() {
-  const existing = await prisma.user.findUnique({
-    where: { email: DEV_USER.email },
-  })
-
-  if (existing) {
-    console.log(`  User ${DEV_USER.email} already exists, skipping.`)
-    return
-  }
-
-  await auth.api.signUpEmail({
-    body: {
-      email: DEV_USER.email,
-      password: DEV_USER.password,
-      name: DEV_USER.name,
-    },
-  })
-
-  console.log(`  Seeded user: ${DEV_USER.email}`)
+  // GitHub SSO handles user creation on first login.
+  // No seed users needed.
+  console.log("  No seed data required (GitHub SSO handles user creation).")
 }
 
 seed()
