@@ -319,6 +319,8 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion('type', [
     type: z.literal('turn_failed'),
     provider: AgentProviderSchema,
     error: z.string(),
+    code: z.string().optional(),
+    diagnostic: z.string().optional(),
   }),
   z.object({
     type: z.literal('turn_canceled'),

@@ -240,7 +240,13 @@ export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage }
-  | { type: "turn_failed"; provider: AgentProvider; error: string }
+  | {
+      type: "turn_failed";
+      provider: AgentProvider;
+      error: string;
+      code?: string;
+      diagnostic?: string;
+    }
   | { type: "turn_canceled"; provider: AgentProvider; reason: string }
   | { type: "timeline"; item: AgentTimelineItem; provider: AgentProvider }
   | { type: "permission_requested"; provider: AgentProvider; request: AgentPermissionRequest }

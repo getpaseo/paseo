@@ -31,6 +31,12 @@ export const CLAUDE_MODEL_CATALOG: readonly ClaudeCatalogModel[] = [
     name: "Sonnet 4.5",
     description: "Sonnet 4.5 · Best for everyday tasks",
     isDefault: true,
+  },
+  {
+    family: "sonnet",
+    modelId: "claude-sonnet-4-6",
+    name: "Sonnet 4.6",
+    description: "Sonnet 4.6 · Best for everyday tasks",
     isLatestInFamily: true,
   },
   {
