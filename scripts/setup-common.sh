@@ -39,11 +39,11 @@ echo "════════════════════════�
 # ------------------------------------------------------------------
 echo ""
 echo "→ Starting PostgreSQL on port ${PG_PORT}..."
-docker compose -f "$REPO_ROOT/docker-compose.yml" up -d postgres
+docker compose -p junction -f "$REPO_ROOT/docker-compose.yml" up -d postgres
 
 echo "→ Waiting for PostgreSQL to be ready..."
 for i in $(seq 1 30); do
-  if docker compose -f "$REPO_ROOT/docker-compose.yml" exec -T postgres pg_isready -U "$PG_USER" > /dev/null 2>&1; then
+  if docker compose -p junction -f "$REPO_ROOT/docker-compose.yml" exec -T postgres pg_isready -U "$PG_USER" > /dev/null 2>&1; then
     echo "  PostgreSQL is ready."
     break
   fi
@@ -59,11 +59,11 @@ done
 # ------------------------------------------------------------------
 echo ""
 echo "→ Creating database '${WORKSPACE_NAME}' (if not exists)..."
-docker compose -f "$REPO_ROOT/docker-compose.yml" exec -T postgres \
+docker compose -p junction -f "$REPO_ROOT/docker-compose.yml" exec -T postgres \
   psql -U "$PG_USER" -d junction_dev -tc \
   "SELECT 1 FROM pg_database WHERE datname = '${WORKSPACE_NAME}'" \
   | grep -q 1 \
-  || docker compose -f "$REPO_ROOT/docker-compose.yml" exec -T postgres \
+  || docker compose -p junction -f "$REPO_ROOT/docker-compose.yml" exec -T postgres \
     createdb -U "$PG_USER" "$WORKSPACE_NAME"
 echo "  Database '${WORKSPACE_NAME}' ready."
 
