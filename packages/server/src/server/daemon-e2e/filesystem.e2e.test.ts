@@ -51,7 +51,7 @@ describe("daemon E2E", () => {
         expect(agent.status).toBe("idle");
 
         // List directory contents
-        const result = await ctx.client.exploreFileSystem(agent.id, cwd, "list");
+        const result = await ctx.client.exploreFileSystem(cwd, ".", "list");
 
         // Verify listing returned without error
         expect(result.error).toBeNull();
@@ -100,7 +100,7 @@ describe("daemon E2E", () => {
         expect(agent.id).toBeTruthy();
 
         // Read file contents
-        const result = await ctx.client.exploreFileSystem(agent.id, testFile, "file");
+        const result = await ctx.client.exploreFileSystem(cwd, "readme.txt", "file");
 
         // Verify file read
         expect(result.error).toBeNull();
@@ -134,8 +134,7 @@ describe("daemon E2E", () => {
         expect(agent.id).toBeTruthy();
 
         // Try to list non-existent path
-        const nonExistent = path.join(cwd, "does-not-exist");
-        const result = await ctx.client.exploreFileSystem(agent.id, nonExistent, "list");
+        const result = await ctx.client.exploreFileSystem(cwd, "does-not-exist", "list");
 
         // Should return error
         expect(result.error).toBeTruthy();

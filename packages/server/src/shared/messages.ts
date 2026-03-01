@@ -927,7 +927,7 @@ const FileExplorerDirectorySchema = z.object({
 
 export const FileExplorerRequestSchema = z.object({
   type: z.literal('file_explorer_request'),
-  agentId: z.string(),
+  cwd: z.string(),
   path: z.string().optional(),
   mode: z.enum(['list', 'file']),
   requestId: z.string(),
@@ -941,7 +941,7 @@ export const ProjectIconRequestSchema = z.object({
 
 export const FileDownloadTokenRequestSchema = z.object({
   type: z.literal('file_download_token_request'),
-  agentId: z.string(),
+  cwd: z.string(),
   path: z.string(),
   requestId: z.string(),
 })
@@ -1786,6 +1786,7 @@ export const DirectorySuggestionsResponseSchema = z.object({
 
 const PaseoWorktreeSchema = z.object({
   worktreePath: z.string(),
+  createdAt: z.string(),
   branchName: z.string().nullable().optional(),
   head: z.string().nullable().optional(),
 })
@@ -1812,7 +1813,7 @@ export const PaseoWorktreeArchiveResponseSchema = z.object({
 export const FileExplorerResponseSchema = z.object({
   type: z.literal('file_explorer_response'),
   payload: z.object({
-    agentId: z.string(),
+    cwd: z.string(),
     path: z.string(),
     mode: z.enum(['list', 'file']),
     directory: FileExplorerDirectorySchema.nullable(),
@@ -1840,7 +1841,7 @@ export const ProjectIconResponseSchema = z.object({
 export const FileDownloadTokenResponseSchema = z.object({
   type: z.literal('file_download_token_response'),
   payload: z.object({
-    agentId: z.string(),
+    cwd: z.string(),
     path: z.string(),
     token: z.string().nullable(),
     fileName: z.string().nullable(),

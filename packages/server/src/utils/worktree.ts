@@ -1,6 +1,6 @@
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "fs";
 import { join, basename, dirname, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
@@ -108,6 +108,7 @@ export class WorktreeDestroyError extends Error {
 
 export interface PaseoWorktreeInfo {
   path: string;
+  createdAt: string;
   branchName?: string;
   head?: string;
 }
@@ -728,9 +729,11 @@ export async function isPaseoOwnedWorktreeCwd(
   };
 }
 
-function parseWorktreeList(output: string): PaseoWorktreeInfo[] {
-  const entries: PaseoWorktreeInfo[] = [];
-  let current: PaseoWorktreeInfo | null = null;
+type ParsedPaseoWorktreeInfo = Omit<PaseoWorktreeInfo, "createdAt">;
+
+function parseWorktreeList(output: string): ParsedPaseoWorktreeInfo[] {
+  const entries: ParsedPaseoWorktreeInfo[] = [];
+  let current: ParsedPaseoWorktreeInfo | null = null;
 
   for (const line of output.split("\n")) {
     if (line.startsWith("worktree ")) {
@@ -767,6 +770,18 @@ function parseWorktreeList(output: string): PaseoWorktreeInfo[] {
   return entries;
 }
 
+function resolveWorktreeCreatedAtIso(worktreePath: string): string {
+  try {
+    const stats = statSync(worktreePath);
+    const birthtimeMs = stats.birthtimeMs;
+    const createdAtMs =
+      Number.isFinite(birthtimeMs) && birthtimeMs > 0 ? birthtimeMs : stats.ctimeMs;
+    return new Date(createdAtMs).toISOString();
+  } catch {
+    return new Date(0).toISOString();
+  }
+}
+
 export async function listPaseoWorktrees({
   cwd,
   paseoHome,
@@ -783,7 +798,11 @@ export async function listPaseoWorktrees({
   const rootPrefix = normalizePathForOwnership(worktreesRoot) + sep;
   return parseWorktreeList(stdout)
     .map((entry) => ({ ...entry, path: normalizePathForOwnership(entry.path) }))
-    .filter((entry) => entry.path.startsWith(rootPrefix));
+    .filter((entry) => entry.path.startsWith(rootPrefix))
+    .map((entry) => ({
+      ...entry,
+      createdAt: resolveWorktreeCreatedAtIso(entry.path),
+    }));
 }
 
 export async function resolvePaseoWorktreeRootForCwd(

@@ -307,6 +307,7 @@ export async function createPaseoDaemon(
     agentManager,
     agentStorage
   );
+  await agentStorage.initialize();
   const persistedRecords = await agentStorage.list();
   logger.info(
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`

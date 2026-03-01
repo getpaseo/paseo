@@ -234,7 +234,7 @@ async function resolveScopedPath({
     return requestedPath;
   }
 
-  throw new Error("Access outside of agent workspace is not allowed");
+  throw new Error("Access outside of workspace is not allowed");
 }
 
 async function buildEntryPayload({

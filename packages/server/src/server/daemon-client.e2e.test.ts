@@ -1163,7 +1163,7 @@ describe("daemon client E2E", () => {
             if (message.type !== "file_explorer_response") {
               return;
             }
-            if (message.payload.agentId !== agent.id) {
+            if (message.payload.cwd !== cwd) {
               return;
             }
             if (message.payload.mode !== "list") {
@@ -1179,7 +1179,7 @@ describe("daemon client E2E", () => {
       });
 
       const listResult = await ctx.client.exploreFileSystem(
-        agent.id,
+        cwd,
         ".",
         "list",
         listRequestId
@@ -1199,7 +1199,7 @@ describe("daemon client E2E", () => {
             if (message.type !== "file_explorer_response") {
               return;
             }
-            if (message.payload.agentId !== agent.id) {
+            if (message.payload.cwd !== cwd) {
               return;
             }
             if (message.payload.mode !== "file") {
@@ -1215,7 +1215,7 @@ describe("daemon client E2E", () => {
       });
 
       const fileResult = await ctx.client.exploreFileSystem(
-        agent.id,
+        cwd,
         "download.txt",
         "file",
         fileRequestId
@@ -1235,7 +1235,7 @@ describe("daemon client E2E", () => {
             if (message.type !== "file_download_token_response") {
               return;
             }
-            if (message.payload.agentId !== agent.id) {
+            if (message.payload.cwd !== cwd) {
               return;
             }
             if (!message.payload.path.endsWith("download.txt")) {
@@ -1251,7 +1251,7 @@ describe("daemon client E2E", () => {
       });
 
       const tokenResponse = await ctx.client.requestDownloadToken(
-        agent.id,
+        cwd,
         "download.txt",
         tokenRequestId
       );
@@ -1259,7 +1259,7 @@ describe("daemon client E2E", () => {
       expect(tokenResponse.error).toBeNull();
       expect(tokenResponse.token).toBeTruthy();
       expect(tokenResponse.requestId).toBe(tokenRequestId);
-      expect(tokenMessage.payload.agentId).toBe(agent.id);
+      expect(tokenMessage.payload.cwd).toBe(cwd);
       expect(tokenMessage.payload.requestId).toBe(tokenRequestId);
 
       const response = await fetch(

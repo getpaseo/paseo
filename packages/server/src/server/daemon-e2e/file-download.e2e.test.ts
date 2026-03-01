@@ -46,7 +46,7 @@ describe("daemon E2E", () => {
         expect(agent.id).toBeTruthy();
 
         const tokenResponse = await ctx.client.requestDownloadToken(
-          agent.id,
+          cwd,
           "download.txt"
         );
 
@@ -102,7 +102,7 @@ describe("daemon E2E", () => {
         });
 
         const tokenResponse = await ctx.client.requestDownloadToken(
-          agent.id,
+          cwd,
           "expired.txt"
         );
 
@@ -123,7 +123,7 @@ describe("daemon E2E", () => {
     );
 
     test(
-      "rejects paths outside the agent cwd",
+      "rejects paths outside the workspace cwd",
       async () => {
         const cwd = tmpCwd();
         const agent = await ctx.client.createAgent({
@@ -133,7 +133,7 @@ describe("daemon E2E", () => {
         });
 
         const tokenResponse = await ctx.client.requestDownloadToken(
-          agent.id,
+          cwd,
           "../outside.txt"
         );
 

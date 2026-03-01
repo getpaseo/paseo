@@ -4380,6 +4380,7 @@ export class Session {
         payload: {
           worktrees: worktrees.map((entry) => ({
             worktreePath: entry.path,
+            createdAt: entry.createdAt,
             branchName: entry.branchName ?? null,
             head: entry.head ?? null,
           })),
@@ -4604,41 +4605,38 @@ export class Session {
   }
 
   /**
-   * Handle read-only file explorer requests scoped to an agent's cwd
+   * Handle read-only file explorer requests scoped to a workspace cwd
    */
   private async handleFileExplorerRequest(request: FileExplorerRequest): Promise<void> {
-    const { agentId, path: requestedPath = '.', mode, requestId } = request
+    const { cwd: workspaceCwd, path: requestedPath = '.', mode, requestId } = request
+    const cwd = workspaceCwd.trim()
+    if (!cwd) {
+      this.emit({
+        type: 'file_explorer_response',
+        payload: {
+          cwd: workspaceCwd,
+          path: requestedPath,
+          mode,
+          directory: null,
+          file: null,
+          error: 'cwd is required',
+          requestId,
+        },
+      })
+      return
+    }
 
     try {
-      const agents = this.agentManager.listAgents()
-      const agent = agents.find((a) => a.id === agentId)
-
-      if (!agent) {
-        this.emit({
-          type: 'file_explorer_response',
-          payload: {
-            agentId,
-            path: requestedPath,
-            mode,
-            directory: null,
-            file: null,
-            error: `Agent not found: ${agentId}`,
-            requestId,
-          },
-        })
-        return
-      }
-
       if (mode === 'list') {
         const directory = await listDirectoryEntries({
-          root: agent.cwd,
+          root: cwd,
           relativePath: requestedPath,
         })
 
         this.emit({
           type: 'file_explorer_response',
           payload: {
-            agentId,
+            cwd,
             path: directory.path,
             mode,
             directory,
@@ -4649,14 +4647,14 @@ export class Session {
         })
       } else {
         const file = await readExplorerFile({
-          root: agent.cwd,
+          root: cwd,
           relativePath: requestedPath,
         })
 
         this.emit({
           type: 'file_explorer_response',
           payload: {
-            agentId,
+            cwd,
             path: file.path,
             mode,
             directory: null,
@@ -4668,13 +4666,13 @@ export class Session {
       }
     } catch (error: any) {
       this.sessionLogger.error(
-        { err: error, agentId, path: requestedPath },
-        `Failed to fulfill file explorer request for agent ${agentId}`
+        { err: error, cwd, path: requestedPath },
+        `Failed to fulfill file explorer request for workspace ${cwd}`
       )
       this.emit({
         type: 'file_explorer_response',
         payload: {
-          agentId,
+          cwd,
           path: requestedPath,
           mode,
           directory: null,
@@ -4719,44 +4717,40 @@ export class Session {
   }
 
   /**
-   * Handle file download token request scoped to an agent's cwd
+   * Handle file download token request scoped to a workspace cwd
    */
   private async handleFileDownloadTokenRequest(request: FileDownloadTokenRequest): Promise<void> {
-    const { agentId, path: requestedPath, requestId } = request
+    const { cwd: workspaceCwd, path: requestedPath, requestId } = request
+    const cwd = workspaceCwd.trim()
+    if (!cwd) {
+      this.emit({
+        type: 'file_download_token_response',
+        payload: {
+          cwd: workspaceCwd,
+          path: requestedPath,
+          token: null,
+          fileName: null,
+          mimeType: null,
+          size: null,
+          error: 'cwd is required',
+          requestId,
+        },
+      })
+      return
+    }
 
     this.sessionLogger.debug(
-      { agentId, path: requestedPath },
-      `Handling file download token request for agent ${agentId} (${requestedPath})`
+      { cwd, path: requestedPath },
+      `Handling file download token request for workspace ${cwd} (${requestedPath})`
     )
 
     try {
-      const agents = this.agentManager.listAgents()
-      const agent = agents.find((a) => a.id === agentId)
-
-      if (!agent) {
-        this.emit({
-          type: 'file_download_token_response',
-          payload: {
-            agentId,
-            path: requestedPath,
-            token: null,
-            fileName: null,
-            mimeType: null,
-            size: null,
-            error: `Agent not found: ${agentId}`,
-            requestId,
-          },
-        })
-        return
-      }
-
       const info = await getDownloadableFileInfo({
-        root: agent.cwd,
+        root: cwd,
         relativePath: requestedPath,
       })
 
       const entry = this.downloadTokenStore.issueToken({
-        agentId,
         path: info.path,
         absolutePath: info.absolutePath,
         fileName: info.fileName,
@@ -4767,7 +4761,7 @@ export class Session {
       this.emit({
         type: 'file_download_token_response',
         payload: {
-          agentId,
+          cwd,
           path: info.path,
           token: entry.token,
           fileName: entry.fileName,
@@ -4779,13 +4773,13 @@ export class Session {
       })
     } catch (error: any) {
       this.sessionLogger.error(
-        { err: error, agentId, path: requestedPath },
-        `Failed to issue download token for agent ${agentId}`
+        { err: error, cwd, path: requestedPath },
+        `Failed to issue download token for workspace ${cwd}`
       )
       this.emit({
         type: 'file_download_token_response',
         payload: {
-          agentId,
+          cwd,
           path: requestedPath,
           token: null,
           fileName: null,

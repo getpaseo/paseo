@@ -2166,7 +2166,7 @@ export class DaemonClient {
   // ============================================================================
 
   async exploreFileSystem(
-    agentId: string,
+    cwd: string,
     path: string,
     mode: 'list' | 'file' = 'list',
     requestId?: string
@@ -2175,7 +2175,7 @@ export class DaemonClient {
       requestId,
       message: {
         type: 'file_explorer_request',
-        agentId,
+        cwd,
         path,
         mode,
       },
@@ -2185,7 +2185,7 @@ export class DaemonClient {
   }
 
   async requestDownloadToken(
-    agentId: string,
+    cwd: string,
     path: string,
     requestId?: string
   ): Promise<FileDownloadTokenPayload> {
@@ -2193,7 +2193,7 @@ export class DaemonClient {
       requestId,
       message: {
         type: 'file_download_token_request',
-        agentId,
+        cwd,
         path,
       },
       responseType: 'file_download_token_response',

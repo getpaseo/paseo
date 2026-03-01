@@ -79,6 +79,7 @@ export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
   private pathById: Map<string, string> = new Map();
+  private pathsById: Map<string, Set<string>> = new Map();
   private pendingWrites: Map<string, Promise<void>> = new Map();
   private deleting: Set<string> = new Set();
   private loaded = false;
@@ -91,6 +92,10 @@ export class AgentStorage {
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
   }
 
+  async initialize(): Promise<void> {
+    await this.load();
+  }
+
   async list(): Promise<StoredAgentRecord[]> {
     await this.load();
     return Array.from(this.cache.values());
@@ -98,24 +103,7 @@ export class AgentStorage {
 
   async get(agentId: string): Promise<StoredAgentRecord | null> {
     await this.load();
-    const cached = this.cache.get(agentId);
-    if (cached) {
-      return cached;
-    }
-
-    const discoveredPath = await this.findAgentPathById(agentId);
-    if (!discoveredPath) {
-      return null;
-    }
-
-    const record = await this.readRecordFile(discoveredPath);
-    if (!record) {
-      return null;
-    }
-
-    this.cache.set(record.id, record);
-    this.pathById.set(record.id, discoveredPath);
-    return record;
+    return this.cache.get(agentId) ?? null;
   }
 
   async upsert(record: StoredAgentRecord): Promise<void> {
@@ -132,6 +120,7 @@ export class AgentStorage {
 
       await fs.mkdir(path.dirname(nextPath), { recursive: true });
       await writeFileAtomically(nextPath, JSON.stringify(record, null, 2));
+      this.addIndexedPath(agentId, nextPath);
 
       if (previousPath && previousPath !== nextPath) {
         try {
@@ -139,6 +128,7 @@ export class AgentStorage {
         } catch {
           // ignore cleanup errors
         }
+        this.removeIndexedPath(agentId, previousPath);
       }
 
       this.cache.set(agentId, record);
@@ -165,47 +155,8 @@ export class AgentStorage {
     await this.load();
     this.beginDelete(agentId);
     await (this.pendingWrites.get(agentId) ?? Promise.resolve());
-    const candidates = new Set<string>();
-
-    const existingPath =
-      this.pathById.get(agentId) ?? (await this.findAgentPathById(agentId));
-    if (existingPath) {
-      candidates.add(existingPath);
-    }
-
-    // Remove any stray duplicate record files across project directories.
-    // This can happen across storage layout migrations or when a record path changes.
-    try {
-      const projects = await fs.readdir(this.baseDir, { withFileTypes: true });
-      for (const project of projects) {
-        if (!project.isDirectory()) {
-          continue;
-        }
-        const projectDir = path.join(this.baseDir, project.name);
-        candidates.add(path.join(projectDir, `${agentId}.json`));
-
-        // Support one more nesting layer (e.g. provider/version subfolders).
-        let entries: Array<import("node:fs").Dirent> = [];
-        try {
-          entries = await fs.readdir(projectDir, { withFileTypes: true });
-        } catch {
-          continue;
-        }
-        for (const entry of entries) {
-          if (!entry.isDirectory()) {
-            continue;
-          }
-          candidates.add(path.join(projectDir, entry.name, `${agentId}.json`));
-        }
-      }
-    } catch {
-      // ignore scan errors
-    }
-
-    // Support legacy flat layouts: baseDir/<agentId>.json
-    candidates.add(path.join(this.baseDir, `${agentId}.json`));
-
-    for (const filePath of candidates) {
+    const paths = Array.from(this.pathsById.get(agentId) ?? []);
+    for (const filePath of paths) {
       try {
         await fs.unlink(filePath);
       } catch (error) {
@@ -221,6 +172,7 @@ export class AgentStorage {
 
     this.cache.delete(agentId);
     this.pathById.delete(agentId);
+    this.pathsById.delete(agentId);
   }
 
   async applySnapshot(
@@ -282,6 +234,7 @@ export class AgentStorage {
   private async doLoad(): Promise<StoredAgentRecord[]> {
     this.cache.clear();
     this.pathById.clear();
+    this.pathsById.clear();
 
     try {
       const records = await this.scanDisk();
@@ -311,6 +264,19 @@ export class AgentStorage {
     }
 
     for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith(".json")) {
+        const rootPath = path.join(this.baseDir, entry.name);
+        const rootRecord = await this.readRecordFile(rootPath);
+        if (!rootRecord) {
+          continue;
+        }
+        records.push(rootRecord);
+        this.cache.set(rootRecord.id, rootRecord);
+        this.pathById.set(rootRecord.id, rootPath);
+        this.addIndexedPath(rootRecord.id, rootPath);
+        continue;
+      }
+
       if (!entry.isDirectory()) {
         continue;
       }
@@ -334,6 +300,7 @@ export class AgentStorage {
         records.push(record);
         this.cache.set(record.id, record);
         this.pathById.set(record.id, filePath);
+        this.addIndexedPath(record.id, filePath);
       }
     }
 
@@ -356,28 +323,21 @@ export class AgentStorage {
     return path.join(this.baseDir, projectDir, `${record.id}.json`);
   }
 
-  private async findAgentPathById(agentId: string): Promise<string | null> {
-    let projects: Array<import("node:fs").Dirent> = [];
-    try {
-      projects = await fs.readdir(this.baseDir, { withFileTypes: true });
-    } catch {
-      return null;
-    }
+  private addIndexedPath(agentId: string, filePath: string): void {
+    const paths = this.pathsById.get(agentId) ?? new Set<string>();
+    paths.add(filePath);
+    this.pathsById.set(agentId, paths);
+  }
 
-    for (const project of projects) {
-      if (!project.isDirectory()) {
-        continue;
-      }
-      const candidate = path.join(this.baseDir, project.name, `${agentId}.json`);
-      try {
-        await fs.access(candidate);
-        return candidate;
-      } catch {
-        // not here
-      }
+  private removeIndexedPath(agentId: string, filePath: string): void {
+    const paths = this.pathsById.get(agentId);
+    if (!paths) {
+      return;
     }
-
-    return null;
+    paths.delete(filePath);
+    if (paths.size === 0) {
+      this.pathsById.delete(agentId);
+    }
   }
 
   private async waitForPendingWrite(agentId: string): Promise<void> {

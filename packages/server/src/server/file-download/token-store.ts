@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 
 export type DownloadTokenEntry = {
   token: string;
-  agentId: string;
   path: string;
   absolutePath: string;
   fileName: string;
