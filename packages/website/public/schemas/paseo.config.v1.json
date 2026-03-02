@@ -320,6 +320,45 @@
                 "pretty",
                 "json"
               ]
+            },
+            "console": {
+              "type": "object",
+              "properties": {
+                "level": {
+                  "$ref": "#/definitions/PaseoConfigV1/properties/log/properties/level"
+                },
+                "format": {
+                  "$ref": "#/definitions/PaseoConfigV1/properties/log/properties/format"
+                }
+              },
+              "additionalProperties": false
+            },
+            "file": {
+              "type": "object",
+              "properties": {
+                "level": {
+                  "$ref": "#/definitions/PaseoConfigV1/properties/log/properties/level"
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rotate": {
+                  "type": "object",
+                  "properties": {
+                    "maxSize": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "maxFiles": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

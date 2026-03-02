@@ -26,7 +26,7 @@ async function main() {
   try {
     paseoHome = resolvePaseoHome();
     const persistedConfig = loadPersistedConfig(paseoHome);
-    logger = createRootLogger(persistedConfig);
+    logger = createRootLogger(persistedConfig, { paseoHome });
     config = loadConfig(paseoHome);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

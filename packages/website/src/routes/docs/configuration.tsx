@@ -169,11 +169,60 @@ docker run --rm -i \\
       </section>
 
       <section className="space-y-4">
+        <h2 className="text-xl font-medium">Logging</h2>
+        <p className="text-white/60 leading-relaxed">
+          Daemon logging uses separate console and file sinks by default:
+        </p>
+        <ul className="text-white/60 space-y-2 list-disc list-inside">
+          <li>
+            Console: <code className="font-mono">info</code> and above
+          </li>
+          <li>
+            File (<code className="font-mono">$PASEO_HOME/daemon.log</code>):{' '}
+            <code className="font-mono">trace</code> and above
+          </li>
+          <li>
+            File rotation: <code className="font-mono">10m</code> max file size,{' '}
+            <code className="font-mono">2</code> retained files total (active + 1 rotated)
+          </li>
+        </ul>
+        <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
+{`{
+  "log": {
+    "console": {
+      "level": "info",
+      "format": "pretty"
+    },
+    "file": {
+      "level": "trace",
+      "path": "daemon.log",
+      "rotate": {
+        "maxSize": "10m",
+        "maxFiles": 2
+      }
+    }
+  }
+}`}
+        </pre>
+        <p className="text-white/60 leading-relaxed">
+          Legacy fields <code className="font-mono">log.level</code> and{' '}
+          <code className="font-mono">log.format</code> are still supported and map to the new
+          destination settings.
+        </p>
+      </section>
+
+      <section className="space-y-4">
         <h2 className="text-xl font-medium">Common env vars</h2>
         <ul className="text-white/60 space-y-2 list-disc list-inside">
           <li><code className="font-mono">PASEO_HOME</code> — set Paseo home directory</li>
           <li><code className="font-mono">PASEO_LISTEN</code> — override <code className="font-mono">daemon.listen</code></li>
           <li><code className="font-mono">PASEO_ALLOWED_HOSTS</code> — override/extend <code className="font-mono">daemon.allowedHosts</code></li>
+          <li><code className="font-mono">PASEO_LOG_CONSOLE_LEVEL</code> — override <code className="font-mono">log.console.level</code></li>
+          <li><code className="font-mono">PASEO_LOG_FILE_LEVEL</code> — override <code className="font-mono">log.file.level</code></li>
+          <li><code className="font-mono">PASEO_LOG_FILE_PATH</code> — override <code className="font-mono">log.file.path</code></li>
+          <li><code className="font-mono">PASEO_LOG_FILE_ROTATE_SIZE</code> — override <code className="font-mono">log.file.rotate.maxSize</code></li>
+          <li><code className="font-mono">PASEO_LOG_FILE_ROTATE_COUNT</code> — override <code className="font-mono">log.file.rotate.maxFiles</code></li>
+          <li><code className="font-mono">PASEO_LOG</code>, <code className="font-mono">PASEO_LOG_FORMAT</code> — legacy log overrides (still supported)</li>
           <li><code className="font-mono">OPENAI_API_KEY</code> — override OpenAI provider key</li>
           <li><code className="font-mono">PASEO_VOICE_LLM_PROVIDER</code> — override voice LLM provider (<code className="font-mono">claude</code>, <code className="font-mono">codex</code>, <code className="font-mono">opencode</code>)</li>
           <li><code className="font-mono">PASEO_DICTATION_STT_PROVIDER</code>, <code className="font-mono">PASEO_VOICE_STT_PROVIDER</code>, <code className="font-mono">PASEO_VOICE_TTS_PROVIDER</code> — override voice provider selection (<code className="font-mono">local</code> or <code className="font-mono">openai</code>)</li>

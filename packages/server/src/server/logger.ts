@@ -1,49 +1,248 @@
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import pino from "pino";
+import pretty from "pino-pretty";
+import { createStream as createRotatingFileStream } from "rotating-file-stream";
 import type { PersistedConfig } from "./persisted-config.js";
+import { resolvePaseoHome } from "./paseo-home.js";
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 export type LogFormat = "pretty" | "json";
 
 export interface ResolvedLogConfig {
   level: LogLevel;
-  format: LogFormat;
+  console: {
+    level: LogLevel;
+    format: LogFormat;
+  };
+  file: {
+    level: LogLevel;
+    path: string;
+    rotate: {
+      maxSize: string;
+      maxFiles: number;
+    };
+  };
+}
+
+type LegacyLogConfig = {
+  level?: LogLevel;
+  format?: LogFormat;
+};
+
+type LoggerConfigInput = PersistedConfig | LegacyLogConfig | undefined;
+
+type ResolveLogConfigOptions = {
+  paseoHome?: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+const LOG_LEVELS: LogLevel[] = ["trace", "debug", "info", "warn", "error", "fatal"];
+const LOG_FORMATS: LogFormat[] = ["pretty", "json"];
+const LOG_LEVEL_PRIORITIES: Record<LogLevel, number> = {
+  trace: 10,
+  debug: 20,
+  info: 30,
+  warn: 40,
+  error: 50,
+  fatal: 60,
+};
+
+const DEFAULT_CONSOLE_LEVEL: LogLevel = "info";
+const DEFAULT_CONSOLE_FORMAT: LogFormat = "pretty";
+const DEFAULT_FILE_LEVEL: LogLevel = "trace";
+const DEFAULT_FILE_ROTATE_SIZE = "10m";
+const DEFAULT_FILE_ROTATE_MAX_FILES = 2;
+const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
+
+function parseLogLevel(value: string | undefined): LogLevel | undefined {
+  if (!value || !LOG_LEVELS.includes(value as LogLevel)) {
+    return undefined;
+  }
+  return value as LogLevel;
+}
+
+function parseLogFormat(value: string | undefined): LogFormat | undefined {
+  if (!value || !LOG_FORMATS.includes(value as LogFormat)) {
+    return undefined;
+  }
+  return value as LogFormat;
+}
+
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  if (!value || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+function resolveFilePath(paseoHome: string, configuredPath: string | undefined): string {
+  const fallback = path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
+  if (!configuredPath) {
+    return fallback;
+  }
+
+  if (path.isAbsolute(configuredPath)) {
+    return configuredPath;
+  }
+
+  return path.resolve(paseoHome, configuredPath);
+}
+
+function minLogLevel(levels: LogLevel[]): LogLevel {
+  let minLevel = levels[0];
+
+  for (const level of levels) {
+    if (LOG_LEVEL_PRIORITIES[level] < LOG_LEVEL_PRIORITIES[minLevel]) {
+      minLevel = level;
+    }
+  }
+
+  return minLevel;
+}
+
+function resolveConfiguredPaseoHome(
+  options: ResolveLogConfigOptions | undefined
+): string {
+  if (options?.paseoHome) {
+    return options.paseoHome;
+  }
+  return resolvePaseoHome(options?.env ?? process.env);
+}
+
+function normalizeLoggerConfigInput(config: LoggerConfigInput): PersistedConfig | undefined {
+  if (!config) {
+    return undefined;
+  }
+
+  if ("log" in config) {
+    return config as PersistedConfig;
+  }
+
+  if ("level" in config || "format" in config) {
+    const legacy = config as LegacyLogConfig;
+    return {
+      log: {
+        ...(legacy.level ? { level: legacy.level } : {}),
+        ...(legacy.format ? { format: legacy.format } : {}),
+      },
+    };
+  }
+
+  return config as PersistedConfig;
+}
+
+function toRotatingFileStreamSize(size: string): string {
+  const trimmed = size.trim();
+  const match = trimmed.match(/^(\d+)\s*([bBkKmMgG])?$/);
+  if (!match) {
+    return trimmed;
+  }
+
+  const value = match[1];
+  const unit = (match[2] ?? "M").toUpperCase();
+  return `${value}${unit}`;
 }
 
 export function resolveLogConfig(
-  persistedConfig: PersistedConfig | undefined
+  configInput: LoggerConfigInput,
+  options?: ResolveLogConfigOptions
 ): ResolvedLogConfig {
-  const envLevel = process.env.PASEO_LOG as LogLevel | undefined;
-  const envFormat = process.env.PASEO_LOG_FORMAT as LogFormat | undefined;
+  const persistedConfig = normalizeLoggerConfigInput(configInput);
+  const env = options?.env ?? process.env;
+  const paseoHome = resolveConfiguredPaseoHome(options);
+  const persistedLog = persistedConfig?.log;
 
-  const level: LogLevel =
-    envLevel ?? persistedConfig?.log?.level ?? "debug";
-  const format: LogFormat =
-    envFormat ?? persistedConfig?.log?.format ?? "pretty";
+  const envGlobalLevel = parseLogLevel(env.PASEO_LOG);
+  const persistedGlobalLevel = persistedLog?.level;
+  const consoleLevel: LogLevel =
+    parseLogLevel(env.PASEO_LOG_CONSOLE_LEVEL) ??
+    envGlobalLevel ??
+    persistedLog?.console?.level ??
+    persistedGlobalLevel ??
+    DEFAULT_CONSOLE_LEVEL;
 
-  return { level, format };
+  const fileLevel: LogLevel =
+    parseLogLevel(env.PASEO_LOG_FILE_LEVEL) ??
+    envGlobalLevel ??
+    persistedLog?.file?.level ??
+    persistedGlobalLevel ??
+    DEFAULT_FILE_LEVEL;
+
+  const consoleFormat: LogFormat =
+    parseLogFormat(env.PASEO_LOG_FORMAT) ??
+    persistedLog?.console?.format ??
+    persistedLog?.format ??
+    DEFAULT_CONSOLE_FORMAT;
+
+  const filePath = resolveFilePath(
+    paseoHome,
+    env.PASEO_LOG_FILE_PATH ?? persistedLog?.file?.path
+  );
+
+  const rotateMaxSize =
+    env.PASEO_LOG_FILE_ROTATE_SIZE?.trim() ||
+    persistedLog?.file?.rotate?.maxSize ||
+    DEFAULT_FILE_ROTATE_SIZE;
+
+  const rotateMaxFiles =
+    parsePositiveInteger(env.PASEO_LOG_FILE_ROTATE_COUNT) ??
+    persistedLog?.file?.rotate?.maxFiles ??
+    DEFAULT_FILE_ROTATE_MAX_FILES;
+
+  return {
+    level: minLogLevel([consoleLevel, fileLevel]),
+    console: {
+      level: consoleLevel,
+      format: consoleFormat,
+    },
+    file: {
+      level: fileLevel,
+      path: filePath,
+      rotate: {
+        maxSize: rotateMaxSize,
+        maxFiles: rotateMaxFiles,
+      },
+    },
+  };
 }
 
 export function createRootLogger(
-  persistedConfig: PersistedConfig | undefined
+  configInput: LoggerConfigInput,
+  options?: ResolveLogConfigOptions
 ): pino.Logger {
-  const config = resolveLogConfig(persistedConfig);
+  const config = resolveLogConfig(configInput, options);
 
-  const transport =
-    config.format === "pretty"
-      ? {
-          target: "pino-pretty",
-          options: {
-            colorize: true,
-            singleLine: true,
-            ignore: "pid,hostname",
-          },
-        }
-      : undefined;
+  mkdirSync(path.dirname(config.file.path), { recursive: true });
 
-  return pino({
-    level: config.level,
-    transport,
+  const consoleStream =
+    config.console.format === "pretty"
+      ? pretty({
+          colorize: true,
+          singleLine: true,
+          ignore: "pid,hostname",
+        })
+      : pino.destination({ dest: 1, sync: false });
+
+  const fileStream = createRotatingFileStream(path.basename(config.file.path), {
+    path: path.dirname(config.file.path),
+    size: toRotatingFileStreamSize(config.file.rotate.maxSize),
+    maxFiles: config.file.rotate.maxFiles,
   });
+
+  return pino(
+    { level: config.level },
+    pino.multistream([
+      { level: config.console.level, stream: consoleStream },
+      { level: config.file.level, stream: fileStream },
+    ])
+  );
 }
 
 export function createChildLogger(parent: pino.Logger, name: string): pino.Logger {

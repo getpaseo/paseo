@@ -57,3 +57,53 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("PersistedConfigSchema logging config", () => {
+  test("accepts destination-specific logging config", () => {
+    const parsed = PersistedConfigSchema.parse({
+      log: {
+        console: {
+          level: "info",
+          format: "pretty",
+        },
+        file: {
+          level: "trace",
+          path: "daemon.log",
+          rotate: {
+            maxSize: "10m",
+            maxFiles: 2,
+          },
+        },
+      },
+    });
+
+    expect(parsed.log?.console?.level).toBe("info");
+    expect(parsed.log?.file?.level).toBe("trace");
+    expect(parsed.log?.file?.rotate?.maxFiles).toBe(2);
+  });
+
+  test("accepts legacy logging config fields", () => {
+    const parsed = PersistedConfigSchema.parse({
+      log: {
+        level: "debug",
+        format: "json",
+      },
+    });
+
+    expect(parsed.log?.level).toBe("debug");
+    expect(parsed.log?.format).toBe("json");
+  });
+
+  test("rejects unknown logging config fields", () => {
+    const result = PersistedConfigSchema.safeParse({
+      log: {
+        console: {
+          level: "info",
+          color: "red",
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+});

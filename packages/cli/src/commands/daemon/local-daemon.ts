@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { loadConfig, resolvePaseoHome } from '@getpaseo/server'
@@ -347,64 +347,58 @@ export async function startLocalDaemonDetached(
   const paseoHome = resolvePaseoHome(childEnv)
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME)
   const daemonRunnerEntry = resolveDaemonRunnerEntry()
-  const logFd = openSync(logPath, 'a')
+  const child = spawn(
+    process.execPath,
+    [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
+    {
+      detached: true,
+      env: childEnv,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    }
+  )
 
-  try {
-    const child = spawn(
-      process.execPath,
-      [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
-      {
-        detached: true,
-        env: childEnv,
-        stdio: ['ignore', logFd, logFd],
-      }
-    )
+  child.unref()
 
-    child.unref()
+  const startup = await new Promise<DetachedStartupResult>((resolve) => {
+    let settled = false
 
-    const startup = await new Promise<DetachedStartupResult>((resolve) => {
-      let settled = false
+    const finish = (value: DetachedStartupResult) => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
 
-      const finish = (value: DetachedStartupResult) => {
-        if (settled) return
-        settled = true
-        resolve(value)
-      }
+    const timer = setTimeout(() => finish(startupReady()), DETACHED_STARTUP_GRACE_MS)
 
-      const timer = setTimeout(() => finish(startupReady()), DETACHED_STARTUP_GRACE_MS)
-
-      child.once('error', (error) => {
-        clearTimeout(timer)
-        finish(startupExited({ code: null, signal: null, error }))
-      })
-
-      child.once('exit', (code, signal) => {
-        clearTimeout(timer)
-        finish(startupExited({ code, signal }))
-      })
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      finish(startupExited({ code: null, signal: null, error }))
     })
 
-    if (startup.exitedEarly) {
-      const reason = startup.error
-        ? startup.error.message
-        : `exit code ${startup.code ?? 'unknown'}${startup.signal ? ` (${startup.signal})` : ''}`
-      const recentLogs = tailFile(logPath)
-      throw new Error(
-        [
-          `Daemon failed to start in background (${reason}).`,
-          recentLogs ? `Recent daemon logs:\n${recentLogs}` : null,
-        ]
-          .filter(Boolean)
-          .join('\n\n')
-      )
-    }
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer)
+      finish(startupExited({ code, signal }))
+    })
+  })
 
-    return {
-      pid: child.pid ?? null,
-      logPath,
-    }
-  } finally {
-    closeSync(logFd)
+  if (startup.exitedEarly) {
+    const reason = startup.error
+      ? startup.error.message
+      : `exit code ${startup.code ?? 'unknown'}${startup.signal ? ` (${startup.signal})` : ''}`
+    const recentLogs = tailFile(logPath)
+    throw new Error(
+      [
+        `Daemon failed to start in background (${reason}).`,
+        recentLogs ? `Recent daemon logs:\n${recentLogs}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+    )
+  }
+
+  return {
+    pid: child.pid ?? null,
+    logPath,
   }
 }
 

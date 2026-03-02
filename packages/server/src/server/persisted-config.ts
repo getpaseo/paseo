@@ -4,12 +4,37 @@ import { z } from "zod";
 import { AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
 import { AgentProviderRuntimeSettingsMapSchema } from "./agent/provider-launch-config.js";
 
+const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
+const LogFormatSchema = z.enum(["pretty", "json"]);
+
 const LogConfigSchema = z
   .object({
-    level: z
-      .enum(["trace", "debug", "info", "warn", "error", "fatal"])
+    // Legacy global log settings (kept for backwards compatibility).
+    level: LogLevelSchema.optional(),
+    format: LogFormatSchema.optional(),
+
+    console: z
+      .object({
+        level: LogLevelSchema.optional(),
+        format: LogFormatSchema.optional(),
+      })
+      .strict()
       .optional(),
-    format: z.enum(["pretty", "json"]).optional(),
+
+    file: z
+      .object({
+        level: LogLevelSchema.optional(),
+        path: z.string().min(1).optional(),
+        rotate: z
+          .object({
+            maxSize: z.string().min(1).optional(),
+            maxFiles: z.number().int().positive().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
