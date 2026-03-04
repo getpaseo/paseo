@@ -64,6 +64,7 @@ struct AttachmentFileResult {
     byte_size: u64,
 }
 
+#[cfg(not(target_os = "windows"))]
 fn resolve_login_shell() -> String {
     std::env::var("SHELL")
         .ok()
@@ -72,6 +73,7 @@ fn resolve_login_shell() -> String {
         .unwrap_or_else(|| "/bin/zsh".to_string())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn execute_local_daemon_version(shell: &str) -> LocalDaemonVersionResult {
     let script = r#"if command -v paseo >/dev/null 2>&1; then
   paseo --version
@@ -114,6 +116,7 @@ fi"#;
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn execute_local_daemon_update(shell: &str) -> DaemonUpdateCommandResult {
     let script = r#"if command -v paseo >/dev/null 2>&1; then
   paseo daemon update
@@ -123,6 +126,63 @@ else
 fi"#;
 
     match Command::new(shell).arg("-lc").arg(script).output() {
+        Ok(output) => DaemonUpdateCommandResult {
+            exit_code: output.status.code().unwrap_or(1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        },
+        Err(error) => DaemonUpdateCommandResult {
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: format!("Failed to run daemon update command: {error}"),
+        },
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_login_shell() -> String {
+    "cmd".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn execute_local_daemon_version(_shell: &str) -> LocalDaemonVersionResult {
+    match Command::new("cmd").args(["/C", "paseo --version"]).output() {
+        Ok(output) => {
+            if output.status.success() {
+                let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if version.is_empty() {
+                    LocalDaemonVersionResult {
+                        version: None,
+                        error: Some("paseo --version returned empty output".to_string()),
+                    }
+                } else {
+                    LocalDaemonVersionResult {
+                        version: Some(version),
+                        error: None,
+                    }
+                }
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                LocalDaemonVersionResult {
+                    version: None,
+                    error: Some(if stderr.is_empty() {
+                        format!("paseo --version exited with code {}", output.status.code().unwrap_or(1))
+                    } else {
+                        stderr
+                    }),
+                }
+            }
+        }
+        Err(error) => LocalDaemonVersionResult {
+            version: None,
+            error: Some(format!("Failed to run version check: {error}")),
+        },
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn execute_local_daemon_update(_shell: &str) -> DaemonUpdateCommandResult {
+    match Command::new("cmd").args(["/C", "paseo daemon update"]).output() {
         Ok(output) => DaemonUpdateCommandResult {
             exit_code: output.status.code().unwrap_or(1),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
