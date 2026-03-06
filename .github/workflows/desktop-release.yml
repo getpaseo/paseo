@@ -42,7 +42,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Install JS dependencies
         run: npm ci
@@ -110,4 +110,4 @@ jobs:
           releaseBody: See the assets to download and install this version.
           releaseDraft: false
           prerelease: false
-          args: --target aarch64-apple-darwin
+          args: --target universal-apple-darwin
