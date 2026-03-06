@@ -37,6 +37,15 @@ const sessionMock = vi.hoisted(() => {
     handleMessage = vi.fn(async () => {});
     handleBinaryFrame = vi.fn((_frame: unknown) => {});
     getClientActivity = vi.fn(() => null);
+    getRuntimeMetrics = vi.fn(() => ({
+      checkoutDiffTargetCount: 0,
+      checkoutDiffSubscriptionCount: 0,
+      checkoutDiffWatcherCount: 0,
+      checkoutDiffFallbackRefreshTargetCount: 0,
+      terminalDirectorySubscriptionCount: 0,
+      terminalSubscriptionCount: 0,
+      terminalStreamCount: 0,
+    }));
     readonly args: Record<string, unknown>;
 
     constructor(args: Record<string, unknown>) {
