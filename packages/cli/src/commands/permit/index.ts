@@ -11,7 +11,7 @@ export function createPermitCommand(): Command {
     .command('ls')
     .description('List all pending permissions')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runLsCommand))
 
   permit
@@ -22,7 +22,7 @@ export function createPermitCommand(): Command {
     .option('--all', 'Allow all pending permissions for this agent')
     .option('--input <json>', 'Modified input parameters (JSON)')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runAllowCommand))
 
   permit
@@ -34,7 +34,7 @@ export function createPermitCommand(): Command {
     .option('--message <msg>', 'Denial reason message')
     .option('--interrupt', 'Stop agent after denial')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runDenyCommand))
 
   return permit

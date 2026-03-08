@@ -6,21 +6,19 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu};
 #[cfg(target_os = "macos")]
 use tauri::menu::AboutMetadata;
+use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_updater::UpdaterExt;
 
 mod runtime_manager;
-pub use runtime_manager::try_run_cli_shim_from_args;
 use runtime_manager::{
-    close_local_daemon_transport, ensure_managed_runtime, install_cli_shim,
-    managed_daemon_logs, managed_daemon_pairing, managed_daemon_status, managed_runtime_status,
-    open_local_daemon_transport, restart_managed_daemon,
-    send_local_daemon_transport_message, start_managed_daemon, stop_managed_daemon,
-    uninstall_cli_shim, update_managed_daemon_tcp_settings, ManagedTcpSettings,
-    LocalTransportState,
+    close_local_daemon_transport, ensure_managed_runtime, install_cli_shim, managed_daemon_logs,
+    managed_daemon_pairing, managed_daemon_status, managed_runtime_status,
+    open_local_daemon_transport, restart_managed_daemon, send_local_daemon_transport_message,
+    start_managed_daemon, stop_managed_daemon, uninstall_cli_shim,
+    update_managed_daemon_tcp_settings, LocalTransportState, ManagedTcpSettings,
 };
 
 // Store zoom as u64 bits (f64 * 100 as integer for atomic ops)
@@ -95,7 +93,11 @@ fn parse_managed_headless_command() -> Result<Option<ManagedHeadlessCommand>, St
     let command = args
         .get(flag_index + 1)
         .ok_or_else(|| "Missing command after --managed-headless".to_string())?;
-    let tail = args.iter().skip(flag_index + 2).cloned().collect::<Vec<_>>();
+    let tail = args
+        .iter()
+        .skip(flag_index + 2)
+        .cloned()
+        .collect::<Vec<_>>();
     match command.as_str() {
         "runtime-status" => Ok(Some(ManagedHeadlessCommand::RuntimeStatus)),
         "bootstrap" => Ok(Some(ManagedHeadlessCommand::Bootstrap)),
@@ -134,15 +136,19 @@ fn parse_managed_headless_command() -> Result<Option<ManagedHeadlessCommand>, St
                         index += 2;
                     }
                     other => {
-                        return Err(format!("Unknown --managed-headless update-tcp option: {other}"));
+                        return Err(format!(
+                            "Unknown --managed-headless update-tcp option: {other}"
+                        ));
                     }
                 }
             }
-            Ok(Some(ManagedHeadlessCommand::UpdateTcp(ManagedTcpSettings {
-                enabled,
-                host,
-                port,
-            })))
+            Ok(Some(ManagedHeadlessCommand::UpdateTcp(
+                ManagedTcpSettings {
+                    enabled,
+                    host,
+                    port,
+                },
+            )))
         }
         other => Err(format!("Unknown --managed-headless command: {other}")),
     }
@@ -198,8 +204,9 @@ fn maybe_run_managed_headless_command(app: &AppHandle) -> Result<bool, String> {
             Err(error) => {
                 eprintln!(
                     "{}",
-                    serde_json::to_string_pretty(&json!({ "error": error }))
-                        .unwrap_or_else(|_| r#"{"error":"managed headless command failed"}"#.to_string())
+                    serde_json::to_string_pretty(&json!({ "error": error })).unwrap_or_else(|_| {
+                        r#"{"error":"managed headless command failed"}"#.to_string()
+                    })
                 );
                 app_handle.exit(1);
             }
@@ -244,7 +251,10 @@ fi"#;
                 LocalDaemonVersionResult {
                     version: None,
                     error: Some(if stderr.is_empty() {
-                        format!("paseo --version exited with code {}", output.status.code().unwrap_or(1))
+                        format!(
+                            "paseo --version exited with code {}",
+                            output.status.code().unwrap_or(1)
+                        )
                     } else {
                         stderr
                     }),
@@ -557,7 +567,8 @@ async fn garbage_collect_attachment_files(
         let entries = fs::read_dir(&attachment_dir)
             .map_err(|error| format!("Failed to scan attachment directory: {error}"))?;
         for entry in entries {
-            let entry = entry.map_err(|error| format!("Failed to read directory entry: {error}"))?;
+            let entry =
+                entry.map_err(|error| format!("Failed to read directory entry: {error}"))?;
             let path = entry.path();
             if !path.is_file() {
                 continue;
@@ -651,7 +662,8 @@ pub fn run() {
                         copyright: app.config().bundle.copyright.clone(),
                         ..Default::default()
                     };
-                    let about = PredefinedMenuItem::about(app.handle(), None, Some(about_metadata))?;
+                    let about =
+                        PredefinedMenuItem::about(app.handle(), None, Some(about_metadata))?;
 
                     if submenu.remove_at(0)?.is_some() {
                         submenu.insert(&about, 0)?;

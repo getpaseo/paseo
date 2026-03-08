@@ -10,7 +10,7 @@ export function createProviderCommand(): Command {
     .command('ls')
     .description('List available providers and status')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runLsCommand))
 
   provider
@@ -19,7 +19,7 @@ export function createProviderCommand(): Command {
     .argument('<provider>', 'Provider name (claude, codex, opencode)')
     .option('--thinking', 'Include thinking option IDs for each model')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runModelsCommand))
 
   return provider

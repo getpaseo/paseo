@@ -30,7 +30,7 @@ export function createAgentCommand(): Command {
     .option('--label <key=value>', 'Filter by label (can be used multiple times)', collectMultiple, [])
     .option('--thinking <id>', 'Filter by thinking option ID')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runLsCommand))
 
   agent
@@ -47,14 +47,14 @@ export function createAgentCommand(): Command {
     .option('--label <key=value>', 'Add label(s) to the agent (can be used multiple times)', collectMultiple, [])
     .option('--output-schema <schema>', 'Output JSON matching the provided schema file path or inline JSON schema')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runRunCommand))
 
   agent
     .command('attach')
     .description("Attach to a running agent's output stream")
     .argument('<id>', 'Agent ID (or prefix)')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(runAttachCommand)
 
   agent
@@ -64,7 +64,7 @@ export function createAgentCommand(): Command {
     .option('-f, --follow', 'Follow log output (streaming)')
     .option('--tail <n>', 'Show last n entries')
     .option('--filter <type>', 'Filter by event type (tools, text, errors, permissions)')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(runLogsCommand)
 
   agent
@@ -74,7 +74,7 @@ export function createAgentCommand(): Command {
     .option('--all', 'Stop all agents')
     .option('--cwd <path>', 'Stop all agents in directory')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runStopCommand))
 
   agent
@@ -84,7 +84,7 @@ export function createAgentCommand(): Command {
     .option('--all', 'Delete all agents')
     .option('--cwd <path>', 'Delete all agents in directory')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runDeleteCommand))
 
   agent
@@ -94,7 +94,7 @@ export function createAgentCommand(): Command {
     .argument('<prompt>', 'The message to send')
     .option('--no-wait', 'Return immediately without waiting for completion')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runSendCommand))
 
   agent
@@ -102,7 +102,7 @@ export function createAgentCommand(): Command {
     .description('Show detailed information about an agent')
     .argument('<id>', 'Agent ID (or prefix)')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runInspectCommand))
 
   agent
@@ -111,7 +111,7 @@ export function createAgentCommand(): Command {
     .argument('<id>', 'Agent ID (or prefix)')
     .option('--timeout <seconds>', 'Maximum wait time (default: no limit)')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runWaitCommand))
 
   // Advanced agent commands (less common operations)
@@ -122,7 +122,7 @@ export function createAgentCommand(): Command {
     .argument('[mode]', 'Mode to set (required unless --list)')
     .option('--list', 'List available modes for this agent')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runModeCommand))
 
   agent
@@ -131,7 +131,7 @@ export function createAgentCommand(): Command {
     .argument('<id>', 'Agent ID (or prefix)')
     .option('--force', 'Force archive running agent (interrupts active run first)')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runArchiveCommand))
 
   agent
@@ -146,7 +146,7 @@ export function createAgentCommand(): Command {
       []
     )
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runUpdateCommand))
 
   return agent

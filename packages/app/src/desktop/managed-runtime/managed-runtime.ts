@@ -45,9 +45,22 @@ export type ManagedPairingOffer = {
 };
 
 export type CliShimResult = {
+  status:
+    | "installed"
+    | "removed"
+    | "elevationDenied"
+    | "automaticInstallUnavailable"
+    | "manualInstallRequired";
   installed: boolean;
   path: string | null;
   message: string;
+  manualInstructions: CliManualInstructions | null;
+};
+
+export type CliManualInstructions = {
+  title: string;
+  detail: string;
+  commands: string;
 };
 
 export type ManagedTcpSettings = {
@@ -146,14 +159,29 @@ function parseManagedPairingOffer(raw: unknown): ManagedPairingOffer {
   };
 }
 
-function parseCliShimResult(raw: unknown): CliShimResult {
+function parseCliManualInstructions(raw: unknown): CliManualInstructions | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  return {
+    title: toStringOrNull(raw.title) ?? "",
+    detail: toStringOrNull(raw.detail) ?? "",
+    commands: toStringOrNull(raw.commands) ?? "",
+  };
+}
+
+export function parseCliShimResult(raw: unknown): CliShimResult {
   if (!isRecord(raw)) {
     throw new Error("Unexpected CLI shim response.");
   }
   return {
+    status:
+      (toStringOrNull(raw.status) as CliShimResult["status"] | null) ??
+      (raw.installed === true ? "installed" : "removed"),
     installed: raw.installed === true,
     path: toStringOrNull(raw.path),
     message: toStringOrNull(raw.message) ?? "",
+    manualInstructions: parseCliManualInstructions(raw.manualInstructions),
   };
 }
 

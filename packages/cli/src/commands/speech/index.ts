@@ -14,7 +14,7 @@ export function createSpeechCommand(): Command {
     .command("models")
     .description("List local speech model download status")
     .option("--json", "Output in JSON format")
-    .option("--host <host>", "Daemon host:port (default: localhost:6767)")
+    .option("--host <host>", "Daemon host target (default: local socket/pipe, then localhost:6767)")
     .action(withOutput(runSpeechModelsCommand));
 
   speech
@@ -22,7 +22,7 @@ export function createSpeechCommand(): Command {
     .description("Download local speech models")
     .option("--model <id>", "Model ID to download (repeatable)", collectMultiple, [])
     .option("--json", "Output in JSON format")
-    .option("--host <host>", "Daemon host:port (default: localhost:6767)")
+    .option("--host <host>", "Daemon host target (default: local socket/pipe, then localhost:6767)")
     .action(withOutput(runSpeechDownloadCommand));
 
   return speech;

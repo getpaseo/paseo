@@ -1,4 +1,6 @@
-import { DaemonClient } from '@getpaseo/server'
+import { existsSync, readFileSync } from 'node:fs'
+import { loadConfig, resolvePaseoHome, DaemonClient } from '@getpaseo/server'
+import path from 'node:path'
 import WebSocket from 'ws'
 import { getOrCreateCliClientId } from './client-id.js'
 
@@ -9,6 +11,7 @@ export interface ConnectOptions {
 
 const DEFAULT_HOST = 'localhost:6767'
 const DEFAULT_TIMEOUT = 5000
+const PID_FILENAME = 'paseo.pid'
 
 type DaemonTarget =
   | {
@@ -25,7 +28,106 @@ type DaemonTarget =
  * Get the daemon host from environment or options
  */
 export function getDaemonHost(options?: ConnectOptions): string {
-  return options?.host ?? process.env.PASEO_HOST ?? DEFAULT_HOST
+  return resolveDaemonHostCandidates(options)[0] ?? DEFAULT_HOST
+}
+
+export function normalizeDaemonHost(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  if (
+    trimmed.startsWith('unix://') ||
+    trimmed.startsWith('pipe://') ||
+    trimmed.startsWith('\\\\.\\pipe\\')
+  ) {
+    return trimmed.startsWith('\\\\.\\pipe\\') ? `pipe://${trimmed}` : trimmed
+  }
+
+  if (path.isAbsolute(trimmed)) {
+    return `unix://${trimmed}`
+  }
+
+  if (/^\d+$/.test(trimmed)) {
+    return `127.0.0.1:${trimmed}`
+  }
+
+  return trimmed.includes(':') ? trimmed : null
+}
+
+export function resolveDefaultDaemonHost(env: NodeJS.ProcessEnv = process.env): string {
+  return resolveDefaultDaemonHosts(env)[0] ?? DEFAULT_HOST
+}
+
+function isIpcDaemonHost(host: string | null): host is string {
+  return host !== null && (host.startsWith('unix://') || host.startsWith('pipe://'))
+}
+
+function isTcpDaemonHost(host: string | null): host is string {
+  return host !== null && !isIpcDaemonHost(host)
+}
+
+function readPidSocketTarget(paseoHome: string): string | null {
+  const pidPath = path.join(paseoHome, PID_FILENAME)
+  if (!existsSync(pidPath)) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(pidPath, 'utf-8')) as { sockPath?: unknown }
+    return typeof parsed.sockPath === 'string' ? parsed.sockPath : null
+  } catch {
+    return null
+  }
+}
+
+function resolveConfiguredIpcDaemonHost(env: NodeJS.ProcessEnv, paseoHome: string): string | null {
+  const directEnvHost = normalizeDaemonHost(env.PASEO_LISTEN ?? '')
+  if (isIpcDaemonHost(directEnvHost)) {
+    return directEnvHost
+  }
+
+  const pidHost = normalizeDaemonHost(readPidSocketTarget(paseoHome) ?? '')
+  if (isIpcDaemonHost(pidHost)) {
+    return pidHost
+  }
+
+  const config = loadConfig(paseoHome, { env })
+  const configuredHost = normalizeDaemonHost(config.listen)
+  return isIpcDaemonHost(configuredHost) ? configuredHost : null
+}
+
+function resolveConfiguredTcpDaemonHost(env: NodeJS.ProcessEnv, paseoHome: string): string | null {
+  const configuredHost = normalizeDaemonHost(loadConfig(paseoHome, { env }).listen)
+  if (!isTcpDaemonHost(configuredHost)) {
+    return null
+  }
+  return configuredHost === '127.0.0.1:6767' ? null : configuredHost
+}
+
+export function resolveDefaultDaemonHosts(env: NodeJS.ProcessEnv = process.env): string[] {
+  const paseoHome = resolvePaseoHome(env)
+  const candidates: string[] = []
+  const configuredIpcHost = resolveConfiguredIpcDaemonHost(env, paseoHome)
+  if (configuredIpcHost) {
+    candidates.push(configuredIpcHost)
+  }
+  const configuredTcpHost = resolveConfiguredTcpDaemonHost(env, paseoHome)
+  if (configuredTcpHost) {
+    candidates.push(configuredTcpHost)
+  }
+  candidates.push(DEFAULT_HOST)
+  return Array.from(new Set(candidates))
+}
+
+function resolveDaemonHostCandidates(options?: ConnectOptions): string[] {
+  const explicitHost = options?.host ?? process.env.PASEO_HOST
+  if (explicitHost) {
+    return [explicitHost]
+  }
+
+  return resolveDefaultDaemonHosts()
 }
 
 export function resolveDaemonTarget(host: string): DaemonTarget {
@@ -86,50 +188,56 @@ function createNodeWebSocketFactory() {
  * Returns the connected client or throws if connection fails
  */
 export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonClient> {
-  const host = getDaemonHost(options)
   const timeout = options?.timeout ?? DEFAULT_TIMEOUT
   const clientId = await getOrCreateCliClientId()
-  const target = resolveDaemonTarget(host)
+  const hosts = resolveDaemonHostCandidates(options)
   const nodeWebSocketFactory = createNodeWebSocketFactory()
+  let lastError: unknown = null
 
-  const client = new DaemonClient(
-    {
-      url: target.url,
-      clientId,
-      clientType: 'cli',
-      webSocketFactory: (url: string, config?: { headers?: Record<string, string> }) =>
-        nodeWebSocketFactory(url, {
-          headers: config?.headers,
-          ...(target.type === 'ipc' ? { socketPath: target.socketPath } : {}),
-        }),
-      reconnect: { enabled: false },
-    } as unknown as ConstructorParameters<typeof DaemonClient>[0]
-  )
+  for (const host of hosts) {
+    const target = resolveDaemonTarget(host)
+    const client = new DaemonClient(
+      {
+        url: target.url,
+        clientId,
+        clientType: 'cli',
+        webSocketFactory: (url: string, config?: { headers?: Record<string, string> }) =>
+          nodeWebSocketFactory(url, {
+            headers: config?.headers,
+            ...(target.type === 'ipc' ? { socketPath: target.socketPath } : {}),
+          }),
+        reconnect: { enabled: false },
+      } as unknown as ConstructorParameters<typeof DaemonClient>[0]
+    )
 
-  // Connect with timeout
-  const connectPromise = client.connect()
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      reject(new Error(`Connection timeout after ${timeout}ms`))
-    }, timeout)
-  })
+    const connectPromise = client.connect()
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(new Error(`Connection timeout after ${timeout}ms`))
+      }, timeout)
+    })
 
-  try {
-    await Promise.race([connectPromise, timeoutPromise])
-    // Clear the timeout so it doesn't keep the event loop alive
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle)
+    try {
+      await Promise.race([connectPromise, timeoutPromise])
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle)
+      }
+      return client
+    } catch (err) {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle)
+      }
+      lastError = err
+      await client.close().catch(() => {})
     }
-    return client
-  } catch (err) {
-    // Clear the timeout on error too
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle)
-    }
-    await client.close().catch(() => {})
-    throw err
   }
+
+  if (lastError instanceof Error) {
+    throw lastError
+  }
+
+  throw new Error(`Unable to connect to Paseo daemon via ${hosts.join(', ')}`)
 }
 
 /**

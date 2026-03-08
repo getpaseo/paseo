@@ -23,6 +23,7 @@ import {
   type ManagedDaemonLogs,
   type ManagedPairingOffer,
   type ManagedDaemonStatus,
+  type CliManualInstructions,
 } from "@/desktop/managed-runtime/managed-runtime";
 
 export interface LocalDaemonSectionProps {
@@ -37,12 +38,17 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
   const [isInstallingCli, setIsInstallingCli] = useState(false);
   const [isSavingTcpSettings, setIsSavingTcpSettings] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [cliStatusMessage, setCliStatusMessage] = useState<string | null>(null);
   const [managedLogs, setManagedLogs] = useState<ManagedDaemonLogs | null>(null);
   const [isTcpModalOpen, setIsTcpModalOpen] = useState(false);
   const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
   const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
+  const [isCliInstallModalOpen, setIsCliInstallModalOpen] = useState(false);
   const [isLoadingPairing, setIsLoadingPairing] = useState(false);
   const [pairingOffer, setPairingOffer] = useState<ManagedPairingOffer | null>(null);
+  const [cliInstallInstructions, setCliInstallInstructions] = useState<CliManualInstructions | null>(
+    null
+  );
   const [pairingStatusMessage, setPairingStatusMessage] = useState<string | null>(null);
   const [tcpHostInput, setTcpHostInput] = useState(DEFAULT_TCP_HOST);
   const [tcpPortInput, setTcpPortInput] = useState(String(DEFAULT_TCP_PORT));
@@ -135,21 +141,47 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
       return;
     }
     setIsInstallingCli(true);
-    setStatusMessage(null);
+    const isInstalling = !managedStatus?.cliShimPath;
+    setCliStatusMessage(
+      isInstalling
+        ? "A permissions popup may appear while Paseo installs the CLI globally."
+        : null
+    );
     const action = managedStatus?.cliShimPath ? uninstallManagedCliShim : installManagedCliShim;
     void action()
       .then((result) => {
-        setStatusMessage(result.message);
+        setCliStatusMessage(result.message);
+        if (result.manualInstructions) {
+          setCliInstallInstructions(result.manualInstructions);
+          setIsCliInstallModalOpen(true);
+        } else {
+          setCliInstallInstructions(null);
+          setIsCliInstallModalOpen(false);
+        }
         return loadManagedStatus();
       })
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        setStatusMessage(`CLI shim action failed: ${message}`);
+        setCliStatusMessage(`CLI shim action failed: ${message}`);
       })
       .finally(() => {
         setIsInstallingCli(false);
       });
   }, [isInstallingCli, loadManagedStatus, managedStatus?.cliShimPath, showSection]);
+
+  const handleCopyCliInstallCommands = useCallback(() => {
+    if (!cliInstallInstructions?.commands) {
+      return;
+    }
+    void Clipboard.setStringAsync(cliInstallInstructions.commands)
+      .then(() => {
+        Alert.alert("Copied", "CLI install commands copied.");
+      })
+      .catch((error) => {
+        console.error("[Settings] Failed to copy CLI install commands", error);
+        Alert.alert("Error", "Unable to copy CLI install commands.");
+      });
+  }, [cliInstallInstructions?.commands]);
 
   const handleCopyLogPath = useCallback(() => {
     const logPath = managedLogs?.logPath ?? managedStatus?.logPath;
@@ -340,8 +372,9 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
           <View style={styles.rowContent}>
             <Text style={styles.rowTitle}>CLI shim</Text>
             <Text style={styles.hintText}>
-              Installs `paseo` into your user path and points it at the managed daemon by default.
+              Installs a global `paseo` launcher that forwards into the desktop-managed runtime.
             </Text>
+            {cliStatusMessage ? <Text style={styles.statusText}>{cliStatusMessage}</Text> : null}
           </View>
           <Button
             variant="secondary"
@@ -470,6 +503,34 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
             </Button>
             <Button size="sm" onPress={handleSaveTcp} disabled={isSavingTcpSettings}>
               {isSavingTcpSettings ? "Saving..." : "Save"}
+            </Button>
+          </View>
+        </View>
+      </AdaptiveModalSheet>
+
+      <AdaptiveModalSheet
+        visible={isCliInstallModalOpen}
+        onClose={() => setIsCliInstallModalOpen(false)}
+        title="Install CLI manually"
+        testID="managed-daemon-cli-install-dialog"
+      >
+        <View style={styles.modalBody}>
+          <Text style={styles.hintText}>
+            A permissions popup should appear when Paseo installs the CLI globally. If it does not
+            complete, open a terminal and run the commands below.
+          </Text>
+          {cliInstallInstructions?.detail ? (
+            <Text style={styles.hintText}>{cliInstallInstructions.detail}</Text>
+          ) : null}
+          <Text style={styles.codeBlock} selectable>
+            {cliInstallInstructions?.commands ?? ""}
+          </Text>
+          <View style={styles.modalActions}>
+            <Button variant="secondary" size="sm" onPress={() => setIsCliInstallModalOpen(false)}>
+              Close
+            </Button>
+            <Button size="sm" onPress={handleCopyCliInstallCommands}>
+              Copy commands
             </Button>
           </View>
         </View>
@@ -735,6 +796,17 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     lineHeight: 18,
+  },
+  codeBlock: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    lineHeight: 18,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface0,
+    padding: theme.spacing[3],
   },
   input: {
     borderWidth: 1,

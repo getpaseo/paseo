@@ -10,7 +10,7 @@ export function createWorktreeCommand(): Command {
     .command('ls')
     .description('List Paseo-managed git worktrees')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runLsCommand))
 
   worktree
@@ -18,7 +18,7 @@ export function createWorktreeCommand(): Command {
     .description('Archive a worktree (removes worktree and associated branch)')
     .argument('<name>', 'Worktree name or branch name')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runArchiveCommand))
 
   return worktree

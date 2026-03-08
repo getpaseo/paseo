@@ -66,7 +66,7 @@ export function createCli(): Command {
     .option('--label <key=value>', 'Filter by label (can be used multiple times)', collectMultiple, [])
     .option('--thinking <id>', 'Filter by thinking option ID')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runLsCommand))
 
   program
@@ -86,14 +86,14 @@ export function createCli(): Command {
     .option('--label <key=value>', 'Add label(s) to the agent (can be used multiple times)', collectMultiple, [])
     .option('--output-schema <schema>', 'Output JSON matching the provided schema file path or inline JSON schema')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runRunCommand))
 
   program
     .command('attach')
     .description("Attach to a running agent's output stream")
     .argument('<id>', 'Agent ID (or prefix)')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(runAttachCommand)
 
   program
@@ -104,7 +104,7 @@ export function createCli(): Command {
     .option('--tail <n>', 'Show last n entries')
     .option('--filter <type>', 'Filter by event type (tools, text, errors, permissions)')
     .option('--since <time>', 'Show logs since timestamp')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(runLogsCommand)
 
   program
@@ -114,7 +114,7 @@ export function createCli(): Command {
     .option('--all', 'Stop all agents')
     .option('--cwd <path>', 'Stop all agents in directory')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runStopCommand))
 
   program
@@ -124,7 +124,7 @@ export function createCli(): Command {
     .option('--all', 'Delete all agents')
     .option('--cwd <path>', 'Delete all agents in directory')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runDeleteCommand))
 
   program
@@ -135,7 +135,7 @@ export function createCli(): Command {
     .option('--no-wait', 'Return immediately without waiting for completion')
     .option('--image <path>', 'Attach image(s) to the message', collectMultiple, [])
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runSendCommand))
 
   program
@@ -143,7 +143,7 @@ export function createCli(): Command {
     .description('Show detailed information about an agent')
     .argument('<id>', 'Agent ID (or prefix)')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runInspectCommand))
 
   program
@@ -152,7 +152,7 @@ export function createCli(): Command {
     .argument('<id>', 'Agent ID (or prefix)')
     .option('--timeout <seconds>', 'Maximum wait time (default: no limit)')
     .option('--json', 'Output in JSON format')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .option('--host <host>', 'Daemon host target (default: local socket/pipe, then localhost:6767)')
     .action(withOutput(runWaitCommand))
 
   // Top-level local daemon shortcuts

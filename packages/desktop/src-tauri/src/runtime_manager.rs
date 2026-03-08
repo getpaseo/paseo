@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io;
+use std::iter;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,6 +30,13 @@ const PIPE_CLIENT_URL: &str = "ws://localhost/ws";
 const PIPE_PREFIX: &str = r"\\.\pipe\";
 const DEFAULT_MANAGED_TCP_HOST: &str = "127.0.0.1";
 const DEFAULT_MANAGED_TCP_PORT: u16 = 7771;
+const CLI_SHIM_NAME: &str = "paseo";
+#[cfg(windows)]
+const CLI_SHIM_WINDOWS_NAME: &str = "paseo.cmd";
+const CLI_INNER_DIR: &str = "bin";
+const CLI_INNER_UNIX_NAME: &str = "paseo-managed";
+#[cfg(windows)]
+const CLI_INNER_WINDOWS_NAME: &str = "paseo-managed.cmd";
 
 static RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -77,6 +85,7 @@ struct PidFile {
 #[derive(Debug, Clone)]
 struct ManagedPaths {
     runtime_root: PathBuf,
+    stable_runtime_root: PathBuf,
     managed_home: PathBuf,
     transport_path: PathBuf,
     logs_path: PathBuf,
@@ -152,9 +161,19 @@ pub struct ManagedPairingOffer {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliShimResult {
+    pub status: String,
     pub installed: bool,
     pub path: Option<String>,
     pub message: String,
+    pub manual_instructions: Option<CliManualInstructions>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliManualInstructions {
+    pub title: String,
+    pub detail: String,
+    pub commands: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -189,17 +208,24 @@ impl Default for LocalTransportState {
 
 impl LocalTransportState {
     fn alloc_session_id(&self) -> String {
-        format!("local-session-{}", self.next_session_id.fetch_add(1, Ordering::Relaxed))
+        format!(
+            "local-session-{}",
+            self.next_session_id.fetch_add(1, Ordering::Relaxed)
+        )
     }
 }
 
 #[cfg(unix)]
-fn build_local_websocket_request(url: &str) -> Result<Request<()>, tokio_tungstenite::tungstenite::Error> {
+fn build_local_websocket_request(
+    url: &str,
+) -> Result<Request<()>, tokio_tungstenite::tungstenite::Error> {
     url.into_client_request()
 }
 
 #[cfg(windows)]
-fn build_local_websocket_request(url: &str) -> Result<Request<()>, tokio_tungstenite::tungstenite::Error> {
+fn build_local_websocket_request(
+    url: &str,
+) -> Result<Request<()>, tokio_tungstenite::tungstenite::Error> {
     url.into_client_request()
 }
 
@@ -268,7 +294,10 @@ mod tests {
 
         assert_eq!(request.uri().to_string(), local_client_url());
         assert_eq!(
-            request.headers().get("host").and_then(|value| value.to_str().ok()),
+            request
+                .headers()
+                .get("host")
+                .and_then(|value| value.to_str().ok()),
             Some("localhost")
         );
         assert!(request.headers().contains_key("sec-websocket-key"));
@@ -280,7 +309,10 @@ mod tests {
             Some("13")
         );
         assert_eq!(
-            request.headers().get("upgrade").and_then(|value| value.to_str().ok()),
+            request
+                .headers()
+                .get("upgrade")
+                .and_then(|value| value.to_str().ok()),
             Some("websocket")
         );
         assert_eq!(
@@ -292,6 +324,72 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cli_shim_result_serializes_manual_instructions_with_camel_case_keys() {
+        let value = serde_json::to_value(CliShimResult {
+            status: "manualInstallRequired".to_string(),
+            installed: false,
+            path: Some("/usr/local/bin/paseo".to_string()),
+            message: "Manual install required.".to_string(),
+            manual_instructions: Some(CliManualInstructions {
+                title: "Install from Terminal".to_string(),
+                detail: "Run the commands below.".to_string(),
+                commands: "sudo ...".to_string(),
+            }),
+        })
+        .expect("serializes");
+
+        assert_eq!(
+            value.get("status").and_then(|entry| entry.as_str()),
+            Some("manualInstallRequired")
+        );
+        assert_eq!(
+            value
+                .get("manualInstructions")
+                .and_then(|entry| entry.get("commands"))
+                .and_then(|entry| entry.as_str()),
+            Some("sudo ...")
+        );
+    }
+
+    #[test]
+    fn outer_cli_shim_contents_only_forwards_to_inner_launcher() {
+        let contents = outer_cli_shim_contents(Path::new(
+            "/Applications/Paseo.app/Contents/MacOS/paseo-managed",
+        ));
+        assert!(contents
+            .contains("exec \"/Applications/Paseo.app/Contents/MacOS/paseo-managed\" \"$@\""));
+        assert!(!contents.contains("--paseo-cli-shim"));
+    }
+
+    #[test]
+    fn inner_cli_launcher_path_lives_inside_managed_runtime_tree() {
+        let runtime_root = PathBuf::from("/tmp/paseo-desktop/runtime");
+        let inner_launcher = managed_cli_inner_launcher_path(&runtime_root);
+
+        assert_eq!(
+            inner_launcher,
+            PathBuf::from("/tmp/paseo-desktop/runtime/bin/paseo-managed")
+        );
+    }
+
+    #[test]
+    fn outer_shim_target_remains_stable_across_runtime_updates() {
+        let runtime_root = PathBuf::from("/tmp/paseo-desktop/runtime");
+        let first_runtime_root = PathBuf::from("/tmp/paseo-desktop/runtime/runtime-a");
+        let second_runtime_root = PathBuf::from("/tmp/paseo-desktop/runtime/runtime-b");
+        let first_target = managed_cli_inner_launcher_path(&runtime_root);
+        let second_target = managed_cli_inner_launcher_path(&runtime_root);
+        let first_contents = outer_cli_shim_contents(&first_target);
+        let second_contents = outer_cli_shim_contents(&second_target);
+
+        assert_ne!(first_runtime_root, second_runtime_root);
+        assert_eq!(first_target, second_target);
+        assert_eq!(first_contents, second_contents);
+        assert!(!first_contents.contains(first_runtime_root.to_string_lossy().as_ref()));
+        assert!(!first_contents.contains(second_runtime_root.to_string_lossy().as_ref()));
+    }
+
     #[cfg(unix)]
     #[test]
     #[ignore = "requires a running local daemon socket"]
@@ -301,7 +399,10 @@ mod tests {
             .filter(|value| !value.trim().is_empty())
             .map(PathBuf::from)
             .or_else(|| {
-                dirs::home_dir().map(|home| home.join(DEFAULT_MANAGED_HOME_BASENAME).join(SHORT_SOCKET_FILENAME))
+                dirs::home_dir().map(|home| {
+                    home.join(DEFAULT_MANAGED_HOME_BASENAME)
+                        .join(SHORT_SOCKET_FILENAME)
+                })
             })
             .expect("socket path should resolve");
 
@@ -345,10 +446,16 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), String> {
             .map_err(|error| format!("Failed to inspect {}: {error}", source_path.display()))?;
         if file_type.is_symlink() {
             let resolved = fs::canonicalize(&source_path).map_err(|error| {
-                format!("Failed to resolve symlink {}: {error}", source_path.display())
+                format!(
+                    "Failed to resolve symlink {}: {error}",
+                    source_path.display()
+                )
             })?;
             let resolved_type = fs::metadata(&resolved).map_err(|error| {
-                format!("Failed to inspect resolved symlink {}: {error}", resolved.display())
+                format!(
+                    "Failed to inspect resolved symlink {}: {error}",
+                    resolved.display()
+                )
             })?;
             if resolved_type.is_dir() {
                 copy_dir_recursive(&resolved, &target_path)?;
@@ -390,7 +497,12 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), String> {
                 .permissions()
                 .mode();
             fs::set_permissions(&target_path, fs::Permissions::from_mode(permissions)).map_err(
-                |error| format!("Failed to preserve mode on {}: {error}", target_path.display()),
+                |error| {
+                    format!(
+                        "Failed to preserve mode on {}: {error}",
+                        target_path.display()
+                    )
+                },
             )?;
         }
     }
@@ -514,6 +626,7 @@ fn resolve_paths(app: &AppHandle, runtime_id: &str) -> Result<ManagedPaths, Stri
             .unwrap_or_else(|| default_transport_path(&managed_home, &test_root));
         return Ok(ManagedPaths {
             runtime_root,
+            stable_runtime_root: test_root.join("runtime"),
             managed_home: managed_home.clone(),
             transport_path,
             logs_path: managed_home.join("daemon.log"),
@@ -525,21 +638,21 @@ fn resolve_paths(app: &AppHandle, runtime_id: &str) -> Result<ManagedPaths, Stri
     let root = app_data_root(app)?;
     let runtime_root = resolve_override_path("PASEO_DESKTOP_MANAGED_RUNTIME_ROOT")
         .unwrap_or_else(|| root.join("runtime").join(runtime_id));
-    let managed_home = resolve_override_path("PASEO_DESKTOP_MANAGED_HOME")
-        .unwrap_or_else(|| {
-            #[cfg(target_os = "macos")]
-            {
-                default_managed_home()
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                default_managed_home(&root)
-            }
-        });
+    let managed_home = resolve_override_path("PASEO_DESKTOP_MANAGED_HOME").unwrap_or_else(|| {
+        #[cfg(target_os = "macos")]
+        {
+            default_managed_home()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            default_managed_home(&root)
+        }
+    });
     let transport_path = resolve_override_path("PASEO_DESKTOP_MANAGED_SOCKET_PATH")
         .unwrap_or_else(|| default_transport_path(&managed_home, &root));
     Ok(ManagedPaths {
         runtime_root,
+        stable_runtime_root: root.join("runtime"),
         managed_home: managed_home.clone(),
         transport_path,
         logs_path: managed_home.join("daemon.log"),
@@ -566,7 +679,9 @@ fn bundled_runtime_root(app: &AppHandle) -> Result<PathBuf, String> {
     Err("Managed runtime resources are not bundled with this desktop build.".to_string())
 }
 
-fn load_bundled_runtime_pointer(app: &AppHandle) -> Result<(PathBuf, BundledRuntimePointer), String> {
+fn load_bundled_runtime_pointer(
+    app: &AppHandle,
+) -> Result<(PathBuf, BundledRuntimePointer), String> {
     let root = bundled_runtime_root(app)?;
     let pointer_path = root.join("current-runtime.json");
     let pointer = read_json_file::<BundledRuntimePointer>(&pointer_path)?;
@@ -645,8 +760,10 @@ fn resolve_tcp_settings_from_state(state: Option<&ManagedStateFile>) -> ManagedT
     let listen = state
         .and_then(|value| value.tcp_listen.clone())
         .unwrap_or_else(|| format!("{DEFAULT_MANAGED_TCP_HOST}:{DEFAULT_MANAGED_TCP_PORT}"));
-    let (host, port) =
-        parse_tcp_listen(&listen).unwrap_or((DEFAULT_MANAGED_TCP_HOST.to_string(), DEFAULT_MANAGED_TCP_PORT));
+    let (host, port) = parse_tcp_listen(&listen).unwrap_or((
+        DEFAULT_MANAGED_TCP_HOST.to_string(),
+        DEFAULT_MANAGED_TCP_PORT,
+    ));
     ManagedTcpSettings {
         enabled: state.map(|value| value.tcp_enabled).unwrap_or(false),
         host,
@@ -681,10 +798,11 @@ fn cli_host_for_target(target: &ManagedTransportTarget) -> String {
 
 fn cli_env(paths: &ManagedPaths) -> Vec<(String, String)> {
     let state = read_state_file(&paths.state_file_path);
-    let target = managed_transport_target(paths, state.as_ref()).unwrap_or(ManagedTransportTarget {
-        transport_type: default_transport_type().to_string(),
-        transport_path: paths.transport_path.to_string_lossy().into_owned(),
-    });
+    let target =
+        managed_transport_target(paths, state.as_ref()).unwrap_or(ManagedTransportTarget {
+            transport_type: default_transport_type().to_string(),
+            transport_path: paths.transport_path.to_string_lossy().into_owned(),
+        });
     vec![
         (
             "PASEO_HOME".to_string(),
@@ -703,10 +821,16 @@ fn cli_command(
     let node = runtime_root.join(&manifest.node_relative_path);
     let cli = runtime_root.join(&manifest.cli_entrypoint_relative_path);
     if !node.exists() {
-        return Err(format!("Bundled Node runtime is missing at {}", node.display()));
+        return Err(format!(
+            "Bundled Node runtime is missing at {}",
+            node.display()
+        ));
     }
     if !cli.exists() {
-        return Err(format!("Bundled CLI entrypoint is missing at {}", cli.display()));
+        return Err(format!(
+            "Bundled CLI entrypoint is missing at {}",
+            cli.display()
+        ));
     }
     let mut command = Command::new(node);
     command.arg(cli);
@@ -715,6 +839,177 @@ fn cli_command(
         command.env(key, value);
     }
     Ok(command)
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+fn escape_applescript_string(value: &str) -> String {
+    value.replace('\\', r"\\").replace('"', "\\\"")
+}
+
+#[cfg(windows)]
+fn powershell_double_quote(value: &str) -> String {
+    value.replace('`', "``").replace('"', "`\"")
+}
+
+fn managed_cli_inner_launcher_path(launcher_root: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        return launcher_root
+            .join(CLI_INNER_DIR)
+            .join(CLI_INNER_WINDOWS_NAME);
+    }
+    #[cfg(not(windows))]
+    {
+        launcher_root.join(CLI_INNER_DIR).join(CLI_INNER_UNIX_NAME)
+    }
+}
+
+fn outer_cli_shim_path() -> Result<PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(PathBuf::from("/usr/local/bin").join(CLI_SHIM_NAME));
+    }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
+    {
+        return Ok(PathBuf::from("/usr/local/bin").join(CLI_SHIM_NAME));
+    }
+    #[cfg(windows)]
+    {
+        let local_app_data = dirs::data_local_dir().ok_or_else(|| {
+            "Failed to resolve LocalAppData for CLI shim instructions.".to_string()
+        })?;
+        Ok(local_app_data
+            .join("Microsoft")
+            .join("WinGet")
+            .join("Links")
+            .join(CLI_SHIM_WINDOWS_NAME))
+    }
+}
+
+fn inner_cli_launcher_contents(paths: &ManagedPaths, manifest: &ManagedRuntimeManifest) -> String {
+    let node = paths.runtime_root.join(&manifest.node_relative_path);
+    let cli = paths
+        .runtime_root
+        .join(&manifest.cli_entrypoint_relative_path);
+    #[cfg(windows)]
+    {
+        return format!(
+            "@echo off\r\nset \"PASEO_HOME={}\"\r\n\"{}\" \"{}\" %*\r\n",
+            paths.managed_home.display(),
+            node.display(),
+            cli.display()
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        format!(
+            "#!/bin/sh\nexport PASEO_HOME={}\nexec \"{}\" \"{}\" \"$@\"\n",
+            shell_single_quote(paths.managed_home.to_string_lossy().as_ref()),
+            node.display(),
+            cli.display()
+        )
+    }
+}
+
+fn outer_cli_shim_contents(inner_launcher: &Path) -> String {
+    #[cfg(windows)]
+    {
+        return format!("@echo off\r\n\"{}\" %*\r\n", inner_launcher.display());
+    }
+    #[cfg(not(windows))]
+    {
+        format!("#!/bin/sh\nexec \"{}\" \"$@\"\n", inner_launcher.display())
+    }
+}
+
+fn write_cli_launcher(path: &Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
+    }
+    fs::write(path, contents)
+        .map_err(|error| format!("Failed to write {}: {error}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+            .map_err(|error| format!("Failed to chmod {}: {error}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn ensure_inner_cli_launcher(
+    paths: &ManagedPaths,
+    manifest: &ManagedRuntimeManifest,
+) -> Result<PathBuf, String> {
+    let inner_launcher = managed_cli_inner_launcher_path(&paths.stable_runtime_root);
+    write_cli_launcher(
+        &inner_launcher,
+        &inner_cli_launcher_contents(paths, manifest),
+    )?;
+    Ok(inner_launcher)
+}
+
+fn cli_manual_instructions(
+    paths: &ManagedPaths,
+    manifest: &ManagedRuntimeManifest,
+) -> Result<CliManualInstructions, String> {
+    let inner_launcher = ensure_inner_cli_launcher(paths, manifest)?;
+    let outer_shim = outer_cli_shim_path()?;
+    #[cfg(windows)]
+    {
+        let target_dir = outer_shim
+            .parent()
+            .ok_or_else(|| "CLI shim target is missing a parent directory.".to_string())?;
+        let contents = outer_cli_shim_contents(&inner_launcher);
+        return Ok(CliManualInstructions {
+            title: "Install the Paseo CLI from PowerShell".to_string(),
+            detail: "If the automatic install does not complete, run these commands in PowerShell to write the PATH shim manually.".to_string(),
+            commands: format!(
+                "$target = \"{}\"\nNew-Item -ItemType Directory -Force -Path \"{}\" | Out-Null\n$contents = @\"\n{}\"@\nSet-Content -Path $target -Value $contents -Encoding ASCII\n",
+                powershell_double_quote(outer_shim.to_string_lossy().as_ref()),
+                powershell_double_quote(target_dir.to_string_lossy().as_ref()),
+                contents
+            ),
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(CliManualInstructions {
+            title: "Install the Paseo CLI from Terminal".to_string(),
+            detail: "If the automatic install does not complete, run these commands in Terminal to write the global PATH shim manually.".to_string(),
+            commands: format!(
+                "sudo mkdir -p {target_dir}\nprintf '%s\\n' {lines} | sudo tee {target_path} >/dev/null\nsudo chmod 755 {target_path}\n",
+                target_dir = shell_single_quote(
+                    outer_shim
+                        .parent()
+                        .ok_or_else(|| "CLI shim target is missing a parent directory.".to_string())?
+                        .to_string_lossy()
+                        .as_ref()
+                ),
+                target_path = shell_single_quote(outer_shim.to_string_lossy().as_ref()),
+                lines = iter::once("#!/bin/sh".to_string())
+                    .chain(iter::once(format!(
+                        "exec \"{}\" \"$@\"",
+                        inner_launcher.to_string_lossy()
+                    )))
+                    .map(|line| shell_single_quote(&line))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+        })
+    }
+}
+
+fn detect_installed_cli_shim_path(paths: &ManagedPaths) -> Option<String> {
+    let outer_shim = outer_cli_shim_path().ok()?;
+    let inner_launcher = managed_cli_inner_launcher_path(&paths.stable_runtime_root);
+    let expected = outer_cli_shim_contents(&inner_launcher);
+    let actual = fs::read_to_string(&outer_shim).ok()?;
+    (actual == expected).then(|| outer_shim.to_string_lossy().into_owned())
 }
 
 fn read_pid_from_home(managed_home: &Path) -> Option<i64> {
@@ -752,8 +1047,12 @@ fn install_runtime_if_needed(source_root: &Path, target_root: &Path) -> Result<(
     }
 
     if target_root.exists() {
-        fs::remove_dir_all(target_root)
-            .map_err(|error| format!("Failed to remove incomplete runtime {}: {error}", target_root.display()))?;
+        fs::remove_dir_all(target_root).map_err(|error| {
+            format!(
+                "Failed to remove incomplete runtime {}: {error}",
+                target_root.display()
+            )
+        })?;
     }
 
     let staging_root = target_root.with_extension(format!("installing-{}", std::process::id()));
@@ -800,6 +1099,7 @@ fn ensure_runtime_installed_internal(app: &AppHandle) -> Result<ManagedRuntimeSt
     }
     fs::create_dir_all(&paths.managed_home)
         .map_err(|error| format!("Failed to create {}: {error}", paths.managed_home.display()))?;
+    ensure_inner_cli_launcher(&paths, &manifest)?;
     let existing_state = read_state_file(&paths.state_file_path);
     let target = managed_transport_target(&paths, existing_state.as_ref())?;
     let state = ManagedStateFile {
@@ -812,7 +1112,9 @@ fn ensure_runtime_installed_internal(app: &AppHandle) -> Result<ManagedRuntimeSt
             .as_ref()
             .map(|entry| entry.tcp_enabled)
             .unwrap_or(false),
-        tcp_listen: existing_state.as_ref().and_then(|entry| entry.tcp_listen.clone()),
+        tcp_listen: existing_state
+            .as_ref()
+            .and_then(|entry| entry.tcp_listen.clone()),
         cli_shim_path: existing_state.and_then(|entry| entry.cli_shim_path),
     };
     write_state_file(&paths.state_file_path, &state)?;
@@ -868,7 +1170,13 @@ fn managed_daemon_status_internal(app: &AppHandle) -> Result<ManagedDaemonStatus
     let cli_status = run_cli_json_command(
         &paths.runtime_root,
         &manifest,
-        &["daemon", "status", "--home", &paths.managed_home.to_string_lossy(), "--json"],
+        &[
+            "daemon",
+            "status",
+            "--home",
+            &paths.managed_home.to_string_lossy(),
+            "--json",
+        ],
         &paths,
     )
     .ok();
@@ -915,93 +1223,163 @@ fn managed_daemon_status_internal(app: &AppHandle) -> Result<ManagedDaemonStatus
         tcp_listen: tcp_settings
             .enabled
             .then(|| format!("{}:{}", tcp_settings.host, tcp_settings.port)),
-        cli_shim_path: state.and_then(|entry| entry.cli_shim_path),
+        cli_shim_path: detect_installed_cli_shim_path(&paths),
     })
 }
 
-fn cli_shim_contents(app_exe: &Path, state_file: &Path) -> String {
-    format!(
-        "#!/usr/bin/env sh\nexec \"{}\" --paseo-cli-shim \"{}\" \"$@\"\n",
-        app_exe.display(),
-        state_file.display()
-    )
+#[cfg(target_os = "macos")]
+fn install_cli_shim_via_macos_prompt(shim_path: &Path, contents: &str) -> Result<(), String> {
+    // Manual smoke path: click Install CLI in the desktop app on macOS and confirm the
+    // /usr/local/bin/paseo prompt writes the trivial outer shim shown in cli_manual_instructions().
+    let temp_path = std::env::temp_dir().join(format!("paseo-cli-shim-{}", std::process::id()));
+    write_cli_launcher(&temp_path, contents)?;
+    let command = format!(
+        "mkdir -p {target_dir} && install -m 755 {temp_path} {target_path}",
+        target_dir = shell_single_quote(
+            shim_path
+                .parent()
+                .ok_or_else(|| "CLI shim target is missing a parent directory.".to_string())?
+                .to_string_lossy()
+                .as_ref()
+        ),
+        temp_path = shell_single_quote(temp_path.to_string_lossy().as_ref()),
+        target_path = shell_single_quote(shim_path.to_string_lossy().as_ref())
+    );
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(format!(
+            "do shell script \"{}\" with administrator privileges",
+            escape_applescript_string(&command)
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("Failed to request macOS CLI install privileges: {error}"))?;
+    let _ = fs::remove_file(&temp_path);
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.contains("User canceled") || stderr.contains("(-128)") {
+        return Err("ELEVATION_DENIED".to_string());
+    }
+    Err(if stderr.is_empty() {
+        "Failed to install the global CLI shim.".to_string()
+    } else {
+        stderr
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn remove_cli_shim_via_macos_prompt(shim_path: &Path) -> Result<(), String> {
+    let command = format!(
+        "rm -f {}",
+        shell_single_quote(shim_path.to_string_lossy().as_ref())
+    );
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(format!(
+            "do shell script \"{}\" with administrator privileges",
+            escape_applescript_string(&command)
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("Failed to request macOS CLI uninstall privileges: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if stderr.is_empty() {
+        "Failed to remove the global CLI shim.".to_string()
+    } else {
+        stderr
+    })
 }
 
 fn install_cli_shim_internal(app: &AppHandle) -> Result<CliShimResult, String> {
     let status = ensure_runtime_installed_internal(app)?;
     let paths = resolve_paths(app, &status.runtime_id)?;
-    let bin_dir = if cfg!(target_os = "windows") {
-        dirs::data_dir()
-            .ok_or_else(|| "Failed to resolve data directory for CLI shim.".to_string())?
-            .join("paseo")
-            .join("bin")
-    } else {
-        dirs::home_dir()
-            .ok_or_else(|| "Failed to resolve home directory for CLI shim.".to_string())?
-            .join(".local")
-            .join("bin")
-    };
-    fs::create_dir_all(&bin_dir)
-        .map_err(|error| format!("Failed to create {}: {error}", bin_dir.display()))?;
-    let shim_path = if cfg!(target_os = "windows") {
-        bin_dir.join("paseo.cmd")
-    } else {
-        bin_dir.join("paseo")
-    };
-    let app_exe = std::env::current_exe()
-        .map_err(|error| format!("Failed to resolve desktop executable: {error}"))?;
-    if cfg!(target_os = "windows") {
-        fs::write(
-            &shim_path,
-            format!(
-                "@echo off\r\n\"{}\" --paseo-cli-shim \"{}\" %*\r\n",
-                app_exe.display(),
-                paths.state_file_path.display()
-            ),
-        )
-        .map_err(|error| format!("Failed to write {}: {error}", shim_path.display()))?;
-    } else {
-        fs::write(&shim_path, cli_shim_contents(&app_exe, &paths.state_file_path))
-            .map_err(|error| format!("Failed to write {}: {error}", shim_path.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&shim_path, fs::Permissions::from_mode(0o755)).map_err(
-                |error| format!("Failed to chmod {}: {error}", shim_path.display()),
-            )?;
+    let manifest = load_runtime_manifest(&paths.runtime_root)?;
+    let inner_launcher = ensure_inner_cli_launcher(&paths, &manifest)?;
+    let shim_path = outer_cli_shim_path()?;
+    let shim_contents = outer_cli_shim_contents(&inner_launcher);
+    let manual_instructions = cli_manual_instructions(&paths, &manifest)?;
+
+    #[cfg(target_os = "macos")]
+    let install_result = install_cli_shim_via_macos_prompt(&shim_path, &shim_contents);
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
+    let install_result = write_cli_launcher(&shim_path, &shim_contents);
+    #[cfg(windows)]
+    let install_result: Result<(), String> = Err("AUTOMATIC_INSTALL_UNAVAILABLE".to_string());
+
+    match install_result {
+        Ok(()) => {
+            let mut state = read_state_file(&paths.state_file_path).unwrap_or(ManagedStateFile {
+                runtime_id: status.runtime_id.clone(),
+                runtime_root: paths.runtime_root.to_string_lossy().into_owned(),
+                managed_home: paths.managed_home.to_string_lossy().into_owned(),
+                transport_type: status.transport_type.clone(),
+                transport_path: status.transport_path.clone(),
+                tcp_enabled: false,
+                tcp_listen: None,
+                cli_shim_path: None,
+            });
+            state.cli_shim_path = Some(shim_path.to_string_lossy().into_owned());
+            write_state_file(&paths.state_file_path, &state)?;
+            Ok(CliShimResult {
+                status: "installed".to_string(),
+                installed: true,
+                path: Some(shim_path.to_string_lossy().into_owned()),
+                message: format!("Paseo CLI installed at {}.", shim_path.display()),
+                manual_instructions: None,
+            })
         }
+        Err(error) if error == "ELEVATION_DENIED" => Ok(CliShimResult {
+            status: "elevationDenied".to_string(),
+            installed: false,
+            path: Some(shim_path.to_string_lossy().into_owned()),
+            message: "CLI install needs administrator approval. If you dismissed the prompt, install it from Terminal with the commands below.".to_string(),
+            manual_instructions: Some(manual_instructions),
+        }),
+        Err(error) if error == "AUTOMATIC_INSTALL_UNAVAILABLE" => Ok(CliShimResult {
+            status: "automaticInstallUnavailable".to_string(),
+            installed: false,
+            path: Some(shim_path.to_string_lossy().into_owned()),
+            message: "Automatic CLI install is not available on this platform. Finish the install manually with the commands below.".to_string(),
+            manual_instructions: Some(manual_instructions),
+        }),
+        Err(error) => Ok(CliShimResult {
+            status: "manualInstallRequired".to_string(),
+            installed: false,
+            path: Some(shim_path.to_string_lossy().into_owned()),
+            message: format!(
+                "Automatic CLI install did not complete: {error}. Finish the install manually with the commands below."
+            ),
+            manual_instructions: Some(manual_instructions),
+        }),
     }
-
-    let mut state = read_state_file(&paths.state_file_path).unwrap_or(ManagedStateFile {
-        runtime_id: status.runtime_id.clone(),
-        runtime_root: paths.runtime_root.to_string_lossy().into_owned(),
-        managed_home: paths.managed_home.to_string_lossy().into_owned(),
-        transport_type: status.transport_type.clone(),
-        transport_path: status.transport_path.clone(),
-        tcp_enabled: false,
-        tcp_listen: None,
-        cli_shim_path: None,
-    });
-    state.cli_shim_path = Some(shim_path.to_string_lossy().into_owned());
-    write_state_file(&paths.state_file_path, &state)?;
-
-    Ok(CliShimResult {
-        installed: true,
-        path: Some(shim_path.to_string_lossy().into_owned()),
-        message: "CLI shim installed for the current user.".to_string(),
-    })
 }
 
 fn uninstall_cli_shim_internal(app: &AppHandle) -> Result<CliShimResult, String> {
     let status = ensure_runtime_installed_internal(app)?;
     let paths = resolve_paths(app, &status.runtime_id)?;
-    let shim_path = read_state_file(&paths.state_file_path).and_then(|entry| entry.cli_shim_path);
-    if let Some(shim_path) = shim_path.clone() {
-        let shim_path_buf = PathBuf::from(&shim_path);
-        if shim_path_buf.exists() {
-            fs::remove_file(&shim_path_buf)
-                .map_err(|error| format!("Failed to remove {}: {error}", shim_path_buf.display()))?;
-        }
+    let shim_path = detect_installed_cli_shim_path(&paths)
+        .map(PathBuf::from)
+        .or_else(|| {
+            read_state_file(&paths.state_file_path)
+                .and_then(|entry| entry.cli_shim_path.map(PathBuf::from))
+        })
+        .unwrap_or(outer_cli_shim_path()?);
+    if shim_path.exists() {
+        #[cfg(target_os = "macos")]
+        remove_cli_shim_via_macos_prompt(&shim_path)?;
+        #[cfg(all(not(target_os = "macos"), not(windows)))]
+        fs::remove_file(&shim_path)
+            .map_err(|error| format!("Failed to remove {}: {error}", shim_path.display()))?;
+        #[cfg(windows)]
+        fs::remove_file(&shim_path)
+            .map_err(|error| format!("Failed to remove {}: {error}", shim_path.display()))?;
     }
     let mut state = read_state_file(&paths.state_file_path).unwrap_or(ManagedStateFile {
         runtime_id: status.runtime_id.clone(),
@@ -1017,44 +1395,12 @@ fn uninstall_cli_shim_internal(app: &AppHandle) -> Result<CliShimResult, String>
     write_state_file(&paths.state_file_path, &state)?;
 
     Ok(CliShimResult {
+        status: "removed".to_string(),
         installed: false,
-        path: None,
-        message: "CLI shim removed.".to_string(),
+        path: Some(shim_path.to_string_lossy().into_owned()),
+        message: "Paseo CLI shim removed.".to_string(),
+        manual_instructions: None,
     })
-}
-
-pub fn try_run_cli_shim_from_args() -> Result<bool, String> {
-    let args = env::args().collect::<Vec<_>>();
-    let Some(flag_index) = args.iter().position(|value| value == "--paseo-cli-shim") else {
-        return Ok(false);
-    };
-    let state_file = args
-        .get(flag_index + 1)
-        .ok_or_else(|| "Missing state file path after --paseo-cli-shim".to_string())?;
-    let passthrough_args = args
-        .iter()
-        .skip(flag_index + 2)
-        .cloned()
-        .collect::<Vec<_>>();
-    let state = read_json_file::<ManagedStateFile>(&PathBuf::from(state_file))?;
-    let manifest = load_runtime_manifest(&PathBuf::from(&state.runtime_root))?;
-    let node = PathBuf::from(&state.runtime_root).join(&manifest.node_relative_path);
-    let cli = PathBuf::from(&state.runtime_root).join(&manifest.cli_entrypoint_relative_path);
-    let mut command = Command::new(node);
-    command.arg(cli);
-    command.args(passthrough_args);
-    command.env("PASEO_HOME", state.managed_home);
-    command.env(
-        "PASEO_HOST",
-        cli_host_for_target(&ManagedTransportTarget {
-            transport_type: state.transport_type,
-            transport_path: state.transport_path,
-        }),
-    );
-    let status = command
-        .status()
-        .map_err(|error| format!("Failed to execute bundled CLI shim: {error}"))?;
-    std::process::exit(status.code().unwrap_or(1));
 }
 
 fn start_managed_daemon_internal(app: &AppHandle) -> Result<ManagedDaemonStatus, String> {
@@ -1265,7 +1611,13 @@ pub async fn managed_daemon_pairing(app: AppHandle) -> Result<ManagedPairingOffe
         let value = run_cli_json_command(
             &paths.runtime_root,
             &manifest,
-            &["daemon", "pair", "--home", &paths.managed_home.to_string_lossy(), "--json"],
+            &[
+                "daemon",
+                "pair",
+                "--home",
+                &paths.managed_home.to_string_lossy(),
+                "--json",
+            ],
             &paths,
         )?;
         serde_json::from_value::<ManagedPairingOffer>(value)
@@ -1294,9 +1646,11 @@ pub async fn update_managed_daemon_tcp_settings(
     app: AppHandle,
     settings: ManagedTcpSettings,
 ) -> Result<ManagedDaemonStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || update_managed_tcp_settings_internal(&app, settings))
-        .await
-        .map_err(|error| format!("Managed daemon TCP settings task failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        update_managed_tcp_settings_internal(&app, settings)
+    })
+    .await
+    .map_err(|error| format!("Managed daemon TCP settings task failed: {error}"))?
 }
 
 async fn spawn_local_transport_session<S>(
@@ -1464,7 +1818,9 @@ pub async fn open_local_daemon_transport(
             {
                 let ws_stream = connect_local_socket(PathBuf::from(transport_path))
                     .await
-                    .map_err(|error| format!("Failed to connect to local daemon socket: {error}"))?;
+                    .map_err(|error| {
+                        format!("Failed to connect to local daemon socket: {error}")
+                    })?;
                 spawn_local_transport_session(app, transport_state, session_id, ws_stream).await
             }
             #[cfg(not(unix))]
