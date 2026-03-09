@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { watch, type FSWatcher } from 'node:fs'
-import { stat } from 'fs/promises'
+import { access, stat } from 'fs/promises'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { join, resolve, sep } from 'path'
@@ -5261,6 +5261,13 @@ export class Session {
       // Non-critical — leave null on failure.
     }
 
+    let stale = false
+    try {
+      await access(workspace.cwd)
+    } catch {
+      stale = true
+    }
+
     return {
       id: workspace.workspaceId,
       projectId: workspace.projectId,
@@ -5272,6 +5279,7 @@ export class Session {
       status: 'done',
       activityAt: null,
       diffStat,
+      ...(stale ? { stale: true } : {}),
     }
   }
 
@@ -5863,7 +5871,16 @@ export class Session {
         throw new Error(`Workspace not found: ${request.workspaceId}`)
       }
       if (existing.kind === 'worktree') {
-        throw new Error('Use worktree archive for Paseo worktrees')
+        let cwdExists = false
+        try {
+          await access(existing.cwd)
+          cwdExists = true
+        } catch {
+          // Directory is gone — allow archiving via the simple path
+        }
+        if (cwdExists) {
+          throw new Error('Use worktree archive for Paseo worktrees')
+        }
       }
       const archivedAt = new Date().toISOString()
       await this.archiveWorkspaceRecord(request.workspaceId, archivedAt)
