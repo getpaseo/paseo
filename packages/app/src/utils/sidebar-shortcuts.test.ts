@@ -13,6 +13,7 @@ function workspace(serverId: string, cwd: string): SidebarWorkspaceEntry {
     activityAt: null,
     statusBucket: "done",
     diffStat: null,
+    stale: false,
   };
 }
 

@@ -659,9 +659,14 @@ function WorkspaceRowInner({
           style={styles.workspaceRowLeft}
         >
           <WorkspaceStatusIndicator bucket={workspace.statusBucket} loading={isArchiving} />
-          <Text style={styles.workspaceBranchText} numberOfLines={1}>
+          <Text style={[styles.workspaceBranchText, workspace.stale && styles.workspaceStaleBranchText]} numberOfLines={1}>
             {workspace.name}
           </Text>
+          {workspace.stale ? (
+            <Text style={styles.workspaceStaleLabel} numberOfLines={1}>
+              missing
+            </Text>
+          ) : null}
         </View>
         <View style={styles.workspaceRowRight}>
           {workspace.diffStat ? (
@@ -832,10 +837,10 @@ function WorkspaceRowWithMenu({
       isArchiving={isArchiving}
       dragHandleProps={dragHandleProps}
       menuController={null}
-      archiveLabel={isWorktree ? 'Archive worktree' : 'Hide from sidebar'}
-      archiveStatus={isWorktree ? archiveStatus : isArchivingWorkspace ? 'pending' : 'idle'}
-      archivePendingLabel={isWorktree ? 'Archiving...' : 'Hiding...'}
-      onArchive={isWorktree ? handleArchiveWorktree : handleArchiveWorkspace}
+      archiveLabel={isWorktree && !workspace.stale ? 'Archive worktree' : isWorktree && workspace.stale ? 'Remove stale worktree' : 'Hide from sidebar'}
+      archiveStatus={isWorktree && !workspace.stale ? archiveStatus : isArchivingWorkspace ? 'pending' : 'idle'}
+      archivePendingLabel={isWorktree && !workspace.stale ? 'Archiving...' : 'Removing...'}
+      onArchive={isWorktree && !workspace.stale ? handleArchiveWorktree : handleArchiveWorkspace}
       onCopyPath={handleCopyPath}
     />
   )
@@ -1725,6 +1730,15 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.76,
     flex: 1,
     minWidth: 0,
+  },
+  workspaceStaleBranchText: {
+    opacity: 0.4,
+  },
+  workspaceStaleLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.palette.amber[500],
+    marginLeft: 4,
+    flexShrink: 0,
   },
   workspaceCreatedAtText: {
     color: theme.colors.foregroundMuted,

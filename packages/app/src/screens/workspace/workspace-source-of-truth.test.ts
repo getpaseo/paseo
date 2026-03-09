@@ -19,6 +19,7 @@ describe('workspace source of truth consumption', () => {
       status: 'running',
       activityAt: new Date('2026-03-01T00:00:00.000Z'),
       diffStat: null,
+      stale: false,
     }
 
     const header = resolveWorkspaceHeader({ workspace })

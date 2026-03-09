@@ -34,6 +34,7 @@ function workspace(
     status: input.status,
     activityAt: input.activityAt,
     diffStat: null,
+    stale: false,
   }
 }
 
