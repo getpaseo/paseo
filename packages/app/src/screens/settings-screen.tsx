@@ -1253,18 +1253,19 @@ function HostDetailModal({
                 </Text>
                 {/* Grouped checks */}
                 {(["provider", "config", "runtime"] as const).map((prefix) => {
-                  const groupChecks = doctorReport.checks.filter((c) => c.id.startsWith(`${prefix}-`));
+                  const groupChecks = doctorReport.checks.filter((c) => c.id.startsWith(`${prefix}.`));
                   if (groupChecks.length === 0) return null;
                   const groupLabel = prefix === "provider" ? "Providers" : prefix === "config" ? "Config" : "Runtime";
                   return (
                     <View key={prefix} style={{ gap: theme.spacing[1] }}>
-                      <Text style={{ color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs, textTransform: "uppercase" }}>
+                      <Text style={{ color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs, textTransform: "uppercase", marginBottom: theme.spacing[1] }}>
                         {groupLabel}
                       </Text>
                       {groupChecks.map((check) => (
-                        <View key={check.id} style={{ flexDirection: "row", alignItems: "flex-start", gap: theme.spacing[2] }}>
+                        <View key={check.id} style={{ flexDirection: "row", alignItems: "flex-start", gap: theme.spacing[2], paddingVertical: 3 }}>
                           <Text style={{
                             fontSize: theme.fontSize.sm,
+                            width: 16,
                             color: check.status === "ok"
                               ? theme.colors.palette.green[400]
                               : check.status === "warn"
@@ -1275,7 +1276,7 @@ function HostDetailModal({
                           </Text>
                           <View style={{ flex: 1 }}>
                             <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.foreground }}>{check.label}</Text>
-                            <Text style={{ fontSize: theme.fontSize.xs, color: theme.colors.foregroundMuted }}>{check.detail}</Text>
+                            <Text style={{ fontSize: theme.fontSize.xs, color: theme.colors.foregroundMuted }} selectable>{check.detail}</Text>
                           </View>
                         </View>
                       ))}
