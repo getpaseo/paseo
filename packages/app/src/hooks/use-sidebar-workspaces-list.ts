@@ -19,6 +19,7 @@ export interface SidebarWorkspaceEntry {
   activityAt: Date | null
   statusBucket: SidebarStateBucket
   diffStat: { additions: number; deletions: number } | null
+  stale: boolean
 }
 
 export interface SidebarProjectEntry {
@@ -131,6 +132,7 @@ export function buildSidebarProjectsFromWorkspaces(input: {
       activityAt: workspace.activityAt,
       statusBucket: workspace.status,
       diffStat: workspace.diffStat,
+      stale: workspace.stale,
     }
 
     project.workspaces.push(row)

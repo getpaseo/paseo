@@ -1494,6 +1494,7 @@ export const WorkspaceDescriptorPayloadSchema = z.object({
     additions: z.number(),
     deletions: z.number(),
   }).nullable().optional(),
+  stale: z.boolean().optional(),
 })
 
 export const AgentUpdateMessageSchema = z.object({

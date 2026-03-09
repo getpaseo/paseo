@@ -434,4 +434,82 @@ describe('workspace aggregation', () => {
     const response = emitted.find((message) => message.type === 'archive_workspace_response') as any
     expect(response?.payload.error).toBeNull()
   })
+
+  test('workspace with missing cwd is marked as stale', async () => {
+    const session = createSessionForWorkspaceTests() as any
+    session.workspaceRegistry.list = async () => [
+      createPersistedWorkspaceRecord({
+        workspaceId: '/tmp/does-not-exist-workspace-stale-test',
+        projectId: '/tmp/does-not-exist-workspace-stale-test',
+        cwd: '/tmp/does-not-exist-workspace-stale-test',
+        kind: 'worktree',
+        displayName: 'stale-branch',
+        createdAt: '2026-03-01T12:00:00.000Z',
+        updatedAt: '2026-03-01T12:00:00.000Z',
+      }),
+    ]
+    session.listAgentPayloads = async () => []
+    const result = await session.listFetchWorkspacesEntries({
+      type: 'fetch_workspaces_request',
+      requestId: 'req-stale',
+    })
+
+    expect(result.entries).toHaveLength(1)
+    expect(result.entries[0]?.stale).toBe(true)
+  })
+
+  test('workspace with existing cwd is not marked as stale', async () => {
+    const session = createSessionForWorkspaceTests() as any
+    session.workspaceRegistry.list = async () => [
+      createPersistedWorkspaceRecord({
+        workspaceId: '/tmp',
+        projectId: '/tmp',
+        cwd: '/tmp',
+        kind: 'directory',
+        displayName: 'tmp',
+        createdAt: '2026-03-01T12:00:00.000Z',
+        updatedAt: '2026-03-01T12:00:00.000Z',
+      }),
+    ]
+    session.listAgentPayloads = async () => []
+    const result = await session.listFetchWorkspacesEntries({
+      type: 'fetch_workspaces_request',
+      requestId: 'req-not-stale',
+    })
+
+    expect(result.entries).toHaveLength(1)
+    expect(result.entries[0]?.stale).toBeFalsy()
+  })
+
+  test('archive_workspace_request succeeds for stale worktree whose cwd is missing', async () => {
+    const emitted: Array<{ type: string; payload: unknown }> = []
+    const session = createSessionForWorkspaceTests() as any
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: '/tmp/gone-worktree-stale-test',
+      projectId: '/tmp/gone-worktree-stale-test',
+      cwd: '/tmp/gone-worktree-stale-test',
+      kind: 'worktree',
+      displayName: 'gone-branch',
+      createdAt: '2026-03-01T12:00:00.000Z',
+      updatedAt: '2026-03-01T12:00:00.000Z',
+    })
+
+    session.emit = (message: any) => emitted.push(message)
+    session.workspaceRegistry.get = async () => workspace
+    session.workspaceRegistry.archive = async (_workspaceId: string, archivedAt: string) => {
+      workspace.archivedAt = archivedAt
+    }
+    session.workspaceRegistry.list = async () => [workspace]
+    session.projectRegistry.archive = async () => {}
+
+    await session.handleMessage({
+      type: 'archive_workspace_request',
+      workspaceId: '/tmp/gone-worktree-stale-test',
+      requestId: 'req-archive-stale',
+    })
+
+    expect(workspace.archivedAt).toBeTruthy()
+    const response = emitted.find((message) => message.type === 'archive_workspace_response') as any
+    expect(response?.payload.error).toBeNull()
+  })
 })

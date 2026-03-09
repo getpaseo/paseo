@@ -121,6 +121,7 @@ export interface WorkspaceDescriptor {
   status: WorkspaceDescriptorPayload["status"];
   activityAt: Date | null;
   diffStat: { additions: number; deletions: number } | null;
+  stale: boolean;
 }
 
 export function normalizeWorkspaceDescriptor(
@@ -139,6 +140,7 @@ export function normalizeWorkspaceDescriptor(
     activityAt:
       activityAt && !Number.isNaN(activityAt.getTime()) ? activityAt : null,
     diffStat: payload.diffStat ?? null,
+    stale: payload.stale ?? false,
   };
 }
 

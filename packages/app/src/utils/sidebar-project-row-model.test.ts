@@ -15,6 +15,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     activityAt: null,
     statusBucket: 'done',
     diffStat: null,
+    stale: false,
     ...overrides,
   }
 }
