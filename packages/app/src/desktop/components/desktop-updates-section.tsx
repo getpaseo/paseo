@@ -3,8 +3,9 @@ import { ActivityIndicator, Alert, Image, Pressable, Text, View } from "react-na
 import * as Clipboard from "expo-clipboard";
 import * as QRCode from "qrcode";
 import { useFocusEffect } from "@react-navigation/native";
-import { StyleSheet } from "react-native-unistyles";
-import { ArrowUpRight } from "lucide-react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { settingsStyles } from "@/styles/settings";
+import { ArrowUpRight, Play, Pause, RotateCw, Terminal, Copy, FileText, Smartphone } from "lucide-react-native";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -35,6 +36,7 @@ export interface LocalDaemonSectionProps {
 }
 
 export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
+  const { theme } = useUnistyles();
   const showSection = shouldUseManagedDesktopDaemon();
   const { settings, updateSettings } = useAppSettings();
   const [managedStatus, setManagedStatus] = useState<ManagedDaemonStatus | null>(null);
@@ -331,9 +333,9 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
   }
 
   return (
-    <View style={styles.section}>
+    <View style={settingsStyles.section}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Built-in daemon</Text>
+        <Text style={settingsStyles.sectionTitle}>Built-in daemon</Text>
         <Pressable
           accessibilityRole="link"
           onPress={() => void openExternalUrl(ADVANCED_DAEMON_SETTINGS_URL)}
@@ -343,7 +345,7 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
           <ArrowUpRight size={14} color={styles.sectionLinkText.color} />
         </Pressable>
       </View>
-      <View style={styles.card}>
+      <View style={settingsStyles.card}>
         <View style={styles.row}>
           <View style={styles.rowContent}>
             <Text style={styles.rowTitle}>Status</Text>
@@ -364,9 +366,11 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
             </Text>
           </View>
           <Button
-            variant="secondary"
+            variant="outline"
             size="sm"
-            style={styles.primaryActionButton}
+            leftIcon={isDaemonManagementPaused
+              ? <Play size={theme.iconSize.sm} color={theme.colors.foreground} />
+              : <Pause size={theme.iconSize.sm} color={theme.colors.foreground} />}
             onPress={handleToggleDaemonManagement}
             disabled={isUpdatingDaemonManagement}
           >
@@ -388,9 +392,9 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
             ) : null}
           </View>
           <Button
-            variant="secondary"
+            variant="outline"
             size="sm"
-            style={styles.primaryActionButton}
+            leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
             onPress={handleUpdateLocalDaemon}
             disabled={isRestartingDaemon}
           >
@@ -410,9 +414,9 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
             {cliStatusMessage ? <Text style={styles.statusText}>{cliStatusMessage}</Text> : null}
           </View>
           <Button
-            variant="secondary"
+            variant="outline"
             size="sm"
-            style={styles.secondaryActionButton}
+            leftIcon={<Terminal size={theme.iconSize.sm} color={theme.colors.foreground} />}
             onPress={handleToggleCliShim}
             disabled={isInstallingCli}
           >
@@ -434,13 +438,14 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
           </View>
           <View style={styles.actionGroup}>
             {(managedLogs?.logPath ?? managedStatus?.logPath) ? (
-              <Button variant="secondary" size="sm" onPress={handleCopyLogPath}>
+              <Button variant="outline" size="sm" leftIcon={<Copy size={theme.iconSize.sm} color={theme.colors.foreground} />} onPress={handleCopyLogPath}>
                 Copy path
               </Button>
             ) : null}
             <Button
-              variant="secondary"
+              variant="outline"
               size="sm"
+              leftIcon={<FileText size={theme.iconSize.sm} color={theme.colors.foreground} />}
               onPress={handleOpenLogs}
               disabled={!managedLogs}
             >
@@ -455,7 +460,7 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
               Connect your phone to this computer.
             </Text>
           </View>
-          <Button variant="secondary" size="sm" style={styles.secondaryActionButton} onPress={handleOpenPairingModal}>
+          <Button variant="outline" size="sm" leftIcon={<Smartphone size={theme.iconSize.sm} color={theme.colors.foreground} />} onPress={handleOpenPairingModal}>
             Pair device
           </Button>
         </View>
@@ -488,7 +493,7 @@ export function LocalDaemonSection({ appVersion }: LocalDaemonSectionProps) {
             {cliInstallInstructions?.commands ?? ""}
           </Text>
           <View style={styles.modalActions}>
-            <Button variant="secondary" size="sm" onPress={() => setIsCliInstallModalOpen(false)}>
+            <Button variant="outline" size="sm" onPress={() => setIsCliInstallModalOpen(false)}>
               Close
             </Button>
             <Button size="sm" onPress={handleCopyCliInstallCommands}>
@@ -627,7 +632,7 @@ function PairingOfferDialogContent(input: {
         {pairingOffer.url}
       </Text>
       <View style={styles.modalActions}>
-        <Button variant="secondary" size="sm" onPress={onCopyLink}>
+        <Button variant="outline" size="sm" onPress={onCopyLink}>
           Copy link
         </Button>
       </View>
@@ -636,20 +641,12 @@ function PairingOfferDialogContent(input: {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  section: {
-    marginBottom: theme.spacing[6],
-  },
   sectionHeader: {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: theme.spacing[3],
     marginLeft: theme.spacing[1],
-  },
-  sectionTitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
   },
   sectionLink: {
     alignItems: "center",
@@ -659,13 +656,6 @@ const styles = StyleSheet.create((theme) => ({
   sectionLinkText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-  },
-  card: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    overflow: "hidden",
   },
   row: {
     flexDirection: "row",
@@ -691,12 +681,6 @@ const styles = StyleSheet.create((theme) => ({
   statusValueGroup: {
     alignItems: "flex-end",
     gap: 2,
-  },
-  primaryActionButton: {
-    minWidth: 124,
-  },
-  secondaryActionButton: {
-    minWidth: 112,
   },
   rowTitle: {
     color: theme.colors.foreground,

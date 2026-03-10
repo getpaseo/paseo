@@ -646,6 +646,9 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     marginLeft: theme.spacing[1],
     flexShrink: 0,
   },
+  chevronExpanded: {
+    transform: [{ rotate: "90deg" }],
+  },
   detailWrapper: {
     borderBottomLeftRadius: theme.borderRadius.lg,
     borderBottomRightRadius: theme.borderRadius.lg,
@@ -1289,6 +1292,8 @@ const ExpandableBadge = memo(function ExpandableBadge({
   const { theme } = useUnistyles();
   const resolvedDisableOuterSpacing =
     useDisableOuterSpacing(disableOuterSpacing);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isPressed, setIsPressed] = useState(false);
   const isInteractive = Boolean(onToggle);
   const hasDetailContent = Boolean(renderDetails);
   const detailContent =
@@ -1479,6 +1484,107 @@ const ExpandableBadge = memo(function ExpandableBadge({
       } as never)
     : null;
 
+  const containerStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.container,
+      !resolvedDisableOuterSpacing &&
+        (isLastInSequence
+          ? expandableBadgeStylesheet.containerLastInSequence
+          : expandableBadgeStylesheet.containerSpacing),
+      style,
+    ],
+    [isLastInSequence, resolvedDisableOuterSpacing, style]
+  );
+
+  const pressableStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.pressable,
+      isPressed && isInteractive
+        ? expandableBadgeStylesheet.pressablePressed
+        : null,
+      isExpanded && expandableBadgeStylesheet.pressableExpanded,
+    ],
+    [isExpanded, isInteractive, isPressed]
+  );
+
+  const accessibilityState = useMemo(
+    () => (isInteractive ? { expanded: isExpanded } : undefined),
+    [isExpanded, isInteractive]
+  );
+
+  const labelStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.label,
+      isLoading && expandableBadgeStylesheet.labelLoading,
+    ],
+    [isLoading]
+  );
+
+  const shimmerLabelTextStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.label,
+      isLoading && expandableBadgeStylesheet.labelLoading,
+      expandableBadgeStylesheet.shimmerText,
+      shimmerLabelStyle,
+    ],
+    [isLoading, shimmerLabelStyle]
+  );
+
+  const shimmerSecondaryTextStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.secondaryLabel,
+      expandableBadgeStylesheet.shimmerText,
+      shimmerSecondaryStyle,
+    ],
+    [shimmerSecondaryStyle]
+  );
+
+  const nativeShimmerTrackStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.nativeShimmerTrack,
+      { width: labelRowWidth, height: labelRowHeight },
+    ],
+    [labelRowHeight, labelRowWidth]
+  );
+
+  const nativeShimmerMaskStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.shimmerMaskRow,
+      { width: labelRowWidth, height: labelRowHeight },
+    ],
+    [labelRowHeight, labelRowWidth]
+  );
+
+  const nativeLabelMaskStyle = useMemo(
+    () => [expandableBadgeStylesheet.label, { color: "#000000", opacity: 1 }],
+    []
+  );
+
+  const nativeSecondaryMaskStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.secondaryLabel,
+      { color: "#000000", opacity: 1 },
+    ],
+    []
+  );
+
+  const nativeShimmerPeakCombinedStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.nativeShimmerPeak,
+      nativeShimmerPeakStyle,
+      { width: nativeShimmerPeakWidth, height: labelRowHeight },
+    ],
+    [labelRowHeight, nativeShimmerPeakStyle, nativeShimmerPeakWidth]
+  );
+
+  const chevronStyle = useMemo(
+    () => [
+      expandableBadgeStylesheet.chevron,
+      isExpanded && expandableBadgeStylesheet.chevronExpanded,
+    ],
+    [isExpanded]
+  );
+
   const IconComponent = icon;
   const iconColor = isError
     ? theme.colors.destructive
@@ -1493,186 +1599,142 @@ const ExpandableBadge = memo(function ExpandableBadge({
 
   return (
     <View
-      style={[
-        expandableBadgeStylesheet.container,
-        !resolvedDisableOuterSpacing &&
-          (isLastInSequence
-            ? expandableBadgeStylesheet.containerLastInSequence
-            : expandableBadgeStylesheet.containerSpacing),
-        style,
-      ]}
+      style={containerStyle}
       testID={testID}
     >
       <Pressable
         onPress={isInteractive ? onToggle : undefined}
+        onHoverIn={isInteractive ? () => setIsHovered(true) : undefined}
+        onHoverOut={
+          isInteractive
+            ? () => {
+                setIsHovered(false);
+                setIsPressed(false);
+              }
+            : undefined
+        }
+        onPressIn={isInteractive ? () => setIsPressed(true) : undefined}
+        onPressOut={isInteractive ? () => setIsPressed(false) : undefined}
         disabled={!isInteractive}
         accessibilityRole={isInteractive ? "button" : undefined}
-        accessibilityState={isInteractive ? { expanded: isExpanded } : undefined}
-        style={({ pressed }) => [
-          expandableBadgeStylesheet.pressable,
-          pressed && isInteractive
-            ? expandableBadgeStylesheet.pressablePressed
-            : null,
-          isExpanded && expandableBadgeStylesheet.pressableExpanded,
-        ]}
+        accessibilityState={accessibilityState}
+        style={pressableStyle}
       >
-        {({ hovered }) => (
-          <>
-            <View style={expandableBadgeStylesheet.headerRow}>
-              <View style={expandableBadgeStylesheet.iconBadge}>{iconNode}</View>
+        <View style={expandableBadgeStylesheet.headerRow}>
+          <View style={expandableBadgeStylesheet.iconBadge}>{iconNode}</View>
+          <View
+            style={expandableBadgeStylesheet.labelRow}
+            onLayout={shouldMeasureNativeShimmer ? handleLabelRowLayout : undefined}
+          >
+            <Text
+              style={labelStyle}
+              numberOfLines={1}
+              onLayout={shouldMeasureWebShimmer ? handleLabelLayout : undefined}
+            >
+              {label}
+            </Text>
+            {secondaryLabel ? (
+              <Text
+                style={expandableBadgeStylesheet.secondaryLabel}
+                numberOfLines={1}
+                onLayout={shouldMeasureWebShimmer ? handleSecondaryLayout : undefined}
+              >
+                {secondaryLabel}
+              </Text>
+            ) : (
+              <View style={expandableBadgeStylesheet.spacer} />
+            )}
+            {isWebShimmer ? (
               <View
-                style={expandableBadgeStylesheet.labelRow}
-                onLayout={shouldMeasureNativeShimmer ? handleLabelRowLayout : undefined}
+                style={expandableBadgeStylesheet.shimmerOverlay}
+                pointerEvents="none"
               >
                 <Text
-                  style={[
-                    expandableBadgeStylesheet.label,
-                    isLoading && expandableBadgeStylesheet.labelLoading,
-                  ]}
+                  style={shimmerLabelTextStyle}
                   numberOfLines={1}
-                  onLayout={shouldMeasureWebShimmer ? handleLabelLayout : undefined}
                 >
                   {label}
                 </Text>
                 {secondaryLabel ? (
                   <Text
-                    style={expandableBadgeStylesheet.secondaryLabel}
+                    style={shimmerSecondaryTextStyle}
                     numberOfLines={1}
-                    onLayout={shouldMeasureWebShimmer ? handleSecondaryLayout : undefined}
                   >
                     {secondaryLabel}
                   </Text>
                 ) : (
                   <View style={expandableBadgeStylesheet.spacer} />
                 )}
-                {isWebShimmer ? (
-                  <View
-                    style={expandableBadgeStylesheet.shimmerOverlay}
-                    pointerEvents="none"
-                  >
-                    <Text
-                      style={[
-                        expandableBadgeStylesheet.label,
-                        isLoading && expandableBadgeStylesheet.labelLoading,
-                        expandableBadgeStylesheet.shimmerText,
-                        shimmerLabelStyle,
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {label}
-                    </Text>
-                    {secondaryLabel ? (
+              </View>
+            ) : null}
+            {isNativeShimmer ? (
+              <View
+                style={expandableBadgeStylesheet.shimmerOverlay}
+                pointerEvents="none"
+              >
+                <MaskedView
+                  style={nativeShimmerTrackStyle}
+                  maskElement={
+                    <View style={nativeShimmerMaskStyle}>
                       <Text
-                        style={[
-                          expandableBadgeStylesheet.secondaryLabel,
-                          expandableBadgeStylesheet.shimmerText,
-                          shimmerSecondaryStyle,
-                        ]}
+                        style={nativeLabelMaskStyle}
                         numberOfLines={1}
                       >
-                        {secondaryLabel}
+                        {label}
                       </Text>
-                    ) : (
-                      <View style={expandableBadgeStylesheet.spacer} />
-                    )}
-                  </View>
-                ) : null}
-                {isNativeShimmer ? (
+                      {secondaryLabel ? (
+                        <Text
+                          style={nativeSecondaryMaskStyle}
+                          numberOfLines={1}
+                        >
+                          {secondaryLabel}
+                        </Text>
+                      ) : (
+                        <View style={expandableBadgeStylesheet.spacer} />
+                      )}
+                    </View>
+                  }
+                >
                   <View
-                    style={expandableBadgeStylesheet.shimmerOverlay}
-                    pointerEvents="none"
+                    style={nativeShimmerTrackStyle}
                   >
-                    <MaskedView
-                      style={[
-                        expandableBadgeStylesheet.nativeShimmerTrack,
-                        { width: labelRowWidth, height: labelRowHeight },
-                      ]}
-                      maskElement={
-                        <View
-                          style={[
-                            expandableBadgeStylesheet.shimmerMaskRow,
-                            { width: labelRowWidth, height: labelRowHeight },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              expandableBadgeStylesheet.label,
-                              { color: "#000000", opacity: 1 },
-                            ]}
-                            numberOfLines={1}
+                    <Animated.View style={nativeShimmerPeakCombinedStyle}>
+                      <Svg width="100%" height="100%" preserveAspectRatio="none">
+                        <Defs>
+                          <SvgLinearGradient
+                            id={nativeGradientIdRef.current}
+                            x1="0%"
+                            y1="0%"
+                            x2="100%"
+                            y2="0%"
                           >
-                            {label}
-                          </Text>
-                          {secondaryLabel ? (
-                            <Text
-                              style={[
-                                expandableBadgeStylesheet.secondaryLabel,
-                                { color: "#000000", opacity: 1 },
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {secondaryLabel}
-                            </Text>
-                          ) : (
-                            <View style={expandableBadgeStylesheet.spacer} />
-                          )}
-                        </View>
-                      }
-                    >
-                      <View
-                        style={[
-                          expandableBadgeStylesheet.nativeShimmerTrack,
-                          { width: labelRowWidth, height: labelRowHeight },
-                        ]}
-                      >
-                        <Animated.View
-                          style={[
-                            expandableBadgeStylesheet.nativeShimmerPeak,
-                            nativeShimmerPeakStyle,
-                            { width: nativeShimmerPeakWidth, height: labelRowHeight },
-                          ]}
-                        >
-                          <Svg width="100%" height="100%" preserveAspectRatio="none">
-                            <Defs>
-                              <SvgLinearGradient
-                                id={nativeGradientIdRef.current}
-                                x1="0%"
-                                y1="0%"
-                                x2="100%"
-                                y2="0%"
-                              >
-                                <Stop offset="0%" stopColor="#ffffff" stopOpacity={0} />
-                                <Stop offset="50%" stopColor="#ffffff" stopOpacity={1} />
-                                <Stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
-                              </SvgLinearGradient>
-                            </Defs>
-                            <Rect
-                              x="0"
-                              y="0"
-                              width="100%"
-                              height="100%"
-                              fill={`url(#${nativeGradientIdRef.current})`}
-                            />
-                          </Svg>
-                        </Animated.View>
-                      </View>
-                    </MaskedView>
+                            <Stop offset="0%" stopColor="#ffffff" stopOpacity={0} />
+                            <Stop offset="50%" stopColor="#ffffff" stopOpacity={1} />
+                            <Stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+                          </SvgLinearGradient>
+                        </Defs>
+                        <Rect
+                          x="0"
+                          y="0"
+                          width="100%"
+                          height="100%"
+                          fill={`url(#${nativeGradientIdRef.current})`}
+                        />
+                      </Svg>
+                    </Animated.View>
                   </View>
-                ) : null}
+                </MaskedView>
               </View>
-              {isInteractive && hovered ? (
-                <ChevronRight
-                  size={14}
-                  color={theme.colors.foregroundMuted}
-                  style={[
-                    expandableBadgeStylesheet.chevron,
-                    { transform: [{ rotate: isExpanded ? "90deg" : "0deg" }] },
-                  ]}
-                />
-              ) : null}
-            </View>
-          </>
-        )}
+            ) : null}
+          </View>
+          {isInteractive && isHovered ? (
+            <ChevronRight
+              size={14}
+              color={theme.colors.foregroundMuted}
+              style={chevronStyle}
+            />
+          ) : null}
+        </View>
       </Pressable>
       {detailContent ? (
         <Pressable

@@ -40,7 +40,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   outline: {
     backgroundColor: "transparent",
-    borderColor: theme.colors.border,
+    borderColor: theme.colors.borderAccent,
   },
   ghost: {
     backgroundColor: "transparent",
@@ -59,7 +59,7 @@ const styles = StyleSheet.create((theme) => ({
   text: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
   },
   textDefault: {
     color: theme.colors.palette.white,

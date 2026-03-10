@@ -41,7 +41,7 @@ export function DesktopPermissionRow({
             <Text style={styles.permissionStatusText}>Granted</Text>
           </View>
         ) : (
-          <Button variant="secondary" size="sm" onPress={onRequest} disabled={isRequesting}>
+          <Button variant="outline" size="sm" onPress={onRequest} disabled={isRequesting}>
             {isRequesting ? "Requesting..." : "Request"}
           </Button>
         )}

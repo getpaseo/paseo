@@ -42,6 +42,7 @@ import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
+import { settingsStyles } from "@/styles/settings";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -112,16 +113,6 @@ const styles = StyleSheet.create((theme) => ({
     maxWidth: 720,
     alignSelf: "center",
   },
-  section: {
-    marginBottom: theme.spacing[6],
-  },
-  sectionTitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    marginBottom: theme.spacing[3],
-    marginLeft: theme.spacing[1],
-  },
   label: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
@@ -139,10 +130,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Host card styles
   hostCard: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
     marginBottom: theme.spacing[3],
     overflow: "hidden",
   },
@@ -286,10 +273,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Add/Edit form
   formCard: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
     padding: theme.spacing[4],
     marginBottom: theme.spacing[3],
     gap: theme.spacing[4],
@@ -328,10 +311,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Audio settings card
   audioCard: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
     overflow: "hidden",
   },
   audioRow: {
@@ -375,10 +354,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Empty state
   emptyCard: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
     padding: theme.spacing[4],
     marginBottom: theme.spacing[3],
   },
@@ -389,10 +364,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Dev section
   devCard: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
     overflow: "hidden",
   },
   devButton: {
@@ -501,7 +472,7 @@ function DesktopAppUpdateRow() {
       </View>
       <View style={styles.aboutUpdateActions}>
         <Button
-          variant="secondary"
+          variant="outline"
           size="sm"
           onPress={handleCheckForUpdates}
           disabled={isChecking || isInstalling}
@@ -722,11 +693,11 @@ export default function SettingsScreen() {
       <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: insets.bottom }}>
         <View style={styles.content}>
           {/* Host Management */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Hosts</Text>
+          <View style={settingsStyles.section}>
+            <Text style={settingsStyles.sectionTitle}>Hosts</Text>
 
             {daemons.length === 0 ? (
-              <View style={styles.emptyCard}>
+              <View style={[settingsStyles.card, styles.emptyCard]}>
                 <Text style={styles.emptyText}>No hosts configured</Text>
               </View>
             ) : (
@@ -878,9 +849,9 @@ export default function SettingsScreen() {
           />
 
           {/* Appearance */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Appearance</Text>
-            <View style={styles.audioCard}>
+          <View style={settingsStyles.section}>
+            <Text style={settingsStyles.sectionTitle}>Appearance</Text>
+            <View style={[settingsStyles.card, styles.audioCard]}>
               <View style={styles.audioRow}>
                 <View style={styles.audioRowContent}>
                   <Text style={styles.audioRowTitle}>Theme</Text>
@@ -915,9 +886,9 @@ export default function SettingsScreen() {
           {isDesktop ? <LocalDaemonSection appVersion={appVersion} /> : null}
 
           {/* About */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>About</Text>
-            <View style={styles.audioCard}>
+          <View style={settingsStyles.section}>
+            <Text style={settingsStyles.sectionTitle}>About</Text>
+            <View style={[settingsStyles.card, styles.audioCard]}>
               <View style={styles.audioRow}>
                 <View style={styles.audioRowContent}>
                   <Text style={styles.audioRowTitle}>Version</Text>
@@ -1332,7 +1303,7 @@ function ConnectionRow({
         borderRadius: 12,
         borderWidth: 1,
         borderColor: theme.colors.border,
-        backgroundColor: theme.colors.surface2,
+        backgroundColor: theme.colors.surface1,
       }}
     >
       <Text style={{ color: theme.colors.foreground, fontSize: 12, flex: 1 }}>
@@ -1400,7 +1371,7 @@ function DaemonCard({
 
   return (
     <View
-      style={styles.hostCard}
+      style={[settingsStyles.card, styles.hostCard]}
       testID={`daemon-card-${daemon.serverId}`}
     >
       <View style={styles.hostCardContent}>
