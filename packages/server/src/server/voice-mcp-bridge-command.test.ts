@@ -1,4 +1,3 @@
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
@@ -26,7 +25,9 @@ describe("resolveVoiceMcpBridgeFromRuntime", () => {
   });
 
   test("uses explicit script override when provided", () => {
-    const explicitScriptPath = path.resolve(process.cwd(), "scripts/mcp-stdio-socket-bridge-cli.mjs");
+    const explicitScriptPath = fileURLToPath(
+      new URL("../../scripts/mcp-stdio-socket-bridge-cli.mjs", bootstrapModuleUrl)
+    );
 
     const result = resolveVoiceMcpBridgeFromRuntime({
       bootstrapModuleUrl,

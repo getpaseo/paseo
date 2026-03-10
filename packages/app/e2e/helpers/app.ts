@@ -136,14 +136,36 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
   }
 }
 
-export const gotoHome = async (page: Page) => {
+export const gotoAppShell = async (page: Page) => {
   await page.goto('/');
   await ensureE2EStorageSeeded(page);
-  await expect(page.getByText('New agent', { exact: true }).first()).toBeVisible();
+};
+
+export const gotoHome = async (page: Page) => {
+  await gotoAppShell(page);
   const composer = page.getByRole('textbox', { name: 'Message agent...' });
   if (!(await composer.first().isVisible().catch(() => false))) {
+    const addProjectCta = page.getByText('Add a project', { exact: true }).first();
+    const addProjectSidebar = page.getByText('Add project', { exact: true }).first();
     const newAgentButton = page.getByText('New agent', { exact: true }).first();
-    await newAgentButton.click();
+
+    await expect
+      .poll(
+        async () =>
+          (await addProjectCta.isVisible().catch(() => false)) ||
+          (await addProjectSidebar.isVisible().catch(() => false)) ||
+          (await newAgentButton.isVisible().catch(() => false)),
+        { timeout: 10000 }
+      )
+      .toBe(true);
+
+    if (await addProjectCta.isVisible().catch(() => false)) {
+      await addProjectCta.click();
+    } else if (await addProjectSidebar.isVisible().catch(() => false)) {
+      await addProjectSidebar.click();
+    } else {
+      await newAgentButton.click();
+    }
   }
   await expect(composer.first()).toBeVisible({ timeout: 30000 });
 };

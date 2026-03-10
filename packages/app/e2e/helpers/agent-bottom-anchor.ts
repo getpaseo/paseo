@@ -165,8 +165,12 @@ export async function seedBottomAnchorAgent(input: {
   };
 }
 
+function getVisibleChatScroll(page: Page) {
+  return page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+}
+
 export async function readScrollMetrics(page: Page): Promise<ScrollMetrics> {
-  return page.getByTestId("agent-chat-scroll").evaluate((root: Element) => {
+  return getVisibleChatScroll(page).evaluate((root: Element) => {
     const rootElement = root as HTMLElement;
     const candidates = [rootElement, ...Array.from(rootElement.querySelectorAll("*"))];
     const scrollElement =
@@ -194,7 +198,7 @@ export async function readScrollMetrics(page: Page): Promise<ScrollMetrics> {
 }
 
 export async function scrollUpFromBottom(page: Page, pixels: number): Promise<void> {
-  const scrollViewport = page.getByTestId("agent-chat-scroll");
+  const scrollViewport = getVisibleChatScroll(page);
   await expect(scrollViewport).toHaveCount(1, { timeout: 30000 });
   await scrollViewport.evaluate(
     (root: Element, amount: number) => {
@@ -240,7 +244,7 @@ export async function scrollUpFromBottom(page: Page, pixels: number): Promise<vo
 }
 
 export async function waitForAgentReady(page: Page, expectedTailText?: string): Promise<void> {
-  await expect(page.getByTestId("agent-chat-scroll")).toBeVisible({ timeout: 60000 });
+  await expect(getVisibleChatScroll(page)).toBeVisible({ timeout: 60000 });
   await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible({
     timeout: 60000,
   });
@@ -287,9 +291,7 @@ export async function waitForContentGrowth(
 }
 
 export async function getChatContainerKey(page: Page): Promise<string | null> {
-  return page
-    .getByTestId("agent-chat-scroll")
-    .evaluate((element) => {
+  return getVisibleChatScroll(page).evaluate((element) => {
       const nativeId = (element as HTMLElement).id;
       const prefix = "agent-chat-scroll-";
       return nativeId.startsWith(prefix) ? nativeId.slice(prefix.length) : null;

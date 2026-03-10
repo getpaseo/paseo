@@ -9,6 +9,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import pino from "pino";
 
 import { createVoiceMcpSocketBridgeManager } from "./voice-mcp-bridge.js";
+import { resolveVoiceMcpBridgeScriptPath } from "./voice-mcp-bridge-command.js";
 
 describe("voice MCP bridge", () => {
   test("proxies stdio MCP bytes through per-agent unix socket bridge", async () => {
@@ -54,12 +55,12 @@ describe("voice MCP bridge", () => {
 
     const socketPath = await bridgeManager.ensureBridgeForCaller(callerAgentId);
 
-    const bridgeScript = path.resolve(process.cwd(), "scripts/mcp-stdio-socket-bridge-cli.mjs");
-
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [
-        bridgeScript,
+        resolveVoiceMcpBridgeScriptPath({
+          bootstrapModuleUrl: import.meta.url,
+        }),
         "--socket",
         socketPath,
       ],
