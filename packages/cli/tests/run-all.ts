@@ -36,6 +36,58 @@ for (let i = 0; i < args.length; i++) {
 
 $.verbose = false
 
+type Failure = { test: string; error: string }
+
+async function runCommand(label: string, command: string): Promise<void> {
+  console.log(`\n${'─'.repeat(50)}`)
+  console.log(`🔧 ${label}...`)
+  console.log('─'.repeat(50))
+
+  const result = await $`bash -lc ${command}`.nothrow()
+  if (result.exitCode !== 0) {
+    const error = result.stderr || result.stdout || `Exit code: ${result.exitCode}`
+    console.error(`\n❌ ${label} failed`)
+    console.error(error)
+    throw new Error(error)
+  }
+}
+
+async function writeJsonSummary({
+  passed,
+  failed,
+  failures,
+}: {
+  passed: number
+  failed: number
+  failures: Failure[]
+}) {
+  if (!jsonOutputPath) {
+    return
+  }
+
+  await writeFile(
+    jsonOutputPath,
+    JSON.stringify(
+      {
+        suite: 'cli-local',
+        command: 'npm run test:local --workspace=@getpaseo/cli',
+        counts: {
+          passed,
+          failed,
+          skipped: 0,
+        },
+        skippedTests: [],
+        failures: failures.map(({ test, error }) => ({
+          test,
+          error: error.split('\n')[0] ?? '',
+        })),
+      },
+      null,
+      2
+    ) + '\n'
+  )
+}
+
 console.log('🧪 Paseo CLI E2E Test Runner\n')
 console.log('='.repeat(50))
 
@@ -47,27 +99,7 @@ const testFiles = files
 
 if (testFiles.length === 0) {
   console.log('❌ No test files found')
-  if (jsonOutputPath) {
-    await writeFile(
-      jsonOutputPath,
-      JSON.stringify(
-        {
-          suite: 'cli-local',
-          command: 'npm run test:local --workspace=@getpaseo/cli',
-          counts: {
-            passed: 0,
-            failed: 0,
-            skipped: 0,
-          },
-          skippedTests: [],
-          failures: [],
-          error: 'No test files found',
-        },
-        null,
-        2
-      ) + '\n'
-    )
-  }
+  await writeJsonSummary({ passed: 0, failed: 0, failures: [] })
   process.exit(1)
 }
 
@@ -79,7 +111,11 @@ console.log()
 
 let passed = 0
 let failed = 0
-const failures: { test: string; error: string }[] = []
+const failures: Failure[] = []
+
+await runCommand('Building relay', 'npm run build --workspace=@getpaseo/relay')
+await runCommand('Building server', 'npm run build --workspace=@getpaseo/server')
+await runCommand('Building CLI', 'npm run build --workspace=@getpaseo/cli')
 
 for (const testFile of testFiles) {
   const testPath = join(__dirname, testFile)
@@ -101,6 +137,7 @@ for (const testFile of testFiles) {
       }
       failed++
       failures.push({ test: testName, error: result.stderr || `Exit code: ${result.exitCode}` })
+      break
     }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e)
@@ -108,6 +145,7 @@ for (const testFile of testFiles) {
     console.log('Error:', error)
     failed++
     failures.push({ test: testName, error })
+    break
   }
 }
 
@@ -131,28 +169,6 @@ if (failures.length > 0) {
 
 console.log()
 
-if (jsonOutputPath) {
-  await writeFile(
-    jsonOutputPath,
-    JSON.stringify(
-      {
-        suite: 'cli-local',
-        command: 'npm run test:local --workspace=@getpaseo/cli',
-        counts: {
-          passed,
-          failed,
-          skipped: 0,
-        },
-        skippedTests: [],
-        failures: failures.map(({ test, error }) => ({
-          test,
-          error: error.split('\n')[0] ?? '',
-        })),
-      },
-      null,
-      2
-    ) + '\n'
-  )
-}
+await writeJsonSummary({ passed, failed, failures })
 
 process.exit(failed > 0 ? 1 : 0)
