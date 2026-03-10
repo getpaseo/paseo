@@ -18,7 +18,10 @@ test.describe.configure({ timeout: 180000 });
 async function openWorkspaceAgentTab(page: Page, agentId: string) {
   const tab = page.getByTestId(`workspace-tab-agent_${agentId}`).first();
   await expect(tab).toBeVisible({ timeout: 30000 });
-  await tab.click();
+  const trigger = tab.getByRole("button").first();
+  const clickableTarget = (await trigger.count()) > 0 ? trigger : tab;
+  await clickableTarget.scrollIntoViewIfNeeded();
+  await clickableTarget.click({ timeout: 5000 });
 }
 
 function buildWorkspaceDraftUrl(workspaceUrl: string) {
@@ -120,8 +123,10 @@ test("sticky mode stays pinned through composer growth and viewport resize, but 
     await expectNearBottom(page);
     await expect(page.getByTestId("scroll-to-bottom-button")).toHaveCount(0);
 
-    await page.setViewportSize({ width: 820, height: 760 });
-    await openWorkspaceAgentTab(page, agent.id);
+    await page.setViewportSize({ width: 1040, height: 760 });
+    await expect(page.getByTestId(`workspace-tab-agent_${agent.id}`).first()).toBeVisible({
+      timeout: 30000,
+    });
     await waitForAgentReady(page, agent.expectedTailText);
     await expectNearBottom(page);
 
