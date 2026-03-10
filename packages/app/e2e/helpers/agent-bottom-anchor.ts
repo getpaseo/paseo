@@ -194,7 +194,9 @@ export async function readScrollMetrics(page: Page): Promise<ScrollMetrics> {
 }
 
 export async function scrollUpFromBottom(page: Page, pixels: number): Promise<void> {
-  await page.getByTestId("agent-chat-scroll").evaluate(
+  const scrollViewport = page.getByTestId("agent-chat-scroll");
+  await expect(scrollViewport).toHaveCount(1, { timeout: 30000 });
+  await scrollViewport.evaluate(
     (root: Element, amount: number) => {
       const rootElement = root as HTMLElement;
       const candidates = [rootElement, ...Array.from(rootElement.querySelectorAll("*"))];
@@ -210,9 +212,31 @@ export async function scrollUpFromBottom(page: Page, pixels: number): Promise<vo
         scrollElement.scrollHeight - scrollElement.clientHeight
       );
       scrollElement.scrollTop = Math.max(0, bottomOffset - amount);
+      scrollElement.dispatchEvent(new Event("scroll", { bubbles: true }));
     },
     pixels
   );
+
+  if ((await readScrollMetrics(page)).distanceFromBottom > NEAR_BOTTOM_THRESHOLD_PX) {
+    return;
+  }
+
+  const box = await scrollViewport.boundingBox();
+  if (!box) {
+    return;
+  }
+  await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 24));
+
+  let remaining = Math.max(0, pixels);
+  while (remaining > 0) {
+    const delta = Math.min(240, remaining);
+    await page.mouse.wheel(0, -delta);
+    remaining -= delta;
+
+    if ((await readScrollMetrics(page)).distanceFromBottom > NEAR_BOTTOM_THRESHOLD_PX) {
+      return;
+    }
+  }
 }
 
 export async function waitForAgentReady(page: Page, expectedTailText?: string): Promise<void> {
