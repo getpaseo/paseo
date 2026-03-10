@@ -1,4 +1,8 @@
 import { expect, type Page } from '@playwright/test';
+import {
+  buildCreateAgentPreferences,
+  buildSeededHost,
+} from './daemon-registry';
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -33,8 +37,8 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
       if (entry?.serverId !== expectedServerId) return true;
       const connections = entry?.connections;
       if (!Array.isArray(connections)) return true;
-      if (connections.some((c: any) => c?.type === 'direct' && typeof c?.endpoint === 'string' && /:6767\b/.test(c.endpoint))) return true;
-      return !connections.some((c: any) => c?.type === 'direct' && c?.endpoint === expectedEndpoint);
+      if (connections.some((c: any) => c?.type === 'directTcp' && typeof c?.endpoint === 'string' && /:6767\b/.test(c.endpoint))) return true;
+      return !connections.some((c: any) => c?.type === 'directTcp' && c?.endpoint === expectedEndpoint);
     } catch {
       return true;
     }
@@ -45,42 +49,20 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
   }
 
   const nowIso = new Date().toISOString();
+  const daemon = buildSeededHost({
+    serverId: expectedServerId,
+    endpoint: expectedEndpoint,
+    nowIso,
+  });
+  const preferences = buildCreateAgentPreferences(expectedServerId);
   await page.evaluate(
-    ({ expectedEndpoint, nowIso, expectedServerId }) => {
+    ({ daemon, preferences }) => {
       localStorage.setItem('@paseo:e2e', '1');
-      localStorage.setItem(
-        '@paseo:daemon-registry',
-        JSON.stringify([
-          {
-            serverId: expectedServerId,
-            label: 'localhost',
-            connections: [
-              {
-                id: `direct:${expectedEndpoint}`,
-                type: 'direct',
-                endpoint: expectedEndpoint,
-              },
-            ],
-            preferredConnectionId: `direct:${expectedEndpoint}`,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          },
-        ])
-      );
-      localStorage.setItem(
-        '@paseo:create-agent-preferences',
-        JSON.stringify({
-          serverId: expectedServerId,
-          provider: 'codex',
-          providerPreferences: {
-            claude: { model: 'haiku' },
-            codex: { model: 'gpt-5.1-codex-mini', thinkingOptionId: 'low' },
-          },
-        })
-      );
+      localStorage.setItem('@paseo:daemon-registry', JSON.stringify([daemon]));
+      localStorage.setItem('@paseo:create-agent-preferences', JSON.stringify(preferences));
       localStorage.removeItem('@paseo:settings');
     },
-    { expectedEndpoint, nowIso, expectedServerId }
+    { daemon, preferences }
   );
 
   await page.reload();
@@ -128,13 +110,13 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
   const connections: unknown = daemon?.connections;
   if (
     !Array.isArray(connections) ||
-    !connections.some((c: any) => c?.type === 'direct' && c?.endpoint === expectedEndpoint)
+    !connections.some((c: any) => c?.type === 'directTcp' && c?.endpoint === expectedEndpoint)
   ) {
     throw new Error(
-      `E2E expected seeded daemon connections to include direct ${expectedEndpoint} (got ${JSON.stringify(connections)}).`
+      `E2E expected seeded daemon connections to include directTcp ${expectedEndpoint} (got ${JSON.stringify(connections)}).`
     );
   }
-  if (Array.isArray(connections) && connections.some((c: any) => c?.type === 'direct' && typeof c?.endpoint === 'string' && /:6767\b/.test(c.endpoint))) {
+  if (Array.isArray(connections) && connections.some((c: any) => c?.type === 'directTcp' && typeof c?.endpoint === 'string' && /:6767\b/.test(c.endpoint))) {
     throw new Error(`E2E detected a daemon endpoint pointing at :6767 (${JSON.stringify(connections)}).`);
   }
 
