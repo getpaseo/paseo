@@ -527,6 +527,7 @@ const managedEnv = {
 let externalPid = null;
 let startedTemporaryExternalDaemon = false;
 let relayProcess = null;
+let smokePassed = false;
 const forbiddenManagedReferences = ["127.0.0.1:6767", fakePaseoHome, managedRuntimeDir];
 const npmExecPath = process.env.npm_execpath;
 if (!npmExecPath) {
@@ -833,6 +834,7 @@ try {
   );
 
   console.log(`\n[managed-smoke] PASS (${testRoot})`);
+  smokePassed = true;
 } finally {
   clearInterval(heartbeat);
   try {
@@ -851,4 +853,7 @@ try {
   try {
     await terminateChildProcess(relayProcess, "local relay");
   } catch {}
+  // Force-exit: on Windows, taskkill may leave orphaned handles that keep the
+  // Node event loop alive even after all child processes are dead.
+  process.exit(smokePassed ? 0 : 1);
 }
