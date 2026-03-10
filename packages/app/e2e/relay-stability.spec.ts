@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { buildDirectTcpConnection } from './helpers/daemon-registry';
 import { gotoHome, openSettings } from './helpers/app';
 
 test('relay connection stays stable across multiple tabs', async ({ page }) => {
@@ -18,7 +19,7 @@ test('relay connection stays stable across multiple tabs', async ({ page }) => {
     serverId,
     label: 'relay-daemon',
     connections: [
-      { id: 'direct:127.0.0.1:9', type: 'direct', endpoint: '127.0.0.1:9' },
+      buildDirectTcpConnection('127.0.0.1:9'),
       { id: `relay:${relayEndpoint}`, type: 'relay', relayEndpoint, daemonPublicKeyB64 },
     ],
     preferredConnectionId: 'direct:127.0.0.1:9',
