@@ -32,6 +32,8 @@ const impossibleSchema = JSON.stringify({
   ],
 })
 
+const OPEN_CODE_STRUCTURED_MODEL = 'opencode/gpt-5-nano'
+
 let ctx: E2EContext
 
 async function setup(): Promise<void> {
@@ -94,7 +96,7 @@ async function test_all_providers_return_structured_output(): Promise<void> {
   await runProviderCase({
     provider: 'opencode',
     mode: 'default',
-    model: 'opencode/kimi-k2.5-free',
+    model: OPEN_CODE_STRUCTURED_MODEL,
   })
 }
 

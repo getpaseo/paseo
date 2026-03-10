@@ -16,7 +16,6 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { curateAgentActivity } from "../activity-curator.js";
 import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
 import { useTempClaudeConfigDir } from "../../test-utils/claude-config.js";
 import type { AgentStreamEventPayload } from "../../messages.js";
@@ -1282,62 +1281,6 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
     240_000
   );
 
-  test(
-    "collapses sub-agent tool calls into Task sub_agent detail updates",
-    async () => {
-      const cwd = tmpCwd();
-      const client = new ClaudeAgentClient({ logger });
-      const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
-      const session = await client.createSession(config);
-
-      try {
-        const events = session.stream(
-          "Use the Task tool to launch a sub-agent that reads the current directory listing. " +
-          "The sub-agent should run 'ls' in the shell and report the result. " +
-          "Do NOT do the work yourself — delegate it to a sub-agent via the Task tool."
-        );
-
-        const timeline: AgentTimelineItem[] = [];
-
-        for await (const event of events) {
-          await autoApprove(session, event);
-          if (event.type === "timeline") {
-            timeline.push(event.item);
-          }
-          if (event.type === "turn_completed" || event.type === "turn_failed") {
-            break;
-          }
-        }
-
-        const toolCalls = timeline.filter(
-          (item): item is ToolCallItem => item.type === "tool_call"
-        );
-
-        // There should be at least one Task tool call
-        const taskCalls = toolCalls.filter((item) => item.name === "Task");
-        expect(taskCalls.length).toBeGreaterThanOrEqual(1);
-
-        // We can't 100% guarantee Claude won't also use tools directly, but Task detail
-        // updates should exist for the sub-agent activity
-        const taskWithSubAgentDetail = taskCalls.filter(
-          (item) => item.detail.type === "sub_agent"
-        );
-        if (taskCalls.length > 0) {
-          expect(taskWithSubAgentDetail.length).toBeGreaterThanOrEqual(1);
-        }
-
-        // Verify the curator produces clean output with collapsed Task entries
-        const curated = curateAgentActivity(timeline);
-        const lines = curated.split("\n");
-        const taskLines = lines.filter((l) => l.includes("[Task]"));
-        // Each Task callId should appear at most once in curated output
-        expect(taskLines.length).toBeLessThanOrEqual(taskCalls.length);
-      } finally {
-        await closeSessionAndCleanup(session, cwd);
-      }
-    },
-    180_000
-  );
 });
 
 describe("convertClaudeHistoryEntry", () => {

@@ -11,6 +11,7 @@ function createState(sessionId = "session-1"): OpenCodeEventTranslationState {
     messageRoles: new Map(),
     accumulatedUsage: {},
     streamedPartKeys: new Set(),
+    emittedStructuredMessageIds: new Set(),
   };
 }
 
@@ -170,5 +171,50 @@ describe("translateOpenCodeEvent", () => {
         item: { type: "reasoning", text: "The user said hello." },
       },
     ]);
+  });
+
+  it("emits structured assistant output when schema mode completes without text parts", () => {
+    const state = createState();
+
+    const first = translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-structured-1",
+            sessionID: "session-1",
+            role: "assistant",
+            time: { created: 1, completed: 2 },
+            structured: { summary: "hello" },
+          },
+        },
+      },
+      state
+    );
+
+    const second = translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-structured-1",
+            sessionID: "session-1",
+            role: "assistant",
+            time: { created: 1, completed: 2 },
+            structured: { summary: "hello" },
+          },
+        },
+      },
+      state
+    );
+
+    expect(first).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "assistant_message", text: '{"summary":"hello"}' },
+      },
+    ]);
+    expect(second).toEqual([]);
   });
 });

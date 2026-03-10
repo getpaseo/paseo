@@ -544,7 +544,23 @@ export type OpenCodeEventTranslationState = {
   messageRoles: Map<string, OpenCodeMessageRole>;
   accumulatedUsage: AgentUsage;
   streamedPartKeys: Set<string>;
+  emittedStructuredMessageIds: Set<string>;
 };
+
+function stringifyStructuredAssistantMessage(value: unknown): string | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
 
 export function translateOpenCodeEvent(
   event: unknown,
@@ -585,6 +601,23 @@ export function translateOpenCodeEvent(
 
       if (messageId && messageSessionId === state.sessionId && role) {
         state.messageRoles.set(messageId, role);
+        if (
+          role === "assistant" &&
+          !state.emittedStructuredMessageIds.has(messageId) &&
+          typeof info.time === "object" &&
+          info.time !== null &&
+          "completed" in info.time
+        ) {
+          const text = stringifyStructuredAssistantMessage(info.structured);
+          if (text) {
+            state.emittedStructuredMessageIds.add(messageId);
+            events.push({
+              type: "timeline",
+              provider: "opencode",
+              item: { type: "assistant_message", text },
+            });
+          }
+        }
       }
       break;
     }
@@ -761,6 +794,8 @@ class OpenCodeAgentSession implements AgentSession {
   private messageRoles = new Map<string, OpenCodeMessageRole>();
   /** Tracks streamed textual part IDs to suppress final full-text echoes from OpenCode. */
   private streamedPartKeys = new Set<string>();
+  /** Tracks assistant messages already emitted from structured payloads. */
+  private emittedStructuredMessageIds = new Set<string>();
 
   constructor(
     config: OpenCodeAgentConfig,
@@ -799,8 +834,8 @@ class OpenCodeAgentSession implements AgentSession {
     this.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
   }
 
-  async run(prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<AgentRunResult> {
-    const events = this.stream(prompt);
+  async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
+    const events = this.stream(prompt, options);
     const timeline: AgentTimelineItem[] = [];
     let finalText = "";
     let usage: AgentUsage | undefined;
@@ -828,7 +863,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   async *stream(
     prompt: AgentPromptInput,
-    _options?: AgentRunOptions
+    options?: AgentRunOptions
   ): AsyncGenerator<AgentStreamEvent> {
     this.abortController = new AbortController();
     await this.ensureMcpServersConfigured();
@@ -844,6 +879,14 @@ class OpenCodeAgentSession implements AgentSession {
       sessionID: this.sessionId,
       directory: this.config.cwd,
       parts,
+      ...(options?.outputSchema
+        ? {
+            format: {
+              type: "json_schema" as const,
+              schema: options.outputSchema as Record<string, unknown>,
+            },
+          }
+        : {}),
       ...(this.config.systemPrompt ? { system: this.config.systemPrompt } : {}),
       ...(model ? { model } : {}),
       ...(effectiveVariant ? { variant: effectiveVariant } : {}),
@@ -929,6 +972,7 @@ class OpenCodeAgentSession implements AgentSession {
           };
         }
       } else if (role === "assistant") {
+        let emittedAssistantText = false;
         // Process each part
         for (const part of parts) {
           const partType = (part as { type?: string }).type;
@@ -936,6 +980,7 @@ class OpenCodeAgentSession implements AgentSession {
           if (partType === "text") {
             const text = (part as { text?: string }).text;
             if (text) {
+              emittedAssistantText = true;
               yield {
                 type: "timeline",
                 provider: "opencode",
@@ -962,6 +1007,19 @@ class OpenCodeAgentSession implements AgentSession {
                 };
               }
             }
+          }
+        }
+
+        if (!emittedAssistantText) {
+          const text = stringifyStructuredAssistantMessage(
+            (info as { structured?: unknown }).structured
+          );
+          if (text) {
+            yield {
+              type: "timeline",
+              provider: "opencode",
+              item: { type: "assistant_message", text },
+            };
           }
         }
       }
@@ -1114,6 +1172,7 @@ class OpenCodeAgentSession implements AgentSession {
       messageRoles: this.messageRoles,
       accumulatedUsage: this.accumulatedUsage,
       streamedPartKeys: this.streamedPartKeys,
+      emittedStructuredMessageIds: this.emittedStructuredMessageIds,
     });
 
     for (const translatedEvent of translated) {

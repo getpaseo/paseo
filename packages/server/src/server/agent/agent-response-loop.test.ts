@@ -267,7 +267,7 @@ describe("generateStructuredAgentResponseWithFallback", () => {
         providers: [
           { provider: "claude", model: "haiku" },
           { provider: "codex", model: "gpt-5.1-codex-mini" },
-          { provider: "opencode", model: "opencode/kimi-k2.5-free" },
+          { provider: "opencode", model: "opencode/gpt-5-nano" },
         ],
         runner: async () => {
           throw new Error("failed");
