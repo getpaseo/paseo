@@ -121,6 +121,8 @@ test("sticky mode stays pinned through composer growth and viewport resize, but 
     await expect(page.getByTestId("scroll-to-bottom-button")).toHaveCount(0);
 
     await page.setViewportSize({ width: 820, height: 760 });
+    await openWorkspaceAgentTab(page, agent.id);
+    await waitForAgentReady(page, agent.expectedTailText);
     await expectNearBottom(page);
 
     await scrollUpFromBottom(page, 720);

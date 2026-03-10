@@ -171,14 +171,7 @@ function getVisibleChatScroll(page: Page) {
 
 export async function readScrollMetrics(page: Page): Promise<ScrollMetrics> {
   return getVisibleChatScroll(page).evaluate((root: Element) => {
-    const rootElement = root as HTMLElement;
-    const candidates = [rootElement, ...Array.from(rootElement.querySelectorAll("*"))];
-    const scrollElement =
-      candidates.find(
-        (element) =>
-          element instanceof HTMLElement &&
-          element.scrollHeight - element.clientHeight > 1
-      ) ?? rootElement;
+    const scrollElement = root as HTMLElement;
 
     const offsetY = Math.max(0, scrollElement.scrollTop);
     const contentHeight = Math.max(0, scrollElement.scrollHeight);
@@ -202,14 +195,7 @@ export async function scrollUpFromBottom(page: Page, pixels: number): Promise<vo
   await expect(scrollViewport).toHaveCount(1, { timeout: 30000 });
   await scrollViewport.evaluate(
     (root: Element, amount: number) => {
-      const rootElement = root as HTMLElement;
-      const candidates = [rootElement, ...Array.from(rootElement.querySelectorAll("*"))];
-      const scrollElement =
-        candidates.find(
-          (element) =>
-            element instanceof HTMLElement &&
-            element.scrollHeight - element.clientHeight > 1
-        ) ?? rootElement;
+      const scrollElement = root as HTMLElement;
 
       const bottomOffset = Math.max(
         0,
