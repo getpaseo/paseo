@@ -1,4 +1,8 @@
 import { test, expect } from './fixtures';
+import {
+  buildCreateAgentPreferences,
+  buildSeededHost,
+} from './helpers/daemon-registry';
 import { ensureHostSelected, gotoHome } from './helpers/app';
 
 test('new agent auto-selects the previous host', async ({ page }) => {
@@ -25,28 +29,12 @@ test('new agent respects serverId in the URL', async ({ page }) => {
 
   // Ensure this test's storage is deterministic even under parallel load.
   const nowIso = new Date().toISOString();
-  const testDaemon = {
+  const testDaemon = buildSeededHost({
     serverId,
-    label: 'localhost',
-    connections: [
-      {
-        id: `direct:127.0.0.1:${daemonPort}`,
-        type: 'direct',
-        endpoint: `127.0.0.1:${daemonPort}`,
-      },
-    ],
-    preferredConnectionId: `direct:127.0.0.1:${daemonPort}`,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  };
-  const createAgentPreferences = {
-    serverId: testDaemon.serverId,
-    provider: 'codex',
-    providerPreferences: {
-      claude: { model: 'haiku' },
-      codex: { model: 'gpt-5.1-codex-mini', thinkingOptionId: 'low' },
-    },
-  };
+    endpoint: `127.0.0.1:${daemonPort}`,
+    nowIso,
+  });
+  const createAgentPreferences = buildCreateAgentPreferences(testDaemon.serverId);
 
   await page.goto('/settings');
   await page.evaluate(
@@ -60,7 +48,10 @@ test('new agent respects serverId in the URL', async ({ page }) => {
     { daemon: testDaemon, preferences: createAgentPreferences }
   );
   await page.reload();
-  await expect(page.getByText('New agent', { exact: true }).first()).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText('Settings', { exact: true }).first()).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(`[data-testid="daemon-card-${serverId}"]:visible`).first()).toBeVisible({
+    timeout: 20000,
+  });
 
   await page.goto(`/?serverId=${encodeURIComponent(serverId)}`);
   await expect(page.getByText('New agent', { exact: true }).first()).toBeVisible();
@@ -87,20 +78,11 @@ test('new agent auto-selects first online host when no preference is stored', as
   }
 
   const nowIso = new Date().toISOString();
-  const testDaemon = {
+  const testDaemon = buildSeededHost({
     serverId,
-    label: 'localhost',
-    connections: [
-      {
-        id: `direct:127.0.0.1:${daemonPort}`,
-        type: 'direct',
-        endpoint: `127.0.0.1:${daemonPort}`,
-      },
-    ],
-    preferredConnectionId: `direct:127.0.0.1:${daemonPort}`,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  };
+    endpoint: `127.0.0.1:${daemonPort}`,
+    nowIso,
+  });
 
   await gotoHome(page);
   await page.evaluate(
