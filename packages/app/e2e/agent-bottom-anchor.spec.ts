@@ -21,6 +21,10 @@ async function openWorkspaceAgentTab(page: Page, agentId: string) {
   await tab.click();
 }
 
+function buildWorkspaceDraftUrl(workspaceUrl: string) {
+  return `${workspaceUrl}?open=${encodeURIComponent("draft:new")}`;
+}
+
 test("direct load and refresh land at the bottom for history-backed chats", async ({
   page,
 }) => {
@@ -69,7 +73,9 @@ test("revisiting a loaded chat restores bottom anchoring", async ({
     await waitForAgentReady(page, agent.expectedTailText);
     await expectNearBottom(page);
 
-    await page.getByTestId("sidebar-new-agent").first().click();
+    await page.goto(buildWorkspaceDraftUrl(agent.workspaceUrl), {
+      waitUntil: "domcontentloaded",
+    });
     await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible({
       timeout: 30000,
     });

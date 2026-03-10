@@ -93,31 +93,36 @@ async function waitForTimelineToolCall(
 async function waitForPathExists(
   options: { targetPath: string; timeoutMs: number; label: string }
 ): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < options.timeoutMs) {
-    if (existsSync(options.targetPath)) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(
-    `Timed out after ${options.timeoutMs}ms waiting for ${options.label}: ${options.targetPath}`
-  );
+  await waitForCondition({
+    timeoutMs: options.timeoutMs,
+    label: `${options.label}: ${options.targetPath}`,
+    predicate: () => existsSync(options.targetPath),
+  });
 }
 
 async function waitForPathRemoved(
   options: { targetPath: string; timeoutMs: number; label: string }
 ): Promise<void> {
+  await waitForCondition({
+    timeoutMs: options.timeoutMs,
+    label: `removal of ${options.label}: ${options.targetPath}`,
+    predicate: () => !existsSync(options.targetPath),
+  });
+}
+
+async function waitForCondition(options: {
+  timeoutMs: number;
+  label: string;
+  predicate: () => boolean | Promise<boolean>;
+}): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < options.timeoutMs) {
-    if (!existsSync(options.targetPath)) {
+    if (await options.predicate()) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(
-    `Timed out after ${options.timeoutMs}ms waiting for removal of ${options.label}: ${options.targetPath}`
-  );
+  throw new Error(`Timed out after ${options.timeoutMs}ms waiting for ${options.label}`);
 }
 
 async function withShell<T>(shell: string, run: () => Promise<T>): Promise<T> {
@@ -818,10 +823,17 @@ describe("daemon E2E", () => {
           label: "createAgent should not block on setup",
         });
 
-        await waitForPathExists({
-          targetPath: path.join(agent.cwd, "dev-terminal.txt"),
-          timeoutMs: 15000,
-          label: "worktree terminal marker",
+        await waitForCondition({
+          timeoutMs: 30000,
+          label: `worktree terminal bootstrap for ${agent.cwd}`,
+          predicate: async () => {
+            const directories = ctx.daemon.daemon.terminalManager.listDirectories();
+            if (!directories.includes(agent.cwd)) {
+              return false;
+            }
+            const terminals = await ctx.client.listTerminals(agent.cwd);
+            return terminals.terminals.some((terminal) => terminal.name === "Dev Server");
+          },
         });
 
         const beforeArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
