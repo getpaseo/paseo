@@ -171,7 +171,23 @@ function getVisibleChatScroll(page: Page) {
 
 export async function readScrollMetrics(page: Page): Promise<ScrollMetrics> {
   return getVisibleChatScroll(page).evaluate((root: Element) => {
-    const scrollElement = root as HTMLElement;
+    const candidates = [root, ...Array.from(root.querySelectorAll("*"))]
+      .filter((element): element is HTMLElement => element instanceof HTMLElement)
+      .filter((element) => {
+        const tagName = element.tagName.toLowerCase();
+        const isEditable =
+          tagName === "textarea" ||
+          tagName === "input" ||
+          element.getAttribute("contenteditable") === "true";
+        return !isEditable && element.scrollHeight - element.clientHeight > 1;
+      });
+    const scrollElement =
+      candidates.sort(
+        (left, right) =>
+          right.scrollHeight -
+          right.clientHeight -
+          (left.scrollHeight - left.clientHeight)
+      )[0] ?? (root as HTMLElement);
 
     const offsetY = Math.max(0, scrollElement.scrollTop);
     const contentHeight = Math.max(0, scrollElement.scrollHeight);
@@ -193,40 +209,36 @@ export async function readScrollMetrics(page: Page): Promise<ScrollMetrics> {
 export async function scrollUpFromBottom(page: Page, pixels: number): Promise<void> {
   const scrollViewport = getVisibleChatScroll(page);
   await expect(scrollViewport).toHaveCount(1, { timeout: 30000 });
+  const targetDistanceFromBottom = Math.max(
+    NEAR_BOTTOM_THRESHOLD_PX + 24,
+    Math.max(0, pixels)
+  );
   await scrollViewport.evaluate(
-    (root: Element, amount: number) => {
-      const scrollElement = root as HTMLElement;
-
-      const bottomOffset = Math.max(
-        0,
-        scrollElement.scrollHeight - scrollElement.clientHeight
-      );
-      scrollElement.scrollTop = Math.max(0, bottomOffset - amount);
+    (root: Element, input: { targetDistanceFromBottom: number }) => {
+      const candidates = [root, ...Array.from(root.querySelectorAll("*"))]
+        .filter((element): element is HTMLElement => element instanceof HTMLElement)
+        .filter((element) => {
+          const tagName = element.tagName.toLowerCase();
+          const isEditable =
+            tagName === "textarea" ||
+            tagName === "input" ||
+            element.getAttribute("contenteditable") === "true";
+          return !isEditable && element.scrollHeight - element.clientHeight > 1;
+        });
+      const scrollElement =
+        candidates.sort(
+          (left, right) =>
+            right.scrollHeight -
+            right.clientHeight -
+            (left.scrollHeight - left.clientHeight)
+        )[0] ?? (root as HTMLElement);
+      const maxOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+      const nextOffset = Math.max(0, maxOffset - input.targetDistanceFromBottom);
+      scrollElement.scrollTop = nextOffset;
       scrollElement.dispatchEvent(new Event("scroll", { bubbles: true }));
     },
-    pixels
+    { targetDistanceFromBottom }
   );
-
-  if ((await readScrollMetrics(page)).distanceFromBottom > NEAR_BOTTOM_THRESHOLD_PX) {
-    return;
-  }
-
-  const box = await scrollViewport.boundingBox();
-  if (!box) {
-    return;
-  }
-  await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 24));
-
-  let remaining = Math.max(0, pixels);
-  while (remaining > 0) {
-    const delta = Math.min(240, remaining);
-    await page.mouse.wheel(0, -delta);
-    remaining -= delta;
-
-    if ((await readScrollMetrics(page)).distanceFromBottom > NEAR_BOTTOM_THRESHOLD_PX) {
-      return;
-    }
-  }
 }
 
 export async function waitForAgentReady(page: Page, expectedTailText?: string): Promise<void> {
