@@ -30,6 +30,29 @@ type ProviderModel = {
   description?: string
 }
 
+const EXPECTED_CLAUDE_MODELS = [
+  {
+    id: 'claude-sonnet-4-5-20250929',
+    model: 'Sonnet 4.5',
+    descriptionFragment: 'Best for everyday tasks',
+  },
+  {
+    id: 'claude-sonnet-4-6',
+    model: 'Sonnet 4.6',
+    descriptionFragment: 'Best for everyday tasks',
+  },
+  {
+    id: 'claude-opus-4-6',
+    model: 'Opus 4.6',
+    descriptionFragment: 'Most capable',
+  },
+  {
+    id: 'claude-haiku-4-5-20251001',
+    model: 'Haiku 4.5',
+    descriptionFragment: 'Fastest',
+  },
+] as const
+
 let claudeModelIdsFromJson: string[] = []
 let claudeModelsFromJson: ProviderModel[] = []
 
@@ -58,6 +81,27 @@ async function runProviderModelsJson(
   }
 
   assert.fail(`provider models ${provider} exhausted retries`)
+}
+
+function assertClaudeModels(data: ProviderModel[]): void {
+  assert.strictEqual(data.length, EXPECTED_CLAUDE_MODELS.length, 'claude output should match the current catalog size')
+
+  const byId = new Map(data.map((model) => [model.id, model]))
+  const ids = [...byId.keys()].sort()
+  const expectedIds = EXPECTED_CLAUDE_MODELS.map((model) => model.id).sort()
+
+  assert.strictEqual(byId.size, data.length, 'claude model IDs should be unique')
+  assert.deepStrictEqual(ids, expectedIds, 'claude IDs should match the current catalog')
+
+  for (const expectedModel of EXPECTED_CLAUDE_MODELS) {
+    const actualModel = byId.get(expectedModel.id)
+    assert(actualModel, `claude output should include ${expectedModel.id}`)
+    assert.strictEqual(actualModel.model, expectedModel.model, `${expectedModel.id} should keep its display name`)
+    assert(
+      (actualModel.description ?? '').includes(expectedModel.descriptionFragment),
+      `${expectedModel.id} description should mention ${expectedModel.descriptionFragment}`
+    )
+  }
 }
 
 try {
@@ -114,25 +158,7 @@ try {
   {
     console.log('Test 5: provider models claude lists canonical model aliases')
     const data = await runProviderModelsJson('claude')
-    assert.strictEqual(data.length, 3, 'should have exactly 3 claude models')
-    const byId = new Map(data.map((model) => [model.id, model]))
-    const ids = [...byId.keys()].sort()
-    assert.deepStrictEqual(ids, ['default', 'haiku', 'opus'], 'claude IDs should be default/opus/haiku')
-    assert.strictEqual(byId.get('default')?.model, 'Sonnet 4.5', 'default claude alias should map to Sonnet 4.5')
-    assert.strictEqual(byId.get('opus')?.model, 'Opus 4.6', 'opus claude alias should map to Opus 4.6')
-    assert.strictEqual(byId.get('haiku')?.model, 'Haiku 4.5', 'haiku claude alias should map to Haiku 4.5')
-    assert(
-      (byId.get('default')?.description ?? '').includes('Best for everyday tasks'),
-      'default claude description should mention everyday tasks'
-    )
-    assert(
-      (byId.get('opus')?.description ?? '').includes('Most capable'),
-      'opus claude description should mention most capable'
-    )
-    assert(
-      (byId.get('haiku')?.description ?? '').includes('Fastest'),
-      'haiku claude description should mention fastest'
-    )
+    assertClaudeModels(data)
     console.log('✓ provider models claude lists canonical model aliases\n')
   }
 
@@ -184,14 +210,8 @@ try {
     console.log('Test 9: provider models --json outputs valid JSON')
     const data = await runProviderModelsJson('claude')
     assert(Array.isArray(data), 'output should be an array')
-    assert.strictEqual(data.length, 3, 'should have exactly 3 models for claude')
     assert(data.every((m) => m.model && m.id), 'each model should have name and id')
-    const byId = new Map(data.map((model) => [model.id, model]))
-    const ids = [...byId.keys()].sort()
-    assert.deepStrictEqual(ids, ['default', 'haiku', 'opus'], 'claude JSON IDs should be deterministic')
-    assert.strictEqual(byId.get('default')?.model, 'Sonnet 4.5', 'default claude alias should map to Sonnet 4.5')
-    assert.strictEqual(byId.get('opus')?.model, 'Opus 4.6', 'opus claude alias should map to Opus 4.6')
-    assert.strictEqual(byId.get('haiku')?.model, 'Haiku 4.5', 'haiku claude alias should map to Haiku 4.5')
+    assertClaudeModels(data)
     claudeModelIdsFromJson = data.map((m) => m.id)
     claudeModelsFromJson = data
     console.log('✓ provider models --json outputs valid JSON\n')
@@ -204,7 +224,7 @@ try {
     const result = await ctx.paseo(['provider', 'models', 'claude', '--quiet'])
     assert.strictEqual(result.exitCode, 0, 'should exit 0')
     const lines = result.stdout.trim().split('\n').filter(Boolean)
-    assert.strictEqual(lines.length, 3, 'should have 3 lines')
+    assert.strictEqual(lines.length, EXPECTED_CLAUDE_MODELS.length, 'should have one line per Claude catalog model')
     assert.deepStrictEqual(
       [...lines].sort(),
       [...claudeModelIdsFromJson].sort(),
@@ -212,12 +232,12 @@ try {
     )
     assert.deepStrictEqual(
       [...lines].sort(),
-      ['default', 'haiku', 'opus'],
-      '--quiet should print canonical claude IDs'
+      EXPECTED_CLAUDE_MODELS.map((model) => model.id).sort(),
+      '--quiet should print the current Claude catalog IDs'
     )
     assert(
-      claudeModelsFromJson.some((m) => m.id === 'default'),
-      'captured --json output should still include default claude model id'
+      claudeModelsFromJson.some((m) => m.id === 'claude-sonnet-4-5-20250929'),
+      'captured --json output should still include the Claude default model id'
     )
     console.log('✓ provider models --quiet outputs model IDs only\n')
   }

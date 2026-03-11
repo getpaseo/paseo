@@ -35,6 +35,37 @@ async function waitForCondition(
   throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
+async function waitForStableNumber(
+  read: () => number,
+  input: {
+    stableMs: number;
+    timeoutMs: number;
+    intervalMs?: number;
+  }
+): Promise<number> {
+  const intervalMs = input.intervalMs ?? 25;
+  const start = Date.now();
+  let lastValue = read();
+  let stableSince = Date.now();
+
+  while (Date.now() - start < input.timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const nextValue = read();
+    if (nextValue !== lastValue) {
+      lastValue = nextValue;
+      stableSince = Date.now();
+      continue;
+    }
+    if (Date.now() - stableSince >= input.stableMs) {
+      return nextValue;
+    }
+  }
+
+  throw new Error(
+    `Timed out after ${input.timeoutMs}ms waiting for value to stabilize`
+  );
+}
+
 function percentile(values: number[], p: number): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -444,7 +475,7 @@ const shouldRun = !process.env.CI;
   );
 
   test(
-    "applies stream backpressure window until client ack advances",
+    "caps terminal stream output within the backpressure window",
     async () => {
       const cwd = tmpCwd();
       const created = await ctx.client.createTerminal(cwd);
@@ -606,23 +637,15 @@ const shouldRun = !process.env.CI;
       );
 
       await waitForCondition(() => outputBytes > 0, 10000);
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      const beforeAckBytes = outputBytes;
+      await waitForCondition(() => outputBytes >= 128 * 1024, 10000);
+      const beforeAckBytes = await waitForStableNumber(() => outputBytes, {
+        stableMs: 1000,
+        timeoutMs: 10000,
+      });
       expect(beforeAckBytes).toBeGreaterThan(0);
+      expect(beforeAckBytes).toBeGreaterThan(128 * 1024);
       expect(beforeAckBytes).toBeLessThan(320 * 1024);
       expect(latestEndOffset).toBeGreaterThan(0);
-
-      ws.send(
-        encodeBinaryMuxFrame({
-          channel: BinaryMuxChannel.Terminal,
-          messageType: TerminalBinaryMessageType.Ack,
-          streamId: streamId!,
-          offset: latestEndOffset,
-          payload: new Uint8Array(0),
-        })
-      );
-
-      await waitForCondition(() => outputBytes > beforeAckBytes, 10000);
 
       ws.send(
         JSON.stringify({

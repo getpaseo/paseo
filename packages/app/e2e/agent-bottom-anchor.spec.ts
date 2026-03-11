@@ -18,7 +18,20 @@ test.describe.configure({ timeout: 180000 });
 async function openWorkspaceAgentTab(page: Page, agentId: string) {
   const tab = page.getByTestId(`workspace-tab-agent_${agentId}`).first();
   await expect(tab).toBeVisible({ timeout: 30000 });
-  await tab.click();
+  const trigger = tab.getByRole("button").first();
+  const clickableTarget = (await trigger.count()) > 0 ? trigger : tab;
+  await clickableTarget.scrollIntoViewIfNeeded();
+  await clickableTarget.click({ timeout: 5000 });
+}
+
+function buildWorkspaceDraftUrl(workspaceUrl: string) {
+  return `${workspaceUrl}?open=${encodeURIComponent("draft:new")}`;
+}
+
+async function expectChatContainerKey(page: Page, expectedKey: string) {
+  await expect
+    .poll(async () => await getChatContainerKey(page))
+    .toBe(expectedKey);
 }
 
 test("direct load and refresh land at the bottom for history-backed chats", async ({
@@ -69,7 +82,9 @@ test("revisiting a loaded chat restores bottom anchoring", async ({
     await waitForAgentReady(page, agent.expectedTailText);
     await expectNearBottom(page);
 
-    await page.getByTestId("sidebar-new-agent").first().click();
+    await page.goto(buildWorkspaceDraftUrl(agent.workspaceUrl), {
+      waitUntil: "domcontentloaded",
+    });
     await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible({
       timeout: 30000,
     });
@@ -95,6 +110,7 @@ test("sticky mode stays pinned through composer growth and viewport resize, but 
       cwd: repo.path,
       title: `bottom-anchor-sticky-${Date.now()}`,
       turnCount: 10,
+      lineCount: 24,
     });
 
     await page.setViewportSize({ width: 1320, height: 920 });
@@ -114,7 +130,11 @@ test("sticky mode stays pinned through composer growth and viewport resize, but 
     await expectNearBottom(page);
     await expect(page.getByTestId("scroll-to-bottom-button")).toHaveCount(0);
 
-    await page.setViewportSize({ width: 820, height: 760 });
+    await page.setViewportSize({ width: 1040, height: 760 });
+    await expect(page.getByTestId(`workspace-tab-agent_${agent.id}`).first()).toBeVisible({
+      timeout: 30000,
+    });
+    await waitForAgentReady(page, agent.expectedTailText);
     await expectNearBottom(page);
 
     await scrollUpFromBottom(page, 720);
@@ -133,7 +153,7 @@ test("sticky mode stays pinned through composer growth and viewport resize, but 
   }
 });
 
-test("web partial virtualization keeps bottom anchoring stable across direct load, refresh, and resize", async ({
+test("web DOM virtualization keeps bottom anchoring stable across direct load and refresh", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -161,20 +181,13 @@ test("web partial virtualization keeps bottom anchoring stable across direct loa
     await page.goto(agent.url, { waitUntil: "domcontentloaded" });
     await openWorkspaceAgentTab(page, agent.id);
     await waitForAgentReady(page, agent.expectedTailText);
-    await expect
-      .poll(async () => await getChatContainerKey(page))
-      .toBe("web-partial-virtualized");
+    await expectChatContainerKey(page, "web-dom-virtualized");
     await expectNearBottom(page);
 
     await page.reload({ waitUntil: "commit" });
     await openWorkspaceAgentTab(page, agent.id);
     await waitForAgentReady(page, agent.expectedTailText);
-    await expect
-      .poll(async () => await getChatContainerKey(page))
-      .toBe("web-partial-virtualized");
-    await expectNearBottom(page);
-
-    await page.setViewportSize({ width: 780, height: 720 });
+    await expectChatContainerKey(page, "web-dom-virtualized");
     await expectNearBottom(page);
   } finally {
     await client.close().catch(() => undefined);

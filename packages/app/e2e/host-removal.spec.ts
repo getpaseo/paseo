@@ -1,4 +1,7 @@
 import { test, expect } from './fixtures';
+import {
+  buildSeededHost,
+} from './helpers/daemon-registry';
 
 test('host removal removes the host from UI and persists after reload', async ({ page }) => {
   const daemonPort = process.env.E2E_DAEMON_PORT;
@@ -14,27 +17,18 @@ test('host removal removes the host from UI and persists after reload', async ({
   const extraEndpoint = `127.0.0.1:${extraPort}`;
   const nowIso = new Date().toISOString();
 
-  const extraDaemon = {
+  const extraDaemon = buildSeededHost({
     serverId: 'srv_e2e_extra_daemon',
+    endpoint: extraEndpoint,
     label: 'extra',
-    connections: [
-      { id: `direct:${extraEndpoint}`, type: 'direct', endpoint: extraEndpoint },
-    ],
-    preferredConnectionId: `direct:${extraEndpoint}`,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  };
+    nowIso,
+  });
 
-  const seededTestDaemon = {
+  const seededTestDaemon = buildSeededHost({
     serverId: seededServerId,
-    label: 'localhost',
-    connections: [
-      { id: `direct:127.0.0.1:${daemonPort}`, type: 'direct', endpoint: `127.0.0.1:${daemonPort}` },
-    ],
-    preferredConnectionId: `direct:127.0.0.1:${daemonPort}`,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  };
+    endpoint: `127.0.0.1:${daemonPort}`,
+    nowIso,
+  });
 
   const seedOnceKey = `@paseo:e2e-host-removal-seeded:${Math.random().toString(36).slice(2)}`;
 

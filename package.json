@@ -59,6 +59,8 @@
     "get-port-cli": "^3.0.0",
     "knip": "^5.82.1",
     "patch-package": "^8.0.1",
+    "react": "19.1.4",
+    "react-dom": "19.1.4",
     "typescript": "^5.9.3"
   },
   "description": "Paseo: voice-controlled development environment with OpenAI Realtime API",

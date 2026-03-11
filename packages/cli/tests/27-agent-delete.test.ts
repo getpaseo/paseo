@@ -14,19 +14,30 @@ import assert from 'node:assert'
 import { $ } from 'zx'
 import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
 
 $.verbose = false
 
 console.log('=== Delete Command Tests ===\n')
 
+const cliRoot = dirname(fileURLToPath(import.meta.url))
+const repoRoot = join(cliRoot, '..', '..', '..')
 const port = 10000 + Math.floor(Math.random() * 50000)
 const paseoHome = await mkdtemp(join(tmpdir(), 'paseo-delete-test-home-'))
+
+async function runCli(args: string[]) {
+  return $`npm --prefix ${repoRoot} run cli -- ${args}`.nothrow()
+}
+
+async function runDelete(args: string[]) {
+  return $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm --prefix ${repoRoot} run cli -- delete ${args}`.nothrow()
+}
 
 try {
   {
     console.log('Test 1: delete --help shows options')
-    const result = await $`npm run cli -- delete --help`.nothrow()
+    const result = await runDelete(['--help'])
     assert.strictEqual(result.exitCode, 0, 'delete --help should exit 0')
     assert(result.stdout.includes('--all'), 'help should mention --all flag')
     assert(result.stdout.includes('--cwd'), 'help should mention --cwd option')
@@ -37,8 +48,7 @@ try {
 
   {
     console.log('Test 2: delete requires ID, --all, or --cwd')
-    const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm run cli -- delete`.nothrow()
+    const result = await runDelete([])
     assert.notStrictEqual(result.exitCode, 0, 'should fail without id, --all, or --cwd')
     const output = result.stdout + result.stderr
     const hasError =
@@ -52,8 +62,7 @@ try {
 
   {
     console.log('Test 3: delete handles daemon not running')
-    const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm run cli -- delete abc123`.nothrow()
+    const result = await runDelete(['abc123'])
     assert.notStrictEqual(result.exitCode, 0, 'should fail when daemon not running')
     const output = result.stdout + result.stderr
     const hasError =
@@ -66,8 +75,7 @@ try {
 
   {
     console.log('Test 4: delete --all flag is accepted')
-    const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm run cli -- delete --all`.nothrow()
+    const result = await runDelete(['--all'])
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept --all flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
@@ -76,8 +84,7 @@ try {
 
   {
     console.log('Test 5: delete --cwd flag is accepted')
-    const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm run cli -- delete --cwd /tmp`.nothrow()
+    const result = await runDelete(['--cwd', '/tmp'])
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept --cwd flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
@@ -86,8 +93,7 @@ try {
 
   {
     console.log('Test 6: delete with ID and --host flag is accepted')
-    const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm run cli -- delete abc123 --host localhost:${port}`.nothrow()
+    const result = await runDelete(['abc123', '--host', `localhost:${port}`])
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept --host flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
@@ -96,7 +102,7 @@ try {
 
   {
     console.log('Test 7: paseo --help shows delete command')
-    const result = await $`npm run cli -- --help`.nothrow()
+    const result = await runCli(['--help'])
     assert.strictEqual(result.exitCode, 0, 'paseo --help should exit 0')
     assert(result.stdout.includes('delete'), 'help should mention delete command')
     console.log('✓ paseo --help shows delete command\n')
@@ -105,7 +111,7 @@ try {
   {
     console.log('Test 8: -q (quiet) flag is accepted with delete')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm run cli -- -q delete abc123`.nothrow()
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm --prefix ${repoRoot} run cli -- -q delete abc123`.nothrow()
     const output = result.stdout + result.stderr
     assert(!output.includes('unknown option'), 'should accept -q flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')

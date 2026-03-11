@@ -72,7 +72,7 @@ test('manual host add accepts host:port only and persists a direct connection', 
           entry?.serverId === serverId &&
           Array.isArray(entry?.connections) &&
           entry.connections.some(
-            (conn: any) => conn?.type === 'direct' && conn?.endpoint === `127.0.0.1:${port}`
+            (conn: any) => conn?.type === 'directTcp' && conn?.endpoint === `127.0.0.1:${port}`
           )
         );
       } catch {

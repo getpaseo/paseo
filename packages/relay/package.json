@@ -14,16 +14,19 @@
     ".": {
       "types": "./dist/index.d.ts",
       "node": "./dist/index.js",
+      "import": "./src/index.ts",
       "default": "./src/index.ts"
     },
     "./e2ee": {
       "types": "./dist/e2ee.d.ts",
       "node": "./dist/e2ee.js",
+      "import": "./src/e2ee.ts",
       "default": "./src/e2ee.ts"
     },
     "./cloudflare": {
       "types": "./dist/cloudflare-adapter.d.ts",
       "node": "./dist/cloudflare-adapter.js",
+      "import": "./src/cloudflare-adapter.ts",
       "default": "./src/cloudflare-adapter.ts"
     }
   },

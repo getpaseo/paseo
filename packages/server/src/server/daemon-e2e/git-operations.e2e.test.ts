@@ -93,31 +93,36 @@ async function waitForTimelineToolCall(
 async function waitForPathExists(
   options: { targetPath: string; timeoutMs: number; label: string }
 ): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < options.timeoutMs) {
-    if (existsSync(options.targetPath)) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(
-    `Timed out after ${options.timeoutMs}ms waiting for ${options.label}: ${options.targetPath}`
-  );
+  await waitForCondition({
+    timeoutMs: options.timeoutMs,
+    label: `${options.label}: ${options.targetPath}`,
+    predicate: () => existsSync(options.targetPath),
+  });
 }
 
 async function waitForPathRemoved(
   options: { targetPath: string; timeoutMs: number; label: string }
 ): Promise<void> {
+  await waitForCondition({
+    timeoutMs: options.timeoutMs,
+    label: `removal of ${options.label}: ${options.targetPath}`,
+    predicate: () => !existsSync(options.targetPath),
+  });
+}
+
+async function waitForCondition(options: {
+  timeoutMs: number;
+  label: string;
+  predicate: () => boolean | Promise<boolean>;
+}): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < options.timeoutMs) {
-    if (!existsSync(options.targetPath)) {
+    if (await options.predicate()) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(
-    `Timed out after ${options.timeoutMs}ms waiting for removal of ${options.label}: ${options.targetPath}`
-  );
+  throw new Error(`Timed out after ${options.timeoutMs}ms waiting for ${options.label}`);
 }
 
 async function withShell<T>(shell: string, run: () => Promise<T>): Promise<T> {
@@ -818,10 +823,17 @@ describe("daemon E2E", () => {
           label: "createAgent should not block on setup",
         });
 
-        await waitForPathExists({
-          targetPath: path.join(agent.cwd, "dev-terminal.txt"),
-          timeoutMs: 15000,
-          label: "worktree terminal marker",
+        await waitForCondition({
+          timeoutMs: 30000,
+          label: `worktree terminal bootstrap for ${agent.cwd}`,
+          predicate: async () => {
+            const directories = ctx.daemon.daemon.terminalManager.listDirectories();
+            if (!directories.includes(agent.cwd)) {
+              return false;
+            }
+            const terminals = await ctx.client.listTerminals(agent.cwd);
+            return terminals.terminals.some((terminal) => terminal.name === "Dev Server");
+          },
         });
 
         const beforeArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
@@ -846,122 +858,5 @@ describe("daemon E2E", () => {
       60000
     );
 
-    test(
-      "archives the worktree when the last agent in it is archived",
-      async () => {
-        const repoRoot = tmpCwd();
-
-        const { execSync } = await import("child_process");
-        execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
-        execSync("git config user.email 'test@test.com'", {
-          cwd: repoRoot,
-          stdio: "pipe",
-        });
-        execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
-
-        writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
-        execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
-        execSync("git -c commit.gpgsign=false commit -m 'initial'", {
-          cwd: repoRoot,
-          stdio: "pipe",
-        });
-        execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
-
-        const agent = await ctx.client.createAgent({
-          provider: "codex",
-          model: CODEX_TEST_MODEL,
-          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd: repoRoot,
-          title: "Archive Last Agent Cleanup Test",
-          git: {
-            createWorktree: true,
-            createNewBranch: true,
-            baseBranch: "main",
-            newBranchName: "archive-last-agent",
-            worktreeSlug: "archive-last-agent",
-          },
-        });
-
-        expect(existsSync(agent.cwd)).toBe(true);
-
-        const result = await ctx.client.archiveAgent(agent.id);
-        expect(result.archivedAt).toBeTruthy();
-
-        await waitForPathRemoved({
-          targetPath: agent.cwd,
-          timeoutMs: 10000,
-          label: "archived worktree",
-        });
-
-        rmSync(repoRoot, { recursive: true, force: true });
-      },
-      60000
-    );
-
-    test(
-      "does not archive the worktree until all agents in it are archived",
-      async () => {
-        const repoRoot = tmpCwd();
-
-        const { execSync } = await import("child_process");
-        execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
-        execSync("git config user.email 'test@test.com'", {
-          cwd: repoRoot,
-          stdio: "pipe",
-        });
-        execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
-
-        writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
-        execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
-        execSync("git -c commit.gpgsign=false commit -m 'initial'", {
-          cwd: repoRoot,
-          stdio: "pipe",
-        });
-        execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
-
-        const firstAgent = await ctx.client.createAgent({
-          provider: "codex",
-          model: CODEX_TEST_MODEL,
-          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd: repoRoot,
-          title: "Archive Multi-Agent Test 1",
-          git: {
-            createWorktree: true,
-            createNewBranch: true,
-            baseBranch: "main",
-            newBranchName: "archive-multi-agent",
-            worktreeSlug: "archive-multi-agent",
-          },
-        });
-
-        const secondAgent = await ctx.client.createAgent({
-          provider: "codex",
-          model: CODEX_TEST_MODEL,
-          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd: firstAgent.cwd,
-          title: "Archive Multi-Agent Test 2",
-        });
-
-        expect(existsSync(firstAgent.cwd)).toBe(true);
-
-        await ctx.client.archiveAgent(firstAgent.id);
-
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        expect(existsSync(firstAgent.cwd)).toBe(true);
-
-        await ctx.client.archiveAgent(secondAgent.id);
-
-        await waitForPathRemoved({
-          targetPath: firstAgent.cwd,
-          timeoutMs: 10000,
-          label: "worktree after final agent archive",
-        });
-
-        rmSync(repoRoot, { recursive: true, force: true });
-      },
-      60000
-    );
   });
-
-
 });

@@ -1,4 +1,8 @@
 import { test as base, expect, type Page } from '@playwright/test';
+import {
+  buildCreateAgentPreferences,
+  buildSeededHost,
+} from './helpers/daemon-registry';
 
 // Extend base test to provide dynamic baseURL from global-setup
 const test = base.extend({
@@ -58,31 +62,12 @@ test.beforeEach(async ({ page }) => {
   if (!serverId) {
     throw new Error('E2E_SERVER_ID is not set - expected from Playwright globalSetup.');
   }
-  const testDaemon = {
+  const testDaemon = buildSeededHost({
     serverId,
-    label: 'localhost',
-    connections: [
-      {
-        id: `direct:127.0.0.1:${daemonPort}`,
-        type: 'direct',
-        endpoint: `127.0.0.1:${daemonPort}`,
-      },
-    ],
-    preferredConnectionId: `direct:127.0.0.1:${daemonPort}`,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  };
-
-  const createAgentPreferences = {
-    // Ensure create flow never uses a remembered host from the developer's real app.
-    serverId: testDaemon.serverId,
-    // Keep e2e fast/cheap by default.
-    provider: 'codex',
-    providerPreferences: {
-      claude: { model: 'haiku' },
-      codex: { model: 'gpt-5.1-codex-mini', thinkingOptionId: 'low' },
-    },
-  };
+    endpoint: `127.0.0.1:${daemonPort}`,
+    nowIso,
+  });
+  const createAgentPreferences = buildCreateAgentPreferences(testDaemon.serverId);
 
   await page.addInitScript(
     ({ daemon, preferences, seedNonce }) => {

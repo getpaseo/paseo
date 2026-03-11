@@ -199,6 +199,19 @@ function stripAnsi(input: string): string {
   return input.replace(/\u001b\[[0-9;]*m/g, '');
 }
 
+function ensureRelayBuildArtifact(repoRoot: string): void {
+  const relayDistEntry = path.join(repoRoot, 'packages/relay/dist/e2ee.js');
+  if (existsSync(relayDistEntry)) {
+    return;
+  }
+
+  console.log('[e2e] Building @getpaseo/relay for daemon startup');
+  execSync('npm run build --workspace=@getpaseo/relay', {
+    cwd: repoRoot,
+    stdio: 'inherit',
+  });
+}
+
 function decodeOfferFromFragmentUrl(url: string): OfferPayload {
   const marker = '#offer=';
   const idx = url.indexOf(marker);
@@ -217,6 +230,7 @@ function decodeOfferFromFragmentUrl(url: string): OfferPayload {
 
 export default async function globalSetup() {
   const repoRoot = path.resolve(__dirname, '../../..');
+  ensureRelayBuildArtifact(repoRoot);
   const envTestPath = path.join(repoRoot, '.env.test');
   if (existsSync(envTestPath)) {
     dotenv.config({ path: envTestPath });

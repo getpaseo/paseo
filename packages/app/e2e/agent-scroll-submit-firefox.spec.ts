@@ -1,4 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import {
+  buildCreateAgentPreferences,
+  buildSeededHost,
+} from "./helpers/daemon-registry";
 
 const SERVER_ID =
   process.env.PLAYWRIGHT_REPRO_SERVER_ID ?? "srv_ETXtcjYRGrCI";
@@ -26,33 +30,17 @@ function seedDaemonRegistryScript(params: {
   endpoint: string;
   nowIso: string;
 }) {
-  const daemon = {
+  const daemon = buildSeededHost({
     serverId: params.serverId,
-    label: "localhost",
-    connections: [
-      {
-        id: `direct:${params.endpoint}`,
-        type: "direct",
-        endpoint: params.endpoint,
-      },
-    ],
-    preferredConnectionId: `direct:${params.endpoint}`,
-    createdAt: params.nowIso,
-    updatedAt: params.nowIso,
-  };
+    endpoint: params.endpoint,
+    nowIso: params.nowIso,
+  });
 
   localStorage.setItem("@paseo:e2e", "1");
   localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
   localStorage.setItem(
     "@paseo:create-agent-preferences",
-    JSON.stringify({
-      serverId: params.serverId,
-      provider: "codex",
-      providerPreferences: {
-        claude: { model: "haiku" },
-        codex: { model: "gpt-5.1-codex-mini", thinkingOptionId: "low" },
-      },
-    })
+    JSON.stringify(buildCreateAgentPreferences(params.serverId))
   );
 }
 

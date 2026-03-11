@@ -284,23 +284,9 @@ describe("TerminalManager - Command Execution", () => {
         5000
       );
 
-      // First command
-      await manager.sendTextToCommand(
-        execResult.commandId,
-        "x = 5",
-        true,
-        { lines: 50, maxWait: 2000 }
-      );
+      await manager.sendTextToCommand(execResult.commandId, "x = 5", true);
+      await manager.sendTextToCommand(execResult.commandId, "y = 3", true);
 
-      // Second command
-      await manager.sendTextToCommand(
-        execResult.commandId,
-        "y = 3",
-        true,
-        { lines: 50, maxWait: 2000 }
-      );
-
-      // Third command - use variables
       const output = await manager.sendTextToCommand(
         execResult.commandId,
         "print(x + y)",
@@ -449,24 +435,16 @@ describe("TerminalManager - Command Execution", () => {
       expect(execResult.output).toContain(">"); // Node prompt
       expect(execResult.isDead).toBe(false);
 
-      // Execute JavaScript
-      await manager.sendTextToCommand(
-        execResult.commandId,
-        "const x = [1, 2, 3]",
-        true,
-        { lines: 50, maxWait: 2000 }
-      );
+      await manager.sendTextToCommand(execResult.commandId, "const x = [1, 2, 3]", true);
 
       const output2 = await manager.sendTextToCommand(
         execResult.commandId,
-        "x.map(n => n * 2)",
+        "console.log(x.map(n => n * 2).join(','))",
         true,
         { lines: 50, maxWait: 2000 }
       );
 
-      expect(output2).toContain("2");
-      expect(output2).toContain("4");
-      expect(output2).toContain("6");
+      expect(output2).toContain("2,4,6");
 
       // Exit
       await manager.sendTextToCommand(execResult.commandId, ".exit", true);

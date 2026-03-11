@@ -296,6 +296,7 @@ export async function runRunCommand(
             model: options.model,
             thinkingOptionId,
             initialPrompt: structuredPrompt,
+            outputSchema,
             images,
             git,
             worktreeName: options.worktree,
