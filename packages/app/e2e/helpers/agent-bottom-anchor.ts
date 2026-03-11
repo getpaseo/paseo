@@ -66,17 +66,17 @@ function buildReplyBlock(label: string, lineCount = 14): string {
   }).join("\n");
 }
 
-function buildProtocolMessage(label: string): string {
+function buildProtocolMessage(label: string, lineCount = 14): string {
   return [
     "For every message in this chat, reply with exactly the text after the final line `REPLY:`.",
     "Do not add extra words, bullets, markdown fences, or tool calls.",
     "REPLY:",
-    buildReplyBlock(label),
+    buildReplyBlock(label, lineCount),
   ].join("\n");
 }
 
-function buildReplyMessage(label: string): string {
-  return ["REPLY:", buildReplyBlock(label)].join("\n");
+function buildReplyMessage(label: string, lineCount = 14): string {
+  return ["REPLY:", buildReplyBlock(label, lineCount)].join("\n");
 }
 
 export function createReplyTurn(label: string): {
@@ -124,9 +124,11 @@ export async function seedBottomAnchorAgent(input: {
   cwd: string;
   title?: string;
   turnCount?: number;
+  lineCount?: number;
 }): Promise<SeededAgent> {
   const title = input.title ?? `bottom-anchor-${Date.now()}`;
   const turnCount = Math.max(3, input.turnCount ?? 5);
+  const lineCount = Math.max(14, input.lineCount ?? 14);
   const created = await input.client.createAgent({
     provider: "codex",
     model: "gpt-5.1-codex-mini",
@@ -134,7 +136,7 @@ export async function seedBottomAnchorAgent(input: {
     modeId: "full-access",
     cwd: input.cwd,
     title,
-    initialPrompt: buildProtocolMessage(`${title}-turn-00`),
+    initialPrompt: buildProtocolMessage(`${title}-turn-00`, lineCount),
   });
   const initialFinish = await input.client.waitForFinish(created.id, 120000);
   if (initialFinish.status !== "idle") {
@@ -143,11 +145,11 @@ export async function seedBottomAnchorAgent(input: {
     );
   }
 
-  let expectedTailText = buildReplyBlock(`${title}-turn-00`);
+  let expectedTailText = buildReplyBlock(`${title}-turn-00`, lineCount);
   for (let index = 1; index < turnCount; index += 1) {
     const label = `${title}-turn-${index.toString().padStart(2, "0")}`;
-    expectedTailText = buildReplyBlock(label);
-    await input.client.sendAgentMessage(created.id, buildReplyMessage(label));
+    expectedTailText = buildReplyBlock(label, lineCount);
+    await input.client.sendAgentMessage(created.id, buildReplyMessage(label, lineCount));
     const finish = await input.client.waitForFinish(created.id, 120000);
     if (finish.status !== "idle") {
       throw new Error(
@@ -209,36 +211,27 @@ export async function readScrollMetrics(page: Page): Promise<ScrollMetrics> {
 export async function scrollUpFromBottom(page: Page, pixels: number): Promise<void> {
   const scrollViewport = getVisibleChatScroll(page);
   await expect(scrollViewport).toHaveCount(1, { timeout: 30000 });
-  const targetDistanceFromBottom = Math.max(
-    NEAR_BOTTOM_THRESHOLD_PX + 24,
-    Math.max(0, pixels)
-  );
-  await scrollViewport.evaluate(
-    (root: Element, input: { targetDistanceFromBottom: number }) => {
-      const candidates = [root, ...Array.from(root.querySelectorAll("*"))]
-        .filter((element): element is HTMLElement => element instanceof HTMLElement)
-        .filter((element) => {
-          const tagName = element.tagName.toLowerCase();
-          const isEditable =
-            tagName === "textarea" ||
-            tagName === "input" ||
-            element.getAttribute("contenteditable") === "true";
-          return !isEditable && element.scrollHeight - element.clientHeight > 1;
-        });
-      const scrollElement =
-        candidates.sort(
-          (left, right) =>
-            right.scrollHeight -
-            right.clientHeight -
-            (left.scrollHeight - left.clientHeight)
-        )[0] ?? (root as HTMLElement);
-      const maxOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-      const nextOffset = Math.max(0, maxOffset - input.targetDistanceFromBottom);
-      scrollElement.scrollTop = nextOffset;
-      scrollElement.dispatchEvent(new Event("scroll", { bubbles: true }));
-    },
-    { targetDistanceFromBottom }
-  );
+  let remaining = Math.max(0, pixels);
+  while (remaining > 0) {
+    const delta = Math.min(240, remaining);
+    await scrollViewport.evaluate((element: Element, step: number) => {
+      const scrollContainer = element as HTMLElement;
+      scrollContainer.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY: -step,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+      scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - step);
+      scrollContainer.dispatchEvent(new Event("scroll", { bubbles: true }));
+    }, delta);
+    remaining -= delta;
+
+    if ((await readScrollMetrics(page)).distanceFromBottom > NEAR_BOTTOM_THRESHOLD_PX) {
+      return;
+    }
+  }
 }
 
 export async function waitForAgentReady(page: Page, expectedTailText?: string): Promise<void> {

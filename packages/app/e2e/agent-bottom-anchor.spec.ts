@@ -104,6 +104,7 @@ test("sticky mode stays pinned through composer growth and viewport resize, but 
       cwd: repo.path,
       title: `bottom-anchor-sticky-${Date.now()}`,
       turnCount: 10,
+      lineCount: 24,
     });
 
     await page.setViewportSize({ width: 1320, height: 920 });
@@ -123,7 +124,7 @@ test("sticky mode stays pinned through composer growth and viewport resize, but 
     await expectNearBottom(page);
     await expect(page.getByTestId("scroll-to-bottom-button")).toHaveCount(0);
 
-    await page.setViewportSize({ width: 820, height: 760 });
+    await page.setViewportSize({ width: 1040, height: 760 });
     await expect(page.getByTestId(`workspace-tab-agent_${agent.id}`).first()).toBeVisible({
       timeout: 30000,
     });
