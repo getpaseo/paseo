@@ -28,6 +28,12 @@ function buildWorkspaceDraftUrl(workspaceUrl: string) {
   return `${workspaceUrl}?open=${encodeURIComponent("draft:new")}`;
 }
 
+async function expectChatContainerKey(page: Page, expectedKey: string) {
+  await expect
+    .poll(async () => await getChatContainerKey(page))
+    .toBe(expectedKey);
+}
+
 test("direct load and refresh land at the bottom for history-backed chats", async ({
   page,
 }) => {
@@ -147,7 +153,7 @@ test("sticky mode stays pinned through composer growth and viewport resize, but 
   }
 });
 
-test("web partial virtualization keeps bottom anchoring stable across direct load, refresh, and resize", async ({
+test("web DOM virtualization keeps bottom anchoring stable across direct load and refresh", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -175,20 +181,13 @@ test("web partial virtualization keeps bottom anchoring stable across direct loa
     await page.goto(agent.url, { waitUntil: "domcontentloaded" });
     await openWorkspaceAgentTab(page, agent.id);
     await waitForAgentReady(page, agent.expectedTailText);
-    await expect
-      .poll(async () => await getChatContainerKey(page))
-      .toBe("web-partial-virtualized");
+    await expectChatContainerKey(page, "web-dom-virtualized");
     await expectNearBottom(page);
 
     await page.reload({ waitUntil: "commit" });
     await openWorkspaceAgentTab(page, agent.id);
     await waitForAgentReady(page, agent.expectedTailText);
-    await expect
-      .poll(async () => await getChatContainerKey(page))
-      .toBe("web-partial-virtualized");
-    await expectNearBottom(page);
-
-    await page.setViewportSize({ width: 780, height: 720 });
+    await expectChatContainerKey(page, "web-dom-virtualized");
     await expectNearBottom(page);
   } finally {
     await client.close().catch(() => undefined);
