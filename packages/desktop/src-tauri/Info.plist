@@ -12,5 +12,16 @@
     <string>0.1.25</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Paseo needs access to your microphone for voice dictation and voice mode.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleURLName</key>
+        <string>dev.paseo.desktop</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>paseo</string>
+        </array>
+      </dict>
+    </array>
   </dict>
 </plist>

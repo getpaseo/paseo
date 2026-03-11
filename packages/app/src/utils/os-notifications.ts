@@ -117,16 +117,33 @@ async function sendTauriNotification(
   payload: OsNotificationPayload,
   notificationModule: TauriNotificationApi
 ): Promise<boolean> {
+  const granted = await ensureTauriNotificationPermission(notificationModule);
+  if (!granted) {
+    console.log("[OSNotifications][Tauri] Permission not granted");
+    return false;
+  }
+
+  const tauri = getTauri();
+  if (tauri?.core?.invoke) {
+    try {
+      await tauri.core.invoke("send_desktop_notification", {
+        title: payload.title,
+        body: payload.body,
+        routeData: payload.data,
+      });
+      return true;
+    } catch (error) {
+      console.warn(
+        "[OSNotifications][Tauri] Failed to send desktop notification, falling back",
+        error
+      );
+    }
+  }
+
   if (typeof notificationModule.sendNotification !== "function") {
     console.warn(
       "[OSNotifications][Tauri] notification.sendNotification is unavailable"
     );
-    return false;
-  }
-
-  const granted = await ensureTauriNotificationPermission(notificationModule);
-  if (!granted) {
-    console.log("[OSNotifications][Tauri] Permission not granted");
     return false;
   }
 

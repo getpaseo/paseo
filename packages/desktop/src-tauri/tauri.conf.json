@@ -50,6 +50,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["paseo"]
+      }
+    },
     "updater": {
       "active": true,
       "endpoints": [

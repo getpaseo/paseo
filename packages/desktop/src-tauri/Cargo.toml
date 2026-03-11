@@ -35,10 +35,28 @@ tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-deep-link = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-websocket = "2"
 tokio = { version = "1", features = ["net", "sync"] }
 tokio-tungstenite = "0.24"
+
+[target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[target."cfg(target_os = \"macos\")".dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSDictionary", "NSObject"] }
+objc2-user-notifications = { version = "0.3", features = [
+    "UNUserNotificationCenter",
+    "UNNotificationResponse",
+    "UNNotification",
+    "UNNotificationRequest",
+    "UNNotificationContent",
+    "UNNotificationSettings",
+    "block2",
+] }
+block2 = "0.6"
 
 
 
