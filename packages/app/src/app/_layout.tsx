@@ -71,13 +71,47 @@ function PushNotificationRouter() {
 
   useEffect(() => {
     if (Platform.OS === "web") {
-      if (getTauri()) {
+      const tauri = getTauri();
+
+      if (tauri) {
         void ensureOsNotificationPermission().then((granted) => {
           console.log(
             "[OSNotifications][Tauri] Startup permission preflight result:",
             granted ? "granted" : "not-granted"
           );
         });
+      }
+
+      const unlisteners: Array<(() => void) | Promise<() => void>> = [];
+
+      if (tauri?.event?.listen) {
+        const notifUnlisten = tauri.event.listen(
+          "notification-clicked",
+          (event: unknown) => {
+            const payload = (event as { payload?: unknown })?.payload;
+            const data = payload as Record<string, unknown> | undefined;
+            const route = buildNotificationRoute(data);
+            router.push(route as any);
+          }
+        );
+        unlisteners.push(notifUnlisten);
+
+        const deepLinkUnlisten = tauri.event.listen(
+          "deep-link-opened",
+          (event: unknown) => {
+            const payload = (event as { payload?: unknown })?.payload;
+            const urls = payload as string[] | undefined;
+            if (!urls?.length) return;
+            try {
+              const url = new URL(urls[0]);
+              const route = url.pathname + url.search;
+              router.push(route as any);
+            } catch {
+              console.warn("[DeepLink] Failed to parse deep link URL:", urls[0]);
+            }
+          }
+        );
+        unlisteners.push(deepLinkUnlisten);
       }
 
       const target = globalThis as unknown as EventTarget;
@@ -97,6 +131,11 @@ function PushNotificationRouter() {
           WEB_NOTIFICATION_CLICK_EVENT,
           openFromWebClick as EventListener
         );
+        for (const unlisten of unlisteners) {
+          void Promise.resolve(unlisten).then((fn) => {
+            if (typeof fn === "function") fn();
+          });
+        }
       };
     }
 

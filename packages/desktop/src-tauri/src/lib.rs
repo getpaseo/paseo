@@ -9,9 +9,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "macos")]
 use tauri::menu::AboutMetadata;
 use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_updater::UpdaterExt;
 
+mod notifications;
 mod runtime_manager;
 use runtime_manager::{
     close_local_daemon_transport, install_cli_shim, managed_daemon_logs, managed_daemon_pairing,
@@ -610,8 +611,21 @@ async fn garbage_collect_attachment_files(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .manage(LocalTransportState::default())
+    let mut builder = tauri::Builder::default()
+        .manage(LocalTransportState::default());
+
+    // Single-instance must be registered before other plugins (per docs).
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
@@ -639,7 +653,8 @@ pub fn run() {
             copy_attachment_file,
             read_file_base64,
             delete_attachment_file,
-            garbage_collect_attachment_files
+            garbage_collect_attachment_files,
+            notifications::send_desktop_notification
         ])
         .setup(|app| {
             log::info!(
@@ -672,6 +687,19 @@ pub fn run() {
                     ))
                     .build(),
             )?;
+
+            notifications::init_notification_delegate(app.handle());
+
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let app_handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    let urls: Vec<String> =
+                        event.urls().iter().map(|u| u.to_string()).collect();
+                    let _ = app_handle.emit("deep-link-opened", urls);
+                });
+            }
 
             // Start from Tauri's default menu so macOS standard shortcuts (Cmd+A/C/V/etc)
             // keep working. Then inject our zoom controls into a View menu.
