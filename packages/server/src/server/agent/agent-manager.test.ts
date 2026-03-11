@@ -1387,11 +1387,46 @@ describe("AgentManager", () => {
       cwd: workdir,
     });
 
+    const runningStateEvents: string[] = [];
+    let resolveAutonomousTurnStarted!: () => void;
+    const autonomousTurnStarted = new Promise<void>((resolve) => {
+      resolveAutonomousTurnStarted = resolve;
+    });
+    let resolveSecondRunningState!: () => void;
+    const secondRunningState = new Promise<void>((resolve) => {
+      resolveSecondRunningState = resolve;
+    });
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === snapshot.id) {
+          if (event.agent.lifecycle !== "running") {
+            return;
+          }
+          runningStateEvents.push(event.agent.lifecycle);
+          if (runningStateEvents.length >= 2) {
+            resolveSecondRunningState();
+          }
+          return;
+        }
+
+        if (
+          event.type === "agent_stream" &&
+          event.agentId === snapshot.id &&
+          event.event.type === "turn_started"
+        ) {
+          resolveAutonomousTurnStarted();
+        }
+      },
+      { agentId: snapshot.id, replayState: true }
+    );
+
     const foreground = manager.streamAgent(snapshot.id, "foreground run");
-    const consumeForeground = (async () => {
-      for await (const _event of foreground) {
-        // Drain foreground stream.
+    const foregroundResults = (async () => {
+      const events: AgentStreamEvent[] = [];
+      for await (const event of foreground) {
+        events.push(event);
       }
+      return events;
     })();
 
     await manager.waitForAgentRunStart(snapshot.id);
@@ -1405,16 +1440,32 @@ describe("AgentManager", () => {
     liveEvents.push({ type: "turn_completed", provider: "codex" });
 
     releaseForeground.resolve();
-    await consumeForeground;
+    const foregroundEvents = await foregroundResults;
 
     const replaying = manager.getAgent(snapshot.id);
     expect(replaying?.lifecycle).toBe("running");
+    expect(
+      foregroundEvents.some((event) => event.type === "turn_completed")
+    ).toBe(true);
+    expect(
+      foregroundEvents.some(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "assistant_message" &&
+          event.item.text.includes("AUTONOMOUS_DURING_FOREGROUND")
+      )
+    ).toBe(false);
+
+    await autonomousTurnStarted;
+    await secondRunningState;
+
     const settled = await manager.waitForAgentEvent(snapshot.id);
     expect(settled.status).toBe("idle");
     expect(manager.getTimeline(snapshot.id)).toContainEqual({
       type: "assistant_message",
       text: "AUTONOMOUS_DURING_FOREGROUND",
     });
+    expect(runningStateEvents).toHaveLength(2);
   });
 
   test("restarts live event pump after iterator failure", async () => {
