@@ -58,6 +58,9 @@ objc2-user-notifications = { version = "0.3", features = [
 ] }
 block2 = "0.6"
 
+[target."cfg(windows)".dependencies]
+tauri-winrt-notification = "0.7"
+
 
 
 

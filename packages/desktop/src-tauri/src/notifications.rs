@@ -183,48 +183,20 @@ mod platform {
 #[cfg(windows)]
 mod platform {
     use super::*;
+    use tauri_winrt_notification::Toast;
 
     pub fn init_delegate() {}
 
     pub fn send_notification(id: u32, title: &str, body: Option<&str>) -> Result<(), String> {
-        let body_text = body.unwrap_or_default().to_string();
-        let title_owned = title.to_string();
-
-        std::thread::spawn(move || {
-            let ps_script = format!(
-                r#"
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null
-$xml = @"
-<toast activationType="foreground" launch="{id}">
-    <visual>
-        <binding template="ToastGeneric">
-            <text>{title}</text>
-            <text>{body}</text>
-        </binding>
-    </visual>
-</toast>
-"@
-$doc = [Windows.Data.Xml.Dom.XmlDocument]::new()
-$doc.LoadXml($xml)
-$toast = [Windows.UI.Notifications.ToastNotification]::new($doc)
-$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Paseo")
-$notifier.Show($toast)
-"#,
-                id = id,
-                title = title_owned.replace('"', "&quot;"),
-                body = body_text.replace('"', "&quot;"),
-            );
-            let _ = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command", &ps_script])
-                .output();
-
-            // Windows toast click handling via single-instance plugin will refocus the app.
-            // Emit the route data so the frontend can navigate.
-            handle_notification_click(id);
-        });
-
-        Ok(())
+        Toast::new(Toast::POWERSHELL_APP_ID)
+            .title(title)
+            .text1(body.unwrap_or_default())
+            .on_activated(move |_action| {
+                handle_notification_click(id);
+                Ok(())
+            })
+            .show()
+            .map_err(|e| format!("Failed to show notification: {e}"))
     }
 }
 
