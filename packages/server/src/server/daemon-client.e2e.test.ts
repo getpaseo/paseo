@@ -1,9 +1,11 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import {
   createDaemonTestContext,
@@ -22,6 +24,16 @@ const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
 const localModelsDir =
   process.env.PASEO_LOCAL_MODELS_DIR ??
   path.join(homedir(), ".paseo", "models", "local-speech");
+const testFileDir = path.dirname(fileURLToPath(import.meta.url));
+const appE2eFixturesDir = path.resolve(testFileDir, "../../../app/e2e/fixtures");
+
+function fixturePath(fileName: string): string {
+  return path.join(appE2eFixturesDir, fileName);
+}
+
+async function readFixture(fileName: string): Promise<Buffer> {
+  return readFile(fixturePath(fileName));
+}
 
 function hasSherpaZipformerModels(modelsDir: string): boolean {
   return (
@@ -829,15 +841,7 @@ describe("daemon client E2E", () => {
         };
       });
 
-      const fixturePath = path.resolve(
-        process.cwd(),
-        "..",
-        "app",
-        "e2e",
-        "fixtures",
-        "recording.wav"
-      );
-      const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+      const wav = await readFixture("recording.wav");
       await ctx.client.sendVoiceAudioChunk(wav.toString("base64"), "audio/wav", true);
       await transcriptSeen;
       await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -899,15 +903,7 @@ describe("daemon client E2E", () => {
       });
 
       try {
-        const fixturePath = path.resolve(
-          process.cwd(),
-          "..",
-          "app",
-          "e2e",
-          "fixtures",
-          "recording.wav"
-        );
-        const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+        const wav = await readFixture("recording.wav");
         const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
         expect(sampleRate).toBe(16000);
         const format = "audio/pcm;rate=16000;bits=16";
@@ -1011,15 +1007,7 @@ describe("daemon client E2E", () => {
       });
 
       try {
-        const fixturePath = path.resolve(
-          process.cwd(),
-          "..",
-          "app",
-          "e2e",
-          "fixtures",
-          "recording.wav"
-        );
-        const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+        const wav = await readFixture("recording.wav");
         const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
         expect(sampleRate).toBe(16000);
 
@@ -1068,15 +1056,7 @@ describe("daemon client E2E", () => {
   speechTest(
     "streams dictation PCM and returns final transcript",
     async () => {
-      const fixturePath = path.resolve(
-        process.cwd(),
-        "..",
-        "app",
-        "e2e",
-        "fixtures",
-        "recording.wav"
-      );
-      const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+      const wav = await readFixture("recording.wav");
       const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
       expect(sampleRate).toBe(16000);
       const dictationId = `dict-${Date.now()}`;
@@ -1104,31 +1084,13 @@ describe("daemon client E2E", () => {
   speechTest(
     "realtime dictation transcript is similar to baseline fixture",
     async () => {
-      const fixturePath = path.resolve(
-        process.cwd(),
-        "..",
-        "app",
-        "e2e",
-        "fixtures",
-        "recording.wav"
-      );
-      const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+      const wav = await readFixture("recording.wav");
       const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
       expect(sampleRate).toBe(16000);
       const dictationId = `dict-baseline-${Date.now()}`;
       const format = "audio/pcm;rate=16000;bits=16";
 
-      const baselinePath = path.resolve(
-        process.cwd(),
-        "..",
-        "app",
-        "e2e",
-        "fixtures",
-        "recording.baseline.txt"
-      );
-      const baseline = await import("node:fs/promises")
-        .then((fs) => fs.readFile(baselinePath, "utf-8"))
-        .then((text) => text.trim());
+      const baseline = (await readFile(fixturePath("recording.baseline.txt"), "utf-8")).trim();
 
       await ctx.client.startDictationStream(dictationId, format);
 
