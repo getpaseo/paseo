@@ -11,7 +11,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2 } from "lucide-react-native";
+import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2, Eye } from "lucide-react-native";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import { useDaemonRegistry, type HostProfile, type HostConnection } from "@/contexts/daemon-registry-context";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
@@ -862,6 +862,11 @@ export default function SettingsScreen() {
                       value: "auto",
                       label: "System",
                       icon: ({ color, size }) => <Monitor size={size} color={color} />,
+                    },
+                    {
+                      value: "colorblind",
+                      label: "Colorblind",
+                      icon: ({ color, size }) => <Eye size={size} color={color} />,
                     },
                   ]}
                 />

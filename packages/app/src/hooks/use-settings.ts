@@ -7,7 +7,7 @@ const LEGACY_SETTINGS_KEY = "@paseo:settings";
 const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 
 export interface AppSettings {
-  theme: "dark" | "light" | "auto";
+  theme: "dark" | "light" | "auto" | "colorblind";
   manageBuiltInDaemon: boolean;
 }
 
@@ -97,7 +97,7 @@ export async function loadSettingsFromStorage(): Promise<AppSettings> {
 
 function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
-  if (legacy.theme === "dark" || legacy.theme === "light" || legacy.theme === "auto") {
+  if (legacy.theme === "dark" || legacy.theme === "light" || legacy.theme === "auto" || legacy.theme === "colorblind") {
     result.theme = legacy.theme;
   }
   if (typeof legacy.manageBuiltInDaemon === "boolean") {
