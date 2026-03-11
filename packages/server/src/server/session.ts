@@ -1789,7 +1789,7 @@ export class Session {
   private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Archiving agent ${agentId}`)
 
-    const { archivedAt, archivedRecord } = await this.archiveAgentState(agentId)
+    const { archivedAt } = await this.archiveAgentState(agentId)
 
     this.emit({
       type: 'agent_archived',
@@ -1799,8 +1799,6 @@ export class Session {
         requestId,
       },
     })
-
-    await this.maybeArchivePaseoWorktreeAfterAgentArchive(archivedRecord, requestId)
   }
 
   private async archiveAgentState(agentId: string): Promise<{
@@ -1872,52 +1870,6 @@ export class Session {
       return
     }
     await this.unarchiveAgentState(matched.id)
-  }
-
-  private async maybeArchivePaseoWorktreeAfterAgentArchive(
-    archivedRecord: StoredAgentRecord,
-    requestId: string
-  ): Promise<void> {
-    const ownership = await isPaseoOwnedWorktreeCwd(archivedRecord.cwd, {
-      paseoHome: this.paseoHome,
-    })
-    if (!ownership.allowed || !ownership.repoRoot || !ownership.worktreePath) {
-      return
-    }
-
-    const activeAgentIds = await this.listUnarchivedAgentIdsWithinRoot(ownership.worktreePath)
-    if (activeAgentIds.size > 0) {
-      return
-    }
-
-    await this.archivePaseoWorktree({
-      targetPath: ownership.worktreePath,
-      repoRoot: ownership.repoRoot,
-      requestId,
-    })
-  }
-
-  private async listUnarchivedAgentIdsWithinRoot(rootPath: string): Promise<Set<string>> {
-    const storedRecords = await this.agentStorage.list()
-    const archivedIds = new Set(
-      storedRecords
-        .filter((record) => this.isPathWithinRoot(rootPath, record.cwd) && Boolean(record.archivedAt))
-        .map((record) => record.id)
-    )
-    const activeIds = new Set(
-      storedRecords
-        .filter((record) => this.isPathWithinRoot(rootPath, record.cwd) && !record.archivedAt)
-        .map((record) => record.id)
-    )
-
-    for (const agent of this.agentManager.listAgents()) {
-      if (!this.isPathWithinRoot(rootPath, agent.cwd) || archivedIds.has(agent.id)) {
-        continue
-      }
-      activeIds.add(agent.id)
-    }
-
-    return activeIds
   }
 
   private async handleUpdateAgentRequest(

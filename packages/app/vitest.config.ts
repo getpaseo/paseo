@@ -14,18 +14,10 @@ export default defineConfig({
     pool: "forks",
   },
   resolve: {
-    alias: [
-      {
-        find: /^@getpaseo\/relay\/e2ee$/,
-        replacement: path.resolve(__dirname, "../relay/src/e2ee.ts"),
-      },
-      {
-        find: /^@getpaseo\/relay$/,
-        replacement: path.resolve(__dirname, "../relay/src/index.ts"),
-      },
-      { find: "@", replacement: path.resolve(__dirname, "src") },
-      { find: "@server", replacement: path.resolve(__dirname, "../server/src") },
-      { find: "react-native", replacement: "react-native-web" },
-    ],
+    alias: {
+      "@": path.resolve(__dirname, "src"),
+      "@server": path.resolve(__dirname, "../server/src"),
+      "react-native": "react-native-web",
+    },
   },
 });

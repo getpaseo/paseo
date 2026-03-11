@@ -30,7 +30,7 @@ When a test fails:
 - Flaky (races, timing) → make it deterministic
 - Too slow → make it fast or delete
 
-Do NOT weaken tests. Do NOT add conditionals. Do NOT introduce mocks — we use real environment on purpose because we want to test the REAL thing. Do NOT add auth gating or skip conditions.
+Do NOT weaken tests. Do NOT add conditionals. Do NOT introduce mocks — we use real environment on purpose because we want to test the REAL thing. Do NOT add auth gating or skip conditions. Do NOT implement new features to make a test pass. You are here to fix tests, not build features. If a test expects unimplemented behavior, delete it.
 
 While you're in a file, improve it:
 - Refactor repeated code RUTHLESSLY. Extract shared helpers across test files.
