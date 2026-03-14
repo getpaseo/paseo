@@ -309,6 +309,37 @@ const commonTheme = {
   },
 } as const;
 
+
+const colorblindSemanticColors = {
+  ...darkSemanticColors,
+  
+  // Brand - GitHub colorblind friendly blue/orange
+  accent: "#1f6feb",
+  accentForeground: "#ffffff",
+
+  // Semantic
+  destructive: "#e36209", // Orange instead of red
+  destructiveForeground: "#ffffff",
+  success: "#1f6feb", // Blue instead of green
+  successForeground: "#ffffff",
+
+  terminal: {
+    ...darkSemanticColors.terminal,
+    red: "#e36209",
+    green: "#1f6feb",
+    brightRed: "#e36209",
+    brightGreen: "#1f6feb",
+  },
+} as const;
+
+export const colorblindTheme = {
+  colors: {
+    ...colorblindSemanticColors,
+    palette: baseColors,
+  },
+  ...commonTheme,
+} as const;
+
 export const darkTheme = {
   colors: {
     ...darkSemanticColors,
@@ -329,4 +360,4 @@ export const lightTheme = {
 export const theme = darkTheme;
 
 // Export a union type that works for both themes
-export type Theme = typeof darkTheme | typeof lightTheme;
+export type Theme = typeof darkTheme | typeof lightTheme | typeof colorblindTheme;
