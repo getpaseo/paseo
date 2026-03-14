@@ -19,6 +19,8 @@ import type { HostProfile, HostConnection } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
+import type { DoctorReport } from "@server/server/doctor/types";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -996,6 +998,9 @@ function HostDetailModal({
   const activeConnection = runtimeSnapshot?.activeConnection ?? null;
   const lastError = runtimeSnapshot?.lastError ?? null;
   const [isRestarting, setIsRestarting] = useState(false);
+  const [doctorReport, setDoctorReport] = useState<DoctorReport | null>(null);
+  const [doctorLoading, setDoctorLoading] = useState(false);
+  const [doctorError, setDoctorError] = useState<string | null>(null);
   const isHostConnected = useCallback(() => {
     if (!host) {
       return false;
@@ -1109,6 +1114,30 @@ function HostDetailModal({
     setDraftLabel(nextValue);
   }, []);
 
+  const runHealthCheck = useCallback(async () => {
+    const endpoint =
+      activeConnection?.endpoint ??
+      host?.connections.find((c) => c.type === "directTcp")?.endpoint ??
+      null;
+    if (!endpoint) return;
+
+    setDoctorLoading(true);
+    setDoctorError(null);
+    try {
+      const parsed = new URL(buildDaemonWebSocketUrl(endpoint));
+      parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
+      const baseUrl = parsed.toString().replace(/\/ws\/?$/, "");
+      const res = await fetch(`${baseUrl}/api/doctor`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const report = (await res.json()) as DoctorReport;
+      setDoctorReport(report);
+    } catch (err) {
+      setDoctorError(err instanceof Error ? err.message : "Health check failed");
+    } finally {
+      setDoctorLoading(false);
+    }
+  }, [activeConnection, host]);
+
   useEffect(() => {
     if (!visible || !host) return;
     // Initialize once per modal open / host switch; keep user edits fully local while typing.
@@ -1119,6 +1148,9 @@ function HostDetailModal({
     if (!visible) {
       setIsRestarting(false);
       setDraftLabel("");
+      setDoctorReport(null);
+      setDoctorLoading(false);
+      setDoctorError(null);
     }
   }, [visible]);
 
@@ -1202,6 +1234,76 @@ function HostDetailModal({
                 + Add connection
               </Button>
             </View>
+          </View>
+        ) : null}
+
+        {/* Diagnostics */}
+        {host ? (
+          <View style={styles.formField}>
+            <Text style={styles.label}>Diagnostics</Text>
+            <Button
+              variant="secondary"
+              size="sm"
+              onPress={() => { void runHealthCheck(); }}
+              disabled={doctorLoading || !isConnected}
+            >
+              {doctorLoading ? "Running..." : doctorReport ? "Re-run" : "Run Health Check"}
+            </Button>
+            {doctorError ? (
+              <Text style={{ color: theme.colors.destructive, fontSize: theme.fontSize.xs, marginTop: theme.spacing[2] }}>
+                {doctorError}
+              </Text>
+            ) : null}
+            {doctorReport ? (
+              <View style={{ marginTop: theme.spacing[2], gap: theme.spacing[3] }}>
+                {/* Summary */}
+                <Text style={{ fontSize: theme.fontSize.sm }}>
+                  {doctorReport.summary.ok > 0 ? (
+                    <Text style={{ color: theme.colors.palette.green[400] }}>{doctorReport.summary.ok} passed</Text>
+                  ) : null}
+                  {doctorReport.summary.ok > 0 && (doctorReport.summary.warn > 0 || doctorReport.summary.error > 0) ? " · " : ""}
+                  {doctorReport.summary.warn > 0 ? (
+                    <Text style={{ color: theme.colors.palette.amber[500] }}>{doctorReport.summary.warn} warning{doctorReport.summary.warn !== 1 ? "s" : ""}</Text>
+                  ) : null}
+                  {doctorReport.summary.warn > 0 && doctorReport.summary.error > 0 ? " · " : ""}
+                  {doctorReport.summary.error > 0 ? (
+                    <Text style={{ color: theme.colors.destructive }}>{doctorReport.summary.error} error{doctorReport.summary.error !== 1 ? "s" : ""}</Text>
+                  ) : null}
+                </Text>
+                {/* Grouped checks */}
+                {(["provider", "config", "runtime"] as const).map((prefix) => {
+                  const groupChecks = doctorReport.checks.filter((c) => c.id.startsWith(`${prefix}.`));
+                  if (groupChecks.length === 0) return null;
+                  const groupLabel = prefix === "provider" ? "Providers" : prefix === "config" ? "Config" : "Runtime";
+                  return (
+                    <View key={prefix} style={{ gap: theme.spacing[1] }}>
+                      <Text style={{ color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs, textTransform: "uppercase", marginBottom: theme.spacing[1] }}>
+                        {groupLabel}
+                      </Text>
+                      {groupChecks.map((check) => (
+                        <View key={check.id} style={{ flexDirection: "row", alignItems: "flex-start", gap: theme.spacing[2], paddingVertical: 3 }}>
+                          <Text style={{
+                            fontSize: theme.fontSize.sm,
+                            width: 16,
+                            color: check.status === "ok"
+                              ? theme.colors.palette.green[400]
+                              : check.status === "warn"
+                                ? theme.colors.palette.amber[500]
+                                : theme.colors.destructive,
+                          }}>
+                            {check.status === "ok" ? "✓" : check.status === "warn" ? "⚠" : "✗"}
+                          </Text>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.foreground }}>{check.label}</Text>
+                            <Text style={{ fontSize: theme.fontSize.xs, color: theme.colors.foregroundMuted }} selectable>{check.detail}</Text>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null}
           </View>
         ) : null}
 

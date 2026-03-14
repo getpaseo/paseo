@@ -24,6 +24,14 @@ export {
   type SherpaLoaderEnvResolution,
 } from "./speech/providers/local/sherpa/sherpa-runtime-env.js";
 
+// Doctor health check
+export {
+  runDoctorChecks,
+  type CheckStatus,
+  type DoctorCheckResult,
+  type DoctorReport,
+} from "./doctor/index.js";
+
 // Agent SDK types for CLI commands
 export type {
   AgentMode,
