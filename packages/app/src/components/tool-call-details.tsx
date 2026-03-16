@@ -8,6 +8,7 @@ import {
   buildLineDiff,
   parseUnifiedDiff,
 } from "@/utils/tool-call-parsers";
+import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 
@@ -20,6 +21,7 @@ interface ToolCallDetailsContentProps {
   errorText?: string;
   maxHeight?: number;
   fillAvailableHeight?: boolean;
+  showLoadingSkeleton?: boolean;
 }
 
 export function ToolCallDetailsContent({
@@ -27,6 +29,7 @@ export function ToolCallDetailsContent({
   errorText,
   maxHeight,
   fillAvailableHeight = false,
+  showLoadingSkeleton = false,
 }: ToolCallDetailsContentProps) {
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
 
@@ -269,7 +272,11 @@ export function ToolCallDetailsContent({
       const sectionsFromTopLevel = [
         { title: "Input", value: detail.input },
         { title: "Output", value: detail.output },
-      ].filter((entry) => entry.value !== null && entry.value !== undefined);
+      ].filter((entry) => hasMeaningfulToolCallDetail({
+        type: "unknown",
+        input: entry.value ?? null,
+        output: null,
+      }));
 
       for (const section of sectionsFromTopLevel) {
         let value = "";
@@ -327,6 +334,20 @@ export function ToolCallDetailsContent({
   }
 
   if (sections.length === 0) {
+    if (showLoadingSkeleton) {
+      return (
+        <View
+          style={[
+            styles.loadingContainer,
+            fillAvailableHeight && styles.fillHeight,
+          ]}
+        >
+          <View style={styles.loadingLineWide} />
+          <View style={styles.loadingLineMedium} />
+          <View style={styles.loadingLineShort} />
+        </View>
+      );
+    }
     return (
       <Text style={styles.emptyStateText}>No additional details available</Text>
     );
@@ -470,6 +491,28 @@ const styles = StyleSheet.create((theme) => {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontStyle: "italic",
+  },
+  loadingContainer: {
+    gap: theme.spacing[2],
+    padding: theme.spacing[3],
+  },
+  loadingLineWide: {
+    height: 12,
+    width: "100%",
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface3,
+  },
+  loadingLineMedium: {
+    height: 12,
+    width: "72%",
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface3,
+  },
+  loadingLineShort: {
+    height: 12,
+    width: "48%",
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface3,
   },
   };
 });

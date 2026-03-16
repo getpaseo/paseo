@@ -72,6 +72,10 @@ import {
 } from "@/utils/tool-call-display";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import {
+  hasMeaningfulToolCallDetail,
+  isPendingToolCallDetail,
+} from "@/utils/tool-call-detail-state";
+import {
   parseAssistantFileLink,
   parseInlinePathToken,
   type InlinePathTarget,
@@ -1923,31 +1927,42 @@ export const ToolCall = memo(function ToolCall({
   const summary = displayModel.summary;
   const errorText = displayModel.errorText;
   const IconComponent = resolveToolCallIcon(toolName, effectiveDetail);
+  const isLoadingDetails = isPendingToolCallDetail({
+    detail: effectiveDetail,
+    status,
+    error,
+  });
+  const secondaryLabel = summary ?? (isLoadingDetails ? "Loading details" : undefined);
 
   // Check if there's any content to display
   const hasDetails =
     Boolean(error) ||
-    (effectiveDetail
-      ? effectiveDetail.type === "plain_text"
-        ? Boolean(effectiveDetail.text)
-        : effectiveDetail.type !== "unknown" ||
-          effectiveDetail.input !== null ||
-          effectiveDetail.output !== null
-      : false);
+    hasMeaningfulToolCallDetail(effectiveDetail);
+  const canOpenDetails = hasDetails || isLoadingDetails;
 
   const handleToggle = useCallback(() => {
     if (isMobile) {
       openToolCall({
         toolName,
         displayName,
-        summary,
+        summary: secondaryLabel,
         detail: effectiveDetail,
         errorText,
+        showLoadingSkeleton: isLoadingDetails,
       });
     } else {
       setIsExpanded((prev) => !prev);
     }
-  }, [isMobile, openToolCall, toolName, displayName, summary, effectiveDetail, errorText]);
+  }, [
+    isMobile,
+    openToolCall,
+    toolName,
+    displayName,
+    secondaryLabel,
+    effectiveDetail,
+    errorText,
+    isLoadingDetails,
+  ]);
 
   useEffect(() => {
     if (!onInlineDetailsHoverChange || isMobile || isExpanded) {
@@ -1984,19 +1999,20 @@ export const ToolCall = memo(function ToolCall({
         detail={effectiveDetail}
         errorText={errorText}
         maxHeight={400}
+        showLoadingSkeleton={isLoadingDetails}
       />
     );
-  }, [isMobile, effectiveDetail, errorText]);
+  }, [isMobile, effectiveDetail, errorText, isLoadingDetails]);
 
   return (
     <ExpandableBadge
       testID="tool-call-badge"
       label={displayName}
-      secondaryLabel={summary}
+      secondaryLabel={secondaryLabel}
       icon={IconComponent}
       isExpanded={!isMobile && isExpanded}
-      onToggle={hasDetails ? handleToggle : undefined}
-      renderDetails={hasDetails && !isMobile ? renderDetails : undefined}
+      onToggle={canOpenDetails ? handleToggle : undefined}
+      renderDetails={canOpenDetails && !isMobile ? renderDetails : undefined}
       isLoading={status === "running" || status === "executing"}
       isError={status === "failed"}
       isLastInSequence={isLastInSequence}

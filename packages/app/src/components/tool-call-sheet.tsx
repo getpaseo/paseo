@@ -28,6 +28,7 @@ export type ToolCallSheetData = {
   summary?: string;
   detail?: ToolCallDetail;
   errorText?: string;
+  showLoadingSkeleton?: boolean;
 };
 
 interface ToolCallSheetContextValue {
@@ -131,7 +132,7 @@ interface ToolCallSheetContentProps {
 }
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
-  const { toolName, displayName, detail, errorText } = data;
+  const { toolName, displayName, detail, errorText, showLoadingSkeleton } = data;
 
   const IconComponent = resolveToolCallIcon(toolName, detail);
 
@@ -159,6 +160,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
           detail={detail}
           errorText={errorText}
           fillAvailableHeight
+          showLoadingSkeleton={showLoadingSkeleton}
         />
       </BottomSheetScrollView>
     </View>
