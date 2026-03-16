@@ -4402,6 +4402,28 @@ class ClaudeAgentSession implements AgentSession {
     try {
       parsed = JSON.parse(buffer);
     } catch {
+      const entry = this.toolUseCache.get(toolId);
+      const preview = this.extractToolInputPreview(buffer);
+      if (!entry || !preview) {
+        return;
+      }
+      const mergedPreview = {
+        ...(entry.input ?? {}),
+        ...preview,
+      };
+      if (this.areToolInputsEqual(entry.input ?? undefined, mergedPreview)) {
+        return;
+      }
+      this.applyToolInput(entry, mergedPreview);
+      this.toolUseCache.set(toolId, entry);
+      this.pushToolCall(
+        mapClaudeRunningToolCall({
+          name: entry.name,
+          callId: toolId,
+          input: mergedPreview,
+          output: null,
+        })
+      );
       return;
     }
     const entry = this.toolUseCache.get(toolId);
@@ -4426,6 +4448,62 @@ class ClaudeAgentSession implements AgentSession {
       return null;
     }
     return input;
+  }
+
+  private extractToolInputPreview(buffer: string): AgentMetadata | null {
+    const preview: AgentMetadata = {};
+
+    for (const field of ["path", "file_path", "filePath", "query", "cwd", "directory"] as const) {
+      const value = this.readPartialJsonStringField(buffer, field);
+      if (value) {
+        preview[field] = value;
+      }
+    }
+
+    const command =
+      this.readPartialJsonStringField(buffer, "command") ??
+      this.readPartialJsonStringField(buffer, "cmd");
+    if (command) {
+      preview.command = command;
+    }
+
+    return Object.keys(preview).length > 0 ? preview : null;
+  }
+
+  private readPartialJsonStringField(
+    buffer: string,
+    field: string
+  ): string | undefined {
+    const escapedField = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(
+      `"${escapedField}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`
+    );
+    const match = pattern.exec(buffer);
+    const encodedValue = match?.[1];
+    if (!encodedValue) {
+      return undefined;
+    }
+    try {
+      const value = JSON.parse(`"${encodedValue}"`);
+      return typeof value === "string" && value.length > 0 ? value : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private areToolInputsEqual(
+    left: AgentMetadata | undefined,
+    right: AgentMetadata
+  ): boolean {
+    if (!left) {
+      return false;
+    }
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) {
+      return false;
+    }
+    return rightKeys.every((key) => left[key] === right[key]);
   }
 
   private applyToolInput(entry: ToolUseCacheEntry, input: AgentMetadata): void {

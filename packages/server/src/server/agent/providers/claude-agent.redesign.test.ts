@@ -528,6 +528,44 @@ describe("ClaudeAgentSession redesign invariants", () => {
     }
   });
 
+  test("surfaces path preview from partial input_json_delta before JSON is complete", async () => {
+    const session = await createSession();
+    const internal = session as unknown as {
+      mapPartialEvent: (event: Record<string, unknown>) => AgentTimelineItem[];
+      toolUseCache: Map<string, { input?: Record<string, unknown> }>;
+    };
+
+    const toolUseId = "tool-input-preview";
+    const index = 8;
+    try {
+      internal.mapPartialEvent({
+        type: "content_block_start",
+        index,
+        content_block: {
+          type: "tool_use",
+          id: toolUseId,
+          name: "Edit",
+        },
+      });
+
+      internal.mapPartialEvent({
+        type: "content_block_delta",
+        index,
+        delta: {
+          type: "input_json_delta",
+          partial_json:
+            "{\"file_path\":\"src/message.tsx\",\"old_string\":\"before",
+        },
+      });
+
+      expect(internal.toolUseCache.get(toolUseId)?.input).toEqual({
+        file_path: "src/message.tsx",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("maps tool_result content shapes into deterministic string output", async () => {
     const session = await createSession();
     const internal = session as unknown as {
