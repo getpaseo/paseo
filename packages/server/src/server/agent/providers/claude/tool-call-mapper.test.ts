@@ -36,6 +36,22 @@ describe("claude tool-call mapper", () => {
     }
   });
 
+  it("maps partial running input through the same canonical detail path", () => {
+    const item = expectMapped(
+      mapClaudeRunningToolCall({
+        callId: "claude-call-partial-1",
+        name: "Bash",
+        input: { command: "echo " },
+        output: null,
+      })
+    );
+
+    expect(item.detail).toEqual({
+      type: "shell",
+      command: "echo ",
+    });
+  });
+
   it("maps running known tool variants with detail for early summaries", () => {
     const readItem = expectMapped(
       mapClaudeRunningToolCall({
