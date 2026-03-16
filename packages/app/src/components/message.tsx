@@ -1932,7 +1932,7 @@ export const ToolCall = memo(function ToolCall({
     status,
     error,
   });
-  const secondaryLabel = summary ?? (isLoadingDetails ? "Loading details" : undefined);
+  const secondaryLabel = summary;
 
   // Check if there's any content to display
   const hasDetails =
