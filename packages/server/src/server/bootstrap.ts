@@ -91,6 +91,7 @@ import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
+import { runDoctorChecks } from "./doctor/index.js";
 import type {
   AgentClient,
   AgentProvider,
@@ -271,6 +272,20 @@ export async function createPaseoDaemon(
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // Doctor diagnostic endpoint
+  app.get("/api/doctor", async (_req, res) => {
+    try {
+      const report = await runDoctorChecks({
+        paseoHome: config.paseoHome,
+        version: daemonVersion,
+      });
+      res.json(report);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
   });
 
   app.get("/api/files/download", async (req, res) => {

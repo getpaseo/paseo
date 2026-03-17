@@ -18,6 +18,7 @@ import { runSendCommand } from './commands/agent/send.js'
 import { runInspectCommand } from './commands/agent/inspect.js'
 import { runWaitCommand } from './commands/agent/wait.js'
 import { runAttachCommand } from './commands/agent/attach.js'
+import { runDoctorCommand } from './commands/doctor.js'
 import { withOutput } from './output/index.js'
 import { onboardCommand } from './commands/onboard.js'
 import {
@@ -184,6 +185,14 @@ export function createCli(): Command {
       'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")'
     )
     .action(withOutput(runDaemonRestartCommand))
+
+  program
+    .command('doctor')
+    .description('Diagnose your Paseo setup (agents, config, runtime)')
+    .option('--remote', 'Fetch diagnostics from the running daemon instead of checking locally')
+    .option('--json', 'Output in JSON format')
+    .option('--host <host>', 'Daemon host target (used with --remote)')
+    .action(withOutput(runDoctorCommand))
 
   // Advanced agent commands (less common operations)
   program.addCommand(createAgentCommand())
