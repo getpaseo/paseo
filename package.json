@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "private": true,
   "workspaces": [
     "packages/expo-two-way-audio",

@@ -1,6 +1,6 @@
 [package]
 name = "paseo"
-version = "0.1.28"
+version = "0.1.29"
 description = "Paseo Desktop"
 authors = ["moboudra"]
 license = "MIT"
@@ -43,6 +43,7 @@ tokio-tungstenite = "0.24"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6"
+
 
 
 

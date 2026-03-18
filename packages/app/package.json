@@ -1,7 +1,7 @@
 {
   "name": "@getpaseo/app",
   "main": "index.ts",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "private": true,
   "scripts": {
     "start": "expo start",
@@ -26,13 +26,13 @@
     "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app --branch main"
   },
   "dependencies": {
-    "@getpaseo/expo-two-way-audio": "0.1.28",
+    "@getpaseo/expo-two-way-audio": "0.1.29",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@expo/vector-icons": "^15.0.2",
     "@floating-ui/react-native": "^0.10.7",
-    "@getpaseo/server": "0.1.28",
+    "@getpaseo/server": "0.1.29",
     "@gorhom/bottom-sheet": "^5.2.6",
     "@gorhom/portal": "^1.0.14",
     "@lezer/common": "^1.5.0",

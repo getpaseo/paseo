@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/desktop",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "private": true,
   "description": "Paseo desktop app (Tauri wrapper)",
   "scripts": {
