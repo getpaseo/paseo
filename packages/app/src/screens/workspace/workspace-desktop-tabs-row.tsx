@@ -62,6 +62,7 @@ type WorkspaceDesktopTabsRowProps = {
   onSplitDown: () => void;
   externalDndContext?: boolean;
   activeDragTabId?: string | null;
+  tabDropPreviewIndex?: number | null;
 };
 
 function getFallbackTabLabel(tab: WorkspaceTabDescriptor): string {
@@ -278,6 +279,7 @@ export function WorkspaceDesktopTabsRow({
   onSplitDown,
   externalDndContext = false,
   activeDragTabId = null,
+  tabDropPreviewIndex = null,
 }: WorkspaceDesktopTabsRowProps) {
   const { theme } = useUnistyles();
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
@@ -362,6 +364,12 @@ export function WorkspaceDesktopTabsRow({
             const layoutItem = layout.items[index] ?? null;
             const resolvedTabWidth = layoutItem?.width ?? 150;
             const showLabel = layoutItem?.showLabel ?? true;
+            const showDropIndicatorBefore =
+              activeDragTabId !== null && tabDropPreviewIndex === index;
+            const showDropIndicatorAfter =
+              activeDragTabId !== null &&
+              tabDropPreviewIndex === tabs.length &&
+              index === tabs.length - 1;
 
             return (
               <ResolvedDesktopTabChip
@@ -385,6 +393,8 @@ export function WorkspaceDesktopTabsRow({
                 onNavigateTab={onNavigateTab}
                 onCloseTab={onCloseTab}
                 dragHandleProps={dragHandleProps}
+                showDropIndicatorBefore={showDropIndicatorBefore}
+                showDropIndicatorAfter={showDropIndicatorAfter}
               />
             );
           }}
@@ -489,6 +499,8 @@ function ResolvedDesktopTabChip({
   onNavigateTab,
   onCloseTab,
   dragHandleProps,
+  showDropIndicatorBefore,
+  showDropIndicatorAfter,
 }: {
   item: WorkspaceDesktopTabRowItem;
   isFocused: boolean;
@@ -509,6 +521,8 @@ function ResolvedDesktopTabChip({
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   dragHandleProps: any;
+  showDropIndicatorBefore: boolean;
+  showDropIndicatorAfter: boolean;
 }) {
   const presentation = useWorkspaceTabPresentation({
     tab: item.tab,
@@ -544,24 +558,32 @@ function ResolvedDesktopTabChip({
   );
 
   return (
-    <TabChip
-      tab={item.tab}
-      isActive={item.isActive}
-      isFocused={isFocused}
-      resolvedTabWidth={resolvedTabWidth}
-      showLabel={showLabel}
-      showCloseButton={showCloseButton}
-      isCloseHovered={item.isCloseHovered}
-      isClosingTab={item.isClosingTab}
-      presentation={presentation}
-      tooltipLabel={tooltipLabel}
-      resolvedTab={resolvedTab}
-      setHoveredTabKey={setHoveredTabKey}
-      setHoveredCloseTabKey={setHoveredCloseTabKey}
-      onNavigateTab={onNavigateTab}
-      onCloseTab={onCloseTab}
-      dragHandleProps={dragHandleProps}
-    />
+    <View style={styles.tabSlot}>
+      {showDropIndicatorBefore ? (
+        <View style={[styles.tabDropIndicator, styles.tabDropIndicatorBefore]} />
+      ) : null}
+      <TabChip
+        tab={item.tab}
+        isActive={item.isActive}
+        isFocused={isFocused}
+        resolvedTabWidth={resolvedTabWidth}
+        showLabel={showLabel}
+        showCloseButton={showCloseButton}
+        isCloseHovered={item.isCloseHovered}
+        isClosingTab={item.isClosingTab}
+        presentation={presentation}
+        tooltipLabel={tooltipLabel}
+        resolvedTab={resolvedTab}
+        setHoveredTabKey={setHoveredTabKey}
+        setHoveredCloseTabKey={setHoveredCloseTabKey}
+        onNavigateTab={onNavigateTab}
+        onCloseTab={onCloseTab}
+        dragHandleProps={dragHandleProps}
+      />
+      {showDropIndicatorAfter ? (
+        <View style={[styles.tabDropIndicator, styles.tabDropIndicatorAfter]} />
+      ) : null}
+    </View>
   );
 }
 
@@ -604,6 +626,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     userSelect: "none",
   },
+  tabSlot: {
+    position: "relative",
+    overflow: "visible",
+  },
   tabHandle: {
     flexDirection: "row",
     alignItems: "center",
@@ -625,6 +651,22 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabFocusIndicatorUnfocused: {
     backgroundColor: theme.colors.borderAccent,
+  },
+  tabDropIndicator: {
+    position: "absolute",
+    top: theme.spacing[2],
+    bottom: theme.spacing[2],
+    width: 5,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.accent,
+    zIndex: 10,
+    pointerEvents: "none",
+  },
+  tabDropIndicatorBefore: {
+    left: -3,
+  },
+  tabDropIndicatorAfter: {
+    right: -3,
   },
   tabLabel: {
     flexShrink: 1,

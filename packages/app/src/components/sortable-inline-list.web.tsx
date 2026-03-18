@@ -61,10 +61,9 @@ function SortableItem<T>({
     // This is a no-op but matches the mobile API
   }, []);
 
-  // When using an external DndContext (e.g. split pane container), hide the
-  // original item during drag so the DragOverlay renders the floating copy.
-  // In standalone mode, keep the existing in-place drag visual.
-  const baseTransform = externalDndContext && isDragging
+  // External DnD contexts render their own insertion affordance, so keep the
+  // tab row static and let the DragOverlay carry the moving chip.
+  const baseTransform = externalDndContext
     ? undefined
     : CSS.Transform.toString(
         transform && isDragging ? { ...transform, scaleX: 1, scaleY: 1 } : transform

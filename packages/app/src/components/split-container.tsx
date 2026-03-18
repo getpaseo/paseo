@@ -19,6 +19,10 @@ import { Platform, View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
 import {
+  computeTabDropPreview,
+  type TabDropPreview,
+} from "@/components/split-container-tab-drop-preview";
+import {
   SplitDropZone,
   resolveSplitDropPosition,
   type SplitDropZoneHover,
@@ -104,6 +108,7 @@ interface SplitNodeViewProps
   activeDragTabId: string | null;
   showDropZones: boolean;
   dropPreview: SplitDropZoneHover | null;
+  tabDropPreview: TabDropPreview | null;
 }
 
 interface SplitPaneViewProps
@@ -124,6 +129,7 @@ interface SplitPaneViewProps
   activeDragTabId: string | null;
   showDropZones: boolean;
   dropPreview: SplitDropZoneHover | null;
+  tabDropPreview: TabDropPreview | null;
 }
 
 const dropCollisionDetection: CollisionDetection = (args) => {
@@ -178,6 +184,7 @@ export function SplitContainer({
 }: SplitContainerProps) {
   const [activeDragTabId, setActiveDragTabId] = useState<string | null>(null);
   const [dropPreview, setDropPreview] = useState<SplitDropZoneHover | null>(null);
+  const [tabDropPreview, setTabDropPreview] = useState<TabDropPreview | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -197,6 +204,7 @@ export function SplitContainer({
     if (data?.kind !== "workspace-tab") {
       setActiveDragTabId(null);
       setDropPreview(null);
+      setTabDropPreview(null);
       return;
     }
     setActiveDragTabId(data.tabId);
@@ -205,6 +213,7 @@ export function SplitContainer({
   const handleDragCancel = useCallback(() => {
     setActiveDragTabId(null);
     setDropPreview(null);
+    setTabDropPreview(null);
   }, []);
 
   const updateDropPreview = useCallback(
@@ -221,17 +230,53 @@ export function SplitContainer({
 
       if (activeData?.kind !== "workspace-tab") {
         setDropPreview(null);
-        return;
-      }
-
-      if (overData?.kind !== "split-pane-drop") {
-        setDropPreview(null);
+        setTabDropPreview(null);
         return;
       }
 
       const translatedRect = event.active.rect.current.translated;
       const overRect = event.over?.rect;
       if (!translatedRect || !overRect || overRect.width <= 0 || overRect.height <= 0) {
+        setDropPreview(null);
+        setTabDropPreview(null);
+        return;
+      }
+
+      if (overData?.kind === "workspace-tab") {
+        const targetPane = panesById.get(overData.paneId) ?? null;
+        if (!targetPane) {
+          setDropPreview(null);
+          setTabDropPreview(null);
+          return;
+        }
+
+        const targetTabs = getWorkspacePaneDescriptors({
+          pane: targetPane,
+          tabs: uiTabs,
+        });
+        setDropPreview(null);
+        setTabDropPreview(
+          computeTabDropPreview({
+            activePaneId: activeData.paneId,
+            activeTabId: activeData.tabId,
+            overPaneId: overData.paneId,
+            overTabId: overData.tabId,
+            targetTabs,
+            activeRect: {
+              left: translatedRect.left,
+              width: translatedRect.width,
+            },
+            overRect: {
+              left: overRect.left,
+              width: overRect.width,
+            },
+          })
+        );
+        return;
+      }
+
+      setTabDropPreview(null);
+      if (overData?.kind !== "split-pane-drop") {
         setDropPreview(null);
         return;
       }
@@ -262,7 +307,7 @@ export function SplitContainer({
         }),
       });
     },
-    []
+    [panesById, uiTabs]
   );
 
   const handleDragEnd = useCallback(
@@ -277,6 +322,7 @@ export function SplitContainer({
 
       if (activeData?.kind !== "workspace-tab" || !event.over) {
         setDropPreview(null);
+        setTabDropPreview(null);
         return;
       }
 
@@ -285,32 +331,37 @@ export function SplitContainer({
         const targetPane = panesById.get(overData.paneId) ?? null;
         if (!sourcePane || !targetPane) {
           setDropPreview(null);
+          setTabDropPreview(null);
           return;
         }
 
         const sourceTabs = getWorkspacePaneDescriptors({ pane: sourcePane, tabs: uiTabs });
         const targetTabs = getWorkspacePaneDescriptors({ pane: targetPane, tabs: uiTabs });
         const sourceIndex = sourceTabs.findIndex((tab) => tab.tabId === activeData.tabId);
-        const targetIndex = targetTabs.findIndex((tab) => tab.tabId === overData.tabId);
-        if (sourceIndex < 0 || targetIndex < 0) {
+        const resolvedTabDropPreview =
+          tabDropPreview?.paneId === overData.paneId ? tabDropPreview : null;
+        if (sourceIndex < 0 || !resolvedTabDropPreview) {
           setDropPreview(null);
+          setTabDropPreview(null);
           return;
         }
 
         if (activeData.paneId === overData.paneId) {
-          if (sourceIndex !== targetIndex) {
-            const nextTabs = arrayMove(sourceTabs, sourceIndex, targetIndex);
+          if (sourceIndex !== resolvedTabDropPreview.insertionIndex) {
+            const nextTabs = arrayMove(sourceTabs, sourceIndex, resolvedTabDropPreview.insertionIndex);
             onReorderTabsInPane(activeData.paneId, nextTabs.map((tab) => tab.tabId));
           }
           setDropPreview(null);
+          setTabDropPreview(null);
           return;
         }
 
         const nextTargetTabIds = targetTabs.map((tab) => tab.tabId);
-        nextTargetTabIds.splice(targetIndex, 0, activeData.tabId);
+        nextTargetTabIds.splice(resolvedTabDropPreview.insertionIndex, 0, activeData.tabId);
         onMoveTabToPane(activeData.tabId, overData.paneId);
         onReorderTabsInPane(overData.paneId, nextTargetTabIds);
         setDropPreview(null);
+        setTabDropPreview(null);
         return;
       }
 
@@ -320,6 +371,7 @@ export function SplitContainer({
             onMoveTabToPane(activeData.tabId, overData.paneId);
           }
           setDropPreview(null);
+          setTabDropPreview(null);
           return;
         }
 
@@ -331,8 +383,9 @@ export function SplitContainer({
       }
 
       setDropPreview(null);
+      setTabDropPreview(null);
     },
-    [dropPreview, onMoveTabToPane, onReorderTabsInPane, onSplitPane, panesById, uiTabs]
+    [dropPreview, onMoveTabToPane, onReorderTabsInPane, onSplitPane, panesById, tabDropPreview, uiTabs]
   );
 
   return (
@@ -379,6 +432,7 @@ export function SplitContainer({
         activeDragTabId={activeDragTabId}
         showDropZones={activeDragTabId !== null}
         dropPreview={dropPreview}
+        tabDropPreview={tabDropPreview}
       />
       <DragOverlay dropAnimation={null}>
         {activeDragTabId ? (
@@ -500,6 +554,7 @@ function SplitNodeView({
   activeDragTabId,
   showDropZones,
   dropPreview,
+  tabDropPreview,
 }: SplitNodeViewProps) {
   if (node.kind === "pane") {
     return (
@@ -534,6 +589,7 @@ function SplitNodeView({
         activeDragTabId={activeDragTabId}
         showDropZones={showDropZones}
         dropPreview={dropPreview}
+        tabDropPreview={tabDropPreview}
       />
     );
   }
@@ -586,6 +642,7 @@ function SplitNodeView({
               activeDragTabId={activeDragTabId}
               showDropZones={showDropZones}
               dropPreview={dropPreview}
+              tabDropPreview={tabDropPreview}
             />
           </View>
           {index < node.group.children.length - 1 ? (
@@ -634,6 +691,7 @@ function SplitPaneView({
   activeDragTabId,
   showDropZones,
   dropPreview,
+  tabDropPreview,
 }: SplitPaneViewProps) {
   const { theme } = useUnistyles();
   const paneRef = useRef<View | null>(null);
@@ -761,6 +819,7 @@ function SplitPaneView({
           onSplitDown={() => onSplitPaneEmpty({ targetPaneId: pane.id, position: "bottom" })}
           externalDndContext
           activeDragTabId={activeDragTabId}
+          tabDropPreviewIndex={tabDropPreview?.paneId === pane.id ? tabDropPreview.indicatorIndex : null}
         />
       </View>
 
