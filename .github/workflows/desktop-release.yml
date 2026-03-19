@@ -238,7 +238,7 @@ jobs:
     permissions:
       contents: write
       packages: read
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -427,52 +427,6 @@ jobs:
             echo "::error::Linux AppImage assets are still missing after the manual fallback."
             exit 1
           fi
-
-      - name: Rebuild Linux AppImage against host WebKitGTK
-        if: env.IS_SMOKE_TAG != 'true'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        shell: bash
-        run: |
-          set -euxo pipefail
-          appimage_dir="packages/desktop/src-tauri/target/release/bundle/appimage"
-          appdir_path="$appimage_dir/Paseo.AppDir"
-          canonical_appimage="$appimage_dir/Paseo_${DESKTOP_VERSION}_amd64.AppImage"
-          existing_appimage="$(find "$appimage_dir" -maxdepth 1 -type f -name '*.AppImage' | head -n 1)"
-          if [ -z "$existing_appimage" ]; then
-            echo "::error::No AppImage found to normalize"
-            exit 1
-          fi
-
-          if [ ! -d "$appdir_path" ]; then
-            extract_dir="$(mktemp -d)"
-            (
-              cd "$extract_dir"
-              APPIMAGE_EXTRACT_AND_RUN=1 "$existing_appimage" --appimage-extract >/dev/null
-            )
-            mv "$extract_dir/squashfs-root" "$appdir_path"
-          fi
-
-          # Let Linux resolve WebKitGTK from the host system instead of freezing the
-          # CI runner's copy into the AppImage. This avoids stale WebKitGTK GPU/runtime
-          # incompatibilities on newer Wayland systems while keeping the rest of the
-          # AppImage self-contained.
-          find "$appdir_path" \
-            \( -path '*/usr/lib/libwebkit2gtk-4.1.so*' \
-            -o -path '*/usr/lib/libjavascriptcoregtk-4.1.so*' \
-            -o -path '*/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1' \) \
-            -print -exec rm -rf {} +
-
-          cp --remove-destination "$appdir_path/usr/share/applications/Paseo.desktop" "$appdir_path/Paseo.desktop"
-          cp --remove-destination "$appdir_path/Paseo.png" "$appdir_path/.DirIcon"
-
-          rm -f "$canonical_appimage" "$canonical_appimage.sig"
-          tools_dir="$(mktemp -d)"
-          curl -fsSL https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -o "$tools_dir/appimagetool-x86_64.AppImage"
-          chmod +x "$tools_dir/appimagetool-x86_64.AppImage"
-          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tools_dir/appimagetool-x86_64.AppImage" "$appdir_path" "$canonical_appimage"
-          npx tauri signer sign "$canonical_appimage"
 
       - name: Upload Linux release assets
         if: env.IS_SMOKE_TAG != 'true'
