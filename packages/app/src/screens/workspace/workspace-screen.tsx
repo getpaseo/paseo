@@ -279,6 +279,25 @@ function ResolvedMobileActiveTabTrigger({
   );
 }
 
+function WorkspaceDocumentTitleEffect({
+  label,
+  titleState,
+}: {
+  label: string;
+  titleState: "ready" | "loading";
+}) {
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof document === "undefined") {
+      return;
+    }
+    const resolvedLabel = label.trim();
+    document.title =
+      titleState === "loading" ? "Loading..." : resolvedLabel || "Workspace";
+  }, [label, titleState]);
+
+  return null;
+}
+
 function MobileWorkspaceTabOption({
   tab,
   tabIndex,
@@ -1804,6 +1823,12 @@ function WorkspaceScreenContent({
   });
 
   const activeTabDescriptor = activeTab?.descriptor ?? null;
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof document === "undefined" || activeTabDescriptor) {
+      return;
+    }
+    document.title = "Workspace";
+  }, [activeTabDescriptor]);
   const buildPaneContentModel = useCallback(
     (input: {
       tab: WorkspaceTabDescriptor;
@@ -1890,6 +1915,20 @@ function WorkspaceScreenContent({
 
   return (
     <View style={[styles.container, { backgroundColor: mainBackgroundColor }]}>
+      {Platform.OS === "web" && activeTabDescriptor ? (
+        <WorkspaceTabPresentationResolver
+          tab={activeTabDescriptor}
+          serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
+        >
+          {(presentation) => (
+            <WorkspaceDocumentTitleEffect
+              label={presentation.label}
+              titleState={presentation.titleState}
+            />
+          )}
+        </WorkspaceTabPresentationResolver>
+      ) : null}
       <View style={styles.threePaneRow}>
         <View style={styles.centerColumn}>
           <ScreenHeader
