@@ -430,6 +430,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
     <VoiceProvider>
       <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
       <HostSessionManager />
+      <FaviconStatusSync />
       {children}
     </VoiceProvider>
   );
@@ -478,7 +479,6 @@ function OfferLinkListener({
 function AppWithSidebar({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const params = useGlobalSearchParams<{ open?: string | string[] }>();
-  useFaviconStatus();
   const activeServerId = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);
   const shouldShowAppChrome = activeServerId !== null;
 
@@ -506,6 +506,11 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
       {children}
     </AppContainer>
   );
+}
+
+function FaviconStatusSync() {
+  useFaviconStatus();
+  return null;
 }
 
 function NavigationActiveWorkspaceObserver() {
@@ -608,10 +613,13 @@ export default function RootLayout() {
                             >
                               <Stack.Screen name="index" />
                               <Stack.Screen name="settings" />
-                              <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
+                              <Stack.Screen
+                                name="h/[serverId]/workspace/[workspaceId]"
+                                options={{ freezeOnBlur: true }}
+                              />
                               <Stack.Screen
                                 name="h/[serverId]/agent/[agentId]"
-                                options={{ gestureEnabled: false }}
+                                options={{ gestureEnabled: false, freezeOnBlur: true }}
                               />
                               <Stack.Screen name="h/[serverId]/index" />
                               <Stack.Screen name="h/[serverId]/agents" />
