@@ -5,6 +5,9 @@ import type {
   KeyboardShortcutPayload,
   MessageInputKeyboardActionKind,
 } from "@/keyboard/actions";
+import { type KeyCombo, parseShortcutString } from "@/keyboard/shortcut-string";
+
+export type { KeyCombo } from "@/keyboard/shortcut-string";
 
 // --- Public types ---
 
@@ -43,18 +46,6 @@ type KeyboardShortcutPlatformContext = {
   isDesktop: boolean;
 };
 
-interface KeyCombo {
-  /** Event.code to match. Use "Digit" for any digit 1-9. */
-  code: string;
-  /** Optional event.key fallback (case-insensitive). */
-  key?: string;
-  meta?: true;
-  ctrl?: true;
-  alt?: true;
-  shift?: true;
-  /** Set to false to block key repeat events. */
-  repeat?: false;
-}
 
 interface ShortcutWhen {
   /** true = mac only, false = non-mac only */
@@ -87,12 +78,17 @@ interface ShortcutHelp {
 interface ShortcutBinding {
   id: string;
   action: KeyboardActionId;
-  combo: KeyCombo;
+  combo: string;
+  repeat?: false;
   when?: ShortcutWhen;
   payload?: ShortcutPayloadDef;
   preventDefault?: boolean;
   stopPropagation?: boolean;
   help?: ShortcutHelp;
+}
+
+export interface ParsedShortcutBinding extends ShortcutBinding {
+  parsedCombo: KeyCombo;
 }
 
 // --- Constants ---
@@ -109,7 +105,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "agent-new-cmd-shift-o-mac",
     action: "agent.new",
-    combo: { code: "KeyO", key: "o", meta: true, shift: true },
+    combo: "Cmd+Shift+O",
     when: { mac: true },
     help: {
       id: "new-agent",
@@ -121,7 +117,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "agent-new-ctrl-shift-o-non-mac",
     action: "agent.new",
-    combo: { code: "KeyO", key: "o", ctrl: true, shift: true },
+    combo: "Ctrl+Shift+O",
     when: { mac: false, terminal: false },
     help: {
       id: "new-agent",
@@ -135,7 +131,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-tab-new-cmd-t-mac",
     action: "workspace.tab.new",
-    combo: { code: "KeyT", key: "t", meta: true },
+    combo: "Cmd+T",
     when: { mac: true, commandCenter: false },
     help: {
       id: "workspace-tab-new",
@@ -147,7 +143,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-tab-new-ctrl-t-non-mac",
     action: "workspace.tab.new",
-    combo: { code: "KeyT", key: "t", ctrl: true },
+    combo: "Ctrl+T",
     when: { mac: false, commandCenter: false, terminal: false },
     help: {
       id: "workspace-tab-new",
@@ -159,7 +155,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-tab-close-current-cmd-w-mac",
     action: "workspace.tab.close.current",
-    combo: { code: "KeyW", key: "w", meta: true },
+    combo: "Cmd+W",
     when: { mac: true, desktop: true, commandCenter: false },
     help: {
       id: "workspace-tab-close-current",
@@ -171,7 +167,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-tab-close-current-ctrl-w-non-mac",
     action: "workspace.tab.close.current",
-    combo: { code: "KeyW", key: "w", ctrl: true },
+    combo: "Ctrl+W",
     when: { mac: false, desktop: true, commandCenter: false, terminal: false },
     help: {
       id: "workspace-tab-close-current",
@@ -183,7 +179,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-tab-close-current-alt-shift-w-web",
     action: "workspace.tab.close.current",
-    combo: { code: "KeyW", key: "w", alt: true, shift: true },
+    combo: "Alt+Shift+W",
     when: { desktop: false, commandCenter: false },
     help: {
       id: "workspace-tab-close-current",
@@ -197,7 +193,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-navigate-index-cmd-digit-mac",
     action: "workspace.navigate.index",
-    combo: { code: "Digit", meta: true },
+    combo: "Cmd+Digit",
     when: { mac: true, desktop: true, commandCenter: false },
     payload: { type: "index" },
     help: {
@@ -210,7 +206,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-navigate-index-ctrl-digit-non-mac",
     action: "workspace.navigate.index",
-    combo: { code: "Digit", ctrl: true },
+    combo: "Ctrl+Digit",
     when: { mac: false, desktop: true, commandCenter: false, terminal: false },
     payload: { type: "index" },
     help: {
@@ -223,7 +219,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-navigate-index-alt-digit-web",
     action: "workspace.navigate.index",
-    combo: { code: "Digit", alt: true },
+    combo: "Alt+Digit",
     when: { desktop: false, commandCenter: false },
     payload: { type: "index" },
     help: {
@@ -238,7 +234,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-tab-navigate-index-alt-digit-desktop",
     action: "workspace.tab.navigate.index",
-    combo: { code: "Digit", alt: true },
+    combo: "Alt+Digit",
     when: { desktop: true, commandCenter: false },
     payload: { type: "index" },
     help: {
@@ -251,7 +247,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-tab-navigate-index-alt-shift-digit-web",
     action: "workspace.tab.navigate.index",
-    combo: { code: "Digit", alt: true, shift: true },
+    combo: "Alt+Shift+Digit",
     when: { desktop: false, commandCenter: false },
     payload: { type: "index" },
     help: {
@@ -266,7 +262,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-navigate-relative-cmd-left-mac",
     action: "workspace.navigate.relative",
-    combo: { code: "BracketLeft", key: "[", meta: true },
+    combo: "Cmd+[",
     when: { mac: true, desktop: true, commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
@@ -279,7 +275,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-navigate-relative-ctrl-left-non-mac",
     action: "workspace.navigate.relative",
-    combo: { code: "BracketLeft", key: "[", ctrl: true },
+    combo: "Ctrl+[",
     when: { mac: false, desktop: true, commandCenter: false, terminal: false },
     payload: { type: "delta", delta: -1 },
     help: {
@@ -292,7 +288,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-navigate-relative-cmd-right-mac",
     action: "workspace.navigate.relative",
-    combo: { code: "BracketRight", key: "]", meta: true },
+    combo: "Cmd+]",
     when: { mac: true, desktop: true, commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {
@@ -305,7 +301,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-navigate-relative-ctrl-right-non-mac",
     action: "workspace.navigate.relative",
-    combo: { code: "BracketRight", key: "]", ctrl: true },
+    combo: "Ctrl+]",
     when: { mac: false, desktop: true, commandCenter: false, terminal: false },
     payload: { type: "delta", delta: 1 },
     help: {
@@ -318,7 +314,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-navigate-relative-alt-left-web",
     action: "workspace.navigate.relative",
-    combo: { code: "BracketLeft", key: "[", alt: true },
+    combo: "Alt+[",
     when: { desktop: false, commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
@@ -331,7 +327,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-navigate-relative-alt-right-web",
     action: "workspace.navigate.relative",
-    combo: { code: "BracketRight", key: "]", alt: true },
+    combo: "Alt+]",
     when: { desktop: false, commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {
@@ -346,7 +342,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-tab-navigate-relative-alt-shift-left",
     action: "workspace.tab.navigate.relative",
-    combo: { code: "BracketLeft", alt: true, shift: true },
+    combo: "Alt+Shift+[",
     when: { commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
@@ -359,7 +355,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-tab-navigate-relative-alt-shift-right",
     action: "workspace.tab.navigate.relative",
-    combo: { code: "BracketRight", alt: true, shift: true },
+    combo: "Alt+Shift+]",
     when: { commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {
@@ -374,7 +370,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-split-right-cmd-backslash",
     action: "workspace.pane.split.right",
-    combo: { code: "Backslash", meta: true },
+    combo: "Cmd+\\",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-split-right",
@@ -386,7 +382,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-split-down-cmd-shift-backslash",
     action: "workspace.pane.split.down",
-    combo: { code: "Backslash", meta: true, shift: true },
+    combo: "Cmd+Shift+\\",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-split-down",
@@ -398,7 +394,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-focus-left-cmd-shift-left",
     action: "workspace.pane.focus.left",
-    combo: { code: "ArrowLeft", meta: true, shift: true },
+    combo: "Cmd+Shift+ArrowLeft",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-focus-left",
@@ -410,7 +406,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-focus-right-cmd-shift-right",
     action: "workspace.pane.focus.right",
-    combo: { code: "ArrowRight", meta: true, shift: true },
+    combo: "Cmd+Shift+ArrowRight",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-focus-right",
@@ -422,7 +418,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-focus-up-cmd-shift-up",
     action: "workspace.pane.focus.up",
-    combo: { code: "ArrowUp", meta: true, shift: true },
+    combo: "Cmd+Shift+ArrowUp",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-focus-up",
@@ -434,7 +430,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-focus-down-cmd-shift-down",
     action: "workspace.pane.focus.down",
-    combo: { code: "ArrowDown", meta: true, shift: true },
+    combo: "Cmd+Shift+ArrowDown",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-focus-down",
@@ -446,7 +442,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-move-tab-left-cmd-shift-alt-left",
     action: "workspace.pane.move-tab.left",
-    combo: { code: "ArrowLeft", meta: true, alt: true, shift: true },
+    combo: "Cmd+Alt+Shift+ArrowLeft",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-move-tab-left",
@@ -458,7 +454,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-move-tab-right-cmd-shift-alt-right",
     action: "workspace.pane.move-tab.right",
-    combo: { code: "ArrowRight", meta: true, alt: true, shift: true },
+    combo: "Cmd+Alt+Shift+ArrowRight",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-move-tab-right",
@@ -470,7 +466,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-move-tab-up-cmd-shift-alt-up",
     action: "workspace.pane.move-tab.up",
-    combo: { code: "ArrowUp", meta: true, alt: true, shift: true },
+    combo: "Cmd+Alt+Shift+ArrowUp",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-move-tab-up",
@@ -482,7 +478,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-move-tab-down-cmd-shift-alt-down",
     action: "workspace.pane.move-tab.down",
-    combo: { code: "ArrowDown", meta: true, alt: true, shift: true },
+    combo: "Cmd+Alt+Shift+ArrowDown",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-move-tab-down",
@@ -494,7 +490,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-pane-close-cmd-shift-w",
     action: "workspace.pane.close",
-    combo: { code: "KeyW", key: "w", meta: true, shift: true },
+    combo: "Cmd+Shift+W",
     when: { mac: true, terminal: false, commandCenter: false },
     help: {
       id: "workspace-pane-close",
@@ -508,7 +504,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "command-center-toggle-cmd-k-mac",
     action: "command-center.toggle",
-    combo: { code: "KeyK", key: "k", meta: true },
+    combo: "Cmd+K",
     when: { mac: true },
     help: {
       id: "toggle-command-center",
@@ -520,7 +516,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "command-center-toggle-ctrl-k-non-mac",
     action: "command-center.toggle",
-    combo: { code: "KeyK", key: "k", ctrl: true },
+    combo: "Ctrl+K",
     when: { mac: false, terminal: false },
     help: {
       id: "toggle-command-center",
@@ -534,7 +530,8 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "shortcuts-dialog-toggle-question-mark",
     action: "shortcuts.dialog.toggle",
-    combo: { code: "Slash", key: "?", shift: true, repeat: false },
+    combo: "Shift+?",
+    repeat: false,
     when: { focusScope: "other" },
     help: {
       id: "show-shortcuts",
@@ -549,7 +546,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "sidebar-toggle-left-mac-cmd-b",
     action: "sidebar.toggle.left",
-    combo: { code: "KeyB", key: "b", meta: true },
+    combo: "Cmd+B",
     when: { mac: true },
     help: {
       id: "toggle-left-sidebar",
@@ -561,13 +558,13 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "sidebar-toggle-left-cmd-period-mac",
     action: "sidebar.toggle.left",
-    combo: { code: "Period", key: ".", meta: true },
+    combo: "Cmd+.",
     when: { mac: true, commandCenter: false },
   },
   {
     id: "sidebar-toggle-left-ctrl-period-non-mac",
     action: "sidebar.toggle.left",
-    combo: { code: "Period", key: ".", ctrl: true },
+    combo: "Ctrl+.",
     when: { mac: false, commandCenter: false, terminal: false },
     help: {
       id: "toggle-left-sidebar",
@@ -579,7 +576,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "sidebar-toggle-right-cmd-e-mac",
     action: "sidebar.toggle.right",
-    combo: { code: "KeyE", key: "e", meta: true },
+    combo: "Cmd+E",
     when: { mac: true, hasSelectedAgent: true, commandCenter: false },
     help: {
       id: "toggle-right-sidebar",
@@ -591,7 +588,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "sidebar-toggle-right-ctrl-e-non-mac",
     action: "sidebar.toggle.right",
-    combo: { code: "KeyE", key: "e", ctrl: true },
+    combo: "Ctrl+E",
     when: { mac: false, hasSelectedAgent: true, commandCenter: false, terminal: false },
     help: {
       id: "toggle-right-sidebar",
@@ -603,7 +600,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "sidebar-toggle-right-ctrl-backquote",
     action: "sidebar.toggle.right",
-    combo: { code: "Backquote", key: "`", ctrl: true },
+    combo: "Ctrl+`",
     when: { hasSelectedAgent: true, commandCenter: false },
   },
 
@@ -611,7 +608,8 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "message-input-voice-toggle-cmd-shift-d-mac",
     action: "message-input.action",
-    combo: { code: "KeyD", key: "d", meta: true, shift: true, repeat: false },
+    combo: "Cmd+Shift+D",
+    repeat: false,
     when: { mac: true, commandCenter: false, terminal: false },
     payload: { type: "message-input", kind: "voice-toggle" },
     help: {
@@ -624,7 +622,8 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "message-input-voice-toggle-ctrl-shift-d-non-mac",
     action: "message-input.action",
-    combo: { code: "KeyD", key: "d", ctrl: true, shift: true, repeat: false },
+    combo: "Ctrl+Shift+D",
+    repeat: false,
     when: { mac: false, commandCenter: false, terminal: false },
     payload: { type: "message-input", kind: "voice-toggle" },
     help: {
@@ -637,7 +636,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "message-input-dictation-toggle-cmd-d-mac",
     action: "message-input.action",
-    combo: { code: "KeyD", key: "d", meta: true },
+    combo: "Cmd+D",
     when: { mac: true, commandCenter: false, terminal: false },
     payload: { type: "message-input", kind: "dictation-toggle" },
     help: {
@@ -650,7 +649,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "message-input-dictation-toggle-ctrl-d-non-mac",
     action: "message-input.action",
-    combo: { code: "KeyD", key: "d", ctrl: true },
+    combo: "Ctrl+D",
     when: { mac: false, commandCenter: false, terminal: false },
     payload: { type: "message-input", kind: "dictation-toggle" },
     help: {
@@ -663,7 +662,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "message-input-dictation-cancel",
     action: "message-input.action",
-    combo: { code: "Escape" },
+    combo: "Escape",
     when: { commandCenter: false, terminal: false },
     payload: { type: "message-input", kind: "dictation-cancel" },
     preventDefault: false,
@@ -678,7 +677,8 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "message-input-voice-mute-toggle",
     action: "message-input.action",
-    combo: { code: "Space", key: " ", repeat: false },
+    combo: "Space",
+    repeat: false,
     when: { commandCenter: false, focusScope: "other" },
     payload: { type: "message-input", kind: "voice-mute-toggle" },
     help: {
@@ -689,6 +689,40 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
 ];
+
+// --- Parse bindings at module load ---
+
+function parseBinding(binding: ShortcutBinding): ParsedShortcutBinding {
+  const parsedCombo = parseShortcutString(binding.combo);
+  if (binding.repeat === false) {
+    parsedCombo.repeat = false;
+  }
+  return { ...binding, parsedCombo };
+}
+
+export const DEFAULT_BINDINGS: readonly ParsedShortcutBinding[] =
+  SHORTCUT_BINDINGS.map(parseBinding);
+
+export function buildEffectiveBindings(
+  overrides: Record<string, string>,
+): ParsedShortcutBinding[] {
+  return DEFAULT_BINDINGS.map(function (binding) {
+    const override = overrides[binding.id];
+    if (override === undefined) {
+      return binding;
+    }
+    let parsedCombo: KeyCombo;
+    try {
+      parsedCombo = parseShortcutString(override);
+    } catch {
+      return binding;
+    }
+    if (binding.repeat === false) {
+      parsedCombo.repeat = false;
+    }
+    return { ...binding, combo: override, parsedCombo };
+  });
+}
 
 // --- Matching engine ---
 
@@ -709,9 +743,19 @@ function parseDigit(event: KeyboardEvent): number | null {
   return null;
 }
 
-function matchesCombo(combo: KeyCombo, event: KeyboardEvent): boolean {
-  if (!!combo.meta !== event.metaKey) return false;
-  if (!!combo.ctrl !== event.ctrlKey) return false;
+function matchesCombo(combo: KeyCombo, event: KeyboardEvent, isMac: boolean): boolean {
+  if (combo.mod) {
+    if (isMac) {
+      if (!event.metaKey) return false;
+      if (!!combo.ctrl !== event.ctrlKey) return false;
+    } else {
+      if (!event.ctrlKey) return false;
+      if (!!combo.meta !== event.metaKey) return false;
+    }
+  } else {
+    if (!!combo.meta !== event.metaKey) return false;
+    if (!!combo.ctrl !== event.ctrlKey) return false;
+  }
   if (!!combo.alt !== event.altKey) return false;
   if (!!combo.shift !== event.shiftKey) return false;
   if (combo.repeat === false && event.repeat) return false;
@@ -767,10 +811,11 @@ function helpMatchesPlatform(
 export function resolveKeyboardShortcut(input: {
   event: KeyboardEvent;
   context: KeyboardShortcutContext;
+  bindings?: readonly ParsedShortcutBinding[];
 }): KeyboardShortcutMatch | null {
-  const { event, context } = input;
-  for (const binding of SHORTCUT_BINDINGS) {
-    if (!matchesCombo(binding.combo, event)) {
+  const { event, context, bindings = DEFAULT_BINDINGS } = input;
+  for (const binding of bindings) {
+    if (!matchesCombo(binding.parsedCombo, event, context.isMac)) {
       continue;
     }
     if (!matchesWhen(binding.when, context)) {
@@ -786,8 +831,41 @@ export function resolveKeyboardShortcut(input: {
   return null;
 }
 
+export function getBindingIdForAction(
+  actionId: string,
+  platform: { isMac: boolean; isDesktop: boolean },
+): string | null {
+  for (const binding of DEFAULT_BINDINGS) {
+    if (binding.help?.id !== actionId) {
+      continue;
+    }
+    if (!helpMatchesPlatform(binding.when, platform)) {
+      continue;
+    }
+    return binding.id;
+  }
+  return null;
+}
+
+export function getDefaultKeysForAction(
+  actionId: string,
+  platform: { isMac: boolean; isDesktop: boolean },
+): ShortcutKey[] | null {
+  for (const binding of DEFAULT_BINDINGS) {
+    if (binding.help?.id !== actionId) {
+      continue;
+    }
+    if (!helpMatchesPlatform(binding.when, platform)) {
+      continue;
+    }
+    return binding.help.keys;
+  }
+  return null;
+}
+
 export function buildKeyboardShortcutHelpSections(
   input: KeyboardShortcutPlatformContext,
+  bindings: readonly ParsedShortcutBinding[] = DEFAULT_BINDINGS,
 ): KeyboardShortcutHelpSection[] {
   const seenRows = new Set<string>();
   const rowsBySection = new Map<KeyboardShortcutHelpSection["id"], KeyboardShortcutHelpRow[]>([
@@ -795,7 +873,7 @@ export function buildKeyboardShortcutHelpSections(
     ["agent-input", []],
   ]);
 
-  for (const binding of SHORTCUT_BINDINGS) {
+  for (const binding of bindings) {
     const help = binding.help;
     if (!help) {
       continue;

@@ -1,12 +1,26 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { MutableRefObject } from "react";
+import type { MutableRefObject, ComponentType } from "react";
 import { View, Text, ScrollView, Alert, Platform, Pressable } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Buffer } from "buffer";
-import { Sun, Moon, Monitor, Globe, Settings, RotateCw, Trash2 } from "lucide-react-native";
+import {
+  Sun,
+  Moon,
+  Monitor,
+  Globe,
+  Settings,
+  RotateCw,
+  Trash2,
+  Server,
+  Palette,
+  Keyboard,
+  Stethoscope,
+  Info,
+  Shield,
+} from "lucide-react-native";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import type { HostProfile, HostConnection } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
@@ -24,6 +38,7 @@ import {
 import { AddHostMethodModal } from "@/components/add-host-method-modal";
 import { AddHostModal } from "@/components/add-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
+import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-section";
 import { NameHostModal } from "@/components/name-host-modal";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -44,6 +59,48 @@ import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+
+// ---------------------------------------------------------------------------
+// Section definitions
+// ---------------------------------------------------------------------------
+
+type SettingsSectionId =
+  | "hosts"
+  | "appearance"
+  | "keyboard-shortcuts"
+  | "diagnostics"
+  | "about"
+  | "permissions"
+  | "daemon";
+
+interface SettingsSectionDef {
+  id: SettingsSectionId;
+  label: string;
+  icon: ComponentType<{ size: number; color: string }>;
+}
+
+function getSettingsSections(context: { isDesktop: boolean }): SettingsSectionDef[] {
+  const sections: SettingsSectionDef[] = [
+    { id: "hosts", label: "Hosts", icon: Server },
+    { id: "appearance", label: "Appearance", icon: Palette },
+    { id: "keyboard-shortcuts", label: "Keyboard Shortcuts", icon: Keyboard },
+    { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
+    { id: "about", label: "About", icon: Info },
+  ];
+
+  if (context.isDesktop) {
+    sections.push(
+      { id: "permissions", label: "Permissions", icon: Shield },
+      { id: "daemon", label: "Daemon", icon: Settings },
+    );
+  }
+
+  return sections;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -98,296 +155,6 @@ function formatActiveConnectionBadge(input: {
   };
 }
 
-const styles = StyleSheet.create((theme) => ({
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: theme.colors.surface0,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  loadingText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.surface0,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  content: {
-    padding: theme.spacing[4],
-    paddingTop: theme.spacing[6],
-    width: "100%",
-    maxWidth: 720,
-    alignSelf: "center",
-  },
-  label: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    marginBottom: theme.spacing[2],
-  },
-  input: {
-    backgroundColor: theme.colors.surface0,
-    color: theme.colors.foreground,
-    padding: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    fontSize: theme.fontSize.base,
-  },
-  // Host card styles
-  hostCard: {
-    marginBottom: theme.spacing[3],
-    overflow: "hidden",
-  },
-  hostCardContent: {
-    padding: theme.spacing[4],
-    gap: theme.spacing[2],
-  },
-  hostHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-  },
-  hostHeaderRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    flexShrink: 0,
-  },
-  hostLabel: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
-    flex: 1,
-    flexShrink: 1,
-  },
-  hostError: {
-    color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
-  },
-  // Status pill
-  statusPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 4,
-    borderRadius: theme.borderRadius.full,
-  },
-  statusPillMobile: {
-    alignItems: "center",
-    justifyContent: "center",
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: theme.borderRadius.full,
-  },
-  statusText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-  },
-  connectionPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 4,
-    borderRadius: theme.borderRadius.full,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface3,
-    maxWidth: 170,
-  },
-  connectionPillMobile: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: theme.borderRadius.full,
-  },
-  connectionText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.foregroundMuted,
-    flexShrink: 1,
-  },
-  versionPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 4,
-    borderRadius: theme.borderRadius.full,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface3,
-    maxWidth: 200,
-  },
-  hostSettingsButton: {
-    width: 28,
-    height: 28,
-    paddingVertical: 0,
-    paddingHorizontal: 0,
-    borderRadius: theme.borderRadius.md,
-    gap: 0,
-    marginLeft: theme.spacing[2],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  advancedTrigger: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: "transparent",
-  },
-  advancedTriggerText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
-  },
-  disabled: {
-    opacity: theme.opacity[50],
-  },
-  testResultText: {
-    fontSize: theme.fontSize.xs,
-  },
-  // Add host button
-  addButton: {
-    borderStyle: "dashed",
-  },
-  addButtonText: {
-    color: theme.colors.foregroundMuted,
-  },
-  // Add/Edit form
-  formCard: {
-    padding: theme.spacing[4],
-    marginBottom: theme.spacing[3],
-    gap: theme.spacing[4],
-  },
-  formTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
-  },
-  formField: {
-    gap: theme.spacing[2],
-  },
-  formActionsRow: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: theme.spacing[2],
-  },
-  formButton: {
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[4],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  formButtonPrimary: {
-    backgroundColor: theme.colors.palette.blue[500],
-    borderColor: theme.colors.palette.blue[500],
-  },
-  formButtonText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
-  },
-  formButtonPrimaryText: {
-    color: theme.colors.palette.white,
-  },
-  // Audio settings card
-  audioCard: {
-    overflow: "hidden",
-  },
-  audioRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: theme.spacing[4],
-    paddingHorizontal: theme.spacing[4],
-  },
-  audioRowBorder: {
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  audioRowContent: {
-    flex: 1,
-    marginRight: theme.spacing[3],
-  },
-  audioRowTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  aboutValue: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
-  },
-  aboutHintText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    marginTop: 2,
-  },
-  aboutErrorText: {
-    color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
-    marginTop: theme.spacing[1],
-  },
-  aboutUpdateActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  // Empty state
-  emptyCard: {
-    padding: theme.spacing[4],
-    marginBottom: theme.spacing[3],
-  },
-  emptyText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    textAlign: "center",
-  },
-  // Dev section
-  devCard: {
-    overflow: "hidden",
-  },
-  devButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-    paddingVertical: theme.spacing[4],
-    paddingHorizontal: theme.spacing[4],
-  },
-  devButtonBorder: {
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  devButtonContent: {
-    flex: 1,
-  },
-  devButtonTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  devButtonDescription: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    marginTop: 2,
-  },
-}));
-
 function formatDaemonVersionBadge(version: string | null): string | null {
   const daemonVersion = version?.trim();
   if (!daemonVersion) {
@@ -398,6 +165,457 @@ function formatDaemonVersionBadge(version: string | null): string | null {
   }
   return `v${daemonVersion}`;
 }
+
+// ---------------------------------------------------------------------------
+// Section content components
+// ---------------------------------------------------------------------------
+
+interface HostsSectionProps {
+  daemons: HostProfile[];
+  settings: AppSettings;
+  routeServerId: string;
+  isDesktop: boolean;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+  handleEditDaemon: (profile: HostProfile) => void;
+  setAddConnectionTargetServerId: (id: string | null) => void;
+  setPendingEditReopenServerId: (id: string | null) => void;
+  setIsAddHostMethodVisible: (visible: boolean) => void;
+  isAddHostMethodVisible: boolean;
+  isDirectHostVisible: boolean;
+  isPasteLinkVisible: boolean;
+  addConnectionTargetServerId: string | null;
+  closeAddConnectionFlow: () => void;
+  goBackToAddConnectionMethods: () => void;
+  setIsDirectHostVisible: (visible: boolean) => void;
+  setIsPasteLinkVisible: (visible: boolean) => void;
+  pendingNameHost: { serverId: string; hostname: string | null } | null;
+  setPendingNameHost: (host: { serverId: string; hostname: string | null } | null) => void;
+  pendingNameHostname: string | null;
+  renameHost: (serverId: string, label: string) => Promise<void>;
+  pendingRemoveHost: HostProfile | null;
+  setPendingRemoveHost: (host: HostProfile | null) => void;
+  isRemovingHost: boolean;
+  setIsRemovingHost: (removing: boolean) => void;
+  removeHost: (serverId: string) => Promise<void>;
+  editingDaemonLive: HostProfile | null;
+  isSavingEdit: boolean;
+  handleCloseEditDaemon: () => void;
+  handleSaveEditDaemon: (label: string) => Promise<void>;
+  handleRemoveConnection: (serverId: string, connectionId: string) => Promise<void>;
+  handleRemoveDaemon: (profile: HostProfile) => void;
+  handleAddConnectionFromModal: () => void;
+  restartConfirmationMessage: string;
+  waitForCondition: (
+    predicate: () => boolean,
+    timeoutMs: number,
+    intervalMs?: number,
+  ) => Promise<boolean>;
+  isMountedRef: MutableRefObject<boolean>;
+}
+
+function HostsSection(props: HostsSectionProps) {
+  const { theme } = useUnistyles();
+
+  return (
+    <>
+      <View style={settingsStyles.section}>
+        <Text style={settingsStyles.sectionTitle}>Hosts</Text>
+
+        {props.daemons.length === 0 ? (
+          <View style={[settingsStyles.card, styles.emptyCard]}>
+            <Text style={styles.emptyText}>No hosts configured</Text>
+          </View>
+        ) : (
+          props.daemons.map((daemon) => {
+            return (
+              <DaemonCard
+                key={daemon.serverId}
+                daemon={daemon}
+                onOpenSettings={props.handleEditDaemon}
+              />
+            );
+          })
+        )}
+
+        <Button
+          variant="outline"
+          size="md"
+          style={styles.addButton}
+          textStyle={styles.addButtonText}
+          onPress={() => {
+            props.setAddConnectionTargetServerId(null);
+            props.setPendingEditReopenServerId(null);
+            props.setIsAddHostMethodVisible(true);
+          }}
+        >
+          + Add connection
+        </Button>
+      </View>
+
+      <AddHostMethodModal
+        visible={props.isAddHostMethodVisible}
+        onClose={props.closeAddConnectionFlow}
+        onDirectConnection={() => {
+          props.setIsAddHostMethodVisible(false);
+          props.setIsDirectHostVisible(true);
+        }}
+        onPasteLink={() => {
+          props.setIsAddHostMethodVisible(false);
+          props.setIsPasteLinkVisible(true);
+        }}
+        onScanQr={() => {
+          const targetServerId = props.addConnectionTargetServerId;
+          const source = targetServerId ? "editHost" : "settings";
+          const sourceServerId = props.routeServerId || targetServerId || undefined;
+          props.closeAddConnectionFlow();
+          router.push({
+            pathname: "/pair-scan",
+            params: targetServerId
+              ? { source, targetServerId, sourceServerId }
+              : { source, sourceServerId },
+          });
+        }}
+      />
+
+      <AddHostModal
+        visible={props.isDirectHostVisible}
+        targetServerId={props.addConnectionTargetServerId ?? undefined}
+        onClose={props.closeAddConnectionFlow}
+        onCancel={props.goBackToAddConnectionMethods}
+        onSaved={({ serverId, hostname, isNewHost }) => {
+          if (isNewHost) {
+            props.setPendingNameHost({ serverId, hostname });
+          }
+        }}
+      />
+
+      <PairLinkModal
+        visible={props.isPasteLinkVisible}
+        targetServerId={props.addConnectionTargetServerId ?? undefined}
+        onClose={props.closeAddConnectionFlow}
+        onCancel={props.goBackToAddConnectionMethods}
+        onSaved={({ serverId, hostname, isNewHost }) => {
+          if (isNewHost) {
+            props.setPendingNameHost({ serverId, hostname });
+          }
+        }}
+      />
+
+      {props.pendingNameHost ? (
+        <NameHostModal
+          visible
+          serverId={props.pendingNameHost.serverId}
+          hostname={props.pendingNameHostname}
+          onSkip={() => props.setPendingNameHost(null)}
+          onSave={(label) => {
+            void props.renameHost(props.pendingNameHost!.serverId, label).finally(() => {
+              props.setPendingNameHost(null);
+            });
+          }}
+        />
+      ) : null}
+
+      {props.pendingRemoveHost ? (
+        <AdaptiveModalSheet
+          title="Remove host"
+          visible
+          onClose={() => {
+            if (props.isRemovingHost) return;
+            props.setPendingRemoveHost(null);
+          }}
+          testID="remove-host-confirm-modal"
+        >
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>
+            Remove {props.pendingRemoveHost.label}? This will delete its saved connections.
+          </Text>
+          <View style={[styles.formActionsRow, { marginTop: theme.spacing[4] }]}>
+            <Button
+              variant="secondary"
+              size="sm"
+              style={{ flex: 1 }}
+              onPress={() => props.setPendingRemoveHost(null)}
+              disabled={props.isRemovingHost}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              style={{ flex: 1 }}
+              onPress={() => {
+                const serverId = props.pendingRemoveHost!.serverId;
+                props.setIsRemovingHost(true);
+                void props
+                  .removeHost(serverId)
+                  .then(() => props.setPendingRemoveHost(null))
+                  .catch((error) => {
+                    console.error("[Settings] Failed to remove host", error);
+                    Alert.alert("Error", "Unable to remove host");
+                  })
+                  .finally(() => props.setIsRemovingHost(false));
+              }}
+              disabled={props.isRemovingHost}
+              testID="remove-host-confirm"
+            >
+              Remove
+            </Button>
+          </View>
+        </AdaptiveModalSheet>
+      ) : null}
+
+      <HostDetailModal
+        visible={Boolean(props.editingDaemonLive)}
+        host={props.editingDaemonLive}
+        isSaving={props.isSavingEdit}
+        onClose={props.handleCloseEditDaemon}
+        onSave={(label) => void props.handleSaveEditDaemon(label)}
+        onRemoveConnection={props.handleRemoveConnection}
+        onRemoveHost={props.handleRemoveDaemon}
+        onAddConnection={props.handleAddConnectionFromModal}
+        restartConfirmationMessage={props.restartConfirmationMessage}
+        waitForCondition={props.waitForCondition}
+        isScreenMountedRef={props.isMountedRef}
+      />
+    </>
+  );
+}
+
+interface AppearanceSectionProps {
+  settings: AppSettings;
+  handleThemeChange: (theme: AppSettings["theme"]) => void;
+}
+
+function AppearanceSection({ settings, handleThemeChange }: AppearanceSectionProps) {
+  return (
+    <View style={settingsStyles.section}>
+      <Text style={settingsStyles.sectionTitle}>Appearance</Text>
+      <View style={[settingsStyles.card, styles.audioCard]}>
+        <View style={styles.audioRow}>
+          <View style={styles.audioRowContent}>
+            <Text style={styles.audioRowTitle}>Theme</Text>
+          </View>
+          <SegmentedControl
+            size="sm"
+            hideLabels={Platform.OS !== "web"}
+            value={settings.theme}
+            onValueChange={handleThemeChange}
+            options={[
+              {
+                value: "light",
+                label: "Light",
+                icon: ({ color, size }) => <Sun size={size} color={color} />,
+              },
+              {
+                value: "dark",
+                label: "Dark",
+                icon: ({ color, size }) => <Moon size={size} color={color} />,
+              },
+              {
+                value: "auto",
+                label: "System",
+                icon: ({ color, size }) => <Monitor size={size} color={color} />,
+              },
+            ]}
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+
+interface DiagnosticsSectionProps {
+  voiceAudioEngine: ReturnType<typeof useVoiceAudioEngineOptional>;
+  isPlaybackTestRunning: boolean;
+  playbackTestResult: string | null;
+  handlePlaybackTest: () => Promise<void>;
+}
+
+function DiagnosticsSection({
+  voiceAudioEngine,
+  isPlaybackTestRunning,
+  playbackTestResult,
+  handlePlaybackTest,
+}: DiagnosticsSectionProps) {
+  return (
+    <View style={settingsStyles.section}>
+      <Text style={settingsStyles.sectionTitle}>Diagnostics</Text>
+      <View style={[settingsStyles.card, styles.audioCard]}>
+        <View style={styles.audioRow}>
+          <View style={styles.audioRowContent}>
+            <Text style={styles.audioRowTitle}>Test audio</Text>
+            {playbackTestResult ? (
+              <Text style={styles.aboutHintText}>{playbackTestResult}</Text>
+            ) : null}
+          </View>
+          <Button
+            variant="secondary"
+            size="sm"
+            onPress={() => void handlePlaybackTest()}
+            disabled={!voiceAudioEngine || isPlaybackTestRunning}
+          >
+            {isPlaybackTestRunning ? "Playing..." : "Play test"}
+          </Button>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+interface AboutSectionProps {
+  appVersionText: string;
+  isDesktop: boolean;
+}
+
+function AboutSection({ appVersionText, isDesktop }: AboutSectionProps) {
+  return (
+    <View style={settingsStyles.section}>
+      <Text style={settingsStyles.sectionTitle}>About</Text>
+      <View style={[settingsStyles.card, styles.audioCard]}>
+        <View style={styles.audioRow}>
+          <View style={styles.audioRowContent}>
+            <Text style={styles.audioRowTitle}>Version</Text>
+          </View>
+          <Text style={styles.aboutValue}>{appVersionText}</Text>
+        </View>
+        {isDesktop ? <DesktopAppUpdateRow /> : null}
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Section content switcher
+// ---------------------------------------------------------------------------
+
+interface SettingsSectionContentProps {
+  sectionId: SettingsSectionId;
+  hostsProps: HostsSectionProps;
+  appearanceProps: AppearanceSectionProps;
+  diagnosticsProps: DiagnosticsSectionProps;
+  aboutProps: AboutSectionProps;
+  appVersion: string | null;
+  isLocalDaemon: boolean;
+  isDesktop: boolean;
+}
+
+function SettingsSectionContent({
+  sectionId,
+  hostsProps,
+  appearanceProps,
+  diagnosticsProps,
+  aboutProps,
+  appVersion,
+  isLocalDaemon,
+  isDesktop,
+}: SettingsSectionContentProps) {
+  switch (sectionId) {
+    case "hosts":
+      return <HostsSection {...hostsProps} />;
+    case "appearance":
+      return <AppearanceSection {...appearanceProps} />;
+    case "keyboard-shortcuts":
+      return <KeyboardShortcutsSection />;
+    case "diagnostics":
+      return <DiagnosticsSection {...diagnosticsProps} />;
+    case "about":
+      return <AboutSection {...aboutProps} />;
+    case "permissions":
+      return isDesktop ? <DesktopPermissionsSection /> : null;
+    case "daemon":
+      return isDesktop ? (
+        <LocalDaemonSection appVersion={appVersion} showLifecycleControls={isLocalDaemon} />
+      ) : null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Layouts
+// ---------------------------------------------------------------------------
+
+interface SettingsLayoutProps {
+  sections: SettingsSectionDef[];
+  sectionContentProps: Omit<SettingsSectionContentProps, "sectionId">;
+}
+
+function SettingsMobileLayout({ sections, sectionContentProps }: SettingsLayoutProps) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <ScrollView
+      style={styles.scrollView}
+      contentContainerStyle={{ paddingBottom: insets.bottom }}
+    >
+      <View style={styles.content}>
+        {sections.map((section) => (
+          <SettingsSectionContent
+            key={section.id}
+            sectionId={section.id}
+            {...sectionContentProps}
+          />
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayoutProps) {
+  const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
+  const [selectedSectionId, setSelectedSectionId] = useState<SettingsSectionId>("hosts");
+
+  return (
+    <View style={desktopStyles.row}>
+      <View style={desktopStyles.sidebar}>
+        {sections.map((section) => {
+          const isSelected = section.id === selectedSectionId;
+          const IconComponent = section.icon;
+          return (
+            <Pressable
+              key={section.id}
+              style={[
+                desktopStyles.sidebarItem,
+                isSelected && { backgroundColor: theme.colors.surface2 },
+              ]}
+              onPress={() => setSelectedSectionId(section.id)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
+            >
+              <IconComponent
+                size={theme.iconSize.md}
+                color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
+              />
+              <Text
+                style={[
+                  desktopStyles.sidebarLabel,
+                  isSelected && { color: theme.colors.foreground },
+                ]}
+                numberOfLines={1}
+              >
+                {section.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <ScrollView
+        style={desktopStyles.contentPane}
+        contentContainerStyle={{ paddingBottom: insets.bottom }}
+      >
+        <View style={styles.content}>
+          <SettingsSectionContent
+            sectionId={selectedSectionId}
+            {...sectionContentProps}
+          />
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Desktop app update row (unchanged)
+// ---------------------------------------------------------------------------
 
 function DesktopAppUpdateRow() {
   const {
@@ -493,9 +711,12 @@ function DesktopAppUpdateRow() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Main screen
+// ---------------------------------------------------------------------------
+
 export default function SettingsScreen() {
   const { theme } = useUnistyles();
-  const insets = useSafeAreaInsets();
   const voiceAudioEngine = useVoiceAudioEngineOptional();
   const params = useLocalSearchParams<{ editHost?: string; serverId?: string }>();
   const routeServerId = typeof params.serverId === "string" ? params.serverId.trim() : "";
@@ -685,9 +906,6 @@ export default function SettingsScreen() {
     [updateSettings],
   );
 
-  const restartConfirmationMessage =
-    "This will restart the daemon. The app will reconnect automatically.";
-
   const handlePlaybackTest = useCallback(async () => {
     if (!voiceAudioEngine || isPlaybackTestRunning) {
       return;
@@ -717,6 +935,75 @@ export default function SettingsScreen() {
     }
   }, [isPlaybackTestRunning, voiceAudioEngine]);
 
+  const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const sections = getSettingsSections({ isDesktop });
+
+  const hostsProps: HostsSectionProps = {
+    daemons,
+    settings,
+    routeServerId,
+    isDesktop,
+    theme,
+    handleEditDaemon,
+    setAddConnectionTargetServerId,
+    setPendingEditReopenServerId,
+    setIsAddHostMethodVisible,
+    isAddHostMethodVisible,
+    isDirectHostVisible,
+    isPasteLinkVisible,
+    addConnectionTargetServerId,
+    closeAddConnectionFlow,
+    goBackToAddConnectionMethods,
+    setIsDirectHostVisible,
+    setIsPasteLinkVisible,
+    pendingNameHost,
+    setPendingNameHost,
+    pendingNameHostname,
+    renameHost,
+    pendingRemoveHost,
+    setPendingRemoveHost,
+    isRemovingHost,
+    setIsRemovingHost,
+    removeHost,
+    editingDaemonLive,
+    isSavingEdit,
+    handleCloseEditDaemon,
+    handleSaveEditDaemon,
+    handleRemoveConnection,
+    handleRemoveDaemon,
+    handleAddConnectionFromModal,
+    restartConfirmationMessage: "This will restart the daemon. The app will reconnect automatically.",
+    waitForCondition,
+    isMountedRef,
+  };
+
+  const appearanceProps: AppearanceSectionProps = {
+    settings,
+    handleThemeChange,
+  };
+
+  const diagnosticsProps: DiagnosticsSectionProps = {
+    voiceAudioEngine,
+    isPlaybackTestRunning,
+    playbackTestResult,
+    handlePlaybackTest,
+  };
+
+  const aboutProps: AboutSectionProps = {
+    appVersionText,
+    isDesktop,
+  };
+
+  const sectionContentProps: Omit<SettingsSectionContentProps, "sectionId"> = {
+    hostsProps,
+    appearanceProps,
+    diagnosticsProps,
+    aboutProps,
+    appVersion,
+    isLocalDaemon,
+    isDesktop,
+  };
+
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -728,251 +1015,18 @@ export default function SettingsScreen() {
   return (
     <View style={styles.container}>
       <MenuHeader title="Settings" />
-
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={{ paddingBottom: insets.bottom }}
-      >
-        <View style={styles.content}>
-          {/* Host Management */}
-          <View style={settingsStyles.section}>
-            <Text style={settingsStyles.sectionTitle}>Hosts</Text>
-
-            {daemons.length === 0 ? (
-              <View style={[settingsStyles.card, styles.emptyCard]}>
-                <Text style={styles.emptyText}>No hosts configured</Text>
-              </View>
-            ) : (
-              daemons.map((daemon) => {
-                return (
-                  <DaemonCard
-                    key={daemon.serverId}
-                    daemon={daemon}
-                    onOpenSettings={handleEditDaemon}
-                  />
-                );
-              })
-            )}
-
-            <Button
-              variant="outline"
-              size="md"
-              style={styles.addButton}
-              textStyle={styles.addButtonText}
-              onPress={() => {
-                setAddConnectionTargetServerId(null);
-                setPendingEditReopenServerId(null);
-                setIsAddHostMethodVisible(true);
-              }}
-            >
-              + Add connection
-            </Button>
-          </View>
-
-          <AddHostMethodModal
-            visible={isAddHostMethodVisible}
-            onClose={closeAddConnectionFlow}
-            onDirectConnection={() => {
-              setIsAddHostMethodVisible(false);
-              setIsDirectHostVisible(true);
-            }}
-            onPasteLink={() => {
-              setIsAddHostMethodVisible(false);
-              setIsPasteLinkVisible(true);
-            }}
-            onScanQr={() => {
-              const targetServerId = addConnectionTargetServerId;
-              const source = targetServerId ? "editHost" : "settings";
-              const sourceServerId = routeServerId || targetServerId || undefined;
-              closeAddConnectionFlow();
-              router.push({
-                pathname: "/pair-scan",
-                params: targetServerId
-                  ? { source, targetServerId, sourceServerId }
-                  : { source, sourceServerId },
-              });
-            }}
-          />
-
-          <AddHostModal
-            visible={isDirectHostVisible}
-            targetServerId={addConnectionTargetServerId ?? undefined}
-            onClose={closeAddConnectionFlow}
-            onCancel={goBackToAddConnectionMethods}
-            onSaved={({ serverId, hostname, isNewHost }) => {
-              if (isNewHost) {
-                setPendingNameHost({ serverId, hostname });
-              }
-            }}
-          />
-
-          <PairLinkModal
-            visible={isPasteLinkVisible}
-            targetServerId={addConnectionTargetServerId ?? undefined}
-            onClose={closeAddConnectionFlow}
-            onCancel={goBackToAddConnectionMethods}
-            onSaved={({ serverId, hostname, isNewHost }) => {
-              if (isNewHost) {
-                setPendingNameHost({ serverId, hostname });
-              }
-            }}
-          />
-
-          {pendingNameHost ? (
-            <NameHostModal
-              visible
-              serverId={pendingNameHost.serverId}
-              hostname={pendingNameHostname}
-              onSkip={() => setPendingNameHost(null)}
-              onSave={(label) => {
-                void renameHost(pendingNameHost.serverId, label).finally(() => {
-                  setPendingNameHost(null);
-                });
-              }}
-            />
-          ) : null}
-
-          {pendingRemoveHost ? (
-            <AdaptiveModalSheet
-              title="Remove host"
-              visible
-              onClose={() => {
-                if (isRemovingHost) return;
-                setPendingRemoveHost(null);
-              }}
-              testID="remove-host-confirm-modal"
-            >
-              <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>
-                Remove {pendingRemoveHost.label}? This will delete its saved connections.
-              </Text>
-              <View style={[styles.formActionsRow, { marginTop: theme.spacing[4] }]}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  style={{ flex: 1 }}
-                  onPress={() => setPendingRemoveHost(null)}
-                  disabled={isRemovingHost}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  style={{ flex: 1 }}
-                  onPress={() => {
-                    const serverId = pendingRemoveHost.serverId;
-                    setIsRemovingHost(true);
-                    void removeHost(serverId)
-                      .then(() => setPendingRemoveHost(null))
-                      .catch((error) => {
-                        console.error("[Settings] Failed to remove host", error);
-                        Alert.alert("Error", "Unable to remove host");
-                      })
-                      .finally(() => setIsRemovingHost(false));
-                  }}
-                  disabled={isRemovingHost}
-                  testID="remove-host-confirm"
-                >
-                  Remove
-                </Button>
-              </View>
-            </AdaptiveModalSheet>
-          ) : null}
-
-          <HostDetailModal
-            visible={Boolean(editingDaemonLive)}
-            host={editingDaemonLive}
-            isSaving={isSavingEdit}
-            onClose={handleCloseEditDaemon}
-            onSave={(label) => void handleSaveEditDaemon(label)}
-            onRemoveConnection={handleRemoveConnection}
-            onRemoveHost={handleRemoveDaemon}
-            onAddConnection={handleAddConnectionFromModal}
-            restartConfirmationMessage={restartConfirmationMessage}
-            waitForCondition={waitForCondition}
-            isScreenMountedRef={isMountedRef}
-          />
-
-          {/* Appearance */}
-          <View style={settingsStyles.section}>
-            <Text style={settingsStyles.sectionTitle}>Appearance</Text>
-            <View style={[settingsStyles.card, styles.audioCard]}>
-              <View style={styles.audioRow}>
-                <View style={styles.audioRowContent}>
-                  <Text style={styles.audioRowTitle}>Theme</Text>
-                </View>
-                <SegmentedControl
-                  size="sm"
-                  hideLabels={Platform.OS !== "web"}
-                  value={settings.theme}
-                  onValueChange={handleThemeChange}
-                  options={[
-                    {
-                      value: "light",
-                      label: "Light",
-                      icon: ({ color, size }) => <Sun size={size} color={color} />,
-                    },
-                    {
-                      value: "dark",
-                      label: "Dark",
-                      icon: ({ color, size }) => <Moon size={size} color={color} />,
-                    },
-                    {
-                      value: "auto",
-                      label: "System",
-                      icon: ({ color, size }) => <Monitor size={size} color={color} />,
-                    },
-                  ]}
-                />
-              </View>
-            </View>
-          </View>
-
-          {isDesktop ? <DesktopPermissionsSection /> : null}
-          {isDesktop ? (
-            <LocalDaemonSection appVersion={appVersion} showLifecycleControls={isLocalDaemon} />
-          ) : null}
-
-          <View style={settingsStyles.section}>
-            <Text style={settingsStyles.sectionTitle}>Diagnostics</Text>
-            <View style={[settingsStyles.card, styles.audioCard]}>
-              <View style={styles.audioRow}>
-                <View style={styles.audioRowContent}>
-                  <Text style={styles.audioRowTitle}>Test audio</Text>
-                  {playbackTestResult ? (
-                    <Text style={styles.aboutHintText}>{playbackTestResult}</Text>
-                  ) : null}
-                </View>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onPress={() => void handlePlaybackTest()}
-                  disabled={!voiceAudioEngine || isPlaybackTestRunning}
-                >
-                  {isPlaybackTestRunning ? "Playing..." : "Play test"}
-                </Button>
-              </View>
-            </View>
-          </View>
-
-          {/* About */}
-          <View style={settingsStyles.section}>
-            <Text style={settingsStyles.sectionTitle}>About</Text>
-            <View style={[settingsStyles.card, styles.audioCard]}>
-              <View style={styles.audioRow}>
-                <View style={styles.audioRowContent}>
-                  <Text style={styles.audioRowTitle}>Version</Text>
-                </View>
-                <Text style={styles.aboutValue}>{appVersionText}</Text>
-              </View>
-              {isDesktop ? <DesktopAppUpdateRow /> : null}
-            </View>
-          </View>
-        </View>
-      </ScrollView>
+      {isMobile ? (
+        <SettingsMobileLayout sections={sections} sectionContentProps={sectionContentProps} />
+      ) : (
+        <SettingsDesktopLayout sections={sections} sectionContentProps={sectionContentProps} />
+      )}
     </View>
   );
 }
+
+// ---------------------------------------------------------------------------
+// HostDetailModal (unchanged)
+// ---------------------------------------------------------------------------
 
 interface HostDetailModalProps {
   visible: boolean;
@@ -1354,6 +1408,10 @@ function HostDetailModal({
   );
 }
 
+// ---------------------------------------------------------------------------
+// ConnectionRow (unchanged)
+// ---------------------------------------------------------------------------
+
 function ConnectionRow({
   connection,
   latencyMs,
@@ -1407,6 +1465,10 @@ function ConnectionRow({
     </View>
   );
 }
+
+// ---------------------------------------------------------------------------
+// DaemonCard (unchanged)
+// ---------------------------------------------------------------------------
 
 interface DaemonCardProps {
   daemon: HostProfile;
@@ -1517,3 +1579,328 @@ function DaemonCard({ daemon, onOpenSettings }: DaemonCardProps) {
     </View>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+
+const styles = StyleSheet.create((theme) => ({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: theme.colors.surface0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.lg,
+  },
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.surface0,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  content: {
+    padding: theme.spacing[4],
+    paddingTop: theme.spacing[6],
+    width: "100%",
+    maxWidth: 720,
+    alignSelf: "center",
+  },
+  label: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+    marginBottom: theme.spacing[2],
+  },
+  input: {
+    backgroundColor: theme.colors.surface0,
+    color: theme.colors.foreground,
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    fontSize: theme.fontSize.base,
+  },
+  // Host card styles
+  hostCard: {
+    marginBottom: theme.spacing[3],
+    overflow: "hidden",
+  },
+  hostCardContent: {
+    padding: theme.spacing[4],
+    gap: theme.spacing[2],
+  },
+  hostHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
+  hostHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flexShrink: 0,
+  },
+  hostLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+    flex: 1,
+    flexShrink: 1,
+  },
+  hostError: {
+    color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.xs,
+  },
+  // Status pill
+  statusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.full,
+  },
+  statusPillMobile: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: theme.borderRadius.full,
+  },
+  statusText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+  },
+  connectionPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface3,
+    maxWidth: 170,
+  },
+  connectionPillMobile: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: theme.borderRadius.full,
+  },
+  connectionText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foregroundMuted,
+    flexShrink: 1,
+  },
+  versionPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface3,
+    maxWidth: 200,
+  },
+  hostSettingsButton: {
+    width: 28,
+    height: 28,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    borderRadius: theme.borderRadius.md,
+    gap: 0,
+    marginLeft: theme.spacing[2],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  advancedTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: "transparent",
+  },
+  advancedTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  disabled: {
+    opacity: theme.opacity[50],
+  },
+  testResultText: {
+    fontSize: theme.fontSize.xs,
+  },
+  // Add host button
+  addButton: {
+    borderStyle: "dashed",
+  },
+  addButtonText: {
+    color: theme.colors.foregroundMuted,
+  },
+  // Add/Edit form
+  formCard: {
+    padding: theme.spacing[4],
+    marginBottom: theme.spacing[3],
+    gap: theme.spacing[4],
+  },
+  formTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+  },
+  formField: {
+    gap: theme.spacing[2],
+  },
+  formActionsRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+  },
+  formButton: {
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  formButtonPrimary: {
+    backgroundColor: theme.colors.palette.blue[500],
+    borderColor: theme.colors.palette.blue[500],
+  },
+  formButtonText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+  },
+  formButtonPrimaryText: {
+    color: theme.colors.palette.white,
+  },
+  // Audio settings card
+  audioCard: {
+    overflow: "hidden",
+  },
+  audioRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+  },
+  audioRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  audioRowContent: {
+    flex: 1,
+    marginRight: theme.spacing[3],
+  },
+  audioRowTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  aboutValue: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+  },
+  aboutHintText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    marginTop: 2,
+  },
+  aboutErrorText: {
+    color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.xs,
+    marginTop: theme.spacing[1],
+  },
+  aboutUpdateActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  // Empty state
+  emptyCard: {
+    padding: theme.spacing[4],
+    marginBottom: theme.spacing[3],
+  },
+  emptyText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
+  // Dev section
+  devCard: {
+    overflow: "hidden",
+  },
+  devButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+  },
+  devButtonBorder: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  devButtonContent: {
+    flex: 1,
+  },
+  devButtonTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  devButtonDescription: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    marginTop: 2,
+  },
+}));
+
+const desktopStyles = StyleSheet.create((theme) => ({
+  row: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  sidebar: {
+    width: 200,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[2],
+    gap: theme.spacing[1],
+  },
+  sidebarItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+  },
+  sidebarLabel: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    fontWeight: theme.fontWeight.normal,
+  },
+  contentPane: {
+    flex: 1,
+  },
+}));

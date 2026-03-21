@@ -24,6 +24,7 @@ import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyl
 import { MessagesSquare, Plus, Settings } from "lucide-react-native";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { router, usePathname } from "expo-router";
 import { usePanelStore } from "@/stores/panel-store";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
@@ -353,6 +354,7 @@ function MobileSidebar({
   closeToAgent,
   handleViewMoreNavigate,
 }: MobileSidebarProps) {
+  const newAgentKeys = useShortcutKeys("new-agent");
   const {
     translateX,
     backdropOpacity,
@@ -562,7 +564,7 @@ function MobileSidebar({
                   <TooltipContent side="top" align="center" offset={8}>
                     <View style={styles.tooltipRow}>
                       <Text style={styles.tooltipText}>Add project</Text>
-                      <Shortcut keys={["⌘", "⇧", "O"]} />
+                      {newAgentKeys && <Shortcut keys={newAgentKeys} />}
                     </View>
                   </TooltipContent>
                 </Tooltip>
@@ -626,6 +628,7 @@ function DesktopSidebar({
   isOpen,
   handleViewMore,
 }: DesktopSidebarProps) {
+  const newAgentKeys = useShortcutKeys("new-agent");
   const dragHandlers = useDesktopDragHandlers();
   const trafficLightPadding = useTrafficLightPadding();
   const hostStatusDotStyle = useMemo(

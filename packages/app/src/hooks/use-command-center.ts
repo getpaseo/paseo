@@ -13,6 +13,11 @@ import {
 } from "@/utils/command-center-focus-restore";
 import { buildHostSettingsRoute, parseServerIdFromPathname } from "@/utils/host-routes";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import { comboStringToShortcutKeys } from "@/keyboard/shortcut-string";
+import { getBindingIdForAction, getDefaultKeysForAction } from "@/keyboard/keyboard-shortcuts";
+import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
+import { getShortcutOs } from "@/utils/shortcut-platform";
+import { getIsDesktop } from "@/constants/layout";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { focusWithRetries } from "@/utils/web-focus";
 
@@ -48,7 +53,7 @@ type CommandCenterActionDefinition = {
   id: string;
   title: string;
   icon?: "plus" | "settings";
-  shortcutKeys?: ShortcutKey[];
+  actionId?: string;
   keywords: string[];
   routeKind: "settings" | "none";
 };
@@ -58,7 +63,7 @@ const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
     id: "new-agent",
     title: "Open project",
     icon: "plus",
-    shortcutKeys: ["mod", "shift", "O"],
+    actionId: "new-agent",
     keywords: ["open", "project", "folder", "workspace", "repo"],
     routeKind: "none",
   },
@@ -99,9 +104,25 @@ export type CommandCenterItem =
       agent: AggregatedAgent;
     };
 
+function resolveActionShortcutKeys(
+  actionId: string | undefined,
+  overrides: Record<string, string>,
+): ShortcutKey[] | undefined {
+  if (!actionId) return undefined;
+  const isMac = getShortcutOs() === "mac";
+  const isDesktop = getIsDesktop();
+  const platform = { isMac, isDesktop };
+  const bindingId = getBindingIdForAction(actionId, platform);
+  if (!bindingId) return undefined;
+  const override = overrides[bindingId];
+  if (override) return comboStringToShortcutKeys(override);
+  return getDefaultKeysForAction(actionId, platform) ?? undefined;
+}
+
 export function useCommandCenter() {
   const pathname = usePathname();
   const daemons = useHosts();
+  const { overrides } = useKeyboardShortcutOverrides();
   const open = useKeyboardShortcutsStore((s) => s.commandCenterOpen);
   const setOpen = useKeyboardShortcutsStore((s) => s.setCommandCenterOpen);
   const inputRef = useRef<TextInput>(null);
@@ -158,9 +179,9 @@ export function useCommandCenter() {
       title: action.title,
       icon: action.icon,
       route: action.routeKind === "settings" ? settingsRoute : undefined,
-      shortcutKeys: action.shortcutKeys,
+      shortcutKeys: resolveActionShortcutKeys(action.actionId, overrides),
     }));
-  }, [open, query, settingsRoute]);
+  }, [open, query, settingsRoute, overrides]);
 
   const items = useMemo(() => {
     if (!open) {

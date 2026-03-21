@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Platform } from "react-native";
 import { usePathname } from "expo-router";
 import { getIsDesktop } from "@/constants/layout";
@@ -17,10 +17,11 @@ import {
 } from "@/keyboard/actions";
 import { canToggleFileExplorerShortcut } from "@/keyboard/keyboard-shortcut-routing";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
-import { resolveKeyboardShortcut } from "@/keyboard/keyboard-shortcuts";
+import { resolveKeyboardShortcut, buildEffectiveBindings } from "@/keyboard/keyboard-shortcuts";
 import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
+import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -38,6 +39,8 @@ export function useKeyboardShortcuts({
   const pathname = usePathname();
   const hosts = useHosts();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
+  const { overrides } = useKeyboardShortcutOverrides();
+  const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
   const activeServerIdFromPath = parseServerIdFromPathname(pathname);
   const activeServerId =
     hosts.find((host) => host.serverId === activeServerIdFromPath)?.serverId ??
@@ -285,6 +288,7 @@ export function useKeyboardShortcuts({
             toggleFileExplorer,
           }),
         },
+        bindings,
       });
       if (!match) {
         return;
@@ -332,6 +336,7 @@ export function useKeyboardShortcuts({
       document.removeEventListener("visibilitychange", handleBlurOrHide);
     };
   }, [
+    bindings,
     enabled,
     isMobile,
     openProjectPickerAction,

@@ -28,6 +28,7 @@ import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { Autocomplete } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
 import {
@@ -118,6 +119,7 @@ export function AgentInputArea({
   const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
   const toast = useToast();
   const voice = useVoiceOptional();
+  const voiceToggleKeys = useShortcutKeys("voice-toggle");
   const isDictationReady =
     isConnected &&
     (agentDirectoryStatus === "ready" ||
@@ -623,7 +625,7 @@ export function AgentInputArea({
           <TooltipContent side="top" align="center" offset={8}>
             <View style={styles.tooltipRow}>
               <Text style={styles.tooltipText}>Voice mode</Text>
-              <Shortcut keys={["mod", "shift", "D"]} style={styles.tooltipShortcut} />
+              {voiceToggleKeys && <Shortcut keys={voiceToggleKeys} style={styles.tooltipShortcut} />}
             </View>
           </TooltipContent>
         </Tooltip>
