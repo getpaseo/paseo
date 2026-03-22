@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { existsSync, rmSync } from "node:fs";
+import type { AgentStreamEvent } from "../agent-sdk-types.js";
 
 import {
   __codexAppServerInternals,
@@ -96,5 +97,48 @@ describe("Codex app-server provider", () => {
       expect(item.detail.unifiedDiff).toContain("+after");
       expect(item.detail.newString).toBeUndefined();
     }
+  });
+
+  test("does not buffer terminal Codex events before turn_started", () => {
+    const terminalEvents: AgentStreamEvent[] = [
+      { type: "turn_completed", provider: "codex", usage: undefined },
+      { type: "turn_failed", provider: "codex", error: "boom" },
+      { type: "turn_canceled", provider: "codex", reason: "interrupted" },
+    ];
+
+    for (const event of terminalEvents) {
+      expect(__codexAppServerInternals.shouldBufferCodexEventUntilTurnStarted(event)).toBe(false);
+    }
+
+    expect(
+      __codexAppServerInternals.shouldBufferCodexEventUntilTurnStarted({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "stale chunk" },
+      }),
+    ).toBe(true);
+  });
+
+  test("only synthesizes completion from idle thread status while a run is active", () => {
+    expect(
+      __codexAppServerInternals.shouldSynthesizeTurnCompletionFromThreadStatus({
+        statusType: "idle",
+        hasActiveRun: true,
+      }),
+    ).toBe(true);
+
+    expect(
+      __codexAppServerInternals.shouldSynthesizeTurnCompletionFromThreadStatus({
+        statusType: "idle",
+        hasActiveRun: false,
+      }),
+    ).toBe(false);
+
+    expect(
+      __codexAppServerInternals.shouldSynthesizeTurnCompletionFromThreadStatus({
+        statusType: "running",
+        hasActiveRun: true,
+      }),
+    ).toBe(false);
   });
 });

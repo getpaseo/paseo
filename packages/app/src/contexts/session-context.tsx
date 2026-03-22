@@ -49,6 +49,11 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
+import {
+  shouldAutoReplayQueuedAgentMessage,
+  takeQueuedAgentMessageReplay,
+  type QueuedAgentReplaySource,
+} from "@/contexts/session-queued-message-replay";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -272,7 +277,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
   const sendAgentMessageRef = useRef<
-    ((agentId: string, message: string, images?: AttachmentMetadata[]) => Promise<void>) | null
+    ((
+      agentId: string,
+      message: string,
+      images?: AttachmentMetadata[],
+      messageId?: string,
+    ) => Promise<void>) | null
   >(null);
   const sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
@@ -349,7 +359,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   );
 
   const applyAuthoritativeAgentSnapshot = useCallback(
-    (agent: Agent) => {
+    (agent: Agent, options?: { source?: QueuedAgentReplaySource }) => {
       setAgents(serverId, (prev) => {
         const current = prev.get(agent.id);
         if (current && agent.updatedAt.getTime() < current.updatedAt.getTime()) {
@@ -423,17 +433,27 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       });
 
       const prevStatus = previousAgentStatusRef.current.get(agent.id);
-      if (prevStatus === "running" && agent.status !== "running") {
+      if (
+        shouldAutoReplayQueuedAgentMessage({
+          previousStatus: prevStatus,
+          nextStatus: agent.status,
+          source: options?.source ?? "live",
+        })
+      ) {
         const session = useSessionStore.getState().sessions[serverId];
-        const queue = session?.queuedMessages.get(agent.id);
-        if (queue && queue.length > 0) {
-          const [next, ...rest] = queue;
+        const replay = takeQueuedAgentMessageReplay(session?.queuedMessages.get(agent.id));
+        if (replay) {
           if (sendAgentMessageRef.current) {
-            void sendAgentMessageRef.current(agent.id, next.text, next.images);
+            void sendAgentMessageRef.current(
+              agent.id,
+              replay.text,
+              replay.images,
+              replay.messageId,
+            );
           }
           setQueuedMessages(serverId, (prev) => {
             const updated = new Map(prev);
-            updated.set(agent.id, rest);
+            updated.set(agent.id, replay.remainingQueue);
             return updated;
           });
         }
@@ -741,7 +761,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         }),
       };
 
-      applyAuthoritativeAgentSnapshot(agent);
+      applyAuthoritativeAgentSnapshot(agent, { source: "live" });
     },
     [
       applyAuthoritativeAgentSnapshot,
@@ -791,10 +811,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
       if (payload.agent) {
         const normalized = normalizeAgentSnapshot(payload.agent, serverId);
-        applyAuthoritativeAgentSnapshot({
-          ...normalized,
-          projectPlacement: session?.agents.get(agentId)?.projectPlacement ?? null,
-        });
+        applyAuthoritativeAgentSnapshot(
+          {
+            ...normalized,
+            projectPlacement: session?.agents.get(agentId)?.projectPlacement ?? null,
+          },
+          { source: "hydrate" },
+        );
       }
 
       // Call pure reducer
@@ -1488,11 +1511,16 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   ]);
 
   const sendAgentMessage = useCallback(
-    async (agentId: string, message: string, images?: AttachmentMetadata[]) => {
-      const messageId = generateMessageId();
+    async (
+      agentId: string,
+      message: string,
+      images?: AttachmentMetadata[],
+      messageId?: string,
+    ) => {
+      const resolvedMessageId = messageId ?? generateMessageId();
       const userMessage: StreamItem = {
         kind: "user_message",
-        id: messageId,
+        id: resolvedMessageId,
         text: message,
         timestamp: new Date(),
       };
@@ -1526,7 +1554,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
       void client
         .sendAgentMessage(agentId, message, {
-          messageId,
+          messageId: resolvedMessageId,
           ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
         })
         .catch((error) => {

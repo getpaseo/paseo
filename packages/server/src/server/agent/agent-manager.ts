@@ -247,6 +247,7 @@ type LiveEventStreamingSession = AgentSession & {
 
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 const LIVE_BACKLOG_TERMINAL_REPLAY_DELAY_MS = 300;
+const RECENT_USER_MESSAGE_REPLAY_WINDOW_MS = 15_000;
 const BUSY_STATUSES: AgentLifecycleStatus[] = ["initializing", "running"];
 const AgentIdSchema = z.string().uuid();
 
@@ -847,7 +848,6 @@ export class AgentManager {
     if (!agent || agent.internal) {
       return;
     }
-    this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
 
@@ -929,6 +929,66 @@ export class AgentManager {
     if (options?.emitState !== false) {
       this.emitState(agent);
     }
+  }
+
+  classifyRecordedUserMessage(
+    agentId: string,
+    text: string,
+    options?: { messageId?: string },
+  ): "new" | "duplicate" | "conflict" {
+    const normalizedMessageId = normalizeMessageId(options?.messageId);
+    if (!normalizedMessageId) {
+      return "new";
+    }
+
+    const agent = this.requireAgent(agentId);
+    for (const row of agent.timelineRows) {
+      if (row.item.type !== "user_message") {
+        continue;
+      }
+      const rowMessageId = normalizeMessageId(row.item.messageId);
+      if (rowMessageId !== normalizedMessageId) {
+        continue;
+      }
+      return row.item.text === text ? "duplicate" : "conflict";
+    }
+
+    if (this.isRecentUserMessageReplay(agent, text)) {
+      return "duplicate";
+    }
+
+    return "new";
+  }
+
+  private isRecentUserMessageReplay(agent: ManagedAgent, text: string): boolean {
+    let latestUserMessageRow: AgentTimelineRow | null = null;
+    for (let index = agent.timelineRows.length - 1; index >= 0; index -= 1) {
+      const row = agent.timelineRows[index];
+      if (!row || row.item.type !== "user_message") {
+        continue;
+      }
+      latestUserMessageRow = row;
+      break;
+    }
+
+    const latestUserMessageItem =
+      latestUserMessageRow?.item.type === "user_message" ? latestUserMessageRow.item : null;
+    if (!latestUserMessageRow || !latestUserMessageItem || latestUserMessageItem.text !== text) {
+      return false;
+    }
+
+    if (agent.lifecycle === "running" || agent.pendingRun || agent.pendingReplacement) {
+      return true;
+    }
+
+    const rowTimestampMs = Date.parse(latestUserMessageRow.timestamp);
+    const latestActivityMs = Math.max(
+      Number.isFinite(rowTimestampMs) ? rowTimestampMs : 0,
+      agent.updatedAt.getTime(),
+      agent.lastUserMessageAt?.getTime() ?? 0,
+    );
+
+    return Date.now() - latestActivityMs <= RECENT_USER_MESSAGE_REPLAY_WINDOW_MS;
   }
 
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {

@@ -1588,6 +1588,34 @@ describe("AgentManager", () => {
     }
   });
 
+  test("notifyAgentState does not mutate updatedAt", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000121",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    const before = manager.getAgent(snapshot.id);
+    expect(before).toBeDefined();
+
+    manager.notifyAgentState(snapshot.id);
+
+    const after = manager.getAgent(snapshot.id);
+    expect(after).toBeDefined();
+    expect(after!.updatedAt.getTime()).toBe(before!.updatedAt.getTime());
+  });
+
   test("recordUserMessage can skip emitting agent_state when run start will emit running", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");

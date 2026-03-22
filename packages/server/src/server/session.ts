@@ -2610,6 +2610,20 @@ export class Session {
       return;
     }
 
+    const replayDisposition = this.agentManager.classifyRecordedUserMessage(agentId, text, {
+      messageId,
+    });
+    if (replayDisposition === "duplicate") {
+      this.sessionLogger.info(
+        { agentId, messageId },
+        "Suppressing duplicate send replay for already-recorded user message",
+      );
+      return;
+    }
+    if (replayDisposition === "conflict") {
+      throw new Error(`Client messageId '${messageId}' was reused with different text`);
+    }
+
     try {
       this.agentManager.recordUserMessage(agentId, text, {
         messageId,
@@ -6625,6 +6639,38 @@ export class Session {
       await this.unarchiveAgentState(agentId);
 
       await this.ensureAgentLoaded(agentId);
+
+      const replayDisposition = this.agentManager.classifyRecordedUserMessage(agentId, msg.text, {
+        messageId: msg.messageId,
+      });
+      if (replayDisposition === "duplicate") {
+        this.sessionLogger.info(
+          { agentId, messageId: msg.messageId, requestId: msg.requestId },
+          "Suppressing duplicate send_agent_message_request replay",
+        );
+        this.emit({
+          type: "send_agent_message_response",
+          payload: {
+            requestId: msg.requestId,
+            agentId,
+            accepted: true,
+            error: null,
+          },
+        });
+        return;
+      }
+      if (replayDisposition === "conflict") {
+        this.emit({
+          type: "send_agent_message_response",
+          payload: {
+            requestId: msg.requestId,
+            agentId,
+            accepted: false,
+            error: `Client messageId '${msg.messageId}' was reused with different text`,
+          },
+        });
+        return;
+      }
 
       try {
         this.agentManager.recordUserMessage(agentId, msg.text, {
