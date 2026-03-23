@@ -420,6 +420,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontFamily: Fonts.mono,
     fontSize: 13,
+    userSelect: Platform.OS === "web" ? "text" : "auto",
   },
 }));
 
@@ -821,7 +822,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             <Text
               key={node.key}
               onPress={() => parsed && onInlinePathPress?.(parsed)}
-              selectable={false}
+              selectable={Platform.OS === "web" ? undefined : false}
               style={[assistantMessageStylesheet.pathChip, assistantMessageStylesheet.pathChipText]}
             >
               {content}

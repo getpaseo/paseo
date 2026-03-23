@@ -37,4 +37,36 @@ describe("createMarkdownStyles", () => {
       overflowWrap: "anywhere",
     });
   });
+
+  it("keeps assistant markdown text selectable on web", () => {
+    const styles = createMarkdownStyles(darkTheme);
+
+    expect(styles.body).toMatchObject({
+      userSelect: "text",
+    });
+    expect(styles.text).toMatchObject({
+      userSelect: "text",
+    });
+    expect(styles.heading1).toMatchObject({
+      userSelect: "text",
+    });
+    expect(styles.link).toMatchObject({
+      userSelect: "text",
+    });
+    expect(styles.code_inline).toMatchObject({
+      userSelect: "text",
+    });
+    expect(styles.code_block).toMatchObject({
+      userSelect: "text",
+    });
+    expect(styles.fence).toMatchObject({
+      userSelect: "text",
+    });
+    expect(styles.bullet_list_icon).toMatchObject({
+      userSelect: "text",
+    });
+    expect(styles.ordered_list_icon).toMatchObject({
+      userSelect: "text",
+    });
+  });
 });

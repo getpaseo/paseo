@@ -1,5 +1,8 @@
+import { Platform } from "react-native";
 import type { Theme } from "./theme";
 import { Fonts } from "@/constants/theme";
+
+const webSelectableTextStyle = Platform.OS === "web" ? { userSelect: "text" as const } : {};
 
 /**
  * Creates comprehensive markdown styles for react-native-markdown-display.
@@ -15,6 +18,7 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     body: {
+      ...webSelectableTextStyle,
       color: theme.colors.foreground,
       fontSize: theme.fontSize.base,
       lineHeight: 22,
@@ -24,6 +28,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     text: {
+      ...webSelectableTextStyle,
       color: theme.colors.foreground,
       flexShrink: 1,
       minWidth: 0,
@@ -47,6 +52,7 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     heading1: {
+      ...webSelectableTextStyle,
       fontSize: theme.fontSize["3xl"],
       fontWeight: theme.fontWeight.bold,
       color: theme.colors.foreground,
@@ -59,6 +65,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     heading2: {
+      ...webSelectableTextStyle,
       fontSize: theme.fontSize["2xl"],
       fontWeight: theme.fontWeight.bold,
       color: theme.colors.foreground,
@@ -71,6 +78,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     heading3: {
+      ...webSelectableTextStyle,
       fontSize: theme.fontSize.xl,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foreground,
@@ -80,6 +88,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     heading4: {
+      ...webSelectableTextStyle,
       fontSize: theme.fontSize.lg,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foreground,
@@ -89,6 +98,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     heading5: {
+      ...webSelectableTextStyle,
       fontSize: theme.fontSize.base,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foreground,
@@ -98,6 +108,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     heading6: {
+      ...webSelectableTextStyle,
       fontSize: theme.fontSize.base,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foregroundMuted,
@@ -113,19 +124,23 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     strong: {
+      ...webSelectableTextStyle,
       fontWeight: theme.fontWeight.medium,
     },
 
     em: {
+      ...webSelectableTextStyle,
       fontStyle: "italic" as const,
     },
 
     s: {
+      ...webSelectableTextStyle,
       textDecorationLine: "line-through" as const,
       color: theme.colors.foregroundMuted,
     },
 
     link: {
+      ...webSelectableTextStyle,
       color: theme.colors.accentBright,
       textDecorationLine: "none" as const,
       flexShrink: 1,
@@ -134,6 +149,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     blocklink: {
+      ...webSelectableTextStyle,
       color: theme.colors.accentBright,
       textDecorationLine: "none" as const,
       flexShrink: 1,
@@ -146,6 +162,7 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     code_inline: {
+      ...webSelectableTextStyle,
       backgroundColor: theme.colors.surface2,
       color: theme.colors.foreground,
       paddingHorizontal: theme.spacing[1],
@@ -157,6 +174,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     code_block: {
+      ...webSelectableTextStyle,
       backgroundColor: theme.colors.surface2,
       color: theme.colors.foreground,
       padding: theme.spacing[3],
@@ -167,6 +185,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     fence: {
+      ...webSelectableTextStyle,
       backgroundColor: theme.colors.surface2,
       color: theme.colors.foreground,
       padding: theme.spacing[3],
@@ -200,6 +219,7 @@ export function createMarkdownStyles(theme: Theme) {
     tbody: {},
 
     th: {
+      ...webSelectableTextStyle,
       padding: theme.spacing[2],
       borderBottomWidth: 1,
       borderRightWidth: 1,
@@ -218,6 +238,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     td: {
+      ...webSelectableTextStyle,
       padding: theme.spacing[2],
       borderRightWidth: 1,
       borderColor: theme.colors.border,
@@ -260,6 +281,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     bullet_list_icon: {
+      ...webSelectableTextStyle,
       color: theme.colors.foregroundMuted,
       marginRight: 4,
       fontSize: theme.fontSize.base,
@@ -267,6 +289,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     ordered_list_icon: {
+      ...webSelectableTextStyle,
       color: theme.colors.foregroundMuted,
       marginRight: 4,
       fontSize: theme.fontSize.base,
