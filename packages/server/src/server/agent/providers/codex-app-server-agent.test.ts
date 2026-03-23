@@ -97,4 +97,17 @@ describe("Codex app-server provider", () => {
       expect(item.detail.newString).toBeUndefined();
     }
   });
+
+  test("builds app-server env with the managed Paseo agent id", () => {
+    const env = __codexAppServerInternals.buildCodexAppServerEnv(
+      {
+        env: {
+          PASEO_AGENT_ID: "runtime-value",
+        },
+      },
+      "00000000-0000-4000-8000-000000000301",
+    );
+
+    expect(env.PASEO_AGENT_ID).toBe("00000000-0000-4000-8000-000000000301");
+  });
 });

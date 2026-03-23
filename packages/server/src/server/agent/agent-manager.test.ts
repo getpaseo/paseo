@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { getManagedAgentId } from "./session-config-internals.js";
 import type {
   AgentClient,
   AgentPersistenceHandle,
@@ -210,6 +211,38 @@ describe("AgentManager", () => {
     expect(snapshot.model).toBeUndefined();
   });
 
+  test("createAgent stamps the managed agent id onto provider session config", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class CaptureClient extends TestAgentClient {
+      lastConfig: AgentSessionConfig | null = null;
+
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        this.lastConfig = config;
+        return new TestAgentSession(config);
+      }
+    }
+
+    const client = new CaptureClient();
+    const manager = new AgentManager({
+      clients: {
+        codex: client,
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000103",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    expect(getManagedAgentId(client.lastConfig)).toBe(snapshot.id);
+  });
+
   test("createAgent fails when cwd does not exist", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
@@ -321,6 +354,7 @@ describe("AgentManager", () => {
         },
       },
     });
+    expect(getManagedAgentId(client.lastResumeOverrides)).toBe(resumed.id);
   });
 
   test("reloadAgentSession preserves timeline and does not force history replay", async () => {

@@ -44,6 +44,7 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
+import { attachManagedAgentId, getManagedAgentId } from "../session-config-internals.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
@@ -2032,7 +2033,22 @@ export async function codexAppServerTurnInputFromPrompt(
   return output;
 }
 
+function buildCodexAppServerEnv(
+  runtimeSettings?: ProviderRuntimeSettings,
+  managedAgentId?: string,
+): Record<string, string | undefined> {
+  const env = applyProviderEnv(process.env, runtimeSettings);
+  if (!managedAgentId) {
+    return env;
+  }
+  return {
+    ...env,
+    PASEO_AGENT_ID: managedAgentId,
+  };
+}
+
 export const __codexAppServerInternals = {
+  buildCodexAppServerEnv,
   mapCodexPatchNotificationToToolCall,
 };
 
@@ -3380,7 +3396,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly runtimeSettings?: ProviderRuntimeSettings,
   ) {}
 
-  private spawnAppServer(): ChildProcessWithoutNullStreams {
+  private spawnAppServer(managedAgentId?: string): ChildProcessWithoutNullStreams {
     const launchPrefix = resolveCodexLaunchPrefix(this.runtimeSettings);
     this.logger.trace(
       {
@@ -3391,14 +3407,18 @@ export class CodexAppServerAgentClient implements AgentClient {
     return spawn(launchPrefix.command, [...launchPrefix.args, "app-server"], {
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
-      env: applyProviderEnv(process.env, this.runtimeSettings),
+      env: buildCodexAppServerEnv(this.runtimeSettings, managedAgentId),
     });
   }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-    const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
+    const managedAgentId = getManagedAgentId(config);
+    const sessionConfig: AgentSessionConfig = attachManagedAgentId(
+      { ...config, provider: CODEX_PROVIDER },
+      managedAgentId,
+    );
     const session = new CodexAppServerAgentSession(sessionConfig, null, this.logger, () =>
-      this.spawnAppServer(),
+      this.spawnAppServer(managedAgentId),
     );
     await session.connect();
     return session;
@@ -3408,15 +3428,19 @@ export class CodexAppServerAgentClient implements AgentClient {
     handle: { sessionId: string; metadata?: Record<string, unknown> },
     overrides?: Partial<AgentSessionConfig>,
   ): Promise<AgentSession> {
+    const managedAgentId = getManagedAgentId(overrides);
     const storedConfig = (handle.metadata ?? {}) as AgentSessionConfig;
-    const merged: AgentSessionConfig = {
-      ...storedConfig,
-      ...overrides,
-      provider: CODEX_PROVIDER,
-      cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
-    };
+    const merged: AgentSessionConfig = attachManagedAgentId(
+      {
+        ...storedConfig,
+        ...overrides,
+        provider: CODEX_PROVIDER,
+        cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
+      },
+      managedAgentId,
+    );
     const session = new CodexAppServerAgentSession(merged, handle, this.logger, () =>
-      this.spawnAppServer(),
+      this.spawnAppServer(managedAgentId),
     );
     await session.connect();
     return session;

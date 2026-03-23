@@ -70,6 +70,7 @@ import type {
 } from "../agent-sdk-types.js";
 import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
+import { attachManagedAgentId, getManagedAgentId } from "../session-config-internals.js";
 
 const fsPromises = promises;
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
@@ -324,6 +325,10 @@ function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   runtimeSettings?: ProviderRuntimeSettings,
 ): ClaudeOptions {
+  const managedAgentId =
+    typeof options.env?.PASEO_AGENT_ID === "string" && options.env.PASEO_AGENT_ID.trim().length > 0
+      ? options.env.PASEO_AGENT_ID
+      : undefined;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -335,7 +340,10 @@ function applyRuntimeSettingsToClaudeOptions(
         resolved.command === spawnOptions.command ? process.execPath : resolved.command;
       return spawn(command, resolved.args, {
         cwd: spawnOptions.cwd,
-        env: applyProviderEnv(spawnOptions.env, runtimeSettings),
+        env: {
+          ...applyProviderEnv(spawnOptions.env, runtimeSettings),
+          ...(managedAgentId ? { PASEO_AGENT_ID: managedAgentId } : {}),
+        },
         signal: spawnOptions.signal,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -1117,12 +1125,16 @@ export class ClaudeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
   ): Promise<AgentSession> {
+    const managedAgentId = getManagedAgentId(overrides);
     const metadata = coerceSessionMetadata(handle.metadata);
     const merged: Partial<AgentSessionConfig> = { ...metadata, ...overrides };
     if (!merged.cwd) {
       throw new Error("Claude resume requires the original working directory in metadata");
     }
-    const mergedConfig: AgentSessionConfig = { ...merged, provider: "claude", cwd: merged.cwd };
+    const mergedConfig: AgentSessionConfig = attachManagedAgentId(
+      { ...merged, provider: "claude", cwd: merged.cwd },
+      managedAgentId,
+    );
     const claudeConfig = this.assertConfig(mergedConfig);
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
@@ -1174,7 +1186,10 @@ export class ClaudeAgentClient implements AgentClient {
     if (config.provider !== "claude") {
       throw new Error(`ClaudeAgentClient received config for provider '${config.provider}'`);
     }
-    return { ...config, provider: "claude" };
+    return attachManagedAgentId(
+      { ...config, provider: "claude" },
+      getManagedAgentId(config),
+    ) as ClaudeAgentConfig;
   }
 }
 
@@ -1583,7 +1598,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       sessionId: this.claudeSessionId,
       nativeHandle: this.claudeSessionId,
-      metadata: this.config,
+      metadata: { ...this.config },
     };
     return this.persistence;
   }
@@ -1928,6 +1943,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private buildOptions(): ClaudeOptions {
+    const managedAgentId = getManagedAgentId(this.config);
     const configuredThinkingOptionId = this.config.thinkingOptionId;
     const thinkingOptionId =
       configuredThinkingOptionId && configuredThinkingOptionId !== "default"
@@ -1970,6 +1986,7 @@ class ClaudeAgentSession implements AgentSession {
         // Increase MCP timeouts for long-running tool calls (10 minutes)
         MCP_TIMEOUT: "600000",
         MCP_TOOL_TIMEOUT: "600000",
+        ...(managedAgentId ? { PASEO_AGENT_ID: managedAgentId } : {}),
       },
       // Required for provider-level /rewind support.
       enableFileCheckpointing: true,

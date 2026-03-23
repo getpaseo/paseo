@@ -31,6 +31,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { AGENT_PROVIDER_IDS } from "./provider-manifest.js";
+import { attachManagedAgentId } from "./session-config-internals.js";
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 
@@ -681,13 +682,18 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
-    const normalizedConfig = await this.normalizeConfig(mergedConfig);
+    const normalizedConfig = await this.normalizeConfig(mergedConfig, {
+      agentId: resolvedAgentId,
+    });
     const resumeOverrides =
       normalizedConfig.model !== mergedConfig.model
         ? { ...overrides, model: normalizedConfig.model }
         : overrides;
     const client = this.requireClient(handle.provider);
-    const session = await client.resumeSession(handle, resumeOverrides);
+    const session = await client.resumeSession(
+      handle,
+      attachManagedAgentId({ ...(resumeOverrides ?? {}) }, resolvedAgentId),
+    );
     return this.registerSession(session, normalizedConfig, resolvedAgentId, options);
   }
 
@@ -719,7 +725,7 @@ export class AgentManager {
       ...overrides,
       provider,
     } as AgentSessionConfig;
-    const normalizedConfig = await this.normalizeConfig(refreshConfig);
+    const normalizedConfig = await this.normalizeConfig(refreshConfig, { agentId });
 
     const session = handle
       ? await client.resumeSession(handle, normalizedConfig)
@@ -2155,7 +2161,7 @@ export class AgentManager {
 
   private async normalizeConfig(
     config: AgentSessionConfig,
-    _options?: { labels?: Record<string, string>; agentId?: string },
+    options?: { labels?: Record<string, string>; agentId?: string },
   ): Promise<AgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
 
@@ -2188,7 +2194,7 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 && normalizedId !== "default" ? trimmed : undefined;
     }
 
-    return normalized;
+    return attachManagedAgentId(normalized, options?.agentId);
   }
 
   private requireClient(provider: AgentProvider): AgentClient {
