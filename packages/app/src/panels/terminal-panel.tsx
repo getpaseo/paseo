@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Terminal } from "lucide-react-native";
 import { View } from "react-native";
@@ -49,8 +50,16 @@ function useTerminalPanelDescriptor(
 
 function TerminalPanel() {
   const isFocused = useIsFocused();
-  const { serverId, workspaceId, target, isPaneFocused } = usePaneContext();
+  const { serverId, workspaceId, target, isPaneFocused, registerPaneFocus } = usePaneContext();
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
+
+  const focusCallbackRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return registerPaneFocus(() => {
+      focusCallbackRef.current?.();
+    });
+  }, [registerPaneFocus]);
 
   if (!isFocused) {
     return <View style={{ flex: 1 }} />;
@@ -62,6 +71,7 @@ function TerminalPanel() {
       cwd={workspaceId}
       terminalId={target.terminalId}
       isPaneFocused={isPaneFocused}
+      focusCallbackRef={focusCallbackRef}
     />
   );
 }

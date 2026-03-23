@@ -82,6 +82,8 @@ interface AgentInputAreaProps {
   onAttentionPromptSend?: () => void;
   /** Controlled status controls rendered in input area (draft flows). */
   statusControls?: DraftAgentStatusBarProps;
+  /** Ref that the input area populates with its focus function for pane focus management. */
+  focusCallbackRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
@@ -102,6 +104,7 @@ export function AgentInputArea({
   autoFocus = false,
   onAddImages,
   commandDraftConfig,
+  focusCallbackRef,
   onMessageSent,
   onComposerHeightChange,
   onAttentionInputFocus,
@@ -158,6 +161,18 @@ export function AgentInputArea({
   const keyboardHandlerIdRef = useRef(
     `message-input:${serverId}:${agentId}:${Math.random().toString(36).slice(2)}`,
   );
+
+  useEffect(() => {
+    if (!focusCallbackRef) return;
+    focusCallbackRef.current = () => {
+      messageInputRef.current?.focus();
+    };
+    return () => {
+      if (focusCallbackRef.current) {
+        focusCallbackRef.current = null;
+      }
+    };
+  }, [focusCallbackRef]);
 
   const autocomplete = useAgentAutocomplete({
     userInput,
