@@ -61,11 +61,15 @@ function buildSdkQueryMock() {
     }),
     interrupt: vi.fn(async () => undefined),
     return: vi.fn(async () => undefined),
+    close: vi.fn(() => undefined),
     setPermissionMode: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
     supportedCommands: vi.fn(async () => []),
     rewindFiles: vi.fn(async () => ({ canRewind: true })),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
   };
 }
 
@@ -74,11 +78,15 @@ function buildIdleSdkQueryMock() {
     next: vi.fn(async () => ({ done: true, value: undefined })),
     interrupt: vi.fn(async () => undefined),
     return: vi.fn(async () => undefined),
+    close: vi.fn(() => undefined),
     setPermissionMode: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
     supportedCommands: vi.fn(async () => []),
     rewindFiles: vi.fn(async () => ({ canRewind: true })),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
   };
 }
 

@@ -18,11 +18,13 @@ type QueryMock = {
   next: ReturnType<typeof vi.fn>;
   interrupt: ReturnType<typeof vi.fn>;
   return: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
   setPermissionMode: ReturnType<typeof vi.fn>;
   setModel: ReturnType<typeof vi.fn>;
   supportedModels: ReturnType<typeof vi.fn>;
   supportedCommands: ReturnType<typeof vi.fn>;
   rewindFiles: ReturnType<typeof vi.fn>;
+  [Symbol.asyncIterator]: () => AsyncIterator<Record<string, unknown>, void>;
 };
 
 function buildQueryMock(events: unknown[]): QueryMock {
@@ -38,11 +40,15 @@ function buildQueryMock(events: unknown[]): QueryMock {
     }),
     interrupt: vi.fn(async () => undefined),
     return: vi.fn(async () => undefined),
+    close: vi.fn(() => undefined),
     setPermissionMode: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
     supportedCommands: vi.fn(async () => []),
     rewindFiles: vi.fn(async () => ({ canRewind: true })),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
   };
 }
 

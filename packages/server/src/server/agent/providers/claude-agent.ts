@@ -1235,6 +1235,8 @@ class ClaudeAgentSession implements AgentSession {
   private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
   private pendingInterruptAbort = false;
+  private liveEventSubscriberCount = 0;
+  private liveHistoryPollTimer: NodeJS.Timeout | null = null;
   private userMessageIds: string[] = [];
   private recentStderr = "";
   private closed = false;
@@ -1466,9 +1468,18 @@ class ClaudeAgentSession implements AgentSession {
     if (this.claudeSessionId) {
       this.startQueryPump();
     }
+    this.liveEventSubscriberCount += 1;
+    this.startLiveHistoryPolling();
 
-    for await (const event of this.liveEventQueue) {
-      yield event;
+    try {
+      for await (const event of this.liveEventQueue) {
+        yield event;
+      }
+    } finally {
+      this.liveEventSubscriberCount = Math.max(0, this.liveEventSubscriberCount - 1);
+      if (this.liveEventSubscriberCount === 0) {
+        this.stopLiveHistoryPolling();
+      }
     }
   }
 
@@ -1624,6 +1635,7 @@ class ClaudeAgentSession implements AgentSession {
     this.liveEventQueue.end();
     this.activeTurnPromise = null;
     this.sidechainTracker.clear();
+    this.stopLiveHistoryPolling();
     this.input?.end();
     this.query?.close?.();
     await this.awaitWithTimeout(this.query?.interrupt?.(), "close query interrupt");
@@ -2310,7 +2322,8 @@ class ClaudeAgentSession implements AgentSession {
     const assistantishMessage =
       message.type === "assistant" ||
       message.type === "stream_event" ||
-      message.type === "tool_progress";
+      message.type === "tool_progress" ||
+      (message.type === "system" && message.subtype === "task_notification");
 
     if (!routeToForeground && assistantishMessage) {
       this.startAutonomousTurn();
@@ -2896,6 +2909,27 @@ class ClaudeAgentSession implements AgentSession {
     } catch (error) {
       // ignore history load failures
     }
+  }
+
+  private startLiveHistoryPolling(): void {
+    if (this.liveHistoryPollTimer || !this.claudeSessionId) {
+      return;
+    }
+    this.liveHistoryPollTimer = setInterval(() => {
+      if (!this.claudeSessionId || this.closed) {
+        this.stopLiveHistoryPolling();
+        return;
+      }
+      this.loadPersistedHistory(this.claudeSessionId, { dispatchLive: true });
+    }, 200);
+  }
+
+  private stopLiveHistoryPolling(): void {
+    if (!this.liveHistoryPollTimer) {
+      return;
+    }
+    clearInterval(this.liveHistoryPollTimer);
+    this.liveHistoryPollTimer = null;
   }
 
   private ingestPersistedHistoryChunk(chunk: string, options: { dispatchLive: boolean }): void {

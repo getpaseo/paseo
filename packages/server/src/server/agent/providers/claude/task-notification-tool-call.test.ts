@@ -47,6 +47,7 @@ describe("task-notification-tool-call", () => {
 
   it("maps system task notification to failed synthetic tool call", () => {
     const item = mapTaskNotificationSystemRecordToToolCall({
+      type: "system",
       subtype: "task_notification",
       uuid: "task-note-system-1",
       task_id: "bg-fail-1",
