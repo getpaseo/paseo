@@ -27,7 +27,6 @@ interface TerminalPaneProps {
   cwd: string;
   terminalId: string;
   isPaneFocused: boolean;
-  focusCallbackRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
@@ -87,7 +86,6 @@ export function TerminalPane({
   cwd,
   terminalId,
   isPaneFocused,
-  focusCallbackRef,
 }: TerminalPaneProps) {
   const isScreenFocused = useIsFocused();
   const isAppVisible = useAppVisible();
@@ -132,16 +130,6 @@ export function TerminalPane({
   const requestTerminalReflow = useCallback(() => {
     setResizeRequestToken((current) => current + 1);
   }, []);
-
-  useEffect(() => {
-    if (!focusCallbackRef) return;
-    focusCallbackRef.current = requestTerminalFocus;
-    return () => {
-      if (focusCallbackRef.current === requestTerminalFocus) {
-        focusCallbackRef.current = null;
-      }
-    };
-  }, [focusCallbackRef, requestTerminalFocus]);
 
   useEffect(() => {
     if (isMobile || !isScreenFocused || !isPaneFocused || !terminalId) {

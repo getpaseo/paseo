@@ -40,9 +40,7 @@ export function focusWithRetries({
     });
   };
 
-  requestAnimationFrame(() => {
-    requestAnimationFrame(tick);
-  });
+  tick();
 
   return () => {
     cancelled = true;

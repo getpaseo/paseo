@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Text, View } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -102,17 +102,8 @@ function useAgentPanelDescriptor(
 }
 
 function AgentPanel() {
-  const { serverId, target, isPaneFocused, openFileInWorkspace, registerPaneFocus } =
-    usePaneContext();
+  const { serverId, target, isPaneFocused, openFileInWorkspace } = usePaneContext();
   invariant(target.kind === "agent", "AgentPanel requires agent target");
-
-  const focusCallbackRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    return registerPaneFocus(() => {
-      focusCallbackRef.current?.();
-    });
-  }, [registerPaneFocus]);
 
   function openWorkspaceFile(input: { filePath: string }) {
     openFileInWorkspace(input.filePath);
@@ -126,7 +117,6 @@ function AgentPanel() {
       agentId={target.agentId}
       isPaneFocused={isPaneFocused}
       onOpenWorkspaceFile={handleOpenWorkspaceFile}
-      focusCallbackRef={focusCallbackRef}
     />
   );
 }
@@ -157,13 +147,11 @@ function AgentPanelContent({
   agentId,
   isPaneFocused,
   onOpenWorkspaceFile,
-  focusCallbackRef,
 }: {
   serverId: string;
   agentId: string;
   isPaneFocused: boolean;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
-  focusCallbackRef: MutableRefObject<(() => void) | null>;
 }) {
   const resolvedAgentId = agentId.trim() || undefined;
   const resolvedServerId = serverId.trim() || undefined;
@@ -206,7 +194,6 @@ function AgentPanelContent({
       isConnected={runtimeIsConnected}
       connectionStatus={connectionStatus}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
-      focusCallbackRef={focusCallbackRef}
     />
   );
 }
@@ -219,7 +206,6 @@ function AgentPanelBody({
   isConnected,
   connectionStatus,
   onOpenWorkspaceFile,
-  focusCallbackRef,
 }: {
   serverId: string;
   agentId?: string;
@@ -228,7 +214,6 @@ function AgentPanelBody({
   isConnected: boolean;
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
-  focusCallbackRef: MutableRefObject<(() => void) | null>;
 }) {
   const { theme } = useUnistyles();
   const panelToast = useToastHost();
@@ -832,7 +817,6 @@ function AgentPanelBody({
               onAttentionInputFocus={attentionController.clearOnInputFocus}
               onAttentionPromptSend={attentionController.clearOnPromptSend}
               onAddImages={handleAddImagesCallback}
-              focusCallbackRef={focusCallbackRef}
               onComposerHeightChange={(height) => {
                 logWebStickyBottom("screen_composer_height_change", {
                   agentId,

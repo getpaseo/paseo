@@ -17,8 +17,15 @@ function useDraftPanelDescriptor() {
 }
 
 function DraftPanel() {
-  const { serverId, workspaceId, tabId, target, openFileInWorkspace, retargetCurrentTab } =
-    usePaneContext();
+  const {
+    serverId,
+    workspaceId,
+    tabId,
+    target,
+    isPaneFocused,
+    openFileInWorkspace,
+    retargetCurrentTab,
+  } = usePaneContext();
   invariant(target.kind === "draft", "DraftPanel requires draft target");
 
   return (
@@ -27,6 +34,7 @@ function DraftPanel() {
       workspaceId={workspaceId}
       tabId={tabId}
       draftId={target.draftId}
+      isPaneFocused={isPaneFocused}
       onOpenWorkspaceFile={({ filePath }) => {
         openFileInWorkspace(filePath);
       }}

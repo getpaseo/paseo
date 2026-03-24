@@ -52,7 +52,6 @@ import { useSessionStore } from "@/stores/session-store";
 import {
   buildWorkspaceTabPersistenceKey,
   collectAllTabs,
-  findPaneById,
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
@@ -106,7 +105,6 @@ import {
   classifyBulkClosableTabs,
 } from "@/screens/workspace/workspace-bulk-close";
 import { findAdjacentPane } from "@/utils/split-navigation";
-import { usePaneFocusRegistry } from "@/hooks/use-pane-focus-registry";
 
 const TERMINALS_QUERY_STALE_TIME = 5_000;
 const NEW_TAB_AGENT_OPTION_ID = "__new_tab_agent__";
@@ -808,7 +806,6 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   const splitWorkspacePaneEmpty = useWorkspaceLayoutStore((state) => state.splitPaneEmpty);
   const moveWorkspaceTabToPane = useWorkspaceLayoutStore((state) => state.moveTabToPane);
   const focusWorkspacePane = useWorkspaceLayoutStore((state) => state.focusPane);
-  const paneFocusRegistry = usePaneFocusRegistry();
   const paneFocusSuppressedRef = useRef(false);
   const resizeWorkspaceSplit = useWorkspaceLayoutStore((state) => state.resizeSplit);
   const reorderWorkspaceTabsInPane = useWorkspaceLayoutStore((state) => state.reorderTabsInPane);
@@ -1605,11 +1602,6 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
           const adjacentPaneId = findAdjacentPane(workspaceLayout.root, focusedPane.id, direction);
           if (adjacentPaneId) {
             focusWorkspacePane(persistenceKey, adjacentPaneId);
-            const adjacentPane = findPaneById(workspaceLayout.root, adjacentPaneId);
-            const activeTabId = adjacentPane?.focusedTabId ?? adjacentPane?.tabIds[0] ?? null;
-            if (activeTabId) {
-              paneFocusRegistry.focusTab(activeTabId);
-            }
           }
         }
         return true;
@@ -1659,7 +1651,6 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       focusWorkspacePane,
       handleCreateDraftSplit,
       moveWorkspaceTabToPane,
-      paneFocusRegistry,
       persistenceKey,
       focusedPaneTabState.activeTabId,
       focusedPaneTabState.pane,
@@ -1749,7 +1740,6 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
           }
           handleOpenFileFromChat({ filePath });
         },
-        registerPaneFocus: paneFocusRegistry.register,
       }),
     [
       handleCloseTabById,
@@ -1759,7 +1749,6 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       normalizedServerId,
       normalizedWorkspaceId,
       openWorkspaceTab,
-      paneFocusRegistry.register,
       persistenceKey,
       retargetWorkspaceTab,
     ],

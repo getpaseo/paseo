@@ -20,7 +20,6 @@ export interface BuildWorkspacePaneContentModelInput {
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onOpenWorkspaceFile: (filePath: string) => void;
-  registerPaneFocus: (tabId: string, callback: () => void) => () => void;
 }
 
 export function buildWorkspacePaneContentModel({
@@ -32,7 +31,6 @@ export function buildWorkspacePaneContentModel({
   onCloseCurrentTab,
   onRetargetCurrentTab,
   onOpenWorkspaceFile,
-  registerPaneFocus,
 }: BuildWorkspacePaneContentModelInput): WorkspacePaneContentModel {
   ensurePanelsRegistered();
   const registration = getPanelRegistration(tab.kind);
@@ -50,7 +48,6 @@ export function buildWorkspacePaneContentModel({
       closeCurrentTab: onCloseCurrentTab,
       retargetCurrentTab: onRetargetCurrentTab,
       openFileInWorkspace: onOpenWorkspaceFile,
-      registerPaneFocus: (callback: () => void) => registerPaneFocus(tab.tabId, callback),
     },
   };
 }

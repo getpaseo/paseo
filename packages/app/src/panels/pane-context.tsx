@@ -12,7 +12,6 @@ export interface PaneContextValue {
   closeCurrentTab(): void;
   retargetCurrentTab(target: WorkspaceTabTarget): void;
   openFileInWorkspace(filePath: string): void;
-  registerPaneFocus(callback: () => void): () => void;
 }
 
 const PaneContext = createContext<PaneContextValue | null>(null);

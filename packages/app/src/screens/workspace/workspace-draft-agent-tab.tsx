@@ -12,6 +12,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { Agent } from "@/stores/session-store";
 import { encodeImages } from "@/utils/encode-images";
+import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import type {
   AgentCapabilityFlags,
   AgentSessionConfig,
@@ -33,6 +34,7 @@ type WorkspaceDraftAgentTabProps = {
   workspaceId: string;
   tabId: string;
   draftId: string;
+  isPaneFocused: boolean;
   onCreated: (snapshot: AgentSnapshotPayload) => void;
   onOpenWorkspaceFile: (input: { filePath: string }) => void;
 };
@@ -42,6 +44,7 @@ export function WorkspaceDraftAgentTab({
   workspaceId,
   tabId,
   draftId,
+  isPaneFocused,
   onCreated,
   onOpenWorkspaceFile,
 }: WorkspaceDraftAgentTabProps) {
@@ -251,7 +254,7 @@ export function WorkspaceDraftAgentTab({
             images={draftInput.images}
             onChangeImages={draftInput.setImages}
             clearDraft={draftInput.clear}
-            autoFocus={!isSubmitting}
+            autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
             onAddImages={handleAddImagesCallback}
             commandDraftConfig={draftCommandConfig}
             statusControls={{
