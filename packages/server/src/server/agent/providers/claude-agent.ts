@@ -292,7 +292,7 @@ type ClaudeAgentSessionOptions = {
   defaults?: { agents?: Record<string, AgentDefinition> };
   runtimeSettings?: ProviderRuntimeSettings;
   handle?: AgentPersistenceHandle;
-  managedAgentId?: string;
+  launchEnv?: Record<string, string>;
   logger: Logger;
   queryFactory?: typeof query;
 };
@@ -325,11 +325,8 @@ function resolveClaudeSpawnCommand(
 function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   runtimeSettings?: ProviderRuntimeSettings,
+  launchEnv?: Record<string, string>,
 ): ClaudeOptions {
-  const managedAgentId =
-    typeof options.env?.PASEO_AGENT_ID === "string" && options.env.PASEO_AGENT_ID.trim().length > 0
-      ? options.env.PASEO_AGENT_ID
-      : undefined;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -343,7 +340,7 @@ function applyRuntimeSettingsToClaudeOptions(
         cwd: spawnOptions.cwd,
         env: {
           ...applyProviderEnv(spawnOptions.env, runtimeSettings),
-          ...(managedAgentId ? { PASEO_AGENT_ID: managedAgentId } : {}),
+          ...(launchEnv ?? {}),
         },
         signal: spawnOptions.signal,
         stdio: ["pipe", "pipe", "pipe"],
@@ -1120,7 +1117,7 @@ export class ClaudeAgentClient implements AgentClient {
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
-      managedAgentId: launchContext?.managedAgentId,
+      launchEnv: launchContext?.env,
       logger: this.logger,
       queryFactory: this.queryFactory,
     });
@@ -1142,7 +1139,7 @@ export class ClaudeAgentClient implements AgentClient {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
       handle,
-      managedAgentId: launchContext?.managedAgentId,
+      launchEnv: launchContext?.env,
       logger: this.logger,
       queryFactory: this.queryFactory,
     });
@@ -1198,7 +1195,7 @@ class ClaudeAgentSession implements AgentSession {
   readonly capabilities = CLAUDE_CAPABILITIES;
 
   private readonly config: ClaudeAgentConfig;
-  private readonly managedAgentId?: string;
+  private readonly launchEnv?: Record<string, string>;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly logger: Logger;
@@ -1244,7 +1241,7 @@ class ClaudeAgentSession implements AgentSession {
 
   constructor(config: ClaudeAgentConfig, options: ClaudeAgentSessionOptions) {
     this.config = config;
-    this.managedAgentId = options.managedAgentId;
+    this.launchEnv = options.launchEnv;
     this.defaults = options.defaults;
     this.runtimeSettings = options.runtimeSettings;
     this.logger = options.logger;
@@ -1987,7 +1984,7 @@ class ClaudeAgentSession implements AgentSession {
         // Increase MCP timeouts for long-running tool calls (10 minutes)
         MCP_TIMEOUT: "600000",
         MCP_TOOL_TIMEOUT: "600000",
-        ...(this.managedAgentId ? { PASEO_AGENT_ID: this.managedAgentId } : {}),
+        ...(this.launchEnv ?? {}),
       },
       // Required for provider-level /rewind support.
       enableFileCheckpointing: true,
@@ -2013,7 +2010,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
-    return applyRuntimeSettingsToClaudeOptions(options, this.runtimeSettings);
+    return applyRuntimeSettingsToClaudeOptions(options, this.runtimeSettings, this.launchEnv);
   }
 
   private normalizeMcpServers(

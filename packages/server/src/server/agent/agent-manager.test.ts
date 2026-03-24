@@ -215,7 +215,7 @@ describe("AgentManager", () => {
     expect(snapshot.model).toBeUndefined();
   });
 
-  test("createAgent passes the managed agent id through the provider launch context", async () => {
+  test("createAgent passes daemon launch env through the provider launch context", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
@@ -254,7 +254,9 @@ describe("AgentManager", () => {
       cwd: workdir,
     });
     expect(client.lastLaunchContext).toEqual({
-      managedAgentId: snapshot.id,
+      env: {
+        PASEO_AGENT_ID: snapshot.id,
+      },
     });
   });
 
@@ -278,7 +280,7 @@ describe("AgentManager", () => {
     ).rejects.toThrow("Working directory does not exist");
   });
 
-  test("resumeAgentFromPersistence keeps metadata config and applies systemPrompt/mcpServers overrides", async () => {
+  test("resumeAgentFromPersistence keeps metadata config, applies overrides, and passes launch env", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-resume-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
@@ -373,11 +375,13 @@ describe("AgentManager", () => {
       },
     });
     expect(client.lastResumeLaunchContext).toEqual({
-      managedAgentId: resumed.id,
+      env: {
+        PASEO_AGENT_ID: resumed.id,
+      },
     });
   });
 
-  test("reloadAgentSession passes the managed agent id through the provider launch context", async () => {
+  test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-context-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
@@ -433,7 +437,9 @@ describe("AgentManager", () => {
     });
 
     expect(client.lastCreateLaunchContext).toEqual({
-      managedAgentId: snapshot.id,
+      env: {
+        PASEO_AGENT_ID: snapshot.id,
+      },
     });
 
     await manager.reloadAgentSession(snapshot.id, {
@@ -441,7 +447,9 @@ describe("AgentManager", () => {
     });
 
     expect(client.lastResumeLaunchContext).toEqual({
-      managedAgentId: snapshot.id,
+      env: {
+        PASEO_AGENT_ID: snapshot.id,
+      },
     });
   });
 

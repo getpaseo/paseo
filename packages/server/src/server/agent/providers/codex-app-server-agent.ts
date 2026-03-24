@@ -2035,15 +2035,15 @@ export async function codexAppServerTurnInputFromPrompt(
 
 function buildCodexAppServerEnv(
   runtimeSettings?: ProviderRuntimeSettings,
-  managedAgentId?: string,
+  launchEnv?: Record<string, string>,
 ): Record<string, string | undefined> {
   const env = applyProviderEnv(process.env, runtimeSettings);
-  if (!managedAgentId) {
+  if (!launchEnv) {
     return env;
   }
   return {
     ...env,
-    PASEO_AGENT_ID: managedAgentId,
+    ...launchEnv,
   };
 }
 
@@ -3396,7 +3396,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly runtimeSettings?: ProviderRuntimeSettings,
   ) {}
 
-  private spawnAppServer(managedAgentId?: string): ChildProcessWithoutNullStreams {
+  private spawnAppServer(launchEnv?: Record<string, string>): ChildProcessWithoutNullStreams {
     const launchPrefix = resolveCodexLaunchPrefix(this.runtimeSettings);
     this.logger.trace(
       {
@@ -3407,7 +3407,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     return spawn(launchPrefix.command, [...launchPrefix.args, "app-server"], {
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
-      env: buildCodexAppServerEnv(this.runtimeSettings, managedAgentId),
+      env: buildCodexAppServerEnv(this.runtimeSettings, launchEnv),
     });
   }
 
@@ -3415,10 +3415,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const managedAgentId = launchContext?.managedAgentId;
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const session = new CodexAppServerAgentSession(sessionConfig, null, this.logger, () =>
-      this.spawnAppServer(managedAgentId),
+      this.spawnAppServer(launchContext?.env),
     );
     await session.connect();
     return session;
@@ -3429,7 +3428,6 @@ export class CodexAppServerAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const managedAgentId = launchContext?.managedAgentId;
     const storedConfig = (handle.metadata ?? {}) as AgentSessionConfig;
     const merged: AgentSessionConfig = {
       ...storedConfig,
@@ -3438,7 +3436,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
     };
     const session = new CodexAppServerAgentSession(merged, handle, this.logger, () =>
-      this.spawnAppServer(managedAgentId),
+      this.spawnAppServer(launchContext?.env),
     );
     await session.connect();
     return session;

@@ -2193,7 +2193,9 @@ export class AgentManager {
 
   private buildLaunchContext(agentId: string): AgentLaunchContext {
     return {
-      managedAgentId: agentId,
+      env: {
+        PASEO_AGENT_ID: agentId,
+      },
     };
   }
 

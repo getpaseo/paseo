@@ -99,19 +99,24 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("builds app-server env from the explicit managed-agent launch context", () => {
+  test("builds app-server env from launch-context env overrides", () => {
     const launchContext: AgentLaunchContext = {
-      managedAgentId: "00000000-0000-4000-8000-000000000301",
+      env: {
+        PASEO_AGENT_ID: "00000000-0000-4000-8000-000000000301",
+        PASEO_TEST_FLAG: "codex-launch-value",
+      },
     };
     const env = __codexAppServerInternals.buildCodexAppServerEnv(
       {
         env: {
           PASEO_AGENT_ID: "runtime-value",
+          PASEO_TEST_FLAG: "runtime-test-value",
         },
       },
-      launchContext.managedAgentId,
+      launchContext.env,
     );
 
-    expect(env.PASEO_AGENT_ID).toBe(launchContext.managedAgentId);
+    expect(env.PASEO_AGENT_ID).toBe(launchContext.env?.PASEO_AGENT_ID);
+    expect(env.PASEO_TEST_FLAG).toBe(launchContext.env?.PASEO_TEST_FLAG);
   });
 });

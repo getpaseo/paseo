@@ -383,7 +383,7 @@ export type AgentSessionConfig = {
 };
 
 export interface AgentLaunchContext {
-  managedAgentId?: string;
+  env?: Record<string, string>;
 }
 
 export interface AgentSession {
