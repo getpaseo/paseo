@@ -596,12 +596,8 @@ const x = 1;
         "  exit 0",
         "fi",
         'args="$*"',
-        'if [[ "$args" == *"state=open"* ]]; then',
-        '  echo "[]"',
-        "  exit 0",
-        "fi",
-        'if [[ "$args" == *"state=closed"* ]]; then',
-        '  echo \'[{"html_url":"https://github.com/getpaseo/paseo/pull/123","title":"Ship feature","state":"closed","merged_at":"2026-02-18T00:00:00Z","base":{"ref":"main"},"head":{"ref":"feature"}}]\'',
+        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
+        '  echo \'{"url":"https://github.com/getpaseo/paseo/pull/123","title":"Ship feature","state":"closed","baseRefName":"main","headRefName":"feature","mergedAt":"2026-02-18T00:00:00Z"}\'',
         "  exit 0",
         "fi",
         'echo "unexpected gh args: $args" >&2',
@@ -632,7 +628,7 @@ const x = 1;
     }
   });
 
-  it("does not treat closed-unmerged PRs as shipped status", async () => {
+  it("returns closed-unmerged PR status without marking it as merged", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
@@ -650,12 +646,8 @@ const x = 1;
         "  exit 0",
         "fi",
         'args="$*"',
-        'if [[ "$args" == *"state=open"* ]]; then',
-        '  echo "[]"',
-        "  exit 0",
-        "fi",
-        'if [[ "$args" == *"state=closed"* ]]; then',
-        '  echo \'[{"html_url":"https://github.com/getpaseo/paseo/pull/999","title":"Closed without merge","state":"closed","merged_at":null,"base":{"ref":"main"},"head":{"ref":"feature"}}]\'',
+        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
+        '  echo \'{"url":"https://github.com/getpaseo/paseo/pull/999","title":"Closed without merge","state":"closed","baseRefName":"main","headRefName":"feature","mergedAt":null}\'',
         "  exit 0",
         "fi",
         'echo "unexpected gh args: $args" >&2',
@@ -671,7 +663,12 @@ const x = 1;
     try {
       const status = await getPullRequestStatus(repoDir);
       expect(status.githubFeaturesEnabled).toBe(true);
-      expect(status.status).toBeNull();
+      expect(status.status).not.toBeNull();
+      expect(status.status?.url).toContain("/pull/999");
+      expect(status.status?.baseRefName).toBe("main");
+      expect(status.status?.headRefName).toBe("feature");
+      expect(status.status?.isMerged).toBe(false);
+      expect(status.status?.state).toBe("closed");
     } finally {
       if (originalPath === undefined) {
         delete process.env.PATH;

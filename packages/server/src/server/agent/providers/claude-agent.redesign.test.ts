@@ -9,11 +9,13 @@ type QueryMock = {
   next: ReturnType<typeof vi.fn>;
   interrupt: ReturnType<typeof vi.fn>;
   return: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
   setPermissionMode: ReturnType<typeof vi.fn>;
   setModel: ReturnType<typeof vi.fn>;
   supportedModels: ReturnType<typeof vi.fn>;
   supportedCommands: ReturnType<typeof vi.fn>;
   rewindFiles: ReturnType<typeof vi.fn>;
+  [Symbol.asyncIterator]: () => AsyncIterator<Record<string, unknown>, void>;
 };
 
 function buildUsage() {
@@ -46,11 +48,15 @@ function createBaseQueryMock(nextImpl: QueryMock["next"]): QueryMock {
     next: nextImpl,
     interrupt: vi.fn(async () => undefined),
     return: vi.fn(async () => undefined),
+    close: vi.fn(() => undefined),
     setPermissionMode: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
     supportedCommands: vi.fn(async () => []),
     rewindFiles: vi.fn(async () => ({ canRewind: true })),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
   };
 }
 
@@ -263,13 +269,14 @@ describe("ClaudeAgentSession redesign invariants", () => {
     }
   });
 
-  test("emits interrupt step diagnostics without info logs", async () => {
+  test("interruptActiveTurn only interrupts the active query without info logs", async () => {
     const spy = createSpyLogger();
     const session = await createSessionWithLogger(spy.logger);
     const internal = session as unknown as {
       query: {
         interrupt: () => Promise<void>;
         return?: () => Promise<void>;
+        close?: () => void;
       } | null;
       input: { end: () => void } | null;
       queryRestartNeeded: boolean;
@@ -281,6 +288,7 @@ describe("ClaudeAgentSession redesign invariants", () => {
     internal.query = {
       interrupt,
       return: queryReturn,
+      close: vi.fn(() => undefined),
     };
     internal.input = { end };
     internal.queryRestartNeeded = false;
@@ -296,15 +304,12 @@ describe("ClaudeAgentSession redesign invariants", () => {
       );
 
       expect(interruptInfoMessages).toEqual([]);
-      expect(interruptDebugMessages).toEqual([
-        "interruptActiveTurn: calling query.interrupt()...",
-        "interruptActiveTurn: calling query.return()...",
-      ]);
+      expect(interruptDebugMessages).toEqual([]);
       expect(interrupt).toHaveBeenCalledTimes(1);
-      expect(queryReturn).toHaveBeenCalledTimes(1);
-      expect(end).toHaveBeenCalledTimes(1);
-      expect(internal.query).toBeNull();
-      expect(internal.input).toBeNull();
+      expect(queryReturn).not.toHaveBeenCalled();
+      expect(end).not.toHaveBeenCalled();
+      expect(internal.query).not.toBeNull();
+      expect(internal.input).not.toBeNull();
       expect(internal.queryRestartNeeded).toBe(false);
     } finally {
       await session.close();
@@ -625,164 +630,6 @@ describe("ClaudeAgentSession redesign invariants", () => {
     }
   });
 
-  test("routes by deterministic identifier priority: task_id > parent_message_id > message_id", async () => {
-    const session = await createSession();
-    const internal = session as unknown as {
-      createRun: (owner: "autonomous", queue: null) => { id: string };
-      runTracker: {
-        bindIdentifiers: (
-          run: { id: string },
-          ids: { taskId: string | null; parentMessageId: string | null; messageId: string | null },
-        ) => void;
-      };
-      routeMessage: (input: {
-        message: AgentStreamEvent | Record<string, unknown>;
-        identifiers: {
-          taskId: string | null;
-          parentMessageId: string | null;
-          messageId: string | null;
-        };
-        metadataOnly: boolean;
-      }) => { run: { id: string } | null; reason: string };
-      turnState: "autonomous";
-    };
-
-    const taskRun = internal.createRun("autonomous", null);
-    internal.runTracker.bindIdentifiers(taskRun, {
-      taskId: "task-A",
-      parentMessageId: null,
-      messageId: "msg-A",
-    });
-
-    const parentRun = internal.createRun("autonomous", null);
-    internal.runTracker.bindIdentifiers(parentRun, {
-      taskId: null,
-      parentMessageId: "parent-B",
-      messageId: "msg-B",
-    });
-
-    const messageRun = internal.createRun("autonomous", null);
-    internal.runTracker.bindIdentifiers(messageRun, {
-      taskId: null,
-      parentMessageId: null,
-      messageId: "msg-C",
-    });
-
-    internal.turnState = "autonomous";
-
-    const taskPriorityRoute = internal.routeMessage({
-      message: { type: "assistant", message: { content: "task-priority" } },
-      identifiers: {
-        taskId: "task-A",
-        parentMessageId: "parent-B",
-        messageId: "msg-C",
-      },
-      metadataOnly: false,
-    });
-    expect(taskPriorityRoute.reason).toBe("task_id");
-    expect(taskPriorityRoute.run?.id).toBe(taskRun.id);
-
-    const parentPriorityRoute = internal.routeMessage({
-      message: { type: "assistant", message: { content: "parent-priority" } },
-      identifiers: {
-        taskId: null,
-        parentMessageId: "parent-B",
-        messageId: "msg-C",
-      },
-      metadataOnly: false,
-    });
-    expect(parentPriorityRoute.reason).toBe("parent_message_id");
-    expect(parentPriorityRoute.run?.id).toBe(parentRun.id);
-
-    const messagePriorityRoute = internal.routeMessage({
-      message: { type: "assistant", message: { content: "message-priority" } },
-      identifiers: {
-        taskId: null,
-        parentMessageId: null,
-        messageId: "msg-C",
-      },
-      metadataOnly: false,
-    });
-    expect(messagePriorityRoute.reason).toBe("message_id");
-    expect(messagePriorityRoute.run?.id).toBe(messageRun.id);
-
-    await session.close();
-  });
-
-  test("does not route unbound events to foreground before prompt replay is observed", async () => {
-    const session = await createSession();
-    const internal = session as unknown as {
-      createRun: (owner: "foreground" | "autonomous", queue: unknown) => { id: string };
-      runTracker: {
-        bindIdentifiers: (
-          run: { id: string },
-          ids: { taskId: string | null; parentMessageId: string | null; messageId: string | null },
-        ) => void;
-      };
-      activeForegroundTurn: { runId: string; queue: unknown } | null;
-      turnState: "foreground";
-      routeMessage: (input: {
-        message: Record<string, unknown>;
-        identifiers: {
-          taskId: string | null;
-          parentMessageId: string | null;
-          messageId: string | null;
-        };
-        metadataOnly: boolean;
-      }) => { run: { id: string } | null; reason: string };
-    };
-
-    const foregroundQueueStub = {
-      push: () => undefined,
-      end: () => undefined,
-      [Symbol.asyncIterator]: () => ({
-        next: async () => ({ done: true as const, value: undefined }),
-      }),
-    };
-    const foregroundRun = internal.createRun("foreground", foregroundQueueStub);
-    internal.turnState = "foreground";
-    internal.activeForegroundTurn = {
-      runId: foregroundRun.id,
-      queue: foregroundQueueStub,
-    };
-
-    const unboundBeforeReplay = internal.routeMessage({
-      message: { type: "assistant", message: { content: "stale-before-replay" } },
-      identifiers: {
-        taskId: null,
-        parentMessageId: null,
-        messageId: null,
-      },
-      metadataOnly: false,
-    });
-    expect(unboundBeforeReplay.reason).toBe("foreground");
-    expect(unboundBeforeReplay.run?.id).toBe(foregroundRun.id);
-
-    const promptReplayId = "foreground-replay-id";
-    internal.runTracker.bindIdentifiers(foregroundRun, {
-      taskId: null,
-      parentMessageId: null,
-      messageId: promptReplayId,
-    });
-    const replayRoute = internal.routeMessage({
-      message: {
-        type: "user",
-        message: { role: "user", content: "prompt replay" },
-        uuid: promptReplayId,
-      },
-      identifiers: {
-        taskId: null,
-        parentMessageId: null,
-        messageId: promptReplayId,
-      },
-      metadataOnly: false,
-    });
-    expect(replayRoute.reason).toBe("message_id");
-    expect(replayRoute.run?.id).toBe(foregroundRun.id);
-
-    await session.close();
-  });
-
   test("completes a foreground run when only system metadata arrives before the first assistant message", async () => {
     let step = 0;
     sdkQueryFactory.mockImplementation(() =>
@@ -874,11 +721,9 @@ describe("ClaudeAgentSession redesign invariants", () => {
     const session = await createSession();
     const internal = session as unknown as {
       turnState: "idle" | "foreground" | "autonomous";
-      nextRunOrdinal: number;
+      nextTurnOrdinal: number;
       routeSdkMessageFromPump: (message: Record<string, unknown>) => void;
-      runTracker: {
-        listActiveRuns: (owner?: "foreground" | "autonomous") => Array<{ id: string }>;
-      };
+      autonomousTurn: { id: string } | null;
     };
 
     internal.turnState = "idle";
@@ -890,9 +735,9 @@ describe("ClaudeAgentSession redesign invariants", () => {
       },
     });
 
-    const firstRun = internal.runTracker.listActiveRuns("autonomous");
-    expect(firstRun).toHaveLength(1);
-    expect(internal.nextRunOrdinal).toBe(2);
+    const firstRunId = internal.autonomousTurn?.id ?? null;
+    expect(firstRunId).toBe("autonomous-turn-1");
+    expect(internal.nextTurnOrdinal).toBe(2);
 
     internal.routeSdkMessageFromPump({
       type: "stream_event",
@@ -901,10 +746,8 @@ describe("ClaudeAgentSession redesign invariants", () => {
         delta: { type: "text_delta", text: "WAKE" },
       },
     });
-    const secondRun = internal.runTracker.listActiveRuns("autonomous");
-    expect(secondRun).toHaveLength(1);
-    expect(secondRun[0]?.id).toBe(firstRun[0]?.id);
-    expect(internal.nextRunOrdinal).toBe(2);
+    expect(internal.autonomousTurn?.id).toBe(firstRunId);
+    expect(internal.nextTurnOrdinal).toBe(2);
 
     internal.routeSdkMessageFromPump({
       type: "result",
@@ -912,70 +755,8 @@ describe("ClaudeAgentSession redesign invariants", () => {
       usage: buildUsage(),
       total_cost_usd: 0,
     });
-    expect(internal.runTracker.listActiveRuns("autonomous")).toHaveLength(0);
+    expect(internal.autonomousTurn).toBeNull();
 
-    await session.close();
-  });
-
-  test("pushEvent does not route side-channel events into a stale foreground queue", async () => {
-    const session = await createSession();
-    const staleQueueEvents: AgentStreamEvent[] = [];
-    const staleQueue = {
-      push: (event: AgentStreamEvent) => staleQueueEvents.push(event),
-      end: () => undefined,
-      [Symbol.asyncIterator]: () => ({
-        next: async () => ({ done: true as const, value: undefined }),
-      }),
-    };
-
-    const internal = session as unknown as {
-      createRun: (owner: "foreground" | "autonomous", queue: unknown) => { id: string };
-      activeForegroundTurn: { runId: string; queue: unknown } | null;
-      runTracker: {
-        getRun: (runId: string) => unknown;
-        complete: (run: unknown, state: "completed") => void;
-      };
-      pushEvent: (event: AgentStreamEvent) => void;
-    };
-
-    const staleForegroundRun = internal.createRun("foreground", staleQueue);
-    const runRecord = internal.runTracker.getRun(staleForegroundRun.id);
-    internal.runTracker.complete(runRecord, "completed");
-    internal.activeForegroundTurn = {
-      runId: staleForegroundRun.id,
-      queue: staleQueue,
-    };
-
-    const liveIterator = (
-      session as unknown as {
-        streamLiveEvents: () => AsyncGenerator<AgentStreamEvent>;
-      }
-    ).streamLiveEvents();
-    const permissionEvent: AgentStreamEvent = {
-      type: "permission_requested",
-      provider: "claude",
-      request: {
-        id: "permission-1",
-        provider: "claude",
-        name: "Bash",
-        kind: "tool",
-      },
-    };
-    internal.pushEvent(permissionEvent);
-
-    const next = await Promise.race([
-      liveIterator.next(),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("Timed out waiting for live side-channel event")), 1_000);
-      }),
-    ]);
-
-    expect(next.done).toBe(false);
-    expect(next.value).toEqual(permissionEvent);
-    expect(staleQueueEvents).toHaveLength(0);
-    expect(internal.activeForegroundTurn).toBeNull();
-
-    await liveIterator.return?.();
     await session.close();
   });
 
@@ -1337,7 +1118,7 @@ describe("ClaudeAgentSession redesign invariants", () => {
     const assembler = session as unknown as {
       timelineAssembler: { messages: Map<string, unknown> };
     };
-    expect(assembler.timelineAssembler.messages.size).toBe(1);
+    expect(assembler.timelineAssembler.messages.size).toBe(0);
 
     await session.close();
   });

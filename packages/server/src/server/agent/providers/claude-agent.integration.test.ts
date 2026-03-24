@@ -10,6 +10,8 @@ import { ClaudeAgentClient } from "./claude-agent.js";
 
 const logger = pino({ level: "silent" });
 const client = new ClaudeAgentClient({ logger });
+const hasClaudeCredentials =
+  !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
 
 function tmpCwd(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
@@ -142,11 +144,15 @@ async function cleanupSession(handle: { cwd: string; session: AgentSession }): P
 }
 
 describe("ClaudeAgentSession integration", () => {
+  const canRunClaudeIntegration = isCommandAvailable("claude") && hasClaudeCredentials;
+
   beforeAll(() => {
-    expect(isCommandAvailable("claude")).toBe(true);
+    if (canRunClaudeIntegration) {
+      expect(isCommandAvailable("claude")).toBe(true);
+    }
   });
 
-  test("streams a basic response turn end-to-end", async () => {
+  test.runIf(canRunClaudeIntegration)("streams a basic response turn end-to-end", async () => {
     const handle = await createSession({
       cwdPrefix: "claude-agent-basic-response-",
     });
@@ -177,7 +183,7 @@ describe("ClaudeAgentSession integration", () => {
     }
   }, 60_000);
 
-  test("runs a real Bash tool call and completes it", async () => {
+  test.runIf(canRunClaudeIntegration)("runs a real Bash tool call and completes it", async () => {
     const handle = await createSession({
       cwdPrefix: "claude-agent-basic-tool-",
     });
@@ -213,7 +219,9 @@ describe("ClaudeAgentSession integration", () => {
     }
   }, 60_000);
 
-  test("interrupts a running Bash turn and continues on the same query", async () => {
+  test.runIf(canRunClaudeIntegration)(
+    "interrupts a running Bash turn and continues on the same query",
+    async () => {
     const handle = await createSession({
       cwdPrefix: "claude-agent-interrupt-continue-",
     });
@@ -267,9 +275,13 @@ describe("ClaudeAgentSession integration", () => {
     } finally {
       await cleanupSession(handle);
     }
-  }, 60_000);
+    },
+    60_000,
+  );
 
-  test("creates an autonomous live turn when a background task completes", async () => {
+  test.runIf(canRunClaudeIntegration)(
+    "creates an autonomous live turn when a background task completes",
+    async () => {
     const handle = await createSession({
       cwdPrefix: "claude-agent-autonomous-",
     });
@@ -309,9 +321,11 @@ describe("ClaudeAgentSession integration", () => {
     } finally {
       await cleanupSession(handle);
     }
-  }, 60_000);
+    },
+    60_000,
+  );
 
-  test("surfaces permission requests and resumes after approval", async () => {
+  test.runIf(canRunClaudeIntegration)("surfaces permission requests and resumes after approval", async () => {
     const handle = await createSession({
       cwdPrefix: "claude-agent-permission-",
       modeId: "default",

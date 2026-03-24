@@ -8,6 +8,7 @@ type QueryMock = {
   next: ReturnType<typeof vi.fn>;
   interrupt: ReturnType<typeof vi.fn>;
   return: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
   setPermissionMode: ReturnType<typeof vi.fn>;
   setModel: ReturnType<typeof vi.fn>;
   supportedModels: ReturnType<typeof vi.fn>;
@@ -137,6 +138,7 @@ function createScriptedQuery(params: {
     return: vi.fn(async () => {
       output.end();
     }),
+    close: vi.fn(() => undefined),
     setPermissionMode: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
