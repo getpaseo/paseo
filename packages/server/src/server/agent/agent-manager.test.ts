@@ -7,9 +7,9 @@ import { randomUUID } from "node:crypto";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import { getManagedAgentId } from "./session-config-internals.js";
 import type {
   AgentClient,
+  AgentLaunchContext,
   AgentPersistenceHandle,
   AgentRunResult,
   AgentSession,
@@ -96,7 +96,11 @@ class TestAgentClient implements AgentClient {
     return new TestAgentSession(config);
   }
 
-  async resumeSession(config?: Partial<AgentSessionConfig>): Promise<AgentSession> {
+  async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+    _launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
     return new TestAgentSession({
       provider: "codex",
       cwd: config?.cwd ?? process.cwd(),
@@ -211,16 +215,21 @@ describe("AgentManager", () => {
     expect(snapshot.model).toBeUndefined();
   });
 
-  test("createAgent stamps the managed agent id onto provider session config", async () => {
+  test("createAgent passes the managed agent id through the provider launch context", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
 
     class CaptureClient extends TestAgentClient {
       lastConfig: AgentSessionConfig | null = null;
+      lastLaunchContext: AgentLaunchContext | undefined;
 
-      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      override async createSession(
+        config: AgentSessionConfig,
+        launchContext?: AgentLaunchContext,
+      ): Promise<AgentSession> {
         this.lastConfig = config;
+        this.lastLaunchContext = launchContext;
         return new TestAgentSession(config);
       }
     }
@@ -240,7 +249,13 @@ describe("AgentManager", () => {
       cwd: workdir,
     });
 
-    expect(getManagedAgentId(client.lastConfig)).toBe(snapshot.id);
+    expect(client.lastConfig).toEqual({
+      provider: "codex",
+      cwd: workdir,
+    });
+    expect(client.lastLaunchContext).toEqual({
+      managedAgentId: snapshot.id,
+    });
   });
 
   test("createAgent fails when cwd does not exist", async () => {
@@ -272,6 +287,7 @@ describe("AgentManager", () => {
       readonly provider = "codex" as const;
       readonly capabilities = TEST_CAPABILITIES;
       lastResumeOverrides: Partial<AgentSessionConfig> | undefined;
+      lastResumeLaunchContext: AgentLaunchContext | undefined;
 
       async isAvailable(): Promise<boolean> {
         return true;
@@ -284,8 +300,10 @@ describe("AgentManager", () => {
       async resumeSession(
         handle: AgentPersistenceHandle,
         overrides?: Partial<AgentSessionConfig>,
+        launchContext?: AgentLaunchContext,
       ): Promise<AgentSession> {
         this.lastResumeOverrides = overrides;
+        this.lastResumeLaunchContext = launchContext;
         const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
         const merged: AgentSessionConfig = {
           ...metadata,
@@ -354,7 +372,77 @@ describe("AgentManager", () => {
         },
       },
     });
-    expect(getManagedAgentId(client.lastResumeOverrides)).toBe(resumed.id);
+    expect(client.lastResumeLaunchContext).toEqual({
+      managedAgentId: resumed.id,
+    });
+  });
+
+  test("reloadAgentSession passes the managed agent id through the provider launch context", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-context-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class ReloadCaptureClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+      lastCreateLaunchContext: AgentLaunchContext | undefined;
+      lastResumeLaunchContext: AgentLaunchContext | undefined;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(
+        config: AgentSessionConfig,
+        launchContext?: AgentLaunchContext,
+      ): Promise<AgentSession> {
+        this.lastCreateLaunchContext = launchContext;
+        return new TestAgentSession(config);
+      }
+
+      async resumeSession(
+        handle: AgentPersistenceHandle,
+        overrides?: Partial<AgentSessionConfig>,
+        launchContext?: AgentLaunchContext,
+      ): Promise<AgentSession> {
+        this.lastResumeLaunchContext = launchContext;
+        const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+        const merged: AgentSessionConfig = {
+          ...metadata,
+          ...overrides,
+          provider: "codex",
+          cwd: overrides?.cwd ?? metadata.cwd ?? process.cwd(),
+        };
+        return new TestAgentSession(merged);
+      }
+    }
+
+    const client = new ReloadCaptureClient();
+    const manager = new AgentManager({
+      clients: {
+        codex: client,
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000108",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    expect(client.lastCreateLaunchContext).toEqual({
+      managedAgentId: snapshot.id,
+    });
+
+    await manager.reloadAgentSession(snapshot.id, {
+      systemPrompt: "reloaded prompt",
+    });
+
+    expect(client.lastResumeLaunchContext).toEqual({
+      managedAgentId: snapshot.id,
+    });
   });
 
   test("reloadAgentSession preserves timeline and does not force history replay", async () => {

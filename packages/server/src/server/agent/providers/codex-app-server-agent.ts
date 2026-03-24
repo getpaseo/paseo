@@ -1,6 +1,7 @@
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
   McpServerConfig,
@@ -44,7 +45,6 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
-import { attachManagedAgentId, getManagedAgentId } from "../session-config-internals.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
@@ -3411,12 +3411,12 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
   }
 
-  async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-    const managedAgentId = getManagedAgentId(config);
-    const sessionConfig: AgentSessionConfig = attachManagedAgentId(
-      { ...config, provider: CODEX_PROVIDER },
-      managedAgentId,
-    );
+  async createSession(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    const managedAgentId = launchContext?.managedAgentId;
+    const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const session = new CodexAppServerAgentSession(sessionConfig, null, this.logger, () =>
       this.spawnAppServer(managedAgentId),
     );
@@ -3427,18 +3427,16 @@ export class CodexAppServerAgentClient implements AgentClient {
   async resumeSession(
     handle: { sessionId: string; metadata?: Record<string, unknown> },
     overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const managedAgentId = getManagedAgentId(overrides);
+    const managedAgentId = launchContext?.managedAgentId;
     const storedConfig = (handle.metadata ?? {}) as AgentSessionConfig;
-    const merged: AgentSessionConfig = attachManagedAgentId(
-      {
-        ...storedConfig,
-        ...overrides,
-        provider: CODEX_PROVIDER,
-        cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
-      },
-      managedAgentId,
-    );
+    const merged: AgentSessionConfig = {
+      ...storedConfig,
+      ...overrides,
+      provider: CODEX_PROVIDER,
+      cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
+    };
     const session = new CodexAppServerAgentSession(merged, handle, this.logger, () =>
       this.spawnAppServer(managedAgentId),
     );

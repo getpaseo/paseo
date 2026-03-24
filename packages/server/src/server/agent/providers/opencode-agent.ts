@@ -8,6 +8,7 @@ import { z } from "zod";
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentLaunchContext,
   AgentMetadata,
   AgentMode,
   AgentModelDefinition,
@@ -409,7 +410,10 @@ export class OpenCodeAgentClient implements AgentClient {
     this.serverManager = OpenCodeServerManager.getInstance(this.logger, runtimeSettings);
   }
 
-  async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+  async createSession(
+    config: AgentSessionConfig,
+    _launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
     const { url } = await this.serverManager.ensureRunning();
     const client = createOpencodeClient({
@@ -442,6 +446,7 @@ export class OpenCodeAgentClient implements AgentClient {
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
+    _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const cwd = overrides?.cwd ?? (handle.metadata?.cwd as string);
     if (!cwd) {

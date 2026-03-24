@@ -6,6 +6,7 @@ import path from "node:path";
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
   AgentPersistenceHandle,
@@ -819,13 +820,17 @@ class FakeAgentClient implements AgentClient {
   readonly capabilities = TEST_CAPABILITIES;
   constructor(public readonly provider: string) {}
 
-  async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+  async createSession(
+    config: AgentSessionConfig,
+    _launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
     return new FakeAgentSession(this.provider, { ...config });
   }
 
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
+    _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const cfg: AgentSessionConfig = {
       provider: this.provider,

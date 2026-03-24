@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 
+import type { AgentLaunchContext } from "../agent-sdk-types.js";
 import {
   __codexAppServerInternals,
   codexAppServerTurnInputFromPrompt,
@@ -98,16 +99,19 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("builds app-server env with the managed Paseo agent id", () => {
+  test("builds app-server env from the explicit managed-agent launch context", () => {
+    const launchContext: AgentLaunchContext = {
+      managedAgentId: "00000000-0000-4000-8000-000000000301",
+    };
     const env = __codexAppServerInternals.buildCodexAppServerEnv(
       {
         env: {
           PASEO_AGENT_ID: "runtime-value",
         },
       },
-      "00000000-0000-4000-8000-000000000301",
+      launchContext.managedAgentId,
     );
 
-    expect(env.PASEO_AGENT_ID).toBe("00000000-0000-4000-8000-000000000301");
+    expect(env.PASEO_AGENT_ID).toBe(launchContext.managedAgentId);
   });
 });
