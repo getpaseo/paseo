@@ -7,6 +7,7 @@ import type { Logger } from "pino";
 import { AgentStatusSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
+import type { AgentSnapshotStore } from "./agent-snapshot-store.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
@@ -69,8 +70,11 @@ export type SerializableAgentConfig = Pick<
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
+export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
+  return STORED_AGENT_SCHEMA.parse(value);
+}
 
-export class AgentStorage {
+export class AgentStorage implements AgentSnapshotStore {
   private cache: Map<string, StoredAgentRecord> = new Map();
   private pathById: Map<string, string> = new Map();
   private pathsById: Map<string, Set<string>> = new Map();
@@ -300,7 +304,7 @@ export class AgentStorage {
     try {
       const content = await fs.readFile(filePath, "utf8");
       const parsed = JSON.parse(content);
-      return STORED_AGENT_SCHEMA.parse(parsed);
+      return parseStoredAgentRecord(parsed);
     } catch (error) {
       this.logger.error({ err: error, filePath }, "Skipping invalid agent record");
       return null;

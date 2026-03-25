@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Logger } from "pino";
 
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentStorage } from "./agent/agent-storage.js";
+import type { AgentSnapshotStore } from "./agent/agent-snapshot-store.js";
 import {
   buildProjectPlacementForCwd,
   deriveProjectKind,
@@ -49,7 +49,7 @@ function resolveAgentUpdatedAt(record: StoredAgentRecord): string {
 
 export async function bootstrapWorkspaceRegistries(options: {
   paseoHome: string;
-  agentStorage: AgentStorage;
+  agentStorage: Pick<AgentSnapshotStore, "list">;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   logger: Logger;

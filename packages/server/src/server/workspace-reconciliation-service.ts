@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 
 import type { ProjectPlacementPayload } from "./messages.js";
-import type { AgentStorage } from "./agent/agent-storage.js";
+import type { AgentSnapshotStore } from "./agent/agent-snapshot-store.js";
 import {
   detectStaleWorkspaces,
   deriveProjectKind,
@@ -26,7 +26,7 @@ type Awaitable<T> = T | Promise<T>;
 export type WorkspaceReconciliationServiceOptions = {
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
-  agentStorage: Pick<AgentStorage, "list">;
+  agentStorage: Pick<AgentSnapshotStore, "list">;
   buildProjectPlacement: (cwd: string) => Promise<ProjectPlacementPayload>;
   syncWorkspaceGitWatchTarget?: (
     cwd: string,
@@ -45,7 +45,7 @@ export type ReconcileWorkspaceRecordResult = {
 export class WorkspaceReconciliationService {
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
-  private readonly agentStorage: Pick<AgentStorage, "list">;
+  private readonly agentStorage: Pick<AgentSnapshotStore, "list">;
   private readonly buildProjectPlacement: (cwd: string) => Promise<ProjectPlacementPayload>;
   private readonly syncWorkspaceGitWatchTarget: (
     cwd: string,

@@ -84,12 +84,14 @@ import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { initializeSpeechRuntime } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
-import { AgentStorage } from "./agent/agent-storage.js";
+import type { AgentSnapshotStore } from "./agent/agent-snapshot-store.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { createAllClients, shutdownProviders } from "./agent/provider-registry.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
+import { DbAgentSnapshotStore } from "./db/db-agent-snapshot-store.js";
 import { DbProjectRegistry } from "./db/db-project-registry.js";
 import { DbWorkspaceRegistry } from "./db/db-workspace-registry.js";
+import { importLegacyAgentSnapshots } from "./db/legacy-agent-snapshot-import.js";
 import { importLegacyProjectWorkspaceJson } from "./db/legacy-project-workspace-import.js";
 import { openPaseoDatabase, type PaseoDatabaseHandle } from "./db/pglite-database.js";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
@@ -181,7 +183,7 @@ export type PaseoDaemonConfig = {
 export interface PaseoDaemon {
   config: PaseoDaemonConfig;
   agentManager: AgentManager;
-  agentStorage: AgentStorage;
+  agentStorage: AgentSnapshotStore;
   terminalManager: TerminalManager;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -359,7 +361,9 @@ export async function createPaseoDaemon(
 
     const httpServer = createHTTPServer(app);
 
-    const agentStorage = new AgentStorage(config.agentStoragePath, logger);
+    database = await openPaseoDatabase(path.join(config.paseoHome, "db"));
+    logger.info({ elapsed: elapsed() }, "Paseo database opened");
+    const agentStorage = new DbAgentSnapshotStore(database.db);
     const agentManager = new AgentManager({
       clients: {
         ...createAllClients(logger, {
@@ -374,8 +378,6 @@ export async function createPaseoDaemon(
     const terminalManager = createTerminalManager();
     await agentStorage.initialize();
     logger.info({ elapsed: elapsed() }, "Agent storage initialized");
-    database = await openPaseoDatabase(path.join(config.paseoHome, "db"));
-    logger.info({ elapsed: elapsed() }, "Paseo database opened");
     const projectRegistry = new DbProjectRegistry(database.db);
     const workspaceRegistry = new DbWorkspaceRegistry(database.db);
     await importLegacyProjectWorkspaceJson({
@@ -384,6 +386,12 @@ export async function createPaseoDaemon(
       logger,
     });
     logger.info({ elapsed: elapsed() }, "Legacy project/workspace import checked");
+    await importLegacyAgentSnapshots({
+      db: database.db,
+      paseoHome: config.paseoHome,
+      logger,
+    });
+    logger.info({ elapsed: elapsed() }, "Legacy agent snapshot import checked");
     await bootstrapWorkspaceRegistries({
       paseoHome: config.paseoHome,
       agentStorage,

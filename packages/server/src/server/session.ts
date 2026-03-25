@@ -93,7 +93,8 @@ import type {
   AgentProvider,
   AgentPersistenceHandle,
 } from "./agent/agent-sdk-types.js";
-import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
+import type { StoredAgentRecord } from "./agent/agent-storage.js";
+import type { AgentSnapshotStore } from "./agent/agent-snapshot-store.js";
 import { isValidAgentProvider, AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
 import {
   buildProjectPlacementForCwd,
@@ -388,7 +389,7 @@ export type SessionOptions = {
   pushTokenStore: PushTokenStore;
   paseoHome: string;
   agentManager: AgentManager;
-  agentStorage: AgentStorage;
+  agentStorage: AgentSnapshotStore;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   workspaceReconciliationService?: WorkspaceReconciliationService;
@@ -549,7 +550,7 @@ export class Session {
   private agentMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
   private agentTools: ToolSet | null = null;
   private agentManager: AgentManager;
-  private readonly agentStorage: AgentStorage;
+  private readonly agentStorage: AgentSnapshotStore;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly workspaceReconciliationService: WorkspaceReconciliationService;

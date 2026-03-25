@@ -10,7 +10,7 @@ import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { openPaseoDatabase } from "./db/pglite-database.js";
-import { projects, workspaces } from "./db/schema.js";
+import { agentSnapshots, projects, workspaces } from "./db/schema.js";
 
 describe("paseo daemon bootstrap", () => {
   afterEach(() => {
@@ -340,6 +340,14 @@ describe("paseo daemon bootstrap", () => {
 
       const database = await openPaseoDatabase(path.join(config.paseoHome, "db"));
       try {
+        expect(await database.db.select().from(agentSnapshots)).toEqual([
+          expect.objectContaining({
+            agentId: "agent-1",
+            cwd: "/tmp/db-only-project",
+            requiresAttention: false,
+            internal: false,
+          }),
+        ]);
         expect(await database.db.select().from(projects)).toHaveLength(1);
         expect(await database.db.select().from(workspaces)).toHaveLength(1);
       } finally {

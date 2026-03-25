@@ -16,7 +16,7 @@ import {
 import { toAgentPayload } from "./agent-projections.js";
 import { curateAgentActivity } from "./activity-curator.js";
 import { AGENT_PROVIDER_DEFINITIONS } from "./provider-registry.js";
-import { AgentStorage } from "./agent-storage.js";
+import type { AgentSnapshotStore } from "./agent-snapshot-store.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -31,7 +31,7 @@ import { createAgentWorktree, runAsyncWorktreeBootstrap } from "../worktree-boot
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
-  agentStorage: AgentStorage;
+  agentStorage: AgentSnapshotStore;
   terminalManager?: TerminalManager | null;
   paseoHome?: string;
   /**
@@ -240,7 +240,7 @@ function sanitizePermissionRequest(
 }
 
 async function resolveAgentTitle(
-  agentStorage: AgentStorage,
+  agentStorage: AgentSnapshotStore,
   agentId: string,
   logger: Logger,
 ): Promise<string | null> {
@@ -254,7 +254,7 @@ async function resolveAgentTitle(
 }
 
 async function serializeSnapshotWithMetadata(
-  agentStorage: AgentStorage,
+  agentStorage: AgentSnapshotStore,
   snapshot: ManagedAgent,
   logger: Logger,
 ) {
