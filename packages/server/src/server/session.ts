@@ -291,6 +291,8 @@ export type SessionRuntimeMetrics = {
   checkoutDiffFallbackRefreshTargetCount: number;
   terminalDirectorySubscriptionCount: number;
   terminalSubscriptionCount: number;
+  inflightRequests: number;
+  peakInflightRequests: number;
 };
 
 type FetchAgentsRequestMessage = Extract<SessionInboundMessage, { type: "fetch_agents_request" }>;
@@ -610,6 +612,8 @@ export class Session {
   private readonly activeTerminalStreams = new Map<number, ActiveTerminalStream>();
   private readonly terminalIdToSlot = new Map<string, number>();
   private nextTerminalSlot = 0;
+  private inflightRequests = 0;
+  private peakInflightRequests = 0;
   private readonly checkoutDiffSubscriptions = new Map<string, { targetKey: string }>();
   private readonly checkoutDiffTargets = new Map<string, CheckoutDiffWatchTarget>();
   private readonly workspaceGitWatchTargets = new Map<string, WorkspaceGitWatchTarget>();
@@ -754,6 +758,8 @@ export class Session {
       checkoutDiffFallbackRefreshTargetCount,
       terminalDirectorySubscriptionCount: this.subscribedTerminalDirectories.size,
       terminalSubscriptionCount: this.activeTerminalStreams.size,
+      inflightRequests: this.inflightRequests,
+      peakInflightRequests: this.peakInflightRequests,
     };
   }
 
@@ -1454,6 +1460,11 @@ export class Session {
    * Main entry point for processing session messages
    */
   public async handleMessage(msg: SessionInboundMessage): Promise<void> {
+    this.inflightRequests++;
+    if (this.inflightRequests > this.peakInflightRequests) {
+      this.peakInflightRequests = this.inflightRequests;
+    }
+    try {
     this.sessionLogger.trace({ inbound: msg }, "inbound message");
     try {
       switch (msg.type) {
@@ -1779,6 +1790,13 @@ export class Session {
         },
       });
     }
+    } finally {
+      this.inflightRequests--;
+    }
+  }
+
+  public resetPeakInflight(): void {
+    this.peakInflightRequests = this.inflightRequests;
   }
 
   public handleBinaryFrame(frame: TerminalStreamFrame): void {

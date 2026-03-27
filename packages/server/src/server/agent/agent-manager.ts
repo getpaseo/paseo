@@ -231,6 +231,16 @@ export type ManagedAgent =
   | ManagedAgentError
   | ManagedAgentClosed;
 
+export interface AgentMetricsSnapshot {
+  total: number;
+  byLifecycle: Record<string, number>;
+  withActiveForegroundTurn: number;
+  timelineStats: {
+    totalItems: number;
+    maxItemsPerAgent: number;
+  };
+}
+
 type ActiveManagedAgent =
   | ManagedAgentInitializing
   | ManagedAgentIdle
@@ -343,6 +353,37 @@ export class AgentManager {
 
   setAgentAttentionCallback(callback: AgentAttentionCallback): void {
     this.onAgentAttention = callback;
+  }
+
+  public getMetricsSnapshot(): AgentMetricsSnapshot {
+    const byLifecycle: Record<string, number> = {};
+    let withActiveForegroundTurn = 0;
+    let totalItems = 0;
+    let maxItemsPerAgent = 0;
+
+    for (const agent of this.agents.values()) {
+      byLifecycle[agent.lifecycle] = (byLifecycle[agent.lifecycle] ?? 0) + 1;
+
+      if (agent.activeForegroundTurnId !== null) {
+        withActiveForegroundTurn++;
+      }
+
+      const len = agent.timeline.length;
+      totalItems += len;
+      if (len > maxItemsPerAgent) {
+        maxItemsPerAgent = len;
+      }
+    }
+
+    return {
+      total: this.agents.size,
+      byLifecycle,
+      withActiveForegroundTurn,
+      timelineStats: {
+        totalItems,
+        maxItemsPerAgent,
+      },
+    };
   }
 
   private touchUpdatedAt(agent: ManagedAgent): Date {

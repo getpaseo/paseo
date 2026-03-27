@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { isSameOrDescendantPath } from "../../utils/paths.js";
 
 export function addDeleteOptions(cmd: Command): Command {
   return cmd
@@ -69,12 +70,9 @@ export async function runDeleteCommand(
     if (options.all) {
       agents = agents.filter((a) => !a.archivedAt);
     } else if (options.cwd) {
-      const filterCwd = options.cwd;
       agents = agents.filter((a) => {
         if (a.archivedAt) return false;
-        const agentCwd = a.cwd.replace(/\/$/, "");
-        const targetCwd = filterCwd.replace(/\/$/, "");
-        return agentCwd === targetCwd || agentCwd.startsWith(targetCwd + "/");
+        return isSameOrDescendantPath(options.cwd!, a.cwd);
       });
     } else if (id) {
       const fetchResult = await client.fetchAgent(id);

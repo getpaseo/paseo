@@ -1,3 +1,4 @@
+import path from "path";
 import type { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type {
@@ -77,7 +78,7 @@ export async function runArchiveCommand(
 
     // Find the worktree by name or branch
     const worktree = listResponse.worktrees.find((wt) => {
-      const name = wt.worktreePath.split("/").pop();
+      const name = path.basename(wt.worktreePath);
       return name === nameArg || wt.branchName === nameArg;
     });
 
@@ -105,7 +106,7 @@ export async function runArchiveCommand(
       throw error;
     }
 
-    const worktreeName = worktree.worktreePath.split("/").pop() ?? nameArg;
+    const worktreeName = path.basename(worktree.worktreePath) || nameArg;
 
     return {
       type: "single",

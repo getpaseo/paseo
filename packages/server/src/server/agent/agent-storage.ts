@@ -335,11 +335,16 @@ export class AgentStorage {
 }
 
 function projectDirNameFromCwd(cwd: string): string {
-  const trimmed = cwd.replace(/^[\\/]+/, "").replace(/[\\/]+$/, "");
-  if (!trimmed) {
-    return "root";
+  // path.win32.parse handles drive letters, UNC roots, and Unix roots on all platforms
+  const { root } = path.win32.parse(cwd);
+  const withoutRoot = cwd.slice(root.length).replace(/[\\/]+$/, "");
+  // Sanitize root: strip colons and separators, keep letters (e.g. "C:\" → "C", "\\server\share\" → "server-share")
+  const sanitizedRoot = root.replace(/[:\\/]+/g, "-").replace(/^-+|-+$/g, "");
+  const prefix = sanitizedRoot ? sanitizedRoot + "-" : "";
+  if (!withoutRoot) {
+    return sanitizedRoot || "root";
   }
-  return trimmed.replace(/[\\/]+/g, "-");
+  return prefix + withoutRoot.replace(/[\\/]+/g, "-");
 }
 
 async function writeFileAtomically(targetPath: string, payload: string) {

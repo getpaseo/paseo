@@ -45,8 +45,13 @@ export function normalizeDaemonHost(raw: string): string | null {
     return trimmed.startsWith("\\\\.\\pipe\\") ? `pipe://${trimmed}` : trimmed;
   }
 
-  if (path.isAbsolute(trimmed)) {
+  if (trimmed.startsWith("/") || trimmed.startsWith("~")) {
     return `unix://${trimmed}`;
+  }
+
+  // Windows absolute paths (e.g. C:\Users\foo) are filesystem paths, not TCP or IPC targets.
+  if (/^[A-Za-z]:[/\\]/.test(trimmed)) {
+    return null;
   }
 
   if (/^\d+$/.test(trimmed)) {

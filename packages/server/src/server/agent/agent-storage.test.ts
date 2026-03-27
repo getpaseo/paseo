@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import os from "node:os";
 import path from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -350,6 +350,24 @@ describe("AgentStorage", () => {
     const records = await reloaded.list();
     expect(records).toHaveLength(1);
     expect(records[0]?.internal).toBe(true);
+  });
+
+  test("Windows drive-letter paths produce valid directory names", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "win-agent",
+        cwd: "D:\\Users\\dev\\MyProject",
+      }),
+    );
+
+    const record = await storage.get("win-agent");
+    expect(record).not.toBeNull();
+
+    // The persisted directory must not contain a colon (invalid on Windows)
+    const dirs = readdirSync(storagePath);
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0]).not.toContain(":");
+    expect(dirs[0]).toBe("D-Users-dev-MyProject");
   });
 
   test("remove deletes all duplicate record files across project directories", async () => {

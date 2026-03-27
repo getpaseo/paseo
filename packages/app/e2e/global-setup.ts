@@ -448,12 +448,15 @@ export default async function globalSetup() {
         PASEO_LISTEN: `0.0.0.0:${port}`,
         PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
         PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
-        // Use OpenAI speech providers in e2e to avoid local model bootstrapping delays.
-        PASEO_DICTATION_ENABLED: "1",
-        PASEO_VOICE_MODE_ENABLED: "1",
-        PASEO_DICTATION_STT_PROVIDER: dictationProvider,
-        PASEO_VOICE_STT_PROVIDER: "openai",
-        PASEO_VOICE_TTS_PROVIDER: "openai",
+        PASEO_DICTATION_ENABLED: openAiUsable ? "1" : "0",
+        PASEO_VOICE_MODE_ENABLED: openAiUsable ? "1" : "0",
+        ...(openAiUsable
+          ? {
+              PASEO_DICTATION_STT_PROVIDER: "openai",
+              PASEO_VOICE_STT_PROVIDER: "openai",
+              PASEO_VOICE_TTS_PROVIDER: "openai",
+            }
+          : {}),
         ...(localModelsDir ? { PASEO_LOCAL_MODELS_DIR: localModelsDir } : {}),
         NODE_ENV: "development",
       },

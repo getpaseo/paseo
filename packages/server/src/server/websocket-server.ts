@@ -197,6 +197,7 @@ type WebSocketRuntimeCounters = {
   hostRejected: number;
 };
 
+const SLOW_REQUEST_THRESHOLD_MS = 500;
 const EXTERNAL_SESSION_DISCONNECT_GRACE_MS = 90_000;
 const HELLO_TIMEOUT_MS = 15_000;
 const WS_CLOSE_HELLO_TIMEOUT = 4001;
@@ -275,6 +276,7 @@ export class VoiceAssistantWebSocketServer {
   };
   private readonly inboundMessageCounts = new Map<string, number>();
   private readonly inboundSessionRequestCounts = new Map<string, number>();
+  private readonly requestLatencies = new Map<string, number[]>();
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -1056,7 +1058,21 @@ export class VoiceAssistantWebSocketServer {
 
       if (message.type === "session") {
         this.recordInboundSessionRequestType(message.message.type);
+        const startMs = performance.now();
         await activeConnection.session.handleMessage(message.message);
+        const durationMs = performance.now() - startMs;
+        this.recordRequestLatency(message.message.type, durationMs);
+
+        if (durationMs >= SLOW_REQUEST_THRESHOLD_MS) {
+          activeConnection.connectionLogger.warn(
+            {
+              requestType: message.message.type,
+              durationMs: Math.round(durationMs),
+              inflightRequests: activeConnection.session.getRuntimeMetrics().inflightRequests,
+            },
+            "ws_slow_request",
+          );
+        }
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -1147,8 +1163,47 @@ export class VoiceAssistantWebSocketServer {
     this.incrementCount(this.inboundSessionRequestCounts, type);
   }
 
+  private recordRequestLatency(type: string, durationMs: number): void {
+    let latencies = this.requestLatencies.get(type);
+    if (!latencies) {
+      latencies = [];
+      this.requestLatencies.set(type, latencies);
+    }
+    latencies.push(durationMs);
+  }
+
   private getTopCounts(map: Map<string, number>, limit: number): Array<[string, number]> {
     return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
+  }
+
+  private computeLatencyStats(): Array<{
+    type: string;
+    count: number;
+    minMs: number;
+    maxMs: number;
+    p50Ms: number;
+    totalMs: number;
+  }> {
+    const stats: Array<{
+      type: string;
+      count: number;
+      minMs: number;
+      maxMs: number;
+      p50Ms: number;
+      totalMs: number;
+    }> = [];
+    for (const [type, latencies] of this.requestLatencies) {
+      if (latencies.length === 0) continue;
+      latencies.sort((a, b) => a - b);
+      const count = latencies.length;
+      const minMs = Math.round(latencies[0]!);
+      const maxMs = Math.round(latencies[count - 1]!);
+      const p50Ms = Math.round(latencies[Math.floor(count / 2)]!);
+      const totalMs = Math.round(latencies.reduce((sum, v) => sum + v, 0));
+      stats.push({ type, count, minMs, maxMs, p50Ms, totalMs });
+    }
+    stats.sort((a, b) => b.totalMs - a.totalMs);
+    return stats.slice(0, 15);
   }
 
   private collectSessionRuntimeMetrics(): SessionRuntimeMetrics {
@@ -1159,6 +1214,8 @@ export class VoiceAssistantWebSocketServer {
     let checkoutDiffFallbackRefreshTargetCount = 0;
     let terminalDirectorySubscriptionCount = 0;
     let terminalSubscriptionCount = 0;
+    let inflightRequests = 0;
+    let peakInflightRequests = 0;
 
     for (const connection of uniqueConnections) {
       const sessionMetrics = connection.session.getRuntimeMetrics();
@@ -1169,6 +1226,9 @@ export class VoiceAssistantWebSocketServer {
         sessionMetrics.checkoutDiffFallbackRefreshTargetCount;
       terminalDirectorySubscriptionCount += sessionMetrics.terminalDirectorySubscriptionCount;
       terminalSubscriptionCount += sessionMetrics.terminalSubscriptionCount;
+      inflightRequests += sessionMetrics.inflightRequests;
+      peakInflightRequests = Math.max(peakInflightRequests, sessionMetrics.peakInflightRequests);
+      connection.session.resetPeakInflight();
     }
 
     return {
@@ -1178,6 +1238,8 @@ export class VoiceAssistantWebSocketServer {
       checkoutDiffFallbackRefreshTargetCount,
       terminalDirectorySubscriptionCount,
       terminalSubscriptionCount,
+      inflightRequests,
+      peakInflightRequests,
     };
   }
 
@@ -1192,6 +1254,8 @@ export class VoiceAssistantWebSocketServer {
         connection.sockets.size === 0 && connection.externalDisconnectCleanupTimeout !== null,
     ).length;
     const sessionMetrics = this.collectSessionRuntimeMetrics();
+    const latencyStats = this.computeLatencyStats();
+    const agentSnapshot = this.agentManager.getMetricsSnapshot();
 
     this.logger.info(
       {
@@ -1210,6 +1274,8 @@ export class VoiceAssistantWebSocketServer {
         inboundMessageTypesTop: this.getTopCounts(this.inboundMessageCounts, 12),
         inboundSessionRequestTypesTop: this.getTopCounts(this.inboundSessionRequestCounts, 20),
         runtime: sessionMetrics,
+        latency: latencyStats,
+        agents: agentSnapshot,
       },
       "ws_runtime_metrics",
     );
@@ -1221,6 +1287,7 @@ export class VoiceAssistantWebSocketServer {
     }
     this.inboundMessageCounts.clear();
     this.inboundSessionRequestCounts.clear();
+    this.requestLatencies.clear();
     this.runtimeWindowStartedAt = now;
   }
 

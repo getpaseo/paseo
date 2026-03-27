@@ -1,5 +1,5 @@
 import { createTerminal, type TerminalSession } from "./terminal.js";
-import { resolve, sep } from "node:path";
+import { resolve, sep, win32, posix } from "node:path";
 
 export interface TerminalListItem {
   id: string;
@@ -37,7 +37,7 @@ export function createTerminalManager(): TerminalManager {
   const defaultEnvByRootCwd = new Map<string, Record<string, string>>();
 
   function assertAbsolutePath(cwd: string): void {
-    if (!cwd.startsWith("/")) {
+    if (!posix.isAbsolute(cwd) && !win32.isAbsolute(cwd)) {
       throw new Error("cwd must be absolute path");
     }
   }

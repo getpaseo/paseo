@@ -35,34 +35,43 @@ function resolveBoundListenTarget(
   };
 }
 
+// Matches a Windows drive-letter path like C:\ or D:\
+const WINDOWS_DRIVE_RE = /^[A-Za-z]:\\/;
+
 export function parseListenString(listen: string): ListenTarget {
+  // 1. Windows named pipes: \\.\pipe\... or pipe://...
   if (listen.startsWith("\\\\.\\pipe\\") || listen.startsWith("pipe://")) {
     return {
       type: "pipe",
       path: listen.startsWith("pipe://") ? listen.slice("pipe://".length) : listen,
     };
   }
-  // Unix socket: starts with / or ~ or contains .sock
-  if (listen.startsWith("/") || listen.startsWith("~") || listen.includes(".sock")) {
-    return { type: "socket", path: listen };
-  }
-  // Explicit unix:// prefix
+  // 2. Explicit unix:// prefix
   if (listen.startsWith("unix://")) {
     return { type: "socket", path: listen.slice(7) };
   }
-  // TCP: host:port or just port
+  // 3. Reject Windows absolute drive paths — they are not Unix sockets
+  if (WINDOWS_DRIVE_RE.test(listen)) {
+    throw new Error(`Invalid listen string (Windows path is not a valid listen target): ${listen}`);
+  }
+  // 4. POSIX absolute path (/ or ~) — Unix socket
+  if (listen.startsWith("/") || listen.startsWith("~")) {
+    return { type: "socket", path: listen };
+  }
+  // 5. Pure numeric — TCP port on 127.0.0.1
+  const trimmed = listen.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const port = parseInt(trimmed, 10);
+    return { type: "tcp", host: "127.0.0.1", port };
+  }
+  // 6. host:port — TCP
   if (listen.includes(":")) {
     const [host, portStr] = listen.split(":");
-    const port = parseInt(portStr, 10);
-    if (!Number.isFinite(port)) {
+    const parsedPort = parseInt(portStr, 10);
+    if (!Number.isFinite(parsedPort)) {
       throw new Error(`Invalid port in listen string: ${listen}`);
     }
-    return { type: "tcp", host: host || "127.0.0.1", port };
-  }
-  // Just a port number
-  const port = parseInt(listen, 10);
-  if (Number.isFinite(port)) {
-    return { type: "tcp", host: "127.0.0.1", port };
+    return { type: "tcp", host: host || "127.0.0.1", port: parsedPort };
   }
   throw new Error(`Invalid listen string: ${listen}`);
 }

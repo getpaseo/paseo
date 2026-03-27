@@ -42,4 +42,12 @@ console.log("=== Local Daemon Utility Helpers ===\n");
   console.log("✓ rejects empty and non-host listen values\n");
 }
 
+{
+  console.log("Test 5: rejects Windows absolute paths (not TCP endpoints)");
+  assert.strictEqual(resolveTcpHostFromListen("C:\\Users\\foo\\.paseo\\paseo.sock"), null);
+  assert.strictEqual(resolveTcpHostFromListen("D:\\project\\socket"), null);
+  assert.strictEqual(resolveTcpHostFromListen("C:\\paseo.sock"), null);
+  console.log("✓ rejects Windows absolute paths\n");
+}
+
 console.log("=== All local daemon utility tests passed ===");
