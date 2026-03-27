@@ -603,20 +603,39 @@ async function getMainRepoRoot(cwd: string): Promise<string> {
   });
   const worktrees = parseWorktreeList(worktreeOut);
   const nonBareNonPaseo = worktrees.filter(
-    (wt) => !wt.isBare && !wt.path.includes("/.paseo/worktrees/"),
+    (wt) => !wt.isBare && !isPaseoWorktreePath(wt.path),
   );
-  const childrenOfBareRepo = nonBareNonPaseo.filter((wt) => wt.path.startsWith(normalized + "/"));
+  const childrenOfBareRepo = nonBareNonPaseo.filter((wt) => isDescendantPath(wt.path, normalized));
   const mainChild = childrenOfBareRepo.find((wt) => basename(wt.path) === "main");
   return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonPaseo[0]?.path ?? normalized;
 }
 
-type GitWorktreeEntry = {
+export type GitWorktreeEntry = {
   path: string;
   branchRef?: string;
   isBare?: boolean;
 };
 
-function parseWorktreeList(output: string): GitWorktreeEntry[] {
+/** Check whether a path contains a `.paseo/worktrees/` segment (both `/` and `\`). */
+export function isPaseoWorktreePath(p: string): boolean {
+  return /[/\\]\.paseo[/\\]worktrees[/\\]/.test(p);
+}
+
+/** True when `child` is strictly inside `parent` (handles both `/` and `\`). */
+export function isDescendantPath(child: string, parent: string): boolean {
+  let c = child.replace(/\\/g, "/").replace(/\/+$/, "");
+  let p = parent.replace(/\\/g, "/").replace(/\/+$/, "");
+  // Case-insensitive on Windows (drive letter like C: or D:)
+  if (/^[A-Za-z]:/.test(c) || /^[A-Za-z]:/.test(p)) {
+    c = c.toLowerCase();
+    p = p.toLowerCase();
+  }
+  if (!c.startsWith(p)) return false;
+  if (c.length === p.length) return false;
+  return c[p.length] === "/";
+}
+
+export function parseWorktreeList(output: string): GitWorktreeEntry[] {
   const entries: GitWorktreeEntry[] = [];
   let current: GitWorktreeEntry | null = null;
   for (const line of output.split("\n")) {

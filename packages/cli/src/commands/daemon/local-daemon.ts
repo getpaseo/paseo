@@ -294,7 +294,8 @@ export function resolveTcpHostFromListen(listen: string): string | null {
     normalized.startsWith("/") ||
     normalized.startsWith("unix://") ||
     normalized.startsWith("pipe://") ||
-    normalized.startsWith("\\\\.\\pipe\\")
+    normalized.startsWith("\\\\.\\pipe\\") ||
+    /^[A-Za-z]:[/\\]/.test(normalized)
   ) {
     return null;
   }

@@ -73,6 +73,12 @@ describe("TerminalManager", () => {
       await expect(manager.getTerminals("tmp")).rejects.toThrow("cwd must be absolute path");
     });
 
+    it("accepts Windows absolute paths", async () => {
+      manager = createTerminalManager();
+      await expect(manager.getTerminals("C:\\Users\\foo\\project")).resolves.not.toThrow();
+      await expect(manager.getTerminals("D:\\MyProject")).resolves.not.toThrow();
+    });
+
     it("creates separate terminals for different cwds", async () => {
       manager = createTerminalManager();
       const tmpTerminals = [await manager.createTerminal({ cwd: "/tmp" })];
@@ -119,6 +125,18 @@ describe("TerminalManager", () => {
       await expect(manager.createTerminal({ cwd: "tmp" })).rejects.toThrow(
         "cwd must be absolute path",
       );
+    });
+
+    it("does not reject Windows absolute paths as relative", async () => {
+      manager = createTerminalManager();
+      // Should pass path validation (not throw "cwd must be absolute path").
+      // The terminal may or may not spawn successfully on non-Windows hosts,
+      // so we only assert the validation error is absent.
+      try {
+        await manager.createTerminal({ cwd: "C:\\Users\\foo\\project" });
+      } catch (error) {
+        expect((error as Error).message).not.toBe("cwd must be absolute path");
+      }
     });
 
     it("inherits registered env for the worktree root cwd", async () => {

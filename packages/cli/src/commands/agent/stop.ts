@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { isSameOrDescendantPath } from "../../utils/paths.js";
 import type {
   CommandOptions,
   SingleResult,
@@ -75,12 +76,9 @@ export async function runStopCommand(
       agents = agents.filter((a) => !a.archivedAt);
     } else if (options.cwd) {
       // Stop agents in directory
-      const filterCwd = options.cwd;
       agents = agents.filter((a) => {
         if (a.archivedAt) return false;
-        const agentCwd = a.cwd.replace(/\/$/, "");
-        const targetCwd = filterCwd.replace(/\/$/, "");
-        return agentCwd === targetCwd || agentCwd.startsWith(targetCwd + "/");
+        return isSameOrDescendantPath(options.cwd!, a.cwd);
       });
     } else if (id) {
       // Stop specific agent

@@ -42,6 +42,13 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
+  console.log("Test 3b: Windows absolute paths are NOT treated as unix sockets");
+  assert.strictEqual(normalizeDaemonHost("C:\\Users\\foo\\.paseo\\paseo.sock"), null);
+  assert.strictEqual(normalizeDaemonHost("D:\\project\\socket"), null);
+  console.log("✓ Windows absolute paths are not treated as unix sockets\n");
+}
+
+{
   console.log("Test 4: default host resolution tries local IPC first, then localhost fallback");
   const paseoHome = mkdtempSync(path.join(os.tmpdir(), "paseo-client-targets-"));
   try {

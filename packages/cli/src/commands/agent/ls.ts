@@ -3,6 +3,7 @@ import type { AgentSnapshotPayload } from "@getpaseo/server";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 import { collectMultiple } from "../../utils/command-options.js";
+import { isSameOrDescendantPath } from "../../utils/paths.js";
 
 export function addLsOptions(cmd: Command): Command {
   return cmd
@@ -193,11 +194,7 @@ export async function runLsCommand(
 
     // Optional cwd filter.
     if (options.cwd) {
-      const targetCwd = options.cwd.replace(/\/$/, "");
-      agents = agents.filter((a) => {
-        const agentCwd = a.cwd.replace(/\/$/, "");
-        return agentCwd === targetCwd || agentCwd.startsWith(targetCwd + "/");
-      });
+      agents = agents.filter((a) => isSameOrDescendantPath(options.cwd!, a.cwd));
     }
 
     // Apply label filtering only when explicitly requested.

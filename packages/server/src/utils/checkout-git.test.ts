@@ -18,6 +18,9 @@ import {
   NotGitRepoError,
   pushCurrentBranch,
   resolveRepositoryDefaultBranch,
+  parseWorktreeList,
+  isPaseoWorktreePath,
+  isDescendantPath,
 } from "./checkout-git.js";
 import { createWorktree } from "./worktree.js";
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
@@ -811,5 +814,74 @@ const x = 1;
       getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome }),
     ).rejects.toThrow(/base/i);
     await expect(mergeToBase(worktree.worktreePath, {}, { paseoHome })).rejects.toThrow(/base/i);
+  });
+
+  describe("parseWorktreeList", () => {
+    it("parses porcelain worktree output", () => {
+      const output = [
+        "worktree /home/user/repo",
+        "branch refs/heads/main",
+        "",
+        "worktree /home/user/.paseo/worktrees/feature",
+        "branch refs/heads/feature",
+        "",
+      ].join("\n");
+
+      const entries = parseWorktreeList(output);
+      expect(entries).toHaveLength(2);
+      expect(entries[0]).toEqual({ path: "/home/user/repo", branchRef: "refs/heads/main" });
+      expect(entries[1]).toEqual({
+        path: "/home/user/.paseo/worktrees/feature",
+        branchRef: "refs/heads/feature",
+      });
+    });
+
+    it("detects bare repos", () => {
+      const output = ["worktree /home/user/repo.git", "bare", ""].join("\n");
+      const entries = parseWorktreeList(output);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.isBare).toBe(true);
+    });
+  });
+
+  describe("isPaseoWorktreePath", () => {
+    it("matches Unix .paseo/worktrees/ paths", () => {
+      expect(isPaseoWorktreePath("/home/user/.paseo/worktrees/feature")).toBe(true);
+    });
+
+    it("matches Windows .paseo\\worktrees\\ paths", () => {
+      expect(isPaseoWorktreePath("C:\\Users\\dev\\.paseo\\worktrees\\feature")).toBe(true);
+    });
+
+    it("rejects paths without .paseo/worktrees segment", () => {
+      expect(isPaseoWorktreePath("/home/user/repo")).toBe(false);
+      expect(isPaseoWorktreePath("C:\\Users\\dev\\repo")).toBe(false);
+    });
+  });
+
+  describe("isDescendantPath", () => {
+    it("detects children with Unix separators", () => {
+      expect(isDescendantPath("/home/user/repo/child", "/home/user/repo")).toBe(true);
+    });
+
+    it("detects children with Windows separators", () => {
+      expect(isDescendantPath("C:\\repos\\child", "C:\\repos")).toBe(true);
+    });
+
+    it("rejects the parent itself", () => {
+      expect(isDescendantPath("/home/user/repo", "/home/user/repo")).toBe(false);
+    });
+
+    it("rejects siblings that share a prefix", () => {
+      expect(isDescendantPath("/home/user/repo-extra", "/home/user/repo")).toBe(false);
+    });
+
+    it("handles mixed separators", () => {
+      expect(isDescendantPath("C:/repo/child", "C:\\repo")).toBe(true);
+    });
+
+    it("is case insensitive on Windows paths", () => {
+      expect(isDescendantPath("c:\\repo\\child", "C:\\repo")).toBe(true);
+    });
   });
 });
