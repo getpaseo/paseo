@@ -1,11 +1,11 @@
+import type { AgentAttentionReason } from "../shared/agent-attention-notification.js";
+
 export type ClientAttentionState = {
   deviceType: "web" | "mobile" | null;
   focusedAgentId: string | null;
   isStale: boolean;
   appVisible: boolean;
 };
-
-export type AgentAttentionReason = "finished" | "error" | "permission";
 
 type ComputeClientNotificationInput = {
   clientState: ClientAttentionState;

@@ -9,6 +9,9 @@ import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
+import type { FileBackedChatService } from "./chat/chat-service.js";
+import type { LoopService } from "./loop-service.js";
+import type { ScheduleService } from "./schedule/service.js";
 import {
   type ServerInfoStatusPayload,
   type WSHelloMessage,
@@ -228,6 +231,9 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly chatService: FileBackedChatService;
+  private readonly loopService: LoopService;
+  private readonly scheduleService: ScheduleService;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
   private readonly pushTokenStore: PushTokenStore;
@@ -314,6 +320,9 @@ export class VoiceAssistantWebSocketServer {
     onLifecycleIntent?: (intent: SessionLifecycleIntent) => void,
     projectRegistry?: ProjectRegistry,
     workspaceRegistry?: WorkspaceRegistry,
+    chatService?: FileBackedChatService,
+    loopService?: LoopService,
+    scheduleService?: ScheduleService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -325,6 +334,18 @@ export class VoiceAssistantWebSocketServer {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
+    if (!chatService) {
+      throw new Error("VoiceAssistantWebSocketServer requires a chat service.");
+    }
+    this.chatService = chatService;
+    if (!loopService) {
+      throw new Error("VoiceAssistantWebSocketServer requires a loop service.");
+    }
+    this.loopService = loopService;
+    if (!scheduleService) {
+      throw new Error("VoiceAssistantWebSocketServer requires a schedule service.");
+    }
+    this.scheduleService = scheduleService;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.createAgentMcpTransport = createAgentMcpTransport;
@@ -622,6 +643,9 @@ export class VoiceAssistantWebSocketServer {
       agentStorage: this.agentStorage,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
+      chatService: this.chatService,
+      loopService: this.loopService,
+      scheduleService: this.scheduleService,
       createAgentMcpTransport: this.createAgentMcpTransport,
       stt: this.stt,
       tts: this.tts,

@@ -241,6 +241,82 @@ type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type CreateTerminalPayload = CreateTerminalResponse["payload"];
 type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
+type ChatCreatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "chat/create/response" }
+>["payload"];
+type ChatListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "chat/list/response" }
+>["payload"];
+type ChatInspectPayload = Extract<
+  SessionOutboundMessage,
+  { type: "chat/inspect/response" }
+>["payload"];
+type ChatDeletePayload = Extract<
+  SessionOutboundMessage,
+  { type: "chat/delete/response" }
+>["payload"];
+type ChatPostPayload = Extract<
+  SessionOutboundMessage,
+  { type: "chat/post/response" }
+>["payload"];
+type ChatReadPayload = Extract<
+  SessionOutboundMessage,
+  { type: "chat/read/response" }
+>["payload"];
+type ChatWaitPayload = Extract<
+  SessionOutboundMessage,
+  { type: "chat/wait/response" }
+>["payload"];
+type LoopRunPayload = Extract<
+  SessionOutboundMessage,
+  { type: "loop/run/response" }
+>["payload"];
+type LoopListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "loop/list/response" }
+>["payload"];
+type LoopInspectPayload = Extract<
+  SessionOutboundMessage,
+  { type: "loop/inspect/response" }
+>["payload"];
+type LoopLogsPayload = Extract<
+  SessionOutboundMessage,
+  { type: "loop/logs/response" }
+>["payload"];
+type LoopStopPayload = Extract<
+  SessionOutboundMessage,
+  { type: "loop/stop/response" }
+>["payload"];
+type ScheduleCreatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule/create/response" }
+>["payload"];
+type ScheduleListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule/list/response" }
+>["payload"];
+type ScheduleInspectPayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule/inspect/response" }
+>["payload"];
+type ScheduleLogsPayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule/logs/response" }
+>["payload"];
+type SchedulePausePayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule/pause/response" }
+>["payload"];
+type ScheduleResumePayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule/resume/response" }
+>["payload"];
+type ScheduleDeletePayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule/delete/response" }
+>["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
@@ -277,6 +353,110 @@ export type FetchWorkspacesOptions = Omit<FetchWorkspacesRequest, "type" | "requ
 };
 export type FetchWorkspacesEntry = FetchWorkspacesPayload["entries"][number];
 export type FetchWorkspacesPageInfo = FetchWorkspacesPayload["pageInfo"];
+export type CreateChatRoomOptions = {
+  name: string;
+  purpose?: string | null;
+  requestId?: string;
+};
+export type InspectChatRoomOptions = {
+  room: string;
+  requestId?: string;
+};
+export type DeleteChatRoomOptions = {
+  room: string;
+  requestId?: string;
+};
+export type PostChatMessageOptions = {
+  room: string;
+  body: string;
+  replyToMessageId?: string | null;
+  mentionAgentIds?: string[];
+  requestId?: string;
+};
+export type ReadChatMessagesOptions = {
+  room: string;
+  limit?: number;
+  since?: string;
+  authorAgentId?: string;
+  requestId?: string;
+};
+export type WaitForChatMessagesOptions = {
+  room: string;
+  afterMessageId?: string | null;
+  timeoutMs?: number;
+  requestId?: string;
+};
+export type RunLoopOptions = {
+  prompt: string;
+  cwd: string;
+  verifyPrompt?: string | null;
+  verifyChecks?: string[];
+  name?: string | null;
+  sleepMs?: number;
+  maxIterations?: number;
+  maxTimeMs?: number;
+  requestId?: string;
+};
+export type InspectLoopOptions = {
+  id: string;
+  requestId?: string;
+};
+export type LoopLogsOptions = {
+  id: string;
+  afterSeq?: number;
+  requestId?: string;
+};
+export type StopLoopOptions = {
+  id: string;
+  requestId?: string;
+};
+export type CreateScheduleOptions = {
+  prompt: string;
+  name?: string | null;
+  cadence:
+    | {
+        type: "every";
+        everyMs: number;
+      }
+    | {
+        type: "cron";
+        expression: string;
+      };
+  target:
+    | {
+        type: "self";
+        agentId: string;
+      }
+    | {
+        type: "agent";
+        agentId: string;
+      }
+    | {
+        type: "new-agent";
+        config: {
+          provider: AgentProvider;
+          cwd: string;
+          modeId?: string;
+          model?: string;
+          thinkingOptionId?: string;
+          title?: string | null;
+          approvalPolicy?: string;
+          sandboxMode?: string;
+          networkAccess?: boolean;
+          webSearch?: boolean;
+          extra?: AgentSessionConfig["extra"];
+          systemPrompt?: string;
+          mcpServers?: AgentSessionConfig["mcpServers"];
+        };
+      };
+  maxRuns?: number;
+  expiresAt?: string;
+  requestId?: string;
+};
+export type InspectScheduleOptions = {
+  id: string;
+  requestId?: string;
+};
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
 
@@ -2674,6 +2854,263 @@ export class DaemonClient {
       responseType: "kill_terminal_response",
       timeout: 10000,
       options: { skipQueue: true },
+    });
+  }
+
+  async createChatRoom(options: CreateChatRoomOptions): Promise<ChatCreatePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "chat/create",
+        name: options.name,
+        ...(options.purpose ? { purpose: options.purpose } : {}),
+      },
+      responseType: "chat/create/response",
+      timeout: 10000,
+    });
+  }
+
+  async listChatRooms(requestId?: string): Promise<ChatListPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "chat/list",
+      },
+      responseType: "chat/list/response",
+      timeout: 10000,
+    });
+  }
+
+  async inspectChatRoom(options: InspectChatRoomOptions): Promise<ChatInspectPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "chat/inspect",
+        room: options.room,
+      },
+      responseType: "chat/inspect/response",
+      timeout: 10000,
+    });
+  }
+
+  async deleteChatRoom(options: DeleteChatRoomOptions): Promise<ChatDeletePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "chat/delete",
+        room: options.room,
+      },
+      responseType: "chat/delete/response",
+      timeout: 10000,
+    });
+  }
+
+  async postChatMessage(options: PostChatMessageOptions): Promise<ChatPostPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "chat/post",
+        room: options.room,
+        body: options.body,
+        ...(options.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {}),
+        ...(options.mentionAgentIds && options.mentionAgentIds.length > 0
+          ? { mentionAgentIds: options.mentionAgentIds }
+          : {}),
+      },
+      responseType: "chat/post/response",
+      timeout: 10000,
+    });
+  }
+
+  async readChatMessages(options: ReadChatMessagesOptions): Promise<ChatReadPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "chat/read",
+        room: options.room,
+        ...(typeof options.limit === "number" ? { limit: options.limit } : {}),
+        ...(options.since ? { since: options.since } : {}),
+        ...(options.authorAgentId ? { authorAgentId: options.authorAgentId } : {}),
+      },
+      responseType: "chat/read/response",
+      timeout: 10000,
+    });
+  }
+
+  async waitForChatMessages(options: WaitForChatMessagesOptions): Promise<ChatWaitPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "chat/wait",
+        room: options.room,
+        ...(options.afterMessageId ? { afterMessageId: options.afterMessageId } : {}),
+        ...(typeof options.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
+      },
+      responseType: "chat/wait/response",
+      timeout: (options.timeoutMs ?? 0) + 10000,
+    });
+  }
+
+  async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "schedule/create",
+        prompt: options.prompt,
+        cadence: options.cadence,
+        target: options.target,
+        ...(options.name ? { name: options.name } : {}),
+        ...(typeof options.maxRuns === "number" ? { maxRuns: options.maxRuns } : {}),
+        ...(options.expiresAt ? { expiresAt: options.expiresAt } : {}),
+      },
+      responseType: "schedule/create/response",
+      timeout: 10000,
+    });
+  }
+
+  async scheduleList(requestId?: string): Promise<ScheduleListPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "schedule/list",
+      },
+      responseType: "schedule/list/response",
+      timeout: 10000,
+    });
+  }
+
+  async scheduleInspect(options: InspectScheduleOptions): Promise<ScheduleInspectPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "schedule/inspect",
+        scheduleId: options.id,
+      },
+      responseType: "schedule/inspect/response",
+      timeout: 10000,
+    });
+  }
+
+  async scheduleLogs(options: InspectScheduleOptions): Promise<ScheduleLogsPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "schedule/logs",
+        scheduleId: options.id,
+      },
+      responseType: "schedule/logs/response",
+      timeout: 10000,
+    });
+  }
+
+  async schedulePause(options: InspectScheduleOptions): Promise<SchedulePausePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "schedule/pause",
+        scheduleId: options.id,
+      },
+      responseType: "schedule/pause/response",
+      timeout: 10000,
+    });
+  }
+
+  async scheduleResume(options: InspectScheduleOptions): Promise<ScheduleResumePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "schedule/resume",
+        scheduleId: options.id,
+      },
+      responseType: "schedule/resume/response",
+      timeout: 10000,
+    });
+  }
+
+  async scheduleDelete(options: InspectScheduleOptions): Promise<ScheduleDeletePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "schedule/delete",
+        scheduleId: options.id,
+      },
+      responseType: "schedule/delete/response",
+      timeout: 10000,
+    });
+  }
+
+  async loopRun(options: RunLoopOptions): Promise<LoopRunPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "loop/run",
+        prompt: options.prompt,
+        cwd: options.cwd,
+        ...(options.verifyPrompt ? { verifyPrompt: options.verifyPrompt } : {}),
+        ...(options.verifyChecks && options.verifyChecks.length > 0
+          ? { verifyChecks: options.verifyChecks }
+          : {}),
+        ...(options.name ? { name: options.name } : {}),
+        ...(typeof options.sleepMs === "number" ? { sleepMs: options.sleepMs } : {}),
+        ...(typeof options.maxIterations === "number"
+          ? { maxIterations: options.maxIterations }
+          : {}),
+        ...(typeof options.maxTimeMs === "number" ? { maxTimeMs: options.maxTimeMs } : {}),
+      },
+      responseType: "loop/run/response",
+      timeout: 15000,
+    });
+  }
+
+  async loopList(requestId?: string): Promise<LoopListPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "loop/list",
+      },
+      responseType: "loop/list/response",
+      timeout: 10000,
+    });
+  }
+
+  async loopInspect(options: string | InspectLoopOptions): Promise<LoopInspectPayload> {
+    const normalized = typeof options === "string" ? { id: options } : options;
+    return this.sendCorrelatedSessionRequest({
+      requestId: normalized.requestId,
+      message: {
+        type: "loop/inspect",
+        id: normalized.id,
+      },
+      responseType: "loop/inspect/response",
+      timeout: 10000,
+    });
+  }
+
+  async loopLogs(options: string | LoopLogsOptions, afterSeq?: number): Promise<LoopLogsPayload> {
+    const normalized =
+      typeof options === "string" ? { id: options, afterSeq } : options;
+    return this.sendCorrelatedSessionRequest({
+      requestId: normalized.requestId,
+      message: {
+        type: "loop/logs",
+        id: normalized.id,
+        ...(typeof normalized.afterSeq === "number" ? { afterSeq: normalized.afterSeq } : {}),
+      },
+      responseType: "loop/logs/response",
+      timeout: 10000,
+    });
+  }
+
+  async loopStop(options: string | StopLoopOptions): Promise<LoopStopPayload> {
+    const normalized = typeof options === "string" ? { id: options } : options;
+    return this.sendCorrelatedSessionRequest({
+      requestId: normalized.requestId,
+      message: {
+        type: "loop/stop",
+        id: normalized.id,
+      },
+      responseType: "loop/stop/response",
+      timeout: 10000,
     });
   }
 
