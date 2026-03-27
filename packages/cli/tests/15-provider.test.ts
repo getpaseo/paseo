@@ -32,11 +32,6 @@ type ProviderModel = {
 
 const EXPECTED_CLAUDE_MODELS = [
   {
-    id: "claude-sonnet-4-5-20250929",
-    model: "Sonnet 4.5",
-    descriptionFragment: "Best for everyday tasks",
-  },
-  {
     id: "claude-sonnet-4-6",
     model: "Sonnet 4.6",
     descriptionFragment: "Best for everyday tasks",
@@ -47,7 +42,7 @@ const EXPECTED_CLAUDE_MODELS = [
     descriptionFragment: "Most capable",
   },
   {
-    id: "claude-haiku-4-5-20251001",
+    id: "claude-haiku-4-5",
     model: "Haiku 4.5",
     descriptionFragment: "Fastest",
   },
@@ -207,10 +202,13 @@ try {
       ids.includes("opencode/gpt-5-nano"),
       "opencode output should include opencode/gpt-5-nano",
     );
-    assert(ids.includes("openai/o3-mini"), "opencode output should include openai/o3-mini");
     assert(
-      ids.includes("openai/gpt-5.3-codex-spark"),
-      "opencode output should include openai/gpt-5.3-codex-spark",
+      ids.some((id) => id.startsWith("openrouter/openai/")),
+      "opencode output should include OpenRouter OpenAI models",
+    );
+    assert(
+      ids.includes("openrouter/openai/gpt-5.3-codex"),
+      "opencode output should include openrouter/openai/gpt-5.3-codex",
     );
     console.log("✓ provider models opencode returns namespaced model IDs\n");
   }
@@ -269,8 +267,8 @@ try {
       "--quiet should print the current Claude catalog IDs",
     );
     assert(
-      claudeModelsFromJson.some((m) => m.id === "claude-sonnet-4-5-20250929"),
-      "captured --json output should still include the Claude default model id",
+      claudeModelsFromJson.some((m) => m.id === "claude-sonnet-4-6"),
+      "captured --json output should include the current Claude everyday model id",
     );
     console.log("✓ provider models --quiet outputs model IDs only\n");
   }

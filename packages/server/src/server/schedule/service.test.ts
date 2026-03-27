@@ -170,4 +170,60 @@ describe("ScheduleService", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
   });
+
+  test("keeps schedules paused when an in-flight run finishes after pause", async () => {
+    let releaseRun: (() => void) | null = null;
+    const runStarted = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    let finishRun: (() => void) | null = null;
+    const runBlocked = new Promise<void>((resolve) => {
+      finishRun = resolve;
+    });
+
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => {
+        releaseRun?.();
+        await runBlocked;
+        return {
+          agentId: null,
+          output: "finished",
+        };
+      },
+    });
+
+    const created = await service.create({
+      prompt: "Check status",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+        },
+      },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    const tickPromise = service.tick();
+    await runStarted;
+
+    const paused = await service.pause(created.id);
+    expect(paused.status).toBe("paused");
+    expect(paused.nextRunAt).toBeNull();
+
+    finishRun?.();
+    await tickPromise;
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("paused");
+    expect(inspected.nextRunAt).toBeNull();
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]?.status).toBe("succeeded");
+  });
 });

@@ -345,6 +345,11 @@ export class ScheduleService {
 
     if (shouldCompleteSchedule(updated, now)) {
       updated = completeSchedule(updated, now);
+    } else if (updated.status === "paused") {
+      updated = {
+        ...updated,
+        nextRunAt: null,
+      };
     } else {
       const after = new Date(schedule.nextRunAt ?? now.toISOString());
       let nextRunAt = computeNextRunAt(updated.cadence, after);

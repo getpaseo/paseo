@@ -36,6 +36,7 @@ const sessionMock = vi.hoisted(() => {
     handleMessage = vi.fn(async () => {});
     handleBinaryFrame = vi.fn((_frame: unknown) => {});
     getClientActivity = vi.fn(() => null);
+    resetPeakInflight = vi.fn(() => {});
     getRuntimeMetrics = vi.fn(() => ({
       checkoutDiffTargetCount: 0,
       checkoutDiffSubscriptionCount: 0,
@@ -43,6 +44,8 @@ const sessionMock = vi.hoisted(() => {
       checkoutDiffFallbackRefreshTargetCount: 0,
       terminalDirectorySubscriptionCount: 0,
       terminalSubscriptionCount: 0,
+      inflightRequests: 0,
+      peakInflightRequests: 0,
     }));
     readonly args: Record<string, unknown>;
 
@@ -151,6 +154,13 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     {
       setAgentAttentionCallback: vi.fn(),
       getAgent: vi.fn(() => null),
+      getMetricsSnapshot: vi.fn(() => ({
+        totalAgents: 0,
+        idleAgents: 0,
+        runningAgents: 0,
+        pendingPermissionAgents: 0,
+        erroredAgents: 0,
+      })),
     } as any,
     {} as any,
     {} as any,
@@ -167,6 +177,12 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
       : undefined,
     undefined,
     TEST_DAEMON_VERSION,
+    undefined,
+    undefined,
+    undefined,
+    {} as any,
+    {} as any,
+    {} as any,
   );
 }
 
