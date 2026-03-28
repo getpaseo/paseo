@@ -12,6 +12,10 @@ import { useSharedValue, withTiming, Easing, type SharedValue } from "react-nati
 import { type GestureType } from "react-native-gesture-handler";
 import { UnistylesRuntime } from "react-native-unistyles";
 import { usePanelStore } from "@/stores/panel-store";
+import {
+  getLeftSidebarAnimationTargets,
+  shouldSyncSidebarAnimation,
+} from "@/utils/sidebar-animation-state";
 
 const ANIMATION_DURATION = 220;
 const ANIMATION_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
@@ -38,46 +42,53 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
   const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
 
   // Initialize based on current state
-  const translateX = useSharedValue(isOpen ? 0 : -windowWidth);
-  const backdropOpacity = useSharedValue(isOpen ? 1 : 0);
+  const initialTargets = getLeftSidebarAnimationTargets({ isOpen, windowWidth });
+  const translateX = useSharedValue(initialTargets.translateX);
+  const backdropOpacity = useSharedValue(initialTargets.backdropOpacity);
   const isGesturing = useSharedValue(false);
   const closeGestureRef = useRef<GestureType | undefined>(undefined);
 
   // Track previous isOpen to detect changes
   const prevIsOpen = useRef(isOpen);
+  const prevWindowWidth = useRef(windowWidth);
 
   // Sync animation with store state changes (e.g., backdrop tap, programmatic open/close)
   useEffect(() => {
-    // Skip if this is initial render or if we're mid-gesture
-    if (prevIsOpen.current === isOpen) {
+    const didStateChange = shouldSyncSidebarAnimation({
+      previousIsOpen: prevIsOpen.current,
+      nextIsOpen: isOpen,
+      previousWindowWidth: prevWindowWidth.current,
+      nextWindowWidth: windowWidth,
+    });
+    const previousIsOpen = prevIsOpen.current;
+    prevIsOpen.current = isOpen;
+    prevWindowWidth.current = windowWidth;
+
+    if (!didStateChange) {
       return;
     }
-    prevIsOpen.current = isOpen;
 
     // Don't animate if we're in the middle of a gesture - the gesture handler will handle it
     if (isGesturing.value) {
       return;
     }
 
-    if (isOpen) {
-      translateX.value = withTiming(0, {
+    const targets = getLeftSidebarAnimationTargets({ isOpen, windowWidth });
+
+    if (previousIsOpen !== isOpen) {
+      translateX.value = withTiming(targets.translateX, {
         duration: ANIMATION_DURATION,
         easing: ANIMATION_EASING,
       });
-      backdropOpacity.value = withTiming(1, {
+      backdropOpacity.value = withTiming(targets.backdropOpacity, {
         duration: ANIMATION_DURATION,
         easing: ANIMATION_EASING,
       });
-    } else {
-      translateX.value = withTiming(-windowWidth, {
-        duration: ANIMATION_DURATION,
-        easing: ANIMATION_EASING,
-      });
-      backdropOpacity.value = withTiming(0, {
-        duration: ANIMATION_DURATION,
-        easing: ANIMATION_EASING,
-      });
+      return;
     }
+
+    translateX.value = targets.translateX;
+    backdropOpacity.value = targets.backdropOpacity;
   }, [isOpen, translateX, backdropOpacity, windowWidth, isGesturing]);
 
   const animateToOpen = useCallback(() => {

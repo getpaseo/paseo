@@ -896,12 +896,6 @@ export default function SettingsScreen() {
   const handleThemeChange = useCallback(
     (newTheme: AppSettings["theme"]) => {
       void updateSettings({ theme: newTheme });
-      if (newTheme === "auto") {
-        UnistylesRuntime.setAdaptiveThemes(true);
-      } else {
-        UnistylesRuntime.setAdaptiveThemes(false);
-        UnistylesRuntime.setTheme(newTheme);
-      }
     },
     [updateSettings],
   );
