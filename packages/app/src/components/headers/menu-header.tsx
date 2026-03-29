@@ -10,6 +10,7 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 interface MenuHeaderProps {
   title?: string;
   rightContent?: ReactNode;
+  borderless?: boolean;
 }
 
 interface SidebarMenuToggleProps {
@@ -75,7 +76,7 @@ export function SidebarMenuToggle({
   );
 }
 
-export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
+export function MenuHeader({ title, rightContent, borderless }: MenuHeaderProps) {
   return (
     <ScreenHeader
       left={
@@ -90,6 +91,7 @@ export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
       }
       right={rightContent}
       leftStyle={styles.left}
+      borderless={borderless}
     />
   );
 }

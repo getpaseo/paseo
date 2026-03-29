@@ -15,13 +15,14 @@ interface ScreenHeaderProps {
   right?: ReactNode;
   leftStyle?: StyleProp<ViewStyle>;
   rightStyle?: StyleProp<ViewStyle>;
+  borderless?: boolean;
 }
 
 /**
  * Shared frame for the home/back headers so we only maintain padding, border,
  * and safe-area logic in one place.
  */
-export function ScreenHeader({ left, right, leftStyle, rightStyle }: ScreenHeaderProps) {
+export function ScreenHeader({ left, right, leftStyle, rightStyle, borderless }: ScreenHeaderProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
@@ -47,6 +48,7 @@ export function ScreenHeader({ left, right, leftStyle, rightStyle }: ScreenHeade
               paddingLeft: baseHorizontalPadding + collapsedSidebarInset.left,
               paddingRight: baseHorizontalPadding + collapsedSidebarInset.right,
             },
+            borderless && styles.borderless,
           ]}
           {...dragHandlers}
         >
@@ -86,5 +88,8 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  borderless: {
+    borderBottomWidth: 0,
   },
 }));
