@@ -883,11 +883,13 @@ export class AgentManager {
     await this.registry.upsert({
       ...stored,
       archivedAt,
+      updatedAt: archivedAt,
       lastStatus: normalizedStatus,
       requiresAttention: false,
       attentionReason: null,
       attentionTimestamp: null,
     });
+    this.notifyAgentState(agentId);
     await this.closeAgent(agentId);
 
     return { archivedAt };

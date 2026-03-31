@@ -82,6 +82,9 @@ function createSessionForWorkspaceTests(): Session {
       subscribe: () => () => {},
       listAgents: () => [],
       getAgent: () => null,
+      archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
+      clearAgentAttention: async () => {},
+      notifyAgentState: () => {},
     } as any,
     agentStorage: {
       list: async () => [],
@@ -176,13 +179,20 @@ describe("workspace aggregation", () => {
         subscribe: () => () => {},
         listAgents: () => [],
         getAgent: () => null,
+        archiveAgent: async () => {
+          const archivedAt = new Date().toISOString();
+          Object.assign(archivedRecord, {
+            archivedAt,
+            updatedAt: archivedAt,
+          });
+          return { archivedAt };
+        },
+        clearAgentAttention: async () => {},
+        notifyAgentState: () => {},
       } as any,
       agentStorage: {
         list: async () => [archivedRecord],
         get: async (agentId: string) => (agentId === archivedRecord.id ? archivedRecord : null),
-        upsert: async (record: typeof archivedRecord) => {
-          Object.assign(archivedRecord, record);
-        },
       } as any,
       projectRegistry: {
         initialize: async () => {},

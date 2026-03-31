@@ -2263,6 +2263,50 @@ describe("AgentManager", () => {
     expect(attentionReasons).toEqual(["error", "error"]);
   });
 
+  test("archiveAgent persists archivedAt and updatedAt before emitting closed state", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000131",
+    });
+
+    const agent = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Archive target",
+    });
+
+    const lifecycles: string[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === agent.id) {
+          lifecycles.push(event.agent.lifecycle);
+        }
+      },
+      { agentId: agent.id, replayState: false },
+    );
+
+    const { archivedAt } = await manager.archiveAgent(agent.id);
+    const stored = await storage.get(agent.id);
+
+    expect(stored).toMatchObject({
+      id: agent.id,
+      archivedAt,
+      updatedAt: archivedAt,
+      lastStatus: "idle",
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+    });
+    expect(lifecycles.slice(-2)).toEqual(["idle", "closed"]);
+  });
+
   test("turn_failed emits a system error assistant timeline message and keeps error lifecycle", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-failed-"));
     const storagePath = join(workdir, "agents");

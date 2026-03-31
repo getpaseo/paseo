@@ -1988,7 +1988,16 @@ export class Session {
   private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Archiving agent ${agentId}`);
 
-    const { archivedAt, archivedRecord } = await this.archiveAgentState(agentId);
+    if (this.agentManager.getAgent(agentId)) {
+      await this.interruptAgentIfRunning(agentId);
+      await this.agentManager.clearAgentAttention(agentId).catch(() => undefined);
+    }
+
+    const { archivedAt } = await this.agentManager.archiveAgent(agentId);
+    const archivedRecord = await this.agentStorage.get(agentId);
+    if (!archivedRecord) {
+      throw new Error(`Agent not found in storage after archive: ${agentId}`);
+    }
 
     if (this.agentUpdatesSubscription) {
       const payload = this.buildStoredAgentPayload(archivedRecord);
@@ -2022,63 +2031,6 @@ export class Session {
         requestId,
       },
     });
-  }
-
-  private async archiveAgentState(agentId: string): Promise<{
-    archivedAt: string;
-    archivedRecord: StoredAgentRecord;
-  }> {
-    if (this.agentManager.getAgent(agentId)) {
-      await this.interruptAgentIfRunning(agentId);
-      await this.agentManager.clearAgentAttention(agentId).catch(() => undefined);
-    }
-
-    const archivedAt = new Date().toISOString();
-    const existing = await this.agentStorage.get(agentId);
-    let archivedRecord: StoredAgentRecord | null = existing;
-    if (!archivedRecord) {
-      const liveAgent = this.agentManager.getAgent(agentId);
-      if (!liveAgent) {
-        throw new Error(`Agent not found: ${agentId}`);
-      }
-
-      await this.agentStorage.applySnapshot(liveAgent, {
-        internal: liveAgent.internal,
-      });
-      archivedRecord = await this.agentStorage.get(agentId);
-      if (!archivedRecord) {
-        throw new Error(`Agent not found in storage after snapshot: ${agentId}`);
-      }
-    }
-
-    const normalizedStatus =
-      archivedRecord.lastStatus === "running" || archivedRecord.lastStatus === "initializing"
-        ? "idle"
-        : archivedRecord.lastStatus;
-
-    const nextRecord: StoredAgentRecord = {
-      ...archivedRecord,
-      archivedAt,
-      updatedAt: archivedAt,
-      lastStatus: normalizedStatus,
-      requiresAttention: false,
-      attentionReason: null,
-      attentionTimestamp: null,
-    };
-    await this.agentStorage.upsert(nextRecord);
-
-    // Unload the agent from memory — the storage record is the source of truth now.
-    // This tears down the provider session and drops the hydrated timeline,
-    // freeing memory. ensureAgentLoaded will re-initialize if needed later.
-    if (this.agentManager.getAgent(agentId)) {
-      try {
-        await this.agentManager.closeAgent(agentId);
-      } catch (error) {
-        this.sessionLogger.warn({ err: error, agentId }, "Failed to close agent during archive");
-      }
-    }
-
-    return { archivedAt, archivedRecord: nextRecord };
   }
 
   private async unarchiveAgentState(agentId: string): Promise<boolean> {
