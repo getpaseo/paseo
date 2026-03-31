@@ -130,6 +130,138 @@ function createSessionForWorkspaceTests(): Session {
 }
 
 describe("workspace aggregation", () => {
+  test("archive emits an authoritative agent_update upsert for subscribed clients", async () => {
+    const emitted: Array<{ type: string; payload: any }> = [];
+    const archivedRecord = {
+      id: "agent-1",
+      provider: "codex",
+      cwd: "/tmp/repo",
+      createdAt: "2026-03-30T15:00:00.000Z",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+      lastActivityAt: "2026-03-30T15:00:00.000Z",
+      lastUserMessageAt: null,
+      lastStatus: "idle",
+      lastModeId: null,
+      runtimeInfo: null,
+      config: {
+        provider: "codex",
+        cwd: "/tmp/repo",
+      },
+      persistence: null,
+      title: "Archive me",
+      labels: {},
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+      archivedAt: null,
+    };
+
+    const logger = {
+      child: () => logger,
+      trace: vi.fn(),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const session = new Session({
+      clientId: "test-client",
+      onMessage: (message) => emitted.push(message as any),
+      logger: logger as any,
+      downloadTokenStore: {} as any,
+      pushTokenStore: {} as any,
+      paseoHome: "/tmp/paseo-test",
+      agentManager: {
+        subscribe: () => () => {},
+        listAgents: () => [],
+        getAgent: () => null,
+      } as any,
+      agentStorage: {
+        list: async () => [archivedRecord],
+        get: async (agentId: string) => (agentId === archivedRecord.id ? archivedRecord : null),
+        upsert: async (record: typeof archivedRecord) => {
+          Object.assign(archivedRecord, record);
+        },
+      } as any,
+      projectRegistry: {
+        initialize: async () => {},
+        existsOnDisk: async () => true,
+        list: async () => [],
+        get: async () => null,
+        upsert: async () => {},
+        archive: async () => {},
+        remove: async () => {},
+      } as any,
+      workspaceRegistry: {
+        initialize: async () => {},
+        existsOnDisk: async () => true,
+        list: async () => [],
+        get: async () => null,
+        upsert: async () => {},
+        archive: async () => {},
+        remove: async () => {},
+      } as any,
+      checkoutDiffManager: {
+        subscribe: async () => ({
+          initial: { cwd: "/tmp/repo", files: [], error: null },
+          unsubscribe: () => {},
+        }),
+        scheduleRefreshForCwd: () => {},
+        getMetrics: () => ({
+          checkoutDiffTargetCount: 0,
+          checkoutDiffSubscriptionCount: 0,
+          checkoutDiffWatcherCount: 0,
+          checkoutDiffFallbackRefreshTargetCount: 0,
+        }),
+        dispose: () => {},
+      } as any,
+      createAgentMcpTransport: async () => {
+        throw new Error("not used");
+      },
+      stt: null,
+      tts: null,
+      terminalManager: null,
+    }) as any;
+
+    session.agentUpdatesSubscription = {
+      subscriptionId: "sub-agents",
+      filter: { includeArchived: true },
+      isBootstrapping: false,
+      pendingUpdatesByAgentId: new Map(),
+    };
+    session.buildProjectPlacement = async (cwd: string) => ({
+      projectKey: cwd,
+      projectName: "repo",
+      checkout: {
+        cwd,
+        isGit: false,
+        currentBranch: null,
+        remoteUrl: null,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      },
+    });
+
+    await session.handleArchiveAgentRequest("agent-1", "req-archive");
+
+    const update = emitted.find((message) => message.type === "agent_update");
+    expect(update?.payload).toMatchObject({
+      kind: "upsert",
+      agent: {
+        id: "agent-1",
+        archivedAt: expect.any(String),
+      },
+    });
+    expect(
+      emitted.find((message) => message.type === "agent_archived")?.payload,
+    ).toMatchObject({
+      agentId: "agent-1",
+      archivedAt: expect.any(String),
+      requestId: "req-archive",
+    });
+  });
+
   test("non-git workspace uses deterministic directory name and no unknown branch fallback", async () => {
     const session = createSessionForWorkspaceTests() as any;
     session.workspaceRegistry.list = async () => [

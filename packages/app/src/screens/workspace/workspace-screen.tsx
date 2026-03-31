@@ -952,7 +952,6 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       if (
         canPruneAgentTabs &&
         tab.target.kind === "agent" &&
-        !pinnedAgentIds.has(tab.target.agentId) &&
         shouldPruneWorkspaceAgentTab({
           agentId: tab.target.agentId,
           agentsHydrated: hasHydratedAgents,

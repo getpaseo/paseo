@@ -102,6 +102,17 @@ describe("workspace agent visibility", () => {
     ).toBe(true);
   });
 
+  it("prunes pinned archived agent tabs because archive state is authoritative", () => {
+    expect(
+      shouldPruneWorkspaceAgentTab({
+        agentId: "archived-agent",
+        agentsHydrated: true,
+        knownAgentIds: new Set(["archived-agent"]),
+        activeAgentIds: new Set<string>(),
+      }),
+    ).toBe(true);
+  });
+
   it("does not prune active agent tabs", () => {
     const knownAgentIds = new Set(["active-agent"]);
     const activeAgentIds = new Set(["active-agent"]);

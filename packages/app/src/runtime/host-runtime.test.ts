@@ -6,7 +6,7 @@ import type {
   FetchAgentsOptions,
 } from "@server/client/daemon-client";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
-import { useSessionStore } from "@/stores/session-store";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import {
   HostRuntimeController,
   HostRuntimeStore,
@@ -112,6 +112,7 @@ function makeFetchAgentsEntry(input: {
   title?: string | null;
   requiresAttention?: boolean;
   attentionReason?: "permission" | "error" | null;
+  archivedAt?: string | null;
 }): FetchAgentsEntry {
   return {
     agent: {
@@ -145,7 +146,7 @@ function makeFetchAgentsEntry(input: {
       requiresAttention: input.requiresAttention ?? false,
       attentionReason: input.attentionReason ?? null,
       attentionTimestamp: input.requiresAttention && input.attentionReason ? input.updatedAt : null,
-      archivedAt: null,
+      archivedAt: input.archivedAt ?? null,
       labels: {},
     },
     project: {
@@ -1129,6 +1130,93 @@ describe("HostRuntimeStore", () => {
         page: { limit: 200 },
       },
     ]);
+
+    store.syncHosts([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
+  it("rehydrates archived agents over stale active session state after reconnect bootstrap", async () => {
+    const host = makeHost({
+      serverId: "srv_archived_rehydrate",
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    fakeClient.fetchAgentsResponses.push(
+      makeFetchAgentsPayload({
+        entries: [
+          makeFetchAgentsEntry({
+            id: "agent-archived",
+            cwd: "/Users/moboudra/dev/paseo",
+            updatedAt: "2026-03-30T15:30:00.000Z",
+            archivedAt: "2026-03-30T15:31:00.000Z",
+            title: "Archived remotely",
+          }),
+        ],
+        subscriptionId: "app:srv_archived_rehydrate",
+      }),
+    );
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    useSessionStore
+      .getState()
+      .initializeSession(host.serverId, fakeClient as unknown as DaemonClient);
+    useSessionStore.getState().setAgents(host.serverId, () => {
+      const stale = makeFetchAgentsEntry({
+        id: "agent-archived",
+        cwd: "/Users/moboudra/dev/paseo",
+        updatedAt: "2026-03-30T15:29:00.000Z",
+        archivedAt: null,
+        title: "Stale active copy",
+      }).agent;
+      const staleAgent: Agent = {
+        ...stale,
+        serverId: host.serverId,
+        createdAt: new Date(stale.createdAt),
+        updatedAt: new Date(stale.updatedAt),
+        lastUserMessageAt: null,
+        lastActivityAt: new Date(stale.updatedAt),
+        archivedAt: stale.archivedAt ? new Date(stale.archivedAt) : null,
+        attentionTimestamp: stale.attentionTimestamp ? new Date(stale.attentionTimestamp) : null,
+      };
+      return new Map([
+        [
+          stale.id,
+          staleAgent,
+        ],
+      ]);
+    });
+
+    store.syncHosts([host]);
+
+    const timeoutAt = Date.now() + 300;
+    let archivedAt =
+      useSessionStore.getState().sessions[host.serverId]?.agents.get("agent-archived")
+        ?.archivedAt ?? null;
+    while (!archivedAt && Date.now() < timeoutAt) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      archivedAt =
+        useSessionStore.getState().sessions[host.serverId]?.agents.get("agent-archived")
+          ?.archivedAt ?? null;
+    }
+
+    expect(archivedAt?.toISOString()).toBe("2026-03-30T15:31:00.000Z");
 
     store.syncHosts([]);
     useSessionStore.getState().clearSession(host.serverId);

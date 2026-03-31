@@ -979,6 +979,16 @@ export class Session {
     const storedRecord = await this.agentStorage.get(agent.id);
     const title = storedRecord?.title ?? storedRecord?.config?.title ?? null;
     const payload = toAgentPayload(agent, { title });
+    const storedUpdatedAt = storedRecord
+      ? this.resolveStoredAgentPayloadUpdatedAt(storedRecord)
+      : null;
+    if (storedUpdatedAt) {
+      const liveUpdatedAt = Date.parse(payload.updatedAt);
+      const persistedUpdatedAt = Date.parse(storedUpdatedAt);
+      if (!Number.isNaN(persistedUpdatedAt) && (Number.isNaN(liveUpdatedAt) || persistedUpdatedAt > liveUpdatedAt)) {
+        payload.updatedAt = storedUpdatedAt;
+      }
+    }
     payload.archivedAt = storedRecord?.archivedAt ?? null;
     return payload;
   }
@@ -994,7 +1004,7 @@ export class Session {
     } as const;
 
     const createdAt = new Date(record.createdAt);
-    const updatedAt = new Date(record.lastActivityAt ?? record.updatedAt);
+    const updatedAt = new Date(this.resolveStoredAgentPayloadUpdatedAt(record));
     const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
 
     const provider = coerceAgentProvider(this.sessionLogger, record.provider, record.id);
@@ -1043,6 +1053,23 @@ export class Session {
       archivedAt: record.archivedAt ?? null,
       labels: record.labels,
     };
+  }
+
+  private resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): string {
+    const timestamps = [record.updatedAt, record.lastActivityAt]
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .map((value) => ({
+        raw: value,
+        parsed: Date.parse(value),
+      }))
+      .filter((value) => !Number.isNaN(value.parsed));
+
+    if (timestamps.length === 0) {
+      return record.updatedAt;
+    }
+
+    timestamps.sort((a, b) => b.parsed - a.parsed);
+    return timestamps[0].raw;
   }
 
   private async ensureAgentLoaded(agentId: string): Promise<ManagedAgent> {
@@ -1961,7 +1988,31 @@ export class Session {
   private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Archiving agent ${agentId}`);
 
-    const { archivedAt } = await this.archiveAgentState(agentId);
+    const { archivedAt, archivedRecord } = await this.archiveAgentState(agentId);
+
+    if (this.agentUpdatesSubscription) {
+      const payload = this.buildStoredAgentPayload(archivedRecord);
+      const project = await this.buildProjectPlacement(payload.cwd);
+      const matches = this.matchesAgentFilter({
+        agent: payload,
+        project,
+        filter: this.agentUpdatesSubscription.filter,
+      });
+      this.bufferOrEmitAgentUpdate(
+        this.agentUpdatesSubscription,
+        matches
+          ? {
+              kind: "upsert",
+              agent: payload,
+              project,
+            }
+          : {
+              kind: "remove",
+              agentId,
+            },
+      );
+      await this.emitWorkspaceUpdateForCwd(payload.cwd);
+    }
 
     this.emit({
       type: "agent_archived",
@@ -2008,6 +2059,7 @@ export class Session {
     const nextRecord: StoredAgentRecord = {
       ...archivedRecord,
       archivedAt,
+      updatedAt: archivedAt,
       lastStatus: normalizedStatus,
       requiresAttention: false,
       attentionReason: null,
@@ -2034,9 +2086,11 @@ export class Session {
     if (!record || !record.archivedAt) {
       return false;
     }
+    const updatedAt = new Date().toISOString();
     await this.agentStorage.upsert({
       ...record,
       archivedAt: null,
+      updatedAt,
     });
     this.agentManager.notifyAgentState(agentId);
     return true;
