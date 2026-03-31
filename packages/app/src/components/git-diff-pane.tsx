@@ -86,7 +86,7 @@ interface HighlightedTextProps {
 
 function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
   const { theme } = useUnistyles();
-  const isDark = theme.colors.surface0 === "#18181c";
+  const isDark = theme.colors.surface0 === "#181B1A";
 
   // Get color for a highlight style
   const getTokenColor = (style: HighlightStyle | null): string => {

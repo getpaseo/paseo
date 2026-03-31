@@ -175,21 +175,21 @@ const lightSemanticColors = {
 } as const;
 
 const darkSemanticColors = {
-  // Surfaces (layers)
-  surface0: "#18181c", // App background
-  surface1: "#1f1f23", // Subtle hover
-  surface2: "#27272a", // Elevated: badges, inputs, sheets
-  surface3: "#3f3f46", // Highest elevation
-  surface4: "#52525b", // Extra emphasis
-  surfaceSidebar: "#121216", // Sidebar background (darker than main)
+  // Surfaces (layers) — subtle teal tint
+  surface0: "#181B1A", // App background
+  surface1: "#1E2120", // Subtle hover
+  surface2: "#272A29", // Elevated: badges, inputs, sheets
+  surface3: "#434645", // Highest elevation
+  surface4: "#595B5B", // Extra emphasis
+  surfaceSidebar: "#141716", // Sidebar background (darker than main)
 
   // Text
   foreground: "#fafafa",
-  foregroundMuted: "#a1a1aa",
+  foregroundMuted: "#A1A5A4",
 
   // Borders
-  border: "#27272a",
-  borderAccent: "#34343a",
+  border: "#252B2A",
+  borderAccent: "#2F3534",
 
   // Brand
   accent: "#20744A",
@@ -203,28 +203,28 @@ const darkSemanticColors = {
   successForeground: "#ffffff",
 
   // Legacy aliases (for gradual migration)
-  background: "#18181c",
-  popover: "#27272a",
+  background: "#181B1A",
+  popover: "#272A29",
   popoverForeground: "#fafafa",
   primary: "#fafafa",
-  primaryForeground: "#18181b",
-  secondary: "#27272a",
+  primaryForeground: "#181B1A",
+  secondary: "#272A29",
   secondaryForeground: "#fafafa",
-  muted: "#27272a",
-  mutedForeground: "#a1a1aa",
-  accentBorder: "#34343a",
-  input: "#27272a",
+  muted: "#272A29",
+  mutedForeground: "#A1A5A4",
+  accentBorder: "#2F3534",
+  input: "#272A29",
   ring: "#d4d4d8",
 
   terminal: {
-    background: "#18181c",
+    background: "#181B1A",
     foreground: "#fafafa",
     cursor: "#fafafa",
-    cursorAccent: "#18181c",
+    cursorAccent: "#181B1A",
     selectionBackground: "rgba(255, 255, 255, 0.2)",
     selectionForeground: "#fafafa",
 
-    black: "#121214",
+    black: "#141716",
     red: "#ef4444",
     green: "#22c55e",
     yellow: "#f59e0b",
@@ -233,7 +233,7 @@ const darkSemanticColors = {
     cyan: "#06b6d4",
     white: "#e4e4e7",
 
-    brightBlack: "#3f3f46",
+    brightBlack: "#434645",
     brightRed: "#f87171",
     brightGreen: "#4ade80",
     brightYellow: "#fbbf24",

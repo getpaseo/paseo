@@ -187,27 +187,27 @@
 }
 
 @theme {
-  --color-background: #0a0a0a;
+  --color-background: #101615;
   --color-foreground: #fafafa;
-  --color-muted: #262626;
-  --color-muted-foreground: #b6b6b6;
-  --color-card: #171717;
-  --color-border: #27272a;
+  --color-muted: #252B2A;
+  --color-muted-foreground: #A8ADAC;
+  --color-card: #171D1C;
+  --color-border: #252B2A;
   --color-primary: #3b82f6;
   --color-primary-foreground: #ffffff;
-  --color-secondary: #27272a;
+  --color-secondary: #252B2A;
   --color-secondary-foreground: #fafafa;
 
   /* Mockup palette (from app unistyles theme) */
-  --color-mock-surface0: #18181c;
-  --color-mock-surface1: #1f1f23;
-  --color-mock-surface2: #27272a;
-  --color-mock-surface3: #3f3f46;
-  --color-mock-sidebar: #121216;
+  --color-mock-surface0: #181B1A;
+  --color-mock-surface1: #1E2120;
+  --color-mock-surface2: #272A29;
+  --color-mock-surface3: #434645;
+  --color-mock-sidebar: #141716;
   --color-mock-fg: #fafafa;
-  --color-mock-fg-muted: #a1a1aa;
-  --color-mock-border: #27272a;
-  --color-mock-border-accent: #34343a;
+  --color-mock-fg-muted: #A1A5A4;
+  --color-mock-border: #272A29;
+  --color-mock-border-accent: #313433;
   --color-mock-accent: #20744A;
   --color-mock-green: #22c55e;
   --color-mock-green-400: #4ade80;

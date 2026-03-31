@@ -119,7 +119,7 @@ function FilePreviewBody({
   filePath,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
-  const isDark = theme.colors.surface0 === "#18181c";
+  const isDark = theme.colors.surface0 === "#181B1A";
   const colorMap = isDark ? darkHighlightColors : lightHighlightColors;
   const baseColor = isDark ? "#c9d1d9" : "#24292f";
 
