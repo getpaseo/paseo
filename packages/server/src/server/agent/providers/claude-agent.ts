@@ -2638,6 +2638,16 @@ class ClaudeAgentSession implements AgentSession {
     if (this.claudeSessionId === sessionId) {
       return null;
     }
+    // Allow session ID to be updated if no active turns (new agent initialization)
+    if (this.activeForegroundTurnId === null && this.autonomousTurn === null) {
+      this.logger.debug(
+        { oldSessionId: this.claudeSessionId, newSessionId: sessionId },
+        "Session ID updated during initialization",
+      );
+      this.claudeSessionId = sessionId;
+      this.persistence = null;
+      return sessionId;
+    }
     throw new Error(
       `CRITICAL: Claude session ID overwrite detected! ` +
         `Existing: ${this.claudeSessionId}, New: ${sessionId}. ` +
@@ -2676,6 +2686,14 @@ class ClaudeAgentSession implements AgentSession {
       this.logger.debug({ sessionId: newSessionId }, "Claude session ID set for the first time");
     } else if (existingSessionId === newSessionId) {
       this.logger.debug({ sessionId: newSessionId }, "Claude session ID unchanged (same value)");
+    } else if (this.activeForegroundTurnId === null && this.autonomousTurn === null) {
+      // Allow session ID to be updated during initialization
+      this.logger.debug(
+        { oldSessionId: existingSessionId, newSessionId },
+        "Session ID updated during initialization",
+      );
+      this.claudeSessionId = newSessionId;
+      threadStartedSessionId = newSessionId;
     } else {
       throw new Error(
         `CRITICAL: Claude session ID overwrite detected! ` +
