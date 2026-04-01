@@ -1,3 +1,4 @@
+import type { DaemonClient } from "@server/client/daemon-client";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
 export type BulkClosableTabGroups = {
@@ -5,6 +6,22 @@ export type BulkClosableTabGroups = {
   terminalTabs: Array<{ tabId: string; terminalId: string }>;
   otherTabs: Array<{ tabId: string }>;
 };
+
+type CloseItemsPayload = Awaited<ReturnType<DaemonClient["closeItems"]>>;
+
+interface CloseWorkspaceTabWithCleanupInput {
+  tabId: string;
+  target?: WorkspaceTabDescriptor["target"];
+}
+
+interface CloseBulkWorkspaceTabsInput {
+  client: Pick<DaemonClient, "closeItems"> | null;
+  groups: BulkClosableTabGroups;
+  closeTab: (tabId: string, action: () => Promise<void>) => Promise<void>;
+  closeWorkspaceTabWithCleanup: (input: CloseWorkspaceTabWithCleanupInput) => void;
+  logLabel: string;
+  warn?: (message: string, payload: object) => void;
+}
 
 export function classifyBulkClosableTabs(tabs: WorkspaceTabDescriptor[]): BulkClosableTabGroups {
   const groups: BulkClosableTabGroups = {
@@ -49,4 +66,73 @@ export function buildBulkCloseConfirmationMessage(input: BulkClosableTabGroups):
     return `This will close ${otherTabs.length} tab(s).`;
   }
   return `This will archive ${agentTabs.length} agent(s).`;
+}
+
+function toSuccessfulAgentIds(payload: CloseItemsPayload | null): Set<string> {
+  return new Set(payload?.agents.map((agent) => agent.agentId) ?? []);
+}
+
+function toSuccessfulTerminalIds(payload: CloseItemsPayload | null): Set<string> {
+  return new Set(
+    payload?.terminals.filter((terminal) => terminal.success).map((terminal) => terminal.terminalId) ??
+      [],
+  );
+}
+
+export async function closeBulkWorkspaceTabs(
+  input: CloseBulkWorkspaceTabsInput,
+): Promise<CloseItemsPayload | null> {
+  const { client, groups, closeTab, closeWorkspaceTabWithCleanup, logLabel, warn } = input;
+  const hasDestructiveTabs = groups.agentTabs.length > 0 || groups.terminalTabs.length > 0;
+  let payload: CloseItemsPayload | null = null;
+
+  if (hasDestructiveTabs && client) {
+    try {
+      payload = await client.closeItems({
+        agentIds: groups.agentTabs.map((tab) => tab.agentId),
+        terminalIds: groups.terminalTabs.map((tab) => tab.terminalId),
+      });
+    } catch (error) {
+      warn?.(`[WorkspaceScreen] Failed to bulk close tabs ${logLabel}`, { error });
+    }
+  } else if (hasDestructiveTabs) {
+    warn?.(`[WorkspaceScreen] Failed to bulk close tabs ${logLabel}`, {
+      error: new Error("Daemon client not available"),
+    });
+  }
+
+  const successfulAgentIds = toSuccessfulAgentIds(payload);
+  const successfulTerminalIds = toSuccessfulTerminalIds(payload);
+
+  for (const { tabId, agentId } of groups.agentTabs) {
+    if (!successfulAgentIds.has(agentId)) {
+      continue;
+    }
+    await closeTab(tabId, async () => {
+      closeWorkspaceTabWithCleanup({
+        tabId,
+        target: { kind: "agent", agentId },
+      });
+    });
+  }
+
+  for (const { tabId, terminalId } of groups.terminalTabs) {
+    if (!successfulTerminalIds.has(terminalId)) {
+      continue;
+    }
+    await closeTab(tabId, async () => {
+      closeWorkspaceTabWithCleanup({
+        tabId,
+        target: { kind: "terminal", terminalId },
+      });
+    });
+  }
+
+  for (const { tabId } of groups.otherTabs) {
+    await closeTab(tabId, async () => {
+      closeWorkspaceTabWithCleanup({ tabId });
+    });
+  }
+
+  return payload;
 }

@@ -22,6 +22,7 @@ import {
   type SubscribeTerminalRequest,
   type UnsubscribeTerminalRequest,
   type TerminalInput,
+  type CloseItemsRequest,
   type KillTerminalRequest,
   type CaptureTerminalRequest,
   type SubscribeCheckoutDiffRequest,
@@ -1474,6 +1475,10 @@ export class Session {
           await this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
           break;
 
+        case "close_items_request":
+          await this.handleCloseItemsRequest(msg);
+          break;
+
         case "update_agent_request":
           await this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
           break;
@@ -1986,6 +1991,20 @@ export class Session {
   }
 
   private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {
+    const result = await this.archiveAgentForClose(agentId);
+    this.emit({
+      type: "agent_archived",
+      payload: {
+        agentId: result.agentId,
+        archivedAt: result.archivedAt,
+        requestId,
+      },
+    });
+  }
+
+  private async archiveAgentForClose(
+    agentId: string,
+  ): Promise<{ agentId: string; archivedAt: string }> {
     this.sessionLogger.info({ agentId }, `Archiving agent ${agentId}`);
 
     if (this.agentManager.getAgent(agentId)) {
@@ -2023,12 +2042,44 @@ export class Session {
       await this.emitWorkspaceUpdateForCwd(payload.cwd);
     }
 
+    return { agentId, archivedAt };
+  }
+
+  private async handleCloseItemsRequest(msg: CloseItemsRequest): Promise<void> {
+    const agents = [];
+    for (const agentId of msg.agentIds) {
+      try {
+        agents.push(await this.archiveAgentForClose(agentId));
+      } catch (error: any) {
+        this.sessionLogger.warn(
+          { err: error, agentId, requestId: msg.requestId },
+          "Failed to archive agent during close_items batch",
+        );
+      }
+    }
+
+    const terminals = [];
+    for (const terminalId of msg.terminalIds) {
+      try {
+        terminals.push(this.killTerminalForClose(terminalId));
+      } catch (error: any) {
+        this.sessionLogger.warn(
+          { err: error, terminalId, requestId: msg.requestId },
+          "Failed to kill terminal during close_items batch",
+        );
+        terminals.push({
+          terminalId,
+          success: false,
+        });
+      }
+    }
+
     this.emit({
-      type: "agent_archived",
+      type: "close_items_response",
       payload: {
-        agentId,
-        archivedAt,
-        requestId,
+        agents,
+        terminals,
+        requestId: msg.requestId,
       },
     });
   }
@@ -7491,27 +7542,30 @@ export class Session {
   }
 
   private async handleKillTerminalRequest(msg: KillTerminalRequest): Promise<void> {
-    if (!this.terminalManager) {
-      this.emit({
-        type: "kill_terminal_response",
-        payload: {
-          terminalId: msg.terminalId,
-          success: false,
-          requestId: msg.requestId,
-        },
-      });
-      return;
-    }
-
-    this.killTrackedTerminal(msg.terminalId, { emitExit: true });
+    const result = this.killTerminalForClose(msg.terminalId);
     this.emit({
       type: "kill_terminal_response",
       payload: {
-        terminalId: msg.terminalId,
-        success: true,
+        terminalId: result.terminalId,
+        success: result.success,
         requestId: msg.requestId,
       },
     });
+  }
+
+  private killTerminalForClose(terminalId: string): { terminalId: string; success: boolean } {
+    if (!this.terminalManager) {
+      return {
+        terminalId,
+        success: false,
+      };
+    }
+
+    this.killTrackedTerminal(terminalId, { emitExit: true });
+    return {
+      terminalId,
+      success: true,
+    };
   }
 
   private async handleCaptureTerminalRequest(msg: CaptureTerminalRequest): Promise<void> {

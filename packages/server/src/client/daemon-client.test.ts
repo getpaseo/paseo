@@ -1927,6 +1927,59 @@ describe("DaemonClient", () => {
     ]);
   });
 
+  test("sends close_items_request and resolves close_items_response", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const responsePromise = client.closeItems(
+      {
+        agentIds: ["agent-1"],
+        terminalIds: ["term-1"],
+      },
+      "req-close-items",
+    );
+
+    expect(JSON.parse(String(mock.sent[0]))).toEqual({
+      type: "session",
+      message: {
+        type: "close_items_request",
+        agentIds: ["agent-1"],
+        terminalIds: ["term-1"],
+        requestId: "req-close-items",
+      },
+    });
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "close_items_response",
+        payload: {
+          agents: [{ agentId: "agent-1", archivedAt: "2026-04-01T00:00:00.000Z" }],
+          terminals: [{ terminalId: "term-1", success: true }],
+          requestId: "req-close-items",
+        },
+      }),
+    );
+
+    await expect(responsePromise).resolves.toEqual({
+      agents: [{ agentId: "agent-1", archivedAt: "2026-04-01T00:00:00.000Z" }],
+      terminals: [{ terminalId: "term-1", success: true }],
+      requestId: "req-close-items",
+    });
+  });
+
   test("waitForFinish with timeout=0 omits timeoutMs and has no client deadline", async () => {
     vi.useFakeTimers();
     try {

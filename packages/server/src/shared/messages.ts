@@ -525,6 +525,13 @@ export const ArchiveAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const CloseItemsRequestMessageSchema = z.object({
+  type: z.literal("close_items_request"),
+  agentIds: z.array(z.string()).default([]),
+  terminalIds: z.array(z.string()).default([]),
+  requestId: z.string(),
+});
+
 export const UpdateAgentRequestMessageSchema = z.object({
   type: z.literal("update_agent_request"),
   agentId: z.string(),
@@ -1190,6 +1197,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
   ArchiveAgentRequestMessageSchema,
+  CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
@@ -1805,6 +1813,25 @@ export const AgentArchivedMessageSchema = z.object({
   }),
 });
 
+const CloseItemsAgentResultSchema = z.object({
+  agentId: z.string(),
+  archivedAt: z.string(),
+});
+
+const CloseItemsTerminalResultSchema = z.object({
+  terminalId: z.string(),
+  success: z.boolean(),
+});
+
+export const CloseItemsResponseSchema = z.object({
+  type: z.literal("close_items_response"),
+  payload: z.object({
+    agents: z.array(CloseItemsAgentResultSchema),
+    terminals: z.array(CloseItemsTerminalResultSchema),
+    requestId: z.string(),
+  }),
+});
+
 const AheadBehindSchema = z.object({
   ahead: z.number(),
   behind: z.number(),
@@ -2270,6 +2297,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentPermissionResolvedMessageSchema,
   AgentDeletedMessageSchema,
   AgentArchivedMessageSchema,
+  CloseItemsResponseSchema,
   CheckoutStatusResponseSchema,
   SubscribeCheckoutDiffResponseSchema,
   CheckoutDiffUpdateSchema,
@@ -2487,6 +2515,8 @@ export type TerminalCell = z.infer<typeof TerminalCellSchema>;
 export type TerminalCursorStyle = z.infer<typeof TerminalCursorStyleSchema>;
 export type TerminalCursor = z.infer<typeof TerminalCursorSchema>;
 export type TerminalState = z.infer<typeof TerminalStateSchema>;
+export type CloseItemsRequest = z.infer<typeof CloseItemsRequestMessageSchema>;
+export type CloseItemsResponse = z.infer<typeof CloseItemsResponseSchema>;
 export type KillTerminalRequest = z.infer<typeof KillTerminalRequestSchema>;
 export type KillTerminalResponse = z.infer<typeof KillTerminalResponseSchema>;
 export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema>;

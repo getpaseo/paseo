@@ -9,6 +9,11 @@ export interface ArchiveAgentInput {
   agentId: string;
 }
 
+export interface ArchivedAgentCloseResult {
+  agentId: string;
+  archivedAt: string;
+}
+
 type ArchiveAgentPendingState = Record<string, true>;
 
 interface SetAgentArchivingInput extends ArchiveAgentInput {
@@ -130,6 +135,39 @@ function markAgentArchivedInStore(input: ArchiveAgentInput & { archivedAt: strin
   });
 }
 
+interface ApplyArchivedAgentCloseResultsInput {
+  queryClient: QueryClient;
+  serverId: string;
+  results: ArchivedAgentCloseResult[];
+}
+
+export function applyArchivedAgentCloseResults(
+  input: ApplyArchivedAgentCloseResultsInput,
+): void {
+  if (input.results.length === 0) {
+    return;
+  }
+
+  for (const result of input.results) {
+    markAgentArchivedInStore({
+      serverId: input.serverId,
+      agentId: result.agentId,
+      archivedAt: result.archivedAt,
+    });
+    removeAgentFromCachedLists(input.queryClient, {
+      serverId: input.serverId,
+      agentId: result.agentId,
+    });
+  }
+
+  void input.queryClient.invalidateQueries({
+    queryKey: ["sidebarAgentsList", input.serverId],
+  });
+  void input.queryClient.invalidateQueries({
+    queryKey: ["allAgents", input.serverId],
+  });
+}
+
 export function clearArchiveAgentPending(input: IsAgentArchivingInput): void {
   setAgentArchiving({
     ...input,
@@ -165,17 +203,10 @@ export function useArchiveAgent() {
       });
     },
     onSuccess: (result, input) => {
-      markAgentArchivedInStore({
+      applyArchivedAgentCloseResults({
+        queryClient,
         serverId: input.serverId,
-        agentId: input.agentId,
-        archivedAt: result.archivedAt,
-      });
-      removeAgentFromCachedLists(queryClient, input);
-      void queryClient.invalidateQueries({
-        queryKey: ["sidebarAgentsList", input.serverId],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["allAgents", input.serverId],
+        results: [{ agentId: input.agentId, archivedAt: result.archivedAt }],
       });
     },
     onSettled: (_result, _error, input) => {

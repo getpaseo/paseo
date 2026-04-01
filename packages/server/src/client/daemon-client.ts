@@ -43,6 +43,7 @@ import type {
   CreateTerminalResponse,
   SubscribeTerminalResponse,
   TerminalState,
+  CloseItemsResponse,
   KillTerminalResponse,
   CaptureTerminalResponse,
   TerminalInput,
@@ -237,6 +238,7 @@ type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type CreateTerminalPayload = CreateTerminalResponse["payload"];
 type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
+type CloseItemsPayload = CloseItemsResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
 type CaptureTerminalPayload = CaptureTerminalResponse["payload"];
 type ChatCreatePayload = Extract<
@@ -2824,6 +2826,26 @@ export class DaemonClient {
       requestId: resolvedRequestId,
       message,
       responseType: "kill_terminal_response",
+      timeout: 10000,
+      options: { skipQueue: true },
+    });
+  }
+
+  async closeItems(
+    input: { agentIds?: string[]; terminalIds?: string[] },
+    requestId?: string,
+  ): Promise<CloseItemsPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "close_items_request",
+      agentIds: input.agentIds ?? [],
+      terminalIds: input.terminalIds ?? [],
+      requestId: resolvedRequestId,
+    });
+    return this.sendCorrelatedRequest({
+      requestId: resolvedRequestId,
+      message,
+      responseType: "close_items_response",
       timeout: 10000,
       options: { skipQueue: true },
     });

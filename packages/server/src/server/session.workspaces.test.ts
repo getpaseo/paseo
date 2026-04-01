@@ -272,6 +272,304 @@ describe("workspace aggregation", () => {
     });
   });
 
+  test("close_items_request archives agents and kills terminals in one batch", async () => {
+    const emitted: Array<{ type: string; payload: any }> = [];
+    const archivedAt = "2026-04-01T00:00:00.000Z";
+    const sessionLogger = {
+      child: () => sessionLogger,
+      trace: vi.fn(),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const archivedRecord = {
+      id: "agent-1",
+      provider: "codex",
+      cwd: "/tmp/repo",
+      model: null,
+      thinkingOptionId: null,
+      effectiveThinkingOptionId: null,
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+      lastUserMessageAt: null,
+      status: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      runtimeInfo: { provider: "codex", sessionId: null },
+      title: null,
+      labels: {},
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+      archivedAt: null,
+    };
+    const session = new Session({
+      clientId: "test-client",
+      onMessage: (message) => emitted.push(message as any),
+      logger: sessionLogger as any,
+      downloadTokenStore: {} as any,
+      pushTokenStore: {} as any,
+      paseoHome: "/tmp/paseo-test",
+      agentManager: {
+        subscribe: () => () => {},
+        listAgents: () => [],
+        getAgent: (agentId: string) => (agentId === "agent-1" ? { id: agentId } : null),
+        archiveAgent: async () => ({ archivedAt }),
+        clearAgentAttention: async () => {},
+        notifyAgentState: () => {},
+      } as any,
+      agentStorage: {
+        list: async () => [],
+        get: async (agentId: string) => {
+          if (agentId !== "agent-1") {
+            return null;
+          }
+          archivedRecord.archivedAt = archivedAt;
+          archivedRecord.updatedAt = archivedAt;
+          return archivedRecord;
+        },
+      } as any,
+      projectRegistry: {
+        initialize: async () => {},
+        existsOnDisk: async () => true,
+        list: async () => [],
+        get: async () => null,
+        upsert: async () => {},
+        archive: async () => {},
+        remove: async () => {},
+      } as any,
+      workspaceRegistry: {
+        initialize: async () => {},
+        existsOnDisk: async () => true,
+        list: async () => [],
+        get: async () => null,
+        upsert: async () => {},
+        archive: async () => {},
+        remove: async () => {},
+      } as any,
+      checkoutDiffManager: {
+        subscribe: async () => ({
+          initial: { cwd: "/tmp", files: [], error: null },
+          unsubscribe: () => {},
+        }),
+        scheduleRefreshForCwd: () => {},
+        getMetrics: () => ({
+          checkoutDiffTargetCount: 0,
+          checkoutDiffSubscriptionCount: 0,
+          checkoutDiffWatcherCount: 0,
+          checkoutDiffFallbackRefreshTargetCount: 0,
+        }),
+        dispose: () => {},
+      } as any,
+      createAgentMcpTransport: async () => {
+        throw new Error("not used");
+      },
+      stt: null,
+      tts: null,
+      terminalManager: {
+        killTerminal: vi.fn(),
+        subscribeTerminalsChanged: () => () => {},
+      } as any,
+    }) as any;
+
+    session.agentUpdatesSubscription = {
+      subscriptionId: "sub-agents",
+      filter: { includeArchived: true },
+      isBootstrapping: false,
+      pendingUpdatesByAgentId: new Map(),
+    };
+    session.buildProjectPlacement = async (cwd: string) => ({
+      projectKey: cwd,
+      projectName: "repo",
+      checkout: {
+        cwd,
+        isGit: false,
+        currentBranch: null,
+        remoteUrl: null,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      },
+    });
+    session.interruptAgentIfRunning = vi.fn();
+
+    await session.handleMessage({
+      type: "close_items_request",
+      agentIds: ["agent-1"],
+      terminalIds: ["term-1"],
+      requestId: "req-close-items",
+    });
+
+    expect(session.interruptAgentIfRunning).toHaveBeenCalledWith("agent-1");
+    expect(session.terminalManager.killTerminal).toHaveBeenCalledWith("term-1");
+    expect(
+      emitted.find((message) => message.type === "close_items_response")?.payload,
+    ).toEqual({
+      agents: [{ agentId: "agent-1", archivedAt }],
+      terminals: [{ terminalId: "term-1", success: true }],
+      requestId: "req-close-items",
+    });
+    expect(emitted.find((message) => message.type === "agent_update")?.payload).toMatchObject({
+      kind: "upsert",
+      agent: {
+        id: "agent-1",
+        archivedAt,
+      },
+    });
+  });
+
+  test("close_items_request continues after an archive failure", async () => {
+    const emitted: Array<{ type: string; payload: any }> = [];
+    const sessionLogger = {
+      child: () => sessionLogger,
+      trace: vi.fn(),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const archivedAt = "2026-04-01T00:00:00.000Z";
+    const goodRecord = {
+      ...makeAgent({
+        id: "agent-good",
+        cwd: "/tmp/repo",
+        status: "idle",
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+      archivedAt: null as string | null,
+    };
+    const session = new Session({
+      clientId: "test-client",
+      onMessage: (message) => emitted.push(message as any),
+      logger: sessionLogger as any,
+      downloadTokenStore: {} as any,
+      pushTokenStore: {} as any,
+      paseoHome: "/tmp/paseo-test",
+      agentManager: {
+        subscribe: () => () => {},
+        listAgents: () => [],
+        getAgent: (agentId: string) =>
+          agentId === "agent-bad" || agentId === "agent-good" ? { id: agentId } : null,
+        archiveAgent: async (agentId: string) => {
+          if (agentId === "agent-bad") {
+            throw new Error("archive failed");
+          }
+          return { archivedAt };
+        },
+        clearAgentAttention: async () => {},
+        notifyAgentState: () => {},
+      } as any,
+      agentStorage: {
+        list: async () => [],
+        get: async (agentId: string) => {
+          if (agentId !== "agent-good") {
+            return null;
+          }
+          goodRecord.archivedAt = archivedAt;
+          goodRecord.updatedAt = archivedAt;
+          return goodRecord;
+        },
+      } as any,
+      projectRegistry: {
+        initialize: async () => {},
+        existsOnDisk: async () => true,
+        list: async () => [],
+        get: async () => null,
+        upsert: async () => {},
+        archive: async () => {},
+        remove: async () => {},
+      } as any,
+      workspaceRegistry: {
+        initialize: async () => {},
+        existsOnDisk: async () => true,
+        list: async () => [],
+        get: async () => null,
+        upsert: async () => {},
+        archive: async () => {},
+        remove: async () => {},
+      } as any,
+      checkoutDiffManager: {
+        subscribe: async () => ({
+          initial: { cwd: "/tmp", files: [], error: null },
+          unsubscribe: () => {},
+        }),
+        scheduleRefreshForCwd: () => {},
+        getMetrics: () => ({
+          checkoutDiffTargetCount: 0,
+          checkoutDiffSubscriptionCount: 0,
+          checkoutDiffWatcherCount: 0,
+          checkoutDiffFallbackRefreshTargetCount: 0,
+        }),
+        dispose: () => {},
+      } as any,
+      createAgentMcpTransport: async () => {
+        throw new Error("not used");
+      },
+      stt: null,
+      tts: null,
+      terminalManager: {
+        killTerminal: vi.fn(),
+        subscribeTerminalsChanged: () => () => {},
+      } as any,
+    }) as any;
+
+    session.agentUpdatesSubscription = {
+      subscriptionId: "sub-agents",
+      filter: { includeArchived: true },
+      isBootstrapping: false,
+      pendingUpdatesByAgentId: new Map(),
+    };
+    session.buildProjectPlacement = async (cwd: string) => ({
+      projectKey: cwd,
+      projectName: "repo",
+      checkout: {
+        cwd,
+        isGit: false,
+        currentBranch: null,
+        remoteUrl: null,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      },
+    });
+    session.interruptAgentIfRunning = vi.fn();
+
+    await session.handleMessage({
+      type: "close_items_request",
+      agentIds: ["agent-bad", "agent-good"],
+      terminalIds: ["term-1"],
+      requestId: "req-close-best-effort",
+    });
+
+    expect(session.interruptAgentIfRunning).toHaveBeenCalledWith("agent-bad");
+    expect(session.interruptAgentIfRunning).toHaveBeenCalledWith("agent-good");
+    expect(session.terminalManager.killTerminal).toHaveBeenCalledWith("term-1");
+    expect(
+      emitted.find((message) => message.type === "close_items_response")?.payload,
+    ).toEqual({
+      agents: [{ agentId: "agent-good", archivedAt }],
+      terminals: [{ terminalId: "term-1", success: true }],
+      requestId: "req-close-best-effort",
+    });
+    expect(emitted.find((message) => message.type === "agent_update")?.payload).toMatchObject({
+      kind: "upsert",
+      agent: {
+        id: "agent-good",
+        archivedAt,
+      },
+    });
+    expect(sessionLogger.warn).toHaveBeenCalled();
+  });
+
   test("non-git workspace uses deterministic directory name and no unknown branch fallback", async () => {
     const session = createSessionForWorkspaceTests() as any;
     session.workspaceRegistry.list = async () => [
