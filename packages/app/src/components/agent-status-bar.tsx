@@ -33,6 +33,7 @@ import {
   getStatusSelectorHint,
   resolveAgentModelSelection,
 } from "@/components/agent-status-bar.utils";
+import { isProviderModelsQueryLoading } from "@/components/agent-status-bar.model-loading";
 
 type StatusOption = {
   id: string;
@@ -634,12 +635,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
 
   const modelsQuery = useQuery({
-    queryKey: [
-      "providerModels",
-      serverId,
-      agent?.provider ?? "__missing_provider__",
-      agent?.cwd ?? "__missing_cwd__",
-    ],
+    queryKey: ["providerModels", serverId, agent?.provider ?? "__missing_provider__"],
     enabled: Boolean(client && agent?.provider),
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
@@ -753,7 +749,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
           console.warn("[AgentStatusBar] setAgentThinkingOption failed", error);
         });
       }}
-      isModelLoading={modelsQuery.isPending || modelsQuery.isFetching}
+      isModelLoading={isProviderModelsQueryLoading(modelsQuery)}
       disabled={!client}
     />
   );

@@ -418,7 +418,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   }, [formState.workingDir]);
 
   const providerModelsQuery = useQuery({
-    queryKey: ["providerModels", formState.serverId, formState.provider, debouncedCwd],
+    queryKey: ["providerModels", formState.serverId, formState.provider],
     enabled: Boolean(
       isVisible &&
         isTargetDaemonReady &&
@@ -446,7 +446,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
 
   const allProviderModelQueries = useQueries({
     queries: providerDefinitions.map((def) => ({
-      queryKey: ["providerModels", formState.serverId, def.id, debouncedCwd],
+      queryKey: ["providerModels", formState.serverId, def.id],
       enabled: Boolean(
         isVisible && isTargetDaemonReady && formState.serverId && client && isConnected,
       ),
