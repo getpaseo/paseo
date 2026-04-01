@@ -21,6 +21,7 @@ import type {
   AgentRuntimeInfo,
   AgentSession,
   AgentSessionConfig,
+  AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
@@ -441,7 +442,7 @@ export class OpenCodeAgentClient implements AgentClient {
       throw new Error("OpenCode session creation returned no data");
     }
 
-    return new OpenCodeAgentSession(openCodeConfig, client, session.id);
+    return new OpenCodeAgentSession(openCodeConfig, client, session.id, this.logger);
   }
 
   async resumeSession(
@@ -466,7 +467,7 @@ export class OpenCodeAgentClient implements AgentClient {
       directory: openCodeConfig.cwd,
     });
 
-    return new OpenCodeAgentSession(openCodeConfig, client, handle.sessionId);
+    return new OpenCodeAgentSession(openCodeConfig, client, handle.sessionId, this.logger);
   }
 
   async listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
@@ -971,6 +972,7 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly config: OpenCodeAgentConfig;
   private readonly client: OpencodeClient;
   private readonly sessionId: string;
+  private readonly logger: Logger;
   private currentMode: string = "default";
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private abortController: AbortController | null = null;
@@ -990,10 +992,16 @@ class OpenCodeAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
 
-  constructor(config: OpenCodeAgentConfig, client: OpencodeClient, sessionId: string) {
+  constructor(
+    config: OpenCodeAgentConfig,
+    client: OpencodeClient,
+    sessionId: string,
+    logger: Logger,
+  ) {
     this.config = config;
     this.client = client;
     this.sessionId = sessionId;
+    this.logger = logger;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
   }
 
@@ -1125,23 +1133,37 @@ class OpenCodeAgentSession implements AgentSession {
       thinkingOptionId && thinkingOptionId !== "default" ? thinkingOptionId : undefined;
     const effectiveMode = normalizeOpenCodeModeId(this.currentMode);
 
-    const promptResponse = await this.client.session.promptAsync({
-      sessionID: this.sessionId,
-      directory: this.config.cwd,
-      parts,
-      ...(options?.outputSchema
-        ? {
-            format: {
-              type: "json_schema" as const,
-              schema: options.outputSchema as Record<string, unknown>,
-            },
-          }
-        : {}),
-      ...(this.config.systemPrompt ? { system: this.config.systemPrompt } : {}),
-      ...(model ? { model } : {}),
-      ...(effectiveMode ? { agent: effectiveMode } : {}),
-      ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-    });
+    let promptResponse;
+    const slashCommand = await this.resolveSlashCommandInvocation(prompt);
+    if (slashCommand) {
+      promptResponse = await this.client.session.command({
+        sessionID: this.sessionId,
+        directory: this.config.cwd,
+        command: slashCommand.commandName,
+        arguments: slashCommand.args,
+        ...(this.config.model ? { model: this.config.model } : {}),
+        ...(effectiveMode ? { agent: effectiveMode } : {}),
+        ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+      });
+    } else {
+      promptResponse = await this.client.session.promptAsync({
+        sessionID: this.sessionId,
+        directory: this.config.cwd,
+        parts,
+        ...(options?.outputSchema
+          ? {
+              format: {
+                type: "json_schema" as const,
+                schema: options.outputSchema as Record<string, unknown>,
+              },
+            }
+          : {}),
+        ...(this.config.systemPrompt ? { system: this.config.systemPrompt } : {}),
+        ...(model ? { model } : {}),
+        ...(effectiveMode ? { agent: effectiveMode } : {}),
+        ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+      });
+    }
 
     if (promptResponse.error) {
       const errorMsg = JSON.stringify(promptResponse.error);
@@ -1331,6 +1353,20 @@ class OpenCodeAgentSession implements AgentSession {
     return this.currentMode;
   }
 
+  async listCommands(): Promise<AgentSlashCommand[]> {
+    const result = await this.client.command.list({
+      directory: this.config.cwd,
+    });
+    if (result.error || !result.data) {
+      return [];
+    }
+    return result.data.map((cmd) => ({
+      name: cmd.name,
+      description: cmd.description ?? "",
+      argumentHint: cmd.hints?.length ? cmd.hints.join(" ") : "",
+    }));
+  }
+
   async setMode(modeId: string): Promise<void> {
     this.currentMode = normalizeOpenCodeModeId(modeId);
   }
@@ -1412,6 +1448,45 @@ class OpenCodeAgentSession implements AgentSession {
     return prompt
       .filter((p): p is { type: "text"; text: string } => p.type === "text")
       .map((p) => ({ type: "text", text: p.text }));
+  }
+
+  private parseSlashCommandInput(text: string): { commandName: string; args?: string } | null {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("/") || trimmed.length <= 1) {
+      return null;
+    }
+    const withoutPrefix = trimmed.slice(1);
+    const firstWhitespaceIdx = withoutPrefix.search(/\s/);
+    const commandName =
+      firstWhitespaceIdx === -1 ? withoutPrefix : withoutPrefix.slice(0, firstWhitespaceIdx);
+    if (!commandName || commandName.includes("/")) {
+      return null;
+    }
+    const rawArgs =
+      firstWhitespaceIdx === -1 ? "" : withoutPrefix.slice(firstWhitespaceIdx + 1).trim();
+    return rawArgs.length > 0 ? { commandName, args: rawArgs } : { commandName };
+  }
+
+  private async resolveSlashCommandInvocation(
+    prompt: AgentPromptInput,
+  ): Promise<{ commandName: string; args?: string } | null> {
+    if (typeof prompt !== "string") {
+      return null;
+    }
+    const parsed = this.parseSlashCommandInput(prompt);
+    if (!parsed) {
+      return null;
+    }
+    try {
+      const commands = await this.listCommands();
+      return commands.some((command) => command.name === parsed.commandName) ? parsed : null;
+    } catch (error) {
+      this.logger.warn(
+        { err: error, commandName: parsed.commandName },
+        "Failed to resolve slash command; falling back to plain prompt input",
+      );
+      return null;
+    }
   }
 
   private parseModel(model?: string): { providerID: string; modelID: string } | undefined {
