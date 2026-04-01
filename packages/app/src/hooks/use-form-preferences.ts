@@ -7,6 +7,20 @@ import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
 const FORM_PREFERENCES_QUERY_KEY = ["form-preferences"];
 
+export interface FavoriteModelPreference {
+  provider: string;
+  modelId: string;
+}
+
+export interface FavoriteModelRow {
+  favoriteKey: string;
+  provider: string;
+  providerLabel: string;
+  modelId: string;
+  modelLabel: string;
+  description?: string;
+}
+
 const providerPreferencesSchema = z.object({
   model: z.string().optional(),
   mode: z.string().optional(),
@@ -16,6 +30,12 @@ const providerPreferencesSchema = z.object({
 const formPreferencesSchema = z.object({
   provider: z.string().optional(),
   providerPreferences: z.record(providerPreferencesSchema).optional(),
+  favoriteModels: z.array(
+    z.object({
+      provider: z.string(),
+      modelId: z.string(),
+    }),
+  ).optional(),
 });
 
 export type ProviderPreferences = z.infer<typeof providerPreferencesSchema>;
@@ -63,6 +83,41 @@ export function mergeProviderPreferences(args: {
         ...(nextThinkingByModel ? { thinkingByModel: nextThinkingByModel } : {}),
       },
     },
+  };
+}
+
+export function buildFavoriteModelKey(input: FavoriteModelPreference): string {
+  return `${input.provider}:${input.modelId}`;
+}
+
+export function isFavoriteModel(args: {
+  preferences: FormPreferences;
+  provider: string;
+  modelId: string;
+}): boolean {
+  const favoriteKey = buildFavoriteModelKey({ provider: args.provider, modelId: args.modelId });
+  return (args.preferences.favoriteModels ?? []).some(
+    (favorite) => buildFavoriteModelKey(favorite) === favoriteKey,
+  );
+}
+
+export function toggleFavoriteModel(args: {
+  preferences: FormPreferences;
+  provider: string;
+  modelId: string;
+}): FormPreferences {
+  const favorite = { provider: args.provider, modelId: args.modelId };
+  const favoriteKey = buildFavoriteModelKey(favorite);
+  const existingFavorites = args.preferences.favoriteModels ?? [];
+  const hasFavorite = existingFavorites.some(
+    (entry) => buildFavoriteModelKey(entry) === favoriteKey,
+  );
+
+  return {
+    ...args.preferences,
+    favoriteModels: hasFavorite
+      ? existingFavorites.filter((entry) => buildFavoriteModelKey(entry) !== favoriteKey)
+      : [...existingFavorites, favorite],
   };
 }
 

@@ -6,9 +6,14 @@ import { useStoreWithEqualityFn } from "zustand/traditional";
 import { Brain, ChevronDown, ShieldAlert, ShieldCheck, ShieldOff } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/session-store";
-import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
+import {
+  buildFavoriteModelKey,
+  mergeProviderPreferences,
+  toggleFavoriteModel,
+  useFormPreferences,
+} from "@/hooks/use-form-preferences";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,6 +30,7 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import {
+  AGENT_PROVIDER_DEFINITIONS,
   getModeVisuals,
   type AgentModeColorTier,
   type AgentModeIcon,
@@ -42,6 +48,10 @@ type StatusOption = {
 
 type StatusSelector = "provider" | "mode" | "model" | "thinking";
 
+const PROVIDER_DEFINITION_MAP = new Map(
+  AGENT_PROVIDER_DEFINITIONS.map((definition) => [definition.id, definition]),
+);
+
 type ControlledAgentStatusBarProps = {
   provider: string;
   providerOptions?: StatusOption[];
@@ -58,6 +68,11 @@ type ControlledAgentStatusBarProps = {
   onSelectThinkingOption?: (thinkingOptionId: string) => void;
   disabled?: boolean;
   isModelLoading?: boolean;
+  providerDefinitions?: AgentProviderDefinition[];
+  allProviderModels?: Map<string, AgentModelDefinition[]>;
+  canSelectModelProvider?: (providerId: string) => boolean;
+  favoriteKeys?: Set<string>;
+  onToggleFavoriteModel?: (provider: string, modelId: string) => void;
 };
 
 export interface DraftAgentStatusBarProps {
@@ -142,6 +157,11 @@ function ControlledStatusBar({
   onSelectThinkingOption,
   disabled = false,
   isModelLoading = false,
+  providerDefinitions,
+  allProviderModels,
+  canSelectModelProvider,
+  favoriteKeys = new Set<string>(),
+  onToggleFavoriteModel,
 }: ControlledAgentStatusBarProps) {
   const { theme } = useUnistyles();
   const isWeb = Platform.OS === "web";
@@ -205,6 +225,26 @@ function ControlledStatusBar({
     () => (modelOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
     [modelOptions],
   );
+  const fallbackAllProviderModels = useMemo(() => {
+    const map = new Map<string, AgentModelDefinition[]>();
+    if (!modelOptions || modelOptions.length === 0) {
+      return map;
+    }
+
+    map.set(
+      provider,
+      modelOptions.map((option) => ({
+        provider: provider as AgentProvider,
+        id: option.id,
+        label: option.label,
+      })),
+    );
+    return map;
+  }, [modelOptions, provider]);
+  const effectiveProviderDefinitions = providerDefinitions ??
+    (PROVIDER_DEFINITION_MAP.has(provider) ? [PROVIDER_DEFINITION_MAP.get(provider)!] : []);
+  const effectiveAllProviderModels = allProviderModels ?? fallbackAllProviderModels;
+  const canSelectProviderInModelMenu = canSelectModelProvider ?? (() => true);
   const comboboxThinkingOptions = useMemo<ComboboxOption[]>(
     () => (thinkingOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
     [thinkingOptions],
@@ -289,49 +329,36 @@ function ControlledStatusBar({
           ) : null}
 
           {canSelectModel ? (
-            <>
-              <Tooltip
-                key={`model-${openSelector === "model" ? "open" : "closed"}`}
-                delayDuration={0}
-                enabledOnDesktop
-                enabledOnMobile={false}
-              >
-                <TooltipTrigger asChild triggerRefProp="ref">
-                  <Pressable
-                    ref={modelAnchorRef}
-                    collapsable={false}
+            <Tooltip
+              key={`model-${displayModel}`}
+              delayDuration={0}
+              enabledOnDesktop
+              enabledOnMobile={false}
+            >
+              <TooltipTrigger asChild triggerRefProp="ref">
+                <View>
+                  <CombinedModelSelector
+                    providerDefinitions={effectiveProviderDefinitions}
+                    allProviderModels={effectiveAllProviderModels}
+                    selectedProvider={provider}
+                    selectedModel={selectedModelId ?? ""}
+                    canSelectProvider={canSelectProviderInModelMenu}
+                    onSelect={(selectedProviderId, modelId) => {
+                      if (selectedProviderId === provider) {
+                        onSelectModel?.(modelId);
+                      }
+                    }}
+                    favoriteKeys={favoriteKeys}
+                    onToggleFavorite={onToggleFavoriteModel}
+                    isLoading={isModelLoading}
                     disabled={modelDisabled}
-                    onPress={() => handleSelectorPress("model")}
-                    style={({ pressed, hovered }) => [
-                      styles.modeBadge,
-                      hovered && styles.modeBadgeHovered,
-                      (pressed || openSelector === "model") && styles.modeBadgePressed,
-                      modelDisabled && styles.disabledBadge,
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Select agent model"
-                    testID="agent-model-selector"
-                  >
-                    <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                    <Text style={styles.modeBadgeText}>{displayModel}</Text>
-                    <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-                  </Pressable>
-                </TooltipTrigger>
-                <TooltipContent side="top" align="center" offset={8}>
-                  <Text style={styles.tooltipText}>{getStatusSelectorHint("model")}</Text>
-                </TooltipContent>
-              </Tooltip>
-              <Combobox
-                options={comboboxModelOptions}
-                value={selectedModelId ?? ""}
-                onSelect={(id) => onSelectModel?.(id)}
-                searchable={comboboxModelOptions.length > SEARCH_THRESHOLD}
-                open={openSelector === "model"}
-                onOpenChange={handleOpenChange("model")}
-                anchorRef={modelAnchorRef}
-                desktopPlacement="top-start"
-              />
-            </>
+                  />
+                </View>
+              </TooltipTrigger>
+              <TooltipContent side="top" align="center" offset={8}>
+                <Text style={styles.tooltipText}>{getStatusSelectorHint("model")}</Text>
+              </TooltipContent>
+            </Tooltip>
           ) : null}
 
           {thinkingOptions && thinkingOptions.length > 0 ? (
@@ -491,36 +518,35 @@ function ControlledStatusBar({
 
             {canSelectModel ? (
               <View style={styles.sheetSection}>
-                <DropdownMenu
-                  open={openSelector === "model"}
-                  onOpenChange={handleOpenChange("model")}
-                >
-                  <DropdownMenuTrigger
-                    disabled={modelDisabled}
-                    style={({ pressed }) => [
-                      styles.sheetSelect,
-                      pressed && styles.sheetSelectPressed,
-                      modelDisabled && styles.disabledSheetSelect,
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Select agent model"
-                    testID="agent-preferences-model"
-                  >
-                    <Text style={styles.sheetSelectText}>{displayModel}</Text>
-                    <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent side="top" align="start">
-                    {(modelOptions ?? []).map((model) => (
-                      <DropdownMenuItem
-                        key={model.id}
-                        selected={model.id === selectedModelId}
-                        onSelect={() => onSelectModel?.(model.id)}
-                      >
-                        {model.label}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <CombinedModelSelector
+                  providerDefinitions={effectiveProviderDefinitions}
+                  allProviderModels={effectiveAllProviderModels}
+                  selectedProvider={provider}
+                  selectedModel={selectedModelId ?? ""}
+                  canSelectProvider={canSelectProviderInModelMenu}
+                  onSelect={(selectedProviderId, modelId) => {
+                    if (selectedProviderId === provider) {
+                      onSelectModel?.(modelId);
+                    }
+                  }}
+                  favoriteKeys={favoriteKeys}
+                  onToggleFavorite={onToggleFavoriteModel}
+                  isLoading={isModelLoading}
+                  disabled={modelDisabled}
+                  renderTrigger={({ selectedModelLabel }) => (
+                    <View
+                      style={[
+                        styles.sheetSelect,
+                        modelDisabled && styles.disabledSheetSelect,
+                      ]}
+                      pointerEvents="none"
+                      testID="agent-preferences-model"
+                    >
+                      <Text style={styles.sheetSelectText}>{selectedModelLabel}</Text>
+                      <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+                    </View>
+                  )}
+                />
               </View>
             ) : null}
 
@@ -650,6 +676,60 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
     },
   });
 
+  const availableProvidersQuery = useQuery({
+    queryKey: ["availableProviders", serverId],
+    enabled: Boolean(client),
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.listAvailableProviders();
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload.providers.filter((entry) => entry.available).map((entry) => entry.provider);
+    },
+  });
+
+  const availableProviderDefinitions = useMemo(() => {
+    const availableProviders = availableProvidersQuery.data;
+    if (!availableProviders) {
+      return [];
+    }
+    const available = new Set(availableProviders);
+    return AGENT_PROVIDER_DEFINITIONS.filter((definition) => available.has(definition.id));
+  }, [availableProvidersQuery.data]);
+
+  const allProviderModelQueries = useQueries({
+    queries: availableProviderDefinitions.map((definition) => ({
+      queryKey: ["providerModels", serverId, definition.id, agent?.cwd ?? ""],
+      enabled: Boolean(client && agent?.cwd),
+      staleTime: 5 * 60 * 1000,
+      queryFn: async () => {
+        if (!client || !agent) {
+          throw new Error("Daemon client unavailable");
+        }
+        const payload = await client.listProviderModels(definition.id, { cwd: agent.cwd });
+        if (payload.error) {
+          throw new Error(payload.error);
+        }
+        return payload.models ?? [];
+      },
+    })),
+  });
+
+  const liveAllProviderModels = useMemo(() => {
+    const map = new Map<string, AgentModelDefinition[]>();
+    for (let i = 0; i < availableProviderDefinitions.length; i++) {
+      const query = allProviderModelQueries[i];
+      if (query?.data) {
+        map.set(availableProviderDefinitions[i]!.id, query.data);
+      }
+    }
+    return map;
+  }, [allProviderModelQueries, availableProviderDefinitions]);
+
   const models = modelsQuery.data ?? null;
 
   const displayMode =
@@ -674,6 +754,10 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   const modelOptions = useMemo<StatusOption[]>(() => {
     return (models ?? []).map((model) => ({ id: model.id, label: model.label }));
   }, [models]);
+  const favoriteKeys = useMemo(
+    () => new Set((preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite))),
+    [preferences.favoriteModels],
+  );
 
   const thinkingOptions = useMemo<StatusOption[]>(() => {
     return (modelSelection.thinkingOptions ?? []).map((option) => ({
@@ -693,6 +777,9 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
         modeOptions.length > 0 ? modeOptions : [{ id: agent.currentModeId ?? "", label: displayMode }]
       }
       selectedModeId={agent.currentModeId ?? undefined}
+      providerDefinitions={availableProviderDefinitions}
+      allProviderModels={liveAllProviderModels}
+      canSelectModelProvider={(providerId) => providerId === agent.provider}
       onSelectMode={(modeId) => {
         if (!client) {
           return;
@@ -720,6 +807,12 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
         });
         void client.setAgentModel(agentId, modelId).catch((error) => {
           console.warn("[AgentStatusBar] setAgentModel failed", error);
+        });
+      }}
+      favoriteKeys={favoriteKeys}
+      onToggleFavoriteModel={(provider, modelId) => {
+        void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
+          console.warn("[AgentStatusBar] toggle favorite model failed", error);
         });
       }}
       thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
@@ -775,6 +868,7 @@ export function DraftAgentStatusBar({
   disabled = false,
 }: DraftAgentStatusBarProps) {
   const isWeb = Platform.OS === "web";
+  const { preferences, updatePreferences } = useFormPreferences();
 
   const mappedModeOptions = useMemo<StatusOption[]>(() => {
     if (modeOptions.length === 0) {
@@ -789,6 +883,10 @@ export function DraftAgentStatusBar({
   const mappedThinkingOptions = useMemo<StatusOption[]>(() => {
     return thinkingOptions.map((option) => ({ id: option.id, label: option.label }));
   }, [thinkingOptions]);
+  const favoriteKeys = useMemo(
+    () => new Set((preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite))),
+    [preferences.favoriteModels],
+  );
 
   const effectiveSelectedMode = selectedMode || mappedModeOptions[0]?.id || "";
   const effectiveSelectedThinkingOption =
@@ -803,6 +901,12 @@ export function DraftAgentStatusBar({
           selectedProvider={selectedProvider}
           selectedModel={selectedModel}
           onSelect={onSelectProviderAndModel}
+          favoriteKeys={favoriteKeys}
+          onToggleFavorite={(provider, modelId) => {
+            void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
+              console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
+            });
+          }}
           isLoading={isAllModelsLoading}
           disabled={disabled}
         />
@@ -843,6 +947,12 @@ export function DraftAgentStatusBar({
       selectedModelId={selectedModel}
       onSelectModel={onSelectModel}
       isModelLoading={isModelLoading}
+      favoriteKeys={favoriteKeys}
+      onToggleFavoriteModel={(provider, modelId) => {
+        void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
+          console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
+        });
+      }}
       thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
       selectedThinkingOptionId={effectiveSelectedThinkingOption}
       onSelectThinkingOption={onSelectThinkingOption}
