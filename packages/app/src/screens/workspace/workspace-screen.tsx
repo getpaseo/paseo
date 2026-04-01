@@ -62,6 +62,7 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
+import { isAbsolutePath } from "@/utils/path";
 import { normalizeWorkspaceIdentity } from "@/utils/workspace-identity";
 import {
   normalizeWorkspaceTabTarget,
@@ -617,7 +618,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     enabled:
       Boolean(client && isConnected) &&
       normalizedWorkspaceId.length > 0 &&
-      normalizedWorkspaceId.startsWith("/"),
+      isAbsolutePath(normalizedWorkspaceId),
     queryFn: async () => {
       if (!client) {
         throw new Error("Host is not connected");
@@ -686,7 +687,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   const { archiveAgent } = useArchiveAgent();
 
   useEffect(() => {
-    if (!client || !isConnected || !normalizedWorkspaceId.startsWith("/")) {
+    if (!client || !isConnected || !isAbsolutePath(normalizedWorkspaceId)) {
       return;
     }
 
@@ -718,7 +719,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     enabled:
       Boolean(client && isConnected) &&
       normalizedWorkspaceId.length > 0 &&
-      normalizedWorkspaceId.startsWith("/"),
+      isAbsolutePath(normalizedWorkspaceId),
     queryFn: async () => {
       if (!client) {
         throw new Error("Host is not connected");
@@ -760,7 +761,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   const isExplorerOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
 
   const activeExplorerCheckout = useMemo<ExplorerCheckoutContext | null>(() => {
-    if (!normalizedServerId || !normalizedWorkspaceId.startsWith("/")) {
+    if (!normalizedServerId || !isAbsolutePath(normalizedWorkspaceId)) {
       return null;
     }
     return {
@@ -1138,7 +1139,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       if (createTerminalMutation.isPending) {
         return;
       }
-      if (!normalizedWorkspaceId.startsWith("/")) {
+      if (!isAbsolutePath(normalizedWorkspaceId)) {
         return;
       }
       createTerminalMutation.mutate(input);
@@ -1365,7 +1366,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   );
 
   const handleCopyWorkspacePath = useCallback(async () => {
-    if (!normalizedWorkspaceId.startsWith("/")) {
+    if (!isAbsolutePath(normalizedWorkspaceId)) {
       toast.error("Workspace path not available");
       return;
     }
@@ -2056,7 +2057,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                       <DropdownMenuItem
                         testID="workspace-header-copy-path"
                         leading={<Copy size={16} color={theme.colors.foregroundMuted} />}
-                        disabled={!normalizedWorkspaceId.startsWith("/")}
+                        disabled={!isAbsolutePath(normalizedWorkspaceId)}
                         onSelect={handleCopyWorkspacePath}
                       >
                         Copy workspace path
@@ -2327,7 +2328,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
   },
   headerTitleContainer: {
-    flex: 1,
+    flexShrink: 1,
     minWidth: 0,
     flexDirection: "row",
     alignItems: "center",

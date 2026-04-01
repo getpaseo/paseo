@@ -44,14 +44,17 @@ export interface DesktopMenuBridge {
   }) => Promise<void>;
 }
 
+export interface DesktopWindowControlsOverlayUpdate {
+  height?: number;
+  backgroundColor?: string;
+  foregroundColor?: string;
+}
+
 export interface DesktopWindowBridge {
   label?: string;
-  startMove?: (screenX: number, screenY: number) => void;
-  moving?: (screenX: number, screenY: number) => void;
-  endMove?: () => void;
   toggleMaximize?: () => Promise<void>;
   isFullscreen?: () => Promise<boolean>;
-  setTitleBarTheme?: (theme: "light" | "dark") => Promise<void>;
+  updateWindowControls?: (update: DesktopWindowControlsOverlayUpdate) => Promise<void>;
   onResized?: <TEvent = unknown>(
     handler: (event: TEvent) => void,
   ) => Promise<() => void> | (() => void);

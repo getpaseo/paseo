@@ -9,7 +9,7 @@ import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { isCompactFormFactor } from "@/constants/layout";
-import { useDesktopDragHandlers } from "@/utils/desktop-window";
+import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
 export function OpenProjectScreen({ serverId }: { serverId: string }) {
   const openAgentList = usePanelStore((s) => s.openAgentList);
@@ -18,7 +18,6 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
   const hasProjects = useSessionStore((s) => (s.sessions[serverId]?.workspaces?.size ?? 0) > 0);
 
   const isCompactLayout = isCompactFormFactor();
-  const dragHandlers = useDesktopDragHandlers();
 
   useEffect(() => {
     if (!isCompactLayout) {
@@ -29,7 +28,8 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
   return (
     <View style={styles.container}>
       <MenuHeader borderless />
-      <View style={styles.content} {...dragHandlers}>
+      <View style={styles.content}>
+        <TitlebarDragRegion />
         <View style={styles.logo}>
           <PaseoLogo size={56} />
         </View>
@@ -58,6 +58,7 @@ const styles = StyleSheet.create((theme) => ({
     userSelect: "none",
   },
   content: {
+    position: "relative",
     flexGrow: 1,
     justifyContent: "center",
     alignItems: "center",

@@ -1,4 +1,5 @@
 import { getDesktopHost } from "@/desktop/host";
+import { isAbsolutePath } from "@/utils/path";
 
 export type PickedImageSource = { kind: "file_uri"; uri: string } | { kind: "blob"; blob: Blob };
 
@@ -29,12 +30,8 @@ const IMAGE_FILE_EXTENSIONS = [
   "svg",
 ];
 
-function isAbsoluteWindowsPath(value: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(value);
-}
-
 function shouldTreatAsFileUri(uri: string): boolean {
-  return uri.startsWith("file://") || uri.startsWith("/") || isAbsoluteWindowsPath(uri);
+  return uri.startsWith("file://") || isAbsolutePath(uri);
 }
 
 async function blobFromUri(uri: string): Promise<Blob> {

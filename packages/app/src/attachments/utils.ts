@@ -1,4 +1,5 @@
 import { generateMessageId } from "@/types/stream";
+import { isAbsolutePath } from "@/utils/path";
 
 export function generateAttachmentId(): string {
   return `att_${generateMessageId()}`;
@@ -53,10 +54,21 @@ export function pathToFileUri(path: string): string {
   if (path.startsWith("file://")) {
     return path;
   }
+
+  if (!isAbsolutePath(path)) {
+    return path;
+  }
+
   if (path.startsWith("/")) {
     return `file://${path}`;
   }
-  return path;
+
+  // UNC paths: \\server\share -> file://server/share
+  if (path.startsWith("\\\\")) {
+    return `file:${path.replace(/\\/g, "/")}`;
+  }
+
+  return `file:///${path.replace(/\\/g, "/")}`;
 }
 
 export function fileUriToPath(uri: string): string {

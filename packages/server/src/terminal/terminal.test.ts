@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   createTerminal,
   ensureNodePtySpawnHelperExecutableForCurrentPlatform,
+  resolveDefaultTerminalShell,
   type TerminalSession,
 } from "./terminal.js";
 import { chmodSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -109,6 +110,18 @@ describe("Terminal", () => {
       });
 
       expect(statSync(helperPath).mode & 0o111).toBe(0o111);
+    });
+
+    it("uses cmd.exe-compatible default shell on Windows", () => {
+      expect(resolveDefaultTerminalShell({ platform: "win32", env: {} })).toBe(
+        "C:\\Windows\\System32\\cmd.exe",
+      );
+      expect(
+        resolveDefaultTerminalShell({
+          platform: "win32",
+          env: { ComSpec: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" },
+        }),
+      ).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
     });
 
     it("creates a terminal session with an id, name, and cwd", async () => {

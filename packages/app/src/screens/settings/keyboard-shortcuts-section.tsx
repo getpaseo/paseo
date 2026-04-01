@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { View, Text, Platform } from "react-native";
+import { useIsFocused } from "@react-navigation/native";
 import { StyleSheet } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
 import { Button } from "@/components/ui/button";
@@ -13,18 +14,30 @@ import {
 import {
   chordStringToShortcutKeys,
   comboStringToShortcutKeys,
+  heldModifiersFromEvent,
   keyboardEventToComboString,
 } from "@/keyboard/shortcut-string";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
 
-function ShortcutSequence({ chord }: { chord: string[] | null }) {
-  if (!chord || chord.length === 0) {
+function ShortcutSequence({
+  chord,
+  heldModifiers,
+}: {
+  chord: string[] | null;
+  heldModifiers: string | null;
+}) {
+  if ((!chord || chord.length === 0) && !heldModifiers) {
     return <Text style={styles.capturingText}>Press shortcut...</Text>;
   }
 
-  return <Shortcut chord={chord.map(comboStringToShortcutKeys)} />;
+  const displayCombos = [...(chord ?? [])];
+  if (heldModifiers) {
+    displayCombos.push(heldModifiers);
+  }
+
+  return <Shortcut chord={displayCombos.map(comboStringToShortcutKeys)} />;
 }
 
 function ShortcutRow({
@@ -33,6 +46,7 @@ function ShortcutRow({
   overrideCombo,
   isCapturing,
   capturedCombos,
+  heldModifiers,
   onRebind,
   onDone,
   onCancel,
@@ -43,6 +57,7 @@ function ShortcutRow({
   overrideCombo: string | undefined;
   isCapturing: boolean;
   capturedCombos: string[];
+  heldModifiers: string | null;
   onRebind: () => void;
   onDone: () => void;
   onCancel: () => void;
@@ -55,7 +70,7 @@ function ShortcutRow({
       <Text style={styles.rowLabel}>{row.label}</Text>
       <View style={styles.rowActions}>
         {isCapturing ? (
-          <ShortcutSequence chord={capturedCombos} />
+          <ShortcutSequence chord={capturedCombos} heldModifiers={heldModifiers} />
         ) : (
           <Shortcut chord={displayChord} />
         )}
@@ -88,22 +103,32 @@ function ShortcutRow({
 export function KeyboardShortcutsSection() {
   const [capturingBindingId, setCapturingBindingId] = useState<string | null>(null);
   const [capturedCombos, setCapturedCombos] = useState<string[]>([]);
+  const [heldModifiers, setHeldModifiers] = useState<string | null>(null);
   const { overrides, hasOverrides, setOverride, removeOverride, resetAll } =
     useKeyboardShortcutOverrides();
   const setCapturingShortcut = useKeyboardShortcutsStore((s) => s.setCapturingShortcut);
 
+  const isFocused = useIsFocused();
   const isMac = getShortcutOs() === "mac";
   const isDesktopApp = getIsElectronRuntime();
   const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
 
+  useEffect(() => {
+    if (!isFocused && capturingBindingId !== null) {
+      cancelCapture();
+    }
+  }, [isFocused]);
+
   function cancelCapture() {
     setCapturedCombos([]);
+    setHeldModifiers(null);
     setCapturingBindingId(null);
     setCapturingShortcut(false);
   }
 
   function startCapture(bindingId: string) {
     setCapturedCombos([]);
+    setHeldModifiers(null);
     setCapturingBindingId(bindingId);
     setCapturingShortcut(true);
   }
@@ -132,9 +157,11 @@ export function KeyboardShortcutsSection() {
 
       const comboString = keyboardEventToComboString(event);
       if (comboString === null) {
+        setHeldModifiers(heldModifiersFromEvent(event));
         return;
       }
 
+      setHeldModifiers(null);
       setCapturedCombos((current) => [...current, comboString]);
     }
 
@@ -194,6 +221,7 @@ export function KeyboardShortcutsSection() {
                       overrideCombo={overrideCombo}
                       isCapturing={capturingBindingId === bindingId}
                       capturedCombos={capturingBindingId === bindingId ? capturedCombos : []}
+                      heldModifiers={capturingBindingId === bindingId ? heldModifiers : null}
                       onRebind={() => {
                         if (bindingId) {
                           startCapture(bindingId);

@@ -19,15 +19,13 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   },
   window: {
     getCurrentWindow: () => ({
-      startMove: (screenX: number, screenY: number) =>
-        ipcRenderer.send("paseo:window:startMove", { screenX, screenY }),
-      moving: (screenX: number, screenY: number) =>
-        ipcRenderer.send("paseo:window:moving", { screenX, screenY }),
-      endMove: () => ipcRenderer.send("paseo:window:endMove"),
       toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
       isFullscreen: () => ipcRenderer.invoke("paseo:window:isFullscreen"),
-      setTitleBarTheme: (theme: "light" | "dark") =>
-        ipcRenderer.invoke("paseo:window:setTitleBarTheme", theme),
+      updateWindowControls: (update: {
+        height?: number;
+        backgroundColor?: string;
+        foregroundColor?: string;
+      }) => ipcRenderer.invoke("paseo:window:updateWindowControls", update),
       onResized: (handler: EventHandler): (() => void) => {
         const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
           handler(payload);

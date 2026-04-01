@@ -68,7 +68,7 @@ import {
   ensureOsNotificationPermission,
 } from "@/utils/os-notifications";
 import { getDesktopHost } from "@/desktop/host";
-import { setDesktopTitleBarTheme } from "@/desktop/electron/window";
+import { updateDesktopWindowControls } from "@/desktop/electron/window";
 import { buildNotificationRoute } from "@/utils/notification-routing";
 import {
   buildHostRootRoute,
@@ -476,6 +476,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
   const { settings, isLoading: settingsLoading } = useAppSettings();
   const { upsertConnectionFromOfferUrl } = useHostMutations();
   const systemColorScheme = useColorScheme();
+  const { theme } = useUnistyles();
   const resolvedTheme = settings.theme === "auto" ? (systemColorScheme ?? "light") : settings.theme;
 
   // Apply theme setting on mount and when it changes
@@ -494,10 +495,13 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       return;
     }
 
-    void setDesktopTitleBarTheme(resolvedTheme).catch((error) => {
-      console.warn("[DesktopWindow] Failed to update title bar theme", error);
+    void updateDesktopWindowControls({
+      backgroundColor: theme.colors.surface0,
+      foregroundColor: theme.colors.foreground,
+    }).catch((error) => {
+      console.warn("[DesktopWindow] Failed to update window controls overlay", error);
     });
-  }, [settingsLoading, resolvedTheme]);
+  }, [settingsLoading, resolvedTheme, theme.colors.foreground, theme.colors.surface0]);
 
   return (
     <VoiceProvider>

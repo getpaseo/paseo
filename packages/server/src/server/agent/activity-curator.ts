@@ -2,7 +2,7 @@ import type { AgentTimelineItem, ToolCallDetail } from "./agent-sdk-types.js";
 import { isLikelyExternalToolName } from "./tool-name-normalization.js";
 import { buildToolCallDisplayModel } from "../../shared/tool-call-display.js";
 
-const DEFAULT_MAX_ITEMS = 40;
+const DEFAULT_MAX_ITEMS = 0;
 const MAX_TOOL_INPUT_CHARS = 400;
 const MAX_TOOL_SUMMARY_CHARS = 200;
 

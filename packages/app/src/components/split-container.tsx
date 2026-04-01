@@ -33,6 +33,7 @@ import { ResizeHandle } from "@/components/resize-handle";
 import { shouldFocusPaneFromEventTarget } from "@/components/split-container-pane-focus";
 import { usePanelStore } from "@/stores/panel-store";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
+import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import {
   computeTabDropPreview,
   type TabDropPreview,
@@ -887,6 +888,7 @@ function SplitPaneView({
           { paddingLeft: padding.left, paddingRight: padding.right },
         ]}
       >
+        <TitlebarDragRegion />
         <WorkspaceDesktopTabsRow
           paneId={pane.id}
           isFocused={isFocused}
@@ -997,6 +999,7 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   paneTabs: {
+    position: "relative",
     minWidth: 0,
   },
   paneContent: {

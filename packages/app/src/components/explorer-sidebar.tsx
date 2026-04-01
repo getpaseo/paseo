@@ -18,6 +18,7 @@ import { GitDiffPane } from "./git-diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
+import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
 const MIN_CHAT_WIDTH = 400;
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
@@ -344,6 +345,7 @@ function SidebarContent({
     <View style={styles.sidebarContent} pointerEvents="auto">
       {/* Header with tabs and close button */}
       <View style={[styles.header, { paddingRight: padding.right }]} testID="explorer-header">
+        <TitlebarDragRegion />
         <View style={styles.tabsContainer}>
           {isGit && (
             <Pressable
@@ -434,6 +436,7 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   header: {
+    position: "relative",
     height: HEADER_INNER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",

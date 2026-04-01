@@ -1,12 +1,8 @@
+import { isAbsolutePath } from "./path";
+
 interface BuildAbsoluteExplorerPathInput {
   workspaceRoot: string;
   entryPath: string;
-}
-
-function isAbsolutePath(pathValue: string): boolean {
-  return (
-    pathValue.startsWith("/") || pathValue.startsWith("\\\\") || /^[A-Za-z]:[\\/]/.test(pathValue)
-  );
 }
 
 export function buildAbsoluteExplorerPath({

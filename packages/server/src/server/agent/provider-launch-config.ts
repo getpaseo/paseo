@@ -1,6 +1,7 @@
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { platform } from "node:os";
+import path from "node:path";
 import { shellEnvSync } from "shell-env";
 import { z } from "zod";
 
@@ -106,7 +107,7 @@ function resolveExecutableFromWhichOutput(
     return null;
   }
 
-  if (!candidate.startsWith("/")) {
+  if (!path.isAbsolute(candidate)) {
     console.warn(
       `[findExecutable] Ignoring non-absolute ${source} output for '${name}': ${JSON.stringify(candidate)}`,
     );

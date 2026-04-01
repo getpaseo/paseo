@@ -19,6 +19,12 @@
       body {
         overflow: hidden;
       }
+      /* Prevent white flash before React mounts */
+      @media (prefers-color-scheme: dark) {
+        html, body {
+          background-color: #181B1A;
+        }
+      }
       /* These styles make the root element full-height */
       #root {
         display: flex;

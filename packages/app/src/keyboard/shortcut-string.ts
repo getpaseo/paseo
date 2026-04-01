@@ -43,6 +43,17 @@ KEY_MAP["ArrowLeft"] = { code: "ArrowLeft" };
 KEY_MAP["ArrowRight"] = { code: "ArrowRight" };
 KEY_MAP["ArrowUp"] = { code: "ArrowUp" };
 KEY_MAP["ArrowDown"] = { code: "ArrowDown" };
+KEY_MAP["Tab"] = { code: "Tab" };
+KEY_MAP["Delete"] = { code: "Delete" };
+KEY_MAP["Home"] = { code: "Home" };
+KEY_MAP["End"] = { code: "End" };
+KEY_MAP["PageUp"] = { code: "PageUp" };
+KEY_MAP["PageDown"] = { code: "PageDown" };
+KEY_MAP["Insert"] = { code: "Insert" };
+
+for (let i = 1; i <= 12; i++) {
+  KEY_MAP[`F${i}`] = { code: `F${i}` };
+}
 
 const CODE_TO_KEY: Record<string, string> = {};
 for (const [humanKey, mapping] of Object.entries(KEY_MAP)) {
@@ -168,6 +179,15 @@ export function comboStringToShortcutKeys(comboString: string): ShortcutKey[] {
 
 export function chordStringToShortcutKeys(s: string): ShortcutKey[][] {
   return s.split(" ").map(comboStringToShortcutKeys);
+}
+
+export function heldModifiersFromEvent(event: KeyboardEvent): string | null {
+  const parts: string[] = [];
+  if (event.ctrlKey) parts.push("Ctrl");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey) parts.push("Shift");
+  if (event.metaKey) parts.push("Cmd");
+  return parts.length > 0 ? parts.join("+") : null;
 }
 
 export function keyboardEventToComboString(event: KeyboardEvent): string | null {

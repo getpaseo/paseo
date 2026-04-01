@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.41 - 2026-04-01
+
+### Fixed
+- Fixed agent spawning on Windows — all providers (Claude, Codex, OpenCode) now use shell mode so npm shims and `.cmd` wrappers resolve correctly.
+- Fixed terminal creation on Windows defaulting to a Unix shell instead of `cmd.exe`.
+- Fixed path handling across the app to support Windows drive-letter paths (`C:\...`) and UNC paths (`\\...`).
+- Fixed executable resolution on Windows to work with `nvm4w` and similar Node version managers.
+- Eliminated white flash on window resize in dark mode by setting the native window background color to match the theme.
+- Fixed titlebar drag region — replaced the fragile pointer-event approach with VS Code's proven static CSS `app-region: drag` pattern.
+- Fixed context menu for copy/paste across the desktop app.
+- Fixed shortcut rebinding UI to show held modifier keys and recognize additional keys (Tab, Delete, Home, End, Page Up/Down, Insert, F1–F12).
+- Removed the 40-item cap on activity timeline output so long agent sessions display their full history.
+
+### Improved
+- Improved light mode theming with dedicated workspace background, scrollbar handle colors, and lighter shadows.
+- Window controls overlay on Windows/Linux reduced from 48px to 29px height for a more compact titlebar.
+
 ## 0.1.40 - 2026-04-01
 
 ### Added

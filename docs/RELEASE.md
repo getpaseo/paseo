@@ -63,7 +63,11 @@ Use the RC path when you need to:
 
 **Do not rely on `workflow_dispatch` for tagged code fixes.** The `workflow_dispatch` trigger runs the workflow file from the default branch but checks out the code at the tag ref (`ref: ${{ inputs.tag }}`). That means fixes committed to `main` won't change the tagged source tree being built. `workflow_dispatch` only helps when the fix lives in the workflow file itself.
 
-To retry a failed workflow, **always push a retry tag** on the commit you want to build:
+To retry a failed workflow, **always push a retry tag** on the commit you want to build. Reusing the same tag name is expected: move it with `git tag -f ...` and push it with `--force` so the workflow rebuilds the commit you actually want.
+
+Prefer a tag push over `workflow_dispatch` whenever you are rebuilding release code or release assets.
+
+The retry tag patterns below still work and remain the supported way to rebuild specific release targets:
 
 ```bash
 # Desktop (all platforms)
@@ -82,6 +86,11 @@ git tag -f v0.1.29-rc.2 HEAD && git push origin v0.1.29-rc.2 --force
 ```
 
 This ensures the checkout ref matches the actual code on `main` with the fix included.
+
+- `vX.Y.Z` or `vX.Y.Z-rc.N` rebuilds the full tagged release
+- `desktop-vX.Y.Z` rebuilds desktop for all desktop platforms only
+- `desktop-macos-vX.Y.Z`, `desktop-linux-vX.Y.Z`, and `desktop-windows-vX.Y.Z` rebuild only that desktop platform
+- `android-vX.Y.Z` rebuilds the Android APK release only
 
 ## Notes
 

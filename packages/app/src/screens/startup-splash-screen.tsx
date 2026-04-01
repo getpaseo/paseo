@@ -11,7 +11,7 @@ import {
   getDesktopDaemonLogs,
   type DesktopDaemonLogs,
 } from "@/desktop/daemon/desktop-daemon";
-import { useDesktopDragHandlers } from "@/utils/desktop-window";
+import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
 type StartupSplashScreenProps = {
   bootstrapState?: {
@@ -26,6 +26,7 @@ const DOCS_URL = "https://paseo.sh/docs";
 
 const styles = StyleSheet.create((theme) => ({
   container: {
+    position: "relative",
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -140,7 +141,6 @@ const styles = StyleSheet.create((theme) => ({
 
 export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps) {
   const { theme } = useUnistyles();
-  const dragHandlers = useDesktopDragHandlers();
   const [daemonLogs, setDaemonLogs] = useState<DesktopDaemonLogs | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -222,7 +222,8 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
 
   if (isSimpleSplash) {
     return (
-      <View style={styles.container} {...dragHandlers}>
+      <View style={styles.container}>
+        <TitlebarDragRegion />
         <PaseoLogo size={96} />
         <Text style={styles.subtitle}>Starting up…</Text>
       </View>
@@ -231,7 +232,8 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
 
   if (!isError) {
     return (
-      <View style={styles.container} {...dragHandlers}>
+      <View style={styles.container}>
+        <TitlebarDragRegion />
         <View style={styles.centeredContent}>
           <PaseoLogo size={96} />
           <Text style={styles.title}>Welcome to Paseo</Text>
@@ -253,7 +255,8 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
   }
 
   return (
-    <View style={[styles.container, styles.containerError]} {...dragHandlers}>
+    <View style={[styles.container, styles.containerError]}>
+      <TitlebarDragRegion />
       <View style={styles.errorContent}>
         <View style={styles.errorHeader}>
           <PaseoLogo size={64} />

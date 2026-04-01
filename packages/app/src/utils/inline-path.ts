@@ -1,3 +1,5 @@
+import { isAbsolutePath } from "./path";
+
 export interface InlinePathTarget {
   raw: string;
   path: string;
@@ -183,7 +185,7 @@ export function parseAssistantFileLink(
     };
   }
 
-  if (!trimmed.startsWith("/")) {
+  if (!isAbsolutePath(trimmed)) {
     return null;
   }
 
@@ -195,7 +197,7 @@ export function parseAssistantFileLink(
   }
 
   const normalizedPath = normalizePathToken(decodeURIComponent(parsedUrl.pathname));
-  if (!normalizedPath || !normalizedPath.startsWith("/")) {
+  if (!normalizedPath || !isAbsolutePath(normalizedPath)) {
     return null;
   }
 
@@ -333,8 +335,4 @@ function resolvePathAgainstCwd(pathValue: string, cwd?: string): string | null {
 
 function normalizePathForCompare(value: string): string {
   return /^[A-Za-z]:/.test(value) ? value.toLowerCase() : value;
-}
-
-function isAbsolutePath(value: string): boolean {
-  return value.startsWith("/") || /^[A-Za-z]:\//.test(value);
 }

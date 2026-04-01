@@ -119,6 +119,22 @@ export function ensureNodePtySpawnHelperExecutableForCurrentPlatform(
   }
 }
 
+export function resolveDefaultTerminalShell(
+  options: {
+    platform?: NodeJS.Platform;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): string {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+
+  if (platform === "win32") {
+    return env.ComSpec || env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
+  }
+
+  return env.SHELL || "/bin/sh";
+}
+
 function extractCell(terminal: TerminalType, row: number, col: number): TerminalCell {
   const buffer = terminal.buffer.active;
   const line = buffer.getLine(row);
@@ -299,12 +315,13 @@ export function captureTerminalLines(
 export async function createTerminal(options: CreateTerminalOptions): Promise<TerminalSession> {
   const {
     cwd,
-    shell = process.env.SHELL || "/bin/sh",
+    shell,
     env = {},
     rows = 24,
     cols = 80,
     name = "Terminal",
   } = options;
+  const resolvedShell = shell ?? resolveDefaultTerminalShell();
 
   const id = randomUUID();
   const listeners = new Set<(msg: ServerMessage) => void>();
@@ -324,7 +341,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
   // Create PTY
-  const ptyProcess = pty.spawn(shell, [], {
+  const ptyProcess = pty.spawn(resolvedShell, [], {
     name: "xterm-256color",
     cols,
     rows,

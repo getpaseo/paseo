@@ -35,7 +35,8 @@ import {
   type SidebarProjectEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
-import { useDesktopDragHandlers, useWindowControlsPadding } from "@/utils/desktop-window";
+import { useWindowControlsPadding } from "@/utils/desktop-window";
+import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { Combobox } from "@/components/ui/combobox";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import { formatConnectionStatus } from "@/utils/daemons";
@@ -638,7 +639,6 @@ function DesktopSidebar({
   handleViewMore,
 }: DesktopSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
-  const dragHandlers = useDesktopDragHandlers();
   const padding = useWindowControlsPadding("sidebar");
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
@@ -689,10 +689,13 @@ function DesktopSidebar({
 
   return (
     <Animated.View style={[styles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insetsTop }]}>
-      {padding.top > 0 ? <View style={{ height: padding.top }} {...dragHandlers} /> : null}
-      <View style={styles.sidebarHeader} {...dragHandlers}>
-        <View style={styles.sidebarHeaderRow}>
-          <SessionsButton onPress={handleViewMore} />
+      <View style={styles.sidebarDragArea}>
+        <TitlebarDragRegion />
+        {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
+        <View style={styles.sidebarHeader}>
+          <View style={styles.sidebarHeaderRow}>
+            <SessionsButton onPress={handleViewMore} />
+          </View>
         </View>
       </View>
 
@@ -830,6 +833,9 @@ const styles = StyleSheet.create((theme) => ({
     bottom: 0,
     width: 10,
     zIndex: 10,
+  },
+  sidebarDragArea: {
+    position: "relative",
   },
   sidebarHeader: {
     height: {

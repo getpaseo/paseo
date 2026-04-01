@@ -8,7 +8,8 @@ import {
   HEADER_TOP_PADDING_MOBILE,
   isCompactFormFactor,
 } from "@/constants/layout";
-import { useDesktopDragHandlers, useWindowControlsPadding } from "@/utils/desktop-window";
+import { useWindowControlsPadding } from "@/utils/desktop-window";
+import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -31,8 +32,6 @@ export function ScreenHeader({ left, right, leftStyle, rightStyle, borderless }:
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const baseHorizontalPadding = theme.spacing[2];
 
-  const dragHandlers = useDesktopDragHandlers();
-
   return (
     <View style={styles.header}>
       <View style={[styles.inner, { paddingTop: insets.top + topPadding }]}>
@@ -45,8 +44,8 @@ export function ScreenHeader({ left, right, leftStyle, rightStyle, borderless }:
             },
             borderless && styles.borderless,
           ]}
-          {...dragHandlers}
         >
+          <TitlebarDragRegion />
           <View style={[styles.left, leftStyle]}>{left}</View>
           <View style={[styles.right, rightStyle]}>{right}</View>
         </View>
@@ -61,6 +60,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   inner: {},
   row: {
+    position: "relative",
     height: {
       xs: HEADER_INNER_HEIGHT_MOBILE,
       md: HEADER_INNER_HEIGHT,
