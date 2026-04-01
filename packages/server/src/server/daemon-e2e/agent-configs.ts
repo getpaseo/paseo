@@ -14,7 +14,7 @@ const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 dotenv.config({ path: resolve(serverRoot, ".env.test"), override: true });
 
 export interface AgentTestConfig {
-  provider: "claude" | "codex" | "opencode";
+  provider: "claude" | "claude-acp" | "codex" | "opencode";
   model: string;
   thinkingOptionId?: string;
   modes: {
@@ -26,6 +26,14 @@ export interface AgentTestConfig {
 export const agentConfigs = {
   claude: {
     provider: "claude",
+    model: "haiku",
+    modes: {
+      full: "bypassPermissions",
+      ask: "default",
+    },
+  },
+  "claude-acp": {
+    provider: "claude-acp",
     model: "haiku",
     modes: {
       full: "bypassPermissions",
@@ -96,6 +104,8 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
         isCommandAvailable("claude") &&
         (Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY))
       );
+    case "claude-acp":
+      return Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY);
     case "codex":
       return (
         isCommandAvailable("codex") &&
@@ -109,4 +119,4 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
 /**
  * Helper to run a test for each provider.
  */
-export const allProviders: AgentProvider[] = ["claude", "codex", "opencode"];
+export const allProviders: AgentProvider[] = ["claude", "claude-acp", "codex", "opencode"];

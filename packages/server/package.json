@@ -60,6 +60,7 @@
     "test:e2e:ui": "vitest --ui e2e.test.ts"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.17.1",
     "@ai-sdk/openai": "2.0.52",
     "@anthropic-ai/claude-agent-sdk": "^0.2.11",
     "@deepgram/sdk": "^3.4.0",

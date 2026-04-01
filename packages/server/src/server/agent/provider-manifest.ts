@@ -111,6 +111,18 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     },
   },
   {
+    id: "claude-acp",
+    label: "Claude ACP",
+    description: "Claude Code via Agent Client Protocol with streaming, permissions, and session resume",
+    defaultModeId: "default",
+    modes: CLAUDE_MODES,
+    voice: {
+      enabled: true,
+      defaultModeId: "default",
+      defaultModel: "haiku",
+    },
+  },
+  {
     id: "codex",
     label: "Codex",
     description: "OpenAI's Codex workspace agent with sandbox controls and optional network access",
