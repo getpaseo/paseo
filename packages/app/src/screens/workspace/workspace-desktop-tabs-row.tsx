@@ -8,7 +8,17 @@ import {
   View,
   type LayoutChangeEvent,
 } from "react-native";
-import { Columns2, Rows2, SquarePen, SquareTerminal, X } from "lucide-react-native";
+import {
+  CopyX,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+  Columns2,
+  Copy,
+  Rows2,
+  SquarePen,
+  SquareTerminal,
+  X,
+} from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { SortableInlineList } from "@/components/sortable-inline-list";
 import {
@@ -258,7 +268,14 @@ function TabChip({
           </ContextMenuTrigger>
         </TooltipTrigger>
         <TooltipContent side="bottom" align="center" offset={8}>
-          <Text style={styles.newTabTooltipText}>{tooltipLabel}</Text>
+          {tab.target.kind === "agent" ? (
+            <View style={styles.tooltipAgentRow}>
+              <Text style={styles.newTabTooltipText}>{tooltipLabel}</Text>
+              <Text style={styles.tooltipAgentId}>{tab.target.agentId.slice(0, 7)}</Text>
+            </View>
+          ) : (
+            <Text style={styles.newTabTooltipText}>{tooltipLabel}</Text>
+          )}
         </TooltipContent>
       </Tooltip>
 
@@ -273,6 +290,28 @@ function TabChip({
               disabled={entry.disabled}
               destructive={entry.destructive}
               onSelect={entry.onSelect}
+              leading={(() => {
+                const iconColor = theme.colors.foregroundMuted;
+                switch (entry.icon) {
+                  case "copy":
+                    return <Copy size={16} color={iconColor} />;
+                  case "arrow-left-to-line":
+                    return <ArrowLeftToLine size={16} color={iconColor} />;
+                  case "arrow-right-to-line":
+                    return <ArrowRightToLine size={16} color={iconColor} />;
+                  case "copy-x":
+                    return <CopyX size={16} color={iconColor} />;
+                  case "x":
+                    return <X size={16} color={iconColor} />;
+                  default:
+                    return undefined;
+                }
+              })()}
+              trailing={
+                entry.hint ? (
+                  <Text style={styles.menuItemHint}>{entry.hint}</Text>
+                ) : undefined
+              }
             >
               {entry.label}
             </ContextMenuItem>
@@ -791,5 +830,18 @@ const styles = StyleSheet.create((theme) => ({
   newTabTooltipShortcut: {
     backgroundColor: theme.colors.surface3,
     borderColor: theme.colors.borderAccent,
+  },
+  tooltipAgentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  tooltipAgentId: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  menuItemHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
   },
 }));

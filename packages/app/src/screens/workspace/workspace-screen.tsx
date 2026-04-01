@@ -14,6 +14,9 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
 import {
+  CopyX,
+  ArrowLeftToLine,
+  ArrowRightToLine,
   ChevronDown,
   Copy,
   Ellipsis,
@@ -21,6 +24,7 @@ import {
   PanelRight,
   SquarePen,
   SquareTerminal,
+  X,
 } from "lucide-react-native";
 import { GestureDetector } from "react-native-gesture-handler";
 import Animated from "react-native-reanimated";
@@ -332,6 +336,28 @@ function MobileWorkspaceTabOption({
                       disabled={entry.disabled}
                       destructive={entry.destructive}
                       onSelect={entry.onSelect}
+                      leading={(() => {
+                        const iconColor = theme.colors.foregroundMuted;
+                        switch (entry.icon) {
+                          case "copy":
+                            return <Copy size={16} color={iconColor} />;
+                          case "arrow-left-to-line":
+                            return <ArrowLeftToLine size={16} color={iconColor} />;
+                          case "arrow-right-to-line":
+                            return <ArrowRightToLine size={16} color={iconColor} />;
+                          case "copy-x":
+                            return <CopyX size={16} color={iconColor} />;
+                          case "x":
+                            return <X size={16} color={iconColor} />;
+                          default:
+                            return undefined;
+                        }
+                      })()}
+                      trailing={
+                        entry.hint ? (
+                          <Text style={styles.menuItemHint}>{entry.hint}</Text>
+                        ) : undefined
+                      }
                     >
                       {entry.label}
                     </DropdownMenuItem>
@@ -2420,6 +2446,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   mobileTabMenuTriggerActive: {
     backgroundColor: theme.colors.surface2,
+  },
+  menuItemHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
   },
   tabsContainer: {
     borderBottomWidth: 1,

@@ -8,6 +8,8 @@ export type WorkspaceTabMenuEntry =
       kind: "item";
       key: string;
       label: string;
+      icon?: "copy" | "arrow-left-to-line" | "arrow-right-to-line" | "copy-x" | "x";
+      hint?: string;
       disabled?: boolean;
       destructive?: boolean;
       testID: string;
@@ -106,6 +108,7 @@ export function buildWorkspaceTabMenuEntries(
       kind: "item",
       key: "copy-resume-command",
       label: "Copy resume command",
+      icon: "copy",
       testID: `${menuTestIDBase}-copy-resume-command`,
       onSelect: () => {
         void onCopyResumeCommand(agentId);
@@ -115,6 +118,8 @@ export function buildWorkspaceTabMenuEntries(
       kind: "item",
       key: "copy-agent-id",
       label: "Copy agent id",
+      icon: "copy",
+      hint: agentId.slice(0, 7),
       testID: `${menuTestIDBase}-copy-agent-id`,
       onSelect: () => {
         void onCopyAgentId(agentId);
@@ -130,6 +135,7 @@ export function buildWorkspaceTabMenuEntries(
     kind: "item",
     key: "close-before",
     label: buildCloseBeforeLabel(surface),
+    icon: "arrow-left-to-line",
     disabled: isFirstTab,
     testID: `${menuTestIDBase}-${buildCloseBeforeTestIDSuffix(surface)}`,
     onSelect: () => {
@@ -140,6 +146,7 @@ export function buildWorkspaceTabMenuEntries(
     kind: "item",
     key: "close-after",
     label: buildCloseAfterLabel(surface),
+    icon: "arrow-right-to-line",
     disabled: isLastTab,
     testID: `${menuTestIDBase}-${buildCloseAfterTestIDSuffix(surface)}`,
     onSelect: () => {
@@ -150,6 +157,7 @@ export function buildWorkspaceTabMenuEntries(
     kind: "item",
     key: "close-others",
     label: "Close other tabs",
+    icon: "copy-x",
     disabled: isOnlyTab,
     testID: `${menuTestIDBase}-close-others`,
     onSelect: () => {
@@ -160,6 +168,7 @@ export function buildWorkspaceTabMenuEntries(
     kind: "item",
     key: "close",
     label: "Close",
+    icon: "x",
     testID: `${menuTestIDBase}-close`,
     onSelect: () => {
       void onCloseTab(tab.tabId);
