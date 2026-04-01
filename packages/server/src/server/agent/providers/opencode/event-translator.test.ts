@@ -170,6 +170,199 @@ describe("translateOpenCodeEvent", () => {
     ]);
   });
 
+  it("emits assistant text from message.part.delta events", () => {
+    const state = createState();
+
+    // Register message role
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: { id: "msg-d1", sessionID: "session-1", role: "assistant" },
+        },
+      },
+      state,
+    );
+
+    // OpenCode v2 can send streaming text as message.part.delta
+    const delta1 = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "msg-d1",
+          partID: "part-d1",
+          field: "text",
+          delta: "hey! ",
+        },
+      },
+      state,
+    );
+
+    const delta2 = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "msg-d1",
+          partID: "part-d1",
+          field: "text",
+          delta: "what's up?",
+        },
+      },
+      state,
+    );
+
+    expect([...delta1, ...delta2]).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "assistant_message", text: "hey! " },
+      },
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "assistant_message", text: "what's up?" },
+      },
+    ]);
+  });
+
+  it("emits reasoning from message.part.delta events", () => {
+    const state = createState();
+
+    const delta = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "msg-r1",
+          partID: "rp-1",
+          field: "reasoning",
+          delta: "The user said hello.",
+        },
+      },
+      state,
+    );
+
+    expect(delta).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "reasoning", text: "The user said hello." },
+      },
+    ]);
+  });
+
+  it("deduplicates when message.part.delta is followed by completed message.part.updated", () => {
+    const state = createState();
+
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: { id: "msg-dd1", sessionID: "session-1", role: "assistant" },
+        },
+      },
+      state,
+    );
+
+    // Stream via delta event
+    const streamed = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "msg-dd1",
+          partID: "part-dd1",
+          field: "text",
+          delta: "hello there",
+        },
+      },
+      state,
+    );
+
+    // Completed part echoes the same text
+    const completed = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-dd1",
+            sessionID: "session-1",
+            messageID: "msg-dd1",
+            type: "text",
+            text: "hello there",
+            time: { start: 1, end: 2 },
+          },
+        },
+      },
+      state,
+    );
+
+    const all = [...streamed, ...completed].filter(
+      (e) => e.type === "timeline" && e.item.type === "assistant_message",
+    );
+    // Only the delta, not the completed echo
+    expect(all).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "assistant_message", text: "hello there" },
+      },
+    ]);
+  });
+
+  it("ignores message.part.delta for wrong session", () => {
+    const state = createState();
+
+    const result = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "other-session",
+          messageID: "msg-1",
+          partID: "part-1",
+          field: "text",
+          delta: "should not appear",
+        },
+      },
+      state,
+    );
+
+    expect(result).toEqual([]);
+  });
+
+  it("ignores message.part.delta for user messages", () => {
+    const state = createState();
+
+    // Register as user message
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: { id: "msg-u1", sessionID: "session-1", role: "user" },
+        },
+      },
+      state,
+    );
+
+    const result = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "msg-u1",
+          partID: "part-u1",
+          field: "text",
+          delta: "user typing",
+        },
+      },
+      state,
+    );
+
+    expect(result).toEqual([]);
+  });
+
   it("emits structured assistant output when schema mode completes without text parts", () => {
     const state = createState();
 

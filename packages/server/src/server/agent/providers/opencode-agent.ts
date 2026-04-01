@@ -792,6 +792,52 @@ export function translateOpenCodeEvent(
       break;
     }
 
+    case "message.part.delta": {
+      const deltaSessionId = props.sessionID as string | undefined;
+      if (deltaSessionId !== state.sessionId) {
+        break;
+      }
+
+      const deltaMessageId = props.messageID as string | undefined;
+      const deltaMessageRole = deltaMessageId
+        ? state.messageRoles.get(deltaMessageId)
+        : undefined;
+      const deltaField = props.field as string | undefined;
+      const deltaText = props.delta as string | undefined;
+
+      if (!deltaText || !deltaField) {
+        break;
+      }
+
+      if (deltaField === "text") {
+        if (deltaMessageRole === "user") {
+          break;
+        }
+        const partId = props.partID as string | undefined;
+        const partKey = partId ? `text:${partId}` : null;
+        if (partKey) {
+          state.streamedPartKeys.add(partKey);
+        }
+        events.push({
+          type: "timeline",
+          provider: "opencode",
+          item: { type: "assistant_message", text: deltaText },
+        });
+      } else if (deltaField === "reasoning") {
+        const partId = props.partID as string | undefined;
+        const partKey = partId ? `reasoning:${partId}` : null;
+        if (partKey) {
+          state.streamedPartKeys.add(partKey);
+        }
+        events.push({
+          type: "timeline",
+          provider: "opencode",
+          item: { type: "reasoning", text: deltaText },
+        });
+      }
+      break;
+    }
+
     case "permission.asked": {
       const sessionId = props.sessionID as string | undefined;
       if (sessionId !== state.sessionId) {
@@ -1095,7 +1141,6 @@ class OpenCodeAgentSession implements AgentSession {
 
     const turnId = this.createTurnId();
     this.activeForegroundTurnId = turnId;
-
     void this.consumeEventStream();
 
     return { turnId };
