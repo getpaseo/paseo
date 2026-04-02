@@ -4,9 +4,6 @@ import {
   ActivityIndicator,
   FlatList,
   ListRenderItemInfo,
-  type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   Pressable,
   Text,
   View,
@@ -53,10 +50,7 @@ import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-action
 import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
-import {
-  WebDesktopScrollbarOverlay,
-  useWebDesktopScrollbarMetrics,
-} from "@/components/web-desktop-scrollbar";
+import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "name", label: "Name" },
@@ -152,7 +146,9 @@ export function FileExplorerPane({
 
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set(["."]));
   const treeListRef = useRef<FlatList<TreeRow>>(null);
-  const treeScrollbarMetrics = useWebDesktopScrollbarMetrics();
+  const scrollbar = useWebScrollViewScrollbar(treeListRef, {
+    enabled: showDesktopWebScrollbar,
+  });
 
   const hasInitializedRef = useRef(false);
 
@@ -502,24 +498,6 @@ export function FileExplorerPane({
     });
   }, [errorRecoveryPath, hasWorkspaceScope, requestDirectoryListing, selectExplorerEntry]);
 
-  const handleTreeListScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (showDesktopWebScrollbar) {
-        treeScrollbarMetrics.onScroll(event);
-      }
-    },
-    [showDesktopWebScrollbar, treeScrollbarMetrics],
-  );
-
-  const handleTreeListLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      if (showDesktopWebScrollbar) {
-        treeScrollbarMetrics.onLayout(event);
-      }
-    },
-    [showDesktopWebScrollbar, treeScrollbarMetrics],
-  );
-
   if (!hasWorkspaceScope) {
     return (
       <View style={styles.centerState}>
@@ -598,27 +576,16 @@ export function FileExplorerPane({
             keyExtractor={(row) => row.entry.path}
             testID="file-explorer-tree-scroll"
             contentContainerStyle={styles.entriesContent}
-            onLayout={showDesktopWebScrollbar ? handleTreeListLayout : undefined}
-            onScroll={showDesktopWebScrollbar ? handleTreeListScroll : undefined}
-            onContentSizeChange={
-              showDesktopWebScrollbar ? treeScrollbarMetrics.onContentSizeChange : undefined
-            }
-            scrollEventThrottle={showDesktopWebScrollbar ? 16 : undefined}
+            onLayout={scrollbar.onLayout}
+            onScroll={scrollbar.onScroll}
+            onContentSizeChange={scrollbar.onContentSizeChange}
+            scrollEventThrottle={16}
             showsVerticalScrollIndicator={!showDesktopWebScrollbar}
             initialNumToRender={24}
             maxToRenderPerBatch={40}
             windowSize={12}
           />
-          <WebDesktopScrollbarOverlay
-            enabled={showDesktopWebScrollbar}
-            metrics={treeScrollbarMetrics}
-            onScrollToOffset={(nextOffset) => {
-              treeListRef.current?.scrollToOffset({
-                offset: nextOffset,
-                animated: false,
-              });
-            }}
-          />
+          {scrollbar.overlay}
         </View>
       )}
     </View>

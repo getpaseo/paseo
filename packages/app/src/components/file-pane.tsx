@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef } from "react";
+import React, { useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ActivityIndicator,
@@ -7,17 +7,11 @@ import {
   Text,
   View,
   Platform,
-  type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
 } from "react-native";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
-import {
-  WebDesktopScrollbarOverlay,
-  useWebDesktopScrollbarMetrics,
-} from "@/components/web-desktop-scrollbar";
+import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import {
   highlightCode,
   darkHighlightColors,
@@ -123,9 +117,10 @@ function FilePreviewBody({
   const colorMap = isDark ? darkHighlightColors : lightHighlightColors;
   const baseColor = isDark ? "#c9d1d9" : "#24292f";
 
-  const enablePreviewDesktopScrollbar = showDesktopWebScrollbar;
   const previewScrollRef = useRef<RNScrollView>(null);
-  const previewScrollbarMetrics = useWebDesktopScrollbarMetrics();
+  const scrollbar = useWebScrollViewScrollbar(previewScrollRef, {
+    enabled: showDesktopWebScrollbar,
+  });
 
   const highlightedLines = useMemo(() => {
     if (!preview || preview.kind !== "text") {
@@ -139,24 +134,6 @@ function FilePreviewBody({
     if (!highlightedLines) return 0;
     return lineNumberGutterWidth(highlightedLines.length);
   }, [highlightedLines]);
-
-  const handlePreviewScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (enablePreviewDesktopScrollbar) {
-        previewScrollbarMetrics.onScroll(event);
-      }
-    },
-    [enablePreviewDesktopScrollbar, previewScrollbarMetrics],
-  );
-
-  const handlePreviewLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      if (enablePreviewDesktopScrollbar) {
-        previewScrollbarMetrics.onLayout(event);
-      }
-    },
-    [enablePreviewDesktopScrollbar, previewScrollbarMetrics],
-  );
 
   if (isLoading && !preview) {
     return (
@@ -197,13 +174,11 @@ function FilePreviewBody({
         <RNScrollView
           ref={previewScrollRef}
           style={styles.previewContent}
-          onLayout={enablePreviewDesktopScrollbar ? handlePreviewLayout : undefined}
-          onScroll={enablePreviewDesktopScrollbar ? handlePreviewScroll : undefined}
-          onContentSizeChange={
-            enablePreviewDesktopScrollbar ? previewScrollbarMetrics.onContentSizeChange : undefined
-          }
-          scrollEventThrottle={enablePreviewDesktopScrollbar ? 16 : undefined}
-          showsVerticalScrollIndicator={!enablePreviewDesktopScrollbar}
+          onLayout={scrollbar.onLayout}
+          onScroll={scrollbar.onScroll}
+          onContentSizeChange={scrollbar.onContentSizeChange}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={!showDesktopWebScrollbar}
         >
           {isMobile ? (
             <View style={styles.previewCodeScrollContent}>{codeLines}</View>
@@ -218,13 +193,7 @@ function FilePreviewBody({
             </RNScrollView>
           )}
         </RNScrollView>
-        <WebDesktopScrollbarOverlay
-          enabled={enablePreviewDesktopScrollbar}
-          metrics={previewScrollbarMetrics}
-          onScrollToOffset={(nextOffset) => {
-            previewScrollRef.current?.scrollTo({ y: nextOffset, animated: false });
-          }}
-        />
+        {scrollbar.overlay}
       </View>
     );
   }
@@ -236,13 +205,11 @@ function FilePreviewBody({
           ref={previewScrollRef}
           style={styles.previewContent}
           contentContainerStyle={styles.previewImageScrollContent}
-          onLayout={enablePreviewDesktopScrollbar ? handlePreviewLayout : undefined}
-          onScroll={enablePreviewDesktopScrollbar ? handlePreviewScroll : undefined}
-          onContentSizeChange={
-            enablePreviewDesktopScrollbar ? previewScrollbarMetrics.onContentSizeChange : undefined
-          }
-          scrollEventThrottle={enablePreviewDesktopScrollbar ? 16 : undefined}
-          showsVerticalScrollIndicator={!enablePreviewDesktopScrollbar}
+          onLayout={scrollbar.onLayout}
+          onScroll={scrollbar.onScroll}
+          onContentSizeChange={scrollbar.onContentSizeChange}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={!showDesktopWebScrollbar}
         >
           <RNImage
             source={{
@@ -252,13 +219,7 @@ function FilePreviewBody({
             resizeMode="contain"
           />
         </RNScrollView>
-        <WebDesktopScrollbarOverlay
-          enabled={enablePreviewDesktopScrollbar}
-          metrics={previewScrollbarMetrics}
-          onScrollToOffset={(nextOffset) => {
-            previewScrollRef.current?.scrollTo({ y: nextOffset, animated: false });
-          }}
-        />
+        {scrollbar.overlay}
       </View>
     );
   }

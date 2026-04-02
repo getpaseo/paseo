@@ -30,7 +30,12 @@ export {
 } from "./speech/providers/local/sherpa/sherpa-runtime-env.js";
 
 // Provider binary resolution
-export { findExecutable, applyProviderEnv } from "./agent/provider-launch-config.js";
+export {
+  findExecutable,
+  applyProviderEnv,
+  quoteWindowsArgument,
+  quoteWindowsCommand,
+} from "./agent/provider-launch-config.js";
 
 // Provider manifest (source of truth for provider definitions)
 export {

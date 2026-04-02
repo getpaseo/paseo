@@ -1,7 +1,12 @@
 import type { Command } from "commander";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { getOrCreateServerId, findExecutable, applyProviderEnv } from "@getpaseo/server";
+import {
+  getOrCreateServerId,
+  findExecutable,
+  quoteWindowsCommand,
+  applyProviderEnv,
+} from "@getpaseo/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
 import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";
@@ -170,7 +175,7 @@ function checkProviderBinary(binary: string): { path: string | null; version: st
   }
   const env = applyProviderEnv(process.env);
   try {
-    const output = execFileSync(binaryPath, ["--version"], {
+    const output = execFileSync(quoteWindowsCommand(binaryPath), ["--version"], {
       encoding: "utf8",
       timeout: 5000,
       stdio: ["ignore", "pipe", "pipe"],

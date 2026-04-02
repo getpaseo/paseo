@@ -273,6 +273,31 @@ export function findExecutable(
   }
 }
 
+/**
+ * When spawning with `shell: true` on Windows, the command is passed to
+ * `cmd.exe /d /s /c "command args"`. The `/s` strips outer quotes, so a
+ * command path with spaces (e.g. `C:\Program Files\...`) is split at the
+ * space. Wrapping it in quotes produces the correct `"C:\Program Files\..." args`.
+ */
+export function quoteWindowsCommand(command: string): string {
+  if (process.platform !== "win32") return command;
+  if (!command.includes(" ")) return command;
+  if (command.startsWith('"') && command.endsWith('"')) return command;
+  return `"${command}"`;
+}
+
+/**
+ * `spawn(..., { shell: true })` on Windows also passes argv through `cmd.exe`.
+ * Any argument containing spaces must be quoted or it will be split before the
+ * child process sees it.
+ */
+export function quoteWindowsArgument(argument: string): string {
+  if (process.platform !== "win32") return argument;
+  if (!argument.includes(" ")) return argument;
+  if (argument.startsWith('"') && argument.endsWith('"')) return argument;
+  return `"${argument}"`;
+}
+
 export function isCommandAvailable(command: string): boolean {
   return findExecutable(command) !== null;
 }

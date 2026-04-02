@@ -12,7 +12,15 @@ import {
   Platform,
   BackHandler,
 } from "react-native";
-import { useState, useRef, useCallback, useEffect, useImperativeHandle, forwardRef } from "react";
+import {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useImperativeHandle,
+  forwardRef,
+} from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Mic, MicOff, ArrowUp, Paperclip, Plus, X, Square } from "lucide-react-native";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming } from "react-native-reanimated";
@@ -33,6 +41,7 @@ import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-ur
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
+import { useWebElementScrollbar } from "@/components/use-web-scrollbar";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import {
@@ -570,6 +579,18 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     return null;
   }, []);
 
+  const webTextareaRef = useRef<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (IS_WEB) {
+      webTextareaRef.current = getWebTextArea() as HTMLElement | null;
+    }
+  }, [getWebTextArea]);
+
+  const inputScrollbar = useWebElementScrollbar(webTextareaRef, {
+    enabled: IS_WEB && inputHeight >= MAX_INPUT_HEIGHT,
+  });
+
   const getWebElement = useCallback((target: "root" | "wrapper"): HTMLElement | null => {
     const ref = target === "root" ? rootRef.current : inputWrapperRef.current;
     if (!ref) return null;
@@ -911,42 +932,45 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
         )}
 
         {/* Text input */}
-        <TextInput
-          ref={textInputRef}
-          value={value}
-          onChangeText={handleInputChange}
-          placeholder={placeholder}
-          placeholderTextColor={theme.colors.surface4}
-          accessibilityLabel="Message agent..."
-          onFocus={() => {
-            isInputFocusedRef.current = true;
-            onFocusChange?.(true);
-          }}
-          onBlur={() => {
-            isInputFocusedRef.current = false;
-            onFocusChange?.(false);
-          }}
-          style={[
-            styles.textInput,
-            IS_WEB
-              ? {
-                  height: inputHeight,
-                  minHeight: MIN_INPUT_HEIGHT,
-                  maxHeight: MAX_INPUT_HEIGHT,
-                }
-              : {
-                  minHeight: MIN_INPUT_HEIGHT,
-                  maxHeight: MAX_INPUT_HEIGHT,
-                },
-          ]}
-          multiline
-          scrollEnabled={IS_WEB ? inputHeight >= MAX_INPUT_HEIGHT : true}
-          onContentSizeChange={handleContentSizeChange}
-          editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
-          onKeyPress={shouldHandleDesktopSubmit ? handleDesktopKeyPress : undefined}
-          onSelectionChange={handleSelectionChange}
-          autoFocus={IS_WEB && autoFocus}
-        />
+        <View style={styles.textInputScrollWrapper}>
+          <TextInput
+            ref={textInputRef}
+            value={value}
+            onChangeText={handleInputChange}
+            placeholder={placeholder}
+            placeholderTextColor={theme.colors.surface4}
+            accessibilityLabel="Message agent..."
+            onFocus={() => {
+              isInputFocusedRef.current = true;
+              onFocusChange?.(true);
+            }}
+            onBlur={() => {
+              isInputFocusedRef.current = false;
+              onFocusChange?.(false);
+            }}
+            style={[
+              styles.textInput,
+              IS_WEB
+                ? {
+                    height: inputHeight,
+                    minHeight: MIN_INPUT_HEIGHT,
+                    maxHeight: MAX_INPUT_HEIGHT,
+                  }
+                : {
+                    minHeight: MIN_INPUT_HEIGHT,
+                    maxHeight: MAX_INPUT_HEIGHT,
+                  },
+            ]}
+            multiline
+            scrollEnabled={IS_WEB ? inputHeight >= MAX_INPUT_HEIGHT : true}
+            onContentSizeChange={handleContentSizeChange}
+            editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
+            onKeyPress={shouldHandleDesktopSubmit ? handleDesktopKeyPress : undefined}
+            onSelectionChange={handleSelectionChange}
+            autoFocus={IS_WEB && autoFocus}
+          />
+          {inputScrollbar}
+        </View>
 
         {/* Button row */}
         <View style={styles.buttonRow}>
@@ -1186,6 +1210,9 @@ const styles = StyleSheet.create(((theme: any) => ({
   },
   removeImageButtonVisible: {
     opacity: 1,
+  },
+  textInputScrollWrapper: {
+    position: "relative",
   },
   textInput: {
     width: "100%",

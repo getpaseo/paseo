@@ -42,6 +42,8 @@ import {
 import {
   applyProviderEnv,
   findExecutable,
+  quoteWindowsArgument,
+  quoteWindowsCommand,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
@@ -3419,12 +3421,16 @@ export class CodexAppServerAgentClient implements AgentClient {
       },
       "Spawning Codex app server",
     );
-    return spawn(launchPrefix.command, [...launchPrefix.args, "app-server"], {
-      detached: process.platform !== "win32",
-      shell: process.platform === "win32",
-      stdio: ["pipe", "pipe", "pipe"],
-      env: buildCodexAppServerEnv(this.runtimeSettings, launchEnv),
-    });
+    return spawn(
+      quoteWindowsCommand(launchPrefix.command),
+      [...launchPrefix.args, "app-server"].map((argument) => quoteWindowsArgument(argument)),
+      {
+        detached: process.platform !== "win32",
+        shell: process.platform === "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: buildCodexAppServerEnv(this.runtimeSettings, launchEnv),
+      },
+    );
   }
 
   async createSession(

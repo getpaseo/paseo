@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.42 - 2026-04-01
+
+### Fixed
+- Fixed Claude Code failing to launch on Windows when installed to a path with spaces (e.g. `C:\Program Files\...`).
+
 ## 0.1.41 - 2026-04-01
 
 ### Fixed

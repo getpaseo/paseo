@@ -193,7 +193,7 @@ const darkSemanticColors = {
   foregroundMuted: "#A1A5A4",
 
   // Controls
-  scrollbarHandle: "#71717a", // zinc-500
+  scrollbarHandle: "#717574", // zinc-500 w/ teal tint
 
   // Borders
   border: "#252B2A",

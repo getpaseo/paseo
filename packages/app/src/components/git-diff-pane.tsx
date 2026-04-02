@@ -62,10 +62,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { buildGitActions, type GitActions } from "@/components/git-actions-policy";
 import { lineNumberGutterWidth } from "@/components/code-insets";
-import {
-  WebDesktopScrollbarOverlay,
-  useWebDesktopScrollbarMetrics,
-} from "@/components/web-desktop-scrollbar";
+import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { buildNewAgentRoute, resolveNewAgentWorkingDir } from "@/utils/new-agent-routing";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { GitActionsSplitButton } from "@/components/git-actions-split-button";
@@ -429,7 +426,9 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const [isManualRefresh, setIsManualRefresh] = useState(false);
   const [expandedByPath, setExpandedByPath] = useState<Record<string, boolean>>({});
   const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
-  const diffScrollbarMetrics = useWebDesktopScrollbarMetrics();
+  const scrollbar = useWebScrollViewScrollbar(diffListRef, {
+    enabled: showDesktopWebScrollbar,
+  });
   const diffListScrollOffsetRef = useRef(0);
   const diffListViewportHeightRef = useRef(0);
   const headerHeightByPathRef = useRef<Record<string, number>>({});
@@ -515,11 +514,9 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const handleDiffListScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-      if (showDesktopWebScrollbar) {
-        diffScrollbarMetrics.onScroll(event);
-      }
+      scrollbar.onScroll(event);
     },
-    [diffScrollbarMetrics, showDesktopWebScrollbar],
+    [scrollbar.onScroll],
   );
 
   const handleDiffListLayout = useCallback(
@@ -529,11 +526,9 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         return;
       }
       diffListViewportHeightRef.current = height;
-      if (showDesktopWebScrollbar) {
-        diffScrollbarMetrics.onLayout(event);
-      }
+      scrollbar.onLayout(event);
     },
-    [diffScrollbarMetrics, showDesktopWebScrollbar],
+    [scrollbar.onLayout],
   );
 
   const computeHeaderOffset = useCallback(
@@ -844,9 +839,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         testID="git-diff-scroll"
         onLayout={handleDiffListLayout}
         onScroll={handleDiffListScroll}
-        onContentSizeChange={
-          showDesktopWebScrollbar ? diffScrollbarMetrics.onContentSizeChange : undefined
-        }
+        onContentSizeChange={scrollbar.onContentSizeChange}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={!showDesktopWebScrollbar}
         onRefresh={handleRefresh}
@@ -1085,16 +1078,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
 
       <View style={styles.diffContainer}>
         {bodyContent}
-        <WebDesktopScrollbarOverlay
-          enabled={showDesktopWebScrollbar && hasChanges}
-          metrics={diffScrollbarMetrics}
-          onScrollToOffset={(nextOffset) => {
-            diffListRef.current?.scrollToOffset({
-              offset: nextOffset,
-              animated: false,
-            });
-          }}
-        />
+        {hasChanges ? scrollbar.overlay : null}
       </View>
     </View>
   );

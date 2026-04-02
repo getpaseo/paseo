@@ -72,6 +72,11 @@ declare global {
   }
 }
 
+const isMac =
+  typeof navigator !== "undefined" &&
+  (/Macintosh|Mac OS/i.test(navigator.userAgent ?? "") ||
+    /Mac/i.test((navigator as any).platform ?? ""));
+
 const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
@@ -277,6 +282,10 @@ export class TerminalEmulatorRuntime {
 
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown" || event.isComposing) {
+        return true;
+      }
+
+      if (!isMac && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
         return true;
       }
 

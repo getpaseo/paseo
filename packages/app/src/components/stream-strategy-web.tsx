@@ -23,21 +23,7 @@ const WEB_BOTTOM_SETTLE_TIMEOUT_MS = 200;
 const USER_SCROLL_DELTA_EPSILON = 1;
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 64;
 const AUTO_SCROLL_RESUME_THRESHOLD_PX = 1;
-const WEB_STREAM_SCROLLBAR_STYLE_ID = "web-stream-viewport-scrollbar-style";
-const WEB_STREAM_SCROLLBAR_STYLE = `
-  #agent-chat-scroll-web-dom-scroll,
-  #agent-chat-scroll-web-dom-virtualized {
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-
-  #agent-chat-scroll-web-dom-scroll::-webkit-scrollbar,
-  #agent-chat-scroll-web-dom-virtualized::-webkit-scrollbar {
-    display: none;
-    width: 0;
-    height: 0;
-  }
-`;
+import { useWebElementScrollbar } from "./use-web-scrollbar";
 
 function logWebStickyBottom(_event: string, _details: Record<string, unknown>): void {
   // Intentionally disabled: this path is too noisy during voice debugging.
@@ -119,8 +105,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scrollEnabled,
     isMobileBreakpoint,
   } = props;
-  const { WebDesktopScrollbarOverlay, useWebDesktopScrollbarMetrics } =
-    require("./web-desktop-scrollbar") as typeof import("./web-desktop-scrollbar");
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
   const [followOutput, setFollowOutputr] = useState(true);
@@ -142,8 +126,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollTimeoutRef = useRef<number | null>(null);
-  const streamScrollbarMetrics = useWebDesktopScrollbarMetrics();
   const showDesktopWebScrollbar = !isMobileBreakpoint;
+  const scrollbarOverlay = useWebElementScrollbar(scrollContainerRef, {
+    enabled: showDesktopWebScrollbar,
+    contentRef,
+  });
   const shouldUseVirtualizer = segments.historyVirtualized.length > 0;
   const {
     renderHistoryVirtualizedRow,
@@ -271,33 +258,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       onNearBottomChange(true);
       return;
     }
-    streamScrollbarMetrics.onContentSizeChange(
-      scrollContainer.clientWidth,
-      scrollContainer.scrollHeight,
-    );
-    streamScrollbarMetrics.onLayout({
-      nativeEvent: {
-        layout: {
-          width: scrollContainer.clientWidth,
-          height: scrollContainer.clientHeight,
-          x: 0,
-          y: 0,
-        },
-      },
-    } as never);
-    streamScrollbarMetrics.onScroll({
-      nativeEvent: {
-        contentOffset: { x: 0, y: scrollContainer.scrollTop },
-        contentSize: {
-          width: scrollContainer.clientWidth,
-          height: scrollContainer.scrollHeight,
-        },
-        layoutMeasurement: {
-          width: scrollContainer.clientWidth,
-          height: scrollContainer.clientHeight,
-        },
-      },
-    } as never);
     syncNearBottom(scrollContainer, onNearBottomChange);
     const currentMetrics = {
       scrollTop: scrollContainer.scrollTop,
@@ -323,7 +283,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         ...currentMetrics,
       });
     }
-  }, [onNearBottomChange, props.agentId, streamScrollbarMetrics]);
+  }, [onNearBottomChange, props.agentId]);
 
   const handleDomScroll = useCallback(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -711,7 +671,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
   return (
     <>
-      <style id={WEB_STREAM_SCROLLBAR_STYLE_ID}>{WEB_STREAM_SCROLLBAR_STYLE}</style>
       <div
         ref={(node) => {
           scrollContainerRef.current = node;
@@ -759,20 +718,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
           {shouldRenderEmpty ? listEmptyComponent : null}
         </div>
       </div>
-      <WebDesktopScrollbarOverlay
-        enabled={showDesktopWebScrollbar}
-        metrics={streamScrollbarMetrics}
-        inverted={false}
-        onScrollToOffset={(nextOffset) => {
-          const scrollContainer = scrollContainerRef.current;
-          if (!scrollContainer) {
-            return;
-          }
-          scrollContainer.scrollTo({ top: nextOffset, behavior: "auto" });
-          lastKnownScrollTopRef.current = scrollContainer.scrollTop;
-          updateScrollMetrics();
-        }}
-      />
+      {scrollbarOverlay}
     </>
   );
 }

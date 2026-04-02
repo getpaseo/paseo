@@ -783,6 +783,58 @@ describe("ClaudeAgentSession redesign invariants", () => {
     }
   });
 
+  test("preserves bypass capability across query restarts triggered by thinking changes", async () => {
+    const capturedOptions: Array<{
+      permissionMode?: string;
+      allowDangerouslySkipPermissions?: boolean;
+      effort?: string;
+    }> = [];
+
+    sdkQueryFactory.mockImplementation(
+      ({
+        options,
+      }: {
+        options: {
+          permissionMode?: string;
+          allowDangerouslySkipPermissions?: boolean;
+          effort?: string;
+        };
+      }) => {
+        capturedOptions.push({
+          permissionMode: options.permissionMode,
+          allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions,
+          effort: options.effort,
+        });
+
+        return createBaseQueryMock(
+          vi.fn(async () => ({ done: true, value: undefined })),
+        );
+      },
+    );
+
+    const session = await createSession();
+
+    try {
+      await session.setMode("bypassPermissions");
+      await session.setMode("acceptEdits");
+      await session.setThinkingOption("high");
+      await session.setMode("bypassPermissions");
+
+      expect(capturedOptions).toHaveLength(2);
+      expect(capturedOptions[0]).toMatchObject({
+        permissionMode: "default",
+        allowDangerouslySkipPermissions: true,
+      });
+      expect(capturedOptions[1]).toMatchObject({
+        permissionMode: "acceptEdits",
+        allowDangerouslySkipPermissions: true,
+        effort: "high",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("reuses one autonomous run for unbound stream_event bursts with no foreground run", async () => {
     const session = await createSession();
     const internal = session as unknown as {

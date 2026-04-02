@@ -214,6 +214,25 @@ describe("ClaudeAgentSession integration", () => {
   }, 60_000);
 
   test.runIf(canRunClaudeIntegration)(
+    "keeps bypassPermissions available after a thinking-option restart",
+    async () => {
+      const handle = await createSession({
+        cwdPrefix: "claude-agent-bypass-restart-",
+        modeId: "bypassPermissions",
+      });
+
+      try {
+        await handle.session.setMode("acceptEdits");
+        await handle.session.setThinkingOption("high");
+        await expect(handle.session.setMode("bypassPermissions")).resolves.toBeUndefined();
+      } finally {
+        await cleanupSession(handle);
+      }
+    },
+    60_000,
+  );
+
+  test.runIf(canRunClaudeIntegration)(
     "supportedModels returns the current abstract Claude SDK model shape",
     async () => {
       const claudeQuery = query({

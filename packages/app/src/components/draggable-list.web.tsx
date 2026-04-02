@@ -20,7 +20,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
-import { WebDesktopScrollbarOverlay, useWebDesktopScrollbarMetrics } from "./web-desktop-scrollbar";
+import { useWebScrollViewScrollbar } from "./use-web-scrollbar";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
@@ -133,8 +133,11 @@ export function DraggableList<T>({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dragItems, setDragItems] = useState<T[] | null>(null);
   const items = dragItems ?? data;
+  const showCustomScrollbar = enableDesktopWebScrollbar && scrollEnabled;
   const scrollViewRef = useRef<ScrollView>(null);
-  const scrollbarMetrics = useWebDesktopScrollbarMetrics();
+  const scrollbar = useWebScrollViewScrollbar(scrollViewRef, {
+    enabled: showCustomScrollbar,
+  });
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -177,7 +180,6 @@ export function DraggableList<T>({
   );
 
   const ids = items.map((item, index) => keyExtractor(item, index));
-  const showCustomScrollbar = enableDesktopWebScrollbar && scrollEnabled;
   const wrapperStyle = [
     { position: "relative" as const },
     scrollEnabled ? { flex: 1, minHeight: 0 } : null,
@@ -193,12 +195,10 @@ export function DraggableList<T>({
           style={style}
           contentContainerStyle={contentContainerStyle}
           showsVerticalScrollIndicator={showCustomScrollbar ? false : showsVerticalScrollIndicator}
-          onLayout={showCustomScrollbar ? scrollbarMetrics.onLayout : undefined}
-          onContentSizeChange={
-            showCustomScrollbar ? scrollbarMetrics.onContentSizeChange : undefined
-          }
-          onScroll={showCustomScrollbar ? scrollbarMetrics.onScroll : undefined}
-          scrollEventThrottle={showCustomScrollbar ? 16 : undefined}
+          onLayout={scrollbar.onLayout}
+          onContentSizeChange={scrollbar.onContentSizeChange}
+          onScroll={scrollbar.onScroll}
+          scrollEventThrottle={16}
         >
           {ListHeaderComponent}
           {items.length === 0 && ListEmptyComponent}
@@ -259,13 +259,7 @@ export function DraggableList<T>({
           {ListFooterComponent}
         </>
       )}
-      <WebDesktopScrollbarOverlay
-        enabled={showCustomScrollbar}
-        metrics={scrollbarMetrics}
-        onScrollToOffset={(nextOffset) => {
-          scrollViewRef.current?.scrollTo({ y: nextOffset, animated: false });
-        }}
-      />
+      {scrollbar.overlay}
     </View>
   );
 }
