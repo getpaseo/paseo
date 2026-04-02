@@ -14,7 +14,7 @@ const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
 const shouldRun = process.env.PASEO_VOICE_ROUNDTRIP_E2E === "1" && Boolean(openaiApiKey);
 const speechTest = shouldRun ? test : test.skip;
 
-type VoiceRoundtripProvider = "claude" | "codex" | "opencode";
+type VoiceRoundtripProvider = string;
 
 function getVoiceRoundtripConfig(provider: VoiceRoundtripProvider): {
   provider: VoiceRoundtripProvider;

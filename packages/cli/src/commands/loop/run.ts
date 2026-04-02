@@ -18,9 +18,9 @@ export interface LoopRunRow {
 }
 
 export interface LoopRunOptions extends CommandOptions {
-  provider?: "claude" | "codex" | "opencode";
+  provider?: string;
   model?: string;
-  verifyProvider?: "claude" | "codex" | "opencode";
+  verifyProvider?: string;
   verifyModel?: string;
   verify?: string;
   verifyCheck?: string[];

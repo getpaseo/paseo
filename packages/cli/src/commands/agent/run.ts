@@ -412,7 +412,7 @@ export async function runRunCommand(
       const callStructuredTurn = async (structuredPrompt: string): Promise<string> => {
         if (!structuredAgent) {
           structuredAgent = await client.createAgent({
-            provider: resolvedProviderModel.provider as "claude" | "codex" | "opencode",
+            provider: resolvedProviderModel.provider,
             cwd,
             title: options.name,
             modeId: options.mode,
@@ -511,7 +511,7 @@ export async function runRunCommand(
 
     // Create the agent
     const agent = await client.createAgent({
-      provider: resolvedProviderModel.provider as "claude" | "codex" | "opencode",
+      provider: resolvedProviderModel.provider,
       cwd,
       title: options.name,
       modeId: options.mode,

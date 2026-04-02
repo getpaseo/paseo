@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
+import { AGENT_PROVIDER_DEFINITIONS } from "@getpaseo/server";
 
 /** Provider list item for display */
 export interface ProviderListItem {
@@ -9,27 +10,13 @@ export interface ProviderListItem {
   modes: string;
 }
 
-/** Static provider data - providers are built-in and don't require daemon */
-const PROVIDERS: ProviderListItem[] = [
-  {
-    provider: "claude",
-    status: "available",
-    defaultMode: "default",
-    modes: "plan, default, bypass",
-  },
-  {
-    provider: "codex",
-    status: "available",
-    defaultMode: "auto",
-    modes: "read-only, auto, full-access",
-  },
-  {
-    provider: "opencode",
-    status: "available",
-    defaultMode: "default",
-    modes: "plan, default, bypass",
-  },
-];
+/** Derive provider list from the manifest — single source of truth */
+const PROVIDERS: ProviderListItem[] = AGENT_PROVIDER_DEFINITIONS.map((def) => ({
+  provider: def.id,
+  status: "available",
+  defaultMode: def.defaultModeId ?? "default",
+  modes: def.modes.map((m) => m.label).join(", "),
+}));
 
 /** Schema for provider ls output */
 export const providerLsSchema: OutputSchema<ProviderListItem> = {

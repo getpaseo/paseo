@@ -14,7 +14,7 @@ const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 dotenv.config({ path: resolve(serverRoot, ".env.test"), override: true });
 
 export interface AgentTestConfig {
-  provider: "claude" | "claude-acp" | "codex" | "opencode";
+  provider: string;
   model: string;
   thinkingOptionId?: string;
   modes: {
@@ -47,6 +47,14 @@ export const agentConfigs = {
     modes: {
       full: "full-access",
       ask: "auto",
+    },
+  },
+  copilot: {
+    provider: "copilot",
+    model: "claude-haiku-4.5",
+    modes: {
+      full: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
+      ask: "https://agentclientprotocol.com/protocol/session-modes#agent",
     },
   },
   opencode: {
@@ -111,6 +119,8 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
         isCommandAvailable("codex") &&
         (existsSync(join(homedir(), ".codex", "auth.json")) || Boolean(process.env.OPENAI_API_KEY))
       );
+    case "copilot":
+      return isCommandAvailable("copilot");
     case "opencode":
       return isCommandAvailable("opencode");
   }
@@ -119,4 +129,10 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
 /**
  * Helper to run a test for each provider.
  */
-export const allProviders: AgentProvider[] = ["claude", "claude-acp", "codex", "opencode"];
+export const allProviders: AgentProvider[] = [
+  "claude",
+  "claude-acp",
+  "codex",
+  "copilot",
+  "opencode",
+];

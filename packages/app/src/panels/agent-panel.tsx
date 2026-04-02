@@ -11,9 +11,8 @@ import { AgentInputArea } from "@/components/agent-input-area";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop-zone";
 import type { ImageAttachment } from "@/components/message-input";
+import { getProviderIcon } from "@/components/provider-icons";
 import { ToastViewport, useToastHost } from "@/components/toast-host";
-import { ClaudeIcon } from "@/components/icons/claude-icon";
-import { CodexIcon } from "@/components/icons/codex-icon";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
 import {
@@ -51,16 +50,14 @@ import {
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
 
 function formatProviderLabel(provider: Agent["provider"]): string {
-  if (provider === "claude") {
-    return "Claude";
-  }
-  if (provider === "codex") {
-    return "Codex";
-  }
   if (!provider) {
     return "Agent";
   }
-  return provider.charAt(0).toUpperCase() + provider.slice(1);
+  return provider
+    .split(/[-_\s]+/)
+    .filter((part) => part.length > 0)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function resolveWorkspaceAgentTabLabel(title: string | null | undefined): string | null {
@@ -96,7 +93,7 @@ function useAgentPanelDescriptor(
   );
   const provider = descriptorState.provider;
   const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
-  const icon = provider === "claude" ? ClaudeIcon : provider === "codex" ? CodexIcon : Bot;
+  const icon = getProviderIcon(provider) ?? Bot;
 
   return {
     label: label ?? "",

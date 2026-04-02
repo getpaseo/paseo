@@ -609,7 +609,7 @@ program
 // Agent runner
 
 interface AgentConfig {
-  cli: "claude" | "codex";
+  cli: string;
   model?: string;
   effort?: string;
 }

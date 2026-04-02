@@ -717,23 +717,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
 
-    try {
-      const response = await this.connection.prompt({
+    void this.connection
+      .prompt({
         sessionId: this.sessionId,
         messageId,
         prompt: toACPContentBlocks(prompt),
+      })
+      .then((response) => {
+        this.handlePromptResponse(response, turnId);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.finishTurn({
+          type: "turn_failed",
+          provider: this.provider,
+          error: message,
+          diagnostic: this.collectDiagnostic(message),
+          turnId,
+        });
       });
-      this.handlePromptResponse(response, turnId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.finishTurn({
-        type: "turn_failed",
-        provider: this.provider,
-        error: message,
-        diagnostic: this.collectDiagnostic(message),
-        turnId,
-      });
-    }
 
     return { turnId };
   }
@@ -1284,9 +1286,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return { type: "user_message", text: state.text, messageId: update.messageId ?? undefined };
     }
     if (type === "assistant_message") {
-      return { type: "assistant_message", text: state.text };
+      return { type: "assistant_message", text: chunkText };
     }
-    return { type: "reasoning", text: state.text };
+    return { type: "reasoning", text: chunkText };
   }
 
   private handleCurrentModeUpdate(update: CurrentModeUpdate): void {

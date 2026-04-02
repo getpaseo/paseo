@@ -45,11 +45,11 @@ export interface LoopRecord {
   name: string | null;
   prompt: string;
   cwd: string;
-  provider: "claude" | "codex" | "opencode";
+  provider: string;
   model: string | null;
-  workerProvider: "claude" | "codex" | "opencode" | null;
+  workerProvider: string | null;
   workerModel: string | null;
-  verifierProvider: "claude" | "codex" | "opencode" | null;
+  verifierProvider: string | null;
   verifierModel: string | null;
   verifyPrompt: string | null;
   verifyChecks: string[];
@@ -122,11 +122,11 @@ export interface LoopStopPayload {
 export interface LoopRunInput {
   prompt: string;
   cwd: string;
-  provider?: "claude" | "codex" | "opencode";
+  provider?: string;
   model?: string;
-  workerProvider?: "claude" | "codex" | "opencode";
+  workerProvider?: string;
   workerModel?: string;
-  verifierProvider?: "claude" | "codex" | "opencode";
+  verifierProvider?: string;
   verifierModel?: string;
   verifyPrompt?: string;
   verifyChecks?: string[];

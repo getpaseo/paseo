@@ -50,7 +50,7 @@ async function cleanup(): Promise<void> {
 }
 
 async function runProviderCase(input: {
-  provider: "claude" | "codex" | "opencode";
+  provider: string;
   mode: string;
   model: string;
 }): Promise<void> {

@@ -54,7 +54,7 @@ let claudeModelsFromJson: ProviderModel[] = [];
 const ctx = await createE2ETestContext({ timeout: 120000 });
 
 async function runProviderModelsJson(
-  provider: "claude" | "codex" | "opencode",
+  provider: string,
 ): Promise<ProviderModel[]> {
   const transientNeedles = ["transport closed", "timed out", "timeout", "socket", "econn"];
 

@@ -171,7 +171,7 @@
                 "additionalProperties": false
               },
               "propertyNames": {
-                "enum": ["claude", "codex", "opencode"]
+                "type": "string"
               }
             }
           },
@@ -223,8 +223,7 @@
                   "type": "object",
                   "properties": {
                     "provider": {
-                      "type": "string",
-                      "enum": ["claude", "codex", "opencode"]
+                      "type": "string"
                     },
                     "model": {
                       "type": "string",

@@ -22,7 +22,7 @@ export type ScheduleTarget =
   | {
       type: "new-agent";
       config: {
-        provider: "claude" | "codex" | "opencode";
+        provider: string;
         cwd: string;
         modeId?: string;
         model?: string;

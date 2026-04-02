@@ -11,6 +11,9 @@ export interface AgentModeVisuals {
 
 export interface AgentProviderModeDefinition extends AgentMode, AgentModeVisuals {}
 
+// TODO: `modes` should not be static. Providers (especially ACP) report their
+// own modes at runtime via session/new. We should fetch modes from the provider
+// as source of truth and enrich with UI metadata (icons, colorTier) on top.
 export interface AgentProviderDefinition {
   id: string;
   label: string;
@@ -80,6 +83,30 @@ const CODEX_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const COPILOT_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    label: "Agent",
+    description: "Default agent mode for conversational interactions",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
+    id: "https://agentclientprotocol.com/protocol/session-modes#plan",
+    label: "Plan",
+    description: "Plan mode for creating and executing multi-step plans",
+    icon: "ShieldCheck",
+    colorTier: "planning",
+  },
+  {
+    id: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
+    label: "Autopilot",
+    description: "Autonomous mode that runs until task completion without user interaction",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+  },
+];
+
 const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   {
     id: "build",
@@ -133,6 +160,13 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
       defaultModeId: "read-only",
       defaultModel: "gpt-5.1-codex-mini",
     },
+  },
+  {
+    id: "copilot",
+    label: "Copilot",
+    description: "GitHub Copilot via Agent Client Protocol with dynamic modes and session support",
+    defaultModeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    modes: COPILOT_MODES,
   },
   {
     id: "opencode",

@@ -32,6 +32,12 @@ export {
 // Provider binary resolution
 export { findExecutable, applyProviderEnv } from "./agent/provider-launch-config.js";
 
+// Provider manifest (source of truth for provider definitions)
+export {
+  AGENT_PROVIDER_DEFINITIONS,
+  type AgentProviderDefinition,
+} from "./agent/provider-manifest.js";
+
 // Agent SDK types for CLI commands
 export type {
   AgentMode,
