@@ -32,9 +32,13 @@ import type { AgentProviderDefinition } from "@server/server/agent/provider-mani
 import {
   AGENT_PROVIDER_DEFINITIONS,
   getModeVisuals,
+  getAutopilotModeId,
+  getSafeModeId,
+  isAutopilotMode,
   type AgentModeColorTier,
   type AgentModeIcon,
 } from "@server/server/agent/provider-manifest";
+import { AutopilotToggle } from "@/components/autopilot-toggle";
 import {
   getStatusSelectorHint,
   resolveAgentModelSelection,
@@ -198,6 +202,19 @@ function ControlledStatusBar({
   const ModeIconComponent = modeVisuals?.icon ? MODE_ICONS[modeVisuals.icon] : null;
   const modeIconColor = getModeIconColor(modeVisuals?.colorTier, theme.colors.palette);
   const ProviderIcon = getProviderIcon(provider);
+
+  // Autopilot: derived from whether the current mode is the most permissive mode
+  const autopilotActive = Boolean(selectedModeId && isAutopilotMode(provider, selectedModeId));
+  const handleAutopilotToggle = useCallback(() => {
+    if (!onSelectMode) return;
+    if (autopilotActive) {
+      const safeMode = getSafeModeId(provider);
+      if (safeMode) onSelectMode(safeMode);
+    } else {
+      const autopilotMode = getAutopilotModeId(provider);
+      if (autopilotMode) onSelectMode(autopilotMode);
+    }
+  }, [autopilotActive, onSelectMode, provider]);
 
   const hasAnyControl =
     Boolean(providerOptions?.length) ||
@@ -455,6 +472,15 @@ function ControlledStatusBar({
               />
             </>
           ) : null}
+
+          {canSelectMode ? (
+            <AutopilotToggle
+              isActive={autopilotActive}
+              onToggle={handleAutopilotToggle}
+              disabled={disabled}
+              provider={provider}
+            />
+          ) : null}
         </>
       ) : (
         <>
@@ -591,6 +617,23 @@ function ControlledStatusBar({
                     })}
                   </DropdownMenuContent>
                 </DropdownMenu>
+              </View>
+            ) : null}
+
+            {canSelectMode ? (
+              <View style={styles.sheetAutopilotRow}>
+                <Text style={styles.sheetAutopilotLabel}>Autopilot</Text>
+                <Text style={styles.sheetAutopilotDescription}>
+                  {autopilotActive
+                    ? "All tools run automatically — no approval prompts"
+                    : "Tools require approval before running"}
+                </Text>
+                <AutopilotToggle
+                  isActive={autopilotActive}
+                  onToggle={handleAutopilotToggle}
+                  disabled={disabled}
+                  provider={provider}
+                />
               </View>
             ) : null}
           </AdaptiveModalSheet>
@@ -980,5 +1023,26 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
+  },
+  sheetAutopilotRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surface0,
+  },
+  sheetAutopilotLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  sheetAutopilotDescription: {
+    flex: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
 }));

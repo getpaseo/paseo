@@ -206,3 +206,44 @@ export function getModeVisuals(provider: string, modeId: string): AgentModeVisua
   if (!mode) return undefined;
   return { icon: mode.icon, colorTier: mode.colorTier };
 }
+
+const AUTOPILOT_TIER_ORDER: AgentModeColorTier[] = ["dangerous", "moderate", "planning", "safe"];
+
+/**
+ * Returns the mode ID that represents "Autopilot ON" for a provider — the most
+ * permissive mode where the agent executes tool calls without prompting, mirroring
+ * the VSCode Copilot Autopilot shield toggle.
+ */
+export function getAutopilotModeId(provider: string): string | null {
+  const definition = AGENT_PROVIDER_DEFINITIONS.find((entry) => entry.id === provider);
+  if (!definition || definition.modes.length === 0) return null;
+  for (const tier of AUTOPILOT_TIER_ORDER) {
+    const mode = definition.modes.find((m) => m.colorTier === tier);
+    if (mode) return mode.id;
+  }
+  return definition.defaultModeId;
+}
+
+/**
+ * Returns the mode ID that represents "Autopilot OFF" for a provider — the
+ * provider's default safe mode.
+ */
+export function getSafeModeId(provider: string): string | null {
+  const definition = AGENT_PROVIDER_DEFINITIONS.find((entry) => entry.id === provider);
+  if (!definition) return null;
+  // Return the least permissive mode (reverse tier order: safe > planning > moderate > dangerous).
+  const safeTierOrder: AgentModeColorTier[] = ["safe", "planning", "moderate", "dangerous"];
+  for (const tier of safeTierOrder) {
+    const mode = definition.modes.find((m) => m.colorTier === tier);
+    if (mode) return mode.id;
+  }
+  return definition.defaultModeId ?? definition.modes[0]?.id ?? null;
+}
+
+/**
+ * Returns true if the given modeId is the autopilot (most permissive) mode for
+ * the provider.
+ */
+export function isAutopilotMode(provider: string, modeId: string): boolean {
+  return getAutopilotModeId(provider) === modeId;
+}
