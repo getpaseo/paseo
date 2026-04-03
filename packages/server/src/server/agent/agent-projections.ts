@@ -97,6 +97,7 @@ export function toAgentPayload(
     capabilities: cloneCapabilities(agent.capabilities),
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),
+    features: agent.features,
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
     persistence: sanitizePersistenceHandle(agent.persistence),
     title: options?.title ?? null,
@@ -138,6 +139,12 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   }
   if (config.thinkingOptionId) {
     serializable.thinkingOptionId = config.thinkingOptionId;
+  }
+  if (Object.prototype.hasOwnProperty.call(config, "featureValues")) {
+    const featureValues = sanitizeMetadata(config.featureValues);
+    if (featureValues !== undefined) {
+      serializable.featureValues = featureValues;
+    }
   }
   const extra = sanitizeMetadata(config.extra);
   if (extra !== undefined) {

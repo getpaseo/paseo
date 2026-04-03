@@ -11,6 +11,7 @@ import { z } from "zod";
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentFeature,
   AgentLaunchContext,
   AgentSlashCommand,
   AgentMode,
@@ -168,6 +169,7 @@ type ManagedAgentBase = {
   createdAt: Date;
   updatedAt: Date;
   availableModes: AgentMode[];
+  features?: AgentFeature[];
   currentModeId: string | null;
   pendingPermissions: Map<string, AgentPermissionRequest>;
   pendingReplacement: boolean;
@@ -936,6 +938,19 @@ export class AgentManager {
     }
 
     agent.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+  }
+
+  async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
+    const agent = this.requireAgent(agentId);
+
+    if (!agent.session.setFeature) {
+      throw new Error("Agent session does not support setting features");
+    }
+
+    await agent.session.setFeature(featureId, value);
+    agent.config.featureValues = { ...agent.config.featureValues, [featureId]: value };
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
@@ -2324,6 +2339,10 @@ export class AgentManager {
   private emitState(agent: ManagedAgent): void {
     // Keep attention as an edge-triggered unread signal, not a level signal.
     this.checkAndSetAttention(agent);
+
+    if (agent.session?.features) {
+      agent.features = agent.session.features;
+    }
 
     this.dispatch({
       type: "agent_state",

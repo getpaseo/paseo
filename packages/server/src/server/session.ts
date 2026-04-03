@@ -1569,6 +1569,15 @@ export class Session {
           await this.handleSetAgentModelRequest(msg.agentId, msg.modelId, msg.requestId);
           break;
 
+        case "set_agent_feature_request":
+          await this.handleSetAgentFeatureRequest(
+            msg.agentId,
+            msg.featureId,
+            msg.value,
+            msg.requestId,
+          );
+          break;
+
         case "set_agent_thinking_request":
           await this.handleSetAgentThinkingRequest(
             msg.agentId,
@@ -3389,6 +3398,53 @@ export class Session {
           agentId,
           accepted: false,
           error: error?.message ? String(error.message) : "Failed to set agent model",
+        },
+      });
+    }
+  }
+
+  private async handleSetAgentFeatureRequest(
+    agentId: string,
+    featureId: string,
+    value: unknown,
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { agentId, featureId, value, requestId },
+      "session: set_agent_feature_request",
+    );
+
+    try {
+      await this.agentManager.setAgentFeature(agentId, featureId, value);
+      this.sessionLogger.info(
+        { agentId, featureId, value, requestId },
+        "session: set_agent_feature_request success",
+      );
+      this.emit({
+        type: "set_agent_feature_response",
+        payload: { requestId, agentId, accepted: true, error: null },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error(
+        { err: error, agentId, featureId, value, requestId },
+        "session: set_agent_feature_request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to set agent feature: ${error.message}`,
+        },
+      });
+      this.emit({
+        type: "set_agent_feature_response",
+        payload: {
+          requestId,
+          agentId,
+          accepted: false,
+          error: error?.message ? String(error.message) : "Failed to set agent feature",
         },
       });
     }
