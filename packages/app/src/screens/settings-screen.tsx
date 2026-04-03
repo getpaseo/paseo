@@ -85,16 +85,19 @@ function getSettingsSections(context: { isDesktopApp: boolean }): SettingsSectio
     { id: "hosts", label: "Hosts", icon: Server },
     { id: "appearance", label: "Appearance", icon: Palette },
     { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
-    { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
-    { id: "about", label: "About", icon: Info },
   ];
 
   if (context.isDesktopApp) {
     sections.push(
-      { id: "permissions", label: "Permissions", icon: Shield },
       { id: "daemon", label: "Daemon", icon: Settings },
+      { id: "permissions", label: "Permissions", icon: Shield },
     );
   }
+
+  sections.push(
+    { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
+    { id: "about", label: "About", icon: Info },
+  );
 
   return sections;
 }
