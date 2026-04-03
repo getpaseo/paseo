@@ -99,5 +99,8 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.11",
     "@modelcontextprotocol/sdk": "^1.27.1"
+  },
+  "optionalDependencies": {
+    "@esbuild/linux-x64": "^0.27.4"
   }
 }
