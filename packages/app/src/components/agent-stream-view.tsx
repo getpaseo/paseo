@@ -5,8 +5,8 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
-  useRef,
   useState,
+  useRef,
 } from "react";
 import { View, Text, Pressable, Platform, ActivityIndicator } from "react-native";
 import Markdown from "react-native-markdown-display";
@@ -42,6 +42,7 @@ import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-typ
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { useSessionStore } from "@/stores/session-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { QuestionFormCard } from "./question-form-card";
@@ -85,6 +86,7 @@ export interface AgentStreamViewProps {
   agent: AgentScreenAgent;
   streamItems: StreamItem[];
   pendingPermissions: Map<string, PendingPermission>;
+  isPaneFocused?: boolean;
   routeBottomAnchorRequest?: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady?: boolean;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
@@ -98,6 +100,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       agent,
       streamItems,
       pendingPermissions,
+      isPaneFocused = false,
       routeBottomAnchorRequest = null,
       isAuthoritativeHistoryReady = true,
       onOpenWorkspaceFile,
@@ -207,6 +210,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         openWorkspaceFile,
         workspaceId,
       ],
+    );
+    const pendingPermissionItems = useMemo(
+      () => Array.from(pendingPermissions.values()).filter((perm) => perm.agentId === agentId),
+      [pendingPermissions, agentId],
     );
 
     const baseRenderModel = useMemo(() => {
@@ -490,18 +497,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [getGapBetween, renderStreamItemContent, agent.status, streamRenderStrategy],
     );
 
-    const pendingPermissionItems = useMemo(
-      () => Array.from(pendingPermissions.values()).filter((perm) => perm.agentId === agentId),
-      [pendingPermissions, agentId],
-    );
-
     const showWorkingIndicator = agent.status === "running";
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
       const pendingPermissionsNode =
         pendingPermissionItems.length > 0 ? (
           <View style={stylesheet.permissionsContainer}>
-            {pendingPermissionItems.map((permission) => (
-              <PermissionRequestCard key={permission.key} permission={permission} client={client} />
+            {pendingPermissionItems.map((permission, index) => (
+              <PermissionRequestCard
+                key={permission.key}
+                permission={permission}
+                client={client}
+                shortcutActive={isPaneFocused && index === 0}
+              />
             ))}
           </View>
         ) : null;
@@ -525,7 +532,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           workingIndicator: workingIndicatorNode,
         },
       };
-    }, [baseRenderModel, client, getGapBetween, pendingPermissionItems, showWorkingIndicator]);
+    }, [
+      baseRenderModel,
+      client,
+      getGapBetween,
+      isPaneFocused,
+      pendingPermissionItems,
+      showWorkingIndicator,
+    ]);
 
     const listEmptyComponent = useMemo(() => {
       if (
@@ -727,9 +741,11 @@ function WorkingIndicator() {
 function PermissionRequestCard({
   permission,
   client,
+  shortcutActive,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  shortcutActive: boolean;
 }) {
   const { theme } = useUnistyles();
   const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
@@ -740,9 +756,6 @@ function PermissionRequestCard({
   const description = request.description ?? "";
 
   const planMarkdown = useMemo(() => {
-    if (!request) {
-      return undefined;
-    }
     const planFromMetadata =
       typeof request.metadata?.planText === "string" ? request.metadata.planText : undefined;
     if (planFromMetadata) {
@@ -868,6 +881,7 @@ function PermissionRequestCard({
     resetPermissionMutation();
     setRespondingAction(null);
   }, [permission.request.id, resetPermissionMutation]);
+
   const handleResponse = useCallback(
     (response: AgentPermissionResponse) => {
       respondToPermission({
@@ -881,12 +895,52 @@ function PermissionRequestCard({
     [permission.agentId, permission.request.id, respondToPermission],
   );
 
+  const handleDeny = useCallback(() => {
+    setRespondingAction("deny");
+    handleResponse({
+      behavior: "deny",
+      message: "Denied by user",
+    });
+  }, [handleResponse]);
+
+  const handleAccept = useCallback(() => {
+    setRespondingAction("accept");
+    handleResponse({ behavior: "allow" });
+  }, [handleResponse]);
+
+  const handlePromptSelection = useCallback(
+    (action: { id: string; index?: number }): boolean => {
+      if (action.id !== "agent.prompt.select" || request.kind === "question" || isResponding) {
+        return false;
+      }
+      if (action.index === 1) {
+        handleDeny();
+        return true;
+      }
+      if (action.index === 2) {
+        handleAccept();
+        return true;
+      }
+      return false;
+    },
+    [handleAccept, handleDeny, isResponding, request.kind],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: `agent-prompt-permission:${permission.key}`,
+    actions: ["agent.prompt.select"],
+    enabled: shortcutActive && request.kind !== "question" && !isResponding,
+    priority: 150,
+    handle: handlePromptSelection,
+  });
+
   if (request.kind === "question") {
     return (
       <QuestionFormCard
         permission={permission}
         onRespond={handleResponse}
         isResponding={isResponding}
+        shortcutActive={shortcutActive}
       />
     );
   }
@@ -958,13 +1012,7 @@ function PermissionRequestCard({
             },
             pressed ? permissionStyles.optionButtonPressed : null,
           ]}
-          onPress={() => {
-            setRespondingAction("deny");
-            handleResponse({
-              behavior: "deny",
-              message: "Denied by user",
-            });
-          }}
+          onPress={handleDeny}
           disabled={isResponding}
         >
           {respondingAction === "deny" ? (
@@ -989,10 +1037,7 @@ function PermissionRequestCard({
             },
             pressed ? permissionStyles.optionButtonPressed : null,
           ]}
-          onPress={() => {
-            setRespondingAction("accept");
-            handleResponse({ behavior: "allow" });
-          }}
+          onPress={handleAccept}
           disabled={isResponding}
         >
           {respondingAction === "accept" ? (

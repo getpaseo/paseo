@@ -16,6 +16,7 @@ export type MessageInputKeyboardActionKind =
 
 export type KeyboardActionId =
   | "agent.new"
+  | "agent.prompt.select"
   | "workspace.tab.new"
   | "workspace.tab.close.current"
   | "workspace.tab.navigate.index"

@@ -1,6 +1,7 @@
 export type KeyboardActionScope = "global" | "message-input" | "sidebar" | "workspace";
 
 export type KeyboardActionId =
+  | "agent.prompt.select"
   | "message-input.focus"
   | "message-input.dictation-toggle"
   | "message-input.dictation-cancel"
@@ -26,6 +27,7 @@ export type KeyboardActionId =
   | "worktree.archive";
 
 export type KeyboardActionDefinition =
+  | { id: "agent.prompt.select"; scope: KeyboardActionScope; index: number }
   | { id: "message-input.focus"; scope: KeyboardActionScope }
   | { id: "message-input.dictation-toggle"; scope: KeyboardActionScope }
   | { id: "message-input.dictation-cancel"; scope: KeyboardActionScope }

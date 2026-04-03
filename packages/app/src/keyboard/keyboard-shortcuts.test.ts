@@ -261,8 +261,14 @@ describe("keyboard-shortcuts", () => {
       action: "sidebar.toggle.left",
     },
     {
-      name: "keeps Mod+. as sidebar toggle fallback",
+      name: "matches Mod+. to toggle both sidebars on non-mac",
       event: { key: ".", code: "Period", ctrlKey: true },
+      context: { isMac: false },
+      action: "sidebar.toggle.both",
+    },
+    {
+      name: "matches Ctrl+B sidebar toggle on non-mac",
+      event: { key: "b", code: "KeyB", ctrlKey: true },
       context: { isMac: false },
       action: "sidebar.toggle.left",
     },
@@ -288,6 +294,13 @@ describe("keyboard-shortcuts", () => {
       payload: { kind: "dictation-cancel" },
       preventDefault: false,
       stopPropagation: false,
+    },
+    {
+      name: "routes number keys to prompt selection outside editable scopes",
+      event: { key: "2", code: "Digit2" },
+      context: { focusScope: "other" },
+      action: "agent.prompt.select",
+      payload: { index: 2 },
     },
   ];
 
@@ -345,11 +358,6 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: false, focusScope: "terminal" },
     },
     {
-      name: "does not bind Ctrl+B on non-mac",
-      event: { key: "b", code: "KeyB", ctrlKey: true },
-      context: { isMac: false },
-    },
-    {
       name: "does not route message-input actions when terminal is focused",
       event: { key: "d", code: "KeyD", metaKey: true },
       context: { isMac: true, focusScope: "terminal" },
@@ -362,6 +370,11 @@ describe("keyboard-shortcuts", () => {
     {
       name: "keeps space typing available in message input",
       event: { key: " ", code: "Space" },
+      context: { focusScope: "message-input" },
+    },
+    {
+      name: "does not route prompt selection while typing in the message input",
+      event: { key: "1", code: "Digit1" },
       context: { focusScope: "message-input" },
     },
   ];
@@ -467,6 +480,9 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-close-current": ["meta", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
+        "agent-prompt-select-1": ["1"],
+        "agent-prompt-select-2": ["2"],
+        "agent-prompt-select-3": ["3"],
       },
     },
     {
@@ -477,10 +493,11 @@ describe("keyboard-shortcut help sections", () => {
       },
     },
     {
-      name: "uses mod+period as non-mac left sidebar shortcut",
+      name: "uses mod+b and mod+period for non-mac sidebar shortcuts",
       context: { isMac: false, isDesktop: false },
       expectedKeys: {
-        "toggle-left-sidebar": ["mod", "."],
+        "toggle-left-sidebar": ["mod", "B"],
+        "toggle-both-sidebars": ["mod", "."],
       },
     },
   ];

@@ -161,6 +161,15 @@ export function useKeyboardShortcuts({
       switch (input.action) {
         case "agent.new":
           return openProjectPicker();
+        case "agent.prompt.select":
+          if (!input.payload || typeof input.payload !== "object" || !("index" in input.payload)) {
+            return false;
+          }
+          return keyboardActionDispatcher.dispatch({
+            id: "agent.prompt.select",
+            scope: "workspace",
+            index: input.payload.index,
+          });
         case "workspace.tab.new":
           return keyboardActionDispatcher.dispatch({
             id: "workspace.tab.new",

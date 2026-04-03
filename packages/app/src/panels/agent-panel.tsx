@@ -349,6 +349,7 @@ function AgentPanelBody({
     attentionReason: agentState.attentionReason,
     isScreenFocused: isPaneFocused,
   });
+
   useEffect(() => {
     clearOnAgentBlurRef.current = attentionController.clearOnAgentBlur;
   }, [attentionController.clearOnAgentBlur]);
@@ -770,6 +771,7 @@ function AgentPanelBody({
                 agent={effectiveAgent}
                 streamItems={shouldUseOptimisticStream ? mergedStreamItems : streamItems}
                 pendingPermissions={pendingPermissions}
+                isPaneFocused={isPaneFocused}
                 routeBottomAnchorRequest={routeBottomAnchorRequest}
                 isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}

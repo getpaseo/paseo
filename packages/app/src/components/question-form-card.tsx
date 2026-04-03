@@ -1,8 +1,9 @@
-import { useState, useCallback } from "react";
+import { useCallback, useState } from "react";
 import { View, Text, TextInput, Pressable, ActivityIndicator, Platform } from "react-native";
 import { StyleSheet, useUnistyles, UnistylesRuntime } from "react-native-unistyles";
 import { Check, CircleHelp, X } from "lucide-react-native";
 import type { PendingPermission } from "@/types/shared";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 
 interface QuestionOption {
@@ -17,6 +18,9 @@ interface Question {
   multiSelect: boolean;
 }
 
+type QuestionSelections = Record<number, Set<number>>;
+type QuestionOtherTexts = Record<number, string>;
+
 function parseQuestions(input: unknown): Question[] | null {
   if (
     typeof input !== "object" ||
@@ -26,127 +30,333 @@ function parseQuestions(input: unknown): Question[] | null {
   ) {
     return null;
   }
+
   const raw = (input as Record<string, unknown>).questions as unknown[];
   const questions: Question[] = [];
+
   for (const item of raw) {
-    if (typeof item !== "object" || item === null) return null;
-    const q = item as Record<string, unknown>;
-    if (typeof q.question !== "string" || typeof q.header !== "string") return null;
-    if (!Array.isArray(q.options)) return null;
+    if (typeof item !== "object" || item === null) {
+      return null;
+    }
+
+    const question = item as Record<string, unknown>;
+    if (typeof question.question !== "string" || typeof question.header !== "string") {
+      return null;
+    }
+    if (!Array.isArray(question.options)) {
+      return null;
+    }
+
     const options: QuestionOption[] = [];
-    for (const opt of q.options as unknown[]) {
-      if (typeof opt !== "object" || opt === null) return null;
-      const o = opt as Record<string, unknown>;
-      if (typeof o.label !== "string") return null;
+    for (const option of question.options as unknown[]) {
+      if (typeof option !== "object" || option === null) {
+        return null;
+      }
+
+      const candidate = option as Record<string, unknown>;
+      if (typeof candidate.label !== "string") {
+        return null;
+      }
+
       options.push({
-        label: o.label,
-        description: typeof o.description === "string" ? o.description : undefined,
+        label: candidate.label,
+        description: typeof candidate.description === "string" ? candidate.description : undefined,
       });
     }
+
     questions.push({
-      question: q.question,
-      header: q.header,
+      question: question.question,
+      header: question.header,
       options,
-      multiSelect: q.multiSelect === true,
+      multiSelect: question.multiSelect === true,
     });
   }
+
   return questions.length > 0 ? questions : null;
+}
+
+function cloneSelections(input: QuestionSelections): QuestionSelections {
+  const next: QuestionSelections = {};
+  for (const [key, value] of Object.entries(input)) {
+    next[Number(key)] = new Set(value);
+  }
+  return next;
+}
+
+function isQuestionAnswered(input: {
+  selections: QuestionSelections;
+  otherTexts: QuestionOtherTexts;
+  questionIndex: number;
+}): boolean {
+  const selected = input.selections[input.questionIndex];
+  const otherText = input.otherTexts[input.questionIndex]?.trim();
+  return (selected && selected.size > 0) || Boolean(otherText && otherText.length > 0);
+}
+
+function findFirstUnansweredQuestionIndex(input: {
+  questions: readonly Question[];
+  selections: QuestionSelections;
+  otherTexts: QuestionOtherTexts;
+}): number | null {
+  for (let questionIndex = 0; questionIndex < input.questions.length; questionIndex += 1) {
+    if (
+      !isQuestionAnswered({
+        selections: input.selections,
+        otherTexts: input.otherTexts,
+        questionIndex,
+      })
+    ) {
+      return questionIndex;
+    }
+  }
+
+  return null;
+}
+
+function areAllQuestionsAnswered(input: {
+  questions: readonly Question[];
+  selections: QuestionSelections;
+  otherTexts: QuestionOtherTexts;
+}): boolean {
+  return input.questions.every((_, questionIndex) =>
+    isQuestionAnswered({
+      selections: input.selections,
+      otherTexts: input.otherTexts,
+      questionIndex,
+    }),
+  );
+}
+
+function buildQuestionAnswers(input: {
+  questions: readonly Question[];
+  selections: QuestionSelections;
+  otherTexts: QuestionOtherTexts;
+}): Record<string, string> {
+  const answers: Record<string, string> = {};
+
+  for (let questionIndex = 0; questionIndex < input.questions.length; questionIndex += 1) {
+    const question = input.questions[questionIndex];
+    if (!question) {
+      continue;
+    }
+
+    const selected = input.selections[questionIndex];
+    const otherText = input.otherTexts[questionIndex]?.trim();
+
+    if (otherText && otherText.length > 0) {
+      answers[question.header] = otherText;
+      continue;
+    }
+
+    if (!selected || selected.size === 0) {
+      continue;
+    }
+
+    const labels = Array.from(selected)
+      .map((optionIndex) => question.options[optionIndex]?.label)
+      .filter((label): label is string => typeof label === "string");
+    if (labels.length > 0) {
+      answers[question.header] = labels.join(", ");
+    }
+  }
+
+  return answers;
+}
+
+function selectQuestionOption(input: {
+  questions: readonly Question[];
+  selections: QuestionSelections;
+  otherTexts: QuestionOtherTexts;
+  questionIndex: number;
+  optionIndex: number;
+}): {
+  selections: QuestionSelections;
+  otherTexts: QuestionOtherTexts;
+} {
+  const question = input.questions[input.questionIndex];
+  if (!question || !question.options[input.optionIndex]) {
+    return {
+      selections: input.selections,
+      otherTexts: input.otherTexts,
+    };
+  }
+
+  const selections = cloneSelections(input.selections);
+  const otherTexts = { ...input.otherTexts };
+  const current = selections[input.questionIndex] ?? new Set<number>();
+  const next = new Set(current);
+
+  if (question.multiSelect) {
+    if (next.has(input.optionIndex)) {
+      next.delete(input.optionIndex);
+    } else {
+      next.add(input.optionIndex);
+    }
+  } else if (next.has(input.optionIndex)) {
+    next.clear();
+  } else {
+    next.clear();
+    next.add(input.optionIndex);
+  }
+
+  selections[input.questionIndex] = next;
+  delete otherTexts[input.questionIndex];
+
+  return { selections, otherTexts };
 }
 
 interface QuestionFormCardProps {
   permission: PendingPermission;
   onRespond: (response: AgentPermissionResponse) => void;
   isResponding: boolean;
+  shortcutActive: boolean;
 }
 
 const IS_WEB = Platform.OS === "web";
 
-export function QuestionFormCard({ permission, onRespond, isResponding }: QuestionFormCardProps) {
+export function QuestionFormCard({
+  permission,
+  onRespond,
+  isResponding,
+  shortcutActive,
+}: QuestionFormCardProps) {
   const { theme } = useUnistyles();
   const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const questions = parseQuestions(permission.request.input);
 
-  const [selections, setSelections] = useState<Record<number, Set<number>>>({});
-  const [otherTexts, setOtherTexts] = useState<Record<number, string>>({});
+  const [selections, setSelections] = useState<QuestionSelections>({});
+  const [otherTexts, setOtherTexts] = useState<QuestionOtherTexts>({});
   const [respondingAction, setRespondingAction] = useState<"submit" | "dismiss" | null>(null);
 
-  const toggleOption = useCallback((qIndex: number, optIndex: number, multiSelect: boolean) => {
-    setSelections((prev) => {
-      const current = prev[qIndex] ?? new Set<number>();
-      const next = new Set(current);
-      if (multiSelect) {
-        if (next.has(optIndex)) {
-          next.delete(optIndex);
-        } else {
-          next.add(optIndex);
-        }
-      } else {
-        if (next.has(optIndex)) {
-          next.clear();
-        } else {
-          next.clear();
-          next.add(optIndex);
-        }
+  const submitResponses = useCallback(
+    (input: { selections: QuestionSelections; otherTexts: QuestionOtherTexts }) => {
+      if (!questions) {
+        return;
       }
-      return { ...prev, [qIndex]: next };
-    });
-    setOtherTexts((prev) => {
-      if (!prev[qIndex]) return prev;
-      const next = { ...prev };
-      delete next[qIndex];
-      return next;
-    });
-  }, []);
 
-  const setOtherText = useCallback((qIndex: number, text: string) => {
-    setOtherTexts((prev) => ({ ...prev, [qIndex]: text }));
-    if (text.length > 0) {
-      setSelections((prev) => {
-        if (!prev[qIndex] || prev[qIndex].size === 0) return prev;
-        return { ...prev, [qIndex]: new Set<number>() };
+      setRespondingAction("submit");
+      onRespond({
+        behavior: "allow",
+        updatedInput: {
+          ...permission.request.input,
+          answers: buildQuestionAnswers({
+            questions,
+            selections: input.selections,
+            otherTexts: input.otherTexts,
+          }),
+        },
+      });
+    },
+    [onRespond, permission.request.input, questions],
+  );
+
+  const toggleOption = useCallback(
+    (input: { questionIndex: number; optionIndex: number }) => {
+      if (!questions) {
+        return;
+      }
+
+      const next = selectQuestionOption({
+        questions,
+        selections,
+        otherTexts,
+        questionIndex: input.questionIndex,
+        optionIndex: input.optionIndex,
+      });
+      setSelections(next.selections);
+      setOtherTexts(next.otherTexts);
+    },
+    [otherTexts, questions, selections],
+  );
+
+  const setOtherText = useCallback((input: { questionIndex: number; text: string }) => {
+    setOtherTexts((previous) => ({ ...previous, [input.questionIndex]: input.text }));
+    if (input.text.length > 0) {
+      setSelections((previous) => {
+        if (!previous[input.questionIndex] || previous[input.questionIndex]?.size === 0) {
+          return previous;
+        }
+        return { ...previous, [input.questionIndex]: new Set<number>() };
       });
     }
   }, []);
 
-  if (!questions) {
-    return null;
-  }
+  const handleSubmit = useCallback(() => {
+    submitResponses({ selections, otherTexts });
+  }, [otherTexts, selections, submitResponses]);
 
-  const allAnswered = questions.every((_, qIndex) => {
-    const selected = selections[qIndex];
-    const otherText = otherTexts[qIndex]?.trim();
-    return (selected && selected.size > 0) || (otherText && otherText.length > 0);
-  });
-
-  function handleSubmit() {
-    setRespondingAction("submit");
-    const answers: Record<string, string> = {};
-    for (let i = 0; i < questions!.length; i++) {
-      const q = questions![i];
-      const selected = selections[i];
-      const otherText = otherTexts[i]?.trim();
-
-      if (otherText && otherText.length > 0) {
-        answers[q.header] = otherText;
-      } else if (selected && selected.size > 0) {
-        const labels = Array.from(selected).map((idx) => q.options[idx].label);
-        answers[q.header] = labels.join(", ");
-      }
-    }
-
-    onRespond({
-      behavior: "allow",
-      updatedInput: { ...permission.request.input, answers },
-    });
-  }
-
-  function handleDeny() {
+  const handleDeny = useCallback(() => {
     setRespondingAction("dismiss");
     onRespond({
       behavior: "deny",
       message: "Dismissed by user",
     });
+  }, [onRespond]);
+
+  const handlePromptSelection = useCallback(
+    (action: { id: string; index?: number }): boolean => {
+      if (action.id !== "agent.prompt.select" || isResponding || !questions) {
+        return false;
+      }
+
+      const questionIndex = findFirstUnansweredQuestionIndex({
+        questions,
+        selections,
+        otherTexts,
+      });
+      if (questionIndex === null) {
+        return false;
+      }
+
+      const optionIndex = (action.index ?? 0) - 1;
+      const question = questions[questionIndex];
+      if (!question?.options[optionIndex]) {
+        return false;
+      }
+
+      const next = selectQuestionOption({
+        questions,
+        selections,
+        otherTexts,
+        questionIndex,
+        optionIndex,
+      });
+      setSelections(next.selections);
+      setOtherTexts(next.otherTexts);
+
+      const shouldAutoSubmit =
+        areAllQuestionsAnswered({
+          questions,
+          selections: next.selections,
+          otherTexts: next.otherTexts,
+        }) && questions.every((candidate) => candidate.multiSelect !== true);
+
+      if (shouldAutoSubmit) {
+        submitResponses(next);
+      }
+
+      return true;
+    },
+    [isResponding, otherTexts, questions, selections, submitResponses],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: `agent-prompt-question:${permission.key}`,
+    actions: ["agent.prompt.select"],
+    enabled: shortcutActive && !isResponding && questions !== null,
+    priority: 150,
+    handle: handlePromptSelection,
+  });
+
+  if (!questions) {
+    return null;
   }
+
+  const allAnswered = areAllQuestionsAnswered({
+    questions,
+    selections,
+    otherTexts,
+  });
 
   return (
     <View
@@ -158,24 +368,24 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         },
       ]}
     >
-      {questions.map((q, qIndex) => {
-        const selected = selections[qIndex] ?? new Set<number>();
-        const otherText = otherTexts[qIndex] ?? "";
+      {questions.map((question, questionIndex) => {
+        const selected = selections[questionIndex] ?? new Set<number>();
+        const otherText = otherTexts[questionIndex] ?? "";
 
         return (
-          <View key={qIndex} style={styles.questionBlock}>
+          <View key={questionIndex} style={styles.questionBlock}>
             <View style={styles.questionHeader}>
               <Text style={[styles.questionText, { color: theme.colors.foreground }]}>
-                {q.question}
+                {question.question}
               </Text>
               <CircleHelp size={14} color={theme.colors.foregroundMuted} />
             </View>
             <View style={styles.optionsWrap}>
-              {q.options.map((opt, optIndex) => {
-                const isSelected = selected.has(optIndex);
+              {question.options.map((option, optionIndex) => {
+                const isSelected = selected.has(optionIndex);
                 return (
                   <Pressable
-                    key={optIndex}
+                    key={optionIndex}
                     style={({ pressed, hovered = false }) => [
                       styles.optionItem,
                       (hovered || isSelected) && {
@@ -183,22 +393,27 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
                       },
                       pressed && styles.optionItemPressed,
                     ]}
-                    onPress={() => toggleOption(qIndex, optIndex, q.multiSelect)}
+                    onPress={() =>
+                      toggleOption({
+                        questionIndex,
+                        optionIndex,
+                      })
+                    }
                     disabled={isResponding}
                   >
                     <View style={styles.optionItemContent}>
                       <View style={styles.optionTextBlock}>
                         <Text style={[styles.optionLabel, { color: theme.colors.foreground }]}>
-                          {opt.label}
+                          {option.label}
                         </Text>
-                        {opt.description ? (
+                        {option.description ? (
                           <Text
                             style={[
                               styles.optionDescription,
                               { color: theme.colors.foregroundMuted },
                             ]}
                           >
-                            {opt.description}
+                            {option.description}
                           </Text>
                         ) : null}
                       </View>
@@ -222,12 +437,21 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
                   backgroundColor: theme.colors.surface2,
                 },
                 // @ts-expect-error - outlineStyle is web-only
-                IS_WEB && { outlineStyle: "none", outlineWidth: 0, outlineColor: "transparent" },
+                IS_WEB && {
+                  outlineStyle: "none",
+                  outlineWidth: 0,
+                  outlineColor: "transparent",
+                },
               ]}
               placeholder="Other..."
               placeholderTextColor={theme.colors.foregroundMuted}
               value={otherText}
-              onChangeText={(text) => setOtherText(qIndex, text)}
+              onChangeText={(text) =>
+                setOtherText({
+                  questionIndex,
+                  text,
+                })
+              }
               editable={!isResponding}
             />
           </View>
