@@ -62,6 +62,20 @@ describe("node-entrypoint-launcher", () => {
       ).toEqual(["--version"]);
     });
 
+    it("passes --open-project through as a normal CLI arg", () => {
+      expect(
+        parseCliPassthroughArgsFromArgv({
+          argv: [
+            "/Applications/Paseo.app/Contents/MacOS/Paseo",
+            "--open-project",
+            "/tmp/project",
+          ],
+          isDefaultApp: false,
+          forceCli: false,
+        }),
+      ).toEqual(["--open-project", "/tmp/project"]);
+    });
+
     it("forces CLI mode for shim launches even without args", () => {
       expect(
         parseCliPassthroughArgsFromArgv({

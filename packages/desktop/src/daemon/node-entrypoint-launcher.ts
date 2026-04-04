@@ -42,9 +42,14 @@ export function parseCliPassthroughArgsFromArgv(
   input: ParseCliPassthroughArgsFromArgvInput,
 ): string[] | null {
   const startIndex = input.isDefaultApp ? 2 : 1;
-  const effective = input.argv
-    .slice(startIndex)
-    .filter((arg) => !IGNORED_ARG_PREFIXES.some((p) => arg.startsWith(p)));
+  const effective: string[] = [];
+
+  for (const arg of input.argv.slice(startIndex)) {
+    if (IGNORED_ARG_PREFIXES.some((prefix) => arg.startsWith(prefix))) {
+      continue;
+    }
+    effective.push(arg);
+  }
 
   if (input.forceCli) {
     return effective;
