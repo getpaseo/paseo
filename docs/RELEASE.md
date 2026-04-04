@@ -122,8 +122,34 @@ No prefix (`v`), no extra text. The parser matches the first `## X.Y.Z` line to 
 - **Only Claude should write changelog entries.**
 - If you are Codex and a stable release needs a changelog entry, launch a Claude agent with Paseo to draft it, then review and commit the result.
 
+## Pre-release sanity check
+
+Before cutting any release (RC or stable), run a Codex review of the diff as a last line of defence against shipping bugs.
+
+Load the `paseo` skill and launch a **Codex 5.4** agent with a prompt like:
+
+> Review the diff between the latest release tag and HEAD. Focus on:
+>
+> 1. **Breaking changes** — especially in the WebSocket protocol, agent lifecycle, and any server↔client contract.
+> 2. **Backward compatibility** — mobile apps lag behind desktop/daemon updates by days. Users will update desktop and daemon immediately but keep running the old app. Flag anything that requires both sides to update in lockstep.
+> 3. **Regressions** — anything that looks like it could break existing functionality.
+>
+> Diff: `git diff <latest-release-tag>..HEAD`
+
+The agent's job is a deep sanity check, not a full code review. If it flags anything, investigate before proceeding.
+
+## Changelog scope
+
+The changelog always covers **stable-to-HEAD**:
+
+- **RC release**: the diff and release notes cover `latest stable tag → HEAD`. RC release notes are auto-generated and not added to `CHANGELOG.md`.
+- **Stable release**: the diff and changelog entry cover `latest stable tag → HEAD`. Any intermediate RCs are skipped — the changelog captures the full delta from the previous stable release, not just what changed since the last RC.
+
+In other words, RCs are checkpoints along the way; the changelog only records the final jump from one stable version to the next.
+
 ## Completion checklist
 
+- [ ] Run the pre-release sanity check (see above) and address any findings
 - [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors)
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] `npm run release:patch` or `npm run release:promote` completes successfully
