@@ -4,8 +4,9 @@
 import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
 import { query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
 
 class Pushable<T> implements AsyncIterable<T> {
   private queue: T[] = [];
@@ -52,10 +53,22 @@ function tmpCwd(): string {
   }
 }
 
+const hasClaudeCredentials =
+  !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
+
 describe("Claude SDK direct behavior", () => {
-  it("shows what happens after interrupt()", async () => {
+  const canRunClaudeIntegration = isCommandAvailable("claude") && hasClaudeCredentials;
+
+  beforeAll(() => {
+    if (canRunClaudeIntegration) {
+      expect(isCommandAvailable("claude")).toBe(true);
+    }
+  });
+
+  test.runIf(canRunClaudeIntegration)("shows what happens after interrupt()", async () => {
     const cwd = tmpCwd();
     const input = new Pushable<SDKUserMessage>();
+    const claudeBinary = findExecutable("claude");
 
     // Use same options as claude-agent.ts
     const q = query({
@@ -64,6 +77,7 @@ describe("Claude SDK direct behavior", () => {
         cwd,
         includePartialMessages: true,
         permissionMode: "bypassPermissions",
+        ...(claudeBinary ? { pathToClaudeCodeExecutable: claudeBinary } : {}),
         systemPrompt: {
           type: "preset",
           preset: "claude_code",

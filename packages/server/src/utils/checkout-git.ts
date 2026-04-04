@@ -6,6 +6,7 @@ import { open as openFile, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
+import { findExecutable, resolveShellEnv } from "./executable.js";
 import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
 import { requirePaseoWorktreeBaseRefName } from "./worktree-metadata.js";
 
@@ -23,6 +24,7 @@ const PULL_REQUEST_STATUS_CACHE_MAX = 1_000;
 let pullRequestStatusCacheTtlMs = DEFAULT_PULL_REQUEST_STATUS_CACHE_TTL_MS;
 let pullRequestStatusCache = createPullRequestStatusCache(pullRequestStatusCacheTtlMs);
 const pullRequestStatusInFlight = new Map<string, Promise<PullRequestStatusResult>>();
+let cachedGhPath: string | null | undefined = undefined;
 
 function createPullRequestStatusCache(ttlMs: number) {
   return new TTLCache<string, PullRequestStatusResult>({
@@ -50,6 +52,14 @@ export function __setPullRequestStatusCacheTtlForTests(ttlMs: number): void {
   pullRequestStatusCacheTtlMs = ttlMs;
   pullRequestStatusCache = createPullRequestStatusCache(ttlMs);
   pullRequestStatusInFlight.clear();
+}
+
+export function __resetGhPathCacheForTests(): void {
+  cachedGhPath = undefined;
+}
+
+export function __setGhPathForTests(path: string | null): void {
+  cachedGhPath = path;
 }
 
 async function execGit(
@@ -532,6 +542,7 @@ export type CheckoutStatusLiteNotGit = {
   isGit: false;
   currentBranch: null;
   remoteUrl: null;
+  worktreeRoot: null;
   isPaseoOwnedWorktree: false;
   mainRepoRoot: null;
 };
@@ -540,6 +551,7 @@ export type CheckoutStatusLiteGitNonPaseo = {
   isGit: true;
   currentBranch: string | null;
   remoteUrl: string | null;
+  worktreeRoot: string;
   isPaseoOwnedWorktree: false;
   mainRepoRoot: null;
 };
@@ -548,6 +560,7 @@ export type CheckoutStatusLiteGitPaseo = {
   isGit: true;
   currentBranch: string | null;
   remoteUrl: string | null;
+  worktreeRoot: string;
   isPaseoOwnedWorktree: true;
   mainRepoRoot: string;
 };
@@ -1149,6 +1162,7 @@ export async function getCheckoutStatusLite(
       isGit: false,
       currentBranch: null,
       remoteUrl: null,
+      worktreeRoot: null,
       isPaseoOwnedWorktree: false,
       mainRepoRoot: null,
     };
@@ -1159,6 +1173,7 @@ export async function getCheckoutStatusLite(
       isGit: true,
       currentBranch: inspected.currentBranch,
       remoteUrl: inspected.remoteUrl,
+      worktreeRoot: inspected.worktreeRoot,
       isPaseoOwnedWorktree: true,
       mainRepoRoot: await getMainRepoRoot(cwd),
     };
@@ -1168,6 +1183,7 @@ export async function getCheckoutStatusLite(
     isGit: true,
     currentBranch: inspected.currentBranch,
     remoteUrl: inspected.remoteUrl,
+    worktreeRoot: inspected.worktreeRoot,
     isPaseoOwnedWorktree: false,
     mainRepoRoot: null,
   };
@@ -1731,12 +1747,14 @@ export interface PullRequestStatusResult {
   githubFeaturesEnabled: boolean;
 }
 
-async function ensureGhAvailable(cwd: string): Promise<void> {
-  try {
-    await execAsync("gh --version", { cwd });
-  } catch {
-    throw new Error("GitHub CLI (gh) is not available or not authenticated");
+function resolveGhPath(): string {
+  if (cachedGhPath === undefined) {
+    cachedGhPath = findExecutable("gh");
   }
+  if (cachedGhPath === null) {
+    throw new Error("GitHub CLI (gh) is not installed or not in PATH");
+  }
+  return cachedGhPath;
 }
 
 function getCommandErrorText(error: unknown): string {
@@ -1805,7 +1823,7 @@ export async function createPullRequest(
   options: CreatePullRequestOptions,
 ): Promise<{ url: string; number: number }> {
   await requireGitRepo(cwd);
-  await ensureGhAvailable(cwd);
+  const ghPath = resolveGhPath();
   const repo = await resolveGitHubRepo(cwd);
   if (!repo) {
     throw new Error("Unable to determine GitHub repo from git remote");
@@ -1827,13 +1845,14 @@ export async function createPullRequest(
 
   await execAsync(`git push -u origin ${head}`, { cwd });
 
+  const ghEnv = { ...resolveShellEnv(), GIT_TERMINAL_PROMPT: "0" };
   const args = ["api", "-X", "POST", `repos/${repo}/pulls`, "-f", `title=${options.title}`];
   args.push("-f", `head=${head}`);
   args.push("-f", `base=${normalizedBase}`);
   if (options.body) {
     args.push("-f", `body=${options.body}`);
   }
-  const { stdout } = await execFileAsync("gh", args, { cwd });
+  const { stdout } = await execFileAsync(ghPath, args, { cwd, env: ghEnv });
   const parsed = JSON.parse(stdout.trim());
   if (!parsed?.url || !parsed?.number) {
     throw new Error("GitHub CLI did not return PR url/number");
@@ -1875,8 +1894,9 @@ async function getPullRequestStatusUncached(cwd: string): Promise<PullRequestSta
       githubFeaturesEnabled: false,
     };
   }
+  let ghPath: string;
   try {
-    await ensureGhAvailable(cwd);
+    ghPath = resolveGhPath();
   } catch {
     return {
       status: null,
@@ -1885,14 +1905,14 @@ async function getPullRequestStatusUncached(cwd: string): Promise<PullRequestSta
   }
   try {
     const { stdout } = await execFileAsync(
-      "gh",
+      ghPath,
       [
         "pr",
         "view",
         "--json",
         "url,title,state,baseRefName,headRefName,mergedAt",
       ],
-      { cwd },
+      { cwd, env: { ...resolveShellEnv(), GIT_TERMINAL_PROMPT: "0" } },
     );
     const pr = JSON.parse(stdout.trim());
     if (!pr || typeof pr !== "object" || !pr.url || !pr.title) {

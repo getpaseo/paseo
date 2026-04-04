@@ -6,7 +6,7 @@ import pino from "pino";
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentSession, AgentStreamEvent, ToolCallTimelineItem } from "../agent-sdk-types.js";
-import { isCommandAvailable } from "../provider-launch-config.js";
+import { isCommandAvailable } from "../../../utils/executable.js";
 import { ClaudeAgentClient } from "./claude-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 

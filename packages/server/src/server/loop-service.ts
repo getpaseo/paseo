@@ -256,7 +256,7 @@ async function runVerifyCheck(options: {
 }): Promise<LoopVerifyCheckResult> {
   const startedAt = nowIso();
   try {
-    const result = await execFileAsync("/bin/zsh", ["-lc", options.command], {
+    const result = await execFileAsync("/bin/sh", ["-lc", options.command], {
       cwd: options.cwd,
       maxBuffer: MAX_VERIFY_OUTPUT_BYTES,
     });

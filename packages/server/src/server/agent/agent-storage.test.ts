@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
+import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
   AgentPermissionRequest,
@@ -41,6 +42,9 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     systemPrompt: configOverrides.systemPrompt,
     mcpServers: configOverrides.mcpServers,
   };
+  if (Object.prototype.hasOwnProperty.call(configOverrides, "featureValues")) {
+    config.featureValues = configOverrides.featureValues;
+  }
   const session = lifecycle === "closed" ? null : (overrides.session ?? ({} as AgentSession));
   const activeForegroundTurnId =
     overrides.activeForegroundTurnId ?? (lifecycle === "running" ? "test-turn-id" : null);
@@ -148,6 +152,62 @@ describe("AgentStorage", () => {
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
     expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
+  });
+
+  test("applySnapshot stores and reloads featureValues when present", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "agent-feature-values",
+        config: {
+          featureValues: {
+            fast_mode: true,
+          },
+        },
+      }),
+    );
+
+    const record = await storage.get("agent-feature-values");
+    expect(record?.config?.featureValues).toEqual({ fast_mode: true });
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const persisted = await reloaded.get("agent-feature-values");
+    expect(persisted?.config?.featureValues).toEqual({ fast_mode: true });
+    expect(buildSessionConfig(persisted!).featureValues).toEqual({ fast_mode: true });
+  });
+
+  test("applySnapshot keeps featureValues absent when they were never set", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "agent-no-feature-values",
+      }),
+    );
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const persisted = await reloaded.get("agent-no-feature-values");
+    expect(persisted?.config?.featureValues).toBeUndefined();
+    expect(buildSessionConfig(persisted!).featureValues).toBeUndefined();
+  });
+
+  test("buildConfigOverrides includes featureValues when present in stored config", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "agent-resume-overrides",
+        config: {
+          featureValues: {
+            fast_mode: true,
+          },
+        },
+      }),
+    );
+
+    const record = await storage.get("agent-resume-overrides");
+    expect(record).not.toBeNull();
+    expect(buildConfigOverrides(record!)).toMatchObject({
+      cwd: "/tmp/project",
+      featureValues: {
+        fast_mode: true,
+      },
+    });
   });
 
   test("applySnapshot preserves original createdAt timestamp", async () => {

@@ -27,6 +27,8 @@ interface SidebarAnimationContextValue {
   animateToOpen: () => void;
   animateToClose: () => void;
   isGesturing: SharedValue<boolean>;
+  gestureAnimatingRef: React.MutableRefObject<boolean>;
+  openGestureRef: React.MutableRefObject<GestureType | undefined>;
   closeGestureRef: React.MutableRefObject<GestureType | undefined>;
 }
 
@@ -46,6 +48,8 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
   const translateX = useSharedValue(initialTargets.translateX);
   const backdropOpacity = useSharedValue(initialTargets.backdropOpacity);
   const isGesturing = useSharedValue(false);
+  const gestureAnimatingRef = useRef(false);
+  const openGestureRef = useRef<GestureType | undefined>(undefined);
   const closeGestureRef = useRef<GestureType | undefined>(undefined);
 
   // Track previous isOpen to detect changes
@@ -65,6 +69,14 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
     prevWindowWidth.current = windowWidth;
 
     if (!didStateChange) {
+      return;
+    }
+
+    // Gesture onEnd already started the animation on the UI thread — skip to avoid
+    // a second competing withTiming that can desync translateX and backdropOpacity
+    // after a provider remount (e.g. theme change).
+    if (gestureAnimatingRef.current) {
+      gestureAnimatingRef.current = false;
       return;
     }
 
@@ -123,6 +135,8 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
       animateToOpen,
       animateToClose,
       isGesturing,
+      gestureAnimatingRef,
+      openGestureRef,
       closeGestureRef,
     }),
     [
@@ -132,6 +146,8 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
       animateToOpen,
       animateToClose,
       isGesturing,
+      gestureAnimatingRef,
+      openGestureRef,
       closeGestureRef,
     ],
   );

@@ -167,14 +167,15 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     "/tmp/paseo-test",
     async () => ({}) as any,
     { allowedOrigins: new Set() },
-    undefined,
-    undefined,
-    undefined,
     speechReadiness
       ? {
-          getSpeechReadiness: () => speechReadiness,
+          getReadiness: () => speechReadiness,
+          onReadinessChange: vi.fn(() => () => {}),
         }
       : undefined,
+    undefined,
+    undefined,
+    undefined,
     undefined,
     TEST_DAEMON_VERSION,
     undefined,

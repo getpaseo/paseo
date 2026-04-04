@@ -518,6 +518,7 @@ export async function registerPendingWorktreeWorkspace(
       isGit: true,
       currentBranch: options.branchName,
       remoteUrl: basePlacement.checkout.remoteUrl,
+      worktreeRoot: options.worktreePath,
       isPaseoOwnedWorktree: true,
       mainRepoRoot: options.repoRoot,
     },

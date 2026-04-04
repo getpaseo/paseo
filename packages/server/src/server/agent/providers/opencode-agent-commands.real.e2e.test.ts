@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import pino from "pino";
 
-import { isCommandAvailable } from "../provider-launch-config.js";
 import type { AgentSlashCommand } from "../agent-sdk-types.js";
+import { isCommandAvailable } from "../../../utils/executable.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
 
 describe("opencode agent commands contract (real)", () => {

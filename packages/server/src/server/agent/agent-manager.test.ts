@@ -7,8 +7,10 @@ import { randomUUID } from "node:crypto";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { buildConfigOverrides } from "../persistence-hooks.js";
 import type {
   AgentClient,
+  AgentFeature,
   AgentLaunchContext,
   AgentPersistenceHandle,
   AgentRunResult,
@@ -195,6 +197,16 @@ class TestAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {}
+}
+
+function createFeature(overrides: Partial<AgentFeature> = {}): AgentFeature {
+  return {
+    type: "toggle",
+    id: "fast_mode",
+    label: "Fast mode",
+    value: false,
+    ...overrides,
+  };
 }
 
 describe("AgentManager", () => {
@@ -481,6 +493,101 @@ describe("AgentManager", () => {
     });
   });
 
+  test("resumeAgentFromPersistence passes featureValues through to the resumed session config", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-resume-features-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class ResumeFeatureCaptureClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+      lastResumeOverrides: Partial<AgentSessionConfig> | undefined;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new TestAgentSession(config);
+      }
+
+      async resumeSession(
+        handle: AgentPersistenceHandle,
+        overrides?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        this.lastResumeOverrides = overrides;
+        const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+        return new TestAgentSession({
+          ...metadata,
+          ...overrides,
+          provider: "codex",
+          cwd: overrides?.cwd ?? metadata.cwd ?? process.cwd(),
+        });
+      }
+    }
+
+    const now = new Date().toISOString();
+    await storage.upsert({
+      id: "00000000-0000-4000-8000-000000000138",
+      provider: "codex",
+      cwd: workdir,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      title: null,
+      labels: {},
+      lastStatus: "idle",
+      lastModeId: "plan",
+      config: {
+        model: "gpt-5.1",
+        modeId: "plan",
+        featureValues: {
+          fast_mode: true,
+        },
+      },
+      persistence: {
+        provider: "codex",
+        sessionId: "resume-feature-session",
+        metadata: {
+          provider: "codex",
+          cwd: workdir,
+        },
+      },
+    });
+
+    const record = await storage.get("00000000-0000-4000-8000-000000000138");
+    expect(record).not.toBeNull();
+
+    const client = new ResumeFeatureCaptureClient();
+    const manager = new AgentManager({
+      clients: {
+        codex: client,
+      },
+      registry: storage,
+      logger,
+    });
+
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "resume-feature-session",
+        metadata: {
+          provider: "codex",
+          cwd: workdir,
+        },
+      },
+      buildConfigOverrides(record!),
+      record!.id,
+    );
+
+    expect(client.lastResumeOverrides?.featureValues).toEqual({
+      fast_mode: true,
+    });
+    expect(resumed.config.featureValues).toEqual({
+      fast_mode: true,
+    });
+  });
+
   test("reloadAgentSession preserves timeline and does not force history replay", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-"));
     const storagePath = join(workdir, "agents");
@@ -627,6 +734,119 @@ describe("AgentManager", () => {
     const live = manager.getAgent(snapshot.id);
     expect(live).not.toBeNull();
     expect(live!.updatedAt.getTime()).toBeGreaterThan(Date.parse(before!.updatedAt));
+  });
+
+  test("setAgentFeature calls session.setFeature and persists featureValues in config", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-feature-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class FeatureSession extends TestAgentSession {
+      readonly features: AgentFeature[] = [createFeature()];
+      readonly setFeature = vi.fn(async (featureId: string, value: unknown) => {
+        const feature = this.features.find((item) => item.id === featureId);
+        if (feature?.type === "toggle") {
+          feature.value = Boolean(value);
+        }
+      });
+    }
+
+    class FeatureClient extends TestAgentClient {
+      session: FeatureSession | null = null;
+
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        this.session = new FeatureSession(config);
+        return this.session;
+      }
+    }
+
+    const client = new FeatureClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000128",
+    });
+
+    const agent = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    await manager.setAgentFeature(agent.id, "fast_mode", true);
+
+    expect(client.session?.setFeature).toHaveBeenCalledWith("fast_mode", true);
+    expect(manager.getAgent(agent.id)?.config.featureValues).toEqual({ fast_mode: true });
+  });
+
+  test("setAgentFeature throws when session does not support setFeature", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-feature-unsupported-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000129",
+    });
+
+    const agent = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    await expect(manager.setAgentFeature(agent.id, "fast_mode", true)).rejects.toThrow(
+      "Agent session does not support setting features",
+    );
+  });
+
+  test("emitState syncs features from session to agent", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-emit-state-features-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class FeatureSession extends TestAgentSession {
+      readonly features: AgentFeature[] = [createFeature()];
+    }
+
+    class FeatureClient extends TestAgentClient {
+      session: FeatureSession | null = null;
+
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        this.session = new FeatureSession(config);
+        return this.session;
+      }
+    }
+
+    const client = new FeatureClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000130",
+    });
+
+    const events: AgentFeature[][] = [];
+    const agent = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    manager.subscribe((event) => {
+      if (event.type !== "agent_state" || event.agent.id !== agent.id) {
+        return;
+      }
+      events.push(event.agent.features ?? []);
+    });
+
+    if (client.session?.features[0]?.type === "toggle") {
+      client.session.features[0].value = true;
+    }
+
+    manager.notifyAgentState(agent.id);
+
+    expect(manager.getAgent(agent.id)?.features).toEqual([createFeature({ value: true })]);
+    expect(events.at(-1)).toEqual([createFeature({ value: true })]);
   });
 
   test("reloadAgentSession cancels active run and resumes existing session once thread_started is observed", async () => {

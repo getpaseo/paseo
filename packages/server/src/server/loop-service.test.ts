@@ -106,9 +106,9 @@ class ScriptedAgentSession implements AgentSession {
     const promptText = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
     const turnId = `turn-${++this.turnCount}`;
     this.interrupted = false;
-    setTimeout(() => {
+    queueMicrotask(() => {
       void this.runScript(promptText, turnId);
-    }, 0);
+    });
     return { turnId };
   }
 

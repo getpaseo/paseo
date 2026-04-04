@@ -27,6 +27,7 @@ import {
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { loadSettingsFromStorage } from "@/hooks/use-settings";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useOpenProject } from "@/hooks/use-open-project";
 import { SessionProvider } from "@/contexts/session-context";
 import type { HostProfile } from "@/types/host-connection";
 import {
@@ -67,6 +68,7 @@ import {
   type WebNotificationClickDetail,
   ensureOsNotificationPermission,
 } from "@/utils/os-notifications";
+import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { getDesktopHost } from "@/desktop/host";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
 import { buildNotificationRoute } from "@/utils/notification-routing";
@@ -420,14 +422,28 @@ function MobileGestureWrapper({
   const mobileView = usePanelStore((state) => state.mobileView);
   const openAgentList = usePanelStore((state) => state.openAgentList);
   const horizontalScroll = useHorizontalScrollOptional();
-  const { translateX, backdropOpacity, windowWidth, animateToOpen, animateToClose, isGesturing } =
-    useSidebarAnimation();
+  const {
+    translateX,
+    backdropOpacity,
+    windowWidth,
+    animateToOpen,
+    animateToClose,
+    isGesturing,
+    gestureAnimatingRef,
+    openGestureRef,
+  } = useSidebarAnimation();
   const touchStartX = useSharedValue(0);
   const openGestureEnabled = chromeEnabled && mobileView === "agent";
+
+  const handleGestureOpen = useCallback(() => {
+    gestureAnimatingRef.current = true;
+    openAgentList();
+  }, [openAgentList, gestureAnimatingRef]);
 
   const openGesture = useMemo(
     () =>
       Gesture.Pan()
+        .withRef(openGestureRef)
         .enabled(openGestureEnabled)
         .manualActivation(true)
         .failOffsetY([-10, 10])
@@ -470,7 +486,7 @@ function MobileGestureWrapper({
           const shouldOpen = event.translationX > windowWidth / 3 || event.velocityX > 500;
           if (shouldOpen) {
             animateToOpen();
-            runOnJS(openAgentList)();
+            runOnJS(handleGestureOpen)();
           } else {
             animateToClose();
           }
@@ -485,8 +501,9 @@ function MobileGestureWrapper({
       backdropOpacity,
       animateToOpen,
       animateToClose,
-      openAgentList,
+      handleGestureOpen,
       isGesturing,
+      openGestureRef,
       horizontalScroll?.isAnyScrolledRight,
       touchStartX,
     ],
@@ -533,6 +550,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
   return (
     <VoiceProvider>
       <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
+      <OpenProjectListener />
       <HostSessionManager />
       <FaviconStatusSync />
       {children}
@@ -578,6 +596,68 @@ function OfferLinkListener({
       subscription.remove();
     };
   }, [router, upsertDaemonFromOfferUrl]);
+
+  return null;
+}
+
+interface OpenProjectEventPayload {
+  path?: unknown;
+}
+
+function OpenProjectListener() {
+  const hosts = useHosts();
+  const serverId = hosts[0]?.serverId ?? null;
+  const client = useHostRuntimeClient(serverId ?? "");
+  const openProject = useOpenProject(serverId);
+  const pendingPathRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    const maybeOpenProject = (inputPath: string) => {
+      const nextPath = inputPath.trim();
+      if (!nextPath) {
+        return;
+      }
+
+      pendingPathRef.current = nextPath;
+
+      if (!serverId || !client) {
+        return;
+      }
+
+      const pathToOpen = pendingPathRef.current;
+      pendingPathRef.current = null;
+      if (!pathToOpen) {
+        return;
+      }
+
+      void openProject(pathToOpen).catch(() => undefined);
+    };
+
+    void listenToDesktopEvent<OpenProjectEventPayload>("open-project", (payload) => {
+      if (disposed) {
+        return;
+      }
+      const nextPath = typeof payload?.path === "string" ? payload.path.trim() : "";
+      maybeOpenProject(nextPath);
+    })
+      .then((dispose) => {
+        if (disposed) {
+          dispose();
+          return;
+        }
+        unlisten = dispose;
+      })
+      .catch(() => undefined);
+
+    maybeOpenProject(pendingPathRef.current ?? "");
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [client, openProject, serverId]);
 
   return null;
 }

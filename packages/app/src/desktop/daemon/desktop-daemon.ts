@@ -26,12 +26,6 @@ export type DesktopPairingOffer = {
   qr: string | null;
 };
 
-export type CliSymlinkInstructions = {
-  title: string;
-  detail: string;
-  commands: string;
-};
-
 export type LocalTransportTarget = {
   transportType: "socket" | "pipe";
   transportPath: string;
@@ -115,17 +109,6 @@ function parseDesktopPairingOffer(raw: unknown): DesktopPairingOffer {
   };
 }
 
-function parseCliSymlinkInstructionsInternal(raw: unknown): CliSymlinkInstructions | null {
-  if (!isRecord(raw)) {
-    return null;
-  }
-  return {
-    title: toStringOrNull(raw.title) ?? "",
-    detail: toStringOrNull(raw.detail) ?? "",
-    commands: toStringOrNull(raw.commands) ?? "",
-  };
-}
-
 export function shouldUseDesktopDaemon(): boolean {
   return isElectronRuntime();
 }
@@ -152,18 +135,6 @@ export async function getDesktopDaemonLogs(): Promise<DesktopDaemonLogs> {
 
 export async function getDesktopDaemonPairing(): Promise<DesktopPairingOffer> {
   return parseDesktopPairingOffer(await invokeDesktopCommand("desktop_daemon_pairing"));
-}
-
-export function parseCliSymlinkInstructions(raw: unknown): CliSymlinkInstructions {
-  const instructions = parseCliSymlinkInstructionsInternal(raw);
-  if (!instructions) {
-    throw new Error("Unexpected CLI symlink instructions response.");
-  }
-  return instructions;
-}
-
-export async function getCliSymlinkInstructions(): Promise<CliSymlinkInstructions> {
-  return parseCliSymlinkInstructions(await invokeDesktopCommand("cli_symlink_instructions"));
 }
 
 export async function getCliDaemonStatus(): Promise<string> {
@@ -223,4 +194,35 @@ export async function sendLocalTransportMessage(input: {
 
 export async function closeLocalTransportSession(sessionId: string): Promise<void> {
   await invokeDesktopCommand("close_local_daemon_transport", { sessionId });
+}
+
+// ---------------------------------------------------------------------------
+// Integrations
+// ---------------------------------------------------------------------------
+
+export interface InstallStatus {
+  installed: boolean;
+}
+
+function parseInstallStatus(raw: unknown): InstallStatus {
+  if (!isRecord(raw)) {
+    throw new Error("Unexpected install status response.");
+  }
+  return { installed: raw.installed === true };
+}
+
+export async function getCliInstallStatus(): Promise<InstallStatus> {
+  return parseInstallStatus(await invokeDesktopCommand("get_cli_install_status"));
+}
+
+export async function installCli(): Promise<InstallStatus> {
+  return parseInstallStatus(await invokeDesktopCommand("install_cli"));
+}
+
+export async function getSkillsInstallStatus(): Promise<InstallStatus> {
+  return parseInstallStatus(await invokeDesktopCommand("get_skills_install_status"));
+}
+
+export async function installSkills(): Promise<InstallStatus> {
+  return parseInstallStatus(await invokeDesktopCommand("install_skills"));
 }

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { View, Text, Pressable, Platform, useWindowDimensions } from "react-native";
+import {
+  View,
+  Text,
+  Pressable,
+  Platform,
+  useWindowDimensions,
+  StyleSheet as RNStyleSheet,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useIsFocused } from "@react-navigation/native";
 import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-native-reanimated";
@@ -81,6 +88,7 @@ export function ExplorerSidebar({
     animateToOpen,
     animateToClose,
     isGesturing,
+    gestureAnimatingRef,
     closeGestureRef,
   } = useExplorerSidebarAnimation();
 
@@ -100,6 +108,11 @@ export function ExplorerSidebar({
     },
     [closeToAgent, desktopFileExplorerOpen, isOpen, mobileView],
   );
+
+  const handleCloseFromGesture = useCallback(() => {
+    gestureAnimatingRef.current = true;
+    closeToAgent();
+  }, [closeToAgent, gestureAnimatingRef]);
 
   const enableSidebarCloseGesture = isMobile && isOpen;
 
@@ -175,7 +188,7 @@ export function ExplorerSidebar({
           });
           if (shouldClose) {
             animateToClose();
-            runOnJS(handleClose)("swipe-close-gesture");
+            runOnJS(handleCloseFromGesture)();
           } else {
             animateToOpen();
           }
@@ -190,7 +203,7 @@ export function ExplorerSidebar({
       backdropOpacity,
       animateToOpen,
       animateToClose,
-      handleClose,
+      handleCloseFromGesture,
       isGesturing,
       closeGestureRef,
       closeTouchStartX,
@@ -251,18 +264,13 @@ export function ExplorerSidebar({
     return (
       <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
         {/* Backdrop */}
-        <Animated.View style={[styles.backdrop, backdropAnimatedStyle]}>
-          <Pressable
-            style={styles.backdropPressable}
-            onPress={() => handleClose("backdrop-press")}
-          />
-        </Animated.View>
+        <Animated.View style={[explorerStaticStyles.backdrop, backdropAnimatedStyle]} />
 
         <GestureDetector gesture={closeGesture} touchAction="pan-y">
           <Animated.View
             style={[
-              styles.mobileSidebar,
-              { width: windowWidth, paddingTop: insets.top },
+              explorerStaticStyles.mobileSidebar,
+              { width: windowWidth, paddingTop: insets.top, backgroundColor: theme.colors.surfaceSidebar },
               sidebarAnimatedStyle,
               mobileKeyboardInsetStyle,
             ]}
@@ -291,25 +299,27 @@ export function ExplorerSidebar({
   }
 
   return (
-    <Animated.View style={[styles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }]}>
-      {/* Resize handle - absolutely positioned over left border */}
-      <GestureDetector gesture={resizeGesture}>
-        <View
-          style={[styles.resizeHandle, Platform.OS === "web" && ({ cursor: "col-resize" } as any)]}
-        />
-      </GestureDetector>
+    <Animated.View style={[explorerStaticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }]}>
+      <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
+        {/* Resize handle - absolutely positioned over left border */}
+        <GestureDetector gesture={resizeGesture}>
+          <View
+            style={[styles.resizeHandle, Platform.OS === "web" && ({ cursor: "col-resize" } as any)]}
+          />
+        </GestureDetector>
 
-      <SidebarContent
-        activeTab={explorerTab}
-        onTabPress={handleTabPress}
-        onClose={() => handleClose("desktop-close-button")}
-        serverId={serverId}
-        workspaceId={workspaceId}
-        workspaceRoot={workspaceRoot}
-        isGit={isGit}
-        isMobile={false}
-        onOpenFile={onOpenFile}
-      />
+        <SidebarContent
+          activeTab={explorerTab}
+          onTabPress={handleTabPress}
+          onClose={() => handleClose("desktop-close-button")}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          workspaceRoot={workspaceRoot}
+          isGit={isGit}
+          isMobile={false}
+          onOpenFile={onOpenFile}
+        />
+      </View>
     </Animated.View>
   );
 }
@@ -400,24 +410,28 @@ function SidebarContent({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+// Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
+// avoid the "Unable to find node on an unmounted component" crash when Unistyles
+// tries to patch the native node that Reanimated also manages.
+const explorerStaticStyles = RNStyleSheet.create({
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...RNStyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
-  backdropPressable: {
-    flex: 1,
-  },
   mobileSidebar: {
-    position: "absolute",
+    position: "absolute" as const,
     top: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: theme.colors.surfaceSidebar,
-    overflow: "hidden",
+    overflow: "hidden" as const,
   },
   desktopSidebar: {
-    position: "relative",
+    position: "relative" as const,
+  },
+});
+
+const styles = StyleSheet.create((theme) => ({
+  desktopSidebarBorder: {
     borderLeftWidth: 1,
     borderLeftColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,

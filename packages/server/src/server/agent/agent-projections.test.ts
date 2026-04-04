@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus } from "./agent-manager.js";
 import { toAgentPayload, toStoredAgentRecord, type ManagedAgent } from "./agent-projections.js";
 import type {
+  AgentFeature,
   AgentPermissionRequest,
   AgentPersistenceHandle,
   AgentSessionConfig,
@@ -109,6 +110,16 @@ function createPermission(overrides: Partial<AgentPermissionRequest> = {}): Agen
     metadata: { requestedAt: new Date("2025-02-01T12:00:00.000Z") },
   };
   return { ...base, ...overrides };
+}
+
+function createFeature(overrides: Partial<AgentFeature> = {}): AgentFeature {
+  return {
+    type: "toggle",
+    id: "fast_mode",
+    label: "Fast mode",
+    value: true,
+    ...overrides,
+  };
 }
 
 describe("toStoredAgentRecord", () => {
@@ -290,5 +301,14 @@ describe("toAgentPayload", () => {
     const agent = createManagedAgent({ lastUsage: undefined });
     const payload = toAgentPayload(agent);
     expect(payload).not.toHaveProperty("lastUsage");
+  });
+
+  it("includes features in the snapshot payload", () => {
+    const features = [createFeature()];
+    const agent = createManagedAgent({ features });
+
+    const payload = toAgentPayload(agent);
+
+    expect(payload.features).toEqual(features);
   });
 });

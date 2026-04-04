@@ -39,8 +39,9 @@ describe("resolveNewAgentWorkingDir", () => {
   it("returns the main repo root for paseo-owned worktrees", () => {
     const checkout = {
       isPaseoOwnedWorktree: true,
+      worktreeRoot: "/repo/.paseo/worktrees/feature",
       mainRepoRoot: "/repo/main",
-    } as CheckoutStatusPayload;
+    } as unknown as CheckoutStatusPayload;
 
     expect(resolveNewAgentWorkingDir("/repo/.paseo/worktrees/feature", checkout)).toBe(
       "/repo/main",

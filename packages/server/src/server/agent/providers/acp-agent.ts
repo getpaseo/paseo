@@ -85,10 +85,10 @@ import type {
 } from "../agent-sdk-types.js";
 import {
   applyProviderEnv,
-  findExecutable,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
+import { findExecutable } from "../../../utils/executable.js";
 
 const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,

@@ -15,13 +15,16 @@
  * This pattern is used in claude-agent.ts listModels().
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   query,
-  type Query,
-  type SlashCommand,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { isCommandAvailable } from "../utils/executable.js";
+
+const hasClaudeCredentials =
+  !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
+const canRunClaudeIntegration = isCommandAvailable("claude") && hasClaudeCredentials;
 
 // Pattern from claude-agent.ts listModels():
 // Use an empty async generator when you just need control methods
@@ -31,7 +34,7 @@ function createEmptyPrompt(): AsyncGenerator<SDKUserMessage, void, undefined> {
 
 describe("Claude Agent SDK Commands POC", () => {
   describe("supportedCommands() API", () => {
-    it("should return an array of SlashCommand objects", async () => {
+    test.runIf(canRunClaudeIntegration)("should return an array of SlashCommand objects", async () => {
       // Use the pattern from claude-agent.ts:
       // Create a query with empty prompt generator for control methods
       const emptyPrompt = createEmptyPrompt();
@@ -72,7 +75,7 @@ describe("Claude Agent SDK Commands POC", () => {
       }
     }, 30000);
 
-    it("should have valid SlashCommand structure for all commands", async () => {
+    test.runIf(canRunClaudeIntegration)("should have valid SlashCommand structure for all commands", async () => {
       const emptyPrompt = createEmptyPrompt();
 
       const claudeQuery = query({
@@ -107,7 +110,7 @@ describe("Claude Agent SDK Commands POC", () => {
   });
 
   describe("Command Execution", () => {
-    it("should explain that commands are prompts with / prefix", () => {
+    test("should explain that commands are prompts with / prefix", () => {
       // This is a documentation test - commands ARE just prompts with / prefix
       // To execute a command:
       // 1. Create a user message with content: "/{commandName}"

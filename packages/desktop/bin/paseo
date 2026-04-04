@@ -31,4 +31,30 @@ else
   exit 1
 fi
 
+case "${1:-}" in
+  ./*|../*|.|..|/*|~|~/*)
+    case "$1" in
+      ~) ARG_PATH="$HOME" ;;
+      ~/*) ARG_PATH="$HOME/${1#\~/}" ;;
+      *) ARG_PATH="$1" ;;
+    esac
+    if RESOLVED_PATH=$(CDPATH= cd -- "$ARG_PATH" 2>/dev/null && pwd); then
+      :
+    elif command -v realpath >/dev/null 2>&1; then
+      RESOLVED_PATH=$(realpath "$ARG_PATH" 2>/dev/null || printf "%s" "$ARG_PATH")
+    else
+      RESOLVED_PATH=$ARG_PATH
+    fi
+    if [ ! -e "${RESOLVED_PATH}" ]; then
+      echo "Path does not exist: ${RESOLVED_PATH}" >&2
+      exit 1
+    fi
+    if [ ! -d "${RESOLVED_PATH}" ]; then
+      echo "Not a directory: ${RESOLVED_PATH}" >&2
+      exit 1
+    fi
+    exec "${APP_EXECUTABLE}" --open-project "${RESOLVED_PATH}"
+    ;;
+esac
+
 exec env PASEO_DESKTOP_CLI=1 "${APP_EXECUTABLE}" "$@"

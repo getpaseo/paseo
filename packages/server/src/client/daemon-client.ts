@@ -1402,7 +1402,7 @@ export class DaemonClient {
     const status = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
+      timeout: 60000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "status") {
@@ -1704,6 +1704,35 @@ export class DaemonClient {
     });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentModel rejected");
+    }
+  }
+
+  async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "set_agent_feature_request",
+      agentId,
+      featureId,
+      value,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "set_agent_feature_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setAgentFeature rejected");
     }
   }
 

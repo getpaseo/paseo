@@ -30,7 +30,32 @@ import { setupApplicationMenu } from "./features/menu.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
+const OPEN_PROJECT_EVENT = "paseo:event:open-project";
+const OPEN_PROJECT_FLAG = "--open-project";
+const OPEN_PROJECT_IGNORED_ARG_PREFIXES = ["-psn_", "--no-sandbox"];
 app.setName("Paseo");
+
+function parseOpenProjectPath(argv: string[]): string | null {
+  const startIndex = process.defaultApp ? 2 : 1;
+
+  for (let index = startIndex; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (OPEN_PROJECT_IGNORED_ARG_PREFIXES.some((prefix) => arg.startsWith(prefix))) {
+      continue;
+    }
+
+    if (arg !== OPEN_PROJECT_FLAG) {
+      return null;
+    }
+
+    const pathArg = argv[index + 1];
+    return pathArg ? pathArg : null;
+  }
+
+  return null;
+}
+
+const pendingOpenProjectPath = parseOpenProjectPath(process.argv);
 
 protocol.registerSchemesAsPrivileged([
   { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -126,6 +151,19 @@ async function createMainWindow(): Promise<void> {
   await mainWindow.loadURL(`${APP_SCHEME}://app/`);
 }
 
+function sendOpenProjectEvent(win: BrowserWindow, projectPath: string): void {
+  const send = () => {
+    win.webContents.send(OPEN_PROJECT_EVENT, { path: projectPath });
+  };
+
+  if (win.webContents.isLoadingMainFrame()) {
+    win.webContents.once("did-finish-load", send);
+    return;
+  }
+
+  send();
+}
+
 // ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
@@ -137,12 +175,16 @@ function setupSingleInstanceLock(): boolean {
     return false;
   }
 
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, commandLine) => {
+    const openProjectPath = parseOpenProjectPath(commandLine);
     const win = BrowserWindow.getAllWindows()[0];
     if (win) {
       win.show();
       if (win.isMinimized()) win.restore();
       win.focus();
+      if (openProjectPath) {
+        sendOpenProjectEvent(win, openProjectPath);
+      }
     }
   });
 
@@ -168,7 +210,7 @@ async function runCliPassthroughIfRequested(): Promise<boolean> {
 }
 
 async function bootstrap(): Promise<void> {
-  if (await runCliPassthroughIfRequested()) {
+  if (!pendingOpenProjectPath && (await runCliPassthroughIfRequested())) {
     return;
   }
 
@@ -214,6 +256,10 @@ async function bootstrap(): Promise<void> {
   registerNotificationHandlers();
   registerOpenerHandlers();
   await createMainWindow();
+  const mainWindow = BrowserWindow.getAllWindows()[0];
+  if (mainWindow && pendingOpenProjectPath) {
+    sendOpenProjectEvent(mainWindow, pendingOpenProjectPath);
+  }
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {

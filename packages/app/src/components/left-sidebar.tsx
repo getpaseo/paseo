@@ -10,7 +10,14 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
-import { View, Pressable, Text, Platform, useWindowDimensions } from "react-native";
+import {
+  View,
+  Pressable,
+  Text,
+  Platform,
+  useWindowDimensions,
+  StyleSheet as RNStyleSheet,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useAnimatedStyle,
@@ -370,14 +377,16 @@ function MobileSidebar({
     animateToOpen,
     animateToClose,
     isGesturing,
+    gestureAnimatingRef,
     closeGestureRef,
   } = useSidebarAnimation();
   const closeTouchStartX = useSharedValue(0);
   const closeTouchStartY = useSharedValue(0);
 
-  const handleClose = useCallback(() => {
+  const handleCloseFromGesture = useCallback(() => {
+    gestureAnimatingRef.current = true;
     closeToAgent();
-  }, [closeToAgent]);
+  }, [closeToAgent, gestureAnimatingRef]);
 
   const handleViewMore = useCallback(() => {
     if (!activeServerId) {
@@ -452,7 +461,7 @@ function MobileSidebar({
           const shouldClose = event.translationX < -windowWidth / 3 || event.velocityX < -500;
           if (shouldClose) {
             animateToClose();
-            runOnJS(handleClose)();
+            runOnJS(handleCloseFromGesture)();
           } else {
             animateToOpen();
           }
@@ -471,7 +480,7 @@ function MobileSidebar({
       backdropOpacity,
       animateToClose,
       animateToOpen,
-      handleClose,
+      handleCloseFromGesture,
     ],
   );
 
@@ -498,13 +507,11 @@ function MobileSidebar({
 
   return (
     <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
-      <Animated.View style={[styles.backdrop, backdropAnimatedStyle]}>
-        <Pressable style={styles.backdropPressable} onPress={handleClose} />
-      </Animated.View>
+      <Animated.View style={[staticStyles.backdrop, backdropAnimatedStyle]} />
 
       <GestureDetector gesture={closeGesture} touchAction="pan-y">
         <Animated.View
-          style={[styles.mobileSidebar, mobileSidebarInsetStyle, sidebarAnimatedStyle]}
+          style={[staticStyles.mobileSidebar, mobileSidebarInsetStyle, sidebarAnimatedStyle, { backgroundColor: theme.colors.surfaceSidebar }]}
           pointerEvents="auto"
         >
           <View style={styles.sidebarContent} pointerEvents="auto">
@@ -526,7 +533,7 @@ function MobileSidebar({
                 projects={projects}
                 isRefreshing={isManualRefresh && isRevalidating}
                 onRefresh={handleRefresh}
-                onWorkspacePress={closeToAgent}
+                onWorkspacePress={() => closeToAgent()}
                 onAddProject={handleOpenProject}
                 parentGestureRef={closeGestureRef}
               />
@@ -688,7 +695,8 @@ function DesktopSidebar({
   }
 
   return (
-    <Animated.View style={[styles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insetsTop }]}>
+    <Animated.View style={[staticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insetsTop }]}>
+      <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
       <View style={styles.sidebarDragArea}>
         <TitlebarDragRegion />
         {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
@@ -796,32 +804,37 @@ function DesktopSidebar({
           style={[styles.resizeHandle, Platform.OS === "web" && ({ cursor: "col-resize" } as any)]}
         />
       </GestureDetector>
+      </View>
     </Animated.View>
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+// Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
+// avoid the "Unable to find node on an unmounted component" crash when Unistyles
+// tries to patch the native node that Reanimated also manages.
+const staticStyles = RNStyleSheet.create({
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...RNStyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
-  backdropPressable: {
-    flex: 1,
-  },
   mobileSidebar: {
-    position: "absolute",
+    position: "absolute" as const,
     top: 0,
     left: 0,
     bottom: 0,
-    backgroundColor: theme.colors.surfaceSidebar,
-    overflow: "hidden",
+    overflow: "hidden" as const,
   },
+  desktopSidebar: {
+    position: "relative" as const,
+  },
+});
+
+const styles = StyleSheet.create((theme) => ({
   sidebarContent: {
     flex: 1,
     minHeight: 0,
   },
-  desktopSidebar: {
-    position: "relative",
+  desktopSidebarBorder: {
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,

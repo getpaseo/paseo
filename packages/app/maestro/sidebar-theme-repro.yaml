@@ -1,0 +1,31 @@
+appId: sh.paseo
+---
+# Ensure sidebar is closed: if sidebar-sessions is visible, close it via swipe left
+- runFlow:
+    when:
+      visible:
+        id: "sidebar-sessions"
+    commands:
+      - swipe:
+          direction: LEFT
+          duration: 300
+
+# Small pause for close animation
+- takeScreenshot: 00-sidebar-closed
+
+# Open sidebar via swipe right gesture (the actual path that triggers the bug)
+- swipe:
+    start: "5%,50%"
+    end: "80%,50%"
+    duration: 300
+
+# Verify sidebar opened
+- assertVisible:
+    id: "sidebar-sessions"
+- takeScreenshot: 01-sidebar-opened
+
+# Close sidebar via swipe left
+- swipe:
+    direction: LEFT
+    duration: 300
+- takeScreenshot: 02-sidebar-closed-again

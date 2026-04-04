@@ -10,6 +10,7 @@ import type {
   AgentPermissionResponse,
   AgentPermissionRequest,
   AgentSessionConfig,
+  AgentFeature,
   AgentProvider,
   AgentMode,
   AgentCapabilityFlags,
@@ -99,6 +100,7 @@ export interface Agent {
   title: string | null;
   cwd: string;
   model: string | null;
+  features?: AgentFeature[];
   thinkingOptionId?: string | null;
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;
