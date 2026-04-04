@@ -542,6 +542,7 @@ export type CheckoutStatusLiteNotGit = {
   isGit: false;
   currentBranch: null;
   remoteUrl: null;
+  worktreeRoot: null;
   isPaseoOwnedWorktree: false;
   mainRepoRoot: null;
 };
@@ -550,6 +551,7 @@ export type CheckoutStatusLiteGitNonPaseo = {
   isGit: true;
   currentBranch: string | null;
   remoteUrl: string | null;
+  worktreeRoot: string;
   isPaseoOwnedWorktree: false;
   mainRepoRoot: null;
 };
@@ -558,6 +560,7 @@ export type CheckoutStatusLiteGitPaseo = {
   isGit: true;
   currentBranch: string | null;
   remoteUrl: string | null;
+  worktreeRoot: string;
   isPaseoOwnedWorktree: true;
   mainRepoRoot: string;
 };
@@ -1159,6 +1162,7 @@ export async function getCheckoutStatusLite(
       isGit: false,
       currentBranch: null,
       remoteUrl: null,
+      worktreeRoot: null,
       isPaseoOwnedWorktree: false,
       mainRepoRoot: null,
     };
@@ -1169,6 +1173,7 @@ export async function getCheckoutStatusLite(
       isGit: true,
       currentBranch: inspected.currentBranch,
       remoteUrl: inspected.remoteUrl,
+      worktreeRoot: inspected.worktreeRoot,
       isPaseoOwnedWorktree: true,
       mainRepoRoot: await getMainRepoRoot(cwd),
     };
@@ -1178,6 +1183,7 @@ export async function getCheckoutStatusLite(
     isGit: true,
     currentBranch: inspected.currentBranch,
     remoteUrl: inspected.remoteUrl,
+    worktreeRoot: inspected.worktreeRoot,
     isPaseoOwnedWorktree: false,
     mainRepoRoot: null,
   };

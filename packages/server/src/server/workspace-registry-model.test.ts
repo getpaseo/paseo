@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 
-import { detectStaleWorkspaces } from "./workspace-registry-model.js";
+import { deriveWorkspaceId, detectStaleWorkspaces } from "./workspace-registry-model.js";
 import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 
 function createWorkspaceRecord(workspaceId: string) {
@@ -50,5 +50,35 @@ describe("detectStaleWorkspaces", () => {
     });
 
     expect(Array.from(staleWorkspaceIds)).toEqual([]);
+  });
+});
+
+describe("deriveWorkspaceId", () => {
+  test("uses git worktree root when available", () => {
+    expect(
+      deriveWorkspaceId("/tmp/repo/packages/app", {
+        cwd: "/tmp/repo/packages/app",
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: "https://github.com/acme/repo.git",
+        worktreeRoot: "/tmp/repo",
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+    ).toBe("/tmp/repo");
+  });
+
+  test("falls back to normalized cwd for non-git directories", () => {
+    expect(
+      deriveWorkspaceId("/tmp/repo/../repo/scratch", {
+        cwd: "/tmp/repo/../repo/scratch",
+        isGit: false,
+        currentBranch: null,
+        remoteUrl: null,
+        worktreeRoot: null,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+    ).toBe("/tmp/repo/scratch");
   });
 });

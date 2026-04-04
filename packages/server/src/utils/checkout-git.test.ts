@@ -151,6 +151,7 @@ const x = 1;
     const status = await getCheckoutStatusLite(repoDir);
     expect(status.isGit).toBe(true);
     expect(status.currentBranch).toBe("main");
+    expect(status.worktreeRoot).toBe(repoDir);
     expect(status.isPaseoOwnedWorktree).toBe(false);
     expect(status.mainRepoRoot).toBeNull();
   });
@@ -373,6 +374,7 @@ const x = 1;
 
     const status = await getCheckoutStatusLite(result.worktreePath, { paseoHome });
     expect(status.isGit).toBe(true);
+    expect(status.worktreeRoot).toBe(result.worktreePath);
     expect(status.isPaseoOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(repoDir);
   });

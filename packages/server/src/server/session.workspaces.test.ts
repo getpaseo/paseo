@@ -251,6 +251,7 @@ describe("workspace aggregation", () => {
         isGit: false,
         currentBranch: null,
         remoteUrl: null,
+        worktreeRoot: null,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       },
@@ -400,6 +401,7 @@ describe("workspace aggregation", () => {
         isGit: false,
         currentBranch: null,
         remoteUrl: null,
+        worktreeRoot: null,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       },
@@ -564,6 +566,7 @@ describe("workspace aggregation", () => {
         isGit: false,
         currentBranch: null,
         remoteUrl: null,
+        worktreeRoot: null,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       },
@@ -699,6 +702,7 @@ describe("workspace aggregation", () => {
         isGit: false,
         currentBranch: null,
         remoteUrl: null,
+        worktreeRoot: null,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       },
@@ -792,6 +796,7 @@ describe("workspace aggregation", () => {
         isGit: true,
         currentBranch: "feature/name-from-server",
         remoteUrl: "https://github.com/acme/repo-branch.git",
+        worktreeRoot: cwd,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       },
@@ -847,6 +852,41 @@ describe("workspace aggregation", () => {
     expect(result.entries).toHaveLength(1);
     expect(result.entries[0]?.name).toBe("repo");
     expect(result.entries[0]?.status).toBe("needs_input");
+  });
+
+  test("subdirectory agents map to an existing parent workspace descriptor", async () => {
+    const session = createSessionForWorkspaceTests() as any;
+    session.workspaceRegistry.list = async () => [
+      createPersistedWorkspaceRecord({
+        workspaceId: "/tmp/repo",
+        projectId: "/tmp/repo",
+        cwd: "/tmp/repo",
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-03-01T12:00:00.000Z",
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+    ];
+    session.listAgentPayloads = async () => [
+      makeAgent({
+        id: "a1",
+        cwd: "/tmp/repo/packages/app",
+        status: "running",
+        updatedAt: "2026-03-01T12:03:00.000Z",
+      }),
+    ];
+
+    const result = await session.listFetchWorkspacesEntries({
+      type: "fetch_workspaces_request",
+      requestId: "req-subdir-agent",
+    });
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]).toMatchObject({
+      id: "/tmp/repo",
+      status: "running",
+      activityAt: "2026-03-01T12:03:00.000Z",
+    });
   });
 
   test("workspace update stream keeps persisted workspace visible after agents stop", async () => {
@@ -1114,6 +1154,7 @@ describe("workspace aggregation", () => {
         isGit: false,
         currentBranch: null,
         remoteUrl: null,
+        worktreeRoot: null,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       },
@@ -1129,6 +1170,57 @@ describe("workspace aggregation", () => {
     const response = emitted.find((message) => message.type === "open_project_response") as any;
     expect(response?.payload.error).toBeNull();
     expect(response?.payload.workspace?.id).toBe("/tmp/repo");
+  });
+
+  test("open_project_request collapses a git subdirectory onto the repo root workspace", async () => {
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const session = createSessionForWorkspaceTests() as any;
+    const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
+    const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+    const repoRoot = "/tmp/repo";
+    const subdir = "/tmp/repo/packages/app";
+
+    session.emit = (message: any) => emitted.push(message);
+    session.projectRegistry.get = async (projectId: string) => projects.get(projectId) ?? null;
+    session.projectRegistry.upsert = async (
+      record: ReturnType<typeof createPersistedProjectRecord>,
+    ) => {
+      projects.set(record.projectId, record);
+    };
+    session.workspaceRegistry.get = async (workspaceId: string) =>
+      workspaces.get(workspaceId) ?? null;
+    session.workspaceRegistry.upsert = async (
+      record: ReturnType<typeof createPersistedWorkspaceRecord>,
+    ) => {
+      workspaces.set(record.workspaceId, record);
+    };
+    session.projectRegistry.list = async () => Array.from(projects.values());
+    session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+    session.buildProjectPlacement = async (cwd: string) => ({
+      projectKey: repoRoot,
+      projectName: "repo",
+      checkout: {
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: null,
+        worktreeRoot: repoRoot,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      },
+    });
+
+    await session.handleMessage({
+      type: "open_project_request",
+      cwd: subdir,
+      requestId: "req-open-subdir",
+    });
+
+    expect(workspaces.get(repoRoot)).toBeTruthy();
+    expect(workspaces.has(subdir)).toBe(false);
+    const response = emitted.find((message) => message.type === "open_project_response") as any;
+    expect(response?.payload.error).toBeNull();
+    expect(response?.payload.workspace?.id).toBe(repoRoot);
   });
 
   test("archive_workspace_request hides non-destructive workspace records", async () => {
@@ -1239,6 +1331,7 @@ describe("workspace aggregation", () => {
         isGit: true,
         currentBranch: cwd === mainWorkspaceId ? "main" : "feature-a",
         remoteUrl: "https://github.com/zimakki/inkwell.git",
+        worktreeRoot: cwd,
         isPaseoOwnedWorktree: cwd !== mainWorkspaceId,
         mainRepoRoot: cwd === mainWorkspaceId ? null : mainWorkspaceId,
       },
@@ -1345,6 +1438,7 @@ describe("workspace aggregation", () => {
         isGit: true,
         currentBranch: cwd === mainWorkspaceId ? "main" : "feature-a",
         remoteUrl: "https://github.com/new-owner/inkwell.git",
+        worktreeRoot: cwd,
         isPaseoOwnedWorktree: cwd !== mainWorkspaceId,
         mainRepoRoot: cwd === mainWorkspaceId ? null : mainWorkspaceId,
       },
@@ -1363,6 +1457,101 @@ describe("workspace aggregation", () => {
       expect(workspaces.get(mainWorkspaceId)?.projectId).toBe(newProjectId);
       expect(workspaces.get(worktreeWorkspaceId)?.projectId).toBe(newProjectId);
       expect(projects.get(oldProjectId)?.archivedAt).toBeTruthy();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reconcile archives stale subdirectory workspace records when collapsing to the repo root", async () => {
+    const session = createSessionForWorkspaceTests() as any;
+    const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
+    const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+
+    const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "session-workspace-collapse-")));
+    const repoRoot = path.join(tempDir, "repo");
+    const subdirWorkspaceId = path.join(repoRoot, "packages", "app");
+    const projectId = "remote:github.com/acme/repo";
+
+    execSync(`mkdir -p ${JSON.stringify(subdirWorkspaceId)}`);
+
+    projects.set(
+      projectId,
+      createPersistedProjectRecord({
+        projectId,
+        rootPath: repoRoot,
+        kind: "git",
+        displayName: "acme/repo",
+        createdAt: "2026-03-01T12:00:00.000Z",
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+    );
+    workspaces.set(
+      repoRoot,
+      createPersistedWorkspaceRecord({
+        workspaceId: repoRoot,
+        projectId,
+        cwd: repoRoot,
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-03-01T12:00:00.000Z",
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+    );
+    workspaces.set(
+      subdirWorkspaceId,
+      createPersistedWorkspaceRecord({
+        workspaceId: subdirWorkspaceId,
+        projectId,
+        cwd: subdirWorkspaceId,
+        kind: "directory",
+        displayName: "app",
+        createdAt: "2026-03-01T12:00:00.000Z",
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+    );
+
+    session.projectRegistry.get = async (nextProjectId: string) => projects.get(nextProjectId) ?? null;
+    session.projectRegistry.list = async () => Array.from(projects.values());
+    session.projectRegistry.upsert = async (
+      record: ReturnType<typeof createPersistedProjectRecord>,
+    ) => {
+      projects.set(record.projectId, record);
+    };
+    session.workspaceRegistry.get = async (workspaceId: string) =>
+      workspaces.get(workspaceId) ?? null;
+    session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+    session.workspaceRegistry.upsert = async (
+      record: ReturnType<typeof createPersistedWorkspaceRecord>,
+    ) => {
+      workspaces.set(record.workspaceId, record);
+    };
+    session.workspaceRegistry.archive = async (workspaceId: string, archivedAt: string) => {
+      const existing = workspaces.get(workspaceId);
+      if (!existing) return;
+      workspaces.set(workspaceId, { ...existing, archivedAt, updatedAt: archivedAt });
+    };
+    session.buildProjectPlacement = async (cwd: string) => ({
+      projectKey: projectId,
+      projectName: "acme/repo",
+      checkout: {
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: "https://github.com/acme/repo.git",
+        worktreeRoot: repoRoot,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      },
+    });
+
+    try {
+      const result = await session.reconcileWorkspaceRecord(subdirWorkspaceId);
+
+      expect(result.changed).toBe(true);
+      expect(result.workspace.workspaceId).toBe(repoRoot);
+      expect(result.removedWorkspaceId).toBe(subdirWorkspaceId);
+      expect(workspaces.get(repoRoot)?.archivedAt).toBeNull();
+      expect(workspaces.get(subdirWorkspaceId)?.archivedAt).toBeTruthy();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

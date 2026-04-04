@@ -1553,6 +1553,7 @@ export const ProjectCheckoutLiteNotGitPayloadSchema = z.object({
   isGit: z.literal(false),
   currentBranch: z.null(),
   remoteUrl: z.null(),
+  worktreeRoot: z.null(),
   isPaseoOwnedWorktree: z.literal(false),
   mainRepoRoot: z.null(),
 });
@@ -1562,6 +1563,7 @@ export const ProjectCheckoutLiteGitNonPaseoPayloadSchema = z.object({
   isGit: z.literal(true),
   currentBranch: z.string().nullable(),
   remoteUrl: z.string().nullable(),
+  worktreeRoot: z.string(),
   isPaseoOwnedWorktree: z.literal(false),
   mainRepoRoot: z.null(),
 });
@@ -1571,6 +1573,7 @@ export const ProjectCheckoutLiteGitPaseoPayloadSchema = z.object({
   isGit: z.literal(true),
   currentBranch: z.string().nullable(),
   remoteUrl: z.string().nullable(),
+  worktreeRoot: z.string(),
   isPaseoOwnedWorktree: z.literal(true),
   mainRepoRoot: z.string(),
 });

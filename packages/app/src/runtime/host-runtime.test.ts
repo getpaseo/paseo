@@ -157,6 +157,7 @@ function makeFetchAgentsEntry(input: {
         isGit: false,
         currentBranch: null,
         remoteUrl: null,
+        worktreeRoot: null,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       },

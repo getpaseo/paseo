@@ -109,6 +109,7 @@ import {
   detectStaleWorkspaces,
   deriveProjectKind,
   deriveProjectRootPath,
+  deriveWorkspaceId,
   deriveWorkspaceDisplayName,
   deriveWorkspaceKind,
   normalizeWorkspaceId as normalizePersistedWorkspaceId,
@@ -1298,11 +1299,15 @@ export class Session {
   private async reconcileWorkspaceRecord(workspaceId: string): Promise<{
     workspace: PersistedWorkspaceRecord;
     changed: boolean;
+    removedWorkspaceId: string | null;
   }> {
-    const normalizedWorkspaceId = normalizePersistedWorkspaceId(workspaceId);
-    const existing = await this.workspaceRegistry.get(normalizedWorkspaceId);
-    const placement = await this.buildProjectPlacement(normalizedWorkspaceId);
-    await this.syncWorkspaceGitWatchTarget(normalizedWorkspaceId, {
+    const normalizedCwd = normalizePersistedWorkspaceId(workspaceId);
+    const placement = await this.buildProjectPlacement(normalizedCwd);
+    const resolvedWorkspaceId = deriveWorkspaceId(normalizedCwd, placement.checkout);
+    const staleWorkspace =
+      resolvedWorkspaceId === normalizedCwd ? null : await this.workspaceRegistry.get(normalizedCwd);
+    const existing = (await this.workspaceRegistry.get(resolvedWorkspaceId)) ?? staleWorkspace;
+    await this.syncWorkspaceGitWatchTarget(resolvedWorkspaceId, {
       isGit: placement.checkout.isGit,
     });
     const now = new Date().toISOString();
@@ -1310,13 +1315,13 @@ export class Session {
     const nextWorkspaceCreatedAt = existing?.createdAt ?? now;
     const currentProjectRecord = await this.projectRegistry.get(placement.projectKey);
     const nextProjectRecord = this.buildPersistedProjectRecord({
-      workspaceId: normalizedWorkspaceId,
+      workspaceId: resolvedWorkspaceId,
       placement,
       createdAt: currentProjectRecord?.createdAt ?? nextProjectCreatedAt,
       updatedAt: now,
     });
     const nextWorkspaceRecord = this.buildPersistedWorkspaceRecord({
-      workspaceId: normalizedWorkspaceId,
+      workspaceId: resolvedWorkspaceId,
       placement,
       createdAt: nextWorkspaceCreatedAt,
       updatedAt: now,
@@ -1335,16 +1340,33 @@ export class Session {
       currentProjectRecord.rootPath !== nextProjectRecord.rootPath ||
       currentProjectRecord.kind !== nextProjectRecord.kind ||
       currentProjectRecord.displayName !== nextProjectRecord.displayName;
+    const needsStaleWorkspaceCleanup =
+      !!staleWorkspace &&
+      !staleWorkspace.archivedAt &&
+      staleWorkspace.workspaceId !== resolvedWorkspaceId;
 
-    if (!needsWorkspaceUpdate && !needsProjectUpdate) {
+    let removedWorkspaceId: string | null = null;
+    if (needsStaleWorkspaceCleanup) {
+      await this.workspaceRegistry.archive(staleWorkspace.workspaceId, now);
+      this.removeWorkspaceGitWatchTarget(staleWorkspace.workspaceId);
+      removedWorkspaceId = staleWorkspace.workspaceId;
+    }
+
+    if (!needsWorkspaceUpdate && !needsProjectUpdate && !needsStaleWorkspaceCleanup) {
       return {
         workspace: existing!,
         changed: false,
+        removedWorkspaceId: null,
       };
     }
 
     await this.projectRegistry.upsert(nextProjectRecord);
     await this.workspaceRegistry.upsert(nextWorkspaceRecord);
+    if (existing && existing.workspaceId !== resolvedWorkspaceId) {
+      await this.workspaceRegistry.archive(existing.workspaceId, now);
+      this.removeWorkspaceGitWatchTarget(existing.workspaceId);
+      removedWorkspaceId ??= existing.workspaceId;
+    }
 
     if (existing && !existing.archivedAt && existing.projectId !== nextWorkspaceRecord.projectId) {
       await this.archiveProjectRecordIfEmpty(existing.projectId, now);
@@ -1353,6 +1375,7 @@ export class Session {
     return {
       workspace: nextWorkspaceRecord,
       changed: true,
+      removedWorkspaceId,
     };
   }
 
@@ -1386,6 +1409,9 @@ export class Session {
       const result = await this.reconcileWorkspaceRecord(workspace.workspaceId);
       if (result.changed) {
         changedWorkspaceIds.add(result.workspace.workspaceId);
+        if (result.removedWorkspaceId) {
+          changedWorkspaceIds.add(result.removedWorkspaceId);
+        }
       }
     }
 
@@ -5075,7 +5101,7 @@ export class Session {
         continue;
       }
 
-      const workspaceId = normalizePersistedWorkspaceId(agent.cwd);
+      const workspaceId = this.resolveRegisteredWorkspaceIdForCwd(agent.cwd, activeRecords);
       const existing = descriptorsByWorkspaceId.get(workspaceId);
       if (!existing) {
         continue;
@@ -5089,6 +5115,32 @@ export class Session {
     }
 
     return Array.from(descriptorsByWorkspaceId.values());
+  }
+
+  private resolveRegisteredWorkspaceIdForCwd(
+    cwd: string,
+    workspaces: PersistedWorkspaceRecord[],
+  ): string {
+    const normalizedCwd = normalizePersistedWorkspaceId(cwd);
+    const exact = workspaces.find((workspace) => workspace.workspaceId === normalizedCwd);
+    if (exact) {
+      return exact.workspaceId;
+    }
+
+    let bestMatch: PersistedWorkspaceRecord | null = null;
+    for (const workspace of workspaces) {
+      const prefix = workspace.workspaceId.endsWith(sep)
+        ? workspace.workspaceId
+        : `${workspace.workspaceId}${sep}`;
+      if (!normalizedCwd.startsWith(prefix)) {
+        continue;
+      }
+      if (!bestMatch || workspace.workspaceId.length > bestMatch.workspaceId.length) {
+        bestMatch = workspace;
+      }
+    }
+
+    return bestMatch?.workspaceId ?? normalizedCwd;
   }
 
   private async listWorkspaceDescriptors(): Promise<WorkspaceDescriptorPayload[]> {
@@ -5379,8 +5431,7 @@ export class Session {
   }
 
   private async ensureWorkspaceRegistered(cwd: string): Promise<PersistedWorkspaceRecord> {
-    const workspaceId = normalizePersistedWorkspaceId(cwd);
-    return (await this.reconcileWorkspaceRecord(workspaceId)).workspace;
+    return (await this.reconcileWorkspaceRecord(cwd)).workspace;
   }
 
   private async registerPendingWorktreeWorkspace(options: {
@@ -5432,11 +5483,17 @@ export class Session {
       return;
     }
 
-    const workspaceId = normalizePersistedWorkspaceId(cwd);
     const changedWorkspaceIds = await this.reconcileActiveWorkspaceRecords();
+    const activeWorkspaces = (await this.workspaceRegistry.list()).filter(
+      (workspace) => !workspace.archivedAt,
+    );
+    const workspaceId = this.resolveRegisteredWorkspaceIdForCwd(cwd, activeWorkspaces);
     const all = await this.listWorkspaceDescriptorsSnapshot();
     const descriptorsByWorkspaceId = new Map(all.map((entry) => [entry.id, entry] as const));
-    const workspaceIdsToEmit = new Set<string>([workspaceId, ...changedWorkspaceIds]);
+    const workspaceIdsToEmit = new Set<string>([
+      workspaceId,
+      ...changedWorkspaceIds,
+    ]);
 
     for (const nextWorkspaceId of workspaceIdsToEmit) {
       const workspace = descriptorsByWorkspaceId.get(nextWorkspaceId);
@@ -5473,13 +5530,12 @@ export class Session {
     }
 
     const changedWorkspaceIds = await this.reconcileActiveWorkspaceRecords();
+    const activeWorkspaces = (await this.workspaceRegistry.list()).filter(
+      (workspace) => !workspace.archivedAt,
+    );
     const uniqueWorkspaceCwds = new Set<string>(changedWorkspaceIds);
     for (const cwd of cwds) {
-      const normalized = normalizePersistedWorkspaceId(cwd);
-      if (!normalized) {
-        continue;
-      }
-      uniqueWorkspaceCwds.add(normalized);
+      uniqueWorkspaceCwds.add(this.resolveRegisteredWorkspaceIdForCwd(cwd, activeWorkspaces));
     }
 
     const subscription = this.workspaceUpdatesSubscription;

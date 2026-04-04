@@ -28,6 +28,7 @@ describe("project-placement", () => {
         isGit: true as const,
         currentBranch: "main",
         remoteUrl: "https://github.com/acme/repo.git",
+        worktreeRoot: "/Users/test/repo",
         isPaseoOwnedWorktree: false as const,
         mainRepoRoot: null,
       },

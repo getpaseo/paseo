@@ -19,6 +19,10 @@ export function normalizeWorkspaceId(cwd: string): string {
   return resolve(trimmed);
 }
 
+export function deriveWorkspaceId(cwd: string, checkout: ProjectCheckoutLitePayload): string {
+  return checkout.worktreeRoot ?? normalizeWorkspaceId(cwd);
+}
+
 function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
   if (!remoteUrl) {
     return null;
@@ -161,6 +165,7 @@ export async function buildProjectPlacementForCwd(input: {
           isGit: false,
           currentBranch: null,
           remoteUrl: null,
+          worktreeRoot: null,
           isPaseoOwnedWorktree: false,
           mainRepoRoot: null,
         };
@@ -172,6 +177,7 @@ export async function buildProjectPlacementForCwd(input: {
           isGit: true,
           currentBranch: status.currentBranch,
           remoteUrl: status.remoteUrl,
+          worktreeRoot: status.worktreeRoot,
           isPaseoOwnedWorktree: true,
           mainRepoRoot: status.mainRepoRoot,
         };
@@ -182,6 +188,7 @@ export async function buildProjectPlacementForCwd(input: {
         isGit: true,
         currentBranch: status.currentBranch,
         remoteUrl: status.remoteUrl,
+        worktreeRoot: status.worktreeRoot,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       };
@@ -192,13 +199,14 @@ export async function buildProjectPlacementForCwd(input: {
         isGit: false,
         currentBranch: null,
         remoteUrl: null,
+        worktreeRoot: null,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       }),
     );
 
   const projectKey = deriveProjectGroupingKey({
-    cwd: normalizedCwd,
+    cwd: checkout.worktreeRoot ?? normalizedCwd,
     remoteUrl: checkout.remoteUrl,
     isPaseoOwnedWorktree: checkout.isPaseoOwnedWorktree,
     mainRepoRoot: checkout.mainRepoRoot,

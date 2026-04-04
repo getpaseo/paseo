@@ -6,6 +6,7 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import {
   buildProjectPlacementForCwd,
+  deriveWorkspaceId,
   deriveProjectKind,
   deriveProjectRootPath,
   deriveWorkspaceDisplayName,
@@ -67,22 +68,26 @@ export async function bootstrapWorkspaceRegistries(options: {
 
   const records = await options.agentStorage.list();
   const activeRecords = records.filter((record) => !record.archivedAt);
-  const recordsByWorkspaceId = new Map<string, StoredAgentRecord[]>();
+  const recordsByWorkspaceId = new Map<
+    string,
+    { placement: Awaited<ReturnType<typeof buildProjectPlacementForCwd>>; records: StoredAgentRecord[] }
+  >();
   for (const record of activeRecords) {
-    const workspaceId = normalizeWorkspaceId(record.cwd);
-    const existing = recordsByWorkspaceId.get(workspaceId) ?? [];
-    existing.push(record);
+    const normalizedCwd = normalizeWorkspaceId(record.cwd);
+    const placement = await buildProjectPlacementForCwd({
+      cwd: normalizedCwd,
+      paseoHome: options.paseoHome,
+    });
+    const workspaceId = deriveWorkspaceId(normalizedCwd, placement.checkout);
+    const existing = recordsByWorkspaceId.get(workspaceId) ?? { placement, records: [] };
+    existing.records.push(record);
     recordsByWorkspaceId.set(workspaceId, existing);
   }
 
   const projectRanges = new Map<string, { createdAt: string | null; updatedAt: string | null }>();
 
-  for (const [workspaceId, workspaceRecords] of recordsByWorkspaceId.entries()) {
-    const placement = await buildProjectPlacementForCwd({
-      cwd: workspaceId,
-      paseoHome: options.paseoHome,
-    });
-
+  for (const [workspaceId, entry] of recordsByWorkspaceId.entries()) {
+    const { placement, records: workspaceRecords } = entry;
     let workspaceCreatedAt: string | null = null;
     let workspaceUpdatedAt: string | null = null;
     for (const record of workspaceRecords) {
