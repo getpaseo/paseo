@@ -7,7 +7,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import dotenv from "dotenv";
-import { isCommandAvailable } from "../agent/provider-launch-config.js";
+import { isCommandAvailable } from "../../utils/executable.js";
 
 // Load .env.test eagerly so isProviderAvailable() has credentials at collection time.
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");

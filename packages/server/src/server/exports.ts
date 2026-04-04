@@ -31,11 +31,9 @@ export {
 
 // Provider binary resolution
 export {
-  findExecutable,
   applyProviderEnv,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
 } from "./agent/provider-launch-config.js";
+export { findExecutable, quoteWindowsArgument, quoteWindowsCommand } from "../utils/executable.js";
 
 // Provider manifest (source of truth for provider definitions)
 export {

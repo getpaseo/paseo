@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import pino from "pino";
 
 import type { AgentStreamEvent, AgentSession } from "../agent-sdk-types.js";
-import { isCommandAvailable } from "../provider-launch-config.js";
+import { isCommandAvailable } from "../../../utils/executable.js";
 import { ClaudeAgentClient } from "./claude-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 

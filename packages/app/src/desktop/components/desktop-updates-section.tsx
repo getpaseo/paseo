@@ -10,7 +10,6 @@ import {
   Play,
   Pause,
   RotateCw,
-  Terminal,
   Copy,
   FileText,
   Smartphone,
@@ -24,7 +23,6 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import { isVersionMismatch } from "@/desktop/updates/desktop-updates";
 import {
   getCliDaemonStatus,
-  getCliSymlinkInstructions,
   getDesktopDaemonLogs,
   getDesktopDaemonPairing,
   getDesktopDaemonStatus,
@@ -32,7 +30,6 @@ import {
   shouldUseDesktopDaemon,
   startDesktopDaemon,
   stopDesktopDaemon,
-  type CliSymlinkInstructions,
   type DesktopDaemonLogs,
   type DesktopDaemonStatus,
   type DesktopPairingOffer,
@@ -52,17 +49,12 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
   const [statusError, setStatusError] = useState<string | null>(null);
   const [isRestartingDaemon, setIsRestartingDaemon] = useState(false);
   const [isUpdatingDaemonManagement, setIsUpdatingDaemonManagement] = useState(false);
-  const [isLoadingCliSymlinkInstructions, setIsLoadingCliSymlinkInstructions] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [cliStatusMessage, setCliStatusMessage] = useState<string | null>(null);
   const [daemonLogs, setDaemonLogs] = useState<DesktopDaemonLogs | null>(null);
   const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
   const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
-  const [isCliSymlinkModalOpen, setIsCliSymlinkModalOpen] = useState(false);
   const [isLoadingPairing, setIsLoadingPairing] = useState(false);
   const [pairingOffer, setPairingOffer] = useState<DesktopPairingOffer | null>(null);
-  const [cliSymlinkInstructions, setCliSymlinkInstructions] =
-    useState<CliSymlinkInstructions | null>(null);
   const [pairingStatusMessage, setPairingStatusMessage] = useState<string | null>(null);
   const [cliStatusOutput, setCliStatusOutput] = useState<string | null>(null);
   const [isCliStatusModalOpen, setIsCliStatusModalOpen] = useState(false);
@@ -223,40 +215,6 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
     updateSettings,
   ]);
 
-  const handleOpenCliSymlinkInstructions = useCallback(() => {
-    if (!showSection || isLoadingCliSymlinkInstructions) {
-      return;
-    }
-    setIsLoadingCliSymlinkInstructions(true);
-    setCliStatusMessage(null);
-    void getCliSymlinkInstructions()
-      .then((instructions) => {
-        setCliSymlinkInstructions(instructions);
-        setIsCliSymlinkModalOpen(true);
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setCliStatusMessage(`Unable to load CLI symlink instructions: ${message}`);
-      })
-      .finally(() => {
-        setIsLoadingCliSymlinkInstructions(false);
-      });
-  }, [isLoadingCliSymlinkInstructions, showSection]);
-
-  const handleCopyCliSymlinkCommands = useCallback(() => {
-    if (!cliSymlinkInstructions?.commands) {
-      return;
-    }
-    void Clipboard.setStringAsync(cliSymlinkInstructions.commands)
-      .then(() => {
-        Alert.alert("Copied", "CLI symlink commands copied.");
-      })
-      .catch((error) => {
-        console.error("[Settings] Failed to copy CLI symlink commands", error);
-        Alert.alert("Error", "Unable to copy CLI symlink commands.");
-      });
-  }, [cliSymlinkInstructions?.commands]);
-
   const handleCopyLogPath = useCallback(() => {
     const logPath = daemonLogs?.logPath;
     if (!logPath) {
@@ -353,14 +311,14 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
 
   return (
     <View style={settingsStyles.section}>
-      <View style={styles.sectionHeader}>
-        <Text style={settingsStyles.sectionTitle}>Built-in daemon</Text>
+      <View style={settingsStyles.sectionHeader}>
+        <Text style={settingsStyles.sectionHeaderTitle}>Built-in daemon</Text>
         <Button
           variant="ghost"
           size="sm"
           leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
-          textStyle={styles.sectionLinkText}
-          style={styles.sectionLink}
+          textStyle={settingsStyles.sectionHeaderLinkText}
+          style={settingsStyles.sectionHeaderLink}
           onPress={() => void openExternalUrl(ADVANCED_DAEMON_SETTINGS_URL)}
           accessibilityLabel="Open advanced daemon settings"
         >
@@ -368,10 +326,10 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
         </Button>
       </View>
       <View style={settingsStyles.card}>
-        <View style={styles.row}>
-          <View style={styles.rowContent}>
-            <Text style={styles.rowTitle}>Status</Text>
-            <Text style={styles.hintText}>Only the built-in desktop daemon is shown here.</Text>
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>Status</Text>
+            <Text style={settingsStyles.rowHint}>Only the built-in desktop daemon is shown here.</Text>
           </View>
           <View style={styles.statusValueGroup}>
             <Text style={styles.valueText}>{daemonStatusStateText}</Text>
@@ -380,10 +338,10 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
         </View>
         {showLifecycleControls ? (
           <>
-            <View style={[styles.row, styles.rowBorder]}>
-              <View style={styles.rowContent}>
-                <Text style={styles.rowTitle}>Daemon management</Text>
-                <Text style={styles.hintText}>
+            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>Daemon management</Text>
+                <Text style={settingsStyles.rowHint}>
                   {isDaemonManagementPaused
                     ? "Paused. The built-in daemon stays stopped until you start it again."
                     : "Enabled. Paseo can manage the built-in daemon from the desktop app."}
@@ -411,10 +369,10 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
                     : "Pause"}
               </Button>
             </View>
-            <View style={[styles.row, styles.rowBorder]}>
-              <View style={styles.rowContent}>
-                <Text style={styles.rowTitle}>{daemonActionLabel}</Text>
-                <Text style={styles.hintText}>{daemonActionMessage}</Text>
+            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>{daemonActionLabel}</Text>
+                <Text style={settingsStyles.rowHint}>{daemonActionMessage}</Text>
                 {statusMessage ? <Text style={styles.statusText}>{statusMessage}</Text> : null}
               </View>
               <Button
@@ -433,26 +391,10 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
             </View>
           </>
         ) : null}
-        <View style={[styles.row, styles.rowBorder]}>
-          <View style={styles.rowContent}>
-            <Text style={styles.rowTitle}>Command line (CLI)</Text>
-            <Text style={styles.hintText}>Shows the command to add `paseo` to your terminal.</Text>
-            {cliStatusMessage ? <Text style={styles.statusText}>{cliStatusMessage}</Text> : null}
-          </View>
-          <Button
-            variant="outline"
-            size="sm"
-            leftIcon={<Terminal size={theme.iconSize.sm} color={theme.colors.foreground} />}
-            onPress={handleOpenCliSymlinkInstructions}
-            disabled={isLoadingCliSymlinkInstructions}
-          >
-            {isLoadingCliSymlinkInstructions ? "Loading..." : "Show instructions"}
-          </Button>
-        </View>
-        <View style={[styles.row, styles.rowBorder]}>
-          <View style={styles.rowContent}>
-            <Text style={styles.rowTitle}>Log file</Text>
-            <Text style={styles.hintText}>{daemonLogs?.logPath ?? "Log path unavailable."}</Text>
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>Log file</Text>
+            <Text style={settingsStyles.rowHint}>{daemonLogs?.logPath ?? "Log path unavailable."}</Text>
           </View>
           <View style={styles.actionGroup}>
             {daemonLogs?.logPath ? (
@@ -476,10 +418,10 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
             </Button>
           </View>
         </View>
-        <View style={[styles.row, styles.rowBorder]}>
-          <View style={styles.rowContent}>
-            <Text style={styles.rowTitle}>Pair device</Text>
-            <Text style={styles.hintText}>Connect your phone to this computer.</Text>
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>Pair device</Text>
+            <Text style={settingsStyles.rowHint}>Connect your phone to this computer.</Text>
           </View>
           <Button
             variant="outline"
@@ -490,10 +432,10 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
             Pair device
           </Button>
         </View>
-        <View style={[styles.row, styles.rowBorder]}>
-          <View style={styles.rowContent}>
-            <Text style={styles.rowTitle}>Full status</Text>
-            <Text style={styles.hintText}>
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>Full status</Text>
+            <Text style={settingsStyles.rowHint}>
               Runs `paseo daemon status` and shows the output.
             </Text>
           </View>
@@ -519,33 +461,6 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
       ) : null}
 
       <AdaptiveModalSheet
-        visible={isCliSymlinkModalOpen}
-        onClose={() => setIsCliSymlinkModalOpen(false)}
-        title="Add paseo to your shell"
-        testID="managed-daemon-cli-symlink-dialog"
-      >
-        <View style={styles.modalBody}>
-          <Text style={styles.hintText}>
-            Paseo does not add the command for you. Run the command below in your terminal.
-          </Text>
-          {cliSymlinkInstructions?.detail ? (
-            <Text style={styles.hintText}>{cliSymlinkInstructions.detail}</Text>
-          ) : null}
-          <Text style={styles.codeBlock} selectable>
-            {cliSymlinkInstructions?.commands ?? ""}
-          </Text>
-          <View style={styles.modalActions}>
-            <Button variant="outline" size="sm" onPress={() => setIsCliSymlinkModalOpen(false)}>
-              Close
-            </Button>
-            <Button size="sm" onPress={handleCopyCliSymlinkCommands}>
-              Copy commands
-            </Button>
-          </View>
-        </View>
-      </AdaptiveModalSheet>
-
-      <AdaptiveModalSheet
         visible={isPairingModalOpen}
         onClose={() => setIsPairingModalOpen(false)}
         title="Pair device"
@@ -567,7 +482,7 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
         snapPoints={["70%", "92%"]}
       >
         <View style={styles.modalBody}>
-          <Text style={styles.hintText}>{daemonLogs?.logPath ?? "Log path unavailable."}</Text>
+          <Text style={settingsStyles.rowHint}>{daemonLogs?.logPath ?? "Log path unavailable."}</Text>
           <Text style={styles.logOutput} selectable>
             {daemonLogs?.contents.length ? daemonLogs.contents : "(log file is empty)"}
           </Text>
@@ -652,7 +567,7 @@ function PairingOfferDialogContent(input: {
     return (
       <View style={styles.pairingState}>
         <ActivityIndicator size="small" />
-        <Text style={styles.hintText}>Loading pairing offer…</Text>
+        <Text style={settingsStyles.rowHint}>Loading pairing offer…</Text>
       </View>
     );
   }
@@ -660,7 +575,7 @@ function PairingOfferDialogContent(input: {
   if (statusMessage) {
     return (
       <View style={styles.modalBody}>
-        <Text style={styles.hintText}>{statusMessage}</Text>
+        <Text style={settingsStyles.rowHint}>{statusMessage}</Text>
       </View>
     );
   }
@@ -668,21 +583,21 @@ function PairingOfferDialogContent(input: {
   if (!pairingOffer?.url) {
     return (
       <View style={styles.modalBody}>
-        <Text style={styles.hintText}>Pairing offer unavailable.</Text>
+        <Text style={settingsStyles.rowHint}>Pairing offer unavailable.</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.modalBody}>
-      <Text style={styles.hintText}>
+      <Text style={settingsStyles.rowHint}>
         Scan this QR code in Paseo, or copy the pairing link below.
       </Text>
       <View style={styles.qrCard}>
         {qrDataUrl ? (
           <Image source={{ uri: qrDataUrl }} style={styles.qrImage} resizeMode="contain" />
         ) : qrError ? (
-          <Text style={styles.hintText}>QR unavailable: {qrError}</Text>
+          <Text style={settingsStyles.rowHint}>QR unavailable: {qrError}</Text>
         ) : (
           <ActivityIndicator size="small" />
         )}
@@ -703,37 +618,6 @@ function PairingOfferDialogContent(input: {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  sectionHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing[3],
-    marginLeft: theme.spacing[1],
-  },
-  sectionLink: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: theme.spacing[1],
-  },
-  sectionLinkText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: theme.spacing[4],
-    paddingHorizontal: theme.spacing[4],
-  },
-  rowBorder: {
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  rowContent: {
-    flex: 1,
-    marginRight: theme.spacing[3],
-  },
   actionGroup: {
     flexDirection: "row",
     gap: theme.spacing[2],
@@ -744,10 +628,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "flex-end",
     gap: 2,
   },
-  rowTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
   valueText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
@@ -756,11 +636,6 @@ const styles = StyleSheet.create((theme) => ({
   valueSubtext: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-  },
-  hintText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    marginTop: 2,
   },
   statusText: {
     color: theme.colors.foregroundMuted,

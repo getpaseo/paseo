@@ -192,8 +192,8 @@ export function KeyboardShortcutsSection() {
 
   return (
     <View style={settingsStyles.section}>
-      <View style={styles.sectionHeader}>
-        <Text style={settingsStyles.sectionTitle}>Shortcuts</Text>
+      <View style={settingsStyles.sectionHeader}>
+        <Text style={settingsStyles.sectionHeaderTitle}>Shortcuts</Text>
         {hasOverrides && (
           <Button variant="ghost" size="sm" onPress={() => void resetAll()}>
             Reset all
@@ -246,11 +246,6 @@ export function KeyboardShortcutsSection() {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
   subsectionTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,

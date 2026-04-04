@@ -34,12 +34,14 @@ import type {
 } from "../agent-sdk-types.js";
 import {
   applyProviderEnv,
-  findExecutable,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
+import {
+  findExecutable,
+  quoteWindowsArgument,
+  quoteWindowsCommand,
+} from "../../../utils/executable.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {

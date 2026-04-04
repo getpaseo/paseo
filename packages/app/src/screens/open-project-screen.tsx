@@ -8,7 +8,7 @@ import { MenuHeader } from "@/components/headers/menu-header";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
-import { isCompactFormFactor } from "@/constants/layout";
+import { isCompactFormFactor, HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE, HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
 export function OpenProjectScreen({ serverId }: { serverId: string }) {
@@ -59,11 +59,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     position: "relative",
-    flexGrow: 1,
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
     gap: 0,
     padding: theme.spacing[6],
+    paddingBottom: {
+      xs: HEADER_INNER_HEIGHT_MOBILE + HEADER_TOP_PADDING_MOBILE + theme.spacing[6],
+      md: HEADER_INNER_HEIGHT + theme.spacing[6],
+    },
   },
   logo: {
     marginBottom: theme.spacing[8],

@@ -20,6 +20,7 @@ import {
   Stethoscope,
   Info,
   Shield,
+  Puzzle,
 } from "lucide-react-native";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import type { HostProfile, HostConnection } from "@/types/host-connection";
@@ -50,6 +51,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
+import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
@@ -69,6 +71,7 @@ type SettingsSectionId =
   | "hosts"
   | "appearance"
   | "shortcuts"
+  | "integrations"
   | "diagnostics"
   | "about"
   | "permissions"
@@ -85,12 +88,13 @@ function getSettingsSections(context: { isDesktopApp: boolean }): SettingsSectio
     { id: "hosts", label: "Hosts", icon: Server },
     { id: "appearance", label: "Appearance", icon: Palette },
     { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
+    { id: "permissions", label: "Permissions", icon: Shield },
   ];
 
   if (context.isDesktopApp) {
     sections.push(
+      { id: "integrations", label: "Integrations", icon: Puzzle },
       { id: "daemon", label: "Daemon", icon: Settings },
-      { id: "permissions", label: "Permissions", icon: Shield },
     );
   }
 
@@ -523,6 +527,8 @@ function SettingsSectionContent({
       return <DiagnosticsSection {...diagnosticsProps} />;
     case "about":
       return <AboutSection {...aboutProps} />;
+    case "integrations":
+      return isDesktopApp ? <IntegrationsSection /> : null;
     case "permissions":
       return isDesktopApp ? <DesktopPermissionsSection /> : null;
     case "daemon":
@@ -573,31 +579,35 @@ function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayout
         {sections.map((section) => {
           const isSelected = section.id === selectedSectionId;
           const IconComponent = section.icon;
+          const showSeparator =
+            section.id === "integrations" || section.id === "diagnostics";
           return (
-            <Pressable
-              key={section.id}
-              style={[
-                desktopStyles.sidebarItem,
-                isSelected && { backgroundColor: theme.colors.surface2 },
-              ]}
-              onPress={() => setSelectedSectionId(section.id)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSelected }}
-            >
-              <IconComponent
-                size={theme.iconSize.md}
-                color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
-              />
-              <Text
+            <View key={section.id}>
+              {showSeparator ? <View style={desktopStyles.sidebarSeparator} /> : null}
+              <Pressable
                 style={[
-                  desktopStyles.sidebarLabel,
-                  isSelected && { color: theme.colors.foreground },
+                  desktopStyles.sidebarItem,
+                  isSelected && { backgroundColor: theme.colors.surface2 },
                 ]}
-                numberOfLines={1}
+                onPress={() => setSelectedSectionId(section.id)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isSelected }}
               >
-                {section.label}
-              </Text>
-            </Pressable>
+                <IconComponent
+                  size={theme.iconSize.md}
+                  color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
+                />
+                <Text
+                  style={[
+                    desktopStyles.sidebarLabel,
+                    isSelected && { color: theme.colors.foreground },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {section.label}
+                </Text>
+              </Pressable>
+            </View>
           );
         })}
       </View>
@@ -1895,6 +1905,12 @@ const desktopStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     fontWeight: theme.fontWeight.normal,
+  },
+  sidebarSeparator: {
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    marginVertical: theme.spacing[2],
+    marginHorizontal: theme.spacing[3],
   },
   contentPane: {
     flex: 1,

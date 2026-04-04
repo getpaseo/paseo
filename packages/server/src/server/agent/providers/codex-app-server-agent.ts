@@ -41,12 +41,14 @@ import {
 } from "./codex/tool-call-mapper.js";
 import {
   applyProviderEnv,
-  findExecutable,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
+import {
+  findExecutable,
+  quoteWindowsArgument,
+  quoteWindowsCommand,
+} from "../../../utils/executable.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;

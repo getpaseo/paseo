@@ -422,14 +422,28 @@ function MobileGestureWrapper({
   const mobileView = usePanelStore((state) => state.mobileView);
   const openAgentList = usePanelStore((state) => state.openAgentList);
   const horizontalScroll = useHorizontalScrollOptional();
-  const { translateX, backdropOpacity, windowWidth, animateToOpen, animateToClose, isGesturing } =
-    useSidebarAnimation();
+  const {
+    translateX,
+    backdropOpacity,
+    windowWidth,
+    animateToOpen,
+    animateToClose,
+    isGesturing,
+    gestureAnimatingRef,
+    openGestureRef,
+  } = useSidebarAnimation();
   const touchStartX = useSharedValue(0);
   const openGestureEnabled = chromeEnabled && mobileView === "agent";
+
+  const handleGestureOpen = useCallback(() => {
+    gestureAnimatingRef.current = true;
+    openAgentList();
+  }, [openAgentList, gestureAnimatingRef]);
 
   const openGesture = useMemo(
     () =>
       Gesture.Pan()
+        .withRef(openGestureRef)
         .enabled(openGestureEnabled)
         .manualActivation(true)
         .failOffsetY([-10, 10])
@@ -472,7 +486,7 @@ function MobileGestureWrapper({
           const shouldOpen = event.translationX > windowWidth / 3 || event.velocityX > 500;
           if (shouldOpen) {
             animateToOpen();
-            runOnJS(openAgentList)();
+            runOnJS(handleGestureOpen)();
           } else {
             animateToClose();
           }
@@ -487,8 +501,9 @@ function MobileGestureWrapper({
       backdropOpacity,
       animateToOpen,
       animateToClose,
-      openAgentList,
+      handleGestureOpen,
       isGesturing,
+      openGestureRef,
       horizontalScroll?.isAnyScrolledRight,
       touchStartX,
     ],

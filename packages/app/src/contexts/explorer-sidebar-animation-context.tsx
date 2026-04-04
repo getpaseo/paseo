@@ -18,6 +18,8 @@ interface ExplorerSidebarAnimationContextValue {
   animateToOpen: () => void;
   animateToClose: () => void;
   isGesturing: SharedValue<boolean>;
+  gestureAnimatingRef: React.MutableRefObject<boolean>;
+  openGestureRef: React.MutableRefObject<GestureType | undefined>;
   closeGestureRef: React.MutableRefObject<GestureType | undefined>;
 }
 
@@ -39,6 +41,8 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
   const translateX = useSharedValue(initialTargets.translateX);
   const backdropOpacity = useSharedValue(initialTargets.backdropOpacity);
   const isGesturing = useSharedValue(false);
+  const gestureAnimatingRef = useRef(false);
+  const openGestureRef = useRef<GestureType | undefined>(undefined);
   const closeGestureRef = useRef<GestureType | undefined>(undefined);
 
   // Track previous isOpen to detect changes
@@ -58,6 +62,11 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
     prevWindowWidth.current = windowWidth;
 
     if (!didStateChange) {
+      return;
+    }
+
+    if (gestureAnimatingRef.current) {
+      gestureAnimatingRef.current = false;
       return;
     }
 
@@ -123,6 +132,8 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
         animateToOpen,
         animateToClose,
         isGesturing,
+        gestureAnimatingRef,
+        openGestureRef,
         closeGestureRef,
       }}
     >

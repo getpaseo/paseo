@@ -1402,7 +1402,7 @@ export class DaemonClient {
     const status = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
+      timeout: 60000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "status") {

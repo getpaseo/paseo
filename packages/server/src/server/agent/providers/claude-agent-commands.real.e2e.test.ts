@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import pino from "pino";
 
-import { isCommandAvailable } from "../provider-launch-config.js";
 import type { AgentSlashCommand } from "../agent-sdk-types.js";
+import { isCommandAvailable } from "../../../utils/executable.js";
 import { ClaudeAgentClient } from "./claude-agent.js";
 
 // Real-Claude contract coverage: validates slash command shape from a live Claude CLI session.

@@ -69,11 +69,13 @@ import type {
 } from "../agent-sdk-types.js";
 import {
   applyProviderEnv,
+  type ProviderRuntimeSettings,
+} from "../provider-launch-config.js";
+import {
   findExecutable,
   quoteWindowsArgument,
   quoteWindowsCommand,
-  type ProviderRuntimeSettings,
-} from "../provider-launch-config.js";
+} from "../../../utils/executable.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;

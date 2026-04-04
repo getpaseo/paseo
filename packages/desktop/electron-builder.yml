@@ -10,6 +10,8 @@ files:
 extraResources:
   - from: ../app/dist
     to: app-dist
+  - from: ../../skills
+    to: skills
 publish:
   provider: github
   owner: getpaseo

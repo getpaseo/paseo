@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { Gesture } from "react-native-gesture-handler";
 import { Extrapolation, interpolate, runOnJS, useSharedValue } from "react-native-reanimated";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
@@ -9,14 +9,28 @@ interface UseExplorerOpenGestureParams {
 }
 
 export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestureParams) {
-  const { translateX, backdropOpacity, windowWidth, animateToOpen, animateToClose, isGesturing } =
-    useExplorerSidebarAnimation();
+  const {
+    translateX,
+    backdropOpacity,
+    windowWidth,
+    animateToOpen,
+    animateToClose,
+    isGesturing,
+    gestureAnimatingRef,
+    openGestureRef,
+  } = useExplorerSidebarAnimation();
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
+
+  const handleGestureOpen = useCallback(() => {
+    gestureAnimatingRef.current = true;
+    onOpen();
+  }, [onOpen, gestureAnimatingRef]);
 
   return useMemo(
     () =>
       Gesture.Pan()
+        .withRef(openGestureRef)
         .enabled(enabled)
         .manualActivation(true)
         .onTouchesDown((event) => {
@@ -78,7 +92,7 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
           const shouldOpen = shouldOpenByPosition || shouldOpenByVelocity;
           if (shouldOpen) {
             animateToOpen();
-            runOnJS(onOpen)();
+            runOnJS(handleGestureOpen)();
           } else {
             animateToClose();
           }
@@ -94,7 +108,8 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
       animateToOpen,
       animateToClose,
       isGesturing,
-      onOpen,
+      openGestureRef,
+      handleGestureOpen,
       touchStartX,
       touchStartY,
     ],

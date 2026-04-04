@@ -13,6 +13,12 @@ import {
 } from "../features/attachments.js";
 import { checkForAppUpdate, downloadAndInstallUpdate } from "../features/auto-updater.js";
 import {
+  installCli,
+  getCliInstallStatus,
+  installSkills,
+  getSkillsInstallStatus,
+} from "../integrations/integrations-manager.js";
+import {
   openLocalTransportSession,
   sendLocalTransportMessage,
   closeLocalTransportSession,
@@ -55,12 +61,6 @@ type DesktopPairingOffer = {
   relayEnabled: boolean;
   url: string | null;
   qr: string | null;
-};
-
-type CliSymlinkInstructions = {
-  title: string;
-  detail: string;
-  commands: string;
 };
 
 type DesktopCommandHandler = (args?: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -422,38 +422,6 @@ function resolveCurrentUpdateVersion(): string {
   return resolveDesktopAppVersion();
 }
 
-function getCliSymlinkInstructions(): CliSymlinkInstructions {
-  const electronExePath = app.getPath("exe");
-  const cliShimFilename = process.platform === "win32" ? "paseo.cmd" : "paseo";
-
-  if (process.platform === "darwin") {
-    const appBundle = electronExePath.replace(/\/Contents\/MacOS\/.+$/, "");
-    const cliPath = path.join(appBundle, "Contents", "Resources", "bin", cliShimFilename);
-    return {
-      title: "Add paseo to your shell",
-      detail: "Create a symlink to the bundled Paseo CLI shim.",
-      commands: `sudo ln -sf "${cliPath}" /usr/local/bin/paseo`,
-    };
-  }
-
-  if (process.platform === "win32") {
-    const cliPath = path.join(path.dirname(electronExePath), "resources", "bin", cliShimFilename);
-    return {
-      title: "Add paseo to your PATH",
-      detail: "Add the Paseo installation directory to your system PATH so paseo.cmd is available.",
-      commands: `setx PATH "%PATH%;${path.dirname(cliPath)}"`,
-    };
-  }
-
-  // Linux
-  const cliPath = path.join(path.dirname(electronExePath), "resources", "bin", cliShimFilename);
-  return {
-    title: "Add paseo to your shell",
-    detail: "Create a symlink to the bundled Paseo CLI shim.",
-    commands: `sudo ln -sf "${cliPath}" /usr/local/bin/paseo`,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // IPC registration
 // ---------------------------------------------------------------------------
@@ -466,7 +434,6 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     restart_desktop_daemon: () => restartDaemon(),
     desktop_daemon_logs: () => getDaemonLogs(),
     desktop_daemon_pairing: () => getDaemonPairing(),
-    cli_symlink_instructions: () => getCliSymlinkInstructions(),
     cli_daemon_status: () => getCliDaemonStatus(),
     write_attachment_base64: (args) => writeAttachmentBase64(args ?? {}),
     copy_attachment_file: (args) => copyAttachmentFileToManagedStorage(args ?? {}),
@@ -500,6 +467,10 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       });
     },
     get_local_daemon_version: () => getLocalDaemonVersion(),
+    install_cli: () => installCli(),
+    get_cli_install_status: () => getCliInstallStatus(),
+    install_skills: () => installSkills(),
+    get_skills_install_status: () => getSkillsInstallStatus(),
   };
 }
 

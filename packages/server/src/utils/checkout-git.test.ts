@@ -12,7 +12,9 @@ import {
 import { join } from "path";
 import { tmpdir } from "os";
 import {
+  __resetGhPathCacheForTests,
   __resetPullRequestStatusCacheForTests,
+  __setGhPathForTests,
   __setPullRequestStatusCacheTtlForTests,
   commitAll,
   getCheckoutDiff,
@@ -62,10 +64,12 @@ describe("checkout git utilities", () => {
     tempDir = setup.tempDir;
     repoDir = setup.repoDir;
     paseoHome = join(tempDir, "paseo-home");
+    __resetGhPathCacheForTests();
     __resetPullRequestStatusCacheForTests();
   });
 
   afterEach(() => {
+    __resetGhPathCacheForTests();
     __resetPullRequestStatusCacheForTests();
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -582,18 +586,14 @@ const x = 1;
     const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
     symlinkSync(gitPath, join(fakeBinDir, "git"));
 
-    const originalPath = process.env.PATH;
-    process.env.PATH = fakeBinDir;
     try {
+      __setGhPathForTests(null);
       const status = await getPullRequestStatus(repoDir);
       expect(status.githubFeaturesEnabled).toBe(false);
       expect(status.status).toBeNull();
     } finally {
-      if (originalPath === undefined) {
-        delete process.env.PATH;
-      } else {
-        process.env.PATH = originalPath;
-      }
+      __resetGhPathCacheForTests();
+      __resetPullRequestStatusCacheForTests();
     }
   });
 
@@ -627,9 +627,8 @@ const x = 1;
     );
     execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
 
-    const originalPath = process.env.PATH;
-    process.env.PATH = `${fakeBinDir}:${originalPath ?? ""}`;
     try {
+      __setGhPathForTests(join(fakeBinDir, "gh"));
       const status = await getPullRequestStatus(repoDir);
       expect(status.githubFeaturesEnabled).toBe(true);
       expect(status.status).not.toBeNull();
@@ -639,11 +638,8 @@ const x = 1;
       expect(status.status?.isMerged).toBe(true);
       expect(status.status?.state).toBe("merged");
     } finally {
-      if (originalPath === undefined) {
-        delete process.env.PATH;
-      } else {
-        process.env.PATH = originalPath;
-      }
+      __resetGhPathCacheForTests();
+      __resetPullRequestStatusCacheForTests();
     }
   });
 
@@ -677,9 +673,8 @@ const x = 1;
     );
     execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
 
-    const originalPath = process.env.PATH;
-    process.env.PATH = `${fakeBinDir}:${originalPath ?? ""}`;
     try {
+      __setGhPathForTests(join(fakeBinDir, "gh"));
       const status = await getPullRequestStatus(repoDir);
       expect(status.githubFeaturesEnabled).toBe(true);
       expect(status.status).not.toBeNull();
@@ -689,11 +684,8 @@ const x = 1;
       expect(status.status?.isMerged).toBe(false);
       expect(status.status?.state).toBe("closed");
     } finally {
-      if (originalPath === undefined) {
-        delete process.env.PATH;
-      } else {
-        process.env.PATH = originalPath;
-      }
+      __resetGhPathCacheForTests();
+      __resetPullRequestStatusCacheForTests();
     }
   });
 
@@ -732,20 +724,16 @@ const x = 1;
     );
     execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
 
-    const originalPath = process.env.PATH;
-    process.env.PATH = `${fakeBinDir}:${originalPath ?? ""}`;
     try {
+      __setGhPathForTests(join(fakeBinDir, "gh"));
       const first = await getPullRequestStatus(repoDir);
       const second = await getPullRequestStatus(repoDir);
       expect(first).toEqual(second);
       expect(first.status?.url).toContain("/pull/123");
       expect(readFileSync(callCountPath, "utf8").trim()).toBe("1");
     } finally {
-      if (originalPath === undefined) {
-        delete process.env.PATH;
-      } else {
-        process.env.PATH = originalPath;
-      }
+      __resetGhPathCacheForTests();
+      __resetPullRequestStatusCacheForTests();
     }
   });
 
@@ -785,10 +773,9 @@ const x = 1;
     );
     execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
 
-    const originalPath = process.env.PATH;
-    process.env.PATH = `${fakeBinDir}:${originalPath ?? ""}`;
     __setPullRequestStatusCacheTtlForTests(50);
     try {
+      __setGhPathForTests(join(fakeBinDir, "gh"));
       const first = await getPullRequestStatus(repoDir);
       await sleep(80);
       const second = await getPullRequestStatus(repoDir);
@@ -796,11 +783,8 @@ const x = 1;
       expect(second.status?.url).toContain("/pull/2");
       expect(readFileSync(callCountPath, "utf8").trim()).toBe("2");
     } finally {
-      if (originalPath === undefined) {
-        delete process.env.PATH;
-      } else {
-        process.env.PATH = originalPath;
-      }
+      __resetGhPathCacheForTests();
+      __resetPullRequestStatusCacheForTests();
     }
   });
 
@@ -840,9 +824,8 @@ const x = 1;
     );
     execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
 
-    const originalPath = process.env.PATH;
-    process.env.PATH = `${fakeBinDir}:${originalPath ?? ""}`;
     try {
+      __setGhPathForTests(join(fakeBinDir, "gh"));
       const [first, second] = await Promise.all([
         getPullRequestStatus(repoDir),
         getPullRequestStatus(repoDir),
@@ -850,11 +833,8 @@ const x = 1;
       expect(first).toEqual(second);
       expect(readFileSync(callCountPath, "utf8").trim()).toBe("1");
     } finally {
-      if (originalPath === undefined) {
-        delete process.env.PATH;
-      } else {
-        process.env.PATH = originalPath;
-      }
+      __resetGhPathCacheForTests();
+      __resetPullRequestStatusCacheForTests();
     }
   });
 

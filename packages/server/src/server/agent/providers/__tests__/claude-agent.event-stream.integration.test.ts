@@ -17,7 +17,7 @@ import path from "node:path";
 import pino from "pino";
 
 import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
-import { isCommandAvailable } from "../../provider-launch-config.js";
+import { isCommandAvailable } from "../../../../utils/executable.js";
 import { ClaudeAgentClient } from "../claude-agent.js";
 
 // ---------------------------------------------------------------------------
