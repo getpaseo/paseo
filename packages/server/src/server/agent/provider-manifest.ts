@@ -83,6 +83,30 @@ const CODEX_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const COPILOT_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    label: "Agent",
+    description: "Default agent mode for conversational interactions",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
+    id: "https://agentclientprotocol.com/protocol/session-modes#plan",
+    label: "Plan",
+    description: "Plan mode for creating and executing multi-step plans",
+    icon: "ShieldCheck",
+    colorTier: "planning",
+  },
+  {
+    id: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
+    label: "Autopilot",
+    description: "Autonomous mode that runs until task completion without user interaction",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+  },
+];
+
 const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   {
     id: "build",
@@ -126,6 +150,13 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     },
   },
   {
+    id: "copilot",
+    label: "Copilot",
+    description: "GitHub Copilot via Agent Client Protocol with dynamic modes and session support",
+    defaultModeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    modes: COPILOT_MODES,
+  },
+  {
     id: "opencode",
     label: "OpenCode",
     description: "Open-source coding assistant with multi-provider model support",
@@ -135,6 +166,13 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
       enabled: true,
       defaultModeId: "build",
     },
+  },
+  {
+    id: "pi",
+    label: "Pi",
+    description: "Minimal terminal-based coding agent with multi-provider LLM support",
+    defaultModeId: null,
+    modes: [],
   },
 ];
 

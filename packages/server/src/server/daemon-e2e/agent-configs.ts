@@ -15,9 +15,9 @@ dotenv.config({ path: resolve(serverRoot, ".env.test"), override: true });
 
 export interface AgentTestConfig {
   provider: string;
-  model: string;
+  model?: string;
   thinkingOptionId?: string;
-  modes: {
+  modes?: {
     full: string; // No permissions required
     ask: string; // Requires permission approval
   };
@@ -26,14 +26,6 @@ export interface AgentTestConfig {
 export const agentConfigs = {
   claude: {
     provider: "claude",
-    model: "haiku",
-    modes: {
-      full: "bypassPermissions",
-      ask: "default",
-    },
-  },
-  "claude-acp": {
-    provider: "claude-acp",
     model: "haiku",
     modes: {
       full: "bypassPermissions",
@@ -65,6 +57,10 @@ export const agentConfigs = {
       ask: "default",
     },
   },
+  pi: {
+    provider: "pi",
+    thinkingOptionId: "medium",
+  },
 } as const satisfies Record<string, AgentTestConfig>;
 
 export type AgentProvider = keyof typeof agentConfigs;
@@ -77,9 +73,9 @@ export function getFullAccessConfig(provider: AgentProvider) {
   const thinkingOptionId = "thinkingOptionId" in config ? config.thinkingOptionId : undefined;
   return {
     provider: config.provider,
-    model: config.model,
+    ...(config.model ? { model: config.model } : {}),
     ...(thinkingOptionId ? { thinkingOptionId } : {}),
-    modeId: config.modes.full,
+    ...(config.modes?.full ? { modeId: config.modes.full } : {}),
   };
 }
 
@@ -91,9 +87,9 @@ export function getAskModeConfig(provider: AgentProvider) {
   const thinkingOptionId = "thinkingOptionId" in config ? config.thinkingOptionId : undefined;
   return {
     provider: config.provider,
-    model: config.model,
+    ...(config.model ? { model: config.model } : {}),
     ...(thinkingOptionId ? { thinkingOptionId } : {}),
-    modeId: config.modes.ask,
+    ...(config.modes?.ask ? { modeId: config.modes.ask } : {}),
   };
 }
 
@@ -112,8 +108,6 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
         isCommandAvailable("claude") &&
         (Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY))
       );
-    case "claude-acp":
-      return Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY);
     case "codex":
       return (
         isCommandAvailable("codex") &&
@@ -123,6 +117,14 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
       return isCommandAvailable("copilot");
     case "opencode":
       return isCommandAvailable("opencode");
+    case "pi":
+      return (
+        isCommandAvailable(process.env.PI_ACP_PI_COMMAND ?? "pi") &&
+        (Boolean(process.env.OPENAI_API_KEY) ||
+          Boolean(process.env.ANTHROPIC_API_KEY) ||
+          Boolean(process.env.OPENROUTER_API_KEY) ||
+          existsSync(join(homedir(), ".pi", "agent", "auth.json")))
+      );
   }
 }
 
@@ -131,8 +133,8 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
  */
 export const allProviders: AgentProvider[] = [
   "claude",
-  "claude-acp",
   "codex",
   "copilot",
   "opencode",
+  "pi",
 ];

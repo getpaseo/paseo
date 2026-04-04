@@ -71,9 +71,11 @@ import type {
   AgentRuntimeInfo,
   AgentSession,
   AgentSessionConfig,
+  AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
+  ListModesOptions,
   ListModelsOptions,
   ListPersistedAgentsOptions,
   McpServerConfig,
@@ -111,6 +113,14 @@ type ACPAgentClientOptions = {
   runtimeSettings?: ProviderRuntimeSettings;
   defaultCommand: [string, ...string[]];
   defaultModes?: AgentMode[];
+  modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
+  sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
+  toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  thinkingOptionWriter?: (
+    connection: ClientSideConnection,
+    sessionId: string,
+    thinkingOptionId: string,
+  ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
 };
 
@@ -120,6 +130,14 @@ type ACPAgentSessionOptions = {
   runtimeSettings?: ProviderRuntimeSettings;
   defaultCommand: [string, ...string[]];
   defaultModes: AgentMode[];
+  modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
+  sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
+  toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  thinkingOptionWriter?: (
+    connection: ClientSideConnection,
+    sessionId: string,
+    thinkingOptionId: string,
+  ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   handle?: AgentPersistenceHandle;
   launchEnv?: Record<string, string>;
@@ -131,7 +149,7 @@ type SpawnedACPProcess = {
   initialize: InitializeResponse;
 };
 
-type ACPToolSnapshot = {
+export type ACPToolSnapshot = {
   toolCallId: string;
   title: string;
   kind?: ToolKind | null;
@@ -154,7 +172,7 @@ type MessageAssemblyState = {
   text: string;
 };
 
-type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
+export type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
 
 type TerminalExit = {
   exitCode?: number | null;
@@ -271,6 +289,16 @@ export class ACPAgentClient implements AgentClient {
   protected readonly runtimeSettings?: ProviderRuntimeSettings;
   protected readonly defaultCommand: [string, ...string[]];
   protected readonly defaultModes: AgentMode[];
+  private readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
+  private readonly sessionResponseTransformer?: (
+    response: SessionStateResponse,
+  ) => SessionStateResponse;
+  private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  private readonly thinkingOptionWriter?: (
+    connection: ClientSideConnection,
+    sessionId: string,
+    thinkingOptionId: string,
+  ) => Promise<void>;
 
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
@@ -279,6 +307,10 @@ export class ACPAgentClient implements AgentClient {
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes ?? [];
+    this.modelTransformer = options.modelTransformer;
+    this.sessionResponseTransformer = options.sessionResponseTransformer;
+    this.toolSnapshotTransformer = options.toolSnapshotTransformer;
+    this.thinkingOptionWriter = options.thinkingOptionWriter;
   }
 
   async createSession(
@@ -294,6 +326,10 @@ export class ACPAgentClient implements AgentClient {
         runtimeSettings: this.runtimeSettings,
         defaultCommand: this.defaultCommand,
         defaultModes: this.defaultModes,
+        modelTransformer: this.modelTransformer,
+        sessionResponseTransformer: this.sessionResponseTransformer,
+        toolSnapshotTransformer: this.toolSnapshotTransformer,
+        thinkingOptionWriter: this.thinkingOptionWriter,
         capabilities: this.capabilities,
         launchEnv: launchContext?.env,
       },
@@ -329,6 +365,10 @@ export class ACPAgentClient implements AgentClient {
       runtimeSettings: this.runtimeSettings,
       defaultCommand: this.defaultCommand,
       defaultModes: this.defaultModes,
+      modelTransformer: this.modelTransformer,
+      sessionResponseTransformer: this.sessionResponseTransformer,
+      toolSnapshotTransformer: this.toolSnapshotTransformer,
+      thinkingOptionWriter: this.thinkingOptionWriter,
       capabilities: this.capabilities,
       handle,
       launchEnv: launchContext?.env,
@@ -345,7 +385,33 @@ export class ACPAgentClient implements AgentClient {
         cwd,
         mcpServers: [],
       });
-      return deriveModelDefinitionsFromACP(this.provider, response.models, response.configOptions);
+      const transformed = this.transformSessionResponse(response);
+      const models = deriveModelDefinitionsFromACP(
+        this.provider,
+        transformed.models,
+        transformed.configOptions,
+      );
+      return this.modelTransformer ? this.modelTransformer(models) : models;
+    } finally {
+      await this.closeProbe(probe);
+    }
+  }
+
+  async listModes(options?: ListModesOptions): Promise<AgentMode[]> {
+    const cwd = options?.cwd ?? process.cwd();
+    const probe = await this.spawnProcess(undefined);
+    try {
+      const response = await probe.connection.newSession({
+        cwd,
+        mcpServers: [],
+      });
+      const transformed = this.transformSessionResponse(response);
+      const modeInfo = deriveModesFromACP(
+        this.defaultModes,
+        transformed.modes,
+        transformed.configOptions,
+      );
+      return modeInfo.modes;
     } finally {
       await this.closeProbe(probe);
     }
@@ -502,6 +568,10 @@ export class ACPAgentClient implements AgentClient {
       throw new Error(`Expected ${this.provider} config, received ${config.provider}`);
     }
   }
+
+  protected transformSessionResponse(response: SessionStateResponse): SessionStateResponse {
+    return this.sessionResponseTransformer ? this.sessionResponseTransformer(response) : response;
+  }
 }
 
 export class ACPAgentSession implements AgentSession, ACPClient {
@@ -512,6 +582,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly defaultCommand: [string, ...string[]];
   private readonly defaultModes: AgentMode[];
+  protected readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
+  private readonly sessionResponseTransformer?: (
+    response: SessionStateResponse,
+  ) => SessionStateResponse;
+  private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
+  private readonly thinkingOptionWriter?: (
+    connection: ClientSideConnection,
+    sessionId: string,
+    thinkingOptionId: string,
+  ) => Promise<void>;
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
@@ -528,11 +608,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private sessionId: string | null = null;
   private currentMode: string | null = null;
   private availableModes: AgentMode[];
+  private availableModels: AgentModelDefinition[] = [];
   private currentModel: string | null = null;
   private thinkingOptionId: string | null = null;
   private currentTitle: string | null = null;
   private lastActivityAt: string | null = null;
   private configOptions: SessionConfigOption[] = [];
+  private cachedCommands: AgentSlashCommand[] = [];
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private closed = false;
@@ -549,6 +631,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes;
+    this.modelTransformer = options.modelTransformer;
+    this.sessionResponseTransformer = options.sessionResponseTransformer;
+    this.toolSnapshotTransformer = options.toolSnapshotTransformer;
+    this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.availableModes = options.defaultModes;
     this.launchEnv = options.launchEnv;
     this.initialHandle = options.handle;
@@ -788,6 +874,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return this.currentMode;
   }
 
+  async listCommands(): Promise<AgentSlashCommand[]> {
+    return this.cachedCommands;
+  }
+
   async setMode(modeId: string): Promise<void> {
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
@@ -825,7 +915,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    if (this.agentCapabilities?.sessionCapabilities && "unstable_setSessionModel" in this.connection) {
+    const modelExists = this.availableModels.some((model) => model.id === modelId);
+    if (!modelExists && this.availableModels.length > 0) {
+      throw new Error(`Unknown ${this.provider} model '${modelId}'`);
+    }
+
+    if ("unstable_setSessionModel" in this.connection) {
       try {
         await this.connection.unstable_setSessionModel({
           sessionId: this.sessionId,
@@ -856,6 +951,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     if (!thinkingOptionId) {
       this.thinkingOptionId = null;
+      return;
+    }
+
+    if (this.thinkingOptionWriter) {
+      await this.thinkingOptionWriter(this.connection, this.sessionId, thinkingOptionId);
+      this.thinkingOptionId = thinkingOptionId;
       return;
     }
 
@@ -984,11 +1085,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     params: RequestPermissionRequest,
   ): Promise<RequestPermissionResponse> {
     const requestId = randomUUID();
+    let toolSnapshot =
+      this.toolCalls.get(params.toolCall.toolCallId) ??
+      mergeToolSnapshot(params.toolCall.toolCallId, params.toolCall);
+    if (this.toolSnapshotTransformer) {
+      toolSnapshot = this.toolSnapshotTransformer(toolSnapshot);
+    }
     const request = mapPermissionRequest(
       this.provider,
       requestId,
       params,
-      this.toolCalls.get(params.toolCall.toolCallId) ?? mergeToolSnapshot(params.toolCall.toolCallId, params.toolCall),
+      toolSnapshot,
     );
 
     const promise = new Promise<RequestPermissionResponse>((resolve, reject) => {
@@ -1182,13 +1289,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private applySessionState(response: SessionStateResponse): void {
-    this.configOptions = response.configOptions ?? [];
+    const transformed = this.sessionResponseTransformer
+      ? this.sessionResponseTransformer(response)
+      : response;
 
-    const modeInfo = deriveModesFromACP(this.defaultModes, response.modes, this.configOptions);
-    this.availableModes = modeInfo.modes.length > 0 ? modeInfo.modes : this.defaultModes;
+    this.configOptions = transformed.configOptions ?? [];
+
+    const modeInfo = deriveModesFromACP(this.defaultModes, transformed.modes, this.configOptions);
+    this.availableModes = modeInfo.modes;
+    this.availableModels = this.deriveAvailableModels(transformed.models);
     this.currentMode = modeInfo.currentModeId ?? this.currentMode;
 
-    this.currentModel = response.models?.currentModelId ?? deriveCurrentConfigValue(this.configOptions, "model");
+    this.currentModel =
+      transformed.models?.currentModelId ?? deriveCurrentConfigValue(this.configOptions, "model");
     this.thinkingOptionId =
       deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
   }
@@ -1231,13 +1344,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return item ? [this.wrapTimeline(item)] : [];
       }
       case "tool_call": {
-        const snapshot = mergeToolSnapshot(update.toolCallId, update);
+        let snapshot = mergeToolSnapshot(update.toolCallId, update);
+        if (this.toolSnapshotTransformer) {
+          snapshot = this.toolSnapshotTransformer(snapshot);
+        }
         this.toolCalls.set(update.toolCallId, snapshot);
         return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
       }
       case "tool_call_update": {
         const previous = this.toolCalls.get(update.toolCallId);
-        const snapshot = mergeToolSnapshot(update.toolCallId, update, previous);
+        let snapshot = mergeToolSnapshot(update.toolCallId, update, previous);
+        if (this.toolSnapshotTransformer) {
+          snapshot = this.toolSnapshotTransformer(snapshot);
+        }
         this.toolCalls.set(update.toolCallId, snapshot);
         return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
       }
@@ -1256,6 +1375,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handleUsageUpdate(update);
         return [];
       case "available_commands_update":
+        this.cachedCommands = update.availableCommands.map((command) => ({
+          name: command.name,
+          description: command.description,
+          argumentHint: "",
+        }));
         return [];
       default:
         return [];
@@ -1298,13 +1422,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private handleConfigOptionUpdate(update: ConfigOptionUpdate): void {
     this.configOptions = update.configOptions;
     const modeInfo = deriveModesFromACP(this.defaultModes, null, this.configOptions);
-    if (modeInfo.modes.length > 0) {
-      this.availableModes = modeInfo.modes;
-    }
+    this.availableModes = modeInfo.modes;
+    this.availableModels = this.deriveAvailableModels(null);
     this.currentMode = modeInfo.currentModeId ?? this.currentMode;
     this.currentModel = deriveCurrentConfigValue(this.configOptions, "model") ?? this.currentModel;
     this.thinkingOptionId =
       deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
+  }
+
+  private deriveAvailableModels(
+    models: SessionModelState | null | undefined,
+  ): AgentModelDefinition[] {
+    const availableModels = deriveModelDefinitionsFromACP(this.provider, models, this.configOptions);
+    return this.modelTransformer ? this.modelTransformer(availableModels) : availableModels;
   }
 
   private handleSessionInfoUpdate(update: SessionInfoUpdate): void {

@@ -12,6 +12,8 @@ import type { Logger } from "pino";
 import { ClaudeAgentClient } from "./providers/claude-agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
+import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
+import { PiACPAgentClient } from "./providers/pi-acp-agent.js";
 
 import {
   AGENT_PROVIDER_DEFINITIONS,
@@ -45,8 +47,14 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       runtimeSettings: runtimeSettings?.claude,
     }),
   codex: (logger, runtimeSettings) => new CodexAppServerAgentClient(logger, runtimeSettings?.codex),
+  copilot: (logger, runtimeSettings) =>
+    new CopilotACPAgentClient({
+      logger,
+      runtimeSettings: runtimeSettings?.copilot,
+    }),
   opencode: (logger, runtimeSettings) =>
     new OpenCodeAgentClient(logger, runtimeSettings?.opencode),
+  pi: (logger, runtimeSettings) => new PiACPAgentClient({ logger, runtimeSettings: runtimeSettings?.pi }),
 };
 
 function getProviderClientFactory(provider: string): ProviderClientFactory {
