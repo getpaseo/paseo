@@ -20,7 +20,7 @@ import {
   query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { isCommandAvailable } from "../server/agent/provider-launch-config.js";
+import { isCommandAvailable } from "../utils/executable.js";
 
 const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;

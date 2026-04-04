@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
 import { query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { findExecutable, isCommandAvailable } from "../provider-launch-config.js";
+import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
 
 class Pushable<T> implements AsyncIterable<T> {
   private queue: T[] = [];
