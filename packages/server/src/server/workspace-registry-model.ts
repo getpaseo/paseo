@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { getCheckoutStatusLite } from "../utils/checkout-git.js";
 import type { ProjectCheckoutLitePayload, ProjectPlacementPayload } from "../shared/messages.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
+import { profileWorkspaceFetch } from "./workspace-fetch-profiler.js";
 
 export type PersistedProjectKind = "git" | "non_git";
 export type PersistedWorkspaceKind = "local_checkout" | "worktree" | "directory";
@@ -156,65 +157,71 @@ export async function buildProjectPlacementForCwd(input: {
   cwd: string;
   paseoHome: string;
 }): Promise<ProjectPlacementPayload> {
-  const normalizedCwd = normalizeWorkspaceId(input.cwd);
-  const checkout = await getCheckoutStatusLite(normalizedCwd, { paseoHome: input.paseoHome })
-    .then((status): ProjectCheckoutLitePayload => {
-      if (!status.isGit) {
-        return {
-          cwd: normalizedCwd,
-          isGit: false,
-          currentBranch: null,
-          remoteUrl: null,
-          worktreeRoot: null,
-          isPaseoOwnedWorktree: false,
-          mainRepoRoot: null,
-        };
-      }
+  return profileWorkspaceFetch(
+    "workspace.buildProjectPlacementForCwd",
+    async () => {
+      const normalizedCwd = normalizeWorkspaceId(input.cwd);
+      const checkout = await getCheckoutStatusLite(normalizedCwd, { paseoHome: input.paseoHome })
+        .then((status): ProjectCheckoutLitePayload => {
+          if (!status.isGit) {
+            return {
+              cwd: normalizedCwd,
+              isGit: false,
+              currentBranch: null,
+              remoteUrl: null,
+              worktreeRoot: null,
+              isPaseoOwnedWorktree: false,
+              mainRepoRoot: null,
+            };
+          }
 
-      if (status.isPaseoOwnedWorktree && status.mainRepoRoot) {
-        return {
-          cwd: normalizedCwd,
-          isGit: true,
-          currentBranch: status.currentBranch,
-          remoteUrl: status.remoteUrl,
-          worktreeRoot: status.worktreeRoot,
-          isPaseoOwnedWorktree: true,
-          mainRepoRoot: status.mainRepoRoot,
-        };
-      }
+          if (status.isPaseoOwnedWorktree && status.mainRepoRoot) {
+            return {
+              cwd: normalizedCwd,
+              isGit: true,
+              currentBranch: status.currentBranch,
+              remoteUrl: status.remoteUrl,
+              worktreeRoot: status.worktreeRoot,
+              isPaseoOwnedWorktree: true,
+              mainRepoRoot: status.mainRepoRoot,
+            };
+          }
+
+          return {
+            cwd: normalizedCwd,
+            isGit: true,
+            currentBranch: status.currentBranch,
+            remoteUrl: status.remoteUrl,
+            worktreeRoot: status.worktreeRoot,
+            isPaseoOwnedWorktree: false,
+            mainRepoRoot: null,
+          };
+        })
+        .catch(
+          (): ProjectCheckoutLitePayload => ({
+            cwd: normalizedCwd,
+            isGit: false,
+            currentBranch: null,
+            remoteUrl: null,
+            worktreeRoot: null,
+            isPaseoOwnedWorktree: false,
+            mainRepoRoot: null,
+          }),
+        );
+
+      const projectKey = deriveProjectGroupingKey({
+        cwd: checkout.worktreeRoot ?? normalizedCwd,
+        remoteUrl: checkout.remoteUrl,
+        isPaseoOwnedWorktree: checkout.isPaseoOwnedWorktree,
+        mainRepoRoot: checkout.mainRepoRoot,
+      });
 
       return {
-        cwd: normalizedCwd,
-        isGit: true,
-        currentBranch: status.currentBranch,
-        remoteUrl: status.remoteUrl,
-        worktreeRoot: status.worktreeRoot,
-        isPaseoOwnedWorktree: false,
-        mainRepoRoot: null,
+        projectKey,
+        projectName: deriveProjectGroupingName(projectKey),
+        checkout,
       };
-    })
-    .catch(
-      (): ProjectCheckoutLitePayload => ({
-        cwd: normalizedCwd,
-        isGit: false,
-        currentBranch: null,
-        remoteUrl: null,
-        worktreeRoot: null,
-        isPaseoOwnedWorktree: false,
-        mainRepoRoot: null,
-      }),
-    );
-
-  const projectKey = deriveProjectGroupingKey({
-    cwd: checkout.worktreeRoot ?? normalizedCwd,
-    remoteUrl: checkout.remoteUrl,
-    isPaseoOwnedWorktree: checkout.isPaseoOwnedWorktree,
-    mainRepoRoot: checkout.mainRepoRoot,
-  });
-
-  return {
-    projectKey,
-    projectName: deriveProjectGroupingName(projectKey),
-    checkout,
-  };
+    },
+    { cwd: input.cwd },
+  );
 }

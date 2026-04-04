@@ -6,6 +6,7 @@ import { open as openFile, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
+import { profileWorkspaceFetch } from "../server/workspace-fetch-profiler.js";
 import { findExecutable, resolveShellEnv } from "./executable.js";
 import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
 import { requirePaseoWorktreeBaseRefName } from "./worktree-metadata.js";
@@ -605,27 +606,41 @@ function isGitError(error: unknown): boolean {
 
 async function requireGitRepo(cwd: string): Promise<void> {
   try {
-    await execAsync("git rev-parse --git-dir", { cwd, env: READ_ONLY_GIT_ENV });
+    await profileWorkspaceFetch(
+      "git.requireGitRepo",
+      () => execAsync("git rev-parse --git-dir", { cwd, env: READ_ONLY_GIT_ENV }),
+      { cwd, command: "git rev-parse --git-dir" },
+    );
   } catch (error) {
     throw new NotGitRepoError(cwd);
   }
 }
 
 async function getCurrentBranch(cwd: string): Promise<string | null> {
-  const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
-    cwd,
-    env: READ_ONLY_GIT_ENV,
-  });
+  const { stdout } = await profileWorkspaceFetch(
+    "git.getCurrentBranch",
+    () =>
+      execAsync("git rev-parse --abbrev-ref HEAD", {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      }),
+    { cwd, command: "git rev-parse --abbrev-ref HEAD" },
+  );
   const branch = stdout.trim();
   return branch.length > 0 ? branch : null;
 }
 
 async function getWorktreeRoot(cwd: string): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("git rev-parse --path-format=absolute --show-toplevel", {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
+    const { stdout } = await profileWorkspaceFetch(
+      "git.getWorktreeRoot",
+      () =>
+        execAsync("git rev-parse --path-format=absolute --show-toplevel", {
+          cwd,
+          env: READ_ONLY_GIT_ENV,
+        }),
+      { cwd, command: "git rev-parse --path-format=absolute --show-toplevel" },
+    );
     const root = stdout.trim();
     return root.length > 0 ? root : null;
   } catch {
@@ -634,9 +649,14 @@ async function getWorktreeRoot(cwd: string): Promise<string | null> {
 }
 
 async function getMainRepoRoot(cwd: string): Promise<string> {
-  const { stdout: commonDirOut } = await execAsync(
-    "git rev-parse --path-format=absolute --git-common-dir",
-    { cwd, env: READ_ONLY_GIT_ENV },
+  const { stdout: commonDirOut } = await profileWorkspaceFetch(
+    "git.getMainRepoRoot.commonDir",
+    () =>
+      execAsync("git rev-parse --path-format=absolute --git-common-dir", {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      }),
+    { cwd, command: "git rev-parse --path-format=absolute --git-common-dir" },
   );
   const commonDir = commonDirOut.trim();
   const normalized = realpathSync(commonDir);
@@ -645,10 +665,15 @@ async function getMainRepoRoot(cwd: string): Promise<string> {
     return dirname(normalized);
   }
 
-  const { stdout: worktreeOut } = await execAsync("git worktree list --porcelain", {
-    cwd,
-    env: READ_ONLY_GIT_ENV,
-  });
+  const { stdout: worktreeOut } = await profileWorkspaceFetch(
+    "git.getMainRepoRoot.worktreeList",
+    () =>
+      execAsync("git worktree list --porcelain", {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      }),
+    { cwd, command: "git worktree list --porcelain" },
+  );
   const worktrees = parseWorktreeList(worktreeOut);
   const nonBareNonPaseo = worktrees.filter(
     (wt) => !wt.isBare && !isPaseoWorktreePath(wt.path),
@@ -779,10 +804,15 @@ async function isWorkingTreeDirty(cwd: string): Promise<boolean> {
 
 async function getOriginRemoteUrl(cwd: string): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("git config --get remote.origin.url", {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
+    const { stdout } = await profileWorkspaceFetch(
+      "git.getOriginRemoteUrl",
+      () =>
+        execAsync("git config --get remote.origin.url", {
+          cwd,
+          env: READ_ONLY_GIT_ENV,
+        }),
+      { cwd, command: "git config --get remote.origin.url" },
+    );
     const url = stdout.trim();
     return url.length > 0 ? url : null;
   } catch {
@@ -797,10 +827,15 @@ async function hasOriginRemote(cwd: string): Promise<boolean> {
 
 export async function resolveRepositoryDefaultBranch(repoRoot: string): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("git symbolic-ref --quiet refs/remotes/origin/HEAD", {
-      cwd: repoRoot,
-      env: READ_ONLY_GIT_ENV,
-    });
+    const { stdout } = await profileWorkspaceFetch(
+      "git.resolveRepositoryDefaultBranch.originHead",
+      () =>
+        execAsync("git symbolic-ref --quiet refs/remotes/origin/HEAD", {
+          cwd: repoRoot,
+          env: READ_ONLY_GIT_ENV,
+        }),
+      { cwd: repoRoot, command: "git symbolic-ref --quiet refs/remotes/origin/HEAD" },
+    );
     const ref = stdout.trim();
     if (ref) {
       // Prefer a local branch name (e.g. "main") over the remote-tracking ref (e.g. "origin/main")
@@ -810,10 +845,15 @@ export async function resolveRepositoryDefaultBranch(repoRoot: string): Promise<
         ? remoteShort.slice("origin/".length)
         : remoteShort;
       try {
-        await execAsync(`git show-ref --verify --quiet refs/heads/${localName}`, {
-          cwd: repoRoot,
-          env: READ_ONLY_GIT_ENV,
-        });
+        await profileWorkspaceFetch(
+          "git.resolveRepositoryDefaultBranch.verifyLocal",
+          () =>
+            execAsync(`git show-ref --verify --quiet refs/heads/${localName}`, {
+              cwd: repoRoot,
+              env: READ_ONLY_GIT_ENV,
+            }),
+          { cwd: repoRoot, command: "git show-ref --verify --quiet refs/heads/<localName>" },
+        );
         return localName;
       } catch {
         return remoteShort;
@@ -823,10 +863,15 @@ export async function resolveRepositoryDefaultBranch(repoRoot: string): Promise<
     // ignore
   }
 
-  const { stdout } = await execAsync("git branch --format='%(refname:short)'", {
-    cwd: repoRoot,
-    env: READ_ONLY_GIT_ENV,
-  });
+  const { stdout } = await profileWorkspaceFetch(
+    "git.resolveRepositoryDefaultBranch.listBranches",
+    () =>
+      execAsync("git branch --format='%(refname:short)'", {
+        cwd: repoRoot,
+        env: READ_ONLY_GIT_ENV,
+      }),
+    { cwd: repoRoot, command: "git branch --format='%(refname:short)'" },
+  );
   const branches = stdout
     .split("\n")
     .map((line) => line.trim())
@@ -852,10 +897,15 @@ function normalizeLocalBranchRefName(input: string): string {
 
 async function doesGitRefExist(cwd: string, fullRef: string): Promise<boolean> {
   try {
-    await execAsync(`git show-ref --verify --quiet ${fullRef}`, {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
+    await profileWorkspaceFetch(
+      "git.doesGitRefExist",
+      () =>
+        execAsync(`git show-ref --verify --quiet ${fullRef}`, {
+          cwd,
+          env: READ_ONLY_GIT_ENV,
+        }),
+      { cwd, command: "git show-ref --verify --quiet <ref>", ref: fullRef },
+    );
     return true;
   } catch {
     return false;
@@ -883,9 +933,18 @@ async function resolveBestComparisonBaseRef(
 
   // Both exist: choose the ref with more unique commits compared to the other.
   try {
-    const { stdout } = await execAsync(
-      `git rev-list --left-right --count ${normalizedBaseRef}...origin/${normalizedBaseRef}`,
-      { cwd, env: READ_ONLY_GIT_ENV },
+    const { stdout } = await profileWorkspaceFetch(
+      "git.resolveBestComparisonBaseRef.revList",
+      () =>
+        execAsync(
+          `git rev-list --left-right --count ${normalizedBaseRef}...origin/${normalizedBaseRef}`,
+          { cwd, env: READ_ONLY_GIT_ENV },
+        ),
+      {
+        cwd,
+        command: "git rev-list --left-right --count <base>...origin/<base>",
+        baseRef: normalizedBaseRef,
+      },
     );
     const [localOnlyRaw, originOnlyRaw] = stdout.trim().split(/\s+/);
     const localOnly = Number.parseInt(localOnlyRaw ?? "0", 10);
@@ -966,30 +1025,36 @@ async function inspectCheckoutContext(
   cwd: string,
   context?: CheckoutContext,
 ): Promise<CheckoutInspectionContext | null> {
-  try {
-    const root = await getWorktreeRoot(cwd);
-    if (!root) {
-      return null;
-    }
+  return profileWorkspaceFetch(
+    "git.inspectCheckoutContext",
+    async () => {
+      try {
+        const root = await getWorktreeRoot(cwd);
+        if (!root) {
+          return null;
+        }
 
-    const [currentBranch, remoteUrl, configured] = await Promise.all([
-      getCurrentBranch(cwd),
-      getOriginRemoteUrl(cwd),
-      getConfiguredBaseRefForCwd(cwd, context),
-    ]);
+        const [currentBranch, remoteUrl, configured] = await Promise.all([
+          getCurrentBranch(cwd),
+          getOriginRemoteUrl(cwd),
+          getConfiguredBaseRefForCwd(cwd, context),
+        ]);
 
-    return {
-      worktreeRoot: root,
-      currentBranch,
-      remoteUrl,
-      configured,
-    };
-  } catch (error) {
-    if (isGitError(error)) {
-      return null;
-    }
-    throw error;
-  }
+        return {
+          worktreeRoot: root,
+          currentBranch,
+          remoteUrl,
+          configured,
+        };
+      } catch (error) {
+        if (isGitError(error)) {
+          return null;
+        }
+        throw error;
+      }
+    },
+    { cwd },
+  );
 }
 
 const PER_FILE_DIFF_MAX_BYTES = 1024 * 1024; // 1MB
@@ -1156,37 +1221,43 @@ export async function getCheckoutStatusLite(
   cwd: string,
   context?: CheckoutContext,
 ): Promise<CheckoutStatusLiteResult> {
-  const inspected = await inspectCheckoutContext(cwd, context);
-  if (!inspected) {
-    return {
-      isGit: false,
-      currentBranch: null,
-      remoteUrl: null,
-      worktreeRoot: null,
-      isPaseoOwnedWorktree: false,
-      mainRepoRoot: null,
-    };
-  }
+  return profileWorkspaceFetch(
+    "git.getCheckoutStatusLite",
+    async () => {
+      const inspected = await inspectCheckoutContext(cwd, context);
+      if (!inspected) {
+        return {
+          isGit: false,
+          currentBranch: null,
+          remoteUrl: null,
+          worktreeRoot: null,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        };
+      }
 
-  if (inspected.configured.isPaseoOwnedWorktree) {
-    return {
-      isGit: true,
-      currentBranch: inspected.currentBranch,
-      remoteUrl: inspected.remoteUrl,
-      worktreeRoot: inspected.worktreeRoot,
-      isPaseoOwnedWorktree: true,
-      mainRepoRoot: await getMainRepoRoot(cwd),
-    };
-  }
+      if (inspected.configured.isPaseoOwnedWorktree) {
+        return {
+          isGit: true,
+          currentBranch: inspected.currentBranch,
+          remoteUrl: inspected.remoteUrl,
+          worktreeRoot: inspected.worktreeRoot,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: await getMainRepoRoot(cwd),
+        };
+      }
 
-  return {
-    isGit: true,
-    currentBranch: inspected.currentBranch,
-    remoteUrl: inspected.remoteUrl,
-    worktreeRoot: inspected.worktreeRoot,
-    isPaseoOwnedWorktree: false,
-    mainRepoRoot: null,
-  };
+      return {
+        isGit: true,
+        currentBranch: inspected.currentBranch,
+        remoteUrl: inspected.remoteUrl,
+        worktreeRoot: inspected.worktreeRoot,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      };
+    },
+    { cwd },
+  );
 }
 
 export interface CheckoutShortstat {
@@ -1198,79 +1269,92 @@ export async function getCheckoutShortstat(
   cwd: string,
   context?: CheckoutContext,
 ): Promise<CheckoutShortstat | null> {
-  try {
-    await requireGitRepo(cwd);
-  } catch {
-    return null;
-  }
-
-  const configured = await getConfiguredBaseRefForCwd(cwd, context);
-  const localBaseRef = configured.baseRef ?? (await resolveBaseRef(cwd));
-  const currentBranch = await getCurrentBranch(cwd);
-
-  let diffTarget: string;
-
-  if (currentBranch && localBaseRef && currentBranch !== localBaseRef) {
-    // Feature branch: diff against the merge-base with the base branch
-    const comparisonBaseRef = await resolveBestComparisonBaseRef(
-      cwd,
-      normalizeLocalBranchRefName(localBaseRef),
-    );
-
-    try {
-      const { stdout } = await execAsync(`git merge-base HEAD ${comparisonBaseRef}`, {
-        cwd,
-        env: READ_ONLY_GIT_ENV,
-      });
-      const mergeBase = stdout.trim();
-      if (!mergeBase) {
+  return profileWorkspaceFetch(
+    "git.getCheckoutShortstat",
+    async () => {
+      try {
+        await requireGitRepo(cwd);
+      } catch {
         return null;
       }
-      diffTarget = mergeBase;
-    } catch {
-      return null;
-    }
-  } else if (currentBranch) {
-    // On the base branch (or no base ref configured): diff against remote tracking branch
-    const hasOrigin = await doesGitRefExist(cwd, `refs/remotes/origin/${currentBranch}`);
-    if (!hasOrigin) {
-      return null;
-    }
-    diffTarget = `origin/${currentBranch}`;
-  } else {
-    return null;
-  }
 
-  try {
-    // Omit HEAD so the diff includes uncommitted (staged + unstaged) changes
-    const { stdout } = await execAsync(`git diff --shortstat ${diffTarget}`, {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
-    const text = stdout.trim();
-    if (!text) {
-      return null;
-    }
+      const configured = await getConfiguredBaseRefForCwd(cwd, context);
+      const localBaseRef = configured.baseRef ?? (await resolveBaseRef(cwd));
+      const currentBranch = await getCurrentBranch(cwd);
 
-    let additions = 0;
-    let deletions = 0;
-    const addMatch = text.match(/(\d+)\s+insertion/);
-    if (addMatch) {
-      additions = Number.parseInt(addMatch[1]!, 10);
-    }
-    const delMatch = text.match(/(\d+)\s+deletion/);
-    if (delMatch) {
-      deletions = Number.parseInt(delMatch[1]!, 10);
-    }
+      let diffTarget: string;
 
-    if (additions === 0 && deletions === 0) {
-      return null;
-    }
+      if (currentBranch && localBaseRef && currentBranch !== localBaseRef) {
+        const comparisonBaseRef = await resolveBestComparisonBaseRef(
+          cwd,
+          normalizeLocalBranchRefName(localBaseRef),
+        );
 
-    return { additions, deletions };
-  } catch {
-    return null;
-  }
+        try {
+          const { stdout } = await profileWorkspaceFetch(
+            "git.getCheckoutShortstat.mergeBase",
+            () =>
+              execAsync(`git merge-base HEAD ${comparisonBaseRef}`, {
+                cwd,
+                env: READ_ONLY_GIT_ENV,
+              }),
+            { cwd, command: "git merge-base HEAD <comparisonBaseRef>", baseRef: comparisonBaseRef },
+          );
+          const mergeBase = stdout.trim();
+          if (!mergeBase) {
+            return null;
+          }
+          diffTarget = mergeBase;
+        } catch {
+          return null;
+        }
+      } else if (currentBranch) {
+        const hasOrigin = await doesGitRefExist(cwd, `refs/remotes/origin/${currentBranch}`);
+        if (!hasOrigin) {
+          return null;
+        }
+        diffTarget = `origin/${currentBranch}`;
+      } else {
+        return null;
+      }
+
+      try {
+        const { stdout } = await profileWorkspaceFetch(
+          "git.getCheckoutShortstat.diffShortstat",
+          () =>
+            execAsync(`git diff --shortstat ${diffTarget}`, {
+              cwd,
+              env: READ_ONLY_GIT_ENV,
+            }),
+          { cwd, command: "git diff --shortstat <target>", diffTarget },
+        );
+        const text = stdout.trim();
+        if (!text) {
+          return null;
+        }
+
+        let additions = 0;
+        let deletions = 0;
+        const addMatch = text.match(/(\d+)\s+insertion/);
+        if (addMatch) {
+          additions = Number.parseInt(addMatch[1]!, 10);
+        }
+        const delMatch = text.match(/(\d+)\s+deletion/);
+        if (delMatch) {
+          deletions = Number.parseInt(delMatch[1]!, 10);
+        }
+
+        if (additions === 0 && deletions === 0) {
+          return null;
+        }
+
+        return { additions, deletions };
+      } catch {
+        return null;
+      }
+    },
+    { cwd },
+  );
 }
 
 export async function getCheckoutDiff(

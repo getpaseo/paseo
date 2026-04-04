@@ -137,6 +137,7 @@ import {
 } from "./file-explorer/service.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
+import { profileWorkspaceFetch } from "./workspace-fetch-profiler.js";
 import {
   type WorktreeConfig,
 } from "../utils/worktree.js";
@@ -5093,84 +5094,94 @@ export class Session {
     workspace: PersistedWorkspaceRecord,
     projectRecord?: PersistedProjectRecord | null,
   ): Promise<WorkspaceDescriptorPayload> {
-    const resolvedProjectRecord =
-      projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
-    let displayName = workspace.displayName;
-    try {
-      const placement = await this.buildProjectPlacement(workspace.cwd);
-      displayName = deriveWorkspaceDisplayName({
-        cwd: workspace.cwd,
-        checkout: placement.checkout,
-      });
-    } catch {
-      // Fall back to the persisted label if checkout metadata is unavailable.
-    }
+    return profileWorkspaceFetch(
+      "session.describeWorkspaceRecord",
+      async () => {
+        const resolvedProjectRecord =
+          projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
+        let displayName = workspace.displayName;
+        try {
+          const placement = await this.buildProjectPlacement(workspace.cwd);
+          displayName = deriveWorkspaceDisplayName({
+            cwd: workspace.cwd,
+            checkout: placement.checkout,
+          });
+        } catch {
+          // Fall back to the persisted label if checkout metadata is unavailable.
+        }
 
-    let diffStat: { additions: number; deletions: number } | null = null;
-    try {
-      diffStat = await getCheckoutShortstat(workspace.cwd);
-    } catch {
-      // Non-critical — leave null on failure.
-    }
+        let diffStat: { additions: number; deletions: number } | null = null;
+        try {
+          diffStat = await getCheckoutShortstat(workspace.cwd);
+        } catch {
+          // Non-critical — leave null on failure.
+        }
 
-    return {
-      id: workspace.workspaceId,
-      projectId: workspace.projectId,
-      projectDisplayName: resolvedProjectRecord?.displayName ?? workspace.projectId,
-      projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
-      projectKind: resolvedProjectRecord?.kind ?? "non_git",
-      workspaceKind: workspace.kind,
-      name: displayName,
-      status: "done",
-      activityAt: null,
-      diffStat,
-    };
+        return {
+          id: workspace.workspaceId,
+          projectId: workspace.projectId,
+          projectDisplayName: resolvedProjectRecord?.displayName ?? workspace.projectId,
+          projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
+          projectKind: resolvedProjectRecord?.kind ?? "non_git",
+          workspaceKind: workspace.kind,
+          name: displayName,
+          status: "done",
+          activityAt: null,
+          diffStat,
+        };
+      },
+      { cwd: workspace.cwd, workspaceId: workspace.workspaceId },
+    );
   }
 
   private async listWorkspaceDescriptorsSnapshot(): Promise<WorkspaceDescriptorPayload[]> {
-    const [agents, persistedWorkspaces, persistedProjects] = await Promise.all([
-      this.listAgentPayloads(),
-      this.workspaceRegistry.list(),
-      this.projectRegistry.list(),
-    ]);
-
-    const activeRecords = persistedWorkspaces.filter((workspace) => !workspace.archivedAt);
-    const activeProjects = new Map(
-      persistedProjects
-        .filter((project) => !project.archivedAt)
-        .map((project) => [project.projectId, project] as const),
-    );
-    const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
-
-    for (const workspace of activeRecords) {
-      descriptorsByWorkspaceId.set(
-        workspace.workspaceId,
-        await this.describeWorkspaceRecord(
-          workspace,
-          activeProjects.get(workspace.projectId) ?? null,
+    return profileWorkspaceFetch("session.listWorkspaceDescriptorsSnapshot", async () => {
+      const [agents, persistedWorkspaces, persistedProjects] = await Promise.all([
+        profileWorkspaceFetch("session.listAgentPayloadsForWorkspaceSnapshot", () =>
+          this.listAgentPayloads(),
         ),
+        profileWorkspaceFetch("session.workspaceRegistry.list", () => this.workspaceRegistry.list()),
+        profileWorkspaceFetch("session.projectRegistry.list", () => this.projectRegistry.list()),
+      ]);
+
+      const activeRecords = persistedWorkspaces.filter((workspace) => !workspace.archivedAt);
+      const activeProjects = new Map(
+        persistedProjects
+          .filter((project) => !project.archivedAt)
+          .map((project) => [project.projectId, project] as const),
       );
-    }
+      const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
 
-    for (const agent of agents) {
-      if (agent.archivedAt) {
-        continue;
+      for (const workspace of activeRecords) {
+        descriptorsByWorkspaceId.set(
+          workspace.workspaceId,
+          await this.describeWorkspaceRecord(
+            workspace,
+            activeProjects.get(workspace.projectId) ?? null,
+          ),
+        );
       }
 
-      const workspaceId = this.resolveRegisteredWorkspaceIdForCwd(agent.cwd, activeRecords);
-      const existing = descriptorsByWorkspaceId.get(workspaceId);
-      if (!existing) {
-        continue;
+      for (const agent of agents) {
+        if (agent.archivedAt) {
+          continue;
+        }
+
+        const workspaceId = this.resolveRegisteredWorkspaceIdForCwd(agent.cwd, activeRecords);
+        const existing = descriptorsByWorkspaceId.get(workspaceId);
+        if (!existing) {
+          continue;
+        }
+
+        const bucket = this.deriveWorkspaceStateBucket(agent);
+        if (this.workspaceStatePriority[bucket] < this.workspaceStatePriority[existing.status]) {
+          existing.status = bucket;
+        }
+        existing.activityAt = this.accumulateLatestActivityAt(existing.activityAt, agent);
       }
 
-      const bucket = this.deriveWorkspaceStateBucket(agent);
-      if (this.workspaceStatePriority[bucket] < this.workspaceStatePriority[existing.status]) {
-        existing.status = bucket;
-      }
-      existing.activityAt = this.accumulateLatestActivityAt(existing.activityAt, agent);
-    }
-
-    return Array.from(descriptorsByWorkspaceId.values());
+      return Array.from(descriptorsByWorkspaceId.values());
+    });
   }
 
   private resolveRegisteredWorkspaceIdForCwd(
@@ -5200,8 +5211,12 @@ export class Session {
   }
 
   private async listWorkspaceDescriptors(): Promise<WorkspaceDescriptorPayload[]> {
-    await this.reconcileActiveWorkspaceRecords();
-    return this.listWorkspaceDescriptorsSnapshot();
+    return profileWorkspaceFetch("session.listWorkspaceDescriptors", async () => {
+      await profileWorkspaceFetch("session.reconcileActiveWorkspaceRecords", () =>
+        this.reconcileActiveWorkspaceRecords(),
+      );
+      return this.listWorkspaceDescriptorsSnapshot();
+    });
   }
 
   private normalizeFetchWorkspacesSort(
@@ -5403,36 +5418,46 @@ export class Session {
     entries: FetchWorkspacesResponseEntry[];
     pageInfo: FetchWorkspacesResponsePageInfo;
   }> {
-    const filter = request.filter;
-    const sort = this.normalizeFetchWorkspacesSort(request.sort);
-    let entries = await this.listWorkspaceDescriptors();
-    entries = entries.filter((workspace) => this.matchesWorkspaceFilter({ workspace, filter }));
-    entries.sort((left, right) => this.compareFetchWorkspacesEntries(left, right, sort));
+    return profileWorkspaceFetch(
+      "session.listFetchWorkspacesEntries",
+      async () => {
+        const filter = request.filter;
+        const sort = this.normalizeFetchWorkspacesSort(request.sort);
+        let entries = await this.listWorkspaceDescriptors();
+        entries = entries.filter((workspace) => this.matchesWorkspaceFilter({ workspace, filter }));
+        entries.sort((left, right) => this.compareFetchWorkspacesEntries(left, right, sort));
 
-    const cursorToken = request.page?.cursor;
-    if (cursorToken) {
-      const cursor = this.decodeFetchWorkspacesCursor(cursorToken, sort);
-      entries = entries.filter(
-        (workspace) => this.compareWorkspaceWithCursor(workspace, cursor, sort) > 0,
-      );
-    }
+        const cursorToken = request.page?.cursor;
+        if (cursorToken) {
+          const cursor = this.decodeFetchWorkspacesCursor(cursorToken, sort);
+          entries = entries.filter(
+            (workspace) => this.compareWorkspaceWithCursor(workspace, cursor, sort) > 0,
+          );
+        }
 
-    const limit = request.page?.limit ?? 200;
-    const pagedEntries = entries.slice(0, limit);
-    const hasMore = entries.length > limit;
-    const nextCursor =
-      hasMore && pagedEntries.length > 0
-        ? this.encodeFetchWorkspacesCursor(pagedEntries[pagedEntries.length - 1], sort)
-        : null;
+        const limit = request.page?.limit ?? 200;
+        const pagedEntries = entries.slice(0, limit);
+        const hasMore = entries.length > limit;
+        const nextCursor =
+          hasMore && pagedEntries.length > 0
+            ? this.encodeFetchWorkspacesCursor(pagedEntries[pagedEntries.length - 1], sort)
+            : null;
 
-    return {
-      entries: pagedEntries,
-      pageInfo: {
-        nextCursor,
-        prevCursor: request.page?.cursor ?? null,
-        hasMore,
+        return {
+          entries: pagedEntries,
+          pageInfo: {
+            nextCursor,
+            prevCursor: request.page?.cursor ?? null,
+            hasMore,
+          },
+        };
       },
-    };
+      {
+        requestId: request.requestId,
+        cursor: request.page?.cursor ?? null,
+        limit: request.page?.limit ?? 200,
+      },
+    );
   }
 
   private bufferOrEmitWorkspaceUpdate(
@@ -5701,7 +5726,11 @@ export class Session {
         };
       }
 
-      const payload = await this.listFetchWorkspacesEntries(request);
+      const payload = await profileWorkspaceFetch(
+        "session.handleFetchWorkspacesRequest.payload",
+        () => this.listFetchWorkspacesEntries(request),
+        { requestId: request.requestId },
+      );
       this.primeWorkspaceGitWatchFingerprints(payload.entries);
       const snapshotLatestActivityByWorkspaceId = new Map<string, number>();
       for (const entry of payload.entries) {
