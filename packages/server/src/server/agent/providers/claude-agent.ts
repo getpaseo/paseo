@@ -1848,6 +1848,12 @@ class ClaudeAgentSession implements AgentSession {
       this.input = null;
       this.queryPumpPromise = null;
       this.queryRestartNeeded = false;
+      // Reset session identity so the new query can establish its own session
+      // ID without triggering the overwrite detection. Without this, a query
+      // restart that lands on a different Claude session (e.g. after a hook or
+      // reconnect) would throw a fatal "session ID overwrite" error.
+      this.claudeSessionId = null;
+      this.persistence = null;
       oldInput?.end();
       oldQuery.close?.();
       try {
