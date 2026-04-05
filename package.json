@@ -68,6 +68,7 @@
     "get-port-cli": "^3.0.0",
     "knip": "^5.82.1",
     "patch-package": "^8.0.1",
+    "prettier": "^3.5.3",
     "react": "19.1.4",
     "react-dom": "19.1.4",
     "typescript": "^5.9.3"
@@ -98,6 +99,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.11",
-    "@modelcontextprotocol/sdk": "^1.27.1"
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "concurrently": "^9.2.1"
   }
 }
