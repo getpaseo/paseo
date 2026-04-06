@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -14,7 +14,6 @@ import {
   ArrowRightToLine,
   Columns2,
   Copy,
-  RotateCw,
   Rows2,
   SquarePen,
   SquareTerminal,
@@ -72,7 +71,6 @@ type WorkspaceDesktopTabsRowProps = {
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
-  onReloadAgent: (agentId: string) => Promise<void> | void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
@@ -141,7 +139,39 @@ function TabChip({
   const { theme } = useUnistyles();
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
   const [hovered, setHovered] = useState(false);
+  const suppressNextPressRef = useRef(false);
+  const handledMiddleClickRef = useRef(false);
   const isHighlighted = isActive || hovered || isCloseHovered;
+  const handleWebMiddleClick = useCallback(
+    (event: unknown) => {
+      if (Platform.OS !== "web") {
+        return false;
+      }
+
+      const nativeEvent: any = (event as any)?.nativeEvent ?? event;
+      if (nativeEvent?.button !== 1) {
+        return false;
+      }
+
+      if (handledMiddleClickRef.current) {
+        return true;
+      }
+
+      nativeEvent?.preventDefault?.();
+      nativeEvent?.stopPropagation?.();
+      handledMiddleClickRef.current = true;
+      setTimeout(() => {
+        handledMiddleClickRef.current = false;
+      }, 0);
+      suppressNextPressRef.current = true;
+      queueMicrotask(() => {
+        suppressNextPressRef.current = false;
+      });
+      void onCloseTab(tab.tabId);
+      return true;
+    },
+    [onCloseTab, tab.tabId],
+  );
   const closeButtonDragBlockers =
     Platform.OS === "web"
       ? ({
@@ -182,10 +212,32 @@ function TabChip({
               setHoveredTabKey((current) => (current === tab.key ? null : current));
             }}
             onPressIn={() => {
-              onNavigateTab(tab.tabId);
+              if (suppressNextPressRef.current) {
+                return;
+              }
+              void onNavigateTab(tab.tabId);
+            }}
+            // @ts-ignore - onPointerDown is web-only and not in RN types.
+            onPointerDown={(event) => {
+              const handled = handleWebMiddleClick(event);
+              if (handled) {
+                return;
+              }
+              dragHandleProps?.listeners?.onPointerDown?.(event);
+            }}
+            // @ts-ignore - onMouseDown is web-only and not in RN types.
+            onMouseDown={(event) => {
+              void handleWebMiddleClick(event);
+            }}
+            // @ts-ignore - onAuxClick is web-only and not in RN types.
+            onAuxClick={(event) => {
+              void handleWebMiddleClick(event);
             }}
             onPress={() => {
-              onNavigateTab(tab.tabId);
+              if (suppressNextPressRef.current) {
+                return;
+              }
+              void onNavigateTab(tab.tabId);
             }}
             accessibilityLabel={tooltipLabel}
           >
@@ -293,14 +345,11 @@ function TabChip({
               disabled={entry.disabled}
               destructive={entry.destructive}
               onSelect={entry.onSelect}
-              tooltip={entry.tooltip}
               leading={(() => {
                 const iconColor = theme.colors.foregroundMuted;
                 switch (entry.icon) {
                   case "copy":
                     return <Copy size={16} color={iconColor} />;
-                  case "rotate-cw":
-                    return <RotateCw size={16} color={iconColor} />;
                   case "arrow-left-to-line":
                     return <ArrowLeftToLine size={16} color={iconColor} />;
                   case "arrow-right-to-line":
@@ -340,7 +389,6 @@ export function WorkspaceDesktopTabsRow({
   onCloseTab,
   onCopyResumeCommand,
   onCopyAgentId,
-  onReloadAgent,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -463,7 +511,6 @@ export function WorkspaceDesktopTabsRow({
                 normalizedWorkspaceId={normalizedWorkspaceId}
                 onCopyResumeCommand={onCopyResumeCommand}
                 onCopyAgentId={onCopyAgentId}
-                onReloadAgent={onReloadAgent}
                 onCloseTabsToLeft={onCloseTabsToLeft}
                 onCloseTabsToRight={onCloseTabsToRight}
                 onCloseOtherTabs={onCloseOtherTabs}
@@ -592,7 +639,6 @@ function ResolvedDesktopTabChip({
   normalizedWorkspaceId,
   onCopyResumeCommand,
   onCopyAgentId,
-  onReloadAgent,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -616,7 +662,6 @@ function ResolvedDesktopTabChip({
   normalizedWorkspaceId: string;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
-  onReloadAgent: (agentId: string) => Promise<void> | void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
@@ -639,7 +684,6 @@ function ResolvedDesktopTabChip({
         tabCount,
         onCopyResumeCommand,
         onCopyAgentId,
-        onReloadAgent,
         onCloseTab,
         onCloseTabsToLeft,
         onCloseTabsToRight,
@@ -654,7 +698,6 @@ function ResolvedDesktopTabChip({
       onCloseTabsToRight,
       onCopyAgentId,
       onCopyResumeCommand,
-      onReloadAgent,
       tabCount,
     ],
   );

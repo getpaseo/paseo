@@ -50,3 +50,16 @@ export async function sampleWorkspaceTabIds(
   }
   return snapshots;
 }
+
+export async function middleClickWorkspaceTab(page: Page, testId: string): Promise<void> {
+  const tab = page.getByTestId(testId).first();
+  await expect(tab).toBeVisible({ timeout: 30_000 });
+  const box = await tab.boundingBox();
+  if (!box) {
+    throw new Error(`Could not read bounding box for ${testId}.`);
+  }
+
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {
+    button: "middle",
+  });
+}
