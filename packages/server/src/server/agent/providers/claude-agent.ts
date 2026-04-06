@@ -1848,6 +1848,9 @@ class ClaudeAgentSession implements AgentSession {
       this.input = null;
       this.queryPumpPromise = null;
       this.queryRestartNeeded = false;
+      // Reset session identity for explicit restarts so the new query starts
+      // a fresh session rather than resuming the previous one.
+      this.claudeSessionId = null;
       oldInput?.end();
       oldQuery.close?.();
       try {
@@ -1857,11 +1860,10 @@ class ClaudeAgentSession implements AgentSession {
       }
     }
 
-    // Reset session identity whenever creating a new query — both for explicit
-    // restarts (queryRestartNeeded) and recovery after a pump failure (query
-    // became null). The new query will establish its own session ID via the
-    // SDK init message.
-    this.claudeSessionId = null;
+    // When the pump died unexpectedly (query became null, e.g. after a session
+    // ID overwrite error), preserve claudeSessionId so buildOptions() passes
+    // resume: sessionId and the new query auto-resumes the previous session.
+    // For explicit restarts above, claudeSessionId was already cleared.
     this.persistence = null;
 
     const input = createAsyncMessageInput<SDKUserMessage>();
