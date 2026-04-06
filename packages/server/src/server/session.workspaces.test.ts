@@ -1223,6 +1223,55 @@ describe("workspace aggregation", () => {
     expect(response?.payload.workspace?.id).toBe(repoRoot);
   });
 
+  test("list_available_editors_request returns available targets", async () => {
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const session = createSessionForWorkspaceTests() as any;
+
+    session.emit = (message: any) => emitted.push(message);
+    session.getAvailableEditorTargets = async () => [
+      { id: "cursor", label: "Cursor" },
+      { id: "finder", label: "Finder" },
+    ];
+
+    await session.handleMessage({
+      type: "list_available_editors_request",
+      requestId: "req-editors",
+    });
+
+    const response = emitted.find(
+      (message) => message.type === "list_available_editors_response",
+    ) as any;
+    expect(response?.payload.error).toBeNull();
+    expect(response?.payload.editors).toEqual([
+      { id: "cursor", label: "Cursor" },
+      { id: "finder", label: "Finder" },
+    ]);
+  });
+
+  test("open_in_editor_request launches the selected target", async () => {
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const session = createSessionForWorkspaceTests() as any;
+    const calls: Array<{ editorId: string; path: string }> = [];
+
+    session.emit = (message: any) => emitted.push(message);
+    session.openEditorTarget = async (input: { editorId: string; path: string }) => {
+      calls.push(input);
+    };
+
+    await session.handleMessage({
+      type: "open_in_editor_request",
+      requestId: "req-open-editor",
+      editorId: "vscode",
+      path: "/tmp/repo",
+    });
+
+    expect(calls).toEqual([{ editorId: "vscode", path: "/tmp/repo" }]);
+    const response = emitted.find(
+      (message) => message.type === "open_in_editor_response",
+    ) as any;
+    expect(response?.payload.error).toBeNull();
+  });
+
   test("archive_workspace_request hides non-destructive workspace records", async () => {
     const emitted: Array<{ type: string; payload: unknown }> = [];
     const session = createSessionForWorkspaceTests() as any;

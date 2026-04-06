@@ -34,6 +34,8 @@ import type {
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
+  ListAvailableEditorsResponseMessage,
+  OpenInEditorResponseMessage,
   OpenProjectResponseMessage,
   ArchiveWorkspaceResponseMessage,
   ListCommandsResponse,
@@ -54,6 +56,7 @@ import type {
   TerminalInput,
   SessionInboundMessage,
   SessionOutboundMessage,
+  EditorTargetId,
 } from "../shared/messages.js";
 import type {
   AgentPermissionRequest,
@@ -472,8 +475,11 @@ export type InspectScheduleOptions = {
   id: string;
   requestId?: string;
 };
+type ListAvailableEditorsPayload = ListAvailableEditorsResponseMessage["payload"];
+type OpenInEditorPayload = OpenInEditorResponseMessage["payload"];
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
+export type EditorTargetDescriptor = ListAvailableEditorsPayload["editors"][number];
 
 export type FetchAgentResult = {
   agent: AgentSnapshotPayload;
@@ -1311,6 +1317,34 @@ export class DaemonClient {
         cwd,
       },
       responseType: "open_project_response",
+      timeout: 10000,
+    });
+  }
+
+  async listAvailableEditors(requestId?: string): Promise<ListAvailableEditorsPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "list_available_editors_request",
+      },
+      responseType: "list_available_editors_response",
+      timeout: 10000,
+    });
+  }
+
+  async openInEditor(
+    path: string,
+    editorId: EditorTargetId,
+    requestId?: string,
+  ): Promise<OpenInEditorPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "open_in_editor_request",
+        path,
+        editorId,
+      },
+      responseType: "open_in_editor_response",
       timeout: 10000,
     });
   }

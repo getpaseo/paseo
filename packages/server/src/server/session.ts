@@ -28,6 +28,7 @@ import {
   type SubscribeCheckoutDiffRequest,
   type UnsubscribeCheckoutDiffRequest,
   type DirectorySuggestionsRequest,
+  type EditorTargetId,
   type ProjectPlacementPayload,
   type WorkspaceDescriptorPayload,
   type WorkspaceStateBucket,
@@ -47,6 +48,7 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
 import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
+import { listAvailableEditorTargets, openInEditorTarget } from "./editor-targets.js";
 import {
   DictationStreamManager,
   type DictationStreamOutboundMessage,
@@ -1740,6 +1742,14 @@ export class Session {
 
         case "create_paseo_worktree_request":
           await this.handleCreatePaseoWorktreeRequest(msg);
+          break;
+
+        case "list_available_editors_request":
+          await this.handleListAvailableEditorsRequest(msg);
+          break;
+
+        case "open_in_editor_request":
+          await this.handleOpenInEditorRequest(msg);
           break;
 
         case "open_project_request":
@@ -5975,6 +5985,77 @@ export class Session {
         payload: {
           requestId: request.requestId,
           workspace: null,
+          error: message,
+        },
+      });
+    }
+  }
+
+  async getAvailableEditorTargets() {
+    return listAvailableEditorTargets();
+  }
+
+  async openEditorTarget(options: { editorId: EditorTargetId; path: string }): Promise<void> {
+    await openInEditorTarget(options);
+  }
+
+  private async handleListAvailableEditorsRequest(
+    request: Extract<SessionInboundMessage, { type: "list_available_editors_request" }>,
+  ): Promise<void> {
+    try {
+      const editors = await this.getAvailableEditorTargets();
+      this.emit({
+        type: "list_available_editors_response",
+        payload: {
+          requestId: request.requestId,
+          editors,
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to list available editors";
+      this.sessionLogger.error(
+        { err: error, requestType: request.type },
+        "Failed to list available editors",
+      );
+      this.emit({
+        type: "list_available_editors_response",
+        payload: {
+          requestId: request.requestId,
+          editors: [],
+          error: message,
+        },
+      });
+    }
+  }
+
+  private async handleOpenInEditorRequest(
+    request: Extract<SessionInboundMessage, { type: "open_in_editor_request" }>,
+  ): Promise<void> {
+    try {
+      await this.openEditorTarget({ editorId: request.editorId, path: request.path });
+      this.emit({
+        type: "open_in_editor_response",
+        payload: {
+          requestId: request.requestId,
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to open in editor";
+      this.sessionLogger.error(
+        {
+          err: error,
+          editorId: request.editorId,
+          path: request.path,
+          requestType: request.type,
+        },
+        "Failed to open in editor",
+      );
+      this.emit({
+        type: "open_in_editor_response",
+        payload: {
+          requestId: request.requestId,
           error: message,
         },
       });

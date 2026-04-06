@@ -29,6 +29,27 @@ describe("workspace message schemas", () => {
     expect(parsed.type).toBe("open_project_request");
   });
 
+  test("parses list_available_editors_request", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "list_available_editors_request",
+      requestId: "req-editors",
+    });
+
+    expect(parsed.type).toBe("list_available_editors_request");
+  });
+
+  test("parses open_in_editor_response", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "open_in_editor_response",
+      payload: {
+        requestId: "req-open-editor",
+        error: null,
+      },
+    });
+
+    expect(parsed.type).toBe("open_in_editor_response");
+  });
+
   test("rejects invalid workspace update payload", () => {
     const result = SessionOutboundMessageSchema.safeParse({
       type: "workspace_update",
