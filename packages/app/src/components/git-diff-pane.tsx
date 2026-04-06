@@ -18,17 +18,21 @@ import {
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
+  TextStyle,
 } from "react-native";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import {
+  AlignJustify,
   Archive,
   ChevronDown,
+  Columns2,
   GitBranch,
   GitCommitHorizontal,
   GitMerge,
   ListChevronsDownUp,
   ListChevronsUpDown,
+  Pilcrow,
   RefreshCcw,
   Upload,
   WrapText,
@@ -42,6 +46,7 @@ import {
 } from "@/hooks/use-checkout-diff-query";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { useCheckoutPrStatusQuery } from "@/hooks/use-checkout-pr-status-query";
+import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { DiffScroll } from "./diff-scroll";
 import {
   darkHighlightColors,
@@ -51,6 +56,7 @@ import {
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
 import { shouldAnchorHeaderBeforeCollapse } from "@/utils/git-diff-scroll";
+import { buildSplitDiffRows, type SplitDiffDisplayLine } from "@/utils/diff-layout";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -77,13 +83,27 @@ type HighlightStyle = NonNullable<HighlightToken["style"]>;
 
 interface HighlightedTextProps {
   tokens: HighlightToken[];
-  baseStyle: HighlightStyle | null;
-  lineType: "add" | "remove" | "context" | "header";
+  wrapLines?: boolean;
 }
 
-function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
+type WrappedWebTextStyle = TextStyle & {
+  whiteSpace?: "pre" | "pre-wrap";
+  overflowWrap?: "normal" | "anywhere";
+};
+
+function getWrappedTextStyle(wrapLines: boolean): WrappedWebTextStyle | undefined {
+  if (Platform.OS !== "web") {
+    return undefined;
+  }
+  return wrapLines
+    ? { whiteSpace: "pre-wrap", overflowWrap: "anywhere" }
+    : { whiteSpace: "pre", overflowWrap: "normal" };
+}
+
+function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
   const { theme } = useUnistyles();
   const isDark = theme.colorScheme === "dark";
+  const lineHeight = theme.lineHeight.diff;
 
   const getTokenColor = (style: HighlightStyle | null): string => {
     const baseColor = isDark ? "#c9d1d9" : "#24292f";
@@ -93,9 +113,14 @@ function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
   };
 
   return (
-    <Text style={styles.diffLineText}>
+    <Text
+      style={[
+        styles.diffLineText,
+        { lineHeight, ...getWrappedTextStyle(wrapLines) },
+      ]}
+    >
       {tokens.map((token, index) => (
-        <Text key={index} style={{ color: getTokenColor(token.style) }}>
+        <Text key={index} style={{ color: getTokenColor(token.style), lineHeight }}>
           {token.text}
         </Text>
       ))}
@@ -115,10 +140,12 @@ function DiffLineView({
   line,
   lineNumber,
   gutterWidth,
+  wrapLines,
 }: {
   line: DiffLine;
   lineNumber: number | null;
   gutterWidth: number;
+  wrapLines: boolean;
 }) {
   return (
     <View
@@ -142,11 +169,12 @@ function DiffLineView({
         </Text>
       </View>
       {line.tokens && line.type !== "header" ? (
-        <HighlightedText tokens={line.tokens} baseStyle={null} lineType={line.type} />
+        <HighlightedText tokens={line.tokens} wrapLines={wrapLines} />
       ) : (
         <Text
           style={[
             styles.diffLineText,
+            getWrappedTextStyle(wrapLines),
             line.type === "add" && styles.addLineText,
             line.type === "remove" && styles.removeLineText,
             line.type === "header" && styles.headerLineText,
@@ -154,6 +182,59 @@ function DiffLineView({
           ]}
         >
           {line.content || " "}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function SplitDiffCell({
+  line,
+  gutterWidth,
+  wrapLines,
+  showDivider = false,
+}: {
+  line: SplitDiffDisplayLine | null;
+  gutterWidth: number;
+  wrapLines: boolean;
+  showDivider?: boolean;
+}) {
+  return (
+    <View
+      style={[
+        styles.splitCell,
+        showDivider && styles.splitCellWithDivider,
+        !line && styles.emptySplitCell,
+        line?.type === "add" && styles.addLineContainer,
+        line?.type === "remove" && styles.removeLineContainer,
+        line?.type === "context" && styles.contextLineContainer,
+      ]}
+    >
+      <View style={[styles.lineNumberGutter, { width: gutterWidth }]}>
+        <Text
+          style={[
+            styles.lineNumberText,
+            line?.type === "add" && styles.addLineNumberText,
+            line?.type === "remove" && styles.removeLineNumberText,
+          ]}
+        >
+          {line?.lineNumber != null ? String(line.lineNumber) : ""}
+        </Text>
+      </View>
+      {line?.tokens ? (
+        <HighlightedText tokens={line.tokens} wrapLines={wrapLines} />
+      ) : (
+        <Text
+          style={[
+            styles.diffLineText,
+            getWrappedTextStyle(wrapLines) ,
+            line?.type === "add" && styles.addLineText,
+            line?.type === "remove" && styles.removeLineText,
+            line?.type === "context" && styles.contextLineText,
+            !line && styles.emptySplitCellText,
+          ]}
+        >
+          {line?.content ?? ""}
         </Text>
       )}
     </View>
@@ -245,21 +326,25 @@ const DiffFileHeader = memo(function DiffFileHeader({
 
 function DiffFileBody({
   file,
+  layout,
   wrapLines,
   onBodyHeightChange,
   testID,
 }: {
   file: ParsedDiffFile;
+  layout: "unified" | "split";
   wrapLines: boolean;
   onBodyHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }) {
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
+  const [bodyWidth, setBodyWidth] = useState(0);
 
   return (
     <View
       style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]}
       onLayout={(event) => {
+        setBodyWidth(event.nativeEvent.layout.width);
         onBodyHeightChange?.(file.path, event.nativeEvent.layout.height);
       }}
       testID={testID}
@@ -275,50 +360,80 @@ function DiffFileBody({
           );
         }
 
-        const linesContent = (() => {
-          let maxLineNo = 0;
-          for (const hunk of file.hunks) {
-            maxLineNo = Math.max(
-              maxLineNo,
-              hunk.oldStart + hunk.oldCount,
-              hunk.newStart + hunk.newCount,
-            );
-          }
-          const gutterWidth = lineNumberGutterWidth(maxLineNo);
-          return file.hunks.map((hunk, hunkIndex) => {
-            let oldLineNo = hunk.oldStart;
-            let newLineNo = hunk.newStart;
-            return hunk.lines.map((line, lineIndex) => {
-              let lineNumber: number | null = null;
-              if (line.type === "remove") {
-                lineNumber = oldLineNo;
-                oldLineNo++;
-              } else if (line.type === "add") {
-                lineNumber = newLineNo;
-                newLineNo++;
-              } else if (line.type === "context") {
-                lineNumber = newLineNo;
-                oldLineNo++;
-                newLineNo++;
-              }
-              return (
-                <DiffLineView
-                  key={`${hunkIndex}-${lineIndex}`}
-                  line={line}
-                  lineNumber={lineNumber}
-                  gutterWidth={gutterWidth}
-                />
-              );
-            });
-          });
-        })();
+        let maxLineNo = 0;
+        for (const hunk of file.hunks) {
+          maxLineNo = Math.max(maxLineNo, hunk.oldStart + hunk.oldCount, hunk.newStart + hunk.newCount);
+        }
+        const gutterWidth = lineNumberGutterWidth(maxLineNo);
+
+        const linesContent =
+          layout === "split"
+            ? buildSplitDiffRows(file).map((row, rowIndex) => {
+                if (row.kind === "header") {
+                  return (
+                    <View key={`header-${rowIndex}`} style={styles.splitHeaderRow}>
+                      <Text style={[styles.diffLineText, styles.headerLineText]}>{row.content}</Text>
+                    </View>
+                  );
+                }
+
+                return (
+                  <View key={`pair-${rowIndex}`} style={styles.splitRow}>
+                    <SplitDiffCell line={row.left} gutterWidth={gutterWidth} wrapLines={wrapLines} />
+                    <SplitDiffCell
+                      line={row.right}
+                      gutterWidth={gutterWidth}
+                      wrapLines={wrapLines}
+                      showDivider
+                    />
+                  </View>
+                );
+              })
+            : file.hunks.map((hunk, hunkIndex) => {
+                let oldLineNo = hunk.oldStart;
+                let newLineNo = hunk.newStart;
+                return hunk.lines.map((line, lineIndex) => {
+                  let lineNumber: number | null = null;
+                  if (line.type === "remove") {
+                    lineNumber = oldLineNo;
+                    oldLineNo++;
+                  } else if (line.type === "add") {
+                    lineNumber = newLineNo;
+                    newLineNo++;
+                  } else if (line.type === "context") {
+                    lineNumber = newLineNo;
+                    oldLineNo++;
+                    newLineNo++;
+                  }
+                  return (
+                    <DiffLineView
+                      key={`${hunkIndex}-${lineIndex}`}
+                      line={line}
+                      lineNumber={lineNumber}
+                      gutterWidth={gutterWidth}
+                      wrapLines={wrapLines}
+                    />
+                  );
+                });
+              });
+
+        const availableWidth = bodyWidth > 0 ? bodyWidth : scrollViewWidth;
+        const contentContainer = (
+          <View
+            style={[
+              layout === "split" ? styles.splitLinesContainer : styles.linesContainer,
+              availableWidth > 0 &&
+                (layout === "split"
+                  ? { width: availableWidth, minWidth: availableWidth, maxWidth: availableWidth }
+                  : { minWidth: availableWidth }),
+            ]}
+          >
+            {linesContent}
+          </View>
+        );
 
         if (wrapLines) {
-          return (
-            <View style={styles.diffContent}>
-              <View style={styles.linesContainer}>{linesContent}</View>
-            </View>
-          );
+          return <View style={styles.diffContent}>{contentContainer}</View>;
         }
 
         return (
@@ -328,11 +443,7 @@ function DiffFileBody({
             style={styles.diffContent}
             contentContainerStyle={styles.diffContentInner}
           >
-            <View
-              style={[styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }]}
-            >
-              {linesContent}
-            </View>
+            {contentContainer}
           </DiffScroll>
         );
       })()}
@@ -355,26 +466,31 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const { theme } = useUnistyles();
   const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
+  const canUseSplitLayout = Platform.OS === "web" && !isMobile;
   const router = useRouter();
   const [diffModeOverride, setDiffModeOverride] = useState<"uncommitted" | "base" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
-  const [wrapLines, setWrapLines] = useState(false);
-
-  useEffect(() => {
-    AsyncStorage.getItem("diff-wrap-lines").then((value) => {
-      if (value === "true") setWrapLines(true);
-    });
-  }, []);
+  const { preferences: changesPreferences, updatePreferences: updateChangesPreferences } =
+    useChangesPreferences();
+  const wrapLines = changesPreferences.wrapLines;
+  const effectiveLayout = canUseSplitLayout ? changesPreferences.layout : "unified";
 
   const handleToggleWrapLines = useCallback(() => {
-    setWrapLines((prev) => {
-      const next = !prev;
-      AsyncStorage.setItem("diff-wrap-lines", String(next));
-      return next;
-    });
-  }, []);
+    void updateChangesPreferences({ wrapLines: !wrapLines });
+  }, [updateChangesPreferences, wrapLines]);
+
+  const handleLayoutChange = useCallback(
+    (nextLayout: "unified" | "split") => {
+      void updateChangesPreferences({ layout: nextLayout });
+    },
+    [updateChangesPreferences],
+  );
+
+  const handleToggleHideWhitespace = useCallback(() => {
+    void updateChangesPreferences({ hideWhitespace: !changesPreferences.hideWhitespace });
+  }, [changesPreferences.hideWhitespace, updateChangesPreferences]);
 
   const {
     status,
@@ -410,6 +526,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     cwd,
     mode: diffMode,
     baseRef,
+    ignoreWhitespace: changesPreferences.hideWhitespace,
     enabled: isGit,
   });
   const {
@@ -726,13 +843,20 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       return (
         <DiffFileBody
           file={item.file}
+          layout={effectiveLayout}
           wrapLines={wrapLines}
           onBodyHeightChange={handleBodyHeightChange}
           testID={`diff-file-${item.fileIndex}-body`}
         />
       );
     },
-    [handleBodyHeightChange, handleHeaderHeightChange, handleToggleExpanded, wrapLines],
+    [
+      effectiveLayout,
+      handleBodyHeightChange,
+      handleHeaderHeightChange,
+      handleToggleExpanded,
+      wrapLines,
+    ],
   );
 
   const flatKeyExtractor = useCallback(
@@ -821,7 +945,11 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     bodyContent = (
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyText}>
-          {diffMode === "uncommitted" ? "No uncommitted changes" : `No changes vs ${baseRefLabel}`}
+          {changesPreferences.hideWhitespace
+            ? "No visible changes after hiding whitespace"
+            : diffMode === "uncommitted"
+              ? "No uncommitted changes"
+              : `No changes vs ${baseRefLabel}`}
         </Text>
       </View>
     );
@@ -833,7 +961,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         renderItem={renderFlatItem}
         keyExtractor={flatKeyExtractor}
         stickyHeaderIndices={stickyHeaderIndices}
-        extraData={expandedByPath}
+        extraData={{ expandedByPath, effectiveLayout, wrapLines }}
         style={styles.scrollView}
         contentContainerStyle={styles.contentContainer}
         testID="git-diff-scroll"
@@ -1019,56 +1147,149 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            {files.length > 0 ? (
-              <View style={styles.diffStatusButtons}>
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <Pressable
-                      style={({ hovered, pressed }) => [
-                        styles.expandAllButton,
-                        (hovered || pressed) && styles.diffStatusRowHovered,
-                      ]}
-                      onPress={handleToggleWrapLines}
-                    >
-                      <WrapText size={isMobile ? 18 : 14} color={theme.colors.foregroundMuted} />
-                    </Pressable>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    <Text style={styles.tooltipText}>
-                      {wrapLines ? "Scroll long lines" : "Wrap long lines"}
-                    </Text>
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <Pressable
-                      style={({ hovered, pressed }) => [
-                        styles.expandAllButton,
-                        (hovered || pressed) && styles.diffStatusRowHovered,
-                      ]}
-                      onPress={handleToggleExpandAll}
-                    >
-                      {allExpanded ? (
-                        <ListChevronsDownUp
-                          size={isMobile ? 18 : 14}
-                          color={theme.colors.foregroundMuted}
+            <View style={styles.diffStatusButtons}>
+              {canUseSplitLayout ? (
+                <View style={styles.toggleButtonGroup}>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Unified diff"
+                        testID="changes-layout-unified"
+                        onPress={() => handleLayoutChange("unified")}
+                        style={({ hovered, pressed }) => [
+                          styles.toggleButton,
+                          styles.toggleButtonGroupStart,
+                          changesPreferences.layout === "unified" && styles.toggleButtonSelected,
+                          (hovered || pressed) && styles.diffStatusRowHovered,
+                        ]}
+                      >
+                        <AlignJustify
+                          size={14}
+                          color={
+                            changesPreferences.layout === "unified"
+                              ? theme.colors.foreground
+                              : theme.colors.foregroundMuted
+                          }
                         />
-                      ) : (
-                        <ListChevronsUpDown
-                          size={isMobile ? 18 : 14}
-                          color={theme.colors.foregroundMuted}
+                      </Pressable>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <Text style={styles.tooltipText}>Unified diff</Text>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Side-by-side diff"
+                        testID="changes-layout-split"
+                        onPress={() => handleLayoutChange("split")}
+                        style={({ hovered, pressed }) => [
+                          styles.toggleButton,
+                          styles.toggleButtonGroupEnd,
+                          changesPreferences.layout === "split" && styles.toggleButtonSelected,
+                          (hovered || pressed) && styles.diffStatusRowHovered,
+                        ]}
+                      >
+                        <Columns2
+                          size={14}
+                          color={
+                            changesPreferences.layout === "split"
+                              ? theme.colors.foreground
+                              : theme.colors.foregroundMuted
+                          }
                         />
-                      )}
-                    </Pressable>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    <Text style={styles.tooltipText}>
-                      {allExpanded ? "Collapse all files" : "Expand all files"}
-                    </Text>
-                  </TooltipContent>
-                </Tooltip>
-              </View>
-            ) : null}
+                      </Pressable>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <Text style={styles.tooltipText}>Side-by-side diff</Text>
+                    </TooltipContent>
+                  </Tooltip>
+                </View>
+              ) : null}
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Hide whitespace"
+                    testID="changes-toggle-whitespace"
+                    style={({ hovered, pressed }) => [
+                      styles.expandAllButton,
+                      changesPreferences.hideWhitespace && styles.toggleButtonSelected,
+                      (hovered || pressed) && styles.diffStatusRowHovered,
+                    ]}
+                    onPress={handleToggleHideWhitespace}
+                  >
+                    <Pilcrow
+                      size={isMobile ? 18 : 14}
+                      color={
+                        changesPreferences.hideWhitespace
+                          ? theme.colors.foreground
+                          : theme.colors.foregroundMuted
+                      }
+                    />
+                  </Pressable>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <Text style={styles.tooltipText}>Hide whitespace</Text>
+                </TooltipContent>
+              </Tooltip>
+              {files.length > 0 ? (
+                <View style={styles.diffStatusButtons}>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Pressable
+                        style={({ hovered, pressed }) => [
+                          styles.expandAllButton,
+                          wrapLines && styles.toggleButtonSelected,
+                          (hovered || pressed) && styles.diffStatusRowHovered,
+                        ]}
+                        onPress={handleToggleWrapLines}
+                      >
+                        <WrapText
+                          size={isMobile ? 18 : 14}
+                          color={wrapLines ? theme.colors.foreground : theme.colors.foregroundMuted}
+                        />
+                      </Pressable>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <Text style={styles.tooltipText}>
+                        {wrapLines ? "Scroll long lines" : "Wrap long lines"}
+                      </Text>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Pressable
+                        style={({ hovered, pressed }) => [
+                          styles.expandAllButton,
+                          (hovered || pressed) && styles.diffStatusRowHovered,
+                        ]}
+                        onPress={handleToggleExpandAll}
+                      >
+                        {allExpanded ? (
+                          <ListChevronsDownUp
+                            size={isMobile ? 18 : 14}
+                            color={theme.colors.foregroundMuted}
+                          />
+                        ) : (
+                          <ListChevronsUpDown
+                            size={isMobile ? 18 : 14}
+                            color={theme.colors.foregroundMuted}
+                          />
+                        )}
+                      </Pressable>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <Text style={styles.tooltipText}>
+                        {allExpanded ? "Collapse all files" : "Expand all files"}
+                      </Text>
+                    </TooltipContent>
+                  </Tooltip>
+                </View>
+              ) : null}
+            </View>
           </View>
         </View>
       ) : null}
@@ -1165,6 +1386,43 @@ const styles = StyleSheet.create((theme) => ({
       sm: theme.spacing[1],
       md: 0,
     },
+    flexWrap: "wrap",
+  },
+  toggleButtonGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.base,
+    overflow: "hidden",
+  },
+  toggleButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: {
+      xs: 32,
+      sm: 32,
+      md: 28,
+    },
+    height: {
+      xs: 32,
+      sm: 32,
+      md: 24,
+    },
+    paddingHorizontal: {
+      xs: theme.spacing[2],
+      sm: theme.spacing[2],
+      md: theme.spacing[1],
+    },
+    backgroundColor: theme.colors.surface1,
+  },
+  toggleButtonGroupStart: {
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+  },
+  toggleButtonGroupEnd: {},
+  toggleButtonSelected: {
+    backgroundColor: theme.colors.surface3,
   },
   expandAllButton: {
     flexDirection: "row",
@@ -1343,6 +1601,36 @@ const styles = StyleSheet.create((theme) => ({
   linesContainer: {
     backgroundColor: theme.colors.surface1,
   },
+  splitLinesContainer: {
+    backgroundColor: theme.colors.surface1,
+    minWidth: 760,
+  },
+  splitRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    width: "100%",
+    minWidth: "100%",
+  },
+  splitHeaderRow: {
+    backgroundColor: theme.colors.surface2,
+    paddingHorizontal: theme.spacing[3],
+  },
+  splitCell: {
+    flex: 1,
+    flexBasis: 0,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "stretch",
+    overflow: "hidden",
+    backgroundColor: theme.colors.surface2,
+  },
+  emptySplitCell: {
+    backgroundColor: theme.colors.surfaceDiffEmpty,
+  },
+  splitCellWithDivider: {
+    borderLeftWidth: theme.borderWidth[1],
+    borderLeftColor: theme.colors.border,
+  },
   diffLineContainer: {
     flexDirection: "row",
     alignItems: "stretch",
@@ -1352,13 +1640,13 @@ const styles = StyleSheet.create((theme) => ({
     borderRightColor: theme.colors.border,
     marginRight: theme.spacing[2],
     alignSelf: "stretch",
-    justifyContent: "center",
+    justifyContent: "flex-start",
   },
   lineNumberText: {
     textAlign: "right",
     paddingRight: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
     fontSize: theme.fontSize.xs,
+    lineHeight: theme.lineHeight.diff,
     fontFamily: Fonts.mono,
     color: theme.colors.foregroundMuted,
     userSelect: "none",
@@ -1372,8 +1660,8 @@ const styles = StyleSheet.create((theme) => ({
   diffLineText: {
     flex: 1,
     paddingRight: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
     fontSize: theme.fontSize.xs,
+    lineHeight: theme.lineHeight.diff,
     fontFamily: Fonts.mono,
     color: theme.colors.foreground,
     userSelect: "text",
@@ -1401,6 +1689,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   contextLineText: {
     color: theme.colors.foregroundMuted,
+  },
+  emptySplitCellText: {
+    color: "transparent",
   },
   statusMessageContainer: {
     borderTopWidth: theme.borderWidth[1],

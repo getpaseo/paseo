@@ -611,7 +611,10 @@ export class DaemonClient {
   private connectionState: ConnectionState = { status: "idle" };
   private checkoutDiffSubscriptions = new Map<
     string,
-    { cwd: string; compare: { mode: "uncommitted" | "base"; baseRef?: string } }
+    {
+      cwd: string;
+      compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+    }
   >();
   private terminalDirectorySubscriptions = new Set<string>();
   private terminalSlots = new Map<string, number>();
@@ -2146,20 +2149,22 @@ export class DaemonClient {
   private normalizeCheckoutDiffCompare(compare: {
     mode: "uncommitted" | "base";
     baseRef?: string;
-  }): { mode: "uncommitted" | "base"; baseRef?: string } {
+    ignoreWhitespace?: boolean;
+  }): { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean } {
+    const ignoreWhitespace = compare.ignoreWhitespace === true;
     if (compare.mode === "uncommitted") {
-      return { mode: "uncommitted" };
+      return { mode: "uncommitted", ignoreWhitespace };
     }
     const trimmedBaseRef = compare.baseRef?.trim();
     if (!trimmedBaseRef) {
-      return { mode: "base" };
+      return { mode: "base", ignoreWhitespace };
     }
-    return { mode: "base", baseRef: trimmedBaseRef };
+    return { mode: "base", baseRef: trimmedBaseRef, ignoreWhitespace };
   }
 
   async getCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base"; baseRef?: string },
+    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
     requestId?: string,
   ): Promise<CheckoutDiffPayload> {
     const oneShotSubscriptionId = `oneshot-checkout-diff:${crypto.randomUUID()}`;
@@ -2185,7 +2190,7 @@ export class DaemonClient {
 
   async subscribeCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base"; baseRef?: string },
+    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
     options?: { subscriptionId?: string; requestId?: string },
   ): Promise<SubscribeCheckoutDiffPayload> {
     const subscriptionId = options?.subscriptionId ?? crypto.randomUUID();

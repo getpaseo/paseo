@@ -969,6 +969,7 @@ const CheckoutErrorSchema = z.object({
 const CheckoutDiffCompareSchema = z.object({
   mode: z.enum(["uncommitted", "base"]),
   baseRef: z.string().optional(),
+  ignoreWhitespace: z.boolean().optional(),
 });
 
 export const CheckoutStatusRequestSchema = z.object({

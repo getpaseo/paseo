@@ -111,6 +111,7 @@ const lightSemanticColors = {
   surface2: "#f4f4f5", // Elevated: badges, inputs, sheets (was zinc-200, now zinc-100)
   surface3: "#e4e4e7", // Highest elevation (was zinc-300, now zinc-200)
   surface4: "#d4d4d8", // Extra emphasis (was zinc-400, now zinc-300)
+  surfaceDiffEmpty: "#f6f6f6", // Empty side of split diff rows, between surface1 and surface2 and biased toward surface2
   surfaceSidebar: "#f4f4f5", // Sidebar background (darker than main)
   surfaceWorkspace: "#ffffff", // Workspace main background
 
@@ -185,6 +186,7 @@ const darkSemanticColors = {
   surface2: "#272A29", // Elevated: badges, inputs, sheets
   surface3: "#434645", // Highest elevation
   surface4: "#595B5B", // Extra emphasis
+  surfaceDiffEmpty: "#252827", // Empty side of split diff rows, between surface1 and surface2 and biased toward surface2
   surfaceSidebar: "#141716", // Sidebar background (darker than main)
   surfaceWorkspace: "#1E2120", // Workspace main background (surface1)
 
@@ -277,6 +279,10 @@ const commonTheme = {
     "2xl": 22,
     "3xl": 26,
     "4xl": 34,
+  },
+
+  lineHeight: {
+    diff: 22,
   },
 
   iconSize: {
