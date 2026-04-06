@@ -23,9 +23,9 @@ import { Route as BlogIndexRouteImport } from './routes/blog/index'
 import { Route as DocsWorktreesRouteImport } from './routes/docs/worktrees'
 import { Route as DocsVoiceRouteImport } from './routes/docs/voice'
 import { Route as DocsUpdatesRouteImport } from './routes/docs/updates'
+import { Route as DocsSkillsRouteImport } from './routes/docs/skills'
 import { Route as DocsSecurityRouteImport } from './routes/docs/security'
 import { Route as DocsConfigurationRouteImport } from './routes/docs/configuration'
-import { Route as DocsSkillsRouteImport } from './routes/docs/skills'
 import { Route as DocsCliRouteImport } from './routes/docs/cli'
 import { Route as DocsBestPracticesRouteImport } from './routes/docs/best-practices'
 import { Route as BlogSplatRouteImport } from './routes/blog/$'
@@ -100,6 +100,11 @@ const DocsUpdatesRoute = DocsUpdatesRouteImport.update({
   path: '/updates',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsSkillsRoute = DocsSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsSecurityRoute = DocsSecurityRouteImport.update({
   id: '/security',
   path: '/security',
@@ -108,11 +113,6 @@ const DocsSecurityRoute = DocsSecurityRouteImport.update({
 const DocsConfigurationRoute = DocsConfigurationRouteImport.update({
   id: '/configuration',
   path: '/configuration',
-  getParentRoute: () => DocsRoute,
-} as any)
-const DocsSkillsRoute = DocsSkillsRouteImport.update({
-  id: '/skills',
-  path: '/skills',
   getParentRoute: () => DocsRoute,
 } as any)
 const DocsCliRoute = DocsCliRouteImport.update({
@@ -375,6 +375,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsUpdatesRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/skills': {
+      id: '/docs/skills'
+      path: '/skills'
+      fullPath: '/docs/skills'
+      preLoaderRoute: typeof DocsSkillsRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/security': {
       id: '/docs/security'
       path: '/security'
@@ -387,13 +394,6 @@ declare module '@tanstack/react-router' {
       path: '/configuration'
       fullPath: '/docs/configuration'
       preLoaderRoute: typeof DocsConfigurationRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/docs/skills': {
-      id: '/docs/skills'
-      path: '/skills'
-      fullPath: '/docs/skills'
-      preLoaderRoute: typeof DocsSkillsRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/cli': {
