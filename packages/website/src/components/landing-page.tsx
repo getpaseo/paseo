@@ -779,6 +779,8 @@ function GetStarted() {
           <AgentBadge name="Claude Code" icon={<ClaudeCodeIcon className="h-6 w-6" />} />
           <AgentBadge name="Codex" icon={<CodexIcon className="h-6 w-6" />} />
           <AgentBadge name="OpenCode" icon={<OpenCodeIcon className="h-6 w-6" />} />
+          <AgentBadge name="Copilot" icon={<CopilotIcon className="h-6 w-6" />} />
+          <AgentBadge name="Pi" icon={<PiIcon className="h-6 w-6" />} />
         </div>
       </div>
     </motion.div>

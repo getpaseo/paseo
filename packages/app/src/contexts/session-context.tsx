@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
+import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { generateMessageId, type StreamItem } from "@/types/stream";
 import {
   processTimelineResponse,
@@ -602,6 +603,34 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useEffect(() => {
     updateSessionClient(serverId, client);
   }, [serverId, client, updateSessionClient]);
+
+  useEffect(() => {
+    const serverInfo = client.getLastServerInfoMessage();
+    if (!serverInfo) {
+      return;
+    }
+
+    updateSessionServerInfo(serverId, {
+      serverId: serverInfo.serverId,
+      hostname: serverInfo.hostname,
+      version: serverInfo.version,
+      ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
+      ...(serverInfo.features ? { features: serverInfo.features } : {}),
+    });
+  }, [client, serverId, updateSessionServerInfo]);
+
+  useEffect(() => {
+    if (!isConnected) {
+      return;
+    }
+
+    const serverInfo = client.getLastServerInfoMessage();
+    if (!serverInfo?.features?.providersSnapshot) {
+      return;
+    }
+
+    prefetchProvidersSnapshot(serverId, client);
+  }, [client, isConnected, serverId]);
 
   useEffect(() => {
     if (!voiceRuntime) {

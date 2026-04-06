@@ -11,6 +11,12 @@ There are two supported ways to ship from `main`:
 
 ## Standard release (patch)
 
+Before running any stable patch release command:
+
+- Make sure the intended release commit is already committed to `main` and the working tree is clean.
+- Make sure local `npm run typecheck` passes on that commit.
+- Do not use `npm run release:patch` as a substitute for checking whether the current commit is actually ready.
+
 ```bash
 npm run release:patch
 ```
@@ -24,6 +30,7 @@ Use the direct stable path when the current `main` changes are ready to become t
 ## Manual step-by-step
 
 ```bash
+npm run typecheck            # Verify the exact commit you intend to release
 npm run release:check        # Typecheck, build, dry-run pack
 npm run version:all:patch    # Bump version, create commit + tag
 npm run release:publish      # Publish to npm
@@ -131,7 +138,7 @@ Load the `paseo` skill and launch a **Codex 5.4** agent with a prompt like:
 > Review the diff between the latest release tag and HEAD. Focus on:
 >
 > 1. **Breaking changes** — especially in the WebSocket protocol, agent lifecycle, and any server↔client contract.
-> 2. **Backward compatibility** — mobile apps lag behind desktop/daemon updates by days. Users will update desktop and daemon immediately but keep running the old app. Flag anything that requires both sides to update in lockstep.
+> 2. **Backward compatibility** — the important direction is old app clients talking to newly updated daemons. Users update desktop and daemon first, then keep running the old app for a while. Flag anything that breaks old clients against new daemons or requires both sides to update in lockstep.
 > 3. **Regressions** — anything that looks like it could break existing functionality.
 >
 > Diff: `git diff <latest-release-tag>..HEAD`
@@ -150,6 +157,8 @@ In other words, RCs are checkpoints along the way; the changelog only records th
 ## Completion checklist
 
 - [ ] Run the pre-release sanity check (see above) and address any findings
+- [ ] Ensure the intended release commit is already committed and the git worktree is clean before running any `release:*` patch/promote command
+- [ ] Ensure local `npm run typecheck` passes on that exact commit before running any `release:*` patch/promote command
 - [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors)
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] `npm run release:patch` or `npm run release:promote` completes successfully

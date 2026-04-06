@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.49 - 2026-04-07
+
+### Fixed
+- Models and providers now load reliably on first app connect instead of requiring a second status refresh.
+- Model picker on running agents now only shows models from the agent's own provider, not every provider on the server.
+- Model data is now prefetched consistently regardless of which screen you open first.
+- Draft and running-agent flows now share the same provider data path, eliminating stale model lists from legacy fallbacks.
+
 ## 0.1.48 - 2026-04-05
 
 ### Added

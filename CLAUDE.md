@@ -45,7 +45,7 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup, build sync requir
 - **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.
 - **NEVER add auth checks to tests** — agent providers handle their own auth.
 - **Always run typecheck after every change.**
-- **NEVER make breaking changes to WebSocket or message schemas.** The mobile app in the App Store always lags behind the daemon, and daemons in the wild lag behind new app releases. Both directions must work. Every schema change MUST be backward-compatible:
+- **NEVER make breaking changes to WebSocket or message schemas.** The primary compatibility path is old mobile app clients talking to newly updated daemons. Users update desktop and daemon first, then keep running the old app for a while. Every schema change MUST be backward-compatible for old clients against new daemons:
   - New fields: always `.optional()` with a sensible default or `.transform()` fallback.
   - Never change a field from optional to required.
   - Never remove a field — deprecate it (keep accepting it, stop sending it).

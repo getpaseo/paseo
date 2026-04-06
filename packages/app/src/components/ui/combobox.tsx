@@ -203,12 +203,12 @@ export function ComboboxItem({
       ]}
     >
       {leadingContent}
-      <View style={styles.comboboxItemContent}>
+      <View style={[styles.comboboxItemContent, description && styles.comboboxItemContentInline]}>
         <Text numberOfLines={1} style={styles.comboboxItemLabel}>
           {label}
         </Text>
         {description ? (
-          <Text numberOfLines={2} style={styles.comboboxItemDescription}>
+          <Text numberOfLines={1} style={styles.comboboxItemDescription}>
             {description}
           </Text>
         ) : null}
@@ -847,6 +847,11 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     flexShrink: 1,
   },
+  comboboxItemContentInline: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: theme.spacing[2],
+  },
   comboboxItemLeadingSlot: {
     width: 16,
     alignItems: "center",
@@ -857,9 +862,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   comboboxItemDescription: {
-    marginTop: 2,
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
+    flexShrink: 1,
   },
   emptyText: {
     paddingHorizontal: theme.spacing[3],
