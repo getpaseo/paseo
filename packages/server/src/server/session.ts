@@ -5297,6 +5297,26 @@ export class Session {
   ): Promise<WorkspaceDescriptorPayload> {
     const resolvedProjectRecord =
       projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
+
+    return {
+      id: workspace.workspaceId,
+      projectId: workspace.projectId,
+      projectDisplayName: resolvedProjectRecord?.displayName ?? workspace.projectId,
+      projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
+      projectKind: resolvedProjectRecord?.kind ?? "non_git",
+      workspaceKind: workspace.kind,
+      name: workspace.displayName,
+      status: "done",
+      activityAt: null,
+      diffStat: null,
+    };
+  }
+
+  private async describeWorkspaceRecordWithGitData(
+    workspace: PersistedWorkspaceRecord,
+    projectRecord?: PersistedProjectRecord | null,
+  ): Promise<WorkspaceDescriptorPayload> {
+    const base = await this.describeWorkspaceRecord(workspace, projectRecord);
     let displayName = workspace.displayName;
     try {
       const placement = await this.buildProjectPlacement(workspace.cwd);
@@ -5315,18 +5335,7 @@ export class Session {
       // Non-critical — leave null on failure.
     }
 
-    return {
-      id: workspace.workspaceId,
-      projectId: workspace.projectId,
-      projectDisplayName: resolvedProjectRecord?.displayName ?? workspace.projectId,
-      projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
-      projectKind: resolvedProjectRecord?.kind ?? "non_git",
-      workspaceKind: workspace.kind,
-      name: displayName,
-      status: "done",
-      activityAt: null,
-      diffStat,
-    };
+    return { ...base, name: displayName, diffStat };
   }
 
   private async listWorkspaceDescriptorsSnapshot(): Promise<WorkspaceDescriptorPayload[]> {
@@ -5983,7 +5992,7 @@ export class Session {
     try {
       const workspace = await this.ensureWorkspaceRegistered(request.cwd);
       await this.emitWorkspaceUpdateForCwd(workspace.cwd);
-      const descriptor = await this.describeWorkspaceRecord(workspace);
+      const descriptor = await this.describeWorkspaceRecordWithGitData(workspace);
       this.emit({
         type: "open_project_response",
         payload: {
@@ -6012,7 +6021,7 @@ export class Session {
     return handleCreateWorktreeRequest(
       {
         paseoHome: this.paseoHome,
-        describeWorkspaceRecord: (workspace) => this.describeWorkspaceRecord(workspace),
+        describeWorkspaceRecord: (workspace) => this.describeWorkspaceRecordWithGitData(workspace),
         emit: (message) => this.emit(message),
         registerPendingWorktreeWorkspace: (options) =>
           this.registerPendingWorktreeWorkspace(options),
