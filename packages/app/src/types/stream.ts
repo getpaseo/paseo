@@ -735,14 +735,30 @@ function flushHeadToTail(tail: StreamItem[], head: StreamItem[]): StreamItem[] {
   }
 
   const finalized = finalizeHeadItems(head);
-  const tailIds = new Set(tail.map((item) => item.id));
-  const newItems = finalized.filter((item) => !tailIds.has(item.id));
+  const tailIndexById = new Map(tail.map((item, index) => [item.id, index]));
+  let nextTail = tail;
 
-  if (newItems.length === 0) {
-    return tail;
+  for (const item of finalized) {
+    const existingIndex = tailIndexById.get(item.id);
+    if (existingIndex === undefined) {
+      if (nextTail === tail) {
+        nextTail = [...tail];
+      }
+      nextTail.push(item);
+      tailIndexById.set(item.id, nextTail.length - 1);
+      continue;
+    }
+
+    const existing = nextTail[existingIndex];
+    if (existing !== item) {
+      if (nextTail === tail) {
+        nextTail = [...tail];
+      }
+      nextTail[existingIndex] = item;
+    }
   }
 
-  return [...tail, ...newItems];
+  return nextTail;
 }
 
 /**

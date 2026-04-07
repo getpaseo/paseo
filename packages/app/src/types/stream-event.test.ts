@@ -131,6 +131,37 @@ describe("applyStreamEvent", () => {
     expect(result.tail[0].kind).toBe("assistant_message");
   });
 
+  it("replaces stale tail content with finalized head content on turn completion", () => {
+    const result = applyStreamEvent({
+      tail: [
+        {
+          kind: "assistant_message",
+          id: "assistant-shared",
+          text: "Hello",
+          timestamp: new Date(0),
+        },
+      ],
+      head: [
+        {
+          kind: "assistant_message",
+          id: "assistant-shared",
+          text: "Hello world",
+          timestamp: new Date(1),
+        },
+      ],
+      event: completionEvent(),
+      timestamp: baseTimestamp,
+    });
+
+    expect(result.head).toHaveLength(0);
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toMatchObject({
+      kind: "assistant_message",
+      id: "assistant-shared",
+      text: "Hello world",
+    });
+  });
+
   it("flushes reasoning when assistant message starts", () => {
     let result = applyStreamEvent({
       tail: [],

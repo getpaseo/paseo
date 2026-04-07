@@ -3174,6 +3174,21 @@ class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  private emitBufferedAssistantMessages(): void {
+    for (const [itemId, text] of this.pendingAgentMessages.entries()) {
+      if (!text) {
+        continue;
+      }
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: { type: "assistant_message", text },
+      });
+      this.emittedItemCompletedIds.add(itemId);
+    }
+    this.pendingAgentMessages.clear();
+  }
+
   private createTurnId(): string {
     return `codex-turn-${this.nextTurnOrdinal++}`;
   }
@@ -3205,6 +3220,9 @@ class CodexAppServerAgentSession implements AgentSession {
     }
 
     if (parsed.kind === "turn_completed") {
+      if (parsed.status === "completed" && this.pendingAgentMessages.size > 0) {
+        this.emitBufferedAssistantMessages();
+      }
       if (parsed.status === "failed") {
         this.emitEvent({
           type: "turn_failed",
