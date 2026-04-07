@@ -13,6 +13,7 @@ import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
+import { BackgroundGitFetchManager } from "./background-git-fetch-manager.js";
 import {
   type ServerInfoStatusPayload,
   type WSHelloMessage,
@@ -237,6 +238,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
+  private readonly backgroundGitFetchManager: BackgroundGitFetchManager;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
   private readonly pushTokenStore: PushTokenStore;
@@ -338,6 +340,9 @@ export class VoiceAssistantWebSocketServer {
       throw new Error("VoiceAssistantWebSocketServer requires a checkout diff manager.");
     }
     this.checkoutDiffManager = checkoutDiffManager;
+    this.backgroundGitFetchManager = new BackgroundGitFetchManager({
+      logger: this.logger,
+    });
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.createAgentMcpTransport = createAgentMcpTransport;
@@ -507,6 +512,7 @@ export class VoiceAssistantWebSocketServer {
 
     await Promise.all(cleanupPromises);
     this.providerSnapshotManager.destroy();
+    this.backgroundGitFetchManager.dispose();
     this.checkoutDiffManager.dispose();
     this.pendingConnections.clear();
     this.sessions.clear();
@@ -653,6 +659,7 @@ export class VoiceAssistantWebSocketServer {
       loopService: this.loopService,
       scheduleService: this.scheduleService,
       checkoutDiffManager: this.checkoutDiffManager,
+      backgroundGitFetchManager: this.backgroundGitFetchManager,
       createAgentMcpTransport: this.createAgentMcpTransport,
       stt: () => this.speech?.resolveStt() ?? null,
       tts: () => this.speech?.resolveTts() ?? null,

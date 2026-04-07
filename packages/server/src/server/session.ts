@@ -65,6 +65,7 @@ import {
 import { experimental_createMCPClient } from "ai";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { VoiceCallerContext, VoiceMcpStdioConfig, VoiceSpeakHandler } from "./voice-types.js";
+import { BackgroundGitFetchManager } from "./background-git-fetch-manager.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 import { buildProviderRegistry } from "./agent/provider-registry.js";
@@ -398,6 +399,7 @@ export type SessionOptions = {
   scheduleService: ScheduleService;
   loopService: LoopService;
   checkoutDiffManager: CheckoutDiffManager;
+  backgroundGitFetchManager: BackgroundGitFetchManager;
   createAgentMcpTransport: AgentMcpTransportFactory;
   stt: Resolvable<SpeechToTextProvider | null>;
   tts: Resolvable<TextToSpeechProvider | null>;
@@ -583,6 +585,7 @@ export class Session {
   private readonly scheduleService: ScheduleService;
   private readonly loopService: LoopService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
+  private readonly backgroundGitFetchManager: BackgroundGitFetchManager;
   private readonly createAgentMcpTransport: AgentMcpTransportFactory;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
@@ -611,6 +614,7 @@ export class Session {
   private peakInflightRequests = 0;
   private readonly checkoutDiffSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitWatchTargets = new Map<string, WorkspaceGitWatchTarget>();
+  private readonly workspaceGitFetchSubscriptions = new Map<string, () => void>();
   private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null;
   private readonly registerVoiceSpeakHandler?: (
     agentId: string,
@@ -649,6 +653,7 @@ export class Session {
       scheduleService,
       loopService,
       checkoutDiffManager,
+      backgroundGitFetchManager,
       createAgentMcpTransport,
       stt,
       tts,
@@ -677,6 +682,7 @@ export class Session {
     this.scheduleService = scheduleService;
     this.loopService = loopService;
     this.checkoutDiffManager = checkoutDiffManager;
+    this.backgroundGitFetchManager = backgroundGitFetchManager;
     this.createAgentMcpTransport = createAgentMcpTransport;
     this.terminalManager = terminalManager;
     this.providerSnapshotManager = providerSnapshotManager ?? null;
@@ -4199,6 +4205,9 @@ export class Session {
     if (!target) {
       return;
     }
+    const unsubscribeFetch = this.workspaceGitFetchSubscriptions.get(workspaceId);
+    unsubscribeFetch?.();
+    this.workspaceGitFetchSubscriptions.delete(workspaceId);
     this.closeWorkspaceGitWatchTarget(target);
     this.workspaceGitWatchTargets.delete(workspaceId);
   }
@@ -4329,6 +4338,16 @@ export class Session {
     }
 
     this.workspaceGitWatchTargets.set(workspaceId, target);
+    const subscription = await this.backgroundGitFetchManager.subscribe(
+      { repoGitRoot: refsRoot, cwd: workspaceId },
+      () => {
+        const activeTarget = this.workspaceGitWatchTargets.get(workspaceId);
+        if (activeTarget) {
+          this.scheduleWorkspaceGitWatchRefresh(activeTarget);
+        }
+      },
+    );
+    this.workspaceGitFetchSubscriptions.set(workspaceId, subscription.unsubscribe);
   }
 
   private async syncWorkspaceGitWatchTarget(
@@ -7284,6 +7303,10 @@ export class Session {
     }
     this.checkoutDiffSubscriptions.clear();
 
+    for (const unsubscribe of this.workspaceGitFetchSubscriptions.values()) {
+      unsubscribe();
+    }
+    this.workspaceGitFetchSubscriptions.clear();
     for (const target of this.workspaceGitWatchTargets.values()) {
       this.closeWorkspaceGitWatchTarget(target);
     }
