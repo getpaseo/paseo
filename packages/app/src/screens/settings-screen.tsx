@@ -417,6 +417,11 @@ function AppearanceSection({ settings, handleThemeChange }: AppearanceSectionPro
                 label: "System",
                 icon: ({ color, size }) => <Monitor size={size} color={color} />,
               },
+              {
+                value: "pywal",
+                label: "PyWal",
+                icon: ({ color, size }) => <Palette size={size} color={color} />,
+              },
             ]}
           />
         </View>
