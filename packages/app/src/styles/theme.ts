@@ -381,6 +381,86 @@ export const lightTheme = {
   ...commonTheme,
 } as const;
 
+function getColorValue(
+  key: number | string,
+  colors: { background: string; foreground: string; cursor: string; colors: string[] },
+): string {
+  if (typeof key === "string") {
+    return colors[key] || "#000000";
+  }
+  return colors.colors[key] || "#000000";
+}
+
+export function createPyWalTheme(
+  pywalColors: { background: string; foreground: string; cursor: string; colors: string[] },
+  mapping: {
+    accent: number | string;
+    accentBright: number | string;
+    foreground: number | string;
+    background: number | string;
+    border: number | string;
+    foregroundMuted: number | string;
+    surface0: number | string;
+    surface1: number | string;
+    surface2: number | string;
+    surface3: number | string;
+    surface4: number | string;
+  },
+  colorScheme: "light" | "dark" = "dark",
+) {
+  const getColor = (key: number | string) => getColorValue(key, pywalColors);
+
+  const semanticColors = {
+    surface0: getColor(mapping.surface0),
+    surface1: getColor(mapping.surface1),
+    surface2: getColor(mapping.surface2),
+    surface3: getColor(mapping.surface3),
+    surface4: getColor(mapping.surface4),
+    foreground: getColor(mapping.foreground),
+    foregroundMuted: getColor(mapping.foregroundMuted),
+    border: getColor(mapping.border),
+    accent: getColor(mapping.accent),
+    accentBright: getColor(mapping.accentBright),
+    background: getColor(mapping.background),
+    popover: getColor(mapping.surface2),
+    popoverForeground: getColor(mapping.foreground),
+    primary: getColor(mapping.foreground),
+    primaryForeground: getColor(mapping.background),
+    secondary: getColor(mapping.surface2),
+    secondaryForeground: getColor(mapping.foreground),
+    muted: getColor(mapping.surface2),
+    mutedForeground: getColor(mapping.foregroundMuted),
+    accentBorder: getColor(mapping.border),
+    input: getColor(mapping.surface2),
+    ring: getColor(mapping.accent),
+    destructive: "#dc2626",
+    destructiveForeground: "#ffffff",
+    success: "#22c55e",
+    successForeground: "#ffffff",
+    scrollbarHandle: getColor(mapping.foregroundMuted),
+  };
+
+  return {
+    colorScheme,
+    colors: {
+      ...semanticColors,
+      palette: baseColors,
+    },
+    shadow: colorScheme === "dark"
+      ? {
+          sm: { shadowColor: "rgba(0,0,0,0.25)", shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 2 },
+          md: { shadowColor: "rgba(0,0,0,0.20)", shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 8 },
+          lg: { shadowColor: "rgba(0,0,0,0.40)", shadowOffset: { width: 0, height: 12 }, shadowRadius: 24, elevation: 8 },
+        }
+      : {
+          sm: { shadowColor: "rgba(0,0,0,0.02)", shadowOffset: { width: 0, height: 2 }, shadowRadius: 8, elevation: 2 },
+          md: { shadowColor: "rgba(0,0,0,0.04)", shadowOffset: { width: 0, height: 4 }, shadowRadius: 16, elevation: 4 },
+          lg: { shadowColor: "rgba(0,0,0,0.08)", shadowOffset: { width: 0, height: 8 }, shadowRadius: 24, elevation: 8 },
+        },
+    ...commonTheme,
+  };
+}
+
 // Keep compatibility with existing code
 export const theme = darkTheme;
 
