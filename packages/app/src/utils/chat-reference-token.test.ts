@@ -142,4 +142,62 @@ describe("buildHunkLineChatReference", () => {
       }),
     ).toBe("src/example.ts:10");
   });
+
+  it("uses surrounding new-side context for delete-only blocks", () => {
+    const hunk = {
+      oldStart: 237,
+      oldCount: 8,
+      newStart: 239,
+      newCount: 2,
+      lines: [
+        { type: "header" as const, content: "@@ -237,8 +239,2 @@" },
+        { type: "context" as const, content: "before" },
+        { type: "remove" as const, content: "deleted one" },
+        { type: "remove" as const, content: "deleted two" },
+        { type: "remove" as const, content: "deleted three" },
+        { type: "remove" as const, content: "deleted four" },
+        { type: "remove" as const, content: "deleted five" },
+        { type: "remove" as const, content: "deleted six" },
+        { type: "context" as const, content: "after" },
+      ],
+    };
+
+    expect(
+      buildHunkLineChatReference({
+        path: "src/example.ts",
+        hunk,
+        lineIndex: 2,
+      }),
+    ).toBe("src/example.ts:239-240");
+
+    expect(
+      buildHunkLineChatReference({
+        path: "src/example.ts",
+        hunk,
+        lineIndex: 7,
+      }),
+    ).toBe("src/example.ts:239-240");
+  });
+
+  it("falls back to the deleted old-side range when no surrounding new context exists", () => {
+    const hunk = {
+      oldStart: 18,
+      oldCount: 2,
+      newStart: 18,
+      newCount: 0,
+      lines: [
+        { type: "header" as const, content: "@@ -18,2 +18,0 @@" },
+        { type: "remove" as const, content: "deleted one" },
+        { type: "remove" as const, content: "deleted two" },
+      ],
+    };
+
+    expect(
+      buildHunkLineChatReference({
+        path: "src/example.ts",
+        hunk,
+        lineIndex: 1,
+      }),
+    ).toBe("src/example.ts:18-19");
+  });
 });

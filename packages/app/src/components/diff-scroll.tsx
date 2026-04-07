@@ -14,6 +14,7 @@ interface DiffScrollProps {
   children: React.ReactNode;
   scrollViewWidth: number;
   onScrollViewWidthChange: (width: number) => void;
+  onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   style?: StyleProp<ViewStyle>;
   contentContainerStyle?: StyleProp<ViewStyle>;
 }
@@ -22,6 +23,7 @@ export function DiffScroll({
   children,
   scrollViewWidth,
   onScrollViewWidthChange,
+  onScroll,
   style,
   contentContainerStyle,
 }: DiffScrollProps) {
@@ -57,8 +59,9 @@ export function DiffScroll({
       if (horizontalScroll) {
         horizontalScroll.registerScrollOffset(scrollId, offsetX);
       }
+      onScroll?.(event);
     },
-    [horizontalScroll, scrollId],
+    [horizontalScroll, onScroll, scrollId],
   );
 
   return (

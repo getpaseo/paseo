@@ -15,6 +15,7 @@ import {
   Pressable,
   FlatList,
   Platform,
+  type GestureResponderEvent,
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
@@ -149,6 +150,7 @@ interface DiffFileSectionProps {
   isExpanded: boolean;
   onToggle: (path: string) => void;
   onAddFileReference?: (file: ParsedDiffFile) => void;
+  onClearArmedLine?: () => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }
@@ -160,7 +162,7 @@ interface ChatReferenceButtonProps {
   testID?: string;
 }
 
-type HunkChatActionMode = "hover" | "first-line";
+type HunkChatActionMode = "hover" | "tap-reveal";
 
 function ChatReferenceButton({
   accessibilityLabel,
@@ -218,68 +220,77 @@ function DiffHunkHeaderRow({
 function LineNumberGutterSlot({
   gutterWidth,
   lineNumber,
-  visible,
-  revealOnHover = false,
+  showAction,
   lineType,
   onAddReference,
+  onPressLineNumber,
+  onHoverLine,
+  onLeaveLine,
   testID,
 }: {
   gutterWidth: number;
   lineNumber: number | null;
-  visible: boolean;
-  revealOnHover?: boolean;
+  showAction: boolean;
   lineType: DiffLine["type"];
   onAddReference?: () => void;
+  onPressLineNumber?: () => void;
+  onHoverLine?: () => void;
+  onLeaveLine?: () => void;
   testID?: string;
 }) {
   const { theme } = useUnistyles();
-  const [isHovered, setIsHovered] = useState(false);
   const iconSize = Platform.OS === "web" ? 14 : 16;
-  const showAction = Boolean(onAddReference) && (visible || (revealOnHover && isHovered));
-
-  const trigger = (
-    <Pressable
-      accessibilityRole={showAction ? "button" : undefined}
-      accessibilityLabel={showAction ? "Add hunk to chat" : undefined}
-      testID={showAction ? testID : undefined}
-      onHoverIn={revealOnHover ? () => setIsHovered(true) : undefined}
-      onHoverOut={revealOnHover ? () => setIsHovered(false) : undefined}
-      onPress={showAction ? onAddReference : undefined}
-      disabled={!showAction}
-      style={({ pressed }) => [
-        styles.lineNumberGutter,
-        { width: gutterWidth },
-        showAction && pressed && styles.chatReferenceButtonHovered,
-      ]}
-    >
-      {showAction ? (
-        <View style={styles.lineNumberGutterActionContent}>
-          <Paperclip size={iconSize} color={theme.colors.foregroundMuted} />
-        </View>
-      ) : (
-        <Text
-          style={[
-            styles.lineNumberText,
-            lineType === "add" && styles.addLineNumberText,
-            lineType === "remove" && styles.removeLineNumberText,
-          ]}
-        >
-          {lineNumber != null ? String(lineNumber) : ""}
-        </Text>
-      )}
-    </Pressable>
+  const isInteractive = Boolean(onAddReference) && showAction;
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onAddReference?.();
+    },
+    [onAddReference],
   );
 
-  if (!showAction) {
-    return trigger;
-  }
-
   return (
-    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-      <TooltipContent side="bottom">
-        <Text style={styles.tooltipText}>Add hunk to chat</Text>
-      </TooltipContent>
+    <Tooltip
+      delayDuration={300}
+      enabledOnDesktop={isInteractive}
+      enabledOnMobile={false}
+    >
+      <TooltipTrigger asChild>
+        <Pressable
+          accessibilityRole={isInteractive ? "button" : undefined}
+          accessibilityLabel={isInteractive ? "Add hunk to chat" : undefined}
+          testID={isInteractive ? testID : undefined}
+          onPress={isInteractive ? handlePress : onPressLineNumber}
+          onHoverIn={Platform.OS === "web" ? onHoverLine : undefined}
+          onHoverOut={Platform.OS === "web" ? onLeaveLine : undefined}
+          style={({ pressed }) => [
+            styles.lineNumberGutter,
+            { width: gutterWidth },
+            isInteractive && pressed && styles.chatReferenceButtonHovered,
+          ]}
+        >
+          {isInteractive ? (
+            <View style={styles.lineNumberGutterActionContent}>
+              <Paperclip size={iconSize} color={theme.colors.foregroundMuted} />
+            </View>
+          ) : (
+            <Text
+              style={[
+                styles.lineNumberText,
+                lineType === "add" && styles.addLineNumberText,
+                lineType === "remove" && styles.removeLineNumberText,
+              ]}
+            >
+              {lineNumber != null ? String(lineNumber) : ""}
+            </Text>
+          )}
+        </Pressable>
+      </TooltipTrigger>
+      {isInteractive ? (
+        <TooltipContent side="top">
+          <Text style={styles.tooltipText}>Add hunk to chat</Text>
+        </TooltipContent>
+      ) : null}
     </Tooltip>
   );
 }
@@ -290,7 +301,12 @@ function DiffLineView({
   gutterWidth,
   wrapLines,
   hunkActionMode,
-  isFirstVisibleLineInHunk,
+  lineKey,
+  hoveredLineKey,
+  onHoverLine,
+  onLeaveLine,
+  armedLineKey,
+  onArmLine,
   onAddHunkReference,
   testID,
 }: {
@@ -299,7 +315,12 @@ function DiffLineView({
   gutterWidth: number;
   wrapLines: boolean;
   hunkActionMode: HunkChatActionMode;
-  isFirstVisibleLineInHunk: boolean;
+  lineKey: string;
+  hoveredLineKey: string | null;
+  onHoverLine?: (lineKey: string) => void;
+  onLeaveLine?: () => void;
+  armedLineKey: string | null;
+  onArmLine?: (lineKey: string) => void;
   onAddHunkReference?: () => void;
   testID?: string;
 }) {
@@ -315,6 +336,8 @@ function DiffLineView({
 
   return (
     <Pressable
+      onHoverIn={Platform.OS === "web" ? () => onHoverLine?.(lineKey) : undefined}
+      onHoverOut={Platform.OS === "web" ? onLeaveLine : undefined}
       style={[
         styles.diffLineContainer,
         line.type === "add" && styles.addLineContainer,
@@ -326,19 +349,29 @@ function DiffLineView({
       {({ hovered, pressed }) => {
         const showHunkAction =
           Boolean(onAddHunkReference) &&
-          (hunkActionMode === "first-line"
-            ? isFirstVisibleLineInHunk
-            : hovered || pressed);
+          (hunkActionMode === "tap-reveal"
+            ? armedLineKey === lineKey
+            : hoveredLineKey === lineKey || hovered || pressed);
 
         return (
           <>
             <LineNumberGutterSlot
               gutterWidth={gutterWidth}
               lineNumber={lineNumber}
-              visible={showHunkAction}
-              revealOnHover={hunkActionMode === "hover"}
+              showAction={showHunkAction}
               lineType={line.type}
               onAddReference={onAddHunkReference}
+              onPressLineNumber={
+                hunkActionMode === "tap-reveal"
+                  ? () => {
+                      if (armedLineKey !== lineKey) {
+                        onArmLine?.(lineKey);
+                      }
+                    }
+                  : undefined
+              }
+              onHoverLine={hunkActionMode === "hover" ? () => onHoverLine?.(lineKey) : undefined}
+              onLeaveLine={hunkActionMode === "hover" ? onLeaveLine : undefined}
               testID={testID ? `${testID}-add-to-chat` : undefined}
             />
             {line.tokens ? (
@@ -368,6 +401,10 @@ function SplitDiffCell({
   gutterWidth,
   wrapLines,
   hunkActionMode,
+  lineKey,
+  hoveredLineKey,
+  onHoverLine,
+  onLeaveLine,
   showFirstLineAction,
   onAddHunkReference,
   showDivider = false,
@@ -377,6 +414,10 @@ function SplitDiffCell({
   gutterWidth: number;
   wrapLines: boolean;
   hunkActionMode?: HunkChatActionMode;
+  lineKey?: string;
+  hoveredLineKey: string | null;
+  onHoverLine?: (lineKey: string) => void;
+  onLeaveLine?: () => void;
   showFirstLineAction?: boolean;
   onAddHunkReference?: () => void;
   showDivider?: boolean;
@@ -387,10 +428,13 @@ function SplitDiffCell({
       <LineNumberGutterSlot
         gutterWidth={gutterWidth}
         lineNumber={line?.lineNumber ?? null}
-        visible={showHunkAction}
-        revealOnHover={hunkActionMode === "hover"}
+        showAction={showHunkAction}
         lineType={line?.type ?? "context"}
         onAddReference={onAddHunkReference}
+        onHoverLine={
+          hunkActionMode === "hover" && lineKey ? () => onHoverLine?.(lineKey) : undefined
+        }
+        onLeaveLine={hunkActionMode === "hover" ? onLeaveLine : undefined}
         testID={testID ? `${testID}-add-to-chat` : undefined}
       />
       {line?.tokens ? (
@@ -421,7 +465,7 @@ function SplitDiffCell({
           styles.emptySplitCell,
         ]}
       >
-        {cellContent(false)}
+        <View style={styles.splitCellRow}>{cellContent(false)}</View>
       </View>
     );
   }
@@ -435,12 +479,22 @@ function SplitDiffCell({
         line?.type === "remove" && styles.removeLineContainer,
         line?.type === "context" && styles.contextLineContainer,
       ]}
+      onHoverIn={
+        Platform.OS === "web" && lineKey ? () => onHoverLine?.(lineKey) : undefined
+      }
+      onHoverOut={Platform.OS === "web" ? onLeaveLine : undefined}
       testID={testID}
     >
       {({ hovered, pressed }) =>
-        cellContent(
-          Boolean(onAddHunkReference) &&
-            (hunkActionMode === "first-line" ? Boolean(showFirstLineAction) : hovered || pressed),
+        (
+          <View style={styles.splitCellRow}>
+            {cellContent(
+              Boolean(onAddHunkReference) &&
+                (hunkActionMode === "tap-reveal"
+                  ? Boolean(showFirstLineAction)
+                  : hoveredLineKey === lineKey || hovered || pressed),
+            )}
+          </View>
         )
       }
     </Pressable>
@@ -452,6 +506,9 @@ function SplitDiffRowView({
   gutterWidth,
   wrapLines,
   hunkActionMode,
+  hoveredLineKey,
+  onHoverLine,
+  onLeaveLine,
   onAddHunkReference,
   testID,
 }: {
@@ -459,6 +516,9 @@ function SplitDiffRowView({
   gutterWidth: number;
   wrapLines: boolean;
   hunkActionMode: HunkChatActionMode;
+  hoveredLineKey: string | null;
+  onHoverLine?: (lineKey: string) => void;
+  onLeaveLine?: () => void;
   onAddHunkReference?: () => void;
   testID?: string;
 }) {
@@ -469,7 +529,11 @@ function SplitDiffRowView({
         gutterWidth={gutterWidth}
         wrapLines={wrapLines}
         hunkActionMode={hunkActionMode}
-        showFirstLineAction={row.isFirstVisibleLineInHunk && row.left !== null}
+        lineKey={row.left ? `${testID ?? "split-row"}:left` : undefined}
+        hoveredLineKey={hoveredLineKey}
+        onHoverLine={onHoverLine}
+        onLeaveLine={onLeaveLine}
+        showFirstLineAction={row.isFirstChangedLineInHunk && row.left !== null}
         onAddHunkReference={onAddHunkReference}
         testID={testID ? `${testID}-left` : undefined}
       />
@@ -478,7 +542,13 @@ function SplitDiffRowView({
         gutterWidth={gutterWidth}
         wrapLines={wrapLines}
         hunkActionMode={hunkActionMode}
-        showFirstLineAction={row.isFirstVisibleLineInHunk && row.left === null && row.right !== null}
+        lineKey={row.right ? `${testID ?? "split-row"}:right` : undefined}
+        hoveredLineKey={hoveredLineKey}
+        onHoverLine={onHoverLine}
+        onLeaveLine={onLeaveLine}
+        showFirstLineAction={
+          row.isFirstChangedLineInHunk && row.left === null && row.right !== null
+        }
         onAddHunkReference={onAddHunkReference}
         showDivider
         testID={testID ? `${testID}-right` : undefined}
@@ -492,6 +562,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   isExpanded,
   onToggle,
   onAddFileReference,
+  onClearArmedLine,
   onHeaderHeightChange,
   testID,
 }: DiffFileSectionProps) {
@@ -501,8 +572,9 @@ const DiffFileHeader = memo(function DiffFileHeader({
 
   const toggleExpanded = useCallback(() => {
     pressHandledRef.current = true;
+    onClearArmedLine?.();
     onToggle(file.path);
-  }, [file.path, onToggle]);
+  }, [file.path, onClearArmedLine, onToggle]);
 
   return (
     <View
@@ -572,7 +644,10 @@ const DiffFileHeader = memo(function DiffFileHeader({
           <ChatReferenceButton
             accessibilityLabel="Add file to chat"
             tooltipLabel="Add file to chat"
-            onPress={() => onAddFileReference(file)}
+            onPress={() => {
+              onClearArmedLine?.();
+              onAddFileReference(file);
+            }}
             testID={testID ? `${testID}-add-to-chat` : undefined}
           />
         ) : null}
@@ -586,6 +661,12 @@ function DiffFileBody({
   layout,
   wrapLines,
   hunkActionMode,
+  hoveredLineKey,
+  onHoverLine,
+  onLeaveLine,
+  armedLineKey,
+  onArmLine,
+  onClearArmedLine,
   onAddHunkReference,
   onBodyHeightChange,
   testID,
@@ -594,6 +675,12 @@ function DiffFileBody({
   layout: "unified" | "split";
   wrapLines: boolean;
   hunkActionMode: HunkChatActionMode;
+  hoveredLineKey: string | null;
+  onHoverLine?: (lineKey: string) => void;
+  onLeaveLine?: () => void;
+  armedLineKey: string | null;
+  onArmLine?: (lineKey: string) => void;
+  onClearArmedLine?: () => void;
   onAddHunkReference?: (reference: string) => void;
   onBodyHeightChange?: (path: string, height: number) => void;
   testID?: string;
@@ -648,6 +735,9 @@ function DiffFileBody({
                     gutterWidth={gutterWidth}
                     wrapLines={wrapLines}
                     hunkActionMode={hunkActionMode}
+                    hoveredLineKey={hoveredLineKey}
+                    onHoverLine={onHoverLine}
+                    onLeaveLine={onLeaveLine}
                     onAddHunkReference={
                       onAddHunkReference
                         ? () => onAddHunkReference(row.chatReference)
@@ -660,10 +750,8 @@ function DiffFileBody({
             : file.hunks.map((hunk, hunkIndex) => {
                 let oldLineNo = hunk.oldStart;
                 let newLineNo = hunk.newStart;
-                let hasVisibleLine = false;
                 return hunk.lines.map((line, lineIndex) => {
                   let lineNumber: number | null = null;
-                  let isFirstVisibleLineInHunk = false;
                   if (line.type === "remove") {
                     lineNumber = oldLineNo;
                     oldLineNo++;
@@ -675,10 +763,7 @@ function DiffFileBody({
                     oldLineNo++;
                     newLineNo++;
                   }
-                  if (line.type !== "header") {
-                    isFirstVisibleLineInHunk = !hasVisibleLine;
-                    hasVisibleLine = true;
-                  }
+                  const currentLineKey = `${file.path}:${hunkIndex}:${lineIndex}`;
                   return (
                     <DiffLineView
                       key={`${hunkIndex}-${lineIndex}`}
@@ -687,17 +772,25 @@ function DiffFileBody({
                       gutterWidth={gutterWidth}
                       wrapLines={wrapLines}
                       hunkActionMode={hunkActionMode}
-                      isFirstVisibleLineInHunk={isFirstVisibleLineInHunk}
+                      lineKey={currentLineKey}
+                      hoveredLineKey={hoveredLineKey}
+                      onHoverLine={onHoverLine}
+                      onLeaveLine={onLeaveLine}
+                      armedLineKey={armedLineKey}
+                      onArmLine={onArmLine}
                       onAddHunkReference={
                         line.type !== "header" && onAddHunkReference
                           ? () =>
-                              onAddHunkReference(
-                                buildHunkLineChatReference({
-                                  path: file.path,
-                                  hunk,
-                                  lineIndex,
-                                }),
-                              )
+                              {
+                                onAddHunkReference(
+                                  buildHunkLineChatReference({
+                                    path: file.path,
+                                    hunk,
+                                    lineIndex,
+                                  }),
+                                );
+                                onClearArmedLine?.();
+                              }
                           : undefined
                       }
                       testID={testID ? `${testID}-hunk-${hunkIndex}-line-${lineIndex}` : undefined}
@@ -728,6 +821,7 @@ function DiffFileBody({
           <DiffScroll
             scrollViewWidth={scrollViewWidth}
             onScrollViewWidthChange={setScrollViewWidth}
+            onScroll={hunkActionMode === "tap-reveal" ? onClearArmedLine : undefined}
             style={styles.diffContent}
             contentContainerStyle={styles.diffContentInner}
           >
@@ -756,10 +850,12 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
   const canUseSplitLayout = Platform.OS === "web" && !isMobile;
   const hunkActionMode: HunkChatActionMode =
-    Platform.OS === "web" && !isMobile ? "hover" : "first-line";
+    Platform.OS === "web" && !isMobile ? "hover" : "tap-reveal";
   const router = useRouter();
   const toast = useToast();
   const closeToAgent = usePanelStore((state) => state.closeToAgent);
+  const [hoveredLineKey, setHoveredLineKey] = useState<string | null>(null);
+  const [armedLineKey, setArmedLineKey] = useState<string | null>(null);
   const [diffModeOverride, setDiffModeOverride] = useState<"uncommitted" | "base" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
@@ -996,10 +1092,16 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
 
   const handleDiffListScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (hoveredLineKey !== null) {
+        setHoveredLineKey(null);
+      }
+      if (armedLineKey !== null) {
+        setArmedLineKey(null);
+      }
       diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
       scrollbar.onScroll(event);
     },
-    [scrollbar.onScroll],
+    [armedLineKey, hoveredLineKey, scrollbar.onScroll],
   );
 
   const handleDiffListLayout = useCallback(
@@ -1205,6 +1307,10 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
             isExpanded={item.isExpanded}
             onToggle={handleToggleExpanded}
             onAddFileReference={handleAddFileReference}
+            onClearArmedLine={() => {
+              setHoveredLineKey(null);
+              setArmedLineKey(null);
+            }}
             onHeaderHeightChange={handleHeaderHeightChange}
             testID={`diff-file-${item.fileIndex}`}
           />
@@ -1216,6 +1322,15 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
           layout={effectiveLayout}
           wrapLines={wrapLines}
           hunkActionMode={hunkActionMode}
+          hoveredLineKey={hoveredLineKey}
+          onHoverLine={setHoveredLineKey}
+          onLeaveLine={() => setHoveredLineKey(null)}
+          armedLineKey={armedLineKey}
+          onArmLine={setArmedLineKey}
+          onClearArmedLine={() => {
+            setHoveredLineKey(null);
+            setArmedLineKey(null);
+          }}
           onAddHunkReference={handleAddHunkReference}
           onBodyHeightChange={handleBodyHeightChange}
           testID={`diff-file-${item.fileIndex}-body`}
@@ -1223,6 +1338,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       );
     },
     [
+      armedLineKey,
       effectiveLayout,
       handleAddFileReference,
       handleAddHunkReference,
@@ -1230,6 +1346,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       handleHeaderHeightChange,
       handleToggleExpanded,
       hunkActionMode,
+      hoveredLineKey,
       wrapLines,
     ],
   );
@@ -1336,7 +1453,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         renderItem={renderFlatItem}
         keyExtractor={flatKeyExtractor}
         stickyHeaderIndices={stickyHeaderIndices}
-        extraData={{ expandedPathsArray, effectiveLayout, wrapLines }}
+        extraData={{ armedLineKey, expandedPathsArray, effectiveLayout, hoveredLineKey, wrapLines }}
         style={styles.scrollView}
         contentContainerStyle={styles.contentContainer}
         testID="git-diff-scroll"

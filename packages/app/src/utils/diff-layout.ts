@@ -17,7 +17,7 @@ export type SplitDiffRow =
   | {
       kind: "pair";
       hunkIndex: number;
-      isFirstVisibleLineInHunk: boolean;
+      isFirstChangedLineInHunk: boolean;
       chatReference: string;
       left: SplitDiffDisplayLine | null;
       right: SplitDiffDisplayLine | null;
@@ -72,7 +72,8 @@ export function buildSplitDiffRows(file: ParsedDiffFile): SplitDiffRow[] {
   for (const [hunkIndex, hunk] of file.hunks.entries()) {
     let oldLineNo = hunk.oldStart;
     let newLineNo = hunk.newStart;
-    let hasVisibleLine = false;
+    let hasChangedLine = false;
+    let previousContextNewLineNumber: number | null = null;
     rows.push({
       kind: "header",
       content: hunk.lines[0]?.type === "header" ? hunk.lines[0].content : "@@",
@@ -84,36 +85,57 @@ export function buildSplitDiffRows(file: ParsedDiffFile): SplitDiffRow[] {
 
     const pushPairRow = (input: {
       chatReference: string;
+      hasChanges: boolean;
       left: SplitDiffDisplayLine | null;
       right: SplitDiffDisplayLine | null;
     }) => {
       rows.push({
         kind: "pair",
         hunkIndex,
-        isFirstVisibleLineInHunk: !hasVisibleLine,
+        isFirstChangedLineInHunk: input.hasChanges && !hasChangedLine,
         chatReference: input.chatReference,
         left: input.left,
         right: input.right,
       });
-      hasVisibleLine = true;
+      if (input.hasChanges) {
+        hasChangedLine = true;
+      }
     };
 
-    const flushPendingRows = () => {
+    const flushPendingRows = (nextContextNewLineNumber?: number | null) => {
       const pairCount = Math.max(pendingRemovals.length, pendingAdditions.length);
       const fallbackStart =
         pendingAdditions[0]?.newLineNumber ?? pendingRemovals[0]?.oldLineNumber ?? hunk.newStart;
-      const chatReference = buildDiffRangeChatReference({
-        path: file.path,
-        oldStart: pendingRemovals[0]?.oldLineNumber ?? fallbackStart,
-        oldCount: pendingRemovals.length,
-        newStart: pendingAdditions[0]?.newLineNumber ?? fallbackStart,
-        newCount: pendingAdditions.length,
-      });
+      const oldStart = pendingRemovals[0]?.oldLineNumber ?? fallbackStart;
+      const oldCount = pendingRemovals.length;
+      const newStart = pendingAdditions[0]?.newLineNumber ?? fallbackStart;
+      const newCount = pendingAdditions.length;
+      const surroundingNewStart =
+        previousContextNewLineNumber ?? nextContextNewLineNumber ?? null;
+      const surroundingNewEnd =
+        nextContextNewLineNumber ?? previousContextNewLineNumber ?? null;
+      const chatReference =
+        newCount === 0 && oldCount > 0 && surroundingNewStart != null && surroundingNewEnd != null
+          ? buildDiffRangeChatReference({
+              path: file.path,
+              oldStart,
+              oldCount,
+              newStart: surroundingNewStart,
+              newCount: surroundingNewEnd - surroundingNewStart + 1,
+            })
+          : buildDiffRangeChatReference({
+              path: file.path,
+              oldStart,
+              oldCount,
+              newStart,
+              newCount,
+            });
       for (let index = 0; index < pairCount; index += 1) {
         const removal = pendingRemovals[index] ?? null;
         const addition = pendingAdditions[index] ?? null;
         pushPairRow({
           chatReference,
+          hasChanges: true,
           left: removal
             ? toDisplayLine({
                 line: removal.line,
@@ -149,7 +171,7 @@ export function buildSplitDiffRows(file: ParsedDiffFile): SplitDiffRow[] {
         continue;
       }
 
-      flushPendingRows();
+      flushPendingRows(newLineNo);
 
       if (line.type === "context") {
         pushPairRow({
@@ -160,6 +182,7 @@ export function buildSplitDiffRows(file: ParsedDiffFile): SplitDiffRow[] {
             newStart: newLineNo,
             newCount: 1,
           }),
+          hasChanges: false,
           left: toDisplayLine({
             line,
             oldLineNumber: oldLineNo,
@@ -175,6 +198,7 @@ export function buildSplitDiffRows(file: ParsedDiffFile): SplitDiffRow[] {
         });
         oldLineNo += 1;
         newLineNo += 1;
+        previousContextNewLineNumber = newLineNo - 1;
       }
     }
 

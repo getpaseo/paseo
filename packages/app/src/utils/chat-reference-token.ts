@@ -129,6 +129,33 @@ export function buildHunkLineChatReference(input: {
     }
   }
 
+  if (newCount === 0 && oldStart != null && oldCount > 0) {
+    const previousPosition = positions[startIndex - 1];
+    const nextPosition = positions[endIndex + 1];
+    const surroundingNewStart =
+      previousPosition?.type === "context"
+        ? previousPosition.newLineNumber
+        : nextPosition?.type === "context"
+          ? nextPosition.newLineNumber
+          : null;
+    const surroundingNewEnd =
+      nextPosition?.type === "context"
+        ? nextPosition.newLineNumber
+        : previousPosition?.type === "context"
+          ? previousPosition.newLineNumber
+          : null;
+
+    if (surroundingNewStart != null && surroundingNewEnd != null) {
+      return buildDiffRangeChatReference({
+        path,
+        oldStart,
+        oldCount,
+        newStart: surroundingNewStart,
+        newCount: surroundingNewEnd - surroundingNewStart + 1,
+      });
+    }
+  }
+
   const fallbackStart = newStart ?? oldStart ?? hunk.newStart ?? hunk.oldStart;
 
   return buildDiffRangeChatReference({
