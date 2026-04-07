@@ -983,7 +983,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     const targetWorkingDir = resolveNewAgentWorkingDir(cwd, status ?? null);
     void runArchiveWorktree({ serverId, cwd, worktreePath })
       .then(() => {
-        router.replace(buildNewAgentRoute(serverId, targetWorkingDir) as any);
+        router.replace(buildNewAgentRoute(serverId, targetWorkingDir));
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : "Failed to archive worktree";

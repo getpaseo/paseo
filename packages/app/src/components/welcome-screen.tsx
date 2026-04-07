@@ -270,12 +270,12 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
     if (pendingNameHost) {
       return;
     }
-    router.replace(buildHostRootRoute(anyOnlineServerId) as any);
+    router.replace(buildHostRootRoute(anyOnlineServerId));
   }, [anyOnlineServerId, pendingNameHost, router]);
 
   const finishOnboarding = useCallback(
     (serverId: string) => {
-      router.replace(buildHostRootRoute(serverId) as any);
+      router.replace(buildHostRootRoute(serverId));
     },
     [router],
   );

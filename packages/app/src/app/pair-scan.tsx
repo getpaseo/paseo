@@ -174,7 +174,7 @@ export default function PairScanScreen() {
   const returnToSource = useCallback(
     (serverId: string) => {
       if (source === "onboarding") {
-        router.replace(buildHostRootRoute(serverId) as any);
+        router.replace(buildHostRootRoute(serverId));
         return;
       }
       if (source === "editHost" && targetServerId) {
@@ -190,7 +190,7 @@ export default function PairScanScreen() {
         router.back();
       } catch {
         const settingsServerId = sourceServerId ?? serverId;
-        router.replace(buildHostSettingsRoute(settingsServerId) as any);
+        router.replace(buildHostSettingsRoute(settingsServerId));
       }
     },
     [router, source, sourceServerId, targetServerId],
@@ -209,7 +209,7 @@ export default function PairScanScreen() {
       router.back();
     } catch {
       if (sourceServerId) {
-        router.replace(buildHostSettingsRoute(sourceServerId) as any);
+        router.replace(buildHostSettingsRoute(sourceServerId));
         return;
       }
       router.replace("/" as any);

@@ -268,99 +268,99 @@ export function parseHostWorkspaceRouteFromPathname(
   return { serverId, workspaceId };
 }
 
-export function buildHostWorkspaceRoute(serverId: string, workspaceId: string): string {
+export function buildHostWorkspaceRoute(serverId: string, workspaceId: string) {
   const normalizedServerId = trimNonEmpty(serverId);
   const normalizedWorkspaceId = trimNonEmpty(workspaceId);
   if (!normalizedServerId || !normalizedWorkspaceId) {
-    return "/";
+    return "/" as const;
   }
   const encodedWorkspaceId = encodeWorkspaceIdForPathSegment(normalizedWorkspaceId);
   if (!encodedWorkspaceId) {
-    return "/";
+    return "/" as const;
   }
-  return `/h/${encodeSegment(normalizedServerId)}/workspace/${encodeSegment(encodedWorkspaceId)}`;
+  return `/h/${encodeSegment(normalizedServerId)}/workspace/${encodeSegment(encodedWorkspaceId)}` as const;
 }
 
 export function buildHostAgentDetailRoute(
   serverId: string,
   agentId: string,
   workspaceId?: string,
-): string {
+) {
   const normalizedWorkspaceId = trimNonEmpty(workspaceId);
   if (normalizedWorkspaceId) {
     const normalizedAgentId = trimNonEmpty(agentId);
     if (!normalizedAgentId) {
-      return "/";
+      return "/" as const;
     }
     const base = buildHostWorkspaceRoute(serverId, normalizedWorkspaceId);
     if (base === "/") {
-      return "/";
+      return "/" as const;
     }
-    return `${base}?open=${encodeURIComponent(`agent:${normalizedAgentId}`)}`;
+    return `${base}?open=${encodeURIComponent(`agent:${normalizedAgentId}`)}` as const;
   }
   const normalizedServerId = trimNonEmpty(serverId);
   const normalizedAgentId = trimNonEmpty(agentId);
   if (!normalizedServerId || !normalizedAgentId) {
-    return "/";
+    return "/" as const;
   }
-  return `${buildHostRootRoute(normalizedServerId)}/agent/${encodeSegment(normalizedAgentId)}`;
+  return `${buildHostRootRoute(normalizedServerId)}/agent/${encodeSegment(normalizedAgentId)}` as const;
 }
 
-export function buildHostRootRoute(serverId: string): string {
+export function buildHostRootRoute(serverId: string) {
   const normalized = trimNonEmpty(serverId);
   if (!normalized) {
-    return "/";
+    return "/" as const;
   }
-  return `/h/${encodeSegment(normalized)}`;
+  return `/h/${encodeSegment(normalized)}` as const;
 }
 
-export function buildHostSessionsRoute(serverId: string): string {
+export function buildHostSessionsRoute(serverId: string) {
   const base = buildHostRootRoute(serverId);
   if (base === "/") {
-    return "/";
+    return "/" as const;
   }
-  return `${base}/sessions`;
+  return `${base}/sessions` as const;
 }
 
-export function buildHostOpenProjectRoute(serverId: string): string {
+export function buildHostOpenProjectRoute(serverId: string) {
   const base = buildHostRootRoute(serverId);
   if (base === "/") {
-    return "/";
+    return "/" as const;
   }
-  return `${base}/open-project`;
+  return `${base}/open-project` as const;
 }
 
-export function buildHostSettingsRoute(serverId: string): string {
+export function buildHostSettingsRoute(serverId: string) {
   const base = buildHostRootRoute(serverId);
   if (base === "/") {
-    return "/";
+    return "/" as const;
   }
-  return `${base}/settings`;
+  return `${base}/settings` as const;
 }
 
-export function mapPathnameToServer(pathname: string, nextServerId: string): string {
+export function mapPathnameToServer(pathname: string, nextServerId: string) {
   const normalized = trimNonEmpty(nextServerId);
   if (!normalized) {
-    return "/";
+    return "/" as const;
   }
 
   const suffix = pathname.replace(/^\/h\/[^/]+\/?/, "");
   const base = buildHostRootRoute(normalized);
   if (suffix.startsWith("settings")) {
-    return `${base}/settings`;
+    return `${base}/settings` as const;
   }
   if (suffix.startsWith("sessions")) {
-    return `${base}/sessions`;
+    return `${base}/sessions` as const;
   }
   if (suffix.startsWith("open-project")) {
-    return `${base}/open-project`;
+    return `${base}/open-project` as const;
   }
   const workspaceRoute = parseHostWorkspaceRouteFromPathname(pathname);
   if (workspaceRoute) {
     return buildHostWorkspaceRoute(normalized, workspaceRoute.workspaceId);
   }
   if (suffix.startsWith("agent/")) {
-    return `${base}/${suffix}`;
+    return `${base}/${suffix}` as const;
   }
   return base;
 }

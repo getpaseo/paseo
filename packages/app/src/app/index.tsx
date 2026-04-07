@@ -58,7 +58,7 @@ export default function Index() {
     const targetRoute = anyOnlineServerId
       ? buildHostRootRoute(anyOnlineServerId)
       : WELCOME_ROUTE;
-    router.replace(targetRoute as any);
+    router.replace(targetRoute);
   }, [anyOnlineServerId, pathname, router, storeReady]);
 
   return <StartupSplashScreen bootstrapState={bootstrapState} />;
