@@ -1,19 +1,24 @@
 import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { DEFAULT_PYWAL_MAPPING, type PyWalColorMapping } from "./use-pywal-colors";
 
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 
 export interface AppSettings {
-  theme: "dark" | "light" | "auto";
+  theme: "dark" | "light" | "auto" | "pywal";
   manageBuiltInDaemon: boolean;
+  pywalMapping?: PyWalColorMapping;
+  pywalPollingInterval?: number;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   theme: "auto",
   manageBuiltInDaemon: true,
+  pywalMapping: DEFAULT_PYWAL_MAPPING,
+  pywalPollingInterval: 30000,
 };
 
 export interface UseAppSettingsReturn {
