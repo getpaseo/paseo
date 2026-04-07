@@ -92,10 +92,7 @@ export function findExecutable(
   if (deps.platform() === "win32") {
     try {
       const inheritedPath = process.env["Path"] ?? process.env["PATH"] ?? "";
-      const resolvedPath = [
-        ...inheritedPath.split(";"),
-        ...resolveWindowsPathEntries(deps),
-      ]
+      const resolvedPath = [...inheritedPath.split(";"), ...resolveWindowsPathEntries(deps)]
         .map((entry) => entry.trim())
         .filter((entry) => entry.length > 0)
         .filter((entry, index, entries) => entries.indexOf(entry) === index)
@@ -156,4 +153,3 @@ export function quoteWindowsArgument(argument: string): string {
   if (argument.startsWith('"') && argument.endsWith('"')) return argument;
   return `"${argument}"`;
 }
-

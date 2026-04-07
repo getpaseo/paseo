@@ -54,7 +54,11 @@ test.describe("Terminal wire performance", () => {
 
       await terminal.pressSequentially(`seq 1 ${LINE_COUNT}; echo ${sentinel}\n`, { delay: 0 });
 
-      await waitForTerminalContent(page, (text) => text.includes(sentinel), THROUGHPUT_BUDGET_MS + 15_000);
+      await waitForTerminalContent(
+        page,
+        (text) => text.includes(sentinel),
+        THROUGHPUT_BUDGET_MS + 15_000,
+      );
 
       const elapsedMs = Date.now() - startMs;
 
@@ -81,9 +85,10 @@ test.describe("Terminal wire performance", () => {
         `[perf] Throughput: ${report.throughputMBps} MB/s — ${LINE_COUNT} lines in ${elapsedMs}ms`,
       );
 
-      expect(elapsedMs, `${LINE_COUNT} lines should render within ${THROUGHPUT_BUDGET_MS}ms`).toBeLessThan(
-        THROUGHPUT_BUDGET_MS,
-      );
+      expect(
+        elapsedMs,
+        `${LINE_COUNT} lines should render within ${THROUGHPUT_BUDGET_MS}ms`,
+      ).toBeLessThan(THROUGHPUT_BUDGET_MS);
     } finally {
       await client.killTerminal(terminalId).catch(() => {});
     }

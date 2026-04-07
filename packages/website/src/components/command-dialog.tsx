@@ -59,14 +59,10 @@ export function CommandDialog({
             >
               <div className="space-y-2">
                 <p className="text-base font-medium text-white">{title}</p>
-                {description && (
-                  <p className="text-sm text-muted-foreground">{description}</p>
-                )}
+                {description && <p className="text-sm text-muted-foreground">{description}</p>}
               </div>
               <CodeBlock>{command}</CodeBlock>
-              {footnote && (
-                <p className="text-xs text-white/30">{footnote}</p>
-              )}
+              {footnote && <p className="text-xs text-white/30">{footnote}</p>}
             </motion.div>
           </>
         )}

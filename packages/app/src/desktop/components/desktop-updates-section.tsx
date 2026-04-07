@@ -329,7 +329,9 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>Status</Text>
-            <Text style={settingsStyles.rowHint}>Only the built-in desktop daemon is shown here.</Text>
+            <Text style={settingsStyles.rowHint}>
+              Only the built-in desktop daemon is shown here.
+            </Text>
           </View>
           <View style={styles.statusValueGroup}>
             <Text style={styles.valueText}>{daemonStatusStateText}</Text>
@@ -394,7 +396,9 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
         <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>Log file</Text>
-            <Text style={settingsStyles.rowHint}>{daemonLogs?.logPath ?? "Log path unavailable."}</Text>
+            <Text style={settingsStyles.rowHint}>
+              {daemonLogs?.logPath ?? "Log path unavailable."}
+            </Text>
           </View>
           <View style={styles.actionGroup}>
             {daemonLogs?.logPath ? (
@@ -482,7 +486,9 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
         snapPoints={["70%", "92%"]}
       >
         <View style={styles.modalBody}>
-          <Text style={settingsStyles.rowHint}>{daemonLogs?.logPath ?? "Log path unavailable."}</Text>
+          <Text style={settingsStyles.rowHint}>
+            {daemonLogs?.logPath ?? "Log path unavailable."}
+          </Text>
           <Text style={styles.logOutput} selectable>
             {daemonLogs?.contents.length ? daemonLogs.contents : "(log file is empty)"}
           </Text>

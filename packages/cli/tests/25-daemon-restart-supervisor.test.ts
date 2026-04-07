@@ -124,22 +124,18 @@ let recentSupervisorLogs = "";
 try {
   console.log("Test 1: start supervisor-entrypoint in dev mode with isolated PASEO_HOME");
 
-  supervisorProcess = spawn(
-    "npx",
-    ["tsx", "../server/scripts/supervisor-entrypoint.ts", "--dev"],
-    {
-      cwd: cliRoot,
-      env: {
-        ...process.env,
-        ...testEnv,
-        PASEO_HOME: paseoHome,
-        PASEO_LISTEN: host,
-        PASEO_RELAY_ENABLED: "false",
-        CI: "true",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
+  supervisorProcess = spawn("npx", ["tsx", "../server/scripts/supervisor-entrypoint.ts", "--dev"], {
+    cwd: cliRoot,
+    env: {
+      ...process.env,
+      ...testEnv,
+      PASEO_HOME: paseoHome,
+      PASEO_LISTEN: host,
+      PASEO_RELAY_ENABLED: "false",
+      CI: "true",
     },
-  );
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
   supervisorProcess.stdout?.on("data", (chunk) => {
     recentSupervisorLogs = (recentSupervisorLogs + chunk.toString()).slice(-8000);

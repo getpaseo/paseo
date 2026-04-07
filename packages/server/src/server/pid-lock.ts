@@ -127,10 +127,7 @@ export async function updatePidLock(
   const existingLock = JSON.parse(content) as PidLockInfo;
 
   if (existingLock.pid !== lockOwnerPid) {
-    throw new PidLockError(
-      `Cannot update PID lock owned by PID ${existingLock.pid}`,
-      existingLock,
-    );
+    throw new PidLockError(`Cannot update PID lock owned by PID ${existingLock.pid}`, existingLock);
   }
 
   const updatedLock: PidLockInfo = {

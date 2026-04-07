@@ -51,11 +51,12 @@ function selectWorkspacePrHint(payload: CheckoutPrStatusPayload): PrHint | null 
   return {
     url: status.url,
     number,
-    state: status.isMerged || status.state === "merged"
-      ? "merged"
-      : status.state === "open"
-        ? "open"
-        : "closed",
+    state:
+      status.isMerged || status.state === "merged"
+        ? "merged"
+        : status.state === "open"
+          ? "open"
+          : "closed",
   };
 }
 

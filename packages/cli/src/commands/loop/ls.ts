@@ -1,11 +1,6 @@
 import { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
-import type {
-  CommandOptions,
-  CommandError,
-  OutputSchema,
-  ListResult,
-} from "../../output/index.js";
+import type { CommandOptions, CommandError, OutputSchema, ListResult } from "../../output/index.js";
 import type { LoopDaemonClient, LoopListItem } from "./types.js";
 
 interface LoopListRow {

@@ -17,8 +17,8 @@ function GettingStarted() {
       <div>
         <h1 className="text-3xl font-medium font-title mb-4">Getting Started</h1>
         <p className="text-white/60 leading-relaxed">
-          Paseo has three main pieces: the daemon is the local server that manages your agents,
-          the app is the client you use from mobile, web, or desktop, and the CLI is the terminal
+          Paseo has three main pieces: the daemon is the local server that manages your agents, the
+          app is the client you use from mobile, web, or desktop, and the CLI is the terminal
           interface that can also launch the daemon.
         </p>
       </div>

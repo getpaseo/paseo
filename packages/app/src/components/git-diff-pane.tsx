@@ -1,12 +1,4 @@
-import {
-  useState,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  memo,
-  type ReactElement,
-} from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, memo, type ReactElement } from "react";
 import { useRouter } from "expo-router";
 import {
   View,
@@ -115,12 +107,7 @@ function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
   };
 
   return (
-    <Text
-      style={[
-        styles.diffLineText,
-        { lineHeight, ...getWrappedTextStyle(wrapLines) },
-      ]}
-    >
+    <Text style={[styles.diffLineText, { lineHeight, ...getWrappedTextStyle(wrapLines) }]}>
       {tokens.map((token, index) => (
         <Text key={index} style={{ color: getTokenColor(token.style), lineHeight }}>
           {token.text}
@@ -229,7 +216,7 @@ function SplitDiffCell({
         <Text
           style={[
             styles.diffLineText,
-            getWrappedTextStyle(wrapLines) ,
+            getWrappedTextStyle(wrapLines),
             line?.type === "add" && styles.addLineText,
             line?.type === "remove" && styles.removeLineText,
             line?.type === "context" && styles.contextLineText,
@@ -364,7 +351,11 @@ function DiffFileBody({
 
         let maxLineNo = 0;
         for (const hunk of file.hunks) {
-          maxLineNo = Math.max(maxLineNo, hunk.oldStart + hunk.oldCount, hunk.newStart + hunk.newCount);
+          maxLineNo = Math.max(
+            maxLineNo,
+            hunk.oldStart + hunk.oldCount,
+            hunk.newStart + hunk.newCount,
+          );
         }
         const gutterWidth = lineNumberGutterWidth(maxLineNo);
 
@@ -374,14 +365,20 @@ function DiffFileBody({
                 if (row.kind === "header") {
                   return (
                     <View key={`header-${rowIndex}`} style={styles.splitHeaderRow}>
-                      <Text style={[styles.diffLineText, styles.headerLineText]}>{row.content}</Text>
+                      <Text style={[styles.diffLineText, styles.headerLineText]}>
+                        {row.content}
+                      </Text>
                     </View>
                   );
                 }
 
                 return (
                   <View key={`pair-${rowIndex}`} style={styles.splitRow}>
-                    <SplitDiffCell line={row.left} gutterWidth={gutterWidth} wrapLines={wrapLines} />
+                    <SplitDiffCell
+                      line={row.left}
+                      gutterWidth={gutterWidth}
+                      wrapLines={wrapLines}
+                    />
                     <SplitDiffCell
                       line={row.right}
                       gutterWidth={gutterWidth}
@@ -558,10 +555,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const setDiffExpandedPathsForWorkspace = usePanelStore(
     (state) => state.setDiffExpandedPathsForWorkspace,
   );
-  const expandedPaths = useMemo(
-    () => new Set(expandedPathsArray ?? []),
-    [expandedPathsArray],
-  );
+  const expandedPaths = useMemo(() => new Set(expandedPathsArray ?? []), [expandedPathsArray]);
   const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
   const scrollbar = useWebScrollViewScrollbar(diffListRef, {
     enabled: showDesktopWebScrollbar,

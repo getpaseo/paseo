@@ -314,9 +314,7 @@ function TabChip({
                 }
               })()}
               trailing={
-                entry.hint ? (
-                  <Text style={styles.menuItemHint}>{entry.hint}</Text>
-                ) : undefined
+                entry.hint ? <Text style={styles.menuItemHint}>{entry.hint}</Text> : undefined
               }
             >
               {entry.label}

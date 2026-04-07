@@ -744,10 +744,7 @@ function RootStack() {
         <Stack.Screen name="welcome" />
         <Stack.Screen name="settings" />
         <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
-        <Stack.Screen
-          name="h/[serverId]/agent/[agentId]"
-          options={{ gestureEnabled: false }}
-        />
+        <Stack.Screen name="h/[serverId]/agent/[agentId]" options={{ gestureEnabled: false }} />
         <Stack.Screen name="h/[serverId]/index" />
         <Stack.Screen name="h/[serverId]/sessions" />
         <Stack.Screen name="h/[serverId]/open-project" />

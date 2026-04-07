@@ -16,10 +16,7 @@ import {
 import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
 import { resolveAppVersion } from "@/utils/app-version";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@server/shared/connection-offer";
-import {
-  shouldUseDesktopDaemon,
-  startDesktopDaemon,
-} from "@/desktop/daemon/desktop-daemon";
+import { shouldUseDesktopDaemon, startDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
 import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "@/utils/daemon-endpoints";
 import { getOrCreateClientId } from "@/utils/client-id";
@@ -1078,8 +1075,7 @@ export class HostRuntimeController {
 }
 
 const REGISTRY_STORAGE_KEY = "@paseo:daemon-registry";
-const DEFAULT_LOCALHOST_ENDPOINT =
-  process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim() || "localhost:6767";
+const DEFAULT_LOCALHOST_ENDPOINT = process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim() || "localhost:6767";
 const DEFAULT_LOCALHOST_BOOTSTRAP_KEY = "@paseo:default-localhost-bootstrap-v1";
 const DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS = 2500;
 const CONNECTION_ONLINE_TIMEOUT_MS = 15_000;
@@ -1553,10 +1549,7 @@ export class HostRuntimeStore {
           return { ok: true };
         }
 
-        if (
-          snapshot.activeConnectionId === connectionId &&
-          snapshot.connectionStatus === "error"
-        ) {
+        if (snapshot.activeConnectionId === connectionId && snapshot.connectionStatus === "error") {
           return {
             ok: false,
             error: new Error(snapshot.lastError ?? "Connection failed before coming online."),

@@ -18,10 +18,7 @@ const EDITOR_APP_IMAGES: Record<EditorTargetId, ImageSourcePropType> = {
 };
 /* eslint-enable @typescript-eslint/no-require-imports */
 
-export function EditorAppIcon({
-  editorId,
-  size = 16,
-}: EditorAppIconProps) {
+export function EditorAppIcon({ editorId, size = 16 }: EditorAppIconProps) {
   return (
     <Image
       source={EDITOR_APP_IMAGES[editorId]}

@@ -325,12 +325,10 @@ describe("daemon E2E (real opencode) - send while working and interrupt", () => 
         expect(finish.status).toBe("idle");
 
         const postSendAssistantTexts = getAssistantTexts(collector.messages, agent.id);
-        expect(
-          postSendAssistantTexts.some((text) => text.includes("[System Error]")),
-        ).toBe(false);
-        expect(
-          postSendAssistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET)),
-        ).toBe(false);
+        expect(postSendAssistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
+        expect(postSendAssistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET))).toBe(
+          false,
+        );
 
         const timeline = await client.fetchAgentTimeline(agent.id, { limit: 160 });
         const assistantTexts = getTimelineAssistantTexts(timeline);
@@ -400,9 +398,9 @@ describe("daemon E2E (real opencode) - send while working and interrupt", () => 
         expect(finish.status).toBe("idle");
 
         const postInterruptAssistantTexts = getAssistantTexts(collector.messages, agent.id);
-        expect(
-          postInterruptAssistantTexts.some((text) => text.includes("[System Error]")),
-        ).toBe(false);
+        expect(postInterruptAssistantTexts.some((text) => text.includes("[System Error]"))).toBe(
+          false,
+        );
         expect(
           postInterruptAssistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET)),
         ).toBe(false);

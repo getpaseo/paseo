@@ -806,9 +806,7 @@ describe("ClaudeAgentSession redesign invariants", () => {
           effort: options.effort,
         });
 
-        return createBaseQueryMock(
-          vi.fn(async () => ({ done: true, value: undefined })),
-        );
+        return createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
       },
     );
 

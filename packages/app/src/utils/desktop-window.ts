@@ -95,9 +95,11 @@ function useRawWindowControlsPadding(): RawWindowControlsPadding {
   }, [isFullscreen]);
 }
 
-export function useWindowControlsPadding(
-  role: WindowControlsPaddingRole,
-): { left: number; right: number; top: number } {
+export function useWindowControlsPadding(role: WindowControlsPaddingRole): {
+  left: number;
+  right: number;
+  top: number;
+} {
   const sidebarOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const explorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
   const focusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);

@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import {
-  findExecutable,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "./executable.js";
+import { findExecutable, quoteWindowsArgument, quoteWindowsCommand } from "./executable.js";
 
 type FindExecutableDependencies = NonNullable<Parameters<typeof findExecutable>[1]>;
 
@@ -26,17 +22,18 @@ describe("findExecutable", () => {
   test("on Windows, resolves executables using current machine and user PATH entries", () => {
     findExecutableDependencies.platform = vi.fn(() => "win32");
     process.env.Path = "C:\\Windows\\System32";
-    findExecutableDependencies.execFileSync.mockImplementation(
-      ((command: string, args?: string[]) => {
-        if (command === "powershell") {
-          return "C:\\Windows\\System32\r\nC:\\Users\\boudr\\.local\\bin\r\n";
-        }
-        if (command === "where.exe") {
-          return "C:\\Users\\boudr\\.local\\bin\\claude.exe\r\n";
-        }
-        throw new Error(`unexpected command ${command}`);
-      }) as any,
-    );
+    findExecutableDependencies.execFileSync.mockImplementation(((
+      command: string,
+      args?: string[],
+    ) => {
+      if (command === "powershell") {
+        return "C:\\Windows\\System32\r\nC:\\Users\\boudr\\.local\\bin\r\n";
+      }
+      if (command === "where.exe") {
+        return "C:\\Users\\boudr\\.local\\bin\\claude.exe\r\n";
+      }
+      throw new Error(`unexpected command ${command}`);
+    }) as any);
 
     expect(findExecutable("claude", findExecutableDependencies)).toBe(
       "C:\\Users\\boudr\\.local\\bin\\claude.exe",
@@ -60,32 +57,26 @@ describe("findExecutable", () => {
   test("on Windows, preserves the first where.exe match", () => {
     findExecutableDependencies.platform = vi.fn(() => "win32");
     process.env.Path = "C:\\Windows\\System32";
-    findExecutableDependencies.execFileSync.mockImplementation(
-      ((command: string) => {
-        if (command === "powershell") {
-          return "C:\\Windows\\System32\r\nC:\\nvm4w\\nodejs\r\n";
-        }
-        if (command === "where.exe") {
-          return "C:\\nvm4w\\nodejs\\codex\r\nC:\\nvm4w\\nodejs\\codex.cmd\r\n";
-        }
-        throw new Error(`unexpected command ${command}`);
-      }) as any,
-    );
+    findExecutableDependencies.execFileSync.mockImplementation(((command: string) => {
+      if (command === "powershell") {
+        return "C:\\Windows\\System32\r\nC:\\nvm4w\\nodejs\r\n";
+      }
+      if (command === "where.exe") {
+        return "C:\\nvm4w\\nodejs\\codex\r\nC:\\nvm4w\\nodejs\\codex.cmd\r\n";
+      }
+      throw new Error(`unexpected command ${command}`);
+    }) as any);
 
     expect(findExecutable("codex", findExecutableDependencies)).toBe("C:\\nvm4w\\nodejs\\codex");
   });
 
   test("on Unix, uses the last line from which output", () => {
-    findExecutableDependencies.execFileSync.mockReturnValue(
-      "/usr/local/bin/codex\n",
-    );
+    findExecutableDependencies.execFileSync.mockReturnValue("/usr/local/bin/codex\n");
 
     expect(findExecutable("codex", findExecutableDependencies)).toBe("/usr/local/bin/codex");
-    expect(findExecutableDependencies.execFileSync).toHaveBeenCalledWith(
-      "which",
-      ["codex"],
-      { encoding: "utf8" },
-    );
+    expect(findExecutableDependencies.execFileSync).toHaveBeenCalledWith("which", ["codex"], {
+      encoding: "utf8",
+    });
   });
 
   test("warns and returns null when the final which line is not an absolute path", () => {

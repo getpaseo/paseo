@@ -136,21 +136,32 @@ export function Button({
       return <View>{leftIcon}</View>;
     }
 
-    const color = variant === "default"
-      ? theme.colors.accentForeground
-      : variant === "ghost"
-        ? (isGhostHovered ? theme.colors.foreground : theme.colors.foregroundMuted)
-        : theme.colors.foreground;
+    const color =
+      variant === "default"
+        ? theme.colors.accentForeground
+        : variant === "ghost"
+          ? isGhostHovered
+            ? theme.colors.foreground
+            : theme.colors.foregroundMuted
+          : theme.colors.foreground;
     const iconSize = ICON_SIZE[size];
 
     // Render function
-    if (typeof leftIcon === "function" && !leftIcon.prototype?.isReactComponent && leftIcon.length > 0) {
+    if (
+      typeof leftIcon === "function" &&
+      !leftIcon.prototype?.isReactComponent &&
+      leftIcon.length > 0
+    ) {
       return <View>{(leftIcon as (color: string) => ReactElement)(color)}</View>;
     }
 
     // Component type
     const Icon = leftIcon as ComponentType<{ color: string; size: number }>;
-    return <View><Icon color={color} size={iconSize} /></View>;
+    return (
+      <View>
+        <Icon color={color} size={iconSize} />
+      </View>
+    );
   }
 
   return (

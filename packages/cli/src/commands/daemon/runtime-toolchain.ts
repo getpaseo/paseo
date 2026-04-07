@@ -32,10 +32,15 @@ function resolveNodePathFromPidUnix(pid: number): NodePathFromPidResult {
   }
 
   const resolved = result.stdout.trim();
-  return resolved ? { nodePath: resolved } : { nodePath: null, error: "ps returned an empty command path" };
+  return resolved
+    ? { nodePath: resolved }
+    : { nodePath: null, error: "ps returned an empty command path" };
 }
 
-function runProcessProbe(command: string, args: string[]): {
+function runProcessProbe(
+  command: string,
+  args: string[],
+): {
   resolved: string | null;
   error?: string;
 } {
@@ -52,16 +57,25 @@ function runProcessProbe(command: string, args: string[]): {
     const details = result.stderr?.trim();
     return {
       resolved: null,
-      error: details ? `${command} failed: ${details}` : `${command} exited with code ${result.status ?? 1}`,
+      error: details
+        ? `${command} failed: ${details}`
+        : `${command} exited with code ${result.status ?? 1}`,
     };
   }
 
   const resolved = result.stdout.trim();
-  return resolved ? { resolved } : { resolved: null, error: `${command} returned no executable path` };
+  return resolved
+    ? { resolved }
+    : { resolved: null, error: `${command} returned no executable path` };
 }
 
 function resolveNodePathFromPidWindows(pid: number): NodePathFromPidResult {
-  const probes: Array<{ label: string; command: string; args: string[]; parseValue?: (stdout: string) => string | null }> = [
+  const probes: Array<{
+    label: string;
+    command: string;
+    args: string[];
+    parseValue?: (stdout: string) => string | null;
+  }> = [
     {
       label: "powershell-cim",
       command: "powershell",
@@ -103,7 +117,10 @@ function resolveNodePathFromPidWindows(pid: number): NodePathFromPidResult {
     }
   }
 
-  return { nodePath: null, error: errors.join("; ") || "could not resolve executable path from PID" };
+  return {
+    nodePath: null,
+    error: errors.join("; ") || "could not resolve executable path from PID",
+  };
 }
 
 export function resolveNodePathFromPid(pid: number): NodePathFromPidResult {

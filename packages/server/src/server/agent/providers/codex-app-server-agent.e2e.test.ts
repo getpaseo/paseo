@@ -61,7 +61,11 @@ function responseCompleted(id: string): Record<string, unknown> {
   };
 }
 
-function functionCallEvent(callId: string, name: string, argumentsJson: string): Record<string, unknown> {
+function functionCallEvent(
+  callId: string,
+  name: string,
+  argumentsJson: string,
+): Record<string, unknown> {
   return {
     type: "response.output_item.done",
     item: {
@@ -116,7 +120,11 @@ function requestUserInputSse(callId: string): string {
 }
 
 function assistantMessageSse(text: string): string {
-  return sse([responseCreated("resp-2"), assistantMessageEvent("msg-1", text), responseCompleted("resp-2")]);
+  return sse([
+    responseCreated("resp-2"),
+    assistantMessageEvent("msg-1", text),
+    responseCompleted("resp-2"),
+  ]);
 }
 
 async function startMockResponsesServer(sequence: string[]): Promise<{
@@ -276,10 +284,7 @@ describe("Codex app-server provider (e2e)", () => {
             label: "question permission request",
             predicate: (
               event,
-            ): event is Extract<
-              AgentStreamEvent,
-              { type: "permission_requested" }
-            > =>
+            ): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
               event.type === "permission_requested" &&
               event.request.provider === "codex" &&
               event.request.kind === "question" &&

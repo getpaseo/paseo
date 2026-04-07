@@ -81,11 +81,7 @@ function ShortcutRow({
                 Done
               </Button>
             ) : null}
-            <Button
-              variant="ghost"
-              size="sm"
-              onPress={isCapturing ? onCancel : onRebind}
-            >
+            <Button variant="ghost" size="sm" onPress={isCapturing ? onCancel : onRebind}>
               {isCapturing ? "Cancel" : "Rebind"}
             </Button>
           </>
@@ -182,9 +178,7 @@ export function KeyboardShortcutsSection() {
       <View style={settingsStyles.section}>
         <Text style={settingsStyles.sectionTitle}>Shortcuts</Text>
         <View style={[settingsStyles.card, styles.mobileCard]}>
-          <Text style={styles.mobileText}>
-            Keyboard shortcuts are only available on desktop.
-          </Text>
+          <Text style={styles.mobileText}>Keyboard shortcuts are only available on desktop.</Text>
         </View>
       </View>
     );

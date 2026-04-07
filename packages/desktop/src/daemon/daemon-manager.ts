@@ -149,7 +149,6 @@ function logDesktopDaemonLifecycle(message: string, details?: Record<string, unk
   });
 }
 
-
 function toTrimmedString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -234,12 +233,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   if (current.status === "running") {
     const appVersion = normalizeVersion(resolveDesktopAppVersion());
     const daemonVersion = normalizeVersion(current.version);
-    if (
-      current.desktopManaged &&
-      appVersion &&
-      daemonVersion &&
-      appVersion !== daemonVersion
-    ) {
+    if (current.desktopManaged && appVersion && daemonVersion && appVersion !== daemonVersion) {
       logDesktopDaemonLifecycle("daemon version mismatch, restarting", {
         appVersion,
         daemonVersion,
@@ -266,15 +260,11 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     args: invocation.args,
   });
 
-  const child: ChildProcess = spawn(
-    invocation.command,
-    invocation.args,
-    {
-      detached: true,
-      env: { ...invocation.env, PASEO_DESKTOP_MANAGED: "1" },
-      stdio: ["ignore", "ignore", "ignore"],
-    },
-  );
+  const child: ChildProcess = spawn(invocation.command, invocation.args, {
+    detached: true,
+    env: { ...invocation.env, PASEO_DESKTOP_MANAGED: "1" },
+    stdio: ["ignore", "ignore", "ignore"],
+  });
 
   logDesktopDaemonLifecycle("detached spawn returned", {
     childPid: child.pid ?? null,

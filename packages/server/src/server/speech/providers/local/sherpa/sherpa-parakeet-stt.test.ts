@@ -22,7 +22,10 @@ class TestSherpaOnnxParakeetStt extends SherpaOnnxParakeetSTT {
     super({ engine: { sampleRate: 16000 } as any }, pino({ level: "silent" }));
   }
 
-  override async transcribeAudio(audioBuffer: Buffer, format: string): Promise<TranscriptionResult> {
+  override async transcribeAudio(
+    audioBuffer: Buffer,
+    format: string,
+  ): Promise<TranscriptionResult> {
     this.calls.push({ audio: Buffer.from(audioBuffer), format });
     const deferred = createDeferred<TranscriptionResult>();
     this.pending.push(deferred);

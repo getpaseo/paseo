@@ -1,7 +1,11 @@
 import type { Command } from "commander";
 import type { SingleResult } from "../../output/index.js";
 import type { OutputSchema } from "../../output/index.js";
-import { connectScheduleClient, toScheduleCommandError, type ScheduleCommandOptions } from "./shared.js";
+import {
+  connectScheduleClient,
+  toScheduleCommandError,
+  type ScheduleCommandOptions,
+} from "./shared.js";
 
 interface ScheduleDeleteRow {
   id: string;

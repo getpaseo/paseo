@@ -236,9 +236,7 @@ describe("ProviderSnapshotManager", () => {
     });
 
     manager.refresh("/tmp/project");
-    expect(manager.getSnapshot("/tmp/project")).toEqual([
-      { provider: "codex", status: "loading" },
-    ]);
+    expect(manager.getSnapshot("/tmp/project")).toEqual([{ provider: "codex", status: "loading" }]);
 
     await vi.waitFor(() => {
       expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")?.models?.[0]?.id).toBe(
@@ -302,8 +300,12 @@ describe("ProviderSnapshotManager", () => {
     manager.getSnapshot("/tmp/project-b");
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project-a"), "codex")?.status).toBe("ready");
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project-b"), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot("/tmp/project-a"), "codex")?.status).toBe(
+        "ready",
+      );
+      expect(getProviderEntry(manager.getSnapshot("/tmp/project-b"), "codex")?.status).toBe(
+        "ready",
+      );
     });
 
     expect(getProviderEntry(manager.getSnapshot("/tmp/project-a"), "codex")?.models?.[0]?.id).toBe(
@@ -336,19 +338,24 @@ function createRegistry(handles: MockProviderHandle[]): {
     registry: Object.fromEntries(
       handles.map((handle) => [handle.definition.id, handle.definition]),
     ) as Record<AgentProvider, ProviderDefinition>,
-    handles: Object.fromEntries(
-      handles.map((handle) => [handle.definition.id, handle]),
-    ) as Record<AgentProvider, MockProviderHandle>,
+    handles: Object.fromEntries(handles.map((handle) => [handle.definition.id, handle])) as Record<
+      AgentProvider,
+      MockProviderHandle
+    >,
   };
 }
 
 function createMockProvider(options: MockProviderOptions): MockProviderHandle {
   const isAvailable = vi.fn(async () => options.isAvailable?.() ?? true);
-  const fetchModels = vi.fn(async (listOptions?: { cwd?: string }) =>
-    options.fetchModels?.(listOptions?.cwd) ?? [createModel(options.provider, `${options.provider}-default`)],
+  const fetchModels = vi.fn(
+    async (listOptions?: { cwd?: string }) =>
+      options.fetchModels?.(listOptions?.cwd) ?? [
+        createModel(options.provider, `${options.provider}-default`),
+      ],
   );
-  const fetchModes = vi.fn(async (listOptions?: { cwd?: string }) =>
-    options.fetchModes?.(listOptions?.cwd) ?? [createMode(`${options.provider}-mode`)],
+  const fetchModes = vi.fn(
+    async (listOptions?: { cwd?: string }) =>
+      options.fetchModes?.(listOptions?.cwd) ?? [createMode(`${options.provider}-mode`)],
   );
 
   const definition: ProviderDefinition = {

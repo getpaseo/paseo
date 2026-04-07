@@ -1,11 +1,6 @@
 import type { AgentFeature, AgentFeatureToggle } from "../agent-sdk-types.js";
 
-const CODEX_FAST_MODE_SUPPORTED_MODEL_PREFIXES = [
-  "gpt-5",
-  "gpt-4.1",
-  "o3",
-  "o4-mini",
-] as const;
+const CODEX_FAST_MODE_SUPPORTED_MODEL_PREFIXES = ["gpt-5", "gpt-4.1", "o3", "o4-mini"] as const;
 
 export const CODEX_FAST_MODE_FEATURE: Omit<AgentFeatureToggle, "value"> = {
   type: "toggle",

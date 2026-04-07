@@ -21,7 +21,6 @@ export function isSameOrDescendantPath(basePath: string, candidatePath: string):
   }
 
   return (
-    normalizedCandidate === normalizedBase ||
-    normalizedCandidate.startsWith(normalizedBase + "/")
+    normalizedCandidate === normalizedBase || normalizedCandidate.startsWith(normalizedBase + "/")
   );
 }

@@ -267,9 +267,7 @@ describe("workspace aggregation", () => {
         archivedAt: expect.any(String),
       },
     });
-    expect(
-      emitted.find((message) => message.type === "agent_archived")?.payload,
-    ).toMatchObject({
+    expect(emitted.find((message) => message.type === "agent_archived")?.payload).toMatchObject({
       agentId: "agent-1",
       archivedAt: expect.any(String),
       requestId: "req-archive",
@@ -417,9 +415,7 @@ describe("workspace aggregation", () => {
 
     expect(session.interruptAgentIfRunning).toHaveBeenCalledWith("agent-1");
     expect(session.terminalManager.killTerminal).toHaveBeenCalledWith("term-1");
-    expect(
-      emitted.find((message) => message.type === "close_items_response")?.payload,
-    ).toEqual({
+    expect(emitted.find((message) => message.type === "close_items_response")?.payload).toEqual({
       agents: [{ agentId: "agent-1", archivedAt }],
       terminals: [{ terminalId: "term-1", success: true }],
       requestId: "req-close-items",
@@ -719,9 +715,7 @@ describe("workspace aggregation", () => {
     expect(session.interruptAgentIfRunning).toHaveBeenCalledWith("agent-bad");
     expect(session.interruptAgentIfRunning).toHaveBeenCalledWith("agent-good");
     expect(session.terminalManager.killTerminal).toHaveBeenCalledWith("term-1");
-    expect(
-      emitted.find((message) => message.type === "close_items_response")?.payload,
-    ).toEqual({
+    expect(emitted.find((message) => message.type === "close_items_response")?.payload).toEqual({
       agents: [{ agentId: "agent-good", archivedAt }],
       terminals: [{ terminalId: "term-1", success: true }],
       requestId: "req-close-best-effort",
@@ -1281,9 +1275,7 @@ describe("workspace aggregation", () => {
     });
 
     expect(calls).toEqual([{ editorId: "vscode", path: "/tmp/repo" }]);
-    const response = emitted.find(
-      (message) => message.type === "open_in_editor_response",
-    ) as any;
+    const response = emitted.find((message) => message.type === "open_in_editor_response") as any;
     expect(response?.payload.error).toBeNull();
   });
 
@@ -1574,7 +1566,8 @@ describe("workspace aggregation", () => {
       }),
     );
 
-    session.projectRegistry.get = async (nextProjectId: string) => projects.get(nextProjectId) ?? null;
+    session.projectRegistry.get = async (nextProjectId: string) =>
+      projects.get(nextProjectId) ?? null;
     session.projectRegistry.list = async () => Array.from(projects.values());
     session.projectRegistry.upsert = async (
       record: ReturnType<typeof createPersistedProjectRecord>,
@@ -1762,14 +1755,16 @@ describe("workspace aggregation", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const response = emitted.find(
-      (message) => message.type === "fetch_workspaces_response",
-    ) as { type: "fetch_workspaces_response"; payload: any } | undefined;
+    const response = emitted.find((message) => message.type === "fetch_workspaces_response") as
+      | { type: "fetch_workspaces_response"; payload: any }
+      | undefined;
     expect(
-      response?.payload.entries.map((entry: typeof baselineGitDescriptor | typeof directoryDescriptor) => [
-        entry.id,
-        entry.diffStat,
-      ]),
+      response?.payload.entries.map(
+        (entry: typeof baselineGitDescriptor | typeof directoryDescriptor) => [
+          entry.id,
+          entry.diffStat,
+        ],
+      ),
     ).toEqual([
       [directoryDescriptor.id, directoryDescriptor.diffStat],
       [baselineGitDescriptor.id, baselineGitDescriptor.diffStat],

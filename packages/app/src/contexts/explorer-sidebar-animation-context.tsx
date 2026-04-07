@@ -91,13 +91,7 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
 
     translateX.value = targets.translateX;
     backdropOpacity.value = targets.backdropOpacity;
-  }, [
-    isOpen,
-    translateX,
-    backdropOpacity,
-    windowWidth,
-    isGesturing,
-  ]);
+  }, [isOpen, translateX, backdropOpacity, windowWidth, isGesturing]);
 
   const animateToOpen = () => {
     "worklet";

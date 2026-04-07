@@ -23,10 +23,7 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
-import {
-  asUint8Array,
-  decodeTerminalStreamFrame,
-} from "../shared/terminal-stream-protocol.js";
+import { asUint8Array, decodeTerminalStreamFrame } from "../shared/terminal-stream-protocol.js";
 import type { AllowedHostsConfig } from "./allowed-hosts.js";
 import { isHostAllowed } from "./allowed-hosts.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
@@ -362,9 +359,10 @@ export class VoiceAssistantWebSocketServer {
     this.serverCapabilities = buildServerCapabilities({
       readiness: this.speech?.getReadiness() ?? null,
     });
-    this.unsubscribeSpeechReadiness = this.speech?.onReadinessChange((snapshot) => {
-      this.publishSpeechReadiness(snapshot);
-    }) ?? null;
+    this.unsubscribeSpeechReadiness =
+      this.speech?.onReadinessChange((snapshot) => {
+        this.publishSpeechReadiness(snapshot);
+      }) ?? null;
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(pushLogger, join(paseoHome, "push-tokens.json"));
@@ -527,10 +525,7 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private sendBinaryToClient(
-    ws: WebSocketLike,
-    frame: Uint8Array,
-  ): void {
+  private sendBinaryToClient(ws: WebSocketLike, frame: Uint8Array): void {
     if (ws.readyState !== 1) {
       return;
     }
@@ -543,10 +538,7 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private sendBinaryToConnection(
-    connection: SessionConnection,
-    frame: Uint8Array,
-  ): void {
+  private sendBinaryToConnection(connection: SessionConnection, frame: Uint8Array): void {
     for (const ws of connection.sockets) {
       this.sendBinaryToClient(ws, frame);
     }

@@ -733,9 +733,10 @@ function parseFileChangeEntries(
     .filter((entry): entry is CodexFileChangeEntry => entry !== null);
 }
 
-function resolveFileChangeTextFields(
-  file: CodexFileChangeEntry | undefined,
-): { unifiedDiff?: string; newString?: string } {
+function resolveFileChangeTextFields(file: CodexFileChangeEntry | undefined): {
+  unifiedDiff?: string;
+  newString?: string;
+} {
   if (!file) {
     return {};
   }
