@@ -15,11 +15,9 @@ import {
   Pressable,
   FlatList,
   Platform,
-  type GestureResponderEvent,
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
-  TextStyle,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
@@ -33,7 +31,6 @@ import {
   GitMerge,
   ListChevronsDownUp,
   ListChevronsUpDown,
-  Paperclip,
   Pilcrow,
   RefreshCcw,
   Upload,
@@ -43,26 +40,12 @@ import { useCheckoutGitActionsStore } from "@/stores/checkout-git-actions-store"
 import {
   useCheckoutDiffQuery,
   type ParsedDiffFile,
-  type DiffLine,
-  type HighlightToken,
 } from "@/hooks/use-checkout-diff-query";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { useCheckoutPrStatusQuery } from "@/hooks/use-checkout-pr-status-query";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
-import { DiffScroll } from "./diff-scroll";
-import {
-  darkHighlightColors,
-  lightHighlightColors,
-  type HighlightStyle as HighlightStyleKey,
-} from "@getpaseo/highlight";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
-import { Fonts } from "@/constants/theme";
 import { shouldAnchorHeaderBeforeCollapse } from "@/utils/git-diff-scroll";
-import {
-  buildSplitDiffRows,
-  type SplitDiffDisplayLine,
-  type SplitDiffRow,
-} from "@/utils/diff-layout";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -73,17 +56,19 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { buildGitActions, type GitActions } from "@/components/git-actions-policy";
-import { lineNumberGutterWidth } from "@/components/code-insets";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { buildNewAgentRoute, resolveNewAgentWorkingDir } from "@/utils/new-agent-routing";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { GitActionsSplitButton } from "@/components/git-actions-split-button";
-import { useToast } from "@/contexts/toast-context";
-import { appendTextTokenToComposer, insertIntoActiveChatComposer } from "@/utils/active-chat-composer";
 import {
-  buildFileChatReference,
-  buildHunkLineChatReference,
-} from "@/utils/chat-reference-token";
+  ChatReferenceButton,
+  GitDiffFileBody,
+  type HunkChatActionMode,
+} from "@/components/git-diff-file-body";
+import { useToast } from "@/contexts/toast-context";
+import { insertIntoActiveChatComposer } from "@/utils/active-chat-composer";
+import { buildFileChatReference } from "@/utils/chat-reference-token";
+import { appendTextTokenToComposer } from "@/utils/composer-text-insert";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
@@ -96,55 +81,6 @@ function openURLInNewTab(url: string): void {
   void openExternalUrl(url);
 }
 
-type HighlightStyle = NonNullable<HighlightToken["style"]>;
-
-interface HighlightedTextProps {
-  tokens: HighlightToken[];
-  wrapLines?: boolean;
-}
-
-type WrappedWebTextStyle = TextStyle & {
-  whiteSpace?: "pre" | "pre-wrap";
-  overflowWrap?: "normal" | "anywhere";
-};
-
-function getWrappedTextStyle(wrapLines: boolean): WrappedWebTextStyle | undefined {
-  if (Platform.OS !== "web") {
-    return undefined;
-  }
-  return wrapLines
-    ? { whiteSpace: "pre-wrap", overflowWrap: "anywhere" }
-    : { whiteSpace: "pre", overflowWrap: "normal" };
-}
-
-function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
-  const { theme } = useUnistyles();
-  const isDark = theme.colorScheme === "dark";
-  const lineHeight = theme.lineHeight.diff;
-
-  const getTokenColor = (style: HighlightStyle | null): string => {
-    const baseColor = isDark ? "#c9d1d9" : "#24292f";
-    if (!style) return baseColor;
-    const colors = isDark ? darkHighlightColors : lightHighlightColors;
-    return colors[style as HighlightStyleKey] ?? baseColor;
-  };
-
-  return (
-    <Text
-      style={[
-        styles.diffLineText,
-        { lineHeight, ...getWrappedTextStyle(wrapLines) },
-      ]}
-    >
-      {tokens.map((token, index) => (
-        <Text key={index} style={{ color: getTokenColor(token.style), lineHeight }}>
-          {token.text}
-        </Text>
-      ))}
-    </Text>
-  );
-}
-
 interface DiffFileSectionProps {
   file: ParsedDiffFile;
   isExpanded: boolean;
@@ -153,408 +89,6 @@ interface DiffFileSectionProps {
   onClearArmedLine?: () => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
-}
-
-interface ChatReferenceButtonProps {
-  accessibilityLabel: string;
-  tooltipLabel: string;
-  onPress: () => void;
-  testID?: string;
-}
-
-type HunkChatActionMode = "hover" | "tap-reveal";
-
-function ChatReferenceButton({
-  accessibilityLabel,
-  tooltipLabel,
-  onPress,
-  testID,
-}: ChatReferenceButtonProps) {
-  const { theme } = useUnistyles();
-  const iconSize = Platform.OS === "web" ? 14 : 16;
-
-  return (
-    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={accessibilityLabel}
-          testID={testID}
-          onPress={onPress}
-          style={({ hovered, pressed }) => [
-            styles.chatReferenceButton,
-            (hovered || pressed) && styles.chatReferenceButtonHovered,
-          ]}
-        >
-          <Paperclip size={iconSize} color={theme.colors.foregroundMuted} />
-        </Pressable>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        <Text style={styles.tooltipText}>{tooltipLabel}</Text>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-function DiffHunkHeaderRow({
-  content,
-  gutterWidth,
-  testID,
-}: {
-  content: string;
-  gutterWidth?: number;
-  testID?: string;
-}) {
-  return (
-    <View style={[styles.diffLineContainer, styles.headerLineContainer]} testID={testID}>
-      {typeof gutterWidth === "number" ? (
-        <View style={[styles.lineNumberGutter, { width: gutterWidth }]} />
-      ) : null}
-      <Text style={[styles.diffLineText, styles.headerLineText, styles.hunkHeaderText]}>
-        {content}
-      </Text>
-    </View>
-  );
-}
-
-function LineNumberGutterSlot({
-  gutterWidth,
-  lineNumber,
-  showAction,
-  lineType,
-  onAddReference,
-  onPressLineNumber,
-  onHoverLine,
-  onLeaveLine,
-  testID,
-}: {
-  gutterWidth: number;
-  lineNumber: number | null;
-  showAction: boolean;
-  lineType: DiffLine["type"];
-  onAddReference?: () => void;
-  onPressLineNumber?: () => void;
-  onHoverLine?: () => void;
-  onLeaveLine?: () => void;
-  testID?: string;
-}) {
-  const { theme } = useUnistyles();
-  const iconSize = Platform.OS === "web" ? 14 : 16;
-  const isInteractive = Boolean(onAddReference) && showAction;
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      onAddReference?.();
-    },
-    [onAddReference],
-  );
-
-  return (
-    <Tooltip
-      delayDuration={300}
-      enabledOnDesktop={isInteractive}
-      enabledOnMobile={false}
-    >
-      <TooltipTrigger asChild>
-        <Pressable
-          accessibilityRole={isInteractive ? "button" : undefined}
-          accessibilityLabel={isInteractive ? "Add hunk to chat" : undefined}
-          testID={isInteractive ? testID : undefined}
-          onPress={isInteractive ? handlePress : onPressLineNumber}
-          onHoverIn={Platform.OS === "web" ? onHoverLine : undefined}
-          onHoverOut={Platform.OS === "web" ? onLeaveLine : undefined}
-          style={({ pressed }) => [
-            styles.lineNumberGutter,
-            { width: gutterWidth },
-            isInteractive && pressed && styles.chatReferenceButtonHovered,
-          ]}
-        >
-          {isInteractive ? (
-            <View style={styles.lineNumberGutterActionContent}>
-              <Paperclip size={iconSize} color={theme.colors.foregroundMuted} />
-            </View>
-          ) : (
-            <Text
-              style={[
-                styles.lineNumberText,
-                lineType === "add" && styles.addLineNumberText,
-                lineType === "remove" && styles.removeLineNumberText,
-              ]}
-            >
-              {lineNumber != null ? String(lineNumber) : ""}
-            </Text>
-          )}
-        </Pressable>
-      </TooltipTrigger>
-      {isInteractive ? (
-        <TooltipContent side="top">
-          <Text style={styles.tooltipText}>Add hunk to chat</Text>
-        </TooltipContent>
-      ) : null}
-    </Tooltip>
-  );
-}
-
-function DiffLineView({
-  line,
-  lineNumber,
-  gutterWidth,
-  wrapLines,
-  hunkActionMode,
-  lineKey,
-  hoveredLineKey,
-  onHoverLine,
-  onLeaveLine,
-  armedLineKey,
-  onArmLine,
-  onAddHunkReference,
-  testID,
-}: {
-  line: DiffLine;
-  lineNumber: number | null;
-  gutterWidth: number;
-  wrapLines: boolean;
-  hunkActionMode: HunkChatActionMode;
-  lineKey: string;
-  hoveredLineKey: string | null;
-  onHoverLine?: (lineKey: string) => void;
-  onLeaveLine?: () => void;
-  armedLineKey: string | null;
-  onArmLine?: (lineKey: string) => void;
-  onAddHunkReference?: () => void;
-  testID?: string;
-}) {
-  if (line.type === "header") {
-    return (
-      <DiffHunkHeaderRow
-        content={line.content || " "}
-        gutterWidth={gutterWidth}
-        testID={testID}
-      />
-    );
-  }
-
-  return (
-    <Pressable
-      onHoverIn={Platform.OS === "web" ? () => onHoverLine?.(lineKey) : undefined}
-      onHoverOut={Platform.OS === "web" ? onLeaveLine : undefined}
-      style={[
-        styles.diffLineContainer,
-        line.type === "add" && styles.addLineContainer,
-        line.type === "remove" && styles.removeLineContainer,
-        line.type === "context" && styles.contextLineContainer,
-      ]}
-      testID={testID}
-    >
-      {({ hovered, pressed }) => {
-        const showHunkAction =
-          Boolean(onAddHunkReference) &&
-          (hunkActionMode === "tap-reveal"
-            ? armedLineKey === lineKey
-            : hoveredLineKey === lineKey || hovered || pressed);
-
-        return (
-          <>
-            <LineNumberGutterSlot
-              gutterWidth={gutterWidth}
-              lineNumber={lineNumber}
-              showAction={showHunkAction}
-              lineType={line.type}
-              onAddReference={onAddHunkReference}
-              onPressLineNumber={
-                hunkActionMode === "tap-reveal"
-                  ? () => {
-                      if (armedLineKey !== lineKey) {
-                        onArmLine?.(lineKey);
-                      }
-                    }
-                  : undefined
-              }
-              onHoverLine={hunkActionMode === "hover" ? () => onHoverLine?.(lineKey) : undefined}
-              onLeaveLine={hunkActionMode === "hover" ? onLeaveLine : undefined}
-              testID={testID ? `${testID}-add-to-chat` : undefined}
-            />
-            {line.tokens ? (
-              <HighlightedText tokens={line.tokens} wrapLines={wrapLines} />
-            ) : (
-              <Text
-                style={[
-                  styles.diffLineText,
-                  getWrappedTextStyle(wrapLines),
-                  line.type === "add" && styles.addLineText,
-                  line.type === "remove" && styles.removeLineText,
-                  line.type === "context" && styles.contextLineText,
-                ]}
-              >
-                {line.content || " "}
-              </Text>
-            )}
-          </>
-        );
-      }}
-    </Pressable>
-  );
-}
-
-function SplitDiffCell({
-  line,
-  gutterWidth,
-  wrapLines,
-  hunkActionMode,
-  lineKey,
-  hoveredLineKey,
-  onHoverLine,
-  onLeaveLine,
-  showFirstLineAction,
-  onAddHunkReference,
-  showDivider = false,
-  testID,
-}: {
-  line: SplitDiffDisplayLine | null;
-  gutterWidth: number;
-  wrapLines: boolean;
-  hunkActionMode?: HunkChatActionMode;
-  lineKey?: string;
-  hoveredLineKey: string | null;
-  onHoverLine?: (lineKey: string) => void;
-  onLeaveLine?: () => void;
-  showFirstLineAction?: boolean;
-  onAddHunkReference?: () => void;
-  showDivider?: boolean;
-  testID?: string;
-}) {
-  const cellContent = (showHunkAction: boolean) => (
-    <>
-      <LineNumberGutterSlot
-        gutterWidth={gutterWidth}
-        lineNumber={line?.lineNumber ?? null}
-        showAction={showHunkAction}
-        lineType={line?.type ?? "context"}
-        onAddReference={onAddHunkReference}
-        onHoverLine={
-          hunkActionMode === "hover" && lineKey ? () => onHoverLine?.(lineKey) : undefined
-        }
-        onLeaveLine={hunkActionMode === "hover" ? onLeaveLine : undefined}
-        testID={testID ? `${testID}-add-to-chat` : undefined}
-      />
-      {line?.tokens ? (
-        <HighlightedText tokens={line.tokens} wrapLines={wrapLines} />
-      ) : (
-        <Text
-          style={[
-            styles.diffLineText,
-            getWrappedTextStyle(wrapLines),
-            line?.type === "add" && styles.addLineText,
-            line?.type === "remove" && styles.removeLineText,
-            line?.type === "context" && styles.contextLineText,
-            !line && styles.emptySplitCellText,
-          ]}
-        >
-          {line?.content ?? ""}
-        </Text>
-      )}
-    </>
-  );
-
-  if (!line) {
-    return (
-      <View
-        style={[
-          styles.splitCell,
-          showDivider && styles.splitCellWithDivider,
-          styles.emptySplitCell,
-        ]}
-      >
-        <View style={styles.splitCellRow}>{cellContent(false)}</View>
-      </View>
-    );
-  }
-
-  return (
-    <Pressable
-      style={[
-        styles.splitCell,
-        showDivider && styles.splitCellWithDivider,
-        line?.type === "add" && styles.addLineContainer,
-        line?.type === "remove" && styles.removeLineContainer,
-        line?.type === "context" && styles.contextLineContainer,
-      ]}
-      onHoverIn={
-        Platform.OS === "web" && lineKey ? () => onHoverLine?.(lineKey) : undefined
-      }
-      onHoverOut={Platform.OS === "web" ? onLeaveLine : undefined}
-      testID={testID}
-    >
-      {({ hovered, pressed }) =>
-        (
-          <View style={styles.splitCellRow}>
-            {cellContent(
-              Boolean(onAddHunkReference) &&
-                (hunkActionMode === "tap-reveal"
-                  ? Boolean(showFirstLineAction)
-                  : hoveredLineKey === lineKey || hovered || pressed),
-            )}
-          </View>
-        )
-      }
-    </Pressable>
-  );
-}
-
-function SplitDiffRowView({
-  row,
-  gutterWidth,
-  wrapLines,
-  hunkActionMode,
-  hoveredLineKey,
-  onHoverLine,
-  onLeaveLine,
-  onAddHunkReference,
-  testID,
-}: {
-  row: Extract<SplitDiffRow, { kind: "pair" }>;
-  gutterWidth: number;
-  wrapLines: boolean;
-  hunkActionMode: HunkChatActionMode;
-  hoveredLineKey: string | null;
-  onHoverLine?: (lineKey: string) => void;
-  onLeaveLine?: () => void;
-  onAddHunkReference?: () => void;
-  testID?: string;
-}) {
-  return (
-    <View style={styles.splitRow} testID={testID}>
-      <SplitDiffCell
-        line={row.left}
-        gutterWidth={gutterWidth}
-        wrapLines={wrapLines}
-        hunkActionMode={hunkActionMode}
-        lineKey={row.left ? `${testID ?? "split-row"}:left` : undefined}
-        hoveredLineKey={hoveredLineKey}
-        onHoverLine={onHoverLine}
-        onLeaveLine={onLeaveLine}
-        showFirstLineAction={row.isFirstChangedLineInHunk && row.left !== null}
-        onAddHunkReference={onAddHunkReference}
-        testID={testID ? `${testID}-left` : undefined}
-      />
-      <SplitDiffCell
-        line={row.right}
-        gutterWidth={gutterWidth}
-        wrapLines={wrapLines}
-        hunkActionMode={hunkActionMode}
-        lineKey={row.right ? `${testID ?? "split-row"}:right` : undefined}
-        hoveredLineKey={hoveredLineKey}
-        onHoverLine={onHoverLine}
-        onLeaveLine={onLeaveLine}
-        showFirstLineAction={
-          row.isFirstChangedLineInHunk && row.left === null && row.right !== null
-        }
-        onAddHunkReference={onAddHunkReference}
-        showDivider
-        testID={testID ? `${testID}-right` : undefined}
-      />
-    </View>
-  );
 }
 
 const DiffFileHeader = memo(function DiffFileHeader({
@@ -656,183 +190,6 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 });
 
-function DiffFileBody({
-  file,
-  layout,
-  wrapLines,
-  hunkActionMode,
-  hoveredLineKey,
-  onHoverLine,
-  onLeaveLine,
-  armedLineKey,
-  onArmLine,
-  onClearArmedLine,
-  onAddHunkReference,
-  onBodyHeightChange,
-  testID,
-}: {
-  file: ParsedDiffFile;
-  layout: "unified" | "split";
-  wrapLines: boolean;
-  hunkActionMode: HunkChatActionMode;
-  hoveredLineKey: string | null;
-  onHoverLine?: (lineKey: string) => void;
-  onLeaveLine?: () => void;
-  armedLineKey: string | null;
-  onArmLine?: (lineKey: string) => void;
-  onClearArmedLine?: () => void;
-  onAddHunkReference?: (reference: string) => void;
-  onBodyHeightChange?: (path: string, height: number) => void;
-  testID?: string;
-}) {
-  const [scrollViewWidth, setScrollViewWidth] = useState(0);
-  const [bodyWidth, setBodyWidth] = useState(0);
-
-  return (
-    <View
-      style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]}
-      onLayout={(event) => {
-        setBodyWidth(event.nativeEvent.layout.width);
-        onBodyHeightChange?.(file.path, event.nativeEvent.layout.height);
-      }}
-      testID={testID}
-    >
-      {(() => {
-        if (file.status === "too_large" || file.status === "binary") {
-          return (
-            <View style={styles.statusMessageContainer}>
-              <Text style={styles.statusMessageText}>
-                {file.status === "binary" ? "Binary file" : "Diff too large to display"}
-              </Text>
-            </View>
-          );
-        }
-
-        let maxLineNo = 0;
-        for (const hunk of file.hunks) {
-          maxLineNo = Math.max(maxLineNo, hunk.oldStart + hunk.oldCount, hunk.newStart + hunk.newCount);
-        }
-        const gutterWidth = lineNumberGutterWidth(maxLineNo);
-
-        const linesContent =
-          layout === "split"
-            ? buildSplitDiffRows(file).map((row, rowIndex) => {
-                if (row.kind === "header") {
-                  return (
-                    <View key={`header-${rowIndex}`} style={styles.splitHeaderRow}>
-                      <DiffHunkHeaderRow
-                        content={row.content}
-                        testID={testID ? `${testID}-hunk-${rowIndex}` : undefined}
-                      />
-                    </View>
-                  );
-                }
-
-                return (
-                  <SplitDiffRowView
-                    key={`pair-${rowIndex}`}
-                    row={row}
-                    gutterWidth={gutterWidth}
-                    wrapLines={wrapLines}
-                    hunkActionMode={hunkActionMode}
-                    hoveredLineKey={hoveredLineKey}
-                    onHoverLine={onHoverLine}
-                    onLeaveLine={onLeaveLine}
-                    onAddHunkReference={
-                      onAddHunkReference
-                        ? () => onAddHunkReference(row.chatReference)
-                        : undefined
-                    }
-                    testID={testID ? `${testID}-hunk-${rowIndex}` : undefined}
-                  />
-                );
-              })
-            : file.hunks.map((hunk, hunkIndex) => {
-                let oldLineNo = hunk.oldStart;
-                let newLineNo = hunk.newStart;
-                return hunk.lines.map((line, lineIndex) => {
-                  let lineNumber: number | null = null;
-                  if (line.type === "remove") {
-                    lineNumber = oldLineNo;
-                    oldLineNo++;
-                  } else if (line.type === "add") {
-                    lineNumber = newLineNo;
-                    newLineNo++;
-                  } else if (line.type === "context") {
-                    lineNumber = newLineNo;
-                    oldLineNo++;
-                    newLineNo++;
-                  }
-                  const currentLineKey = `${file.path}:${hunkIndex}:${lineIndex}`;
-                  return (
-                    <DiffLineView
-                      key={`${hunkIndex}-${lineIndex}`}
-                      line={line}
-                      lineNumber={lineNumber}
-                      gutterWidth={gutterWidth}
-                      wrapLines={wrapLines}
-                      hunkActionMode={hunkActionMode}
-                      lineKey={currentLineKey}
-                      hoveredLineKey={hoveredLineKey}
-                      onHoverLine={onHoverLine}
-                      onLeaveLine={onLeaveLine}
-                      armedLineKey={armedLineKey}
-                      onArmLine={onArmLine}
-                      onAddHunkReference={
-                        line.type !== "header" && onAddHunkReference
-                          ? () =>
-                              {
-                                onAddHunkReference(
-                                  buildHunkLineChatReference({
-                                    path: file.path,
-                                    hunk,
-                                    lineIndex,
-                                  }),
-                                );
-                                onClearArmedLine?.();
-                              }
-                          : undefined
-                      }
-                      testID={testID ? `${testID}-hunk-${hunkIndex}-line-${lineIndex}` : undefined}
-                    />
-                  );
-                });
-              });
-
-        const availableWidth = bodyWidth > 0 ? bodyWidth : scrollViewWidth;
-        const contentContainer = (
-          <View
-            style={[
-              layout === "split" ? styles.splitLinesContainer : styles.linesContainer,
-              availableWidth > 0 &&
-                (layout === "split"
-                  ? { width: availableWidth, minWidth: availableWidth, maxWidth: availableWidth }
-                  : { minWidth: availableWidth }),
-            ]}
-          >
-            {linesContent}
-          </View>
-        );
-
-        if (wrapLines) {
-          return <View style={styles.diffContent}>{contentContainer}</View>;
-        }
-        return (
-          <DiffScroll
-            scrollViewWidth={scrollViewWidth}
-            onScrollViewWidthChange={setScrollViewWidth}
-            onScroll={hunkActionMode === "tap-reveal" ? onClearArmedLine : undefined}
-            style={styles.diffContent}
-            contentContainerStyle={styles.diffContentInner}
-          >
-            {contentContainer}
-          </DiffScroll>
-        );
-      })()}
-    </View>
-  );
-}
-
 interface GitDiffPaneProps {
   serverId: string;
   workspaceId?: string | null;
@@ -854,8 +211,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const router = useRouter();
   const toast = useToast();
   const closeToAgent = usePanelStore((state) => state.closeToAgent);
-  const [hoveredLineKey, setHoveredLineKey] = useState<string | null>(null);
-  const [armedLineKey, setArmedLineKey] = useState<string | null>(null);
   const [diffModeOverride, setDiffModeOverride] = useState<"uncommitted" | "base" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
@@ -1092,16 +447,10 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
 
   const handleDiffListScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (hoveredLineKey !== null) {
-        setHoveredLineKey(null);
-      }
-      if (armedLineKey !== null) {
-        setArmedLineKey(null);
-      }
       diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
       scrollbar.onScroll(event);
     },
-    [armedLineKey, hoveredLineKey, scrollbar.onScroll],
+    [scrollbar.onScroll],
   );
 
   const handleDiffListLayout = useCallback(
@@ -1307,30 +656,17 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
             isExpanded={item.isExpanded}
             onToggle={handleToggleExpanded}
             onAddFileReference={handleAddFileReference}
-            onClearArmedLine={() => {
-              setHoveredLineKey(null);
-              setArmedLineKey(null);
-            }}
             onHeaderHeightChange={handleHeaderHeightChange}
             testID={`diff-file-${item.fileIndex}`}
           />
         );
       }
       return (
-        <DiffFileBody
+        <GitDiffFileBody
           file={item.file}
           layout={effectiveLayout}
           wrapLines={wrapLines}
           hunkActionMode={hunkActionMode}
-          hoveredLineKey={hoveredLineKey}
-          onHoverLine={setHoveredLineKey}
-          onLeaveLine={() => setHoveredLineKey(null)}
-          armedLineKey={armedLineKey}
-          onArmLine={setArmedLineKey}
-          onClearArmedLine={() => {
-            setHoveredLineKey(null);
-            setArmedLineKey(null);
-          }}
           onAddHunkReference={handleAddHunkReference}
           onBodyHeightChange={handleBodyHeightChange}
           testID={`diff-file-${item.fileIndex}-body`}
@@ -1338,7 +674,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       );
     },
     [
-      armedLineKey,
       effectiveLayout,
       handleAddFileReference,
       handleAddHunkReference,
@@ -1346,7 +681,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       handleHeaderHeightChange,
       handleToggleExpanded,
       hunkActionMode,
-      hoveredLineKey,
       wrapLines,
     ],
   );
@@ -1453,7 +787,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         renderItem={renderFlatItem}
         keyExtractor={flatKeyExtractor}
         stickyHeaderIndices={stickyHeaderIndices}
-        extraData={{ armedLineKey, expandedPathsArray, effectiveLayout, hoveredLineKey, wrapLines }}
+        extraData={{ expandedPathsArray, effectiveLayout, wrapLines }}
         style={styles.scrollView}
         contentContainerStyle={styles.contentContainer}
         testID="git-diff-scroll"
@@ -2121,130 +1455,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitColumnScroll: {
     flex: 1,
-  },
-  splitHeaderRow: {
-    backgroundColor: theme.colors.surface2,
-    paddingHorizontal: theme.spacing[3],
-  },
-  splitCell: {
-    flex: 1,
-    flexBasis: 0,
-    backgroundColor: theme.colors.surface2,
-  },
-  splitCellRow: {
-    flexDirection: "row",
-    alignItems: "stretch",
-  },
-  emptySplitCell: {
-    backgroundColor: theme.colors.surfaceDiffEmpty,
-  },
-  splitCellWithDivider: {
-    borderLeftWidth: theme.borderWidth[1],
-    borderLeftColor: theme.colors.border,
-  },
-  diffLineContainer: {
-    flexDirection: "row",
-    alignItems: "stretch",
-  },
-  lineNumberGutter: {
-    borderRightWidth: theme.borderWidth[1],
-    borderRightColor: theme.colors.border,
-    marginRight: theme.spacing[2],
-    alignSelf: "stretch",
-    justifyContent: "flex-start",
-  },
-  lineNumberGutterActionContent: {
-    height: theme.lineHeight.diff,
-    alignSelf: "stretch",
-    alignItems: "flex-end",
-    justifyContent: "center",
-    paddingRight: theme.spacing[2],
-  },
-  lineNumberText: {
-    textAlign: "right",
-    paddingRight: theme.spacing[2],
-    fontSize: theme.fontSize.xs,
-    lineHeight: theme.lineHeight.diff,
-    fontFamily: Fonts.mono,
-    color: theme.colors.foregroundMuted,
-    userSelect: "none",
-  },
-  addLineNumberText: {
-    color: theme.colors.palette.green[400],
-  },
-  removeLineNumberText: {
-    color: theme.colors.palette.red[500],
-  },
-  diffLineText: {
-    flex: 1,
-    paddingRight: theme.spacing[3],
-    fontSize: theme.fontSize.xs,
-    lineHeight: theme.lineHeight.diff,
-    fontFamily: Fonts.mono,
-    color: theme.colors.foreground,
-    userSelect: "text",
-  },
-  addLineContainer: {
-    backgroundColor: "rgba(46, 160, 67, 0.15)", // GitHub green
-  },
-  addLineText: {
-    color: theme.colors.foreground,
-  },
-  removeLineContainer: {
-    backgroundColor: "rgba(248, 81, 73, 0.1)", // GitHub red
-  },
-  removeLineText: {
-    color: theme.colors.foreground,
-  },
-  headerLineContainer: {
-    backgroundColor: theme.colors.surface2,
-  },
-  headerLineText: {
-    color: theme.colors.foregroundMuted,
-  },
-  hunkHeaderText: {
-    flexShrink: 1,
-    paddingRight: theme.spacing[2],
-  },
-  contextLineContainer: {
-    backgroundColor: theme.colors.surface1,
-  },
-  contextLineText: {
-    color: theme.colors.foregroundMuted,
-  },
-  chatReferenceButton: {
-    alignItems: "center",
-    justifyContent: "center",
-    width: {
-      xs: 28,
-      sm: 28,
-      md: 24,
-    },
-    height: {
-      xs: 28,
-      sm: 28,
-      md: 24,
-    },
-    borderRadius: theme.borderRadius.base,
-    flexShrink: 0,
-  },
-  chatReferenceButtonHovered: {
-    backgroundColor: theme.colors.surface3,
-  },
-  emptySplitCellText: {
-    color: "transparent",
-  },
-  statusMessageContainer: {
-    borderTopWidth: theme.borderWidth[1],
-    borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.surface1,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[4],
-  },
-  statusMessageText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-    fontStyle: "italic",
   },
   tooltipText: {
     fontSize: theme.fontSize.xs,

@@ -49,10 +49,10 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { submitAgentInput } from "@/components/agent-input-submit";
 import {
-  buildComposerInsertResult,
   markActiveChatComposer,
   registerActiveChatComposer,
 } from "@/utils/active-chat-composer";
+import { buildComposerInsertResult } from "@/utils/composer-text-insert";
 
 type QueuedMessage = {
   id: string;
