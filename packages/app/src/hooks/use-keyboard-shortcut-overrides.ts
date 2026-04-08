@@ -27,8 +27,7 @@ export function useKeyboardShortcutOverrides(): UseKeyboardShortcutOverridesRetu
 
   const setOverride = useCallback(
     async (bindingId: string, comboString: string) => {
-      const prev =
-        queryClient.getQueryData<Record<string, string>>(QUERY_KEY) ?? EMPTY_OVERRIDES;
+      const prev = queryClient.getQueryData<Record<string, string>>(QUERY_KEY) ?? EMPTY_OVERRIDES;
       const next = { ...prev, [bindingId]: comboString };
       queryClient.setQueryData<Record<string, string>>(QUERY_KEY, next);
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -38,8 +37,7 @@ export function useKeyboardShortcutOverrides(): UseKeyboardShortcutOverridesRetu
 
   const removeOverride = useCallback(
     async (bindingId: string) => {
-      const prev =
-        queryClient.getQueryData<Record<string, string>>(QUERY_KEY) ?? EMPTY_OVERRIDES;
+      const prev = queryClient.getQueryData<Record<string, string>>(QUERY_KEY) ?? EMPTY_OVERRIDES;
       const { [bindingId]: _, ...next } = prev;
       queryClient.setQueryData<Record<string, string>>(QUERY_KEY, next);
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));

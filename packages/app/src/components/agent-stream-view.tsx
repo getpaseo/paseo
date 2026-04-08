@@ -254,7 +254,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         if (item.kind === "user_message" && isToolSequenceItem(belowItem)) {
           return looseGap;
         }
-        if ((item.kind === "user_message" || item.kind === "assistant_message") && isToolSequenceItem(belowItem)) {
+        if (
+          (item.kind === "user_message" || item.kind === "assistant_message") &&
+          isToolSequenceItem(belowItem)
+        ) {
           return tightGap;
         }
         if (item.kind === "todo_list" && isToolSequenceItem(belowItem)) {
@@ -914,7 +917,9 @@ function PermissionRequestCard({
         </Text>
       ) : null}
 
-      {planMarkdown ? <PlanCard title="Proposed plan" text={planMarkdown} disableOuterSpacing /> : null}
+      {planMarkdown ? (
+        <PlanCard title="Proposed plan" text={planMarkdown} disableOuterSpacing />
+      ) : null}
 
       {!isPlanRequest ? (
         <ToolCallDetailsContent

@@ -40,7 +40,12 @@ export function UpdateBanner() {
 
   if (!isDesktopApp) return null;
   if (dismissed) return null;
-  if (status !== "available" && status !== "installed" && status !== "installing" && status !== "error")
+  if (
+    status !== "available" &&
+    status !== "installed" &&
+    status !== "installing" &&
+    status !== "error"
+  )
     return null;
 
   const isInstalled = status === "installed";

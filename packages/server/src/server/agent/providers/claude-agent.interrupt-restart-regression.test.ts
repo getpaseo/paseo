@@ -212,7 +212,9 @@ function collectAssistantText(events: AgentStreamEvent[]): string {
     .join("");
 }
 
-function subscribeToEvents(session: { subscribe: (callback: (event: AgentStreamEvent) => void) => () => void }) {
+function subscribeToEvents(session: {
+  subscribe: (callback: (event: AgentStreamEvent) => void) => () => void;
+}) {
   const queue = createAsyncQueue<AgentStreamEvent>();
   const unsubscribe = session.subscribe((event) => {
     queue.push(event);
@@ -484,9 +486,9 @@ describe("ClaudeAgentSession interrupt regression", () => {
     expect(secondTurnEvents.some((event) => event.type === "turn_canceled")).toBe(false);
     expect(secondTurnEvents.some((event) => event.type === "turn_completed")).toBe(true);
     expect(collectAssistantText(secondTurnEvents)).toContain("SECOND_PROMPT_RESPONSE");
-    expect(
-      observedSecondTurnEvents.filter((event) => event.type === "turn_started").length,
-    ).toBe(1);
+    expect(observedSecondTurnEvents.filter((event) => event.type === "turn_started").length).toBe(
+      1,
+    );
     expect(
       observedSecondTurnEvents.some(
         (event) => event.type === "turn_failed" || event.type === "turn_canceled",

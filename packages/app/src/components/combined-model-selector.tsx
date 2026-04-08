@@ -10,17 +10,8 @@ import {
 } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import {
-  ArrowLeft,
-  ChevronDown,
-  ChevronRight,
-  Search,
-  Star,
-} from "lucide-react-native";
-import type {
-  AgentModelDefinition,
-  AgentProvider,
-} from "@server/server/agent/agent-sdk-types";
+import { ArrowLeft, ChevronDown, ChevronRight, Search, Star } from "lucide-react-native";
+import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 const IS_WEB = Platform.OS === "web";
 
@@ -125,7 +116,10 @@ function sortFavoritesFirst(
 function groupRowsByProvider(
   rows: SelectorModelRow[],
 ): Array<{ providerId: string; providerLabel: string; rows: SelectorModelRow[] }> {
-  const grouped = new Map<string, { providerId: string; providerLabel: string; rows: SelectorModelRow[] }>();
+  const grouped = new Map<
+    string,
+    { providerId: string; providerLabel: string; rows: SelectorModelRow[] }
+  >();
 
   for (const row of rows) {
     const existing = grouped.get(row.provider);
@@ -172,8 +166,7 @@ function ModelRow({
     [onToggleFavorite, row.modelId, row.provider],
   );
 
-  const showDescription =
-    row.description && PROVIDERS_WITH_MODEL_DESCRIPTIONS.has(row.provider);
+  const showDescription = row.description && PROVIDERS_WITH_MODEL_DESCRIPTIONS.has(row.provider);
 
   return (
     <ComboboxItem
@@ -290,7 +283,9 @@ function GroupedProviderRows({
   return (
     <View>
       {groupedRows.map((group, index) => {
-        const providerDefinition = providerDefinitions.find((definition) => definition.id === group.providerId);
+        const providerDefinition = providerDefinitions.find(
+          (definition) => definition.id === group.providerId,
+        );
         const ProvIcon = getProviderIcon(group.providerId);
         const isInline = viewKind === "provider";
 

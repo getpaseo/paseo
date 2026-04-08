@@ -28,7 +28,10 @@ try {
     assert.strictEqual(listed.exitCode, 0, listed.stderr);
     const listedJson = JSON.parse(listed.stdout);
     assert(Array.isArray(listedJson), listed.stdout);
-    assert(listedJson.some((item: { id: string }) => item.id === createdJson.id), listed.stdout);
+    assert(
+      listedJson.some((item: { id: string }) => item.id === createdJson.id),
+      listed.stdout,
+    );
 
     const inspected = await ctx.paseo(["schedule", "inspect", createdJson.id, "--json"]);
     assert.strictEqual(inspected.exitCode, 0, inspected.stderr);
@@ -53,7 +56,16 @@ try {
   {
     console.log("Test 2: loop run/ls/inspect/logs/stop work");
     const run = await ctx.paseo(
-      ["loop", "run", "Return any response", "--name", "smoke-loop", "--verify-check", "true", "--json"],
+      [
+        "loop",
+        "run",
+        "Return any response",
+        "--name",
+        "smoke-loop",
+        "--verify-check",
+        "true",
+        "--json",
+      ],
       { timeout: 30000 },
     );
     assert.strictEqual(run.exitCode, 0, run.stderr);
@@ -64,7 +76,10 @@ try {
     assert.strictEqual(listed.exitCode, 0, listed.stderr);
     const listedJson = JSON.parse(listed.stdout);
     assert(Array.isArray(listedJson), listed.stdout);
-    assert(listedJson.some((item: { id: string }) => item.id === runJson.id), listed.stdout);
+    assert(
+      listedJson.some((item: { id: string }) => item.id === runJson.id),
+      listed.stdout,
+    );
 
     let status = "running";
     for (let attempt = 0; attempt < 40; attempt += 1) {

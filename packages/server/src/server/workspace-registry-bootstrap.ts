@@ -70,7 +70,10 @@ export async function bootstrapWorkspaceRegistries(options: {
   const activeRecords = records.filter((record) => !record.archivedAt);
   const recordsByWorkspaceId = new Map<
     string,
-    { placement: Awaited<ReturnType<typeof buildProjectPlacementForCwd>>; records: StoredAgentRecord[] }
+    {
+      placement: Awaited<ReturnType<typeof buildProjectPlacementForCwd>>;
+      records: StoredAgentRecord[];
+    }
   >();
   for (const record of activeRecords) {
     const normalizedCwd = normalizeWorkspaceId(record.cwd);

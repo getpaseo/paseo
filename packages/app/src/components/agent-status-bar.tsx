@@ -297,7 +297,8 @@ function ControlledStatusBar({
     );
     return map;
   }, [modelOptions, provider]);
-  const effectiveProviderDefinitions = providerDefinitions ??
+  const effectiveProviderDefinitions =
+    providerDefinitions ??
     (PROVIDER_DEFINITION_MAP.has(provider) ? [PROVIDER_DEFINITION_MAP.get(provider)!] : []);
   const effectiveAllProviderModels = allProviderModels ?? fallbackAllProviderModels;
   const canSelectProviderInModelMenu = canSelectModelProvider ?? (() => true);
@@ -665,10 +666,7 @@ function ControlledStatusBar({
                   onClose={onDropdownClose}
                   renderTrigger={({ selectedModelLabel }) => (
                     <View
-                      style={[
-                        styles.sheetSelect,
-                        modelDisabled && styles.disabledSheetSelect,
-                      ]}
+                      style={[styles.sheetSelect, modelDisabled && styles.disabledSheetSelect]}
                       pointerEvents="none"
                       testID="agent-preferences-model"
                     >
@@ -923,7 +921,10 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
     return (models ?? []).map((model) => ({ id: model.id, label: model.label }));
   }, [models]);
   const favoriteKeys = useMemo(
-    () => new Set((preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite))),
+    () =>
+      new Set(
+        (preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite)),
+      ),
     [preferences.favoriteModels],
   );
 
@@ -942,7 +943,9 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
     <ControlledStatusBar
       provider={agent.provider}
       modeOptions={
-        modeOptions.length > 0 ? modeOptions : [{ id: agent.currentModeId ?? "", label: displayMode }]
+        modeOptions.length > 0
+          ? modeOptions
+          : [{ id: agent.currentModeId ?? "", label: displayMode }]
       }
       selectedModeId={agent.currentModeId ?? undefined}
       providerDefinitions={agentProviderDefinitions}
@@ -978,9 +981,11 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
       }}
       favoriteKeys={favoriteKeys}
       onToggleFavoriteModel={(provider, modelId) => {
-        void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
-          console.warn("[AgentStatusBar] toggle favorite model failed", error);
-        });
+        void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch(
+          (error) => {
+            console.warn("[AgentStatusBar] toggle favorite model failed", error);
+          },
+        );
       }}
       thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
       selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
@@ -1064,7 +1069,10 @@ export function DraftAgentStatusBar({
     return thinkingOptions.map((option) => ({ id: option.id, label: option.label }));
   }, [thinkingOptions]);
   const favoriteKeys = useMemo(
-    () => new Set((preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite))),
+    () =>
+      new Set(
+        (preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite)),
+      ),
     [preferences.favoriteModels],
   );
 
@@ -1083,9 +1091,11 @@ export function DraftAgentStatusBar({
           onSelect={onSelectProviderAndModel}
           favoriteKeys={favoriteKeys}
           onToggleFavorite={(provider, modelId) => {
-            void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
-              console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
-            });
+            void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch(
+              (error) => {
+                console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
+              },
+            );
           }}
           isLoading={isAllModelsLoading}
           disabled={disabled}
@@ -1129,9 +1139,11 @@ export function DraftAgentStatusBar({
         isModelLoading={isAllModelsLoading}
         favoriteKeys={favoriteKeys}
         onToggleFavoriteModel={(provider, modelId) => {
-          void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
-            console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
-          });
+          void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch(
+            (error) => {
+              console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
+            },
+          );
         }}
         thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
         selectedThinkingOptionId={effectiveSelectedThinkingOption}

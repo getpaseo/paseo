@@ -1,9 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import {
-  createOpencodeClient,
-  type OpencodeClient,
-} from "@opencode-ai/sdk/v2/client";
+import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import net from "node:net";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -355,13 +352,16 @@ function buildOpenCodeModelDefinition(
 }
 
 function resolveOpenCodeSelectedModelContextWindow(
-  providers: {
-    connected?: string[];
-    all?: Array<{
-      id: string;
-      models?: Record<string, unknown>;
-    }>;
-  } | null | undefined,
+  providers:
+    | {
+        connected?: string[];
+        all?: Array<{
+          id: string;
+          models?: Record<string, unknown>;
+        }>;
+      }
+    | null
+    | undefined,
   modelId: string | null | undefined,
 ): number | undefined {
   if (!providers) {
@@ -375,13 +375,18 @@ function resolveOpenCodeSelectedModelContextWindow(
   return lookup.get(modelLookupKey);
 }
 
-function buildOpenCodeModelContextWindowLookup(providers: {
-  connected?: string[];
-  all?: Array<{
-    id: string;
-    models?: Record<string, unknown>;
-  }>;
-} | null | undefined): Map<string, number> {
+function buildOpenCodeModelContextWindowLookup(
+  providers:
+    | {
+        connected?: string[];
+        all?: Array<{
+          id: string;
+          models?: Record<string, unknown>;
+        }>;
+      }
+    | null
+    | undefined,
+): Map<string, number> {
   const lookup = new Map<string, number>();
   if (!providers) {
     return lookup;
@@ -800,16 +805,10 @@ export class OpenCodeAgentClient implements AgentClient {
     const client = createOpencodeClient({ baseUrl: url, directory });
 
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error("OpenCode app.agents timed out after 10s")),
-        10_000,
-      );
+      setTimeout(() => reject(new Error("OpenCode app.agents timed out after 10s")), 10_000);
     });
 
-    const response = await Promise.race([
-      client.app.agents({ directory }),
-      timeoutPromise,
-    ]);
+    const response = await Promise.race([client.app.agents({ directory }), timeoutPromise]);
 
     if (response.error || !response.data) {
       return DEFAULT_MODES;
@@ -889,7 +888,10 @@ export class OpenCodeAgentClient implements AgentClient {
             label: "Binary",
             value: resolvedBinary ?? "not found",
           },
-          { label: "Version", value: resolvedBinary ? resolveBinaryVersion(resolvedBinary) : "unknown" },
+          {
+            label: "Version",
+            value: resolvedBinary ? resolveBinaryVersion(resolvedBinary) : "unknown",
+          },
           { label: "Server", value: serverStatus },
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
@@ -1162,9 +1164,7 @@ export function translateOpenCodeEvent(
       }
 
       const deltaMessageId = props.messageID as string | undefined;
-      const deltaMessageRole = deltaMessageId
-        ? state.messageRoles.get(deltaMessageId)
-        : undefined;
+      const deltaMessageRole = deltaMessageId ? state.messageRoles.get(deltaMessageId) : undefined;
       const deltaField = props.field as string | undefined;
       const deltaText = props.delta as string | undefined;
 
@@ -1361,8 +1361,9 @@ class OpenCodeAgentSession implements AgentSession {
     this.logger = logger;
     this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
-    this.selectedModelContextWindowMaxTokens =
-      this.resolveConfiguredModelContextWindowMaxTokens(config.model);
+    this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
+      config.model,
+    );
   }
 
   get id(): string | null {
@@ -1382,8 +1383,9 @@ class OpenCodeAgentSession implements AgentSession {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
     this.config.model = normalizedModelId ?? undefined;
-    this.selectedModelContextWindowMaxTokens =
-      this.resolveConfiguredModelContextWindowMaxTokens(this.config.model);
+    this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
+      this.config.model,
+    );
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -1498,8 +1500,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.abortController = turnAbortController;
     await this.ensureMcpServersConfigured();
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
-    this.accumulatedUsage =
-      contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
+    this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
 
     const parts = this.buildPromptParts(prompt);
     const model = this.parseModel(this.config.model);
@@ -1515,23 +1516,25 @@ class OpenCodeAgentSession implements AgentSession {
     if (slashCommand) {
       // command() blocks until completion, but events stream via SSE in the
       // background — fire without awaiting so the event stream isn't starved.
-      void this.client.session.command({
-        sessionID: this.sessionId,
-        directory: this.config.cwd,
-        command: slashCommand.commandName,
-        arguments: slashCommand.args ?? "",
-        ...(this.config.model ? { model: this.config.model } : {}),
-        ...(effectiveMode ? { agent: effectiveMode } : {}),
-        ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-      }).then((response) => {
-        if (response.error) {
-          const errorMsg = normalizeTurnFailureError(response.error);
-          this.finishForegroundTurn(
-            { type: "turn_failed", provider: "opencode", error: errorMsg },
-            turnId,
-          );
-        }
-      });
+      void this.client.session
+        .command({
+          sessionID: this.sessionId,
+          directory: this.config.cwd,
+          command: slashCommand.commandName,
+          arguments: slashCommand.args ?? "",
+          ...(this.config.model ? { model: this.config.model } : {}),
+          ...(effectiveMode ? { agent: effectiveMode } : {}),
+          ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+        })
+        .then((response) => {
+          if (response.error) {
+            const errorMsg = normalizeTurnFailureError(response.error);
+            this.finishForegroundTurn(
+              { type: "turn_failed", provider: "opencode", error: errorMsg },
+              turnId,
+            );
+          }
+        });
     } else {
       const promptResponse = await this.client.session.promptAsync({
         sessionID: this.sessionId,
@@ -1594,7 +1597,11 @@ class OpenCodeAgentSession implements AgentSession {
           if (e.type === "timeline" && e.item.type === "tool_call") {
             this.trackToolCall(e.item);
           }
-          if (e.type === "turn_completed" || e.type === "turn_failed" || e.type === "turn_canceled") {
+          if (
+            e.type === "turn_completed" ||
+            e.type === "turn_failed" ||
+            e.type === "turn_canceled"
+          ) {
             if (e.type === "turn_failed") {
               this.finishForegroundTurn(
                 {

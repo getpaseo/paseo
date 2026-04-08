@@ -8,13 +8,7 @@ export type WorkspaceTabMenuEntry =
       kind: "item";
       key: string;
       label: string;
-      icon?:
-        | "copy"
-        | "rotate-cw"
-        | "arrow-left-to-line"
-        | "arrow-right-to-line"
-        | "copy-x"
-        | "x";
+      icon?: "copy" | "rotate-cw" | "arrow-left-to-line" | "arrow-right-to-line" | "copy-x" | "x";
       hint?: string;
       tooltip?: string;
       disabled?: boolean;

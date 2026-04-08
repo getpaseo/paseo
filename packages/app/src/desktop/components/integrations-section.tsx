@@ -87,7 +87,9 @@ export function IntegrationsSection() {
           <Button
             variant="ghost"
             size="sm"
-            leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
+            leftIcon={
+              <ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            }
             textStyle={settingsStyles.sectionHeaderLinkText}
             style={settingsStyles.sectionHeaderLink}
             onPress={() => void openExternalUrl(CLI_DOCS_URL)}
@@ -98,7 +100,9 @@ export function IntegrationsSection() {
           <Button
             variant="ghost"
             size="sm"
-            leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
+            leftIcon={
+              <ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            }
             textStyle={settingsStyles.sectionHeaderLinkText}
             style={settingsStyles.sectionHeaderLink}
             onPress={() => void openExternalUrl(SKILLS_DOCS_URL)}

@@ -2,11 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import type { EditorTargetDescriptorPayload, EditorTargetId } from "../shared/messages.js";
-import {
-  findExecutable,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "../utils/executable.js";
+import { findExecutable, quoteWindowsArgument, quoteWindowsCommand } from "../utils/executable.js";
 
 type EditorTargetDefinition = {
   id: EditorTargetId;
@@ -144,7 +140,9 @@ export async function openInEditorTarget(
 
   const command = platform === "win32" ? quoteWindowsCommand(launch.command) : launch.command;
   const args =
-    platform === "win32" ? launch.args.map((argument) => quoteWindowsArgument(argument)) : launch.args;
+    platform === "win32"
+      ? launch.args.map((argument) => quoteWindowsArgument(argument))
+      : launch.args;
 
   await new Promise<void>((resolve, reject) => {
     let child: ChildProcess;

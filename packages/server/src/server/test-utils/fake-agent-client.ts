@@ -243,7 +243,10 @@ class FakeAgentSession implements AgentSession {
   private async resolveSlashCommandInput(
     prompt: AgentPromptInput,
   ): Promise<{ commandName: string; args?: string } | null> {
-    if ((this.providerName !== "codex" && this.providerName !== "opencode") || typeof prompt !== "string") {
+    if (
+      (this.providerName !== "codex" && this.providerName !== "opencode") ||
+      typeof prompt !== "string"
+    ) {
       return null;
     }
     const parsed = this.parseSlashCommandInput(prompt);

@@ -22,41 +22,35 @@ export function createAgentCommand(): Command {
   const agent = new Command("agent").description("Manage agents (advanced operations)");
 
   // Primary agent commands (same as top-level)
-  addJsonAndDaemonHostOptions(
-    addLsOptions(agent.command("ls")),
-  ).action(withOutput(runLsCommand));
+  addJsonAndDaemonHostOptions(addLsOptions(agent.command("ls"))).action(withOutput(runLsCommand));
 
-  addJsonAndDaemonHostOptions(
-    addRunOptions(agent.command("run")),
-  ).action(withOutput(runRunCommand));
+  addJsonAndDaemonHostOptions(addRunOptions(agent.command("run"))).action(
+    withOutput(runRunCommand),
+  );
 
-  addDaemonHostOption(
-    addAttachOptions(agent.command("attach")),
-  ).action(runAttachCommand);
+  addDaemonHostOption(addAttachOptions(agent.command("attach"))).action(runAttachCommand);
 
-  addDaemonHostOption(
-    addLogsOptions(agent.command("logs")),
-  ).action(runLogsCommand);
+  addDaemonHostOption(addLogsOptions(agent.command("logs"))).action(runLogsCommand);
 
-  addJsonAndDaemonHostOptions(
-    addStopOptions(agent.command("stop")),
-  ).action(withOutput(runStopCommand));
+  addJsonAndDaemonHostOptions(addStopOptions(agent.command("stop"))).action(
+    withOutput(runStopCommand),
+  );
 
-  addJsonAndDaemonHostOptions(
-    addDeleteOptions(agent.command("delete")),
-  ).action(withOutput(runDeleteCommand));
+  addJsonAndDaemonHostOptions(addDeleteOptions(agent.command("delete"))).action(
+    withOutput(runDeleteCommand),
+  );
 
-  addJsonAndDaemonHostOptions(
-    addSendOptions(agent.command("send")),
-  ).action(withOutput(runSendCommand));
+  addJsonAndDaemonHostOptions(addSendOptions(agent.command("send"))).action(
+    withOutput(runSendCommand),
+  );
 
-  addJsonAndDaemonHostOptions(
-    addInspectOptions(agent.command("inspect")),
-  ).action(withOutput(runInspectCommand));
+  addJsonAndDaemonHostOptions(addInspectOptions(agent.command("inspect"))).action(
+    withOutput(runInspectCommand),
+  );
 
-  addJsonAndDaemonHostOptions(
-    addWaitOptions(agent.command("wait")),
-  ).action(withOutput(runWaitCommand));
+  addJsonAndDaemonHostOptions(addWaitOptions(agent.command("wait"))).action(
+    withOutput(runWaitCommand),
+  );
 
   // Advanced agent commands (less common operations)
   addJsonAndDaemonHostOptions(
@@ -68,9 +62,9 @@ export function createAgentCommand(): Command {
       .option("--list", "List available modes for this agent"),
   ).action(withOutput(runModeCommand));
 
-  addJsonAndDaemonHostOptions(
-    addArchiveOptions(agent.command("archive")),
-  ).action(withOutput(runArchiveCommand));
+  addJsonAndDaemonHostOptions(addArchiveOptions(agent.command("archive"))).action(
+    withOutput(runArchiveCommand),
+  );
 
   addJsonAndDaemonHostOptions(
     agent

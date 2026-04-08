@@ -92,17 +92,15 @@ function createSessionForWorkspaceGitWatchTests(): {
     error: vi.fn(),
   };
   const backgroundGitFetchManager = {
-    subscribe: vi.fn(
-      async (params: { repoGitRoot: string; cwd: string }, listener: () => void) => {
-        const unsubscribe = vi.fn();
-        backgroundGitFetchSubscriptions.push({
-          params,
-          listener,
-          unsubscribe,
-        });
-        return { unsubscribe };
-      },
-    ),
+    subscribe: vi.fn(async (params: { repoGitRoot: string; cwd: string }, listener: () => void) => {
+      const unsubscribe = vi.fn();
+      backgroundGitFetchSubscriptions.push({
+        params,
+        listener,
+        unsubscribe,
+      });
+      return { unsubscribe };
+    }),
   };
 
   const session = new Session({
@@ -440,7 +438,8 @@ describe("workspace git watch targets", () => {
   });
 
   test("refreshes the workspace when the background fetch manager callback fires and unsubscribes on cleanup", async () => {
-    const { session, emitted, backgroundGitFetchManager } = createSessionForWorkspaceGitWatchTests();
+    const { session, emitted, backgroundGitFetchManager } =
+      createSessionForWorkspaceGitWatchTests();
     const sessionAny = session as any;
 
     sessionAny.buildProjectPlacement = async (cwd: string) => ({

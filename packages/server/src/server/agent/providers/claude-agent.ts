@@ -9,7 +9,6 @@ import {
   type AgentDefinition,
   type CanUseTool,
   type McpServerConfig as ClaudeSdkMcpServerConfig,
-
   type Options,
   type PermissionMode,
   type PermissionResult,
@@ -34,10 +33,7 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
 } from "./claude/task-notification-tool-call.js";
-import {
-  getClaudeModels,
-  normalizeClaudeRuntimeModelId,
-} from "./claude/claude-models.js";
+import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./claude/claude-models.js";
 import { parsePartialJsonObject } from "./claude/partial-json.js";
 import { ClaudeSidechainTracker } from "./claude/sidechain-tracker.js";
 import {
@@ -75,10 +71,7 @@ import type {
   McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
-import {
-  applyProviderEnv,
-  type ProviderRuntimeSettings,
-} from "../provider-launch-config.js";
+import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
 import {
   findExecutable,
   quoteWindowsArgument,
@@ -222,21 +215,20 @@ function applyRuntimeSettingsToClaudeOptions(
       // PATH lookup failures in the managed runtime bundle.
       // When the SDK passes a native binary path (from pathToClaudeCodeExecutable)
       // or the user overrides the command via runtime settings, use that directly.
-      const isDefaultRuntime =
-        resolved.command === "node" || resolved.command === "bun";
+      const isDefaultRuntime = resolved.command === "node" || resolved.command === "bun";
       const command = isDefaultRuntime ? process.execPath : resolved.command;
       const child = spawn(
         quoteWindowsCommand(command),
         resolved.args.map((argument) => quoteWindowsArgument(argument)),
         {
-        cwd: spawnOptions.cwd,
-        env: {
-          ...applyProviderEnv(spawnOptions.env, runtimeSettings),
-          ...(launchEnv ?? {}),
-        },
-        shell: process.platform === "win32",
-        signal: spawnOptions.signal,
-        stdio: ["pipe", "pipe", "pipe"],
+          cwd: spawnOptions.cwd,
+          env: {
+            ...applyProviderEnv(spawnOptions.env, runtimeSettings),
+            ...(launchEnv ?? {}),
+          },
+          shell: process.platform === "win32",
+          signal: spawnOptions.signal,
+          stdio: ["pipe", "pipe", "pipe"],
         },
       );
       if (typeof options.stderr === "function") {
@@ -1096,7 +1088,6 @@ export class ClaudeAgentClient implements AgentClient {
 
   async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
     return getClaudeModels();
-
   }
 
   async listPersistedAgents(
@@ -1181,10 +1172,12 @@ function resolveClaudeVersion(runtimeSettings?: ProviderRuntimeSettings): string
 
   try {
     if (command?.mode === "replace") {
-      return execFileSync(command.argv[0]!, [...command.argv.slice(1), "--version"], {
-        encoding: "utf8",
-        timeout: 5_000,
-      }).trim() || null;
+      return (
+        execFileSync(command.argv[0]!, [...command.argv.slice(1), "--version"], {
+          encoding: "utf8",
+          timeout: 5_000,
+        }).trim() || null
+      );
     }
 
     const executable = findExecutable("claude");
@@ -1192,10 +1185,12 @@ function resolveClaudeVersion(runtimeSettings?: ProviderRuntimeSettings): string
       return null;
     }
 
-    return execFileSync(executable, ["--version"], {
-      encoding: "utf8",
-      timeout: 5_000,
-    }).trim() || null;
+    return (
+      execFileSync(executable, ["--version"], {
+        encoding: "utf8",
+        timeout: 5_000,
+      }).trim() || null
+    );
   } catch {
     return null;
   }
@@ -2083,10 +2078,9 @@ class ClaudeAgentSession implements AgentSession {
             : process.env["PATH"] !== undefined
               ? "PATH"
               : null,
-        pathIncludesClaudeLocalBin:
-          (process.env["Path"] ?? process.env["PATH"] ?? "")
-            .toLowerCase()
-            .includes("\\.local\\bin"),
+        pathIncludesClaudeLocalBin: (process.env["Path"] ?? process.env["PATH"] ?? "")
+          .toLowerCase()
+          .includes("\\.local\\bin"),
       },
       "Resolved Claude executable",
     );
@@ -2218,8 +2212,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private isAbortError(message: SDKMessage): boolean {
-    const errors =
-      "errors" in message && Array.isArray(message.errors) ? message.errors : [];
+    const errors = "errors" in message && Array.isArray(message.errors) ? message.errors : [];
     return errors.some((e: string) => /\baborted\b/i.test(e));
   }
 
@@ -2260,9 +2253,11 @@ class ClaudeAgentSession implements AgentSession {
     if (this.getRecentStderrDiagnostic()) {
       return;
     }
-    const message =
-      typeof error === "string" ? error : error instanceof Error ? error.message : "";
-    if (!/\bprocess exited with code\b/i.test(message) && !/\bterminated by signal\b/i.test(message)) {
+    const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+    if (
+      !/\bprocess exited with code\b/i.test(message) &&
+      !/\bterminated by signal\b/i.test(message)
+    ) {
       return;
     }
 
@@ -2503,11 +2498,7 @@ class ClaudeAgentSession implements AgentSession {
         return;
       }
     }
-    if (
-      message.type === "result" &&
-      message.subtype !== "success" &&
-      this.isAbortError(message)
-    ) {
+    if (message.type === "result" && message.subtype !== "success" && this.isAbortError(message)) {
       this.logger.debug("Suppressing abort result by content");
       return;
     }
@@ -2973,9 +2964,7 @@ class ClaudeAgentSession implements AgentSession {
       outputTokens: message.usage.output_tokens,
       totalCostUsd: message.total_cost_usd,
     };
-    const contextWindowMaxTokens = extractContextWindowSize(
-      modelUsage ?? message.modelUsage,
-    );
+    const contextWindowMaxTokens = extractContextWindowSize(modelUsage ?? message.modelUsage);
     if (contextWindowMaxTokens !== undefined) {
       this.lastContextWindowMaxTokens = contextWindowMaxTokens;
       usage.contextWindowMaxTokens = contextWindowMaxTokens;
@@ -3092,8 +3081,7 @@ class ClaudeAgentSession implements AgentSession {
       input,
       detail: toolDetail,
       suggestions: options.suggestions?.map((suggestion) => ({ ...suggestion })),
-      actions:
-        kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
+      actions: kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 

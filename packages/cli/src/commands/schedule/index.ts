@@ -25,15 +25,12 @@ export function createScheduleCommand(): Command {
       .option("--expires-in <duration>", "Time to live for the schedule"),
   ).action(withOutput(runCreateCommand));
 
-  addJsonAndDaemonHostOptions(
-    schedule.command("ls").description("List schedules"),
-  ).action(withOutput(runLsCommand));
+  addJsonAndDaemonHostOptions(schedule.command("ls").description("List schedules")).action(
+    withOutput(runLsCommand),
+  );
 
   addJsonAndDaemonHostOptions(
-    schedule
-      .command("inspect")
-      .description("Inspect a schedule")
-      .argument("<id>", "Schedule ID"),
+    schedule.command("inspect").description("Inspect a schedule").argument("<id>", "Schedule ID"),
   ).action(withOutput(runInspectCommand));
 
   addJsonAndDaemonHostOptions(
@@ -44,10 +41,7 @@ export function createScheduleCommand(): Command {
   ).action(withOutput(runLogsCommand));
 
   addJsonAndDaemonHostOptions(
-    schedule
-      .command("pause")
-      .description("Pause a schedule")
-      .argument("<id>", "Schedule ID"),
+    schedule.command("pause").description("Pause a schedule").argument("<id>", "Schedule ID"),
   ).action(withOutput(runPauseCommand));
 
   addJsonAndDaemonHostOptions(
@@ -58,10 +52,7 @@ export function createScheduleCommand(): Command {
   ).action(withOutput(runResumeCommand));
 
   addJsonAndDaemonHostOptions(
-    schedule
-      .command("delete")
-      .description("Delete a schedule")
-      .argument("<id>", "Schedule ID"),
+    schedule.command("delete").description("Delete a schedule").argument("<id>", "Schedule ID"),
   ).action(withOutput(runDeleteCommand));
 
   return schedule;

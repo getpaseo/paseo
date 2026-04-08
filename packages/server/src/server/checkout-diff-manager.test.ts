@@ -5,9 +5,15 @@ const { execMock, getCheckoutDiffMock, resolveCheckoutGitDirMock, readdirMock, w
   vi.hoisted(() => {
     const hoistedWatchCalls: Array<{ path: string; close: ReturnType<typeof vi.fn> }> = [];
     return {
-      execMock: vi.fn((_command: string, _options: unknown, callback: (error: null, result: { stdout: string; stderr: string }) => void) => {
-        callback(null, { stdout: "/tmp/repo\n", stderr: "" });
-      }),
+      execMock: vi.fn(
+        (
+          _command: string,
+          _options: unknown,
+          callback: (error: null, result: { stdout: string; stderr: string }) => void,
+        ) => {
+          callback(null, { stdout: "/tmp/repo\n", stderr: "" });
+        },
+      ),
       getCheckoutDiffMock: vi.fn(async () => ({ diff: "", structured: [] })),
       resolveCheckoutGitDirMock: vi.fn(async () => "/tmp/repo/.git"),
       readdirMock: vi.fn(async (directory: string) => {

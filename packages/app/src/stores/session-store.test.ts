@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  mergeWorkspaceSnapshotWithExisting,
-  type WorkspaceDescriptor,
-} from "./session-store";
+import { mergeWorkspaceSnapshotWithExisting, type WorkspaceDescriptor } from "./session-store";
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,

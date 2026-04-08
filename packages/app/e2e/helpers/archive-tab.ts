@@ -4,7 +4,11 @@ import { pathToFileURL } from "node:url";
 import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
-import { buildHostAgentDetailRoute, buildHostSessionsRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
+import {
+  buildHostAgentDetailRoute,
+  buildHostSessionsRoute,
+  buildHostWorkspaceRoute,
+} from "@/utils/host-routes";
 
 export type ArchiveTabAgent = {
   id: string;

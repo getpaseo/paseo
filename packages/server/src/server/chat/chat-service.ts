@@ -260,7 +260,9 @@ export class FileBackedChatService {
       if (existing.length > 0) {
         return existing;
       }
-      const knownMessage = this.getRoomMessages(room.id).some((message) => message.id === afterMessageId);
+      const knownMessage = this.getRoomMessages(room.id).some(
+        (message) => message.id === afterMessageId,
+      );
       if (!knownMessage) {
         throw new ChatServiceError(
           "chat_message_not_found",
@@ -341,7 +343,9 @@ export class FileBackedChatService {
 
   private async persist(): Promise<void> {
     const payload: ChatStorePayload = {
-      rooms: Array.from(this.rooms.values()).sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+      rooms: Array.from(this.rooms.values()).sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt),
+      ),
       messages: Array.from(this.messagesByRoomId.values())
         .flat()
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),

@@ -22,10 +22,7 @@ import type {
 import { normalizeWorkspaceId as normalizePersistedWorkspaceId } from "./workspace-registry-model.js";
 import { createAgentWorktree } from "./worktree-bootstrap.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
-import {
-  getCheckoutStatusLite,
-  resolveRepositoryDefaultBranch,
-} from "../utils/checkout-git.js";
+import { getCheckoutStatusLite, resolveRepositoryDefaultBranch } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import {
   computeWorktreePath,
@@ -91,20 +88,14 @@ type RegisterPendingWorktreeWorkspaceDependencies = {
   }) => PersistedWorkspaceRecord;
   buildProjectPlacement: (cwd: string) => Promise<ProjectPlacementPayload>;
   projectRegistry: Pick<ProjectRegistry, "get" | "upsert">;
-  syncWorkspaceGitWatchTarget: (
-    cwd: string,
-    options: { isGit: boolean },
-  ) => Promise<void>;
+  syncWorkspaceGitWatchTarget: (cwd: string, options: { isGit: boolean }) => Promise<void>;
   workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert">;
   archiveProjectRecordIfEmpty: (projectId: string, archivedAt: string) => Promise<void>;
 };
 
 type CreatePaseoWorktreeInBackgroundDependencies = {
   paseoHome?: string;
-  emitWorkspaceUpdateForCwd: (
-    cwd: string,
-    options?: { dedupeGitState?: boolean },
-  ) => Promise<void>;
+  emitWorkspaceUpdateForCwd: (cwd: string, options?: { dedupeGitState?: boolean }) => Promise<void>;
   sessionLogger: Logger;
   terminalManager: TerminalManager | null;
 };
@@ -277,10 +268,7 @@ export function assertSafeGitRef(ref: string, label: string): void {
   }
 }
 
-export async function resolveGitCreateBaseBranch(
-  cwd: string,
-  paseoHome?: string,
-): Promise<string> {
+export async function resolveGitCreateBaseBranch(cwd: string, paseoHome?: string): Promise<string> {
   const checkout = await getCheckoutStatusLite(cwd, { paseoHome });
   if (!checkout.isGit) {
     throw new Error("Cannot create a worktree outside a git repository");
@@ -580,7 +568,11 @@ export async function handleCreatePaseoWorktreeRequest(
       throw new Error(`Invalid worktree name: ${validation.error}`);
     }
 
-    const worktreePath = await computeWorktreePath(repoRoot, normalizedSlug, dependencies.paseoHome);
+    const worktreePath = await computeWorktreePath(
+      repoRoot,
+      normalizedSlug,
+      dependencies.paseoHome,
+    );
     const workspace = await dependencies.registerPendingWorktreeWorkspace({
       repoRoot,
       worktreePath,

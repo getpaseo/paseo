@@ -10,7 +10,9 @@ async function main(): Promise<void> {
   }
 
   process.argv =
-    argvMode === "bare" ? [process.argv[0] ?? "node", ...args] : [process.argv[0] ?? "node", entryPath, ...args];
+    argvMode === "bare"
+      ? [process.argv[0] ?? "node", ...args]
+      : [process.argv[0] ?? "node", entryPath, ...args];
   await import(pathToFileURL(entryPath).href);
 }
 

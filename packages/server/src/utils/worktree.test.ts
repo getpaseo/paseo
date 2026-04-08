@@ -11,9 +11,7 @@ import {
   runWorktreeSetupCommands,
   slugify,
 } from "./worktree";
-import {
-  getPaseoWorktreeMetadataPath,
-} from "./worktree-metadata.js";
+import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execSync } from "child_process";
 import { mkdtempSync, rmSync, existsSync, realpathSync, writeFileSync, readFileSync } from "fs";
 import { dirname, join } from "path";

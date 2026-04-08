@@ -131,10 +131,4 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
 /**
  * Helper to run a test for each provider.
  */
-export const allProviders: AgentProvider[] = [
-  "claude",
-  "codex",
-  "copilot",
-  "opencode",
-  "pi",
-];
+export const allProviders: AgentProvider[] = ["claude", "codex", "copilot", "opencode", "pi"];

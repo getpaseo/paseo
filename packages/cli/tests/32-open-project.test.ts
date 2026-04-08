@@ -4,16 +4,12 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  classifyInvocation,
-  isExistingDirectory,
-  isPathLikeArg,
-} from "../src/classify.ts";
+import { classifyInvocation, isExistingDirectory, isPathLikeArg } from "../src/classify.ts";
 import { openDesktopWithProject } from "../src/commands/open.ts";
 
 console.log("📋 Phase 32: Open Project CLI Tests\n");
 
-  console.log("  Testing path-like detection exports...");
+console.log("  Testing path-like detection exports...");
 assert.equal(isPathLikeArg("."), true);
 assert.equal(isPathLikeArg("./app"), true);
 assert.equal(isPathLikeArg("/tmp/app"), true);

@@ -30,12 +30,14 @@ const providerPreferencesSchema = z.object({
 const formPreferencesSchema = z.object({
   provider: z.string().optional(),
   providerPreferences: z.record(providerPreferencesSchema).optional(),
-  favoriteModels: z.array(
-    z.object({
-      provider: z.string(),
-      modelId: z.string(),
-    }),
-  ).optional(),
+  favoriteModels: z
+    .array(
+      z.object({
+        provider: z.string(),
+        modelId: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 export type ProviderPreferences = z.infer<typeof providerPreferencesSchema>;

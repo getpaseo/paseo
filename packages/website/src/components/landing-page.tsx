@@ -1,5 +1,12 @@
 import * as React from "react";
-import { motion, AnimatePresence, useInView, useScroll, useTransform, useMotionValueEvent } from "framer-motion";
+import {
+  motion,
+  AnimatePresence,
+  useInView,
+  useScroll,
+  useTransform,
+  useMotionValueEvent,
+} from "framer-motion";
 import { CursorFieldProvider } from "~/components/butterfly";
 import { CommandDialog } from "~/components/command-dialog";
 import {
@@ -30,7 +37,6 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
     <CursorFieldProvider>
       {/* Hero section with background image */}
       <div className="relative bg-cover bg-center bg-no-repeat">
-
         <div className="relative p-6 pb-10 md:px-32 md:pt-20 md:pb-12 max-w-7xl mx-auto">
           <Nav />
           <Hero title={title} subtitle={subtitle} />
@@ -48,7 +54,6 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <HeroMockup />
           </div>
         </motion.div>
-
       </div>
 
       {/* Phone showcase */}
@@ -334,17 +339,88 @@ function MultiProviderSection() {
 
 function SelfHostedDiagram() {
   const clients = [
-    { name: "Desktop", icon: <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></svg> },
-    { name: "Web", icon: <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg> },
-    { name: "Mobile", icon: <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" /><path d="M12 18h.01" /></svg> },
-    { name: "CLI", icon: <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></svg> },
+    {
+      name: "Desktop",
+      icon: (
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <rect x="2" y="3" width="20" height="14" rx="2" />
+          <path d="M8 21h8M12 17v4" />
+        </svg>
+      ),
+    },
+    {
+      name: "Web",
+      icon: (
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+        </svg>
+      ),
+    },
+    {
+      name: "Mobile",
+      icon: (
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <rect x="5" y="2" width="14" height="20" rx="2" />
+          <path d="M12 18h.01" />
+        </svg>
+      ),
+    },
+    {
+      name: "CLI",
+      icon: (
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <polyline points="4 17 10 11 4 5" />
+          <line x1="12" y1="19" x2="20" y2="19" />
+        </svg>
+      ),
+    },
   ];
   const hosts = ["MacBook Pro", "Hetzner VM", "Dev server"];
   const containerRef = React.useRef<HTMLDivElement>(null);
   const clientRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const hostRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const centerRef = React.useRef<HTMLDivElement>(null);
-  const [paths, setPaths] = React.useState<{ left: string[]; right: string[] }>({ left: [], right: [] });
+  const [paths, setPaths] = React.useState<{ left: string[]; right: string[] }>({
+    left: [],
+    right: [],
+  });
 
   React.useEffect(() => {
     function computePaths() {
@@ -386,93 +462,141 @@ function SelfHostedDiagram() {
 
   return (
     <>
-    {/* Mobile: vertical stack */}
-    <div className="md:hidden flex flex-col items-center gap-4 py-4">
-      <div className="space-y-2 w-full">
-        {clients.map((c) => (
-          <div key={c.name} className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4">
-            <span className="text-white/80">{c.icon}</span>
-            <span className="font-medium">{c.name}</span>
-          </div>
-        ))}
-      </div>
-      <div className="w-px h-6 border-l border-dashed border-white/25" />
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] px-6 py-5 text-center space-y-1">
-        <p className="text-xs font-medium text-white/50">E2E Encrypted Relay</p>
-        <p className="text-[10px] text-white/25">or</p>
-        <p className="text-xs font-medium text-white/50">Direct Connection</p>
-      </div>
-      <div className="w-px h-6 border-l border-dashed border-white/25" />
-      <div className="space-y-2 w-full">
-        {hosts.map((h) => (
-          <div key={h} className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4">
-            <span className="text-white/80"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="2" width="20" height="8" rx="2" />
-              <rect x="2" y="14" width="20" height="8" rx="2" />
-              <circle cx="6" cy="6" r="1" />
-              <circle cx="6" cy="18" r="1" />
-            </svg></span>
-            <span className="font-medium">{h}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-
-    {/* Desktop: horizontal with bezier curves */}
-    <div ref={containerRef} className="relative hidden md:flex items-center py-4 gap-0">
-      {/* SVG curves */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: "visible" }}>
-        {[...paths.left, ...paths.right].map((d, i) => (
-          d && <path key={i} d={d} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1" strokeDasharray="4 4" />
-        ))}
-      </svg>
-
-      {/* Clients */}
-      <div className="space-y-3 flex-shrink-0 relative z-10">
-        {clients.map((c, i) => (
-          <div
-            key={c.name}
-            ref={(el) => { clientRefs.current[i] = el; }}
-            className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4 backdrop-blur-sm"
-          >
-            <span className="text-white/80">{c.icon}</span>
-            <span className="font-medium">{c.name}</span>
-          </div>
-        ))}
+      {/* Mobile: vertical stack */}
+      <div className="md:hidden flex flex-col items-center gap-4 py-4">
+        <div className="space-y-2 w-full">
+          {clients.map((c) => (
+            <div
+              key={c.name}
+              className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4"
+            >
+              <span className="text-white/80">{c.icon}</span>
+              <span className="font-medium">{c.name}</span>
+            </div>
+          ))}
+        </div>
+        <div className="w-px h-6 border-l border-dashed border-white/25" />
+        <div className="rounded-xl border border-white/10 bg-white/[0.03] px-6 py-5 text-center space-y-1">
+          <p className="text-xs font-medium text-white/50">E2E Encrypted Relay</p>
+          <p className="text-[10px] text-white/25">or</p>
+          <p className="text-xs font-medium text-white/50">Direct Connection</p>
+        </div>
+        <div className="w-px h-6 border-l border-dashed border-white/25" />
+        <div className="space-y-2 w-full">
+          {hosts.map((h) => (
+            <div
+              key={h}
+              className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4"
+            >
+              <span className="text-white/80">
+                <svg
+                  width="28"
+                  height="28"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="2" y="2" width="20" height="8" rx="2" />
+                  <rect x="2" y="14" width="20" height="8" rx="2" />
+                  <circle cx="6" cy="6" r="1" />
+                  <circle cx="6" cy="18" r="1" />
+                </svg>
+              </span>
+              <span className="font-medium">{h}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Spacer */}
-      <div className="flex-1" />
+      {/* Desktop: horizontal with bezier curves */}
+      <div ref={containerRef} className="relative hidden md:flex items-center py-4 gap-0">
+        {/* SVG curves */}
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none"
+          style={{ overflow: "visible" }}
+        >
+          {[...paths.left, ...paths.right].map(
+            (d, i) =>
+              d && (
+                <path
+                  key={i}
+                  d={d}
+                  fill="none"
+                  stroke="rgba(255,255,255,0.25)"
+                  strokeWidth="1"
+                  strokeDasharray="4 4"
+                />
+              ),
+          )}
+        </svg>
 
-      {/* Center label */}
-      <div ref={centerRef} className="flex-shrink-0 rounded-xl border border-white/10 bg-white/[0.03] px-8 py-6 text-center space-y-1.5 relative z-10 backdrop-blur-sm">
-        <p className="text-sm font-medium text-white/50">E2E Encrypted Relay</p>
-        <p className="text-xs text-white/25">or</p>
-        <p className="text-sm font-medium text-white/50">Direct Connection</p>
+        {/* Clients */}
+        <div className="space-y-3 flex-shrink-0 relative z-10">
+          {clients.map((c, i) => (
+            <div
+              key={c.name}
+              ref={(el) => {
+                clientRefs.current[i] = el;
+              }}
+              className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4 backdrop-blur-sm"
+            >
+              <span className="text-white/80">{c.icon}</span>
+              <span className="font-medium">{c.name}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Center label */}
+        <div
+          ref={centerRef}
+          className="flex-shrink-0 rounded-xl border border-white/10 bg-white/[0.03] px-8 py-6 text-center space-y-1.5 relative z-10 backdrop-blur-sm"
+        >
+          <p className="text-sm font-medium text-white/50">E2E Encrypted Relay</p>
+          <p className="text-xs text-white/25">or</p>
+          <p className="text-sm font-medium text-white/50">Direct Connection</p>
+        </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Hosts */}
+        <div className="space-y-3 flex-shrink-0 relative z-10">
+          {hosts.map((h, i) => (
+            <div
+              key={h}
+              ref={(el) => {
+                hostRefs.current[i] = el;
+              }}
+              className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4 backdrop-blur-sm"
+            >
+              <span className="text-white/80">
+                <svg
+                  width="28"
+                  height="28"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="2" y="2" width="20" height="8" rx="2" />
+                  <rect x="2" y="14" width="20" height="8" rx="2" />
+                  <circle cx="6" cy="6" r="1" />
+                  <circle cx="6" cy="18" r="1" />
+                </svg>
+              </span>
+              <span className="font-medium">{h}</span>
+            </div>
+          ))}
+        </div>
       </div>
-
-      {/* Spacer */}
-      <div className="flex-1" />
-
-      {/* Hosts */}
-      <div className="space-y-3 flex-shrink-0 relative z-10">
-        {hosts.map((h, i) => (
-          <div
-            key={h}
-            ref={(el) => { hostRefs.current[i] = el; }}
-            className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4 backdrop-blur-sm"
-          >
-            <span className="text-white/80"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="2" width="20" height="8" rx="2" />
-              <rect x="2" y="14" width="20" height="8" rx="2" />
-              <circle cx="6" cy="6" r="1" />
-              <circle cx="6" cy="18" r="1" />
-            </svg></span>
-            <span className="font-medium">{h}</span>
-          </div>
-        ))}
-      </div>
-    </div>
     </>
   );
 }
@@ -487,7 +611,6 @@ function SelfHostedSection() {
     </FeatureSection>
   );
 }
-
 
 function ShortcutsSection() {
   const shortcuts = [
@@ -564,8 +687,12 @@ function VoiceWaveform() {
   );
 }
 
-const USER_WORDS = "Refactor the auth middleware to use the new session store, then run the test suite".split(" ");
-const RESPONSE_WORDS = "I'll update the auth middleware to use SessionStore instead of the legacy cookie-based approach. Let me refactor the middleware and update the tests.".split(" ");
+const USER_WORDS =
+  "Refactor the auth middleware to use the new session store, then run the test suite".split(" ");
+const RESPONSE_WORDS =
+  "I'll update the auth middleware to use SessionStore instead of the legacy cookie-based approach. Let me refactor the middleware and update the tests.".split(
+    " ",
+  );
 const DICTATION_LAG = 2;
 const RESPONSE_LAG = 3;
 const WORD_APPEAR_MS = 150;
@@ -573,7 +700,13 @@ const RESPONSE_WORD_MS = 60;
 const PHASE_GAP_MS = 800;
 const LOOP_PAUSE_MS = 3000;
 
-type VoicePhase = "dictation" | "dictation-flush" | "pause" | "response" | "response-flush" | "done";
+type VoicePhase =
+  | "dictation"
+  | "dictation-flush"
+  | "pause"
+  | "response"
+  | "response-flush"
+  | "done";
 
 function useVoiceConversation() {
   const [phase, setPhase] = React.useState<VoicePhase>("dictation");
@@ -594,11 +727,16 @@ function useVoiceConversation() {
         const t = setTimeout(() => setWordIndex((w) => w + 1), WORD_APPEAR_MS);
         return () => clearTimeout(t);
       }
-      const t = setTimeout(() => { setPhase("pause"); }, PHASE_GAP_MS);
+      const t = setTimeout(() => {
+        setPhase("pause");
+      }, PHASE_GAP_MS);
       return () => clearTimeout(t);
     }
     if (phase === "pause") {
-      const t = setTimeout(() => { setPhase("response"); setWordIndex(0); }, PHASE_GAP_MS);
+      const t = setTimeout(() => {
+        setPhase("response");
+        setWordIndex(0);
+      }, PHASE_GAP_MS);
       return () => clearTimeout(t);
     }
     if (phase === "response") {
@@ -615,11 +753,16 @@ function useVoiceConversation() {
         const t = setTimeout(() => setWordIndex((w) => w + 1), RESPONSE_WORD_MS);
         return () => clearTimeout(t);
       }
-      const t = setTimeout(() => { setPhase("done"); }, LOOP_PAUSE_MS);
+      const t = setTimeout(() => {
+        setPhase("done");
+      }, LOOP_PAUSE_MS);
       return () => clearTimeout(t);
     }
     if (phase === "done") {
-      const t = setTimeout(() => { setPhase("dictation"); setWordIndex(0); }, 0);
+      const t = setTimeout(() => {
+        setPhase("dictation");
+        setWordIndex(0);
+      }, 0);
       return () => clearTimeout(t);
     }
   }, [phase, wordIndex]);
@@ -650,7 +793,15 @@ function useVoiceConversation() {
   return { dictationWordIndex, responseWordIndex, showResponse };
 }
 
-function StreamingWords({ words, wordIndex, confirmLag = 2 }: { words: string[]; wordIndex: number; confirmLag?: number }) {
+function StreamingWords({
+  words,
+  wordIndex,
+  confirmLag = 2,
+}: {
+  words: string[];
+  wordIndex: number;
+  confirmLag?: number;
+}) {
   return (
     <div className="relative">
       {/* Invisible full text to reserve height at any viewport width */}
@@ -766,10 +917,7 @@ function GetStarted() {
         <ServerInstallButton />
       </div>
       <div className="pt-3">
-        <a
-          href="/download"
-          className="text-xs text-white/40 hover:text-white/70 transition-colors"
-        >
+        <a href="/download" className="text-xs text-white/40 hover:text-white/70 transition-colors">
           All download options
         </a>
       </div>
@@ -819,8 +967,8 @@ function ServerInstallButton() {
       command="npm install -g @getpaseo/cli && paseo"
       footnote={
         <>
-          Requires Node.js 18+. Run <span className="font-mono text-white/40">paseo</span> to
-          start the daemon.
+          Requires Node.js 18+. Run <span className="font-mono text-white/40">paseo</span> to start
+          the daemon.
         </>
       }
     />
@@ -966,7 +1114,6 @@ function Step({ number, children }: { number: number; children: React.ReactNode 
     </div>
   );
 }
-
 
 const bashKeywords = new Set([
   "while",
@@ -1257,11 +1404,22 @@ function PhoneShowcase() {
         transition={{ duration: 0.5 }}
         className="flex flex-col items-center gap-1.5 px-6"
       >
-        <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" className="text-white/20">
+        <svg
+          width="24"
+          height="24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          viewBox="0 0 24 24"
+          className="text-white/20"
+        >
           <path d="M12 5v14M5 12l7 7 7-7" />
         </svg>
         <p className="text-lg text-white/80 text-center">
-          When you want to step away from your desk,<br className="md:hidden" /> you can.
+          When you want to step away from your desk,
+          <br className="md:hidden" /> you can.
         </p>
         <p className="text-sm text-white/50 text-center">
           The native mobile app has full feature parity with desktop.
@@ -1269,7 +1427,10 @@ function PhoneShowcase() {
       </motion.div>
 
       {/* Phone trio — side phones are absolute, start behind center, slide outward with perspective rotation */}
-      <div className="relative flex items-center justify-center overflow-x-clip w-full" style={{ minHeight: 480, perspective: 1200 }}>
+      <div
+        className="relative flex items-center justify-center overflow-x-clip w-full"
+        style={{ minHeight: 480, perspective: 1200 }}
+      >
         {/* Left phone — rotated to face inward */}
         <motion.div
           style={{ opacity: sideOpacity, x: leftX, rotateY: -15, scale: 0.97 }}
@@ -1394,9 +1555,11 @@ function FAQ() {
         </FAQItem>
         <FAQItem question="Do I need the desktop app?">
           No. You can run the daemon headless with{" "}
-          <code className="font-mono text-muted-foreground">npm install -g @getpaseo/cli && paseo</code> and
-          use the CLI, web app, or mobile app to connect. The desktop app just bundles the daemon
-          with a UI.
+          <code className="font-mono text-muted-foreground">
+            npm install -g @getpaseo/cli && paseo
+          </code>{" "}
+          and use the CLI, web app, or mobile app to connect. The desktop app just bundles the
+          daemon with a UI.
         </FAQItem>
         <FAQItem question="How does voice work?">
           Voice runs locally on your device by default. You talk, the app transcribes and sends it
@@ -1455,7 +1618,9 @@ function SponsorCTA() {
     >
       <div className="text-sm text-muted-foreground leading-relaxed space-y-3">
         <p>
-          I built Paseo because I wanted better tools for coding agents on my own setup. It's an independent open source project, built around freedom of choice and real workflows. If you like what I'm building, consider becoming a supporter.
+          I built Paseo because I wanted better tools for coding agents on my own setup. It's an
+          independent open source project, built around freedom of choice and real workflows. If you
+          like what I'm building, consider becoming a supporter.
         </p>
         <p>- Mo</p>
       </div>
