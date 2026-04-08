@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { Logger } from "pino";
 
-import { AgentStatusSchema } from "../messages.js";
+import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -56,6 +56,7 @@ const STORED_AGENT_SCHEMA = z.object({
       extra: z.record(z.unknown()).optional(),
     })
     .optional(),
+  features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),

@@ -12,7 +12,11 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { OpenCodeAgentClient } from "./opencode-agent.js";
+import {
+  __openCodeInternals,
+  OpenCodeAgentClient,
+  translateOpenCodeEvent,
+} from "./opencode-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 import type {
   AgentSessionConfig,
@@ -202,6 +206,11 @@ const hasOpenCode = isBinaryInstalled("opencode");
 
       // HARD ASSERT: Model ID contains provider prefix (format: providerId/modelId)
       expect(model.id).toContain("/");
+      expect(model.metadata).toMatchObject({
+        providerId: expect.any(String),
+        modelId: expect.any(String),
+        contextWindowMaxTokens: expect.any(Number),
+      });
     }
   }, 60_000);
 
@@ -302,4 +311,150 @@ const hasOpenCode = isBinaryInstalled("opencode");
     await buildSession.close();
     rmSync(cwd, { recursive: true, force: true });
   }, 180_000);
+});
+
+describe("OpenCode adapter context-window normalization", () => {
+  test("preserves provider catalog context limit in model metadata", () => {
+    const definition = __openCodeInternals.buildOpenCodeModelDefinition(
+      { id: "openai", name: "OpenAI" },
+      "gpt-5",
+      {
+        name: "GPT-5",
+        family: "gpt",
+        limit: {
+          context: 400_000,
+          input: 200_000,
+          output: 16_384,
+        },
+      },
+    );
+
+    expect(definition.metadata).toMatchObject({
+      providerId: "openai",
+      modelId: "gpt-5",
+      contextWindowMaxTokens: 400_000,
+      limit: {
+        context: 400_000,
+        input: 200_000,
+        output: 16_384,
+      },
+    });
+  });
+
+  test("resolves selected model context window from connected provider catalog data", () => {
+    expect(
+      __openCodeInternals.resolveOpenCodeSelectedModelContextWindow(
+        {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              models: {
+                "gpt-5": {
+                  limit: {
+                    context: 400_000,
+                    output: 16_384,
+                  },
+                },
+              },
+            },
+            {
+              id: "anthropic",
+              models: {
+                "claude-opus": {
+                  limit: {
+                    context: 1_000_000,
+                    output: 8_192,
+                  },
+                },
+              },
+            },
+          ],
+        },
+        "openai/gpt-5",
+      ),
+    ).toBe(400_000);
+
+    expect(
+      __openCodeInternals.resolveOpenCodeSelectedModelContextWindow(
+        {
+          connected: ["openai"],
+          all: [
+            {
+              id: "anthropic",
+              models: {
+                "claude-opus": {
+                  limit: {
+                    context: 1_000_000,
+                    output: 8_192,
+                  },
+                },
+              },
+            },
+          ],
+        },
+        "anthropic/claude-opus",
+      ),
+    ).toBeUndefined();
+  });
+
+  test("normalizes step-finish usage into AgentUsage context window fields", () => {
+    const usage = { contextWindowMaxTokens: 400_000 };
+
+    __openCodeInternals.mergeOpenCodeStepFinishUsage(usage, {
+      cost: 0.25,
+      tokens: {
+        total: 999_999,
+        input: 30_000,
+        output: 12_000,
+        reasoning: 10_000,
+        cache: {
+          read: 2_000,
+          write: 1_000,
+        },
+      },
+    });
+
+    expect(usage).toEqual({
+      contextWindowMaxTokens: 400_000,
+      contextWindowUsedTokens: 55_000,
+      cachedInputTokens: 2_000,
+      inputTokens: 30_000,
+      outputTokens: 12_000,
+      totalCostUsd: 0.25,
+    });
+    expect(__openCodeInternals.hasNormalizedOpenCodeUsage(usage)).toBe(true);
+  });
+
+  test("resolves context window max tokens from assistant message metadata", () => {
+    const usage = {};
+    const onAssistantModelContextWindowResolved = vi.fn();
+
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-1",
+            sessionID: "session-1",
+            role: "assistant",
+            providerID: "openai",
+            modelID: "gpt-5",
+          },
+        },
+      },
+      {
+        sessionId: "session-1",
+        messageRoles: new Map(),
+        accumulatedUsage: usage,
+        streamedPartKeys: new Set(),
+        emittedStructuredMessageIds: new Set(),
+        partTypes: new Map(),
+        modelContextWindowsByModelKey: new Map([["openai/gpt-5", 400_000]]),
+        onAssistantModelContextWindowResolved,
+      },
+    );
+
+    expect(onAssistantModelContextWindowResolved).toHaveBeenCalledWith(400_000);
+  });
 });

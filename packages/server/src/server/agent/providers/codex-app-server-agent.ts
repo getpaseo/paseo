@@ -1,4 +1,5 @@
 import type {
+  AgentPermissionAction,
   AgentCapabilityFlags,
   AgentClient,
   AgentFeature,
@@ -64,6 +65,8 @@ const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
+const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
+  "The user approved the plan. Implement it now. Do not restate or revise the plan unless blocked.";
 
 const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -141,6 +144,73 @@ function normalizeCodexModelId(modelId: string | null | undefined): string | und
 
 function normalizeCodexModelLabel(displayName: string): string {
   return displayName.replace(/\bgpt\b/gi, "GPT");
+}
+
+function isSchemaRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isObjectSchemaNode(schema: Record<string, unknown>): boolean {
+  const type = schema.type;
+  return (
+    isSchemaRecord(schema.properties) ||
+    type === "object" ||
+    (Array.isArray(type) && type.includes("object"))
+  );
+}
+
+function normalizeCodexOutputSchemaNode(
+  schema: unknown,
+  path: string,
+): unknown {
+  if (Array.isArray(schema)) {
+    return schema.map((entry, index) => normalizeCodexOutputSchemaNode(entry, `${path}[${index}]`));
+  }
+  if (!isSchemaRecord(schema)) {
+    return schema;
+  }
+
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    normalized[key] = normalizeCodexOutputSchemaNode(value, `${path}.${key}`);
+  }
+
+  if (!isObjectSchemaNode(normalized)) {
+    return normalized;
+  }
+
+  if (normalized.additionalProperties === undefined) {
+    normalized.additionalProperties = false;
+  } else if (normalized.additionalProperties !== false) {
+    throw new Error(
+      `Codex structured outputs require ${path} to set additionalProperties to false for object schemas.`,
+    );
+  }
+
+  const properties = isSchemaRecord(normalized.properties) ? normalized.properties : null;
+  if (!properties) {
+    return normalized;
+  }
+
+  const propertyKeys = Object.keys(properties);
+  const existingRequired = Array.isArray(normalized.required)
+    ? normalized.required.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  normalized.required = Array.from(new Set([...existingRequired, ...propertyKeys]));
+  return normalized;
+}
+
+function normalizeCodexOutputSchema(schema: unknown): Record<string, unknown> {
+  if (!isSchemaRecord(schema)) {
+    throw new Error("Codex structured outputs require a JSON object schema.");
+  }
+
+  const normalized = normalizeCodexOutputSchemaNode(schema, "$");
+  if (!isSchemaRecord(normalized) || !isObjectSchemaNode(normalized)) {
+    throw new Error("Codex structured outputs require a root object schema.");
+  }
+
+  return normalized;
 }
 
 type CodexConfiguredDefaults = {
@@ -677,12 +747,42 @@ function terminateChildProcessTree(child: ChildProcessWithoutNullStreams): void 
 function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
   if (!tokenUsage || typeof tokenUsage !== "object") return undefined;
   const usage = tokenUsage as {
-    last?: { inputTokens?: number; cachedInputTokens?: number; outputTokens?: number };
+    model_context_window?: number;
+    modelContextWindow?: number;
+    last?: {
+      inputTokens?: number;
+      cachedInputTokens?: number;
+      outputTokens?: number;
+      total_tokens?: number;
+      totalTokens?: number;
+    };
   };
+  const contextWindowMaxTokens =
+    typeof usage.model_context_window === "number" &&
+    Number.isFinite(usage.model_context_window) &&
+    usage.model_context_window > 0
+      ? usage.model_context_window
+      : typeof usage.modelContextWindow === "number" &&
+          Number.isFinite(usage.modelContextWindow) &&
+          usage.modelContextWindow > 0
+        ? usage.modelContextWindow
+        : undefined;
+  const contextWindowUsedTokens =
+    typeof usage.last?.total_tokens === "number" &&
+    Number.isFinite(usage.last.total_tokens) &&
+    usage.last.total_tokens > 0
+      ? usage.last.total_tokens
+      : typeof usage.last?.totalTokens === "number" &&
+          Number.isFinite(usage.last.totalTokens) &&
+          usage.last.totalTokens > 0
+        ? usage.last.totalTokens
+        : undefined;
   return {
     inputTokens: usage.last?.inputTokens,
     cachedInputTokens: usage.last?.cachedInputTokens,
     outputTokens: usage.last?.outputTokens,
+    ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
+    ...(contextWindowUsedTokens !== undefined ? { contextWindowUsedTokens } : {}),
   };
 }
 
@@ -737,6 +837,53 @@ function mapCodexPlanToToolCall(params: { callId: string; text: string }): ToolC
       text,
     },
   };
+}
+
+function buildPlanPermissionActions(
+  options?: { includeResumeAction?: boolean; resumeLabel?: string },
+): AgentPermissionAction[] {
+  const actions: AgentPermissionAction[] = [
+    {
+      id: "reject",
+      label: "Reject",
+      behavior: "deny",
+      variant: "danger",
+      intent: "dismiss",
+    },
+    {
+      id: "implement",
+      label: "Implement",
+      behavior: "allow",
+      variant: "primary",
+      intent: "implement",
+    },
+  ];
+
+  if (options?.includeResumeAction && options.resumeLabel) {
+    actions.push({
+      id: "implement_resume",
+      label: options.resumeLabel,
+      behavior: "allow",
+      variant: "secondary",
+      intent: "implement_resume",
+    });
+  }
+
+  return actions;
+}
+
+function buildCodexPlanImplementationPrompt(planText: string): string {
+  const normalizedPlan = normalizePlanMarkdown(planText);
+  if (!normalizedPlan) {
+    return `${CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX} Make the required code changes and verify them.`;
+  }
+
+  return [
+    CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX,
+    "Approved plan:",
+    normalizedPlan,
+    "Carry out the work, make the necessary code changes, and verify the result.",
+  ].join("\n\n");
 }
 
 type CodexQuestionOption = {
@@ -2269,8 +2416,9 @@ class CodexAppServerAgentSession implements AgentSession {
     string,
     {
       resolve: (value: unknown) => void;
-      kind: "command" | "file" | "question";
+      kind: "command" | "file" | "question" | "plan";
       questions?: CodexQuestionPrompt[];
+      planText?: string;
     }
   >();
   private resolvedPermissionRequests = new Set<string>();
@@ -2289,6 +2437,7 @@ class CodexAppServerAgentSession implements AgentSession {
   private warnedInvalidNotificationPayloads = new Set<string>();
   private warnedIncompleteEditToolCallIds = new Set<string>();
   private latestUsage: AgentUsage | undefined;
+  private latestPlanResult: { callId: string; text: string; turnId: string | null } | null = null;
   private connected = false;
   private collaborationModes: Array<{
     name: string;
@@ -2470,6 +2619,79 @@ class CodexAppServerAgentSession implements AgentSession {
 
   private refreshResolvedCollaborationMode(): void {
     this.resolvedCollaborationMode = this.resolveCollaborationMode();
+  }
+
+  private applyFeatureValue(featureId: "fast_mode" | "plan_mode", value: boolean): void {
+    this.config.featureValues = {
+      ...(this.config.featureValues ?? {}),
+      [featureId]: value,
+    };
+
+    if (featureId === "fast_mode") {
+      this.serviceTier = value ? "fast" : null;
+      this.cachedRuntimeInfo = null;
+      return;
+    }
+
+    this.planModeEnabled = value;
+    this.refreshResolvedCollaborationMode();
+    this.cachedRuntimeInfo = null;
+  }
+
+  private rememberPlanResult(item: ToolCallTimelineItem): void {
+    if (item.detail.type !== "plan") {
+      return;
+    }
+
+    this.latestPlanResult = {
+      callId: item.callId,
+      text: item.detail.text,
+      turnId: this.currentTurnId,
+    };
+  }
+
+  private emitSyntheticPlanApprovalRequest(planText: string): void {
+    const requestId = `permission-${randomUUID()}`;
+    const request: AgentPermissionRequest = {
+      id: requestId,
+      provider: CODEX_PROVIDER,
+      name: "CodexPlanApproval",
+      kind: "plan",
+      title: "Plan",
+      description: "Review the proposed plan before implementation starts.",
+      input: { plan: planText },
+      actions: buildPlanPermissionActions(),
+      metadata: {
+        planText,
+        source: "codex_plan_approval",
+      },
+    };
+
+    this.pendingPermissions.set(requestId, request);
+    this.pendingPermissionHandlers.set(requestId, {
+      resolve: () => undefined,
+      kind: "plan",
+      planText,
+    });
+    this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
+  }
+
+  private async handleApprovedPlanPermission(params: { planText?: unknown }): Promise<void> {
+    const planText =
+      typeof params.planText === "string" ? normalizePlanMarkdown(params.planText) : "";
+    const previousPlanMode = this.planModeEnabled;
+    const previousFastMode = this.serviceTier === "fast";
+
+    this.applyFeatureValue("plan_mode", false);
+    this.applyFeatureValue("fast_mode", false);
+
+    try {
+      await this.startTurn(buildCodexPlanImplementationPrompt(planText));
+    } catch (error) {
+      this.applyFeatureValue("plan_mode", previousPlanMode);
+      this.applyFeatureValue("fast_mode", previousFastMode);
+      throw error;
+    }
   }
 
   private registerRequestHandlers(): void {
@@ -2774,7 +2996,7 @@ class CodexAppServerAgentSession implements AgentSession {
       params.cwd = this.config.cwd;
     }
     if (options?.outputSchema) {
-      params.outputSchema = options.outputSchema;
+      params.outputSchema = normalizeCodexOutputSchema(options.outputSchema);
     }
     if (this.config.systemPrompt?.trim()) {
       params.developerInstructions = this.config.systemPrompt.trim();
@@ -2869,14 +3091,11 @@ class CodexAppServerAgentSession implements AgentSession {
 
   async setFeature(featureId: string, value: unknown): Promise<void> {
     if (featureId === "fast_mode") {
-      this.serviceTier = value ? "fast" : null;
-      this.cachedRuntimeInfo = null;
+      this.applyFeatureValue("fast_mode", Boolean(value));
       return;
     }
     if (featureId === "plan_mode") {
-      this.planModeEnabled = Boolean(value);
-      this.refreshResolvedCollaborationMode();
-      this.cachedRuntimeInfo = null;
+      this.applyFeatureValue("plan_mode", Boolean(value));
       return;
     }
     throw new Error(`Unknown Codex feature: ${featureId}`);
@@ -2892,6 +3111,26 @@ class CodexAppServerAgentSession implements AgentSession {
       throw new Error(`No pending Codex app-server permission request with id '${requestId}'`);
     }
     const pendingRequest = this.pendingPermissions.get(requestId) ?? null;
+
+    if (pending.kind === "plan") {
+      if (response.behavior === "allow") {
+        await this.handleApprovedPlanPermission({
+          planText: pending.planText ?? pendingRequest?.metadata?.planText,
+        });
+      }
+
+      this.pendingPermissionHandlers.delete(requestId);
+      this.pendingPermissions.delete(requestId);
+      this.resolvedPermissionRequests.add(requestId);
+      this.emitEvent({
+        type: "permission_resolved",
+        provider: CODEX_PROVIDER,
+        requestId,
+        resolution: response,
+      });
+      return;
+    }
+
     this.pendingPermissionHandlers.delete(requestId);
     this.pendingPermissions.delete(requestId);
     this.resolvedPermissionRequests.add(requestId);
@@ -3193,6 +3432,7 @@ class CodexAppServerAgentSession implements AgentSession {
 
     if (parsed.kind === "turn_started") {
       this.currentTurnId = parsed.turnId;
+      this.latestPlanResult = null;
       this.emittedItemStartedIds.clear();
       this.emittedItemCompletedIds.clear();
       this.emittedExecCommandStartedCallIds.clear();
@@ -3214,6 +3454,9 @@ class CodexAppServerAgentSession implements AgentSession {
       } else if (parsed.status === "interrupted") {
         this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
       } else {
+        if (this.planModeEnabled && this.latestPlanResult?.text) {
+          this.emitSyntheticPlanApprovalRequest(this.latestPlanResult.text);
+        }
         this.emitEvent({
           type: "turn_completed",
           provider: CODEX_PROVIDER,
@@ -3221,6 +3464,7 @@ class CodexAppServerAgentSession implements AgentSession {
         });
       }
       this.activeForegroundTurnId = null;
+      this.latestPlanResult = null;
       this.emittedItemStartedIds.clear();
       this.emittedItemCompletedIds.clear();
       this.emittedExecCommandStartedCallIds.clear();
@@ -3242,6 +3486,7 @@ class CodexAppServerAgentSession implements AgentSession {
         ),
       });
       if (timelineItem) {
+        this.rememberPlanResult(timelineItem);
         this.emitEvent({
           type: "timeline",
           provider: CODEX_PROVIDER,
@@ -3261,6 +3506,13 @@ class CodexAppServerAgentSession implements AgentSession {
 
     if (parsed.kind === "token_usage_updated") {
       this.latestUsage = toAgentUsage(parsed.tokenUsage);
+      if (this.latestUsage) {
+        this.notifySubscribers({
+          type: "usage_updated",
+          provider: CODEX_PROVIDER,
+          usage: this.latestUsage,
+        });
+      }
       return;
     }
 
@@ -3435,6 +3687,9 @@ class CodexAppServerAgentSession implements AgentSession {
           }
         }
         if (timelineItem.type === "tool_call") {
+          if (timelineItem.detail.type === "plan") {
+            this.rememberPlanResult(timelineItem);
+          }
           this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
         }
         this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
@@ -4008,6 +4263,8 @@ export const __codexAppServerInternals = {
   mapCodexPatchNotificationToToolCall,
   planStepsToMarkdown,
   mapCodexPlanToToolCall,
+  normalizeCodexOutputSchema,
   normalizeCodexQuestionPrompts,
+  toAgentUsage,
   threadItemToTimeline,
 };

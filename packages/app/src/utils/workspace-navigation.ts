@@ -20,7 +20,7 @@ function getPreparedTarget(target: WorkspaceTabTarget): WorkspaceTabTarget {
   return { kind: "draft", draftId: generateDraftId() };
 }
 
-export function prepareWorkspaceTab(input: PrepareWorkspaceTabInput): string {
+export function prepareWorkspaceTab(input: PrepareWorkspaceTabInput) {
   const target = getPreparedTarget(input.target);
   const key =
     buildWorkspaceTabPersistenceKey({

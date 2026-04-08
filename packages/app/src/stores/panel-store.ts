@@ -66,6 +66,8 @@ interface PanelState {
   // File explorer settings (shared between mobile/desktop)
   explorerTab: ExplorerTab;
   explorerTabByCheckout: Record<string, ExplorerTab>;
+  expandedPathsByWorkspace: Record<string, string[]>;
+  diffExpandedPathsByWorkspace: Record<string, string[]>;
   activeExplorerCheckout: ExplorerCheckoutContext | null;
   sidebarWidth: number;
   explorerWidth: number;
@@ -85,6 +87,8 @@ interface PanelState {
   // File explorer settings actions
   setExplorerTab: (tab: ExplorerTab) => void;
   setExplorerTabForCheckout: (params: ExplorerCheckoutContext & { tab: ExplorerTab }) => void;
+  setExpandedPathsForWorkspace: (workspaceKey: string, paths: string[]) => void;
+  setDiffExpandedPathsForWorkspace: (workspaceKey: string, paths: string[]) => void;
   activateExplorerTabForCheckout: (checkout: ExplorerCheckoutContext) => void;
   setActiveExplorerCheckout: (checkout: ExplorerCheckoutContext | null) => void;
   setSidebarWidth: (width: number) => void;
@@ -142,6 +146,8 @@ export const usePanelStore = create<PanelState>()(
       // File explorer defaults
       explorerTab: "changes",
       explorerTabByCheckout: {},
+      expandedPathsByWorkspace: {},
+      diffExpandedPathsByWorkspace: {},
       activeExplorerCheckout: null,
       sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
       explorerWidth: DEFAULT_EXPLORER_SIDEBAR_WIDTH,
@@ -261,6 +267,17 @@ export const usePanelStore = create<PanelState>()(
           }
           return nextState;
         }),
+      setExpandedPathsForWorkspace: (workspaceKey, paths) =>
+        set((state) => ({
+          expandedPathsByWorkspace: { ...state.expandedPathsByWorkspace, [workspaceKey]: paths },
+        })),
+      setDiffExpandedPathsForWorkspace: (workspaceKey, paths) =>
+        set((state) => ({
+          diffExpandedPathsByWorkspace: {
+            ...state.diffExpandedPathsByWorkspace,
+            [workspaceKey]: paths,
+          },
+        })),
       activateExplorerTabForCheckout: (checkout) =>
         set((state) => ({
           activeExplorerCheckout: checkout,
@@ -295,7 +312,7 @@ export const usePanelStore = create<PanelState>()(
     }),
     {
       name: "panel-state",
-      version: 8,
+      version: 10,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState, version) => {
         const state = persistedState as Partial<PanelState> & Record<string, unknown>;
@@ -371,6 +388,22 @@ export const usePanelStore = create<PanelState>()(
           state.sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
         }
 
+        if (
+          version < 9 ||
+          typeof state.expandedPathsByWorkspace !== "object" ||
+          !state.expandedPathsByWorkspace
+        ) {
+          state.expandedPathsByWorkspace = {};
+        }
+
+        if (
+          version < 10 ||
+          typeof state.diffExpandedPathsByWorkspace !== "object" ||
+          !state.diffExpandedPathsByWorkspace
+        ) {
+          state.diffExpandedPathsByWorkspace = {};
+        }
+
         state.activeExplorerCheckout = null;
 
         return state as PanelState;
@@ -380,6 +413,8 @@ export const usePanelStore = create<PanelState>()(
         desktop: state.desktop,
         explorerTab: state.explorerTab,
         explorerTabByCheckout: state.explorerTabByCheckout,
+        expandedPathsByWorkspace: state.expandedPathsByWorkspace,
+        diffExpandedPathsByWorkspace: state.diffExpandedPathsByWorkspace,
         sidebarWidth: state.sidebarWidth,
         explorerWidth: state.explorerWidth,
         explorerSortOption: state.explorerSortOption,

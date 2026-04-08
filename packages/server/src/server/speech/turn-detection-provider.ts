@@ -10,6 +10,7 @@ export type TurnDetectionSession = {
   connect(): Promise<void>;
   appendPcm16(pcm16le: Buffer): void;
   flush(): void;
+  reset(): void;
   close(): void;
 
   on(event: "speech_started", handler: () => void): unknown;

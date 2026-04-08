@@ -835,6 +835,82 @@ describe("ClaudeAgentSession redesign invariants", () => {
     }
   });
 
+  test("plan approval exposes a resume-bypass action and can return to bypassPermissions", async () => {
+    const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+    sdkQueryFactory.mockImplementation(() => queryMock);
+
+    const session = await createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await session.setMode("bypassPermissions");
+      await session.setMode("plan");
+
+      const internal = session as unknown as {
+        handlePermissionRequest: (
+          toolName: string,
+          input: Record<string, unknown>,
+          options: Record<string, unknown>,
+        ) => Promise<unknown>;
+      };
+
+      const pendingResolution = internal.handlePermissionRequest(
+        "ExitPlanMode",
+        { plan: "- Implement the approved plan" },
+        {},
+      );
+
+      const requestEvent = events.find(
+        (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+          event.type === "permission_requested" && event.request.kind === "plan",
+      );
+
+      expect(requestEvent).toBeDefined();
+      expect(requestEvent?.request.actions).toEqual([
+        {
+          id: "reject",
+          label: "Reject",
+          behavior: "deny",
+          variant: "danger",
+          intent: "dismiss",
+        },
+        {
+          id: "implement",
+          label: "Implement",
+          behavior: "allow",
+          variant: "primary",
+          intent: "implement",
+        },
+        {
+          id: "implement_resume",
+          label: "Implement with Bypass",
+          behavior: "allow",
+          variant: "secondary",
+          intent: "implement_resume",
+        },
+      ]);
+
+      if (!requestEvent) {
+        throw new Error("Expected plan permission request");
+      }
+
+      await session.respondToPermission(requestEvent.request.id, {
+        behavior: "allow",
+        selectedActionId: "implement_resume",
+      });
+
+      await expect(pendingResolution).resolves.toMatchObject({
+        behavior: "allow",
+        updatedInput: { plan: "- Implement the approved plan" },
+      });
+      expect(queryMock.setPermissionMode).toHaveBeenLastCalledWith("bypassPermissions");
+      expect(await session.getCurrentMode()).toBe("bypassPermissions");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("reuses one autonomous run for unbound stream_event bursts with no foreground run", async () => {
     const session = await createSession();
     const internal = session as unknown as {

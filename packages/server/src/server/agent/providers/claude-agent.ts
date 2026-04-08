@@ -18,6 +18,7 @@ import {
   type SpawnOptions,
   type SDKMessage,
   type SDKPartialAssistantMessage,
+  type SDKTaskProgressMessage,
   type SDKResultMessage,
   type SDKSystemMessage,
   type SDKUserMessage,
@@ -47,6 +48,7 @@ import {
 } from "./diagnostic-utils.js";
 
 import type {
+  AgentPermissionAction,
   AgentCapabilityFlags,
   AgentClient,
   AgentLaunchContext,
@@ -669,6 +671,43 @@ function resolvePermissionKind(
   return "tool";
 }
 
+function getClaudeModeLabel(modeId: PermissionMode): string {
+  return DEFAULT_MODES.find((mode) => mode.id === modeId)?.label ?? modeId;
+}
+
+function buildClaudePlanPermissionActions(
+  resumeMode: PermissionMode | null,
+): AgentPermissionAction[] {
+  const actions: AgentPermissionAction[] = [
+    {
+      id: "reject",
+      label: "Reject",
+      behavior: "deny",
+      variant: "danger",
+      intent: "dismiss",
+    },
+    {
+      id: "implement",
+      label: "Implement",
+      behavior: "allow",
+      variant: "primary",
+      intent: "implement",
+    },
+  ];
+
+  if (resumeMode === "bypassPermissions") {
+    actions.push({
+      id: "implement_resume",
+      label: `Implement with ${getClaudeModeLabel(resumeMode)}`,
+      behavior: "allow",
+      variant: "secondary",
+      intent: "implement_resume",
+    });
+  }
+
+  return actions;
+}
+
 type TimelineFragment = {
   kind: "assistant" | "reasoning";
   text: string;
@@ -967,7 +1006,8 @@ function isSyntheticUserEntry(entry: unknown): boolean {
   if (!entry || typeof entry !== "object") {
     return false;
   }
-  return (entry as { isSynthetic?: unknown }).isSynthetic === true;
+  const candidate = entry as { isSynthetic?: unknown; isMeta?: unknown };
+  return candidate.isSynthetic === true || candidate.isMeta === true;
 }
 
 export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
@@ -1161,6 +1201,91 @@ function resolveClaudeVersion(runtimeSettings?: ProviderRuntimeSettings): string
   }
 }
 
+function extractContextWindowSize(modelUsage: unknown): number | undefined {
+  if (!modelUsage || typeof modelUsage !== "object") {
+    return undefined;
+  }
+
+  let maxContextWindow: number | undefined;
+  for (const value of Object.values(modelUsage as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    const contextWindow = (value as { contextWindow?: unknown }).contextWindow;
+    if (
+      typeof contextWindow !== "number" ||
+      !Number.isFinite(contextWindow) ||
+      contextWindow <= 0
+    ) {
+      continue;
+    }
+    maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
+  }
+
+  return maxContextWindow;
+}
+
+function readUsageTotalTokens(
+  usage: unknown,
+): number | undefined {
+  if (!usage || typeof usage !== "object") {
+    return undefined;
+  }
+  const totalTokens = (usage as { total_tokens?: unknown }).total_tokens;
+  if (typeof totalTokens !== "number" || !Number.isFinite(totalTokens) || totalTokens < 0) {
+    return undefined;
+  }
+  return totalTokens;
+}
+
+function readContextWindowUsedTokensFromTaskProgress(
+  message: SDKTaskProgressMessage,
+): number | undefined {
+  return readUsageTotalTokens(message.usage);
+}
+
+function readUsageFromTaskNotification(message: { usage?: unknown }): number | undefined {
+  return readUsageTotalTokens(message.usage);
+}
+
+function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
+  const messageUsage = (event.message as { usage?: unknown } | undefined)?.usage;
+  if (!messageUsage || typeof messageUsage !== "object") {
+    return undefined;
+  }
+  const usage = messageUsage as {
+    input_tokens?: unknown;
+    cache_creation_input_tokens?: unknown;
+    cache_read_input_tokens?: unknown;
+  };
+  const inputTokens =
+    typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)
+      ? usage.input_tokens
+      : undefined;
+  const cacheCreationInputTokens =
+    typeof usage.cache_creation_input_tokens === "number" &&
+    Number.isFinite(usage.cache_creation_input_tokens)
+      ? usage.cache_creation_input_tokens
+      : 0;
+  const cacheReadInputTokens =
+    typeof usage.cache_read_input_tokens === "number" &&
+    Number.isFinite(usage.cache_read_input_tokens)
+      ? usage.cache_read_input_tokens
+      : 0;
+  if (typeof inputTokens !== "number" || inputTokens < 0) {
+    return undefined;
+  }
+  return inputTokens + cacheCreationInputTokens + cacheReadInputTokens;
+}
+
+function readStreamRequestOutputTokens(event: Record<string, unknown>): number | undefined {
+  const outputTokens = (event.usage as { output_tokens?: unknown } | undefined)?.output_tokens;
+  if (typeof outputTokens !== "number" || !Number.isFinite(outputTokens) || outputTokens < 0) {
+    return undefined;
+  }
+  return outputTokens;
+}
+
 class ClaudeAgentSession implements AgentSession {
   readonly provider: "claude" = "claude";
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -1176,6 +1301,7 @@ class ClaudeAgentSession implements AgentSession {
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
+  private planResumeMode: PermissionMode | null = null;
   private availableModes: AgentMode[] = DEFAULT_MODES;
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
   private toolUseIndexToId = new Map<number, string>();
@@ -1202,6 +1328,10 @@ class ClaudeAgentSession implements AgentSession {
   private pendingInterruptAbort = false;
   private lastForegroundPromptText: string | null = null;
   private foregroundHasVisibleActivity = false;
+  private lastContextWindowUsedTokens: number | undefined;
+  private lastContextWindowMaxTokens: number | undefined;
+  private lastStreamRequestInputTokens: number | undefined;
+  private lastStreamRequestOutputTokens: number | undefined;
   private userMessageIds: string[] = [];
   private recentStderr = "";
   private closed = false;
@@ -1236,6 +1366,9 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     this.currentMode = isPermissionMode(config.modeId) ? config.modeId : "default";
+    if (this.currentMode !== "plan") {
+      this.planResumeMode = this.currentMode;
+    }
   }
 
   get id(): string | null {
@@ -1477,8 +1610,16 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
+    const previousMode = this.currentMode;
     const query = await this.ensureQuery();
     await query.setPermissionMode(normalized);
+    if (normalized === "plan") {
+      if (previousMode !== "plan") {
+        this.planResumeMode = previousMode;
+      }
+    } else {
+      this.planResumeMode = normalized;
+    }
     this.currentMode = normalized;
   }
 
@@ -1525,13 +1666,22 @@ class ClaudeAgentSession implements AgentSession {
 
     if (response.behavior === "allow") {
       if (pending.request.kind === "plan") {
-        await this.setMode("acceptEdits");
+        const selectedActionId = response.selectedActionId;
+        const shouldResumePriorMode =
+          selectedActionId === "implement_resume" && this.planResumeMode === "bypassPermissions";
+        const targetMode: PermissionMode = shouldResumePriorMode
+          ? "bypassPermissions"
+          : "acceptEdits";
+        await this.setMode(targetMode);
         this.pushToolCall(
           mapClaudeCompletedToolCall({
             name: "plan_approval",
             callId: pending.request.id,
             input: pending.request.input ?? null,
-            output: { approved: true },
+            output: {
+              approved: true,
+              actionId: selectedActionId ?? "implement",
+            },
           }),
         );
       }
@@ -1848,6 +1998,9 @@ class ClaudeAgentSession implements AgentSession {
       this.input = null;
       this.queryPumpPromise = null;
       this.queryRestartNeeded = false;
+      // Reset session identity for explicit restarts so the new query starts
+      // a fresh session rather than resuming the previous one.
+      this.claudeSessionId = null;
       oldInput?.end();
       oldQuery.close?.();
       try {
@@ -1856,6 +2009,12 @@ class ClaudeAgentSession implements AgentSession {
         /* ignore */
       }
     }
+
+    // When the pump died unexpectedly (query became null, e.g. after a session
+    // ID overwrite error), preserve claudeSessionId so buildOptions() passes
+    // resume: sessionId and the new query auto-resumes the previous session.
+    // For explicit restarts above, claudeSessionId was already cleared.
+    this.persistence = null;
 
     const input = createAsyncMessageInput<SDKUserMessage>();
     const options = this.buildOptions();
@@ -2567,6 +2726,18 @@ class ClaudeAgentSession implements AgentSession {
               provider: "claude",
             });
           }
+          const usage = readUsageFromTaskNotification(message);
+          if (typeof usage === "number") {
+            this.lastContextWindowUsedTokens = usage;
+            events.push(this.createUsageUpdatedEvent(usage));
+          }
+        } else if (message.subtype === "task_progress") {
+          this.lastContextWindowUsedTokens =
+            readContextWindowUsedTokensFromTaskProgress(message) ??
+            this.lastContextWindowUsedTokens;
+          if (typeof this.lastContextWindowUsedTokens === "number") {
+            events.push(this.createUsageUpdatedEvent(this.lastContextWindowUsedTokens));
+          }
         }
         break;
       case "user": {
@@ -2634,6 +2805,10 @@ class ClaudeAgentSession implements AgentSession {
         break;
       }
       case "stream_event": {
+        const usageUpdatedEvent = this.trackStreamEventUsage(message.event);
+        if (usageUpdatedEvent) {
+          events.push(usageUpdatedEvent);
+        }
         const timelineItems = this.mapPartialEvent(message.event, {
           suppressAssistantText: options?.suppressAssistantText ?? false,
           suppressReasoning: options?.suppressReasoning ?? false,
@@ -2644,7 +2819,7 @@ class ClaudeAgentSession implements AgentSession {
         break;
       }
       case "result": {
-        const usage = this.convertUsage(message);
+        const usage = this.convertUsage(message, message.modelUsage);
         if (message.subtype === "success") {
           events.push({ type: "turn_completed", provider: "claude", usage });
         } else {
@@ -2689,11 +2864,16 @@ class ClaudeAgentSession implements AgentSession {
     if (this.claudeSessionId === sessionId) {
       return null;
     }
-    throw new Error(
-      `CRITICAL: Claude session ID overwrite detected! ` +
-        `Existing: ${this.claudeSessionId}, New: ${sessionId}. ` +
-        `This indicates a session identity corruption bug.`,
+    // Session ID changed mid-stream (e.g. a hook caused Claude to restart
+    // with a new session). Accept the new ID and continue — the turn should
+    // not be failed just because the underlying subprocess cycled.
+    this.logger.warn(
+      { existingSessionId: this.claudeSessionId, newSessionId: sessionId },
+      "Claude session ID changed in message; accepting new session",
     );
+    this.claudeSessionId = sessionId;
+    this.persistence = null;
+    return sessionId;
   }
 
   private handleSystemMessage(message: SDKSystemMessage): string | null {
@@ -2728,14 +2908,20 @@ class ClaudeAgentSession implements AgentSession {
     } else if (existingSessionId === newSessionId) {
       this.logger.debug({ sessionId: newSessionId }, "Claude session ID unchanged (same value)");
     } else {
-      throw new Error(
-        `CRITICAL: Claude session ID overwrite detected! ` +
-          `Existing: ${existingSessionId}, New: ${newSessionId}. ` +
-          `This indicates a session identity corruption bug.`,
+      // Session ID changed in an init message (e.g. a hook restarted Claude
+      // with a new session mid-turn). Accept the new ID and continue.
+      this.logger.warn(
+        { existingSessionId, newSessionId },
+        "Claude session ID changed in init message; accepting new session",
       );
+      this.claudeSessionId = newSessionId;
+      threadStartedSessionId = newSessionId;
     }
     this.availableModes = DEFAULT_MODES;
     this.currentMode = message.permissionMode;
+    if (this.currentMode !== "plan") {
+      this.planResumeMode = this.currentMode;
+    }
     this.persistence = null;
     if (message.model) {
       const normalizedRuntimeModel = normalizeClaudeRuntimeModelId(message.model);
@@ -2777,16 +2963,101 @@ class ClaudeAgentSession implements AgentSession {
     return null;
   }
 
-  private convertUsage(message: SDKResultMessage): AgentUsage | undefined {
+  private convertUsage(message: SDKResultMessage, modelUsage?: unknown): AgentUsage | undefined {
     if (!message.usage) {
       return undefined;
     }
-    return {
+    const usage: AgentUsage = {
       inputTokens: message.usage.input_tokens,
       cachedInputTokens: message.usage.cache_read_input_tokens,
       outputTokens: message.usage.output_tokens,
       totalCostUsd: message.total_cost_usd,
     };
+    const contextWindowMaxTokens = extractContextWindowSize(
+      modelUsage ?? message.modelUsage,
+    );
+    if (contextWindowMaxTokens !== undefined) {
+      this.lastContextWindowMaxTokens = contextWindowMaxTokens;
+      usage.contextWindowMaxTokens = contextWindowMaxTokens;
+    } else if (this.lastContextWindowMaxTokens !== undefined) {
+      usage.contextWindowMaxTokens = this.lastContextWindowMaxTokens;
+    }
+    if (typeof this.lastContextWindowUsedTokens === "number") {
+      // task_progress.total_tokens is the accurate context window fill level.
+      // Prefer it over result.usage which contains accumulated session totals.
+      usage.contextWindowUsedTokens = this.lastContextWindowUsedTokens;
+    } else if (
+      typeof this.lastStreamRequestInputTokens === "number" &&
+      typeof this.lastStreamRequestOutputTokens === "number"
+    ) {
+      usage.contextWindowUsedTokens =
+        this.lastStreamRequestInputTokens + this.lastStreamRequestOutputTokens;
+    } else if (message.usage) {
+      // Fallback: derive from result.usage when no task_progress has been
+      // received yet. These values are accumulated across all API calls, but
+      // for the first turn they equal the per-call values so the estimate is
+      // reasonable. Once a task_progress arrives it takes over permanently.
+      const usageWithCacheCreation = message.usage as typeof message.usage & {
+        cache_creation_input_tokens?: number;
+      };
+      const derived =
+        (message.usage.input_tokens ?? 0) +
+        (usageWithCacheCreation.cache_creation_input_tokens ?? 0) +
+        (message.usage.cache_read_input_tokens ?? 0) +
+        (message.usage.output_tokens ?? 0);
+      if (Number.isFinite(derived) && derived > 0) {
+        usage.contextWindowUsedTokens = derived;
+      }
+    }
+    return usage;
+  }
+
+  private createUsageUpdatedEvent(contextWindowUsedTokens: number): AgentStreamEvent {
+    const usage: AgentUsage = {
+      contextWindowUsedTokens,
+    };
+    if (this.lastContextWindowMaxTokens !== undefined) {
+      usage.contextWindowMaxTokens = this.lastContextWindowMaxTokens;
+    }
+    return {
+      type: "usage_updated",
+      provider: "claude",
+      usage,
+    };
+  }
+
+  private trackStreamEventUsage(event: unknown): AgentStreamEvent | null {
+    if (!event || typeof event !== "object") {
+      return null;
+    }
+    const streamEvent = event as Record<string, unknown>;
+    const eventType = readTrimmedString(streamEvent.type);
+    if (eventType === "message_start") {
+      const inputTokens = readStreamRequestInputTokens(streamEvent);
+      if (typeof inputTokens !== "number") {
+        return null;
+      }
+      this.lastStreamRequestInputTokens = inputTokens;
+      this.lastStreamRequestOutputTokens = 0;
+    } else if (eventType === "message_delta") {
+      const outputTokens = readStreamRequestOutputTokens(streamEvent);
+      if (typeof outputTokens !== "number") {
+        return null;
+      }
+      this.lastStreamRequestOutputTokens = outputTokens;
+    } else {
+      return null;
+    }
+
+    if (
+      typeof this.lastStreamRequestInputTokens !== "number" ||
+      typeof this.lastStreamRequestOutputTokens !== "number"
+    ) {
+      return null;
+    }
+    return this.createUsageUpdatedEvent(
+      this.lastStreamRequestInputTokens + this.lastStreamRequestOutputTokens,
+    );
   }
 
   private handlePermissionRequest: CanUseTool = async (
@@ -2821,6 +3092,8 @@ class ClaudeAgentSession implements AgentSession {
       input,
       detail: toolDetail,
       suggestions: options.suggestions?.map((suggestion) => ({ ...suggestion })),
+      actions:
+        kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 

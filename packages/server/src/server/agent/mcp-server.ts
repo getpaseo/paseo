@@ -233,6 +233,9 @@ function sanitizePermissionRequest(
   if (sanitized.suggestions === undefined) {
     delete sanitized.suggestions;
   }
+  if (sanitized.actions === undefined) {
+    delete sanitized.actions;
+  }
   if (sanitized.metadata === undefined) {
     delete sanitized.metadata;
   }

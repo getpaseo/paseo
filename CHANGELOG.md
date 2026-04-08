@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.1.50 - 2026-04-07
+
+### Added
+- Context window meter — see how much of the context window your agent has used, with color thresholds at 70% and 90%. Works with Claude Code, Codex, and OpenCode.
+- Open in editor — jump from any workspace straight into Cursor, VS Code, Zed, or your file manager. Paseo remembers your choice.
+- Side-by-side diffs — toggle between unified and split-column diff views, with a whitespace visibility option.
+- Spoken messages — when using voice mode, agent speech now appears as regular messages in the conversation instead of raw tool output.
+- Plan actions — plan cards now show the actions your agent supports (e.g. "Implement", "Deny") instead of generic accept/reject buttons.
+- Background git fetch — ahead/behind counts in the Changes pane stay up to date automatically.
+
+### Improved
+- Workspaces load instantly on connect instead of waiting for a full sync.
+- File explorer and diff pane remember which folders are expanded when you switch tabs.
+- Closing a workspace tab is now instant.
+- Settings shows a Refresh button for providers and displays error details inline.
+- Reload agent moved away from the close button to prevent accidental taps.
+
+### Fixed
+- Voice mode no longer drifts into false speech detection during long sessions.
+- Garbled overlapping text on plan cards.
+- Changes pane could show stale diffs when working with git worktrees.
+- Restarting an agent quickly could crash the session.
+- Copilot no longer pauses for permission prompts in autopilot mode.
+- Connection and pairing dialogs now display correctly on tablets.
+- Orchestration errors from agents are now surfaced instead of silently lost.
+- Diff stats no longer reset to zero when reconnecting.
+
+## 0.1.49 - 2026-04-07
+
+### Fixed
+- Models and providers now load reliably on first connect instead of requiring a manual refresh.
+- Model picker only shows models from the agent's own provider, not every provider on the server.
+- Model lists stay consistent regardless of which screen you open first.
+
 ## 0.1.48 - 2026-04-05
 
 ### Added

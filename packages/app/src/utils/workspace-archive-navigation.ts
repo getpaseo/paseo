@@ -52,7 +52,7 @@ export function buildWorkspaceArchiveRedirectRoute(input: {
   serverId: string;
   archivedWorkspaceId: string;
   workspaces: Iterable<WorkspaceDescriptor>;
-}): string {
+}) {
   const redirectWorkspaceId = resolveWorkspaceArchiveRedirectWorkspaceId({
     archivedWorkspaceId: input.archivedWorkspaceId,
     workspaces: input.workspaces,

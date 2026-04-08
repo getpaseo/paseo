@@ -61,6 +61,7 @@ export function toStoredAgentRecord(
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
     config: config ?? null,
     runtimeInfo,
+    features: agent.features,
     persistence,
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention ? agent.attention.attentionReason : null,
@@ -166,6 +167,7 @@ function sanitizePendingPermissions(
     ...request,
     input: sanitizeMetadata(request.input),
     suggestions: sanitizeMetadataArray(request.suggestions),
+    actions: request.actions?.map((action) => ({ ...action })),
     metadata: sanitizeMetadata(request.metadata),
   }));
 }
@@ -259,27 +261,39 @@ function sanitizeUsage(value: unknown): AgentUsage | undefined {
   }
   const result: AgentUsage = {};
   const inputTokens = sanitized.inputTokens;
-  if (typeof inputTokens === "number") {
+  if (typeof inputTokens === "number" && Number.isFinite(inputTokens)) {
     result.inputTokens = inputTokens;
   } else if (inputTokens !== undefined && inputTokens !== null) {
     return undefined;
   }
   const cachedInputTokens = sanitized.cachedInputTokens;
-  if (typeof cachedInputTokens === "number") {
+  if (typeof cachedInputTokens === "number" && Number.isFinite(cachedInputTokens)) {
     result.cachedInputTokens = cachedInputTokens;
   } else if (cachedInputTokens !== undefined && cachedInputTokens !== null) {
     return undefined;
   }
   const outputTokens = sanitized.outputTokens;
-  if (typeof outputTokens === "number") {
+  if (typeof outputTokens === "number" && Number.isFinite(outputTokens)) {
     result.outputTokens = outputTokens;
   } else if (outputTokens !== undefined && outputTokens !== null) {
     return undefined;
   }
   const totalCostUsd = sanitized.totalCostUsd;
-  if (typeof totalCostUsd === "number") {
+  if (typeof totalCostUsd === "number" && Number.isFinite(totalCostUsd)) {
     result.totalCostUsd = totalCostUsd;
   } else if (totalCostUsd !== undefined && totalCostUsd !== null) {
+    return undefined;
+  }
+  const contextWindowMaxTokens = sanitized.contextWindowMaxTokens;
+  if (typeof contextWindowMaxTokens === "number" && Number.isFinite(contextWindowMaxTokens)) {
+    result.contextWindowMaxTokens = contextWindowMaxTokens;
+  } else if (contextWindowMaxTokens !== undefined && contextWindowMaxTokens !== null) {
+    return undefined;
+  }
+  const contextWindowUsedTokens = sanitized.contextWindowUsedTokens;
+  if (typeof contextWindowUsedTokens === "number" && Number.isFinite(contextWindowUsedTokens)) {
+    result.contextWindowUsedTokens = contextWindowUsedTokens;
+  } else if (contextWindowUsedTokens !== undefined && contextWindowUsedTokens !== null) {
     return undefined;
   }
   return Object.keys(result).length ? result : undefined;

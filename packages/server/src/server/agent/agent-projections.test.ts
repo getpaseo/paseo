@@ -260,6 +260,34 @@ describe("toAgentPayload", () => {
     expect(permissionA.title).toBe("Run command");
   });
 
+  it("omits usage when any numeric usage field is NaN", () => {
+    const fields = [
+      "inputTokens",
+      "cachedInputTokens",
+      "outputTokens",
+      "totalCostUsd",
+      "contextWindowMaxTokens",
+      "contextWindowUsedTokens",
+    ] as const;
+
+    for (const field of fields) {
+      const agent = createManagedAgent({
+        lastUsage: {
+          inputTokens: 10,
+          cachedInputTokens: 5,
+          outputTokens: 20,
+          totalCostUsd: 0.5,
+          contextWindowMaxTokens: 200_000,
+          contextWindowUsedTokens: 100_000,
+          [field]: Number.NaN,
+        },
+      });
+
+      const payload = toAgentPayload(agent);
+      expect(payload.lastUsage).toBeUndefined();
+    }
+  });
+
   it("produces null title and current mode even without overrides", () => {
     const agent = createManagedAgent({ currentModeId: null, lastUserMessageAt: null });
     const payload = toAgentPayload(agent);
@@ -301,6 +329,56 @@ describe("toAgentPayload", () => {
     const agent = createManagedAgent({ lastUsage: undefined });
     const payload = toAgentPayload(agent);
     expect(payload).not.toHaveProperty("lastUsage");
+  });
+
+  it("preserves context window usage fields when they are valid numbers", () => {
+    const agent = createManagedAgent({
+      lastUsage: {
+        inputTokens: 10,
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 42_000,
+      },
+    });
+
+    const payload = toAgentPayload(agent);
+
+    expect(payload.lastUsage).toEqual({
+      inputTokens: 10,
+      contextWindowMaxTokens: 200_000,
+      contextWindowUsedTokens: 42_000,
+    });
+  });
+
+  it("omits lastUsage when context window usage fields are invalid", () => {
+    const agent = createManagedAgent({
+      lastUsage: {
+        inputTokens: 10,
+        contextWindowMaxTokens: "200000" as unknown as number,
+        contextWindowUsedTokens: NaN,
+      },
+    });
+
+    const payload = toAgentPayload(agent);
+
+    expect(payload).not.toHaveProperty("lastUsage");
+  });
+
+  it("keeps existing lastUsage behavior when context window fields are absent", () => {
+    const agent = createManagedAgent({
+      lastUsage: {
+        inputTokens: 10,
+        outputTokens: 20,
+        totalCostUsd: 1.25,
+      },
+    });
+
+    const payload = toAgentPayload(agent);
+
+    expect(payload.lastUsage).toEqual({
+      inputTokens: 10,
+      outputTokens: 20,
+      totalCostUsd: 1.25,
+    });
   });
 
   it("includes features in the snapshot payload", () => {

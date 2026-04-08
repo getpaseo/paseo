@@ -149,6 +149,71 @@ describe("createWorktree", () => {
     expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
   });
 
+  it("prefers origin/{branch} over local {branch} when both exist", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    const remoteCloneDir = join(tempDir, "remote-clone");
+    execSync(`git init --bare ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    execSync(`git clone ${remoteDir} ${remoteCloneDir}`);
+    execSync("git config user.email 'test@test.com'", { cwd: remoteCloneDir });
+    execSync("git config user.name 'Test'", { cwd: remoteCloneDir });
+    writeFileSync(join(remoteCloneDir, "file.txt"), "from-origin\n");
+    execSync("git add file.txt", { cwd: remoteCloneDir });
+    execSync("git -c commit.gpgsign=false commit -m 'advance origin main'", {
+      cwd: remoteCloneDir,
+    });
+    execSync("git push origin main", { cwd: remoteCloneDir });
+
+    writeFileSync(join(repoDir, "file.txt"), "from-local\n");
+    execSync("git add file.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'advance local main'", { cwd: repoDir });
+
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const result = await createWorktree({
+      branchName: "prefer-origin-feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "prefer-origin-feature",
+      runSetup: false,
+      paseoHome,
+    });
+
+    expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-origin\n");
+  });
+
+  it("falls back to local {branch} when origin/{branch} does not exist", async () => {
+    writeFileSync(join(repoDir, "file.txt"), "from-local-only\n");
+    execSync("git add file.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'advance local main only'", { cwd: repoDir });
+
+    const result = await createWorktree({
+      branchName: "prefer-local-fallback-feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "prefer-local-fallback-feature",
+      runSetup: false,
+      paseoHome,
+    });
+
+    expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-local-only\n");
+  });
+
+  it("throws when neither origin/{branch} nor local {branch} exists", async () => {
+    await expect(
+      createWorktree({
+        branchName: "missing-base-feature",
+        cwd: repoDir,
+        baseBranch: "does-not-exist",
+        worktreeSlug: "missing-base-feature",
+        runSetup: false,
+        paseoHome,
+      }),
+    ).rejects.toThrow("Base branch not found: does-not-exist");
+  });
+
   it("fails with invalid branch name", async () => {
     await expect(
       createWorktree({

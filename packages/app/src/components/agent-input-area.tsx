@@ -12,6 +12,7 @@ import {
   DraftAgentStatusBar,
   type DraftAgentStatusBarProps,
 } from "./agent-status-bar";
+import { ContextWindowMeter } from "./context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -140,6 +141,8 @@ export function AgentInputArea({
       const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
       return {
         status: agent?.status ?? null,
+        contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
+        contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
       };
     }),
   );
@@ -661,6 +664,25 @@ export function AgentInputArea({
     </View>
   );
 
+  const hasContextWindowMeter =
+    typeof agentState.contextWindowMaxTokens === "number" &&
+    typeof agentState.contextWindowUsedTokens === "number";
+  const contextWindowMaxTokens = hasContextWindowMeter ? agentState.contextWindowMaxTokens : null;
+  const contextWindowUsedTokens = hasContextWindowMeter
+    ? agentState.contextWindowUsedTokens
+    : null;
+
+  const beforeVoiceContent = (
+    <View style={styles.contextWindowMeterSlot}>
+      {contextWindowMaxTokens !== null && contextWindowUsedTokens !== null ? (
+        <ContextWindowMeter
+          maxTokens={contextWindowMaxTokens}
+          usedTokens={contextWindowUsedTokens}
+        />
+      ) : null}
+    </View>
+  );
+
   const leftContent =
     resolveStatusControlMode(statusControls) === "draft" && statusControls ? (
       <DraftAgentStatusBar {...statusControls} />
@@ -771,6 +793,7 @@ export function AgentInputArea({
               disabled={isSubmitLoading}
               isInputActive={isInputActive}
               leftContent={leftContent}
+              beforeVoiceContent={beforeVoiceContent}
               rightContent={rightContent}
               voiceServerId={serverId}
               voiceAgentId={agentId}
@@ -840,6 +863,12 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  contextWindowMeterSlot: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
   },
   realtimeVoiceButton: {
     width: 28,

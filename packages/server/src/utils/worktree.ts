@@ -924,15 +924,14 @@ export async function createWorktree({
     throw new Error("Base branch cannot be HEAD when creating a Paseo worktree");
   }
 
-  // Resolve the base branch - try local first, then remote
+  // Resolve the base branch - prefer origin/{branch}, then fall back to local
   let resolvedBaseBranch = normalizedBaseBranch;
   try {
-    await execAsync(`git rev-parse --verify ${normalizedBaseBranch}`, { cwd });
+    await execAsync(`git rev-parse --verify origin/${normalizedBaseBranch}`, { cwd });
+    resolvedBaseBranch = `origin/${normalizedBaseBranch}`;
   } catch {
-    // Local branch doesn't exist, try remote (origin/{branch})
     try {
-      await execAsync(`git rev-parse --verify origin/${normalizedBaseBranch}`, { cwd });
-      resolvedBaseBranch = `origin/${normalizedBaseBranch}`;
+      await execAsync(`git rev-parse --verify ${normalizedBaseBranch}`, { cwd });
     } catch {
       throw new Error(`Base branch not found: ${normalizedBaseBranch}`);
     }

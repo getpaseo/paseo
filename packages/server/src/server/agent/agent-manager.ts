@@ -172,6 +172,11 @@ type ManagedAgentBase = {
   features?: AgentFeature[];
   currentModeId: string | null;
   pendingPermissions: Map<string, AgentPermissionRequest>;
+  bufferedPermissionResolutions: Map<
+    string,
+    Extract<AgentStreamEvent, { type: "permission_resolved" }>
+  >;
+  inFlightPermissionResponses: Set<string>;
   pendingReplacement: boolean;
   timeline: AgentTimelineItem[];
   timelineRows: AgentTimelineRow[];
@@ -1437,18 +1442,31 @@ export class AgentManager {
     response: AgentPermissionResponse,
   ): Promise<void> {
     const agent = this.requireAgent(agentId);
-    await agent.session.respondToPermission(requestId, response);
-    agent.pendingPermissions.delete(requestId);
+    agent.inFlightPermissionResponses.add(requestId);
 
-    // Update currentModeId - the session may have changed mode internally
-    // (e.g., plan approval changes mode from "plan" to "acceptEdits")
     try {
-      agent.currentModeId = await agent.session.getCurrentMode();
-    } catch {
-      // Ignore errors from getCurrentMode - mode tracking is best effort
-    }
+      await agent.session.respondToPermission(requestId, response);
+      agent.pendingPermissions.delete(requestId);
 
-    this.emitState(agent);
+      try {
+        await this.refreshSessionState(agent);
+      } catch {
+        // Ignore refresh errors - state sync after permission approval is best effort.
+      }
+
+      this.touchUpdatedAt(agent);
+      await this.persistSnapshot(agent);
+      this.emitState(agent);
+
+      const bufferedResolution = agent.bufferedPermissionResolutions.get(requestId);
+      if (bufferedResolution) {
+        agent.bufferedPermissionResolutions.delete(requestId);
+        this.dispatchStream(agent.id, bufferedResolution);
+      }
+    } finally {
+      agent.inFlightPermissionResponses.delete(requestId);
+      agent.bufferedPermissionResolutions.delete(requestId);
+    }
   }
 
   async cancelAgentRun(agentId: string): Promise<boolean> {
@@ -1799,6 +1817,8 @@ export class AgentManager {
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map(),
+      bufferedPermissionResolutions: new Map(),
+      inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
       activeForegroundTurnId: null,
       foregroundTurnWaiters: new Set(),
@@ -2011,6 +2031,7 @@ export class AgentManager {
       agent.pendingPermissions.clear();
     }
 
+    this.syncFeaturesFromSession(agent);
     await this.refreshRuntimeInfo(agent);
   }
 
@@ -2087,6 +2108,7 @@ export class AgentManager {
     }
 
     let timelineRow: AgentTimelineRow | null = null;
+    let shouldDispatchEvent = true;
 
     switch (event.type) {
       case "thread_started":
@@ -2101,6 +2123,10 @@ export class AgentManager {
           }
           void this.refreshRuntimeInfo(agent);
         }
+        break;
+      case "usage_updated":
+        agent.lastUsage = event.usage;
+        this.emitState(agent);
         break;
       case "timeline":
         // Skip provider-replayed user_message items during history hydration.
@@ -2259,6 +2285,11 @@ export class AgentManager {
         break;
       case "permission_resolved":
         agent.pendingPermissions.delete(event.requestId);
+        if (!options?.fromHistory && agent.inFlightPermissionResponses.has(event.requestId)) {
+          agent.bufferedPermissionResolutions.set(event.requestId, event);
+          shouldDispatchEvent = false;
+          break;
+        }
         this.emitState(agent);
         break;
       default:
@@ -2270,7 +2301,7 @@ export class AgentManager {
     }
 
     // Skip dispatching individual stream events during history replay.
-    if (!options?.fromHistory) {
+    if (!options?.fromHistory && shouldDispatchEvent) {
       this.dispatchStream(
         agent.id,
         event,
@@ -2365,14 +2396,18 @@ export class AgentManager {
     // Keep attention as an edge-triggered unread signal, not a level signal.
     this.checkAndSetAttention(agent);
 
-    if (agent.session?.features) {
-      agent.features = agent.session.features;
-    }
+    this.syncFeaturesFromSession(agent);
 
     this.dispatch({
       type: "agent_state",
       agent: { ...agent },
     });
+  }
+
+  private syncFeaturesFromSession(agent: ManagedAgent): void {
+    if ("session" in agent && agent.session?.features) {
+      agent.features = agent.session.features;
+    }
   }
 
   private checkAndSetAttention(agent: ManagedAgent): void {

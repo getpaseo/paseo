@@ -16,7 +16,7 @@ export default function LegacySettingsRoute() {
     if (!targetServerId) {
       return;
     }
-    router.replace(buildHostSettingsRoute(targetServerId) as any);
+    router.replace(buildHostSettingsRoute(targetServerId));
   }, [router, targetServerId]);
 
   if (!targetServerId) {

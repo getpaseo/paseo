@@ -104,6 +104,21 @@ describe("checkout git utilities", () => {
     expect(message).toBe("update file");
   });
 
+  it("hides whitespace-only changes when requested", async () => {
+    writeFileSync(join(repoDir, "file.txt"), "hello  \n");
+
+    const visibleDiff = await getCheckoutDiff(repoDir, { mode: "uncommitted" });
+    expect(visibleDiff.diff).toContain("file.txt");
+
+    const hiddenDiff = await getCheckoutDiff(repoDir, {
+      mode: "uncommitted",
+      ignoreWhitespace: true,
+      includeStructured: true,
+    });
+    expect(hiddenDiff.diff).toBe("");
+    expect(hiddenDiff.structured).toEqual([]);
+  });
+
   it("preserves removed-line syntax highlighting with structured diffs", async () => {
     const originalContent = `/*
 comment line 1

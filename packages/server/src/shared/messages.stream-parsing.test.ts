@@ -139,6 +139,74 @@ describe("shared messages stream parsing", () => {
     }
   });
 
+  it("parses optional permission actions and selectedActionId compatibly", () => {
+    const requestParsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-02-08T20:10:00.000Z",
+        event: {
+          type: "permission_requested",
+          provider: "codex",
+          request: {
+            id: "perm-1",
+            provider: "codex",
+            name: "CodexPlanApproval",
+            kind: "plan",
+            input: { plan: "- step 1" },
+            actions: [
+              {
+                id: "reject",
+                label: "Reject",
+                behavior: "deny",
+                variant: "danger",
+                intent: "dismiss",
+              },
+              {
+                id: "implement",
+                label: "Implement",
+                behavior: "allow",
+                variant: "primary",
+                intent: "implement",
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(requestParsed.payload.event.type).toBe("permission_requested");
+    if (requestParsed.payload.event.type === "permission_requested") {
+      expect(requestParsed.payload.event.request.actions).toHaveLength(2);
+      expect(requestParsed.payload.event.request.actions?.[1]?.label).toBe("Implement");
+    }
+
+    const resolutionParsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-02-08T20:10:01.000Z",
+        event: {
+          type: "permission_resolved",
+          provider: "claude",
+          requestId: "perm-1",
+          resolution: {
+            behavior: "allow",
+            selectedActionId: "implement_resume",
+          },
+        },
+      },
+    });
+
+    expect(resolutionParsed.payload.event.type).toBe("permission_resolved");
+    if (resolutionParsed.payload.event.type === "permission_resolved") {
+      expect(resolutionParsed.payload.event.resolution).toEqual({
+        behavior: "allow",
+        selectedActionId: "implement_resume",
+      });
+    }
+  });
+
   it("rejects removed initialize_agent_request inbound payload", () => {
     const parsed = SessionInboundMessageSchema.safeParse({
       type: "initialize_agent_request",

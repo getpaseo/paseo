@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
+import {
+  mergeWorkspaceSnapshotWithExisting,
+  normalizeWorkspaceDescriptor,
+  useSessionStore,
+} from "@/stores/session-store";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
@@ -356,6 +360,7 @@ export function useSidebarWorkspacesList(options?: {
     }
     void (async () => {
       const next = new Map<string, WorkspaceDescriptor>();
+      const existingWorkspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
       let cursor: string | null = null;
       try {
         while (true) {
@@ -365,7 +370,13 @@ export function useSidebarWorkspacesList(options?: {
           });
           for (const entry of payload.entries) {
             const workspace = toWorkspaceDescriptor(entry);
-            next.set(workspace.id, workspace);
+            next.set(
+              workspace.id,
+              mergeWorkspaceSnapshotWithExisting({
+                incoming: workspace,
+                existing: existingWorkspaces?.get(workspace.id),
+              }),
+            );
           }
           if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) {
             break;

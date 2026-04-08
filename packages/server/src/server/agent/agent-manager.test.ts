@@ -2890,6 +2890,213 @@ describe("AgentManager", () => {
     expect(updatedAgent?.currentModeId).toBe("acceptEdits");
   });
 
+  test("respondToPermission refreshes features and runtime info after provider-managed plan approval", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class RefreshingPermissionSession extends TestAgentSession {
+      private featureState: AgentFeature[] = [
+        createFeature({ id: "fast_mode", label: "Fast", value: true }),
+        createFeature({ id: "plan_mode", label: "Plan", value: true }),
+      ];
+      private modeId = "auto";
+      private pending = [
+        {
+          id: "perm-plan-1",
+          provider: "codex" as const,
+          name: "CodexPlanApproval",
+          kind: "plan" as const,
+          input: { plan: "- Implement the feature" },
+        },
+      ];
+
+      get features(): AgentFeature[] {
+        return this.featureState;
+      }
+
+      override async getRuntimeInfo() {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+          model: "gpt-5.4",
+          modeId: this.modeId,
+          extra: { collaborationMode: this.features[1]?.value ? "Plan" : "Code" },
+        };
+      }
+
+      override async getCurrentMode() {
+        return this.modeId;
+      }
+
+      override getPendingPermissions() {
+        return this.pending;
+      }
+
+      override async respondToPermission(): Promise<void> {
+        this.modeId = "auto";
+        this.pending = [];
+        this.featureState = [
+          createFeature({ id: "fast_mode", label: "Fast", value: false }),
+          createFeature({ id: "plan_mode", label: "Plan", value: false }),
+        ];
+      }
+    }
+
+    class RefreshingPermissionClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new RefreshingPermissionSession(config);
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: {
+        codex: new RefreshingPermissionClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000133",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    const agent = manager.getAgent(snapshot.id);
+    if (!agent) {
+      throw new Error("Expected managed agent");
+    }
+    agent.pendingPermissions.set("perm-plan-1", {
+      id: "perm-plan-1",
+      provider: "codex",
+      name: "CodexPlanApproval",
+      kind: "plan",
+      input: { plan: "- Implement the feature" },
+    });
+
+    await manager.respondToPermission(snapshot.id, "perm-plan-1", {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+
+    const updated = manager.getAgent(snapshot.id);
+    expect(updated?.pendingPermissions.size).toBe(0);
+    expect(updated?.features).toEqual([
+      createFeature({ id: "fast_mode", label: "Fast", value: false }),
+      createFeature({ id: "plan_mode", label: "Plan", value: false }),
+    ]);
+    expect(updated?.runtimeInfo).toMatchObject({
+      model: "gpt-5.4",
+      extra: { collaborationMode: "Code" },
+    });
+
+    const persisted = await storage.get(snapshot.id);
+    expect(persisted?.features).toEqual([
+      createFeature({ id: "fast_mode", label: "Fast", value: false }),
+      createFeature({ id: "plan_mode", label: "Plan", value: false }),
+    ]);
+  });
+
+  test("respondToPermission emits refreshed state before permission_resolved", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-permission-order-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class OrderedPermissionSession extends TestAgentSession {
+      private featureState: AgentFeature[] = [
+        createFeature({ id: "fast_mode", label: "Fast", value: true }),
+      ];
+      private modeId = "plan";
+      private pending = [
+        {
+          id: "perm-order-1",
+          provider: "codex" as const,
+          name: "ExitPlanMode",
+          kind: "plan" as const,
+          input: { plan: "- Do the work" },
+        },
+      ];
+
+      get features(): AgentFeature[] {
+        return this.featureState;
+      }
+
+      override async getRuntimeInfo() {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+          model: "gpt-5.4",
+          modeId: this.modeId,
+        };
+      }
+
+      override async getCurrentMode() {
+        return this.modeId;
+      }
+
+      override getPendingPermissions() {
+        return this.pending;
+      }
+
+      override async respondToPermission(): Promise<void> {
+        this.pushEvent({
+          type: "permission_resolved",
+          provider: this.provider,
+          requestId: "perm-order-1",
+          resolution: { behavior: "allow" },
+        });
+        this.modeId = "acceptEdits";
+        this.featureState = [createFeature({ id: "fast_mode", label: "Fast", value: false })];
+        this.pending = [];
+      }
+    }
+
+    class OrderedPermissionClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new OrderedPermissionSession(config);
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: {
+        codex: new OrderedPermissionClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000134",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    const seen: string[] = [];
+    manager.subscribe((event) => {
+      if ("agentId" in event && event.agentId !== snapshot.id) {
+        return;
+      }
+      if (event.type === "agent_state" && event.agent.id === snapshot.id) {
+        const fastMode = event.agent.features?.find((feature) => feature.id === "fast_mode");
+        seen.push(`state:${event.agent.currentModeId}:${String(fastMode?.type === "toggle" ? fastMode.value : null)}`);
+        return;
+      }
+      if (event.type === "agent_stream" && event.event.type === "permission_resolved") {
+        seen.push(`resolved:${event.event.requestId}`);
+      }
+    });
+
+    await manager.respondToPermission(snapshot.id, "perm-order-1", {
+      behavior: "allow",
+    });
+
+    const refreshedStateIndex = seen.findIndex((entry) => entry === "state:acceptEdits:false");
+    const resolvedIndex = seen.findIndex((entry) => entry === "resolved:perm-order-1");
+    expect(refreshedStateIndex).toBeGreaterThanOrEqual(0);
+    expect(resolvedIndex).toBeGreaterThan(refreshedStateIndex);
+  });
+
   test("close during in-flight stream does not clear persistence sessionId", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");

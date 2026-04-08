@@ -43,7 +43,14 @@ vi.mock("node:fs", async () => {
 });
 
 vi.mock("./checkout-git-utils.js", () => ({
+  READ_ONLY_GIT_ENV: {
+    ...process.env,
+    GIT_OPTIONAL_LOCKS: "0",
+  },
   resolveCheckoutGitDir: resolveCheckoutGitDirMock,
+  toCheckoutError: vi.fn((error: unknown) => ({
+    message: error instanceof Error ? error.message : String(error),
+  })),
 }));
 
 import { Session } from "./session.js";
@@ -51,10 +58,31 @@ import { Session } from "./session.js";
 function createSessionForWorkspaceGitWatchTests(): {
   session: Session;
   emitted: Array<{ type: string; payload: unknown }>;
+  backgroundGitFetchManager: {
+    subscribe: ReturnType<typeof vi.fn>;
+    subscriptions: Array<{
+      params: { repoGitRoot: string; cwd: string };
+      listener: () => void;
+      unsubscribe: ReturnType<typeof vi.fn>;
+    }>;
+  };
+  logger: {
+    child: () => unknown;
+    trace: ReturnType<typeof vi.fn>;
+    debug: ReturnType<typeof vi.fn>;
+    info: ReturnType<typeof vi.fn>;
+    warn: ReturnType<typeof vi.fn>;
+    error: ReturnType<typeof vi.fn>;
+  };
 } {
   const emitted: Array<{ type: string; payload: unknown }> = [];
   const projects = new Map<string, any>();
   const workspaces = new Map<string, any>();
+  const backgroundGitFetchSubscriptions: Array<{
+    params: { repoGitRoot: string; cwd: string };
+    listener: () => void;
+    unsubscribe: ReturnType<typeof vi.fn>;
+  }> = [];
   const logger = {
     child: () => logger,
     trace: vi.fn(),
@@ -62,6 +90,19 @@ function createSessionForWorkspaceGitWatchTests(): {
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+  };
+  const backgroundGitFetchManager = {
+    subscribe: vi.fn(
+      async (params: { repoGitRoot: string; cwd: string }, listener: () => void) => {
+        const unsubscribe = vi.fn();
+        backgroundGitFetchSubscriptions.push({
+          params,
+          listener,
+          unsubscribe,
+        });
+        return { unsubscribe };
+      },
+    ),
   };
 
   const session = new Session({
@@ -140,6 +181,7 @@ function createSessionForWorkspaceGitWatchTests(): {
       }),
       dispose: () => {},
     } as any,
+    backgroundGitFetchManager: backgroundGitFetchManager as any,
     createAgentMcpTransport: async () => {
       throw new Error("not used");
     },
@@ -153,6 +195,11 @@ function createSessionForWorkspaceGitWatchTests(): {
   return {
     session,
     emitted,
+    backgroundGitFetchManager: {
+      subscribe: backgroundGitFetchManager.subscribe,
+      subscriptions: backgroundGitFetchSubscriptions,
+    },
+    logger,
   };
 }
 
@@ -208,7 +255,8 @@ describe("workspace git watch targets", () => {
       diffStat: { additions: 1, deletions: 0 },
     };
 
-    sessionAny.listWorkspaceDescriptorsSnapshot = async () => [descriptor];
+    sessionAny.buildWorkspaceDescriptorMap = async () =>
+      new Map([[descriptor.id, descriptor]]);
 
     await sessionAny.ensureWorkspaceRegistered("/tmp/repo");
     sessionAny.primeWorkspaceGitWatchFingerprints([descriptor]);
@@ -315,5 +363,149 @@ describe("workspace git watch targets", () => {
       rmSync(tempDir, { recursive: true, force: true });
       await session.cleanup();
     }
+  });
+
+  test("subscribes to the background fetch manager when a git watch target is created", async () => {
+    const { session, backgroundGitFetchManager } = createSessionForWorkspaceGitWatchTests();
+    const sessionAny = session as any;
+
+    sessionAny.buildProjectPlacement = async (cwd: string) => ({
+      projectKey: cwd,
+      projectName: path.basename(cwd),
+      checkout: {
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: "https://github.com/acme/repo.git",
+        worktreeRoot: cwd,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      },
+    });
+    resolveCheckoutGitDirMock.mockResolvedValue("/tmp/repo/.git");
+
+    await sessionAny.ensureWorkspaceRegistered("/tmp/repo");
+
+    expect(backgroundGitFetchManager.subscribe).toHaveBeenCalledWith(
+      { repoGitRoot: "/tmp/repo/.git", cwd: "/tmp/repo" },
+      expect.any(Function),
+    );
+    expect(sessionAny.workspaceGitFetchSubscriptions.size).toBe(1);
+
+    await session.cleanup();
+  });
+
+  test("stores separate background fetch subscriptions per workspace and unsubscribes removed targets", async () => {
+    const { session, backgroundGitFetchManager } = createSessionForWorkspaceGitWatchTests();
+    const sessionAny = session as any;
+
+    sessionAny.buildProjectPlacement = async (cwd: string) => ({
+      projectKey: cwd,
+      projectName: path.basename(cwd),
+      checkout: {
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: "https://github.com/acme/repo.git",
+        worktreeRoot: cwd,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      },
+    });
+    resolveCheckoutGitDirMock.mockImplementation(async (cwd: string) =>
+      cwd === "/tmp/repo" ? "/tmp/repo/.git" : "/tmp/repo/.git/worktrees/feature",
+    );
+    sessionAny.resolveWorkspaceGitRefsRoot = vi.fn(async () => "/tmp/repo/.git");
+
+    await sessionAny.ensureWorkspaceRegistered("/tmp/repo");
+    await sessionAny.ensureWorkspaceRegistered("/tmp/repo-feature");
+
+    expect(backgroundGitFetchManager.subscribe).toHaveBeenCalledTimes(2);
+    expect(backgroundGitFetchManager.subscriptions[0]?.params).toEqual({
+      repoGitRoot: "/tmp/repo/.git",
+      cwd: "/tmp/repo",
+    });
+    expect(backgroundGitFetchManager.subscriptions[1]?.params).toEqual({
+      repoGitRoot: "/tmp/repo/.git",
+      cwd: "/tmp/repo-feature",
+    });
+
+    sessionAny.removeWorkspaceGitWatchTarget("/tmp/repo");
+
+    expect(backgroundGitFetchManager.subscriptions[0]?.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(backgroundGitFetchManager.subscriptions[1]?.unsubscribe).not.toHaveBeenCalled();
+    expect(sessionAny.workspaceGitFetchSubscriptions.size).toBe(1);
+
+    await session.cleanup();
+  });
+
+  test("refreshes the workspace when the background fetch manager callback fires and unsubscribes on cleanup", async () => {
+    const { session, emitted, backgroundGitFetchManager } = createSessionForWorkspaceGitWatchTests();
+    const sessionAny = session as any;
+
+    sessionAny.buildProjectPlacement = async (cwd: string) => ({
+      projectKey: cwd,
+      projectName: path.basename(cwd),
+      checkout: {
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: "https://github.com/acme/repo.git",
+        worktreeRoot: cwd,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      },
+    });
+    resolveCheckoutGitDirMock.mockResolvedValue("/tmp/repo/.git");
+    sessionAny.workspaceUpdatesSubscription = {
+      subscriptionId: "sub-1",
+      filter: undefined,
+      isBootstrapping: false,
+      pendingUpdatesByWorkspaceId: new Map(),
+    };
+    sessionAny.reconcileActiveWorkspaceRecords = async () => new Set();
+
+    let descriptor = {
+      id: "/tmp/repo",
+      projectId: "/tmp/repo",
+      projectDisplayName: "repo",
+      projectRootPath: "/tmp/repo",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "main",
+      status: "done",
+      activityAt: null,
+      diffStat: { additions: 1, deletions: 0 },
+    };
+
+    sessionAny.buildWorkspaceDescriptorMap = async () =>
+      new Map([[descriptor.id, descriptor]]);
+
+    await sessionAny.ensureWorkspaceRegistered("/tmp/repo");
+    sessionAny.primeWorkspaceGitWatchFingerprints([descriptor]);
+
+    descriptor = {
+      ...descriptor,
+      name: "updated-after-fetch",
+    };
+
+    backgroundGitFetchManager.subscriptions[0]?.listener();
+    await vi.advanceTimersByTimeAsync(500);
+
+    const workspaceUpdates = emitted.filter(
+      (message) => message.type === "workspace_update",
+    ) as any[];
+    expect(workspaceUpdates).toHaveLength(1);
+    expect(workspaceUpdates[0]?.payload).toMatchObject({
+      kind: "upsert",
+      workspace: {
+        id: "/tmp/repo",
+        name: "updated-after-fetch",
+      },
+    });
+
+    await session.cleanup();
+
+    expect(backgroundGitFetchManager.subscriptions[0]?.unsubscribe).toHaveBeenCalledTimes(1);
   });
 });

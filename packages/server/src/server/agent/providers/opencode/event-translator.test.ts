@@ -14,6 +14,33 @@ function createState(sessionId = "session-1"): OpenCodeEventTranslationState {
 }
 
 describe("translateOpenCodeEvent", () => {
+  it("resolves context window max tokens from assistant message.updated model metadata", () => {
+    const resolvedContextWindowMaxTokens: number[] = [];
+    const state = createState();
+    state.modelContextWindowsByModelKey = new Map([["anthropic/claude-sonnet-4", 200_000]]);
+    state.onAssistantModelContextWindowResolved = (contextWindowMaxTokens) => {
+      resolvedContextWindowMaxTokens.push(contextWindowMaxTokens);
+    };
+
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-model-1",
+            sessionID: "session-1",
+            role: "assistant",
+            providerID: "anthropic",
+            modelID: "claude-sonnet-4",
+          },
+        },
+      },
+      state,
+    );
+
+    expect(resolvedContextWindowMaxTokens).toEqual([200_000]);
+  });
+
   it("does not duplicate assistant output when completed part echoes streamed delta", () => {
     const state = createState();
 
@@ -226,6 +253,61 @@ describe("translateOpenCodeEvent", () => {
         item: { type: "assistant_message", text: "what's up?" },
       },
     ]);
+  });
+
+  it("emits usage_updated after step-finish parts", () => {
+    const state = createState();
+    state.accumulatedUsage.contextWindowMaxTokens = 400_000;
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "step-finish-1",
+            sessionID: "session-1",
+            messageID: "message-usage-1",
+            type: "step-finish",
+            reason: "stop",
+            cost: 0.25,
+            tokens: {
+              total: 999_999,
+              input: 30_000,
+              output: 12_000,
+              reasoning: 10_000,
+              cache: {
+                read: 2_000,
+                write: 1_000,
+              },
+            },
+          },
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "opencode",
+        usage: {
+          contextWindowMaxTokens: 400_000,
+          contextWindowUsedTokens: 55_000,
+          cachedInputTokens: 2_000,
+          inputTokens: 30_000,
+          outputTokens: 12_000,
+          totalCostUsd: 0.25,
+        },
+      },
+    ]);
+    expect(state.accumulatedUsage).toEqual({
+      contextWindowMaxTokens: 400_000,
+      contextWindowUsedTokens: 55_000,
+      cachedInputTokens: 2_000,
+      inputTokens: 30_000,
+      outputTokens: 12_000,
+      totalCostUsd: 0.25,
+    });
   });
 
   it("emits reasoning from message.part.delta events", () => {

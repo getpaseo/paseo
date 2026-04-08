@@ -11,7 +11,7 @@ import { buildHostWorkspaceRoute } from "@/utils/host-routes";
  */
 export function navigateToWorkspace(serverId: string, workspaceId: string) {
   const href = buildHostWorkspaceRoute(serverId, workspaceId);
-  router.navigate(href as any);
+  router.navigate(href);
 }
 
 export function useWorkspaceNavigation() {

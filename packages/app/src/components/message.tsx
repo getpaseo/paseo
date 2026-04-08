@@ -39,6 +39,7 @@ import {
   Copy,
   TriangleAlertIcon,
   Scissors,
+  MicVocal,
 } from "lucide-react-native";
 import { StyleSheet, useUnistyles, UnistylesRuntime } from "react-native-unistyles";
 import Animated, {
@@ -909,6 +910,65 @@ export const AssistantMessage = memo(function AssistantMessage({
       >
         {message}
       </Markdown>
+    </View>
+  );
+});
+
+interface SpeakMessageProps {
+  message: string;
+  timestamp: number;
+  disableOuterSpacing?: boolean;
+}
+
+const speakMessageStylesheet = StyleSheet.create((theme) => ({
+  container: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
+  },
+  containerSpacing: {
+    marginBottom: theme.spacing[4],
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+  },
+  headerLabel: {
+    fontFamily: Fonts.sans,
+    fontSize: 12,
+    fontWeight: "500",
+    color: theme.colors.foregroundMuted,
+  },
+  text: {
+    fontFamily: Fonts.sans,
+    fontSize: theme.fontSize.base,
+    lineHeight: 22,
+    color: theme.colors.foreground,
+  },
+}));
+
+export const SpeakMessage = memo(function SpeakMessage({
+  message,
+  timestamp,
+  disableOuterSpacing,
+}: SpeakMessageProps) {
+  const { theme } = useUnistyles();
+  const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
+
+  return (
+    <View
+      testID="speak-message"
+      style={[
+        speakMessageStylesheet.container,
+        !resolvedDisableOuterSpacing && speakMessageStylesheet.containerSpacing,
+      ]}
+    >
+      <View style={speakMessageStylesheet.header}>
+        <MicVocal size={14} color={theme.colors.foregroundMuted} />
+        <Text style={speakMessageStylesheet.headerLabel}>Spoke</Text>
+      </View>
+      <Text style={speakMessageStylesheet.text}>{message}</Text>
     </View>
   );
 });

@@ -132,6 +132,8 @@ export type AgentUsage = {
   cachedInputTokens?: number;
   outputTokens?: number;
   totalCostUsd?: number;
+  contextWindowMaxTokens?: number;
+  contextWindowUsedTokens?: number;
 };
 
 export const TOOL_CALL_ICON_NAMES = [
@@ -299,6 +301,7 @@ export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
+  | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | {
       type: "turn_failed";
       provider: AgentProvider;
@@ -328,6 +331,14 @@ export type AgentPermissionRequestKind = "tool" | "plan" | "question" | "mode" |
 
 export type AgentPermissionUpdate = AgentMetadata;
 
+export type AgentPermissionAction = {
+  id: string;
+  label: string;
+  behavior: "allow" | "deny";
+  variant?: "primary" | "secondary" | "danger";
+  intent?: "implement" | "implement_resume" | "dismiss";
+};
+
 export type AgentPermissionRequest = {
   id: string;
   provider: AgentProvider;
@@ -338,17 +349,20 @@ export type AgentPermissionRequest = {
   input?: AgentMetadata;
   detail?: ToolCallDetail;
   suggestions?: AgentPermissionUpdate[];
+  actions?: AgentPermissionAction[];
   metadata?: AgentMetadata;
 };
 
 export type AgentPermissionResponse =
   | {
       behavior: "allow";
+      selectedActionId?: string;
       updatedInput?: AgentMetadata;
       updatedPermissions?: AgentPermissionUpdate[];
     }
   | {
       behavior: "deny";
+      selectedActionId?: string;
       message?: string;
       interrupt?: boolean;
     };

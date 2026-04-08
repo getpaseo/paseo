@@ -747,4 +747,55 @@ describe("ACPAgentSession", () => {
     });
     expect((session as any).activeForegroundTurnId).toBeNull();
   });
+
+  test("auto-approves Copilot ACP permissions in autopilot mode without emitting prompt events", async () => {
+    const session = new ACPAgentSession(
+      {
+        provider: "copilot",
+        cwd: "/tmp/paseo-acp-test",
+        modeId: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
+      },
+      {
+        provider: "copilot",
+        logger: createTestLogger(),
+        defaultCommand: ["copilot", "--acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+
+    const events: Array<{ type: string }> = [];
+    session.subscribe((event) => {
+      events.push(event as { type: string });
+    });
+
+    const response = await session.requestPermission({
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+      } as any,
+      options: [
+        { optionId: "allow-once", name: "Allow Once", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject Once", kind: "reject_once" },
+      ],
+    } as any);
+
+    expect(response).toEqual({
+      outcome: {
+        outcome: "selected",
+        optionId: "allow-once",
+      },
+    });
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(events.find((event) => event.type === "permission_requested")).toBeUndefined();
+  });
 });

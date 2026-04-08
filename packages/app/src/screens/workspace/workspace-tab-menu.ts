@@ -139,17 +139,6 @@ export function buildWorkspaceTabMenuEntries(
       },
     });
     entries.push({
-      kind: "item",
-      key: "reload-agent",
-      label: "Reload agent",
-      icon: "rotate-cw",
-      tooltip: "Reload agent to update skills, MCPs or login status.",
-      testID: `${menuTestIDBase}-reload-agent`,
-      onSelect: () => {
-        void onReloadAgent(agentId);
-      },
-    });
-    entries.push({
       kind: "separator",
       key: "copy-separator",
     });
@@ -188,6 +177,20 @@ export function buildWorkspaceTabMenuEntries(
       void onCloseOtherTabs(tab.tabId);
     },
   });
+  if (tab.target.kind === "agent") {
+    const { agentId } = tab.target;
+    entries.push({
+      kind: "item",
+      key: "reload-agent",
+      label: "Reload agent",
+      icon: "rotate-cw",
+      tooltip: "Reload agent to update skills, MCPs or login status.",
+      testID: `${menuTestIDBase}-reload-agent`,
+      onSelect: () => {
+        void onReloadAgent(agentId);
+      },
+    });
+  }
   entries.push({
     kind: "item",
     key: "close",

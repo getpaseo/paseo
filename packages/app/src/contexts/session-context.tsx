@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
+import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { generateMessageId, type StreamItem } from "@/types/stream";
 import {
   processTimelineResponse,
@@ -32,6 +33,7 @@ import {
   type Agent,
   type SessionState,
   type WorkspaceDescriptor,
+  mergeWorkspaceSnapshotWithExisting,
   normalizeWorkspaceDescriptor,
 } from "@/stores/session-store";
 import { useDraftStore } from "@/stores/draft-store";
@@ -66,6 +68,22 @@ export type {
 
 const HISTORY_STALE_AFTER_MS = 60_000;
 const AUTHORITATIVE_REVALIDATION_DEBOUNCE_MS = 300;
+
+function hasAgentUsageChanged(
+  incomingUsage: Agent["lastUsage"] | undefined,
+  currentUsage: Agent["lastUsage"] | undefined,
+): boolean {
+  const keys: Array<keyof NonNullable<Agent["lastUsage"]>> = [
+    "inputTokens",
+    "outputTokens",
+    "cachedInputTokens",
+    "totalCostUsd",
+    "contextWindowMaxTokens",
+    "contextWindowUsedTokens",
+  ];
+
+  return keys.some((key) => incomingUsage?.[key] !== currentUsage?.[key]);
+}
 
 type AudioOutputPayload = Extract<SessionOutboundMessage, { type: "audio_output" }>["payload"];
 
@@ -309,6 +327,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
 
       const workspaces = new Map<string, WorkspaceDescriptor>();
+      const existingWorkspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
       let cursor: string | null = null;
       let includeSubscribe = options?.subscribe ?? false;
 
@@ -324,7 +343,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
         for (const entry of payload.entries) {
           const workspace = normalizeWorkspaceDescriptor(entry);
-          workspaces.set(workspace.id, workspace);
+          workspaces.set(
+            workspace.id,
+            mergeWorkspaceSnapshotWithExisting({
+              incoming: workspace,
+              existing: existingWorkspaces?.get(workspace.id),
+            }),
+          );
         }
 
         if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) {
@@ -349,6 +374,15 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       setAgents(serverId, (prev) => {
         const current = prev.get(agent.id);
         if (current && agent.updatedAt.getTime() < current.updatedAt.getTime()) {
+          const hasUsageUpdate = hasAgentUsageChanged(agent.lastUsage, current.lastUsage);
+          if (hasUsageUpdate) {
+            const next = new Map(prev);
+            next.set(agent.id, {
+              ...current,
+              lastUsage: agent.lastUsage,
+            });
+            return next;
+          }
           return prev;
         }
         const next = new Map(prev);
@@ -602,6 +636,34 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useEffect(() => {
     updateSessionClient(serverId, client);
   }, [serverId, client, updateSessionClient]);
+
+  useEffect(() => {
+    const serverInfo = client.getLastServerInfoMessage();
+    if (!serverInfo) {
+      return;
+    }
+
+    updateSessionServerInfo(serverId, {
+      serverId: serverInfo.serverId,
+      hostname: serverInfo.hostname,
+      version: serverInfo.version,
+      ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
+      ...(serverInfo.features ? { features: serverInfo.features } : {}),
+    });
+  }, [client, serverId, updateSessionServerInfo]);
+
+  useEffect(() => {
+    if (!isConnected) {
+      return;
+    }
+
+    const serverInfo = client.getLastServerInfoMessage();
+    if (!serverInfo?.features?.providersSnapshot) {
+      return;
+    }
+
+    prefetchProvidersSnapshot(serverId, client);
+  }, [client, isConnected, serverId]);
 
   useEffect(() => {
     if (!voiceRuntime) {

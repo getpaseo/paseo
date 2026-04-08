@@ -78,9 +78,17 @@ function createPlanMarkdownRules() {
       const contentStyle = isOrdered ? styles.ordered_list_content : styles.bullet_list_content;
 
       return (
-        <View key={node.key} style={[styles.list_item, { flexShrink: 0 }]}>
+        <View key={node.key} style={styles.list_item}>
           <Text style={iconStyle}>{marker}</Text>
-          <Text style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}>{children}</Text>
+          <View style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}>{children}</View>
+        </View>
+      );
+    },
+    paragraph: (node: any, children: ReactNode[], parent: any, styles: any) => {
+      const isLastChild = parent[0]?.children?.at(-1)?.key === node.key;
+      return (
+        <View key={node.key} style={[styles.paragraph, isLastChild && { marginBottom: 0 }]}>
+          {children}
         </View>
       );
     },

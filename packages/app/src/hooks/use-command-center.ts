@@ -165,7 +165,7 @@ export function useCommandCenter() {
 
   const settingsRoute = useMemo<Href>(() => {
     const serverIdFromPath = activeServerId;
-    return serverIdFromPath ? (buildHostSettingsRoute(serverIdFromPath) as Href) : "/";
+    return serverIdFromPath ? buildHostSettingsRoute(serverIdFromPath) : "/";
   }, [activeServerId]);
 
   const actionItems = useMemo(() => {
@@ -220,7 +220,7 @@ export function useCommandCenter() {
         workspaceId: agent.cwd,
         target: { kind: "agent", agentId: agent.id },
       });
-      router.navigate(route as any);
+      router.navigate(route);
     },
     [setOpen],
   );

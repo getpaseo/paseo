@@ -275,13 +275,25 @@ export async function listBranchSuggestions(
   return ordered.slice(0, limit);
 }
 
-async function listCheckoutFileChanges(cwd: string, ref: string): Promise<CheckoutFileChange[]> {
+async function listCheckoutFileChanges(
+  cwd: string,
+  ref: string,
+  ignoreWhitespace = false,
+): Promise<CheckoutFileChange[]> {
   const changes: CheckoutFileChange[] = [];
 
-  const { stdout: nameStatusOut } = await execGit(`git diff --name-status ${ref}`, {
-    cwd,
-    env: READ_ONLY_GIT_ENV,
-  });
+  const { stdout: nameStatusOut } = await execFileAsync(
+    "git",
+    buildGitDiffArgs({
+      ignoreWhitespace,
+      extra: ["--name-status", ref],
+    }),
+    {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+      maxBuffer: SMALL_OUTPUT_MAX_BUFFER,
+    },
+  );
   for (const line of nameStatusOut
     .split("\n")
     .map((l) => l.trim())
@@ -396,13 +408,24 @@ function normalizeNumstatPath(pathField: string): string {
   return pathField;
 }
 
+function buildGitDiffArgs(args: { ignoreWhitespace?: boolean; extra: string[] }): string[] {
+  return ["diff", ...(args.ignoreWhitespace ? ["-w"] : []), ...args.extra];
+}
+
 const TRACKED_DIFF_NUMSTAT_MAX_BYTES = 2 * 1024 * 1024; // 2MB
 const TRACKED_MAX_CHANGED_LINES = 40_000;
 
-async function getTrackedNumstatByPath(cwd: string, ref: string): Promise<Map<string, FileStat>> {
+async function getTrackedNumstatByPath(
+  cwd: string,
+  ref: string,
+  ignoreWhitespace = false,
+): Promise<Map<string, FileStat>> {
   const result = await spawnLimitedText({
     cmd: "git",
-    args: ["diff", "--numstat", ref],
+    args: buildGitDiffArgs({
+      ignoreWhitespace,
+      extra: ["--numstat", ref],
+    }),
     cwd,
     env: READ_ONLY_GIT_ENV,
     maxBytes: TRACKED_DIFF_NUMSTAT_MAX_BYTES,
@@ -578,6 +601,7 @@ export interface CheckoutDiffResult {
 export interface CheckoutDiffCompare {
   mode: "uncommitted" | "base";
   baseRef?: string;
+  ignoreWhitespace?: boolean;
   includeStructured?: boolean;
 }
 
@@ -1072,6 +1096,7 @@ function buildPlaceholderParsedDiffFile(
 async function getUntrackedDiffText(
   cwd: string,
   change: CheckoutFileChange,
+  ignoreWhitespace = false,
 ): Promise<{ text: string; truncated: boolean; stat: FileStat }> {
   try {
     const inspected = await inspectUntrackedFile(cwd, change.path);
@@ -1084,7 +1109,10 @@ async function getUntrackedDiffText(
 
   const result = await spawnLimitedText({
     cmd: "git",
-    args: ["diff", "--no-index", "/dev/null", "--", change.path],
+    args: buildGitDiffArgs({
+      ignoreWhitespace,
+      extra: ["--no-index", "/dev/null", "--", change.path],
+    }),
     cwd,
     env: READ_ONLY_GIT_ENV,
     maxBytes: PER_FILE_DIFF_MAX_BYTES,
@@ -1299,7 +1327,8 @@ export async function getCheckoutDiff(
     refForDiff = (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef;
   }
 
-  const changes = await listCheckoutFileChanges(cwd, refForDiff);
+  const ignoreWhitespace = compare.ignoreWhitespace === true;
+  const changes = await listCheckoutFileChanges(cwd, refForDiff, ignoreWhitespace);
   changes.sort((a, b) => {
     if (a.path === b.path) return 0;
     return a.path < b.path ? -1 : 1;
@@ -1330,7 +1359,7 @@ export async function getCheckoutDiff(
 
   const trackedNumstatByPath =
     trackedChanges.length > 0
-      ? await getTrackedNumstatByPath(cwd, refForDiff)
+      ? await getTrackedNumstatByPath(cwd, refForDiff, ignoreWhitespace)
       : new Map<string, FileStat>();
   const trackedDiffPaths: string[] = [];
   const trackedPlaceholderByPath = new Map<
@@ -1356,7 +1385,10 @@ export async function getCheckoutDiff(
   if (trackedDiffPaths.length > 0) {
     const trackedDiffResult = await spawnLimitedText({
       cmd: "git",
-      args: ["diff", refForDiff, "--", ...trackedDiffPaths],
+      args: buildGitDiffArgs({
+        ignoreWhitespace,
+        extra: [refForDiff, "--", ...trackedDiffPaths],
+      }),
       cwd,
       env: READ_ONLY_GIT_ENV,
       maxBytes: TOTAL_DIFF_MAX_BYTES,
@@ -1445,7 +1477,11 @@ export async function getCheckoutDiff(
     if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
       break;
     }
-    const { text, truncated, stat } = await getUntrackedDiffText(cwd, change);
+    const { text, truncated, stat } = await getUntrackedDiffText(
+      cwd,
+      change,
+      ignoreWhitespace,
+    );
 
     if (!compare.includeStructured) {
       if (stat?.isBinary) {

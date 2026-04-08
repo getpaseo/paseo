@@ -26,6 +26,7 @@ import { Check, ChevronDown, X } from "lucide-react-native";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   AssistantMessage,
+  SpeakMessage,
   UserMessage,
   ActivityLog,
   ToolCall,
@@ -38,7 +39,10 @@ import {
 import { PlanCard } from "./plan-card";
 import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
-import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
+import type {
+  AgentPermissionAction,
+  AgentPermissionResponse,
+} from "@server/server/agent/agent-sdk-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { useSessionStore } from "@/stores/session-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
@@ -178,7 +182,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             workspaceId,
             target: { kind: "file", path: normalized.file },
           });
-          router.navigate(route as any);
+          router.navigate(route);
           return;
         }
 
@@ -356,6 +360,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
             if (payload.source === "agent") {
               const data = payload.data;
+
+              if (
+                data.name === "speak" &&
+                data.detail.type === "unknown" &&
+                typeof data.detail.input === "string" &&
+                data.detail.input.trim()
+              ) {
+                return (
+                  <SpeakMessage
+                    message={data.detail.input}
+                    timestamp={item.timestamp.getTime()}
+                  />
+                );
+              }
+
               return (
                 <ToolCall
                   toolName={data.name}
@@ -694,6 +713,29 @@ function PermissionRequestCard({
   const isPlanRequest = request.kind === "plan";
   const title = isPlanRequest ? "Plan" : (request.title ?? request.name ?? "Permission Required");
   const description = request.description ?? "";
+  const resolvedActions = useMemo((): AgentPermissionAction[] => {
+    if (request.kind === "question") {
+      return [];
+    }
+    if (Array.isArray(request.actions) && request.actions.length > 0) {
+      return request.actions;
+    }
+    return [
+      {
+        id: "reject",
+        label: "Deny",
+        behavior: "deny",
+        variant: "danger",
+        intent: "dismiss",
+      },
+      {
+        id: "accept",
+        label: isPlanRequest ? "Implement" : "Accept",
+        behavior: "allow",
+        variant: "primary",
+      },
+    ];
+  }, [isPlanRequest, request]);
 
   const planMarkdown = useMemo(() => {
     if (!request) {
@@ -734,11 +776,11 @@ function PermissionRequestCard({
     isPending: isResponding,
   } = permissionMutation;
 
-  const [respondingAction, setRespondingAction] = useState<"accept" | "deny" | null>(null);
+  const [respondingActionId, setRespondingActionId] = useState<string | null>(null);
 
   useEffect(() => {
     resetPermissionMutation();
-    setRespondingAction(null);
+    setRespondingActionId(null);
   }, [permission.request.id, resetPermissionMutation]);
   const handleResponse = useCallback(
     (response: AgentPermissionResponse) => {
@@ -751,6 +793,24 @@ function PermissionRequestCard({
       });
     },
     [permission.agentId, permission.request.id, respondToPermission],
+  );
+  const handleActionPress = useCallback(
+    (action: AgentPermissionAction) => {
+      setRespondingActionId(action.id);
+      if (action.behavior === "allow") {
+        handleResponse({
+          behavior: "allow",
+          selectedActionId: action.id,
+        });
+        return;
+      }
+      handleResponse({
+        behavior: "deny",
+        selectedActionId: action.id,
+        message: "Denied by user",
+      });
+    },
+    [handleResponse],
   );
 
   if (request.kind === "question") {
@@ -778,64 +838,48 @@ function PermissionRequestCard({
           !isMobile && permissionStyles.optionsContainerDesktop,
         ]}
       >
-        <Pressable
-          testID="permission-request-deny"
-          style={({ pressed, hovered = false }) => [
-            permissionStyles.optionButton,
-            {
-              backgroundColor: hovered ? theme.colors.surface2 : theme.colors.surface1,
-              borderColor: theme.colors.borderAccent,
-            },
-            pressed ? permissionStyles.optionButtonPressed : null,
-          ]}
-          onPress={() => {
-            setRespondingAction("deny");
-            handleResponse({
-              behavior: "deny",
-              message: "Denied by user",
-            });
-          }}
-          disabled={isResponding}
-        >
-          {respondingAction === "deny" ? (
-            <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
-          ) : (
-            <View style={permissionStyles.optionContent}>
-              <X size={14} color={theme.colors.foregroundMuted} />
-              <Text style={[permissionStyles.optionText, { color: theme.colors.foregroundMuted }]}>
-                Deny
-              </Text>
-            </View>
-          )}
-        </Pressable>
+        {resolvedActions.map((action) => {
+          const isDanger = action.variant === "danger" || action.behavior === "deny";
+          const isPrimary = action.variant === "primary";
+          const isRespondingAction = respondingActionId === action.id;
+          const textColor = isPrimary ? theme.colors.foreground : theme.colors.foregroundMuted;
+          const iconColor = textColor;
+          const Icon = action.behavior === "allow" ? Check : X;
+          const testID =
+            action.behavior === "deny"
+              ? "permission-request-deny"
+              : action.id === "accept" || action.id === "implement"
+                ? "permission-request-accept"
+                : `permission-request-action-${action.id}`;
 
-        <Pressable
-          testID="permission-request-accept"
-          style={({ pressed, hovered = false }) => [
-            permissionStyles.optionButton,
-            {
-              backgroundColor: hovered ? theme.colors.surface2 : theme.colors.surface1,
-              borderColor: theme.colors.borderAccent,
-            },
-            pressed ? permissionStyles.optionButtonPressed : null,
-          ]}
-          onPress={() => {
-            setRespondingAction("accept");
-            handleResponse({ behavior: "allow" });
-          }}
-          disabled={isResponding}
-        >
-          {respondingAction === "accept" ? (
-            <ActivityIndicator size="small" color={theme.colors.foreground} />
-          ) : (
-            <View style={permissionStyles.optionContent}>
-              <Check size={14} color={theme.colors.foreground} />
-              <Text style={[permissionStyles.optionText, { color: theme.colors.foreground }]}>
-                Accept
-              </Text>
-            </View>
-          )}
-        </Pressable>
+          return (
+            <Pressable
+              key={action.id}
+              testID={testID}
+              style={({ pressed, hovered = false }) => [
+                permissionStyles.optionButton,
+                {
+                  backgroundColor: hovered ? theme.colors.surface2 : theme.colors.surface1,
+                  borderColor: isDanger ? theme.colors.borderAccent : theme.colors.borderAccent,
+                },
+                pressed ? permissionStyles.optionButtonPressed : null,
+              ]}
+              onPress={() => handleActionPress(action)}
+              disabled={isResponding}
+            >
+              {isRespondingAction ? (
+                <ActivityIndicator size="small" color={textColor} />
+              ) : (
+                <View style={permissionStyles.optionContent}>
+                  <Icon size={14} color={iconColor} />
+                  <Text style={[permissionStyles.optionText, { color: textColor }]}>
+                    {action.label}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+          );
+        })}
       </View>
     </>
   );

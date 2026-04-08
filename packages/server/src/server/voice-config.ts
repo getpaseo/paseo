@@ -53,6 +53,10 @@ export function buildVoiceModeSystemPrompt(existing: string | undefined, enabled
     .join("\n\n");
 }
 
+export function wrapSpokenInput(text: string): string {
+  return `<spoken-input>\n${text}\n</spoken-input>`;
+}
+
 export function buildVoiceAgentMcpServerConfig(params: {
   command: string;
   baseArgs: string[];

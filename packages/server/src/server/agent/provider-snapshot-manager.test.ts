@@ -251,6 +251,51 @@ describe("ProviderSnapshotManager", () => {
     manager.destroy();
   });
 
+  test("refresh during an in-flight refresh is a no-op", async () => {
+    const fetchModels = deferred<AgentModelDefinition[]>();
+    const fetchModes = deferred<AgentMode[]>();
+    const { registry, handles } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async () => fetchModels.promise,
+        fetchModes: async () => fetchModes.promise,
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+    const changes: ProviderSnapshotEntry[][] = [];
+    manager.on("change", (entries) => changes.push(entries));
+
+    manager.refresh("/tmp/project");
+
+    expect(manager.getSnapshot("/tmp/project")).toEqual([
+      { provider: "codex", status: "loading" },
+    ]);
+
+    manager.refresh("/tmp/project");
+    manager.refresh("/tmp/project");
+    manager.refresh("/tmp/project");
+
+    expect(changes).toHaveLength(1);
+    expect(handles.codex?.isAvailable).toHaveBeenCalledTimes(1);
+
+    fetchModels.resolve([createModel("codex", "gpt-5.2")]);
+    fetchModes.resolve([createMode("auto")]);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")).toMatchObject({
+        provider: "codex",
+        status: "ready",
+        models: [createModel("codex", "gpt-5.2")],
+        modes: [createMode("auto")],
+      });
+    });
+
+    expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(1);
+    expect(handles.codex?.fetchModes).toHaveBeenCalledTimes(1);
+
+    manager.destroy();
+  });
+
   test("multiple getSnapshot calls for same cwd do not trigger multiple warmUps", async () => {
     const codexModels = deferred<AgentModelDefinition[]>();
     const { registry, handles } = createRegistry([

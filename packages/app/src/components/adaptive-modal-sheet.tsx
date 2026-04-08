@@ -28,6 +28,8 @@ const styles = StyleSheet.create((theme) => ({
     width: "100%",
     maxWidth: 520,
     maxHeight: "85%",
+    flexShrink: 1,
+    minHeight: 0,
     backgroundColor: theme.colors.surface1,
     borderRadius: theme.borderRadius.xl,
     borderWidth: 1,
@@ -54,11 +56,13 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   desktopScroll: {
-    flex: 1,
+    flexShrink: 1,
+    minHeight: 0,
   },
   desktopContent: {
     padding: theme.spacing[6],
     gap: theme.spacing[4],
+    flexGrow: 1,
   },
   bottomSheetHandle: {
     backgroundColor: theme.colors.surface2,

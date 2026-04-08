@@ -1,6 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
+import {
+  createOpencodeClient,
+  type OpencodeClient,
+} from "@opencode-ai/sdk/v2/client";
 import net from "node:net";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -268,6 +271,224 @@ function sortOpenCodeModes(modes: AgentMode[]): AgentMode[] {
   });
 }
 
+function readPositiveFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function buildOpenCodeModelLookupKey(providerId: string, modelId: string): string {
+  return `${providerId}/${modelId}`;
+}
+
+function parseOpenCodeModelLookupKey(modelId: string | null | undefined): string | undefined {
+  if (typeof modelId !== "string" || modelId.trim().length === 0) {
+    return undefined;
+  }
+
+  const slashIndex = modelId.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === modelId.length - 1) {
+    return undefined;
+  }
+
+  const providerId = modelId.slice(0, slashIndex).trim();
+  const providerModelId = modelId.slice(slashIndex + 1).trim();
+  if (!providerId || !providerModelId) {
+    return undefined;
+  }
+
+  return buildOpenCodeModelLookupKey(providerId, providerModelId);
+}
+
+function extractOpenCodeModelContextWindow(model: unknown): number | undefined {
+  if (!model || typeof model !== "object") {
+    return undefined;
+  }
+  const limit = (model as { limit?: { context?: unknown } }).limit;
+  return readPositiveFiniteNumber(limit?.context);
+}
+
+function buildOpenCodeModelDefinition(
+  provider: {
+    id: string;
+    name: string;
+  },
+  modelId: string,
+  model: {
+    name: string;
+    family?: string;
+    release_date?: string;
+    attachment?: boolean;
+    reasoning?: boolean;
+    tool_call?: boolean;
+    cost?: unknown;
+    limit?: { context?: number; input?: number; output?: number };
+    variants?: Record<string, unknown>;
+  },
+): AgentModelDefinition {
+  const rawVariants = model.variants ? Object.keys(model.variants) : [];
+  const thinkingOptions = rawVariants.map((id, index) => ({
+    id,
+    label: id,
+    isDefault: index === 0,
+  }));
+
+  return {
+    provider: "opencode",
+    id: `${provider.id}/${modelId}`,
+    label: model.name,
+    description: `${provider.name} - ${model.family ?? ""}`.trim(),
+    thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
+    defaultThinkingOptionId: thinkingOptions[0]?.id,
+    metadata: {
+      providerId: provider.id,
+      providerName: provider.name,
+      modelId,
+      family: model.family,
+      releaseDate: model.release_date,
+      supportsAttachments: model.attachment,
+      supportsReasoning: model.reasoning,
+      supportsToolCall: model.tool_call,
+      cost: model.cost,
+      contextWindowMaxTokens: extractOpenCodeModelContextWindow(model),
+      ...(model.limit ? { limit: model.limit } : {}),
+    },
+  };
+}
+
+function resolveOpenCodeSelectedModelContextWindow(
+  providers: {
+    connected?: string[];
+    all?: Array<{
+      id: string;
+      models?: Record<string, unknown>;
+    }>;
+  } | null | undefined,
+  modelId: string | null | undefined,
+): number | undefined {
+  if (!providers) {
+    return undefined;
+  }
+  const modelLookupKey = parseOpenCodeModelLookupKey(modelId);
+  if (!modelLookupKey) {
+    return undefined;
+  }
+  const lookup = buildOpenCodeModelContextWindowLookup(providers);
+  return lookup.get(modelLookupKey);
+}
+
+function buildOpenCodeModelContextWindowLookup(providers: {
+  connected?: string[];
+  all?: Array<{
+    id: string;
+    models?: Record<string, unknown>;
+  }>;
+} | null | undefined): Map<string, number> {
+  const lookup = new Map<string, number>();
+  if (!providers) {
+    return lookup;
+  }
+
+  const connectedProviderIds = new Set(providers.connected ?? []);
+  for (const provider of providers.all ?? []) {
+    if (!connectedProviderIds.has(provider.id)) {
+      continue;
+    }
+    for (const [modelId, modelDefinition] of Object.entries(provider.models ?? {})) {
+      const contextWindow = extractOpenCodeModelContextWindow(modelDefinition);
+      if (contextWindow === undefined) {
+        continue;
+      }
+      lookup.set(buildOpenCodeModelLookupKey(provider.id, modelId), contextWindow);
+    }
+  }
+
+  return lookup;
+}
+
+function resolveOpenCodeModelLookupKeyFromAssistantMessageInfo(
+  info: AgentMetadata | undefined,
+): string | undefined {
+  if (!info || info.role !== "assistant") {
+    return undefined;
+  }
+
+  const providerId = readNonEmptyString(info.providerID);
+  const modelId = readNonEmptyString(info.modelID);
+  if (!providerId || !modelId) {
+    return undefined;
+  }
+
+  return buildOpenCodeModelLookupKey(providerId, modelId);
+}
+
+function mergeOpenCodeStepFinishUsage(
+  usage: AgentUsage,
+  part: {
+    cost?: unknown;
+    tokens?: {
+      input?: unknown;
+      output?: unknown;
+      reasoning?: unknown;
+      total?: unknown;
+      cache?: {
+        read?: unknown;
+        write?: unknown;
+      };
+    };
+  },
+): void {
+  const inputTokens = readPositiveFiniteNumber(part.tokens?.input);
+  const outputTokens = readPositiveFiniteNumber(part.tokens?.output);
+  const reasoningTokens = readPositiveFiniteNumber(part.tokens?.reasoning);
+  const cacheReadTokens = readPositiveFiniteNumber(part.tokens?.cache?.read);
+  const cacheWriteTokens = readPositiveFiniteNumber(part.tokens?.cache?.write);
+  const totalTokens =
+    (inputTokens ?? 0) +
+    (outputTokens ?? 0) +
+    (reasoningTokens ?? 0) +
+    (cacheReadTokens ?? 0) +
+    (cacheWriteTokens ?? 0);
+  const cost = readPositiveFiniteNumber(part.cost);
+
+  if (inputTokens !== undefined) {
+    usage.inputTokens = inputTokens;
+  }
+  if (cacheReadTokens !== undefined) {
+    usage.cachedInputTokens = cacheReadTokens;
+  }
+  if (outputTokens !== undefined) {
+    usage.outputTokens = outputTokens;
+  }
+  if (totalTokens > 0) {
+    usage.contextWindowUsedTokens = totalTokens;
+  }
+  if (cost !== undefined) {
+    usage.totalCostUsd = (usage.totalCostUsd ?? 0) + cost;
+  }
+}
+
+function hasNormalizedOpenCodeUsage(usage: AgentUsage): boolean {
+  return [
+    usage.inputTokens,
+    usage.cachedInputTokens,
+    usage.outputTokens,
+    usage.totalCostUsd,
+    usage.contextWindowMaxTokens,
+    usage.contextWindowUsedTokens,
+  ].some((value) => typeof value === "number" && Number.isFinite(value));
+}
+
+export const __openCodeInternals = {
+  buildOpenCodeModelContextWindowLookup,
+  buildOpenCodeModelDefinition,
+  buildOpenCodeModelLookupKey,
+  extractOpenCodeModelContextWindow,
+  hasNormalizedOpenCodeUsage,
+  mergeOpenCodeStepFinishUsage,
+  parseOpenCodeModelLookupKey,
+  resolveOpenCodeModelLookupKeyFromAssistantMessageInfo,
+  resolveOpenCodeSelectedModelContextWindow,
+};
+
 export class OpenCodeServerManager {
   private static instance: OpenCodeServerManager | null = null;
   private static exitHandlerRegistered = false;
@@ -423,6 +644,7 @@ export class OpenCodeAgentClient implements AgentClient {
   private readonly serverManager: OpenCodeServerManager;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
+  private readonly modelContextWindows = new Map<string, number>();
 
   constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
     this.logger = logger.child({ module: "agent", provider: "opencode" });
@@ -460,7 +682,15 @@ export class OpenCodeAgentClient implements AgentClient {
       throw new Error("OpenCode session creation returned no data");
     }
 
-    return new OpenCodeAgentSession(openCodeConfig, client, session.id, this.logger);
+    await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+
+    return new OpenCodeAgentSession(
+      openCodeConfig,
+      client,
+      session.id,
+      this.logger,
+      new Map(this.modelContextWindows),
+    );
   }
 
   async resumeSession(
@@ -485,7 +715,15 @@ export class OpenCodeAgentClient implements AgentClient {
       directory: openCodeConfig.cwd,
     });
 
-    return new OpenCodeAgentSession(openCodeConfig, client, handle.sessionId, this.logger);
+    await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+
+    return new OpenCodeAgentSession(
+      openCodeConfig,
+      client,
+      handle.sessionId,
+      this.logger,
+      new Map(this.modelContextWindows),
+    );
   }
 
   async listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
@@ -533,6 +771,7 @@ export class OpenCodeAgentClient implements AgentClient {
     }
 
     const models: AgentModelDefinition[] = [];
+    this.modelContextWindows.clear();
     for (const provider of providers.all) {
       // Skip providers that aren't connected/configured
       if (!connectedProviderIds.has(provider.id)) {
@@ -540,32 +779,15 @@ export class OpenCodeAgentClient implements AgentClient {
       }
 
       for (const [modelId, model] of Object.entries(provider.models)) {
-        const rawVariants = model.variants ? Object.keys(model.variants) : [];
-        const thinkingOptions = rawVariants.map((id, index) => ({
-          id,
-          label: id,
-          isDefault: index === 0,
-        }));
-
-        models.push({
-          provider: "opencode",
-          id: `${provider.id}/${modelId}`,
-          label: model.name,
-          description: `${provider.name} - ${model.family ?? ""}`.trim(),
-          thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
-          defaultThinkingOptionId: thinkingOptions[0]?.id,
-          metadata: {
-            providerId: provider.id,
-            providerName: provider.name,
-            modelId,
-            family: model.family,
-            releaseDate: model.release_date,
-            supportsAttachments: model.attachment,
-            supportsReasoning: model.reasoning,
-            supportsToolCall: model.tool_call,
-            cost: model.cost,
-          },
-        });
+        const definition = buildOpenCodeModelDefinition(provider, modelId, model);
+        const contextWindowMaxTokens = extractOpenCodeModelContextWindow(model);
+        if (contextWindowMaxTokens !== undefined) {
+          this.modelContextWindows.set(
+            buildOpenCodeModelLookupKey(provider.id, modelId),
+            contextWindowMaxTokens,
+          );
+        }
+        models.push(definition);
       }
     }
 
@@ -685,6 +907,22 @@ export class OpenCodeAgentClient implements AgentClient {
     }
     return { ...config, provider: "opencode" };
   }
+
+  private async populateModelContextWindowCache(
+    client: OpencodeClient,
+    cwd: string,
+  ): Promise<void> {
+    const response = await client.provider.list({ directory: cwd });
+    if (response.error || !response.data) {
+      return;
+    }
+
+    const lookup = buildOpenCodeModelContextWindowLookup(response.data);
+    this.modelContextWindows.clear();
+    for (const [modelLookupKey, contextWindowMaxTokens] of lookup.entries()) {
+      this.modelContextWindows.set(modelLookupKey, contextWindowMaxTokens);
+    }
+  }
 }
 
 export type OpenCodeEventTranslationState = {
@@ -695,6 +933,8 @@ export type OpenCodeEventTranslationState = {
   emittedStructuredMessageIds: Set<string>;
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
   partTypes: Map<string, string>;
+  modelContextWindowsByModelKey?: ReadonlyMap<string, number>;
+  onAssistantModelContextWindowResolved?: (contextWindowMaxTokens: number) => void;
 };
 
 function stringifyStructuredAssistantMessage(value: unknown): string | null {
@@ -787,6 +1027,15 @@ export function translateOpenCodeEvent(
 
       if (messageId && messageSessionId === state.sessionId && role) {
         state.messageRoles.set(messageId, role);
+        if (role === "assistant") {
+          const modelLookupKey = resolveOpenCodeModelLookupKeyFromAssistantMessageInfo(info);
+          if (modelLookupKey) {
+            const contextWindowMaxTokens = state.modelContextWindowsByModelKey?.get(modelLookupKey);
+            if (contextWindowMaxTokens !== undefined) {
+              state.onAssistantModelContextWindowResolved?.(contextWindowMaxTokens);
+            }
+          }
+        }
         if (
           role === "assistant" &&
           !state.emittedStructuredMessageIds.has(messageId) &&
@@ -894,19 +1143,13 @@ export function translateOpenCodeEvent(
           });
         }
       } else if (partType === "step-finish") {
-        const tokens = part.tokens as
-          | { input?: number; output?: number; reasoning?: number }
-          | undefined;
-        const cost = part.cost as number | undefined;
-
-        if (tokens) {
-          state.accumulatedUsage.inputTokens =
-            (state.accumulatedUsage.inputTokens ?? 0) + (tokens.input ?? 0);
-          state.accumulatedUsage.outputTokens =
-            (state.accumulatedUsage.outputTokens ?? 0) + (tokens.output ?? 0);
-        }
-        if (cost !== undefined) {
-          state.accumulatedUsage.totalCostUsd = (state.accumulatedUsage.totalCostUsd ?? 0) + cost;
+        mergeOpenCodeStepFinishUsage(state.accumulatedUsage, part);
+        if (hasNormalizedOpenCodeUsage(state.accumulatedUsage)) {
+          events.push({
+            type: "usage_updated",
+            provider: "opencode",
+            usage: { ...state.accumulatedUsage },
+          });
         }
       }
       break;
@@ -1083,6 +1326,7 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly client: OpencodeClient;
   private readonly sessionId: string;
   private readonly logger: Logger;
+  private readonly modelContextWindowsByModelKey: ReadonlyMap<string, number>;
   private currentMode: string = "default";
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private abortController: AbortController | null = null;
@@ -1102,18 +1346,23 @@ class OpenCodeAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
+  private selectedModelContextWindowMaxTokens: number | undefined;
 
   constructor(
     config: OpenCodeAgentConfig,
     client: OpencodeClient,
     sessionId: string,
     logger: Logger,
+    modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
   ) {
     this.config = config;
     this.client = client;
     this.sessionId = sessionId;
     this.logger = logger;
+    this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
+    this.selectedModelContextWindowMaxTokens =
+      this.resolveConfiguredModelContextWindowMaxTokens(config.model);
   }
 
   get id(): string | null {
@@ -1133,6 +1382,8 @@ class OpenCodeAgentSession implements AgentSession {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
     this.config.model = normalizedModelId ?? undefined;
+    this.selectedModelContextWindowMaxTokens =
+      this.resolveConfiguredModelContextWindowMaxTokens(this.config.model);
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -1246,6 +1497,9 @@ class OpenCodeAgentSession implements AgentSession {
     const turnAbortController = new AbortController();
     this.abortController = turnAbortController;
     await this.ensureMcpServersConfigured();
+    const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
+    this.accumulatedUsage =
+      contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
 
     const parts = this.buildPromptParts(prompt);
     const model = this.parseModel(this.config.model);
@@ -1781,6 +2035,13 @@ class OpenCodeAgentSession implements AgentSession {
       streamedPartKeys: this.streamedPartKeys,
       emittedStructuredMessageIds: this.emittedStructuredMessageIds,
       partTypes: this.partTypes,
+      modelContextWindowsByModelKey: this.modelContextWindowsByModelKey,
+      onAssistantModelContextWindowResolved: (contextWindowMaxTokens) => {
+        this.accumulatedUsage.contextWindowMaxTokens = contextWindowMaxTokens;
+        if (!this.config.model) {
+          this.selectedModelContextWindowMaxTokens = contextWindowMaxTokens;
+        }
+      },
     });
 
     for (const translatedEvent of translated) {
@@ -1788,21 +2049,32 @@ class OpenCodeAgentSession implements AgentSession {
         this.pendingPermissions.set(translatedEvent.request.id, translatedEvent.request);
       }
       if (translatedEvent.type === "turn_completed") {
-        translatedEvent.usage = this.extractAndResetUsage();
+        if (hasNormalizedOpenCodeUsage(this.accumulatedUsage)) {
+          translatedEvent.usage = this.accumulatedUsage;
+        }
+        const contextWindowMaxTokens =
+          this.resolveSelectedModelContextWindowMaxTokens();
+        this.accumulatedUsage =
+          contextWindowMaxTokens !== undefined
+            ? { contextWindowMaxTokens }
+            : {};
       }
     }
 
     return translated;
   }
 
-  private extractAndResetUsage(): AgentUsage | undefined {
-    const usage = this.accumulatedUsage;
-    this.accumulatedUsage = {};
+  private resolveSelectedModelContextWindowMaxTokens(): number | undefined {
+    return this.selectedModelContextWindowMaxTokens;
+  }
 
-    if (!usage.inputTokens && !usage.outputTokens && !usage.totalCostUsd) {
+  private resolveConfiguredModelContextWindowMaxTokens(
+    modelId: string | undefined,
+  ): number | undefined {
+    const modelLookupKey = parseOpenCodeModelLookupKey(modelId);
+    if (!modelLookupKey) {
       return undefined;
     }
-
-    return usage;
+    return this.modelContextWindowsByModelKey.get(modelLookupKey);
   }
 }

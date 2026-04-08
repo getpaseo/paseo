@@ -142,6 +142,21 @@ export function normalizeWorkspaceDescriptor(
   };
 }
 
+export function mergeWorkspaceSnapshotWithExisting(input: {
+  incoming: WorkspaceDescriptor;
+  existing?: WorkspaceDescriptor | null;
+}): WorkspaceDescriptor {
+  const { incoming, existing } = input;
+  if (!existing || existing.id !== incoming.id) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    diffStat: incoming.diffStat ?? existing.diffStat,
+  };
+}
+
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
 export type ExplorerEncoding = "utf-8" | "base64" | "none";

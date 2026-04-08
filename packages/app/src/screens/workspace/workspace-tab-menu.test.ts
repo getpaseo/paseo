@@ -39,10 +39,10 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
       "Copy resume command",
       "Copy agent id",
-      "Reload agent",
       "Close to the left",
       "Close to the right",
       "Close other tabs",
+      "Reload agent",
       "Close",
     ]);
   });
@@ -66,10 +66,10 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
       "Copy resume command",
       "Copy agent id",
-      "Reload agent",
       "Close tabs above",
       "Close tabs below",
       "Close other tabs",
+      "Reload agent",
       "Close",
     ]);
   });

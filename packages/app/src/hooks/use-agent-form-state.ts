@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   type AgentProviderDefinition,
@@ -11,8 +10,7 @@ import type {
   ProviderSnapshotEntry,
 } from "@server/server/agent/agent-sdk-types";
 import { useHosts } from "@/runtime/host-runtime";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useSessionForServer } from "./use-session-directory";
+import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
   useFormPreferences,
   mergeProviderPreferences,
@@ -322,10 +320,6 @@ function combineInitialValues(
   return initialValues;
 }
 
-function providersSnapshotQueryKey(serverId: string | null, cwd: string | undefined) {
-  return ["providersSnapshot", serverId, cwd ?? ""] as const;
-}
-
 export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAgentFormStateResult {
   const {
     initialServerId = null,
@@ -343,7 +337,6 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   } = useFormPreferences();
 
   const daemons = useHosts();
-  const queryClient = useQueryClient();
 
   // Build a set of valid server IDs for preference validation
   const validServerIds = useMemo(() => new Set(daemons.map((d) => d.serverId)), [daemons]);
@@ -376,95 +369,19 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     }
   }, [isVisible]);
 
-  // Session state for provider model listing
-  const client = useHostRuntimeClient(formState.serverId ?? "");
-  const isConnected = useHostRuntimeIsConnected(formState.serverId ?? "");
-  const supportsProvidersSnapshot = useSessionForServer(
-    formState.serverId,
-    (session) => session?.serverInfo?.features?.providersSnapshot === true,
-  );
+  const {
+    entries: snapshotEntries,
+    isLoading: snapshotIsLoading,
+    isFetching: snapshotIsFetching,
+    error: snapshotError,
+    refresh: refreshSnapshot,
+  } = useProvidersSnapshot(formState.serverId);
 
-  const [debouncedCwd, setDebouncedCwd] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    const trimmed = formState.workingDir.trim();
-    const next = trimmed.length > 0 ? trimmed : undefined;
-    const timer = setTimeout(() => setDebouncedCwd(next), 180);
-    return () => clearTimeout(timer);
-  }, [formState.workingDir]);
-
-  const snapshotQueryKey = useMemo(
-    () => providersSnapshotQueryKey(formState.serverId, debouncedCwd),
-    [debouncedCwd, formState.serverId],
-  );
-
-  const providersSnapshotQuery = useQuery({
-    queryKey: snapshotQueryKey,
-    enabled: Boolean(
-      supportsProvidersSnapshot &&
-        isVisible &&
-        isTargetDaemonReady &&
-        formState.serverId &&
-        client &&
-        isConnected,
-    ),
-    staleTime: 60 * 1000,
-    queryFn: async () => {
-      if (!client) {
-        throw new Error("Host is not connected");
-      }
-      return client.getProvidersSnapshot({ cwd: debouncedCwd });
-    },
-  });
-
-  useEffect(() => {
-    if (
-      !supportsProvidersSnapshot ||
-      !client ||
-      !isConnected ||
-      !isVisible ||
-      !isTargetDaemonReady ||
-      !formState.serverId
-    ) {
-      return;
-    }
-
-    return client.on("providers_snapshot_update", (message) => {
-      if (message.type !== "providers_snapshot_update") {
-        return;
-      }
-      if (message.payload.cwd !== undefined && message.payload.cwd !== debouncedCwd) {
-        return;
-      }
-      queryClient.setQueryData(snapshotQueryKey, {
-        entries: message.payload.entries,
-        generatedAt: message.payload.generatedAt,
-        requestId: "providers_snapshot_update",
-      });
-    });
-  }, [
-    client,
-    debouncedCwd,
-    formState.serverId,
-    isConnected,
-    isTargetDaemonReady,
-    isVisible,
-    queryClient,
-    snapshotQueryKey,
-    supportsProvidersSnapshot,
-  ]);
-
-  const snapshotEntries = providersSnapshotQuery.data?.entries ?? undefined;
-  const allProviderEntries = useMemo(
-    () => (supportsProvidersSnapshot ? snapshotEntries ?? [] : undefined),
-    [snapshotEntries, supportsProvidersSnapshot],
-  );
+  const allProviderEntries = useMemo(() => snapshotEntries ?? [], [snapshotEntries]);
   const snapshotProviderDefinitions = useMemo(() => {
-    if (!supportsProvidersSnapshot) {
-      return [];
-    }
     const snapshotProviders = new Set((snapshotEntries ?? []).map((entry) => entry.provider));
     return allProviderDefinitions.filter((definition) => snapshotProviders.has(definition.id));
-  }, [snapshotEntries, supportsProvidersSnapshot]);
+  }, [snapshotEntries]);
   const snapshotProviderDefinitionMap = useMemo(
     () =>
       new Map<AgentProvider, AgentProviderDefinition>(
@@ -500,157 +417,13 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     snapshotSelectedEntry?.modes ??
     snapshotProviderDefinitionMap.get(formState.provider)?.modes ??
     [];
-
-  // COMPAT(providersSnapshot): legacy fallback for daemons without snapshot support — remove when all daemons support snapshots
-  const availableProvidersQuery = useQuery({
-    queryKey: ["availableProviders", formState.serverId],
-    enabled: Boolean(
-      !supportsProvidersSnapshot &&
-        isVisible &&
-        isTargetDaemonReady &&
-        formState.serverId &&
-        client &&
-        isConnected,
-    ),
-    staleTime: 60 * 1000,
-    queryFn: async () => {
-      if (!client) {
-        throw new Error("Host is not connected");
-      }
-      const payload = await client.listAvailableProviders();
-      if (payload.error) {
-        throw new Error(payload.error);
-      }
-      return payload.providers.filter((entry) => entry.available).map((entry) => entry.provider);
-    },
-  });
-  const legacyProviderDefinitions = useMemo(() => {
-    const availableProviders = availableProvidersQuery.data;
-    if (!availableProviders) {
-      return [];
-    }
-    const available = new Set(availableProviders);
-    return allProviderDefinitions.filter((definition) => available.has(definition.id));
-  }, [availableProvidersQuery.data]);
-  const legacyProviderDefinitionMap = useMemo(
-    () =>
-      new Map<AgentProvider, AgentProviderDefinition>(
-        legacyProviderDefinitions.map((definition) => [definition.id, definition]),
-      ),
-    [legacyProviderDefinitions],
-  );
-
-  // COMPAT(providersSnapshot): legacy fallback for daemons without snapshot support — remove when all daemons support snapshots
-  const legacySelectedProviderModelsQuery = useQuery({
-    queryKey: ["providerModels", formState.serverId, formState.provider],
-    enabled: Boolean(
-      !supportsProvidersSnapshot &&
-      isVisible &&
-        isTargetDaemonReady &&
-        formState.serverId &&
-        client &&
-        isConnected &&
-        legacyProviderDefinitionMap.has(formState.provider),
-    ),
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      if (!client) {
-        throw new Error("Host is not connected");
-      }
-      const payload = await client.listProviderModels(formState.provider, {
-        cwd: debouncedCwd,
-      });
-      if (payload.error) {
-        throw new Error(payload.error);
-      }
-      return payload.models ?? [];
-    },
-  });
-  const legacySelectedProviderModels = legacySelectedProviderModelsQuery.data ?? null;
-
-  // COMPAT(providersSnapshot): legacy fallback for daemons without snapshot support — remove when all daemons support snapshots
-  const providerModesQuery = useQuery({
-    queryKey: ["providerModes", formState.serverId, formState.provider, debouncedCwd],
-    enabled: Boolean(
-      !supportsProvidersSnapshot &&
-        isVisible &&
-        isTargetDaemonReady &&
-        formState.serverId &&
-        client &&
-        isConnected &&
-        legacyProviderDefinitionMap.has(formState.provider),
-    ),
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      if (!client) {
-        throw new Error("Host is not connected");
-      }
-      const payload = await client.listProviderModes(formState.provider, {
-        cwd: debouncedCwd,
-      });
-      if (payload.error) {
-        throw new Error(payload.error);
-      }
-      return payload.modes ?? [];
-    },
-  });
-
-  // COMPAT(providersSnapshot): legacy fallback for daemons without snapshot support — remove when all daemons support snapshots
-  const allProviderModelQueries = useQueries({
-    queries: (supportsProvidersSnapshot ? [] : legacyProviderDefinitions).map((def) => ({
-      queryKey: ["providerModels", formState.serverId, def.id],
-      enabled: Boolean(
-        isVisible && isTargetDaemonReady && formState.serverId && client && isConnected,
-      ),
-      staleTime: 5 * 60 * 1000,
-      queryFn: async () => {
-        if (!client) {
-          throw new Error("Host is not connected");
-        }
-        const payload = await client.listProviderModels(def.id as AgentProvider, {
-          cwd: debouncedCwd,
-        });
-        if (payload.error) {
-          throw new Error(payload.error);
-        }
-        return payload.models ?? [];
-      },
-    })),
-  });
-  const legacyAllProviderModels = useMemo(() => {
-    const map = new Map<string, AgentModelDefinition[]>();
-    for (let i = 0; i < legacyProviderDefinitions.length; i++) {
-      const query = allProviderModelQueries[i];
-      if (query?.data) {
-        map.set(legacyProviderDefinitions[i]!.id, query.data);
-      }
-    }
-    return map;
-  }, [allProviderModelQueries, legacyProviderDefinitions]);
-  const legacySelectedProviderModes =
-    providerModesQuery.data ?? legacyProviderDefinitionMap.get(formState.provider)?.modes ?? [];
-
-  const providerDefinitions = supportsProvidersSnapshot
-    ? snapshotProviderDefinitions
-    : legacyProviderDefinitions;
-  const providerDefinitionMap = supportsProvidersSnapshot
-    ? snapshotProviderDefinitionMap
-    : legacyProviderDefinitionMap;
-  const selectableProviderDefinitionMap = supportsProvidersSnapshot
-    ? snapshotSelectableProviderDefinitionMap
-    : legacyProviderDefinitionMap;
-  const allProviderModels = supportsProvidersSnapshot
-    ? snapshotAllProviderModels
-    : legacyAllProviderModels;
-  const availableModels = supportsProvidersSnapshot
-    ? snapshotSelectedProviderModels
-    : legacySelectedProviderModels;
-  const modeOptions = supportsProvidersSnapshot
-    ? snapshotSelectedProviderModes
-    : legacySelectedProviderModes;
-  const isAllModelsLoading = supportsProvidersSnapshot
-    ? providersSnapshotQuery.isLoading || providersSnapshotQuery.isFetching
-    : allProviderModelQueries.some((q) => q.isLoading);
+  const providerDefinitions = snapshotProviderDefinitions;
+  const providerDefinitionMap = snapshotProviderDefinitionMap;
+  const selectableProviderDefinitionMap = snapshotSelectableProviderDefinitionMap;
+  const allProviderModels = snapshotAllProviderModels;
+  const availableModels = snapshotSelectedProviderModels;
+  const modeOptions = snapshotSelectedProviderModes;
+  const isAllModelsLoading = snapshotIsLoading || snapshotIsFetching;
 
   // Combine initialValues with initialServerId for resolution
   const combinedInitialValues = useMemo((): FormInitialValues | undefined => {
@@ -872,15 +645,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   }, []);
 
   const refreshProviderModels = useCallback(() => {
-    if (supportsProvidersSnapshot) {
-      if (!client) {
-        return;
-      }
-      void client.refreshProvidersSnapshot({ cwd: debouncedCwd });
-      return;
-    }
-    void legacySelectedProviderModelsQuery.refetch();
-  }, [client, debouncedCwd, legacySelectedProviderModelsQuery, supportsProvidersSnapshot]);
+    refreshSnapshot();
+  }, [refreshSnapshot]);
 
   const persistFormPreferences = useCallback(async () => {
     const resolvedModel = resolveEffectiveModel(availableModels, formState.model);
@@ -916,17 +682,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
   const resolvedModelId = effectiveModel?.id ?? formState.model;
   const availableThinkingOptions = effectiveModel?.thinkingOptions ?? [];
-  const isModelLoading = supportsProvidersSnapshot
-    ? providersSnapshotQuery.isLoading || providersSnapshotQuery.isFetching
-    : legacySelectedProviderModelsQuery.isLoading || legacySelectedProviderModelsQuery.isFetching;
-  const modelError =
-    supportsProvidersSnapshot
-      ? providersSnapshotQuery.error instanceof Error
-        ? providersSnapshotQuery.error.message
-        : null
-      : legacySelectedProviderModelsQuery.error instanceof Error
-        ? legacySelectedProviderModelsQuery.error.message
-        : null;
+  const isModelLoading = snapshotIsLoading || snapshotIsFetching;
+  const modelError = snapshotError;
 
   const workingDirIsEmpty = !formState.workingDir.trim();
 

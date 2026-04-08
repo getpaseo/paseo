@@ -68,11 +68,11 @@ export default function HostIndexRoute() {
 
       const primaryWorkspace = visibleWorkspaces[0];
       if (primaryWorkspace?.id?.trim()) {
-        router.replace(buildHostWorkspaceRoute(serverId, primaryWorkspace.id.trim()) as any);
+        router.replace(buildHostWorkspaceRoute(serverId, primaryWorkspace.id.trim()));
         return;
       }
 
-      router.replace(buildHostOpenProjectRoute(serverId) as any);
+      router.replace(buildHostOpenProjectRoute(serverId));
     }, HOST_ROOT_REDIRECT_DELAY_MS);
 
     return () => clearTimeout(timer);

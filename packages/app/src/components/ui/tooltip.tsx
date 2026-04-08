@@ -44,6 +44,7 @@ type TooltipContextValue = {
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<View | null>;
   enabled: boolean;
+  openOnPress: boolean;
   delayDuration: number;
 };
 
@@ -105,6 +106,18 @@ function measureElement(element: View): Promise<Rect> {
       resolve({ x, y, width, height });
     });
   });
+}
+
+function isMobileTooltipEnvironment(): boolean {
+  if (Platform.OS !== "web") {
+    return true;
+  }
+
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent ?? "");
 }
 
 function computePosition({
@@ -214,12 +227,8 @@ export function Tooltip({
     onOpenChange,
   });
 
-  const isWeb = Platform.OS === "web";
-  const isMobileWeb =
-    isWeb &&
-    typeof navigator !== "undefined" &&
-    /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent ?? "");
-  const enabled = isWeb ? (isMobileWeb ? enabledOnMobile : enabledOnDesktop) : enabledOnMobile;
+  const isMobile = isMobileTooltipEnvironment();
+  const enabled = isMobile ? enabledOnMobile : enabledOnDesktop;
 
   const value = useMemo<TooltipContextValue>(
     () => ({
@@ -227,9 +236,10 @@ export function Tooltip({
       setOpen: setIsOpen,
       triggerRef,
       enabled,
+      openOnPress: isMobile,
       delayDuration,
     }),
-    [isOpen, setIsOpen, enabled, delayDuration],
+    [isOpen, setIsOpen, enabled, isMobile, delayDuration],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -323,9 +333,17 @@ export function TooltipTrigger({
   const handlePress = useCallback(
     (e: any) => {
       onPress?.(e);
+      if (!ctx.enabled || disabled) {
+        return;
+      }
+      if (ctx.openOnPress) {
+        clearOpenTimer();
+        ctx.setOpen(true);
+        return;
+      }
       close();
     },
-    [close, onPress],
+    [clearOpenTimer, close, ctx, disabled, onPress],
   );
 
   const triggerProps = {
@@ -492,7 +510,7 @@ export function TooltipContent({
       statusBarTranslucent={Platform.OS === "android"}
       onRequestClose={() => ctx.setOpen(false)}
     >
-      <View pointerEvents="box-none" style={styles.overlay}>
+      <Pressable style={styles.overlay} onPress={() => ctx.setOpen(false)}>
         <Animated.View
           pointerEvents="none"
           entering={FadeIn.duration(80)}
@@ -513,7 +531,7 @@ export function TooltipContent({
         >
           {children}
         </Animated.View>
-      </View>
+      </Pressable>
     </Modal>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ActivityIndicator,
@@ -118,7 +118,6 @@ export function FileExplorerPane({
   );
 
   const {
-    workspaceStateKey: actionsWorkspaceStateKey,
     requestDirectoryListing,
     requestFileDownloadToken,
     selectExplorerEntry,
@@ -129,6 +128,16 @@ export function FileExplorerPane({
   });
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
+  const expandedPathsArray = usePanelStore((state) =>
+    workspaceStateKey ? state.expandedPathsByWorkspace[workspaceStateKey] : undefined,
+  );
+  const setExpandedPathsForWorkspace = usePanelStore(
+    (state) => state.setExpandedPathsForWorkspace,
+  );
+  const expandedPaths = useMemo(
+    () => new Set(expandedPathsArray && expandedPathsArray.length > 0 ? expandedPathsArray : ["."]),
+    [expandedPathsArray],
+  );
 
   const directories = explorerState?.directories ?? new Map();
   const pendingRequest = explorerState?.pendingRequest ?? null;
@@ -144,7 +153,6 @@ export function FileExplorerPane({
     [isExplorerLoading, pendingRequest?.mode, pendingRequest?.path],
   );
 
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set(["."]));
   const treeListRef = useRef<FlatList<TreeRow>>(null);
   const scrollbar = useWebScrollViewScrollbar(treeListRef, {
     enabled: showDesktopWebScrollbar,
@@ -154,8 +162,7 @@ export function FileExplorerPane({
 
   useEffect(() => {
     hasInitializedRef.current = false;
-    setExpandedPaths(new Set(["."]));
-  }, [actionsWorkspaceStateKey]);
+  }, [workspaceStateKey]);
 
   useEffect(() => {
     if (!hasWorkspaceScope) {
@@ -169,23 +176,35 @@ export function FileExplorerPane({
       recordHistory: false,
       setCurrentPath: false,
     });
-  }, [hasWorkspaceScope, requestDirectoryListing]);
+    const persistedPaths = usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
+    if (persistedPaths) {
+      for (const path of persistedPaths) {
+        if (path !== ".") {
+          void requestDirectoryListing(path, {
+            recordHistory: false,
+            setCurrentPath: false,
+          });
+        }
+      }
+    }
+  }, [hasWorkspaceScope, requestDirectoryListing, workspaceStateKey]);
 
   // Expand ancestor directories when a file is selected (e.g., from an inline path click)
   useEffect(() => {
-    if (!selectedEntryPath || !hasWorkspaceScope) {
+    if (!selectedEntryPath || !workspaceStateKey) {
       return;
     }
     const parentDir = getParentDirectory(selectedEntryPath);
     const ancestors = getAncestorDirectories(parentDir);
-
-    setExpandedPaths((prev) => {
-      const next = new Set(prev);
-      ancestors.forEach((path) => next.add(path));
-      return next;
-    });
-
-    ancestors.forEach((path) => {
+    const newPaths = ancestors.filter((path) => !expandedPaths.has(path));
+    if (newPaths.length === 0) {
+      return;
+    }
+    setExpandedPathsForWorkspace(
+      workspaceStateKey,
+      [...Array.from(expandedPaths), ...newPaths],
+    );
+    newPaths.forEach((path) => {
       if (!directories.has(path)) {
         void requestDirectoryListing(path, {
           recordHistory: false,
@@ -193,34 +212,46 @@ export function FileExplorerPane({
         });
       }
     });
-  }, [directories, hasWorkspaceScope, requestDirectoryListing, selectedEntryPath]);
+  }, [
+    directories,
+    workspaceStateKey,
+    expandedPaths,
+    requestDirectoryListing,
+    selectedEntryPath,
+    setExpandedPathsForWorkspace,
+  ]);
 
   const handleToggleDirectory = useCallback(
     (entry: ExplorerEntry) => {
-      if (!hasWorkspaceScope) {
+      if (!workspaceStateKey) {
         return;
       }
-
       const isExpanded = expandedPaths.has(entry.path);
-      const nextExpanded = !isExpanded;
-      setExpandedPaths((prev) => {
-        const next = new Set(prev);
-        if (isExpanded) {
-          next.delete(entry.path);
-        } else {
-          next.add(entry.path);
+      if (isExpanded) {
+        setExpandedPathsForWorkspace(
+          workspaceStateKey,
+          Array.from(expandedPaths).filter((path) => path !== entry.path),
+        );
+      } else {
+        setExpandedPathsForWorkspace(
+          workspaceStateKey,
+          [...Array.from(expandedPaths), entry.path],
+        );
+        if (!directories.has(entry.path)) {
+          void requestDirectoryListing(entry.path, {
+            recordHistory: false,
+            setCurrentPath: false,
+          });
         }
-        return next;
-      });
-
-      if (nextExpanded && !directories.has(entry.path)) {
-        void requestDirectoryListing(entry.path, {
-          recordHistory: false,
-          setCurrentPath: false,
-        });
       }
     },
-    [directories, expandedPaths, hasWorkspaceScope, requestDirectoryListing],
+    [
+      workspaceStateKey,
+      expandedPaths,
+      directories,
+      requestDirectoryListing,
+      setExpandedPathsForWorkspace,
+    ],
   );
 
   const handleOpenFile = useCallback(
