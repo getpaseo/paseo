@@ -1533,7 +1533,9 @@ class OpenCodeAgentSession implements AgentSession {
         }
       });
     } else {
-      const promptResponse = await this.client.session.promptAsync({
+      // Use the standard message endpoint instead of prompt_async to align with
+      // OpenCode CLI behavior and avoid async-path provider inconsistencies.
+      void this.client.session.prompt({
         sessionID: this.sessionId,
         directory: this.config.cwd,
         parts,
@@ -1549,17 +1551,15 @@ class OpenCodeAgentSession implements AgentSession {
         ...(model ? { model } : {}),
         ...(effectiveMode ? { agent: effectiveMode } : {}),
         ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+      }).then((response) => {
+        if (response.error) {
+          const errorMsg = normalizeTurnFailureError(response.error);
+          this.finishForegroundTurn(
+            { type: "turn_failed", provider: "opencode", error: errorMsg },
+            turnId,
+          );
+        }
       });
-
-      if (promptResponse.error) {
-        const errorMsg = normalizeTurnFailureError(promptResponse.error);
-        this.notifySubscribers({
-          type: "turn_failed",
-          provider: "opencode",
-          error: errorMsg,
-        });
-        throw new Error(errorMsg);
-      }
     }
 
     return { turnId };

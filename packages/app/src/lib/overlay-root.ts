@@ -13,6 +13,7 @@ export function getOverlayRoot(): HTMLElement {
     el.id = "overlay-root";
     el.style.position = "fixed";
     el.style.inset = "0";
+    el.style.zIndex = "9999";
     el.style.pointerEvents = "none";
     document.body.appendChild(el);
   }

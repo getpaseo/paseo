@@ -44,6 +44,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useWebElementScrollbar } from "@/components/use-web-scrollbar";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
+import { AttachmentImagePreviewModal } from "@/components/attachment-image-preview-modal";
 import {
   markScrollInvestigationEvent,
   markScrollInvestigationRender,
@@ -184,6 +185,27 @@ function ImageAttachmentThumbnail({ image }: { image: ImageAttachment }) {
   return <Image source={{ uri }} style={styles.imageThumbnail} />;
 }
 
+function ComposerImagePreview({
+  image,
+  visible,
+  onClose,
+}: {
+  image: ImageAttachment | null;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const uri = useAttachmentPreviewUrl(image);
+
+  return (
+    <AttachmentImagePreviewModal
+      visible={visible}
+      imageUri={uri}
+      fileName={image?.fileName ?? null}
+      onClose={onClose}
+    />
+  );
+}
+
 export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(function MessageInput(
   {
     value,
@@ -228,6 +250,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   const dictationToggleKeys = useShortcutKeys("dictation-toggle");
   const queueKeys = useShortcutKeys("message-input-queue");
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
+  const [previewedImageIndex, setPreviewedImageIndex] = useState<number | null>(null);
   const rootRef = useRef<View | null>(null);
   const inputWrapperRef = useRef<View | null>(null);
   const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(
@@ -887,6 +910,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   }
 
   const hasImages = images.length > 0;
+  const previewedImage =
+    previewedImageIndex !== null ? (images[previewedImageIndex] ?? null) : null;
   const hasSendableContent = value.trim().length > 0 || hasImages;
   const shouldShowSendButton = hasSendableContent || isSubmitLoading;
   const canPressLoadingButton = isSubmitLoading && typeof onSubmitLoadingPress === "function";
@@ -914,6 +939,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
 
   return (
     <View ref={rootRef} style={styles.container} testID="message-input-root">
+      <ComposerImagePreview
+        image={previewedImage}
+        visible={previewedImage !== null}
+        onClose={() => setPreviewedImageIndex(null)}
+      />
       {/* Regular input */}
       <Animated.View ref={inputWrapperRef} style={[styles.inputWrapper, inputAnimatedStyle]}>
         {/* Image preview pills */}
@@ -924,20 +954,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                 key={`${image.id}-${index}`}
                 testID="message-input-image-pill"
                 style={styles.imagePill}
-                onPress={onRemoveImage ? () => onRemoveImage(index) : undefined}
+                accessibilityLabel={`Preview image ${image.fileName ?? index + 1}`}
+                onPress={() => setPreviewedImageIndex(index)}
               >
                 {({ hovered }) => (
                   <>
-                    <ImageAttachmentThumbnail image={image} />
+                    <View style={styles.imageThumbnailWrapper}>
+                      <ImageAttachmentThumbnail image={image} />
+                    </View>
                     {onRemoveImage && (
-                      <View
+                      <Pressable
+                        accessibilityLabel={`Remove image ${image.fileName ?? index + 1}`}
+                        hitSlop={8}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          onRemoveImage(index);
+                        }}
                         style={[
                           styles.removeImageButton,
                           (hovered || !IS_WEB) && styles.removeImageButtonVisible,
                         ]}
                       >
-                        <X size={theme.iconSize.md} color="white" />
-                      </View>
+                        <X size={12} color="white" />
+                      </Pressable>
                     )}
                   </>
                 )}
@@ -1188,15 +1227,19 @@ const styles = StyleSheet.create(((theme: any) => ({
   },
   imagePill: {
     position: "relative",
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.borderAccent,
-    overflow: "hidden",
     ...(IS_WEB
       ? {
           cursor: "pointer",
         }
       : {}),
+  },
+  imageThumbnailWrapper: {
+    width: 48,
+    height: 48,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
+    overflow: "hidden",
   },
   imageThumbnail: {
     width: 48,
@@ -1209,23 +1252,32 @@ const styles = StyleSheet.create(((theme: any) => ({
   },
   removeImageButton: {
     position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    top: -7,
+    right: -7,
+    width: 18,
+    height: 18,
+    borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    opacity: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+    opacity: IS_WEB ? 0 : 1,
     ...(IS_WEB
       ? {
-          transitionProperty: "opacity",
+          transitionProperty: "opacity, transform",
           transitionDuration: "150ms",
+          transform: [{ scale: 0.85 }],
         }
       : {}),
   },
   removeImageButtonVisible: {
     opacity: 1,
+    ...(IS_WEB
+      ? {
+          transform: [{ scale: 1 }],
+        }
+      : {}),
   },
   textInputScrollWrapper: {
     position: "relative",
