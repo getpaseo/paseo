@@ -1,4 +1,12 @@
-import { useState, useCallback, useEffect, useMemo, useRef, memo, type ReactElement } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  memo,
+  type ReactElement,
+} from "react";
 import { useRouter } from "expo-router";
 import {
   View,
@@ -48,7 +56,7 @@ import {
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
 import { shouldAnchorHeaderBeforeCollapse } from "@/utils/git-diff-scroll";
-import { buildSplitDiffRows, type SplitDiffDisplayLine } from "@/utils/diff-layout";
+import { buildSplitDiffRows, type SplitDiffDisplayLine, type SplitDiffRow } from "@/utils/diff-layout";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -107,7 +115,12 @@ function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
   };
 
   return (
-    <Text style={[styles.diffLineText, { lineHeight, ...getWrappedTextStyle(wrapLines) }]}>
+    <Text
+      style={[
+        styles.diffLineText,
+        { lineHeight, ...getWrappedTextStyle(wrapLines) },
+      ]}
+    >
       {tokens.map((token, index) => (
         <Text key={index} style={{ color: getTokenColor(token.style), lineHeight }}>
           {token.text}
@@ -125,6 +138,96 @@ interface DiffFileSectionProps {
   testID?: string;
 }
 
+function lineTypeBackground(type: DiffLine["type"] | undefined | null) {
+  if (!type) return styles.emptySplitCell;
+  if (type === "add") return styles.addLineContainer;
+  if (type === "remove") return styles.removeLineContainer;
+  if (type === "header") return styles.headerLineContainer;
+  return styles.contextLineContainer;
+}
+
+function DiffGutterCell({
+  lineNumber,
+  type,
+  gutterWidth,
+}: {
+  lineNumber: number | null;
+  type: DiffLine["type"] | undefined | null;
+  gutterWidth: number;
+}) {
+  return (
+    <View style={[styles.gutterCell, lineTypeBackground(type), { width: gutterWidth }]}>
+      <Text
+        style={[
+          styles.lineNumberText,
+          type === "add" && styles.addLineNumberText,
+          type === "remove" && styles.removeLineNumberText,
+        ]}
+      >
+        {lineNumber != null ? String(lineNumber) : ""}
+      </Text>
+    </View>
+  );
+}
+
+function DiffTextLine({
+  line,
+  wrapLines,
+}: {
+  line: DiffLine;
+  wrapLines: boolean;
+}) {
+  return (
+    <View style={[styles.textLineContainer, lineTypeBackground(line.type)]}>
+      {line.tokens && line.type !== "header" ? (
+        <HighlightedText tokens={line.tokens} wrapLines={wrapLines} />
+      ) : (
+        <Text
+          style={[
+            styles.diffLineText,
+            getWrappedTextStyle(wrapLines),
+            line.type === "add" && styles.addLineText,
+            line.type === "remove" && styles.removeLineText,
+            line.type === "header" && styles.headerLineText,
+            line.type === "context" && styles.contextLineText,
+          ]}
+        >
+          {line.content || " "}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function SplitTextLine({
+  line,
+  wrapLines,
+}: {
+  line: SplitDiffDisplayLine | null;
+  wrapLines: boolean;
+}) {
+  return (
+    <View style={[styles.textLineContainer, lineTypeBackground(line?.type)]}>
+      {line?.tokens ? (
+        <HighlightedText tokens={line.tokens} wrapLines={wrapLines} />
+      ) : (
+        <Text
+          style={[
+            styles.diffLineText,
+            getWrappedTextStyle(wrapLines),
+            line?.type === "add" && styles.addLineText,
+            line?.type === "remove" && styles.removeLineText,
+            line?.type === "context" && styles.contextLineText,
+            !line && styles.emptySplitCellText,
+          ]}
+        >
+          {line?.content ?? ""}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function DiffLineView({
   line,
   lineNumber,
@@ -140,10 +243,7 @@ function DiffLineView({
     <View
       style={[
         styles.diffLineContainer,
-        line.type === "add" && styles.addLineContainer,
-        line.type === "remove" && styles.removeLineContainer,
-        line.type === "header" && styles.headerLineContainer,
-        line.type === "context" && styles.contextLineContainer,
+        lineTypeBackground(line.type),
       ]}
     >
       <View style={[styles.lineNumberGutter, { width: gutterWidth }]}>
@@ -177,26 +277,20 @@ function DiffLineView({
   );
 }
 
-function SplitDiffCell({
+function SplitDiffLine({
   line,
   gutterWidth,
   wrapLines,
-  showDivider = false,
 }: {
   line: SplitDiffDisplayLine | null;
   gutterWidth: number;
   wrapLines: boolean;
-  showDivider?: boolean;
 }) {
   return (
     <View
       style={[
-        styles.splitCell,
-        showDivider && styles.splitCellWithDivider,
-        !line && styles.emptySplitCell,
-        line?.type === "add" && styles.addLineContainer,
-        line?.type === "remove" && styles.removeLineContainer,
-        line?.type === "context" && styles.contextLineContainer,
+        styles.diffLineContainer,
+        lineTypeBackground(line?.type),
       ]}
     >
       <View style={[styles.lineNumberGutter, { width: gutterWidth }]}>
@@ -226,6 +320,81 @@ function SplitDiffCell({
           {line?.content ?? ""}
         </Text>
       )}
+    </View>
+  );
+}
+
+function SplitDiffColumn({
+  rows,
+  side,
+  gutterWidth,
+  wrapLines,
+  showDivider = false,
+}: {
+  rows: SplitDiffRow[];
+  side: "left" | "right";
+  gutterWidth: number;
+  wrapLines: boolean;
+  showDivider?: boolean;
+}) {
+  const [scrollWidth, setScrollWidth] = useState(0);
+
+  if (wrapLines) {
+    return (
+      <View style={[styles.splitCell, showDivider && styles.splitCellWithDivider]}>
+        <View style={styles.linesContainer}>
+          {rows.map((row, i) => {
+            if (row.kind === "header") {
+              return (
+                <View key={`header-${i}`} style={styles.splitHeaderRow}>
+                  <Text style={[styles.diffLineText, styles.headerLineText]}>{row.content}</Text>
+                </View>
+              );
+            }
+            return (
+              <SplitDiffLine
+                key={`line-${i}`}
+                line={side === "left" ? row.left : row.right}
+                gutterWidth={gutterWidth}
+                wrapLines={wrapLines}
+              />
+            );
+          })}
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.splitCell, showDivider && styles.splitCellWithDivider, styles.splitCellRow]}>
+      <View style={styles.gutterColumn}>
+        {rows.map((row, i) => {
+          if (row.kind === "header") {
+            return <DiffGutterCell key={`g-${i}`} lineNumber={null} type="header" gutterWidth={gutterWidth} />;
+          }
+          const line = side === "left" ? row.left : row.right;
+          return <DiffGutterCell key={`g-${i}`} lineNumber={line?.lineNumber ?? null} type={line?.type} gutterWidth={gutterWidth} />;
+        })}
+      </View>
+      <DiffScroll
+        scrollViewWidth={scrollWidth}
+        onScrollViewWidthChange={setScrollWidth}
+        style={styles.splitColumnScroll}
+        contentContainerStyle={styles.diffContentInner}
+      >
+        <View style={[styles.linesContainer, scrollWidth > 0 && { minWidth: scrollWidth }]}>
+          {rows.map((row, i) => {
+            if (row.kind === "header") {
+              return (
+                <View key={`t-${i}`} style={styles.splitHeaderRow}>
+                  <Text style={[styles.diffLineText, styles.headerLineText]}>{row.content}</Text>
+                </View>
+              );
+            }
+            return <SplitTextLine key={`t-${i}`} line={side === "left" ? row.left : row.right} wrapLines={false} />;
+          })}
+        </View>
+      </DiffScroll>
     </View>
   );
 }
@@ -351,99 +520,74 @@ function DiffFileBody({
 
         let maxLineNo = 0;
         for (const hunk of file.hunks) {
-          maxLineNo = Math.max(
-            maxLineNo,
-            hunk.oldStart + hunk.oldCount,
-            hunk.newStart + hunk.newCount,
-          );
+          maxLineNo = Math.max(maxLineNo, hunk.oldStart + hunk.oldCount, hunk.newStart + hunk.newCount);
         }
         const gutterWidth = lineNumberGutterWidth(maxLineNo);
 
-        const linesContent =
-          layout === "split"
-            ? buildSplitDiffRows(file).map((row, rowIndex) => {
-                if (row.kind === "header") {
-                  return (
-                    <View key={`header-${rowIndex}`} style={styles.splitHeaderRow}>
-                      <Text style={[styles.diffLineText, styles.headerLineText]}>
-                        {row.content}
-                      </Text>
-                    </View>
-                  );
-                }
-
-                return (
-                  <View key={`pair-${rowIndex}`} style={styles.splitRow}>
-                    <SplitDiffCell
-                      line={row.left}
-                      gutterWidth={gutterWidth}
-                      wrapLines={wrapLines}
-                    />
-                    <SplitDiffCell
-                      line={row.right}
-                      gutterWidth={gutterWidth}
-                      wrapLines={wrapLines}
-                      showDivider
-                    />
-                  </View>
-                );
-              })
-            : file.hunks.map((hunk, hunkIndex) => {
-                let oldLineNo = hunk.oldStart;
-                let newLineNo = hunk.newStart;
-                return hunk.lines.map((line, lineIndex) => {
-                  let lineNumber: number | null = null;
-                  if (line.type === "remove") {
-                    lineNumber = oldLineNo;
-                    oldLineNo++;
-                  } else if (line.type === "add") {
-                    lineNumber = newLineNo;
-                    newLineNo++;
-                  } else if (line.type === "context") {
-                    lineNumber = newLineNo;
-                    oldLineNo++;
-                    newLineNo++;
-                  }
-                  return (
-                    <DiffLineView
-                      key={`${hunkIndex}-${lineIndex}`}
-                      line={line}
-                      lineNumber={lineNumber}
-                      gutterWidth={gutterWidth}
-                      wrapLines={wrapLines}
-                    />
-                  );
-                });
-              });
-
-        const availableWidth = bodyWidth > 0 ? bodyWidth : scrollViewWidth;
-        const contentContainer = (
-          <View
-            style={[
-              layout === "split" ? styles.splitLinesContainer : styles.linesContainer,
-              availableWidth > 0 &&
-                (layout === "split"
-                  ? { width: availableWidth, minWidth: availableWidth, maxWidth: availableWidth }
-                  : { minWidth: availableWidth }),
-            ]}
-          >
-            {linesContent}
-          </View>
-        );
-
-        if (wrapLines) {
-          return <View style={styles.diffContent}>{contentContainer}</View>;
+        if (layout === "split") {
+          const rows = buildSplitDiffRows(file);
+          return (
+            <View style={[styles.diffContent, styles.splitRow]}>
+              <SplitDiffColumn rows={rows} side="left" gutterWidth={gutterWidth} wrapLines={wrapLines} />
+              <SplitDiffColumn rows={rows} side="right" gutterWidth={gutterWidth} wrapLines={wrapLines} showDivider />
+            </View>
+          );
         }
 
+        const computedLines: { line: DiffLine; lineNumber: number | null; key: string }[] = [];
+        for (const [hunkIndex, hunk] of file.hunks.entries()) {
+          let oldLineNo = hunk.oldStart;
+          let newLineNo = hunk.newStart;
+          for (const [lineIndex, line] of hunk.lines.entries()) {
+            let lineNumber: number | null = null;
+            if (line.type === "remove") {
+              lineNumber = oldLineNo;
+              oldLineNo++;
+            } else if (line.type === "add") {
+              lineNumber = newLineNo;
+              newLineNo++;
+            } else if (line.type === "context") {
+              lineNumber = newLineNo;
+              oldLineNo++;
+              newLineNo++;
+            }
+            computedLines.push({ line, lineNumber, key: `${hunkIndex}-${lineIndex}` });
+          }
+        }
+
+        if (wrapLines) {
+          return (
+            <View style={styles.diffContent}>
+              <View style={styles.linesContainer}>
+                {computedLines.map(({ line, lineNumber, key }) => (
+                  <DiffLineView key={key} line={line} lineNumber={lineNumber} gutterWidth={gutterWidth} wrapLines={wrapLines} />
+                ))}
+              </View>
+            </View>
+          );
+        }
+
+        const availableWidth = bodyWidth > 0 ? bodyWidth : scrollViewWidth;
         return (
-          <DiffScroll
-            scrollViewWidth={scrollViewWidth}
-            onScrollViewWidthChange={setScrollViewWidth}
-            style={styles.diffContent}
-            contentContainerStyle={styles.diffContentInner}
-          >
-            {contentContainer}
-          </DiffScroll>
+          <View style={[styles.diffContent, styles.diffContentRow]}>
+            <View style={styles.gutterColumn}>
+              {computedLines.map(({ line, lineNumber, key }) => (
+                <DiffGutterCell key={key} lineNumber={lineNumber} type={line.type} gutterWidth={gutterWidth} />
+              ))}
+            </View>
+            <DiffScroll
+              scrollViewWidth={scrollViewWidth}
+              onScrollViewWidthChange={setScrollViewWidth}
+              style={styles.splitColumnScroll}
+              contentContainerStyle={styles.diffContentInner}
+            >
+              <View style={[styles.linesContainer, availableWidth > 0 && { minWidth: availableWidth }]}>
+                {computedLines.map(({ line, key }) => (
+                  <DiffTextLine key={key} line={line} wrapLines={false} />
+                ))}
+              </View>
+            </DiffScroll>
+          </View>
         );
       })()}
     </View>
@@ -555,7 +699,10 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const setDiffExpandedPathsForWorkspace = usePanelStore(
     (state) => state.setDiffExpandedPathsForWorkspace,
   );
-  const expandedPaths = useMemo(() => new Set(expandedPathsArray ?? []), [expandedPathsArray]);
+  const expandedPaths = useMemo(
+    () => new Set(expandedPathsArray ?? []),
+    [expandedPathsArray],
+  );
   const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
   const scrollbar = useWebScrollViewScrollbar(diffListRef, {
     enabled: showDesktopWebScrollbar,
@@ -836,7 +983,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     const targetWorkingDir = resolveNewAgentWorkingDir(cwd, status ?? null);
     void runArchiveWorktree({ serverId, cwd, worktreePath })
       .then(() => {
-        router.replace(buildNewAgentRoute(serverId, targetWorkingDir) as any);
+        router.replace(buildNewAgentRoute(serverId, targetWorkingDir));
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : "Failed to archive worktree";
@@ -1606,21 +1753,35 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.border,
     backgroundColor: theme.colors.surface1,
   },
+  diffContentRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
   diffContentInner: {
     flexDirection: "column",
   },
   linesContainer: {
     backgroundColor: theme.colors.surface1,
   },
-  splitLinesContainer: {
+  gutterColumn: {
     backgroundColor: theme.colors.surface1,
-    minWidth: 760,
+  },
+  gutterCell: {
+    borderRightWidth: theme.borderWidth[1],
+    borderRightColor: theme.colors.border,
+    justifyContent: "flex-start",
+  },
+  textLineContainer: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    paddingLeft: theme.spacing[2],
   },
   splitRow: {
     flexDirection: "row",
     alignItems: "stretch",
-    width: "100%",
-    minWidth: "100%",
+  },
+  splitColumnScroll: {
+    flex: 1,
   },
   splitHeaderRow: {
     backgroundColor: theme.colors.surface2,
@@ -1629,11 +1790,11 @@ const styles = StyleSheet.create((theme) => ({
   splitCell: {
     flex: 1,
     flexBasis: 0,
-    minWidth: 0,
+    backgroundColor: theme.colors.surface2,
+  },
+  splitCellRow: {
     flexDirection: "row",
     alignItems: "stretch",
-    overflow: "hidden",
-    backgroundColor: theme.colors.surface2,
   },
   emptySplitCell: {
     backgroundColor: theme.colors.surfaceDiffEmpty,

@@ -133,6 +133,7 @@ import {
   buildVoiceAgentMcpServerConfig,
   buildVoiceModeSystemPrompt,
   stripVoiceModeSystemPrompt,
+  wrapSpokenInput,
 } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
@@ -2830,6 +2831,7 @@ export class Session {
     messageId?: string,
     images?: Array<{ data: string; mimeType: string }>,
     runOptions?: AgentRunOptions,
+    options?: { spokenInput?: boolean },
   ): Promise<void> {
     this.sessionLogger.info(
       { agentId, textPreview: text.substring(0, 50), imageCount: images?.length ?? 0 },
@@ -2857,7 +2859,8 @@ export class Session {
       );
     }
 
-    const prompt = this.buildAgentPrompt(text, images);
+    const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
+    const prompt = this.buildAgentPrompt(promptText, images);
 
     this.startAgentStream(agentId, prompt, runOptions);
   }
@@ -7015,9 +7018,14 @@ export class Session {
       return;
     }
 
-    // Route voice utterances through the same send path as regular text input:
-    // interrupt-if-running, record message, then start a new stream.
-    await this.handleSendAgentMessage(agentId, result.text);
+    await this.handleSendAgentMessage(
+      agentId,
+      result.text,
+      undefined,
+      undefined,
+      undefined,
+      { spokenInput: true },
+    );
     await this.flushPendingAudioSegments("transcription complete");
   }
 

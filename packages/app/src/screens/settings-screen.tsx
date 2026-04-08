@@ -425,6 +425,7 @@ function AppearanceSection({ settings, handleThemeChange }: AppearanceSectionPro
   );
 }
 
+
 interface ProvidersSectionProps {
   routeServerId: string;
 }
@@ -446,7 +447,10 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
             <Pressable
               onPress={refresh}
               disabled={isFetching}
-              style={[settingsStyles.sectionHeaderLink, isFetching ? { opacity: 0.5 } : null]}
+              style={[
+                settingsStyles.sectionHeaderLink,
+                isFetching ? { opacity: 0.5 } : null,
+              ]}
             >
               <Text
                 style={{
@@ -473,17 +477,25 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
               const entry = entries?.find((e) => e.provider === def.id);
               const status = entry?.status ?? "unavailable";
               const ProviderIcon = getProviderIcon(def.id);
+              const providerError =
+                status === "error" && typeof entry?.error === "string" && entry.error.trim().length > 0
+                  ? entry.error.trim()
+                  : null;
 
               return (
                 <View key={def.id} style={styles.audioRow}>
-                  <View
-                    style={[
-                      styles.audioRowContent,
-                      { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
-                    ]}
-                  >
-                    <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foreground} />
-                    <Text style={styles.audioRowTitle}>{def.label}</Text>
+                  <View style={styles.audioRowContent}>
+                    <View
+                      style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing[2] }}
+                    >
+                      <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foreground} />
+                      <Text style={styles.audioRowTitle}>{def.label}</Text>
+                    </View>
+                    {providerError ? (
+                      <Text style={styles.aboutErrorText} numberOfLines={3}>
+                        {providerError}
+                      </Text>
+                    ) : null}
                   </View>
                   <View style={styles.providerActions}>
                     <StatusBadge
@@ -497,7 +509,11 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
                               : "Not installed"
                       }
                       variant={
-                        status === "ready" ? "success" : status === "error" ? "error" : "muted"
+                        status === "ready"
+                          ? "success"
+                          : status === "error"
+                            ? "error"
+                            : "muted"
                       }
                     />
                     <Button
@@ -651,7 +667,10 @@ function SettingsMobileLayout({ sections, sectionContentProps }: SettingsLayoutP
   const insets = useSafeAreaInsets();
 
   return (
-    <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: insets.bottom }}>
+    <ScrollView
+      style={styles.scrollView}
+      contentContainerStyle={{ paddingBottom: insets.bottom }}
+    >
       <View style={styles.content}>
         {sections.map((section) => (
           <SettingsSectionContent
@@ -676,7 +695,8 @@ function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayout
         {sections.map((section) => {
           const isSelected = section.id === selectedSectionId;
           const IconComponent = section.icon;
-          const showSeparator = section.id === "integrations" || section.id === "providers";
+          const showSeparator =
+            section.id === "integrations" || section.id === "providers";
           return (
             <View key={section.id}>
               {showSeparator ? <View style={desktopStyles.sidebarSeparator} /> : null}
@@ -712,7 +732,10 @@ function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayout
         contentContainerStyle={{ paddingBottom: insets.bottom }}
       >
         <View style={styles.content}>
-          <SettingsSectionContent sectionId={selectedSectionId} {...sectionContentProps} />
+          <SettingsSectionContent
+            sectionId={selectedSectionId}
+            {...sectionContentProps}
+          />
         </View>
       </ScrollView>
     </View>
@@ -1035,8 +1058,7 @@ export default function SettingsScreen() {
     handleSaveEditDaemon,
     handleRemoveConnection,
     handleRemoveDaemon,
-    restartConfirmationMessage:
-      "This will restart the daemon. The app will reconnect automatically.",
+    restartConfirmationMessage: "This will restart the daemon. The app will reconnect automatically.",
     waitForCondition,
     isMountedRef,
   };

@@ -1121,14 +1121,20 @@ describe("workspace aggregation", () => {
     };
 
     await session.emitWorkspaceUpdateForCwd("/tmp/repo/worktree");
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const workspaceUpdates = emitted.filter(
       (message) => message.type === "workspace_update",
     ) as any[];
-    expect(workspaceUpdates).toHaveLength(2);
-    expect(workspaceUpdates.map((entry) => entry.payload.kind)).toEqual(["upsert", "upsert"]);
+    expect(workspaceUpdates).toHaveLength(3);
+    expect(workspaceUpdates.map((entry) => entry.payload.kind)).toEqual([
+      "upsert",
+      "upsert",
+      "upsert",
+    ]);
     expect(workspaceUpdates.map((entry) => entry.payload.workspace.id).sort()).toEqual([
       "/tmp/repo",
+      "/tmp/repo/worktree",
       "/tmp/repo/worktree",
     ]);
   });

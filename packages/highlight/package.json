@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/highlight",
-  "version": "0.1.49",
+  "version": "0.1.50",
   "type": "module",
   "publishConfig": {
     "access": "public"

@@ -2114,6 +2114,10 @@ export class AgentManager {
           void this.refreshRuntimeInfo(agent);
         }
         break;
+      case "usage_updated":
+        agent.lastUsage = event.usage;
+        this.emitState(agent);
+        break;
       case "timeline":
         // Skip provider-replayed user_message items during history hydration.
         if (options?.fromHistory && event.item.type === "user_message") {

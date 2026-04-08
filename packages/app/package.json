@@ -1,7 +1,7 @@
 {
   "name": "@getpaseo/app",
   "main": "index.ts",
-  "version": "0.1.49",
+  "version": "0.1.50",
   "private": true,
   "scripts": {
     "start": "expo start",
@@ -31,9 +31,9 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@expo/vector-icons": "^15.0.2",
     "@floating-ui/react-native": "^0.10.7",
-    "@getpaseo/expo-two-way-audio": "0.1.49",
-    "@getpaseo/highlight": "0.1.49",
-    "@getpaseo/server": "0.1.49",
+    "@getpaseo/expo-two-way-audio": "0.1.50",
+    "@getpaseo/highlight": "0.1.50",
+    "@getpaseo/server": "0.1.50",
     "@gorhom/bottom-sheet": "^5.2.6",
     "@gorhom/portal": "^1.0.14",
     "@react-native-async-storage/async-storage": "2.2.0",

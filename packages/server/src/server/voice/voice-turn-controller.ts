@@ -9,7 +9,7 @@ import { FixedDurationPcmRingBuffer } from "./fixed-duration-pcm-ring-buffer.js"
 
 const PCM_CHANNELS = 1;
 const PCM_BITS_PER_SAMPLE = 16;
-const DEFAULT_PREFIX_DURATION_MS = 400;
+const DEFAULT_PREFIX_DURATION_MS = 1000;
 
 type VoiceInputState =
   | { status: "idle" }
@@ -133,6 +133,8 @@ export function createVoiceTurnController(params: {
 
     utteranceChunks = [];
     state = { status: "listening", rollingPrefixBytes: prefixBuffer.byteLength };
+
+    detector.reset();
 
     await params.callbacks.onSpeechStopped();
 

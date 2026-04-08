@@ -570,6 +570,52 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("emits usage_updated on token usage updates and keeps usage on turn completion", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    (session as any).handleNotification("thread/tokenUsage/updated", {
+      tokenUsage: {
+        model_context_window: 200000,
+        last: {
+          total_tokens: 50000,
+          inputTokens: 30000,
+          cachedInputTokens: 5000,
+          outputTokens: 15000,
+        },
+      },
+    });
+    (session as any).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "codex",
+      turnId: "test-turn",
+      usage: {
+        inputTokens: 30000,
+        cachedInputTokens: 5000,
+        outputTokens: 15000,
+        contextWindowMaxTokens: 200000,
+        contextWindowUsedTokens: 50000,
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "test-turn",
+      usage: {
+        inputTokens: 30000,
+        cachedInputTokens: 5000,
+        outputTokens: 15000,
+        contextWindowMaxTokens: 200000,
+        contextWindowUsedTokens: 50000,
+      },
+    });
+  });
+
   test("approving a synthetic Codex plan permission disables plan and fast mode and starts implementation", async () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },

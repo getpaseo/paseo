@@ -3505,6 +3505,13 @@ class CodexAppServerAgentSession implements AgentSession {
 
     if (parsed.kind === "token_usage_updated") {
       this.latestUsage = toAgentUsage(parsed.tokenUsage);
+      if (this.latestUsage) {
+        this.notifySubscribers({
+          type: "usage_updated",
+          provider: CODEX_PROVIDER,
+          usage: this.latestUsage,
+        });
+      }
       return;
     }
 

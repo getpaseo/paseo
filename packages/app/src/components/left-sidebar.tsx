@@ -226,21 +226,21 @@ export const LeftSidebar = memo(function LeftSidebar({
       return;
     }
     closeToAgent();
-    router.push(buildHostSettingsRoute(activeServerId) as any);
+    router.push(buildHostSettingsRoute(activeServerId));
   }, [activeServerId, closeToAgent]);
 
   const handleSettingsDesktop = useCallback(() => {
     if (!activeServerId) {
       return;
     }
-    router.push(buildHostSettingsRoute(activeServerId) as any);
+    router.push(buildHostSettingsRoute(activeServerId));
   }, [activeServerId]);
 
   const handleViewMoreNavigate = useCallback(() => {
     if (!activeServerId) {
       return;
     }
-    router.push(buildHostSessionsRoute(activeServerId) as any);
+    router.push(buildHostSessionsRoute(activeServerId));
   }, [activeServerId]);
 
   const handleHostSelect = useCallback(
@@ -250,7 +250,7 @@ export const LeftSidebar = memo(function LeftSidebar({
       }
       const nextPath = mapPathnameToServer(pathname, nextServerId);
       setIsHostPickerOpen(false);
-      router.push(nextPath as any);
+      router.push(nextPath);
     },
     [pathname],
   );

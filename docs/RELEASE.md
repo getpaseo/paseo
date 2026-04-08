@@ -129,6 +129,16 @@ No prefix (`v`), no extra text. The parser matches the first `## X.Y.Z` line to 
 - **Only Claude should write changelog entries.**
 - If you are Codex and a stable release needs a changelog entry, launch a Claude agent with Paseo to draft it, then review and commit the result.
 
+## Changelog voice
+
+The changelog is shown on the Paseo homepage. Write it for **end users**, not developers.
+
+- **Frame everything from the user's perspective.** Describe what changed in the app, not what changed in the code. Users care that "workspaces load instantly" — not that a component no longer remounts.
+- **Never mention component names, internal modules, or implementation details.** No `WorkingIndicator`, no `accumulatedUsage`, no `reconcileAndEmitWorkspaceUpdates`.
+- **Collapse internal iterations.** If a feature was added and then fixed within the same release, just list the feature as working. Users never saw the broken version.
+- **Only list changes relative to the previous stable release.** The diff is `v(previous)..HEAD`. If something was introduced and fixed between those two tags, it never shipped — don't mention the fix.
+- **Cut low-signal entries.** "Toolbar buttons have consistent sizing" is too granular. Combine small polish items or drop them.
+
 ## Pre-release sanity check
 
 Before cutting any release (RC or stable), run a Codex review of the diff as a last line of defence against shipping bugs.

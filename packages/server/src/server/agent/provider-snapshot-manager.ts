@@ -26,8 +26,7 @@ export class ProviderSnapshotManager {
     const cwdKey = normalizeCwdKey(cwd);
     const entries = this.snapshots.get(cwdKey);
     if (!entries) {
-      const loadingEntries = this.createLoadingEntries();
-      this.snapshots.set(cwdKey, loadingEntries);
+      const loadingEntries = this.resetSnapshotToLoading(cwdKey);
       void this.warmUp(cwd);
       return entriesToArray(loadingEntries);
     }
@@ -36,7 +35,11 @@ export class ProviderSnapshotManager {
 
   refresh(cwd?: string): void {
     const cwdKey = normalizeCwdKey(cwd);
-    this.snapshots.set(cwdKey, this.createLoadingEntries());
+    if (this.warmUps.has(cwdKey)) {
+      return;
+    }
+    this.resetSnapshotToLoading(cwdKey);
+    this.emitChange(cwdKey);
     void this.warmUp(cwd);
   }
 
@@ -165,6 +168,15 @@ export class ProviderSnapshotManager {
     const created = this.createLoadingEntries();
     this.snapshots.set(cwdKey, created);
     return created;
+  }
+
+  private resetSnapshotToLoading(cwdKey: string): Map<AgentProvider, ProviderSnapshotEntry> {
+    const snapshot = this.getOrCreateSnapshot(cwdKey);
+    snapshot.clear();
+    for (const [provider, entry] of this.createLoadingEntries()) {
+      snapshot.set(provider, entry);
+    }
+    return snapshot;
   }
 
   private getProviderIds(): AgentProvider[] {

@@ -1103,7 +1103,7 @@ function WorkspaceRowWithMenu({
         serverId: workspace.serverId,
         archivedWorkspaceId: workspace.workspaceId,
         workspaces: sessionWorkspaces.values(),
-      }) as any,
+      }),
     );
   }, [activeWorkspaceSelection, sessionWorkspaces, workspace.serverId, workspace.workspaceId]);
 

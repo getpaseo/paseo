@@ -358,7 +358,7 @@ describe("ClaudeAgentSession context window usage", () => {
     });
   }
 
-  test("convertUsage includes contextWindowMaxTokens and derives used tokens from result usage", async () => {
+  test("convertUsage includes contextWindowMaxTokens and derives used tokens from result usage as initial fallback", async () => {
     const session = await createSessionForTest();
 
     const usage = session.convertUsage(
@@ -388,7 +388,7 @@ describe("ClaudeAgentSession context window usage", () => {
     });
   });
 
-  test("contextWindowUsedTokens is derived from result usage when task_progress is missing", async () => {
+  test("contextWindowUsedTokens falls back to result usage when no task_progress was received", async () => {
     const session = await createSessionForTest();
 
     const usage = session.convertUsage({
@@ -468,6 +468,124 @@ describe("ClaudeAgentSession context window usage", () => {
     });
   });
 
+  test("task_progress emits a usage_updated event", async () => {
+    const session = await createSessionForTest();
+
+    const events = session.translateMessageToEvents({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "task-1",
+      description: "Processing",
+      usage: {
+        total_tokens: 999,
+        tool_uses: 1,
+        duration_ms: 50,
+      },
+      uuid: "task-progress-1",
+      session_id: "session-1",
+    });
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "claude",
+      usage: {
+        contextWindowUsedTokens: 999,
+      },
+    });
+  });
+
+  test("task_notification emits a usage_updated event", async () => {
+    const session = await createSessionForTest();
+
+    const events = session.translateMessageToEvents({
+      type: "system",
+      subtype: "task_notification",
+      uuid: "task-note-1",
+      task_id: "task-1",
+      status: "running",
+      summary: "Background task still running",
+      usage: {
+        total_tokens: 777,
+        tool_uses: 1,
+        duration_ms: 50,
+      },
+      session_id: "session-1",
+    } as any);
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "claude",
+      usage: {
+        contextWindowUsedTokens: 777,
+      },
+    });
+  });
+
+  test("message_start stream events emit usage_updated with per-request usage", async () => {
+    const session = await createSessionForTest();
+
+    const events = session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 30,
+          },
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "claude",
+      usage: {
+        contextWindowUsedTokens: 150,
+      },
+    });
+  });
+
+  test("message_delta stream events update per-request usage", async () => {
+    const session = await createSessionForTest();
+
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 30,
+          },
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    const events = session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        usage: {
+          output_tokens: 25,
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "claude",
+      usage: {
+        contextWindowUsedTokens: 175,
+      },
+    });
+  });
+
   test("task_progress usage takes priority over derived result usage", async () => {
     const session = await createSessionForTest();
 
@@ -508,7 +626,7 @@ describe("ClaudeAgentSession context window usage", () => {
     });
   });
 
-  test("contextWindowUsedTokens resets between turns and falls back to result usage", async () => {
+  test("contextWindowUsedTokens persists across turns from last task_progress", async () => {
     const queryFactory = createQueryFactoryForTurns([
       [
         {
@@ -600,20 +718,23 @@ describe("ClaudeAgentSession context window usage", () => {
         contextWindowMaxTokens: 200_000,
         contextWindowUsedTokens: 999,
       });
+      // Turn 2 has no task_progress, so contextWindowUsedTokens retains the
+      // last known value from turn 1 rather than deriving from accumulated
+      // result.usage (which would be incorrect — those are session-level totals).
       expect(secondTurn.usage).toEqual({
         inputTokens: 11,
         cachedInputTokens: 6,
         outputTokens: 8,
         totalCostUsd: 0.1,
         contextWindowMaxTokens: 200_000,
-        contextWindowUsedTokens: 28,
+        contextWindowUsedTokens: 999,
       });
     } finally {
       await session.close();
     }
   });
 
-  test("convertUsage derives used tokens even when modelUsage is missing", async () => {
+  test("convertUsage derives used tokens from result usage as fallback when task_progress is missing", async () => {
     const session = await createSessionForTest();
 
     const usage = session.convertUsage({
@@ -633,6 +754,136 @@ describe("ClaudeAgentSession context window usage", () => {
       outputTokens: 7,
       totalCostUsd: 0.12,
       contextWindowUsedTokens: 22,
+    });
+  });
+
+  test("convertUsage uses per-request stream usage when no task_progress is available", async () => {
+    const session = await createSessionForTest();
+
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 30,
+          },
+        },
+      },
+      session_id: "session-1",
+    } as any);
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        usage: {
+          output_tokens: 25,
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    const usage = session.convertUsage({
+      type: "result",
+      subtype: "success",
+      usage: {
+        input_tokens: 10,
+        cache_read_input_tokens: 5,
+        output_tokens: 7,
+      },
+      total_cost_usd: 0.12,
+    });
+
+    expect(usage).toEqual({
+      inputTokens: 10,
+      cachedInputTokens: 5,
+      outputTokens: 7,
+      totalCostUsd: 0.12,
+      contextWindowUsedTokens: 175,
+    });
+  });
+
+  test("per-request stream usage is not cumulative across API calls in a turn", async () => {
+    const session = await createSessionForTest();
+
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 30,
+          },
+        },
+      },
+      session_id: "session-1",
+    } as any);
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        usage: {
+          output_tokens: 25,
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    const secondStartEvents = session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 40,
+            cache_creation_input_tokens: 5,
+            cache_read_input_tokens: 10,
+          },
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    expect(secondStartEvents).toContainEqual({
+      type: "usage_updated",
+      provider: "claude",
+      usage: {
+        contextWindowUsedTokens: 55,
+      },
+    });
+
+    session.translateMessageToEvents({
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        usage: {
+          output_tokens: 7,
+        },
+      },
+      session_id: "session-1",
+    } as any);
+
+    const usage = session.convertUsage({
+      type: "result",
+      subtype: "success",
+      usage: {
+        input_tokens: 10,
+        cache_read_input_tokens: 5,
+        output_tokens: 7,
+      },
+      total_cost_usd: 0.12,
+    });
+
+    expect(usage).toEqual({
+      inputTokens: 10,
+      cachedInputTokens: 5,
+      outputTokens: 7,
+      totalCostUsd: 0.12,
+      contextWindowUsedTokens: 62,
     });
   });
 });

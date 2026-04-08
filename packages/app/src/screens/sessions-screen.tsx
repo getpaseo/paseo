@@ -54,7 +54,7 @@ function SessionsScreenContent({ serverId }: { serverId: string }) {
           <Button
             variant="ghost"
             leftIcon={ChevronLeft}
-            onPress={() => router.navigate(buildHostOpenProjectRoute(serverId) as any)}
+            onPress={() => router.navigate(buildHostOpenProjectRoute(serverId))}
           >
             Back
           </Button>
