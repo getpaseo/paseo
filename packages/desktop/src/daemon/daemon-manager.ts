@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { URL } from "node:url";
 import { app, ipcMain } from "electron";
 import log from "electron-log/main";
 import { resolvePaseoHome } from "@getpaseo/server";
@@ -182,6 +183,34 @@ function resolveDesktopAppVersion(): string {
   return app.getVersion();
 }
 
+function resolveDevServerOrigin(rawUrl: string | undefined): string | null {
+  const trimmed = rawUrl?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return null;
+  }
+}
+
+function mergeCorsOrigins(existingValue: string | undefined, nextOrigin: string | null): string | undefined {
+  const origins = new Set(
+    (existingValue ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  );
+
+  if (nextOrigin) {
+    origins.add(nextOrigin);
+  }
+
+  return origins.size > 0 ? Array.from(origins).join(",") : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Daemon lifecycle
 // ---------------------------------------------------------------------------
@@ -266,12 +295,21 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     args: invocation.args,
   });
 
+  const childEnv = {
+    ...invocation.env,
+    PASEO_DESKTOP_MANAGED: "1",
+    PASEO_CORS_ORIGINS: mergeCorsOrigins(
+      invocation.env.PASEO_CORS_ORIGINS,
+      app.isPackaged ? null : resolveDevServerOrigin(process.env.EXPO_DEV_URL),
+    ),
+  };
+
   const child: ChildProcess = spawn(
     invocation.command,
     invocation.args,
     {
       detached: true,
-      env: { ...invocation.env, PASEO_DESKTOP_MANAGED: "1" },
+      env: childEnv,
       stdio: ["ignore", "ignore", "ignore"],
     },
   );

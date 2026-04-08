@@ -37,7 +37,7 @@
     "web": "npm run web --workspace=@getpaseo/app",
     "dev:desktop": "npm run dev --workspace=@getpaseo/desktop",
     "build:desktop": "npm run version:sync-internal && npm run build:web --workspace=@getpaseo/app && npm run build --workspace=@getpaseo/desktop",
-    "cli": "npx tsx packages/cli/src/index.js",
+    "cli": "npx tsx packages/cli/src/index.ts",
     "version": "npm run version:sync-internal && npm run release:prepare && git add -A",
     "version:sync-internal": "node scripts/sync-workspace-versions.mjs",
     "release:prepare": "npm install --workspaces --include-workspace-root",
@@ -98,6 +98,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.11",
-    "@modelcontextprotocol/sdk": "^1.27.1"
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "concurrently": "^9.2.1"
   }
 }

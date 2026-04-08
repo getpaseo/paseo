@@ -144,14 +144,24 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const activationKey = routeBottomAnchorRequest?.requestKey ?? props.agentId;
   const isActivationReady = routeBottomAnchorRequest === null || isAuthoritativeHistoryReady;
 
+  const historyVirtualizedRef = useRef(segments.historyVirtualized);
+  historyVirtualizedRef.current = segments.historyVirtualized;
+
+  const stableGetItemKey = useCallback(
+    (index: number) => historyVirtualizedRef.current[index]?.id ?? index,
+    [],
+  );
+  const stableEstimateSize = useCallback((index: number) => {
+    const row = historyVirtualizedRef.current[index];
+    return row ? estimateStreamItemHeight(row) : 120;
+  }, []);
+  const stableGetScrollElement = useCallback(() => scrollContainerRef.current, []);
+
   const rowVirtualizer = useVirtualizer({
     count: segments.historyVirtualized.length,
-    getScrollElement: () => scrollContainerRef.current,
-    getItemKey: (index: number) => segments.historyVirtualized[index]?.id ?? index,
-    estimateSize: (index: number) => {
-      const row = segments.historyVirtualized[index];
-      return row ? estimateStreamItemHeight(row) : 120;
-    },
+    getScrollElement: stableGetScrollElement,
+    getItemKey: stableGetItemKey,
+    estimateSize: stableEstimateSize,
     measureElement: measureVirtualElement,
     useAnimationFrameWithResizeObserver: true,
     overscan: 8,

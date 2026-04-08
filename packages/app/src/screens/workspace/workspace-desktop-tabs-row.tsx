@@ -18,6 +18,7 @@ import {
   Rows2,
   SquarePen,
   SquareTerminal,
+  Globe,
   X,
 } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -47,7 +48,7 @@ import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-
 
 const DROPDOWN_WIDTH = 220;
 const LOADING_TAB_LABEL_SKELETON_WIDTH = 80;
-type NewTabOptionId = "__new_tab_agent__" | "__new_tab_terminal__";
+type NewTabOptionId = "__new_tab_agent__" | "__new_tab_browser__" | "__new_tab_terminal__";
 type NewTabSelection = {
   optionId: NewTabOptionId;
   paneId?: string;
@@ -94,6 +95,9 @@ function getFallbackTabLabel(tab: WorkspaceTabDescriptor): string {
   }
   if (tab.target.kind === "terminal") {
     return "Terminal";
+  }
+  if (tab.target.kind === "browser") {
+    return "Browser";
   }
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").filter(Boolean).pop() ?? tab.target.path;
@@ -507,6 +511,29 @@ export function WorkspaceDesktopTabsRow({
               {newAgentTabKeys ? (
                 <Shortcut chord={newAgentTabKeys} style={styles.newTabTooltipShortcut} />
               ) : null}
+            </View>
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+          <TooltipTrigger
+            onPress={() =>
+              onSelectNewTabOption({
+                optionId: "__new_tab_browser__",
+                paneId,
+              })
+            }
+            accessibilityRole="button"
+            accessibilityLabel="New browser tab"
+            style={({ hovered, pressed }) => [
+              styles.newTabActionButton,
+              (hovered || pressed) && styles.newTabActionButtonHovered,
+            ]}
+          >
+            <Globe size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <View style={styles.newTabTooltipRow}>
+              <Text style={styles.newTabTooltipText}>New browser tab</Text>
             </View>
           </TooltipContent>
         </Tooltip>

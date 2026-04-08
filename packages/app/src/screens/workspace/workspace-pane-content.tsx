@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { memo, type ComponentType } from "react";
 import invariant from "tiny-invariant";
 import { PaneProvider, type PaneContextValue } from "@/panels/pane-context";
 import { getPanelRegistration } from "@/panels/panel-registry";
@@ -56,12 +56,15 @@ export interface WorkspacePaneContentProps {
   content: WorkspacePaneContentModel;
 }
 
-export function WorkspacePaneContent({ content }: WorkspacePaneContentProps) {
-  const { Component, key, paneContextValue } = content;
+export const WorkspacePaneContent = memo(
+  function WorkspacePaneContent({ content }: WorkspacePaneContentProps) {
+    const { Component, key, paneContextValue } = content;
 
-  return (
-    <PaneProvider value={paneContextValue}>
-      <Component key={key} />
-    </PaneProvider>
-  );
-}
+    return (
+      <PaneProvider value={paneContextValue}>
+        <Component key={key} />
+      </PaneProvider>
+    );
+  },
+  (prev, next) => prev.content === next.content || prev.content.key === next.content.key,
+);

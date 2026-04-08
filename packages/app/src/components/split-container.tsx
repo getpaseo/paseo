@@ -89,11 +89,11 @@ interface SplitContainerProps {
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onSelectNewTabOption: (selection: {
-    optionId: "__new_tab_agent__" | "__new_tab_terminal__";
+    optionId: "__new_tab_agent__" | "__new_tab_browser__" | "__new_tab_terminal__";
     paneId?: string;
   }) => void;
   onNewTerminalTab: (input: { paneId?: string }) => void;
-  newTabAgentOptionId?: "__new_tab_agent__" | "__new_tab_terminal__";
+  newTabAgentOptionId?: "__new_tab_agent__" | "__new_tab_browser__" | "__new_tab_terminal__";
   buildPaneContentModel: (input: {
     paneId: string;
     isPaneFocused: boolean;

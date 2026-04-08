@@ -35,6 +35,10 @@ function getSnapshot(): ActiveWorkspaceSelection | null {
   return snapshot;
 }
 
+export function getNavigationActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
+  return snapshot;
+}
+
 function emitIfChanged(next: ActiveWorkspaceSelection | null) {
   if (snapshot?.serverId === next?.serverId && snapshot?.workspaceId === next?.workspaceId) {
     return;

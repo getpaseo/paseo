@@ -405,13 +405,6 @@ function AgentPanelBody({
     }
   }, [connectionStatus, panelToast.api]);
 
-  useEffect(() => {
-    if (!isPaneFocused || !agentId || !isConnected || !hasSession) {
-      return;
-    }
-    ensureInitializedWithSyncErrorHandling("focus");
-  }, [agentId, ensureInitializedWithSyncErrorHandling, hasSession, isConnected, isPaneFocused]);
-
   const isArchivingCurrentAgent = Boolean(agentId && isArchivingAgent({ serverId, agentId }));
 
   useEffect(() => {

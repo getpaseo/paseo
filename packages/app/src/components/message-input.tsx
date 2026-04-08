@@ -234,6 +234,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     null,
   );
   const isInputFocusedRef = useRef(false);
+  const onFocusChangeRef = useRef(onFocusChange);
+  useEffect(() => {
+    onFocusChangeRef.current = onFocusChange;
+  });
 
   useImperativeHandle(ref, () => ({
     focus: () => {
@@ -318,9 +322,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
 
   useEffect(() => {
     return () => {
-      onFocusChange?.(false);
+      onFocusChangeRef.current?.(false);
     };
-  }, [onFocusChange]);
+  }, []);
 
   // Autofocus on web when autoFocus is true, and re-run when focus key changes.
   useEffect(() => {

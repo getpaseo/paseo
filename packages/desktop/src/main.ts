@@ -141,12 +141,24 @@ async function createMainWindow(): Promise<void> {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
     },
   });
 
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
+  mainWindow.webContents.on("will-attach-webview", (_event, webPreferences) => {
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    delete webPreferences.preload;
+  });
+  mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
+    contents.setWindowOpenHandler(({ url }) => {
+      contents.loadURL(url).catch(() => undefined);
+      return { action: "deny" };
+    });
+  });
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
