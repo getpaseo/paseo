@@ -369,9 +369,40 @@ function AppContainer({
   const toggleBothSidebars = usePanelStore((state) => state.toggleBothSidebars);
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
+  const agentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
 
   const isCompactLayout = isCompactFormFactor();
   const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
+
+  useEffect(() => {
+    const bp = UnistylesRuntime.breakpoint;
+    const screenW = UnistylesRuntime.screen.width;
+    const screenH = UnistylesRuntime.screen.height;
+    const isElectron = getIsElectronRuntime();
+    const windowW = Platform.OS === "web" ? window.innerWidth : undefined;
+    const windowH = Platform.OS === "web" ? window.innerHeight : undefined;
+    const dpr = Platform.OS === "web" ? window.devicePixelRatio : undefined;
+    const ua = Platform.OS === "web" ? navigator.userAgent : undefined;
+
+    console.log(
+      "[layout-debug]",
+      JSON.stringify({
+        breakpoint: bp,
+        isCompactLayout,
+        isElectron,
+        chromeEnabled,
+        isFocusModeEnabled,
+        agentListOpen,
+        sidebarWidth,
+        sidebarRenderedInRow: !isCompactLayout && chromeEnabled && !isFocusModeEnabled,
+        unistylesScreen: { w: screenW, h: screenH },
+        window: { w: windowW, h: windowH },
+        devicePixelRatio: dpr,
+        userAgent: ua,
+      }),
+    );
+  }, [isCompactLayout, chromeEnabled, isFocusModeEnabled, agentListOpen, sidebarWidth]);
 
   useKeyboardShortcuts({
     enabled: chromeEnabled,

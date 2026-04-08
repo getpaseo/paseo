@@ -143,6 +143,7 @@ async function main() {
       logger.error({ pid: err.existingLock?.pid }, err.message);
       process.exit(1);
     }
+    logger.fatal({ err }, "Daemon bootstrap failed");
     throw err;
   }
 
@@ -153,6 +154,7 @@ async function main() {
       logger.error({ pid: err.existingLock?.pid }, err.message);
       process.exit(1);
     }
+    logger.fatal({ err }, "Daemon failed to start listening");
     throw err;
   }
 
@@ -171,10 +173,9 @@ async function main() {
 }
 
 main().catch((err) => {
-  if (process.env.PASEO_DEBUG === "1") {
-    process.stderr.write(`${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
-  } else {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-  }
-  process.exit(1);
+  process.stderr.write(`${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
+  // Give pino streams a moment to flush the fatal log entry to daemon.log
+  // before the process exits. Without this, async file streams may lose the
+  // last few entries that explain why the daemon crashed.
+  setTimeout(() => process.exit(1), 200);
 });

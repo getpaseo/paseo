@@ -1,4 +1,5 @@
 import log from "electron-log/main";
+log.transports.console.level = "info";
 log.initialize({ spyRendererConsole: true });
 
 import { inheritLoginShellEnv } from "./login-shell-env.js";
@@ -36,6 +37,18 @@ const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
 const OPEN_PROJECT_EVENT = "paseo:event:open-project";
 app.setName("Paseo");
+
+// Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
+// rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
+// Must run before app.whenReady().
+const electronFlags = process.env.PASEO_ELECTRON_FLAGS?.trim();
+if (electronFlags) {
+  for (const token of electronFlags.split(/\s+/)) {
+    const [key, ...rest] = token.replace(/^--/, "").split("=");
+    app.commandLine.appendSwitch(key, rest.join("=") || undefined);
+  }
+  log.info("[electron-flags]", electronFlags);
+}
 
 let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   argv: process.argv,
@@ -146,6 +159,7 @@ async function createMainWindow(): Promise<void> {
       return { action: "deny" };
     });
   });
+
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
   });
