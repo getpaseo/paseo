@@ -833,12 +833,19 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   });
 
   const allStashes = stashListQuery.data ?? [];
-  const hasStashes = allStashes.length > 0;
 
-  const currentBranchStash = useMemo<StashEntry | null>(() => {
-    if (!currentBranchName || !stashListQuery.data) return null;
-    return stashListQuery.data.find((e) => e.branch === currentBranchName) ?? null;
-  }, [currentBranchName, stashListQuery.data]);
+  // Only show stashes for the current branch in the dropdown
+  const currentBranchStashes = useMemo(
+    () =>
+      currentBranchName
+        ? allStashes.filter((e) => e.branch === currentBranchName)
+        : [],
+    [allStashes, currentBranchName],
+  );
+  const hasCurrentBranchStashes = currentBranchStashes.length > 0;
+
+  // Used by the post-switch restore prompt
+  const currentBranchStash = currentBranchStashes[0] ?? null;
 
   // Stash diff preview state
   const [previewStashIndex, setPreviewStashIndex] = useState<number | null>(null);
@@ -869,20 +876,55 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     ]);
   }, [queryClient, stashListQueryKey, normalizedServerId, normalizedWorkspaceId]);
 
-  const stashPopMutation = useMutation({
-    mutationFn: async (stashIndex: number) => {
-      if (!client) throw new Error("Daemon client unavailable");
+  const restoreStash = useCallback(
+    async (stashIndex: number) => {
+      if (!client) return;
       const payload = await client.stashPop(normalizedWorkspaceId, stashIndex);
-      if (payload.error) throw new Error(payload.error.message);
-      return payload;
-    },
-    onSuccess: async () => {
+      if (!payload.error) {
+        await invalidateStashAndCheckout();
+        toast.show("Stashed changes restored");
+        return;
+      }
+
+      const isOverwrite = payload.error.message.toLowerCase().includes("overwritten");
+      if (!isOverwrite) {
+        toast.error(payload.error.message);
+        return;
+      }
+
+      // Conflict: current changes would be overwritten
+      const confirmed = await confirmDialog({
+        title: "Uncommitted changes conflict",
+        message:
+          "Your current changes would be overwritten by restoring this stash. Stash current changes first, then restore?",
+        confirmLabel: "Stash current & restore",
+        cancelLabel: "Cancel",
+      });
+      if (!confirmed) return;
+
+      // Stash current changes, then pop the target stash
+      const savePayload = await client.stashSave(normalizedWorkspaceId, {
+        branch: currentBranchName ?? undefined,
+      });
+      if (savePayload.error) {
+        toast.error(savePayload.error.message);
+        return;
+      }
+      // The stash we want shifted up by 1 since we just pushed a new stash
+      const adjustedIndex = stashIndex + 1;
+      const retryPayload = await client.stashPop(normalizedWorkspaceId, adjustedIndex);
+      if (retryPayload.error) {
+        toast.error(retryPayload.error.message);
+      } else {
+        toast.show("Stashed changes restored");
+      }
       await invalidateStashAndCheckout();
-      toast.show("Stashed changes restored");
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to restore stash");
-    },
+    [client, currentBranchName, invalidateStashAndCheckout, normalizedWorkspaceId, toast],
+  );
+
+  const stashPopMutation = useMutation({
+    mutationFn: restoreStash,
   });
 
   const stashDropMutation = useMutation({
@@ -2231,7 +2273,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                           {workspaceHeader.title}
                         </Text>
                       )}
-                      {hasStashes ? (
+                      {hasCurrentBranchStashes ? (
                         <DropdownMenu>
                           <DropdownMenuTrigger
                             testID="workspace-header-stash-trigger"
@@ -2240,7 +2282,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                               (hovered || pressed) && styles.stashIndicatorHovered,
                             ]}
                             accessibilityRole="button"
-                            accessibilityLabel={`${allStashes.length} stashed change${allStashes.length === 1 ? "" : "s"}`}
+                            accessibilityLabel={`${currentBranchStashes.length} stashed change${currentBranchStashes.length === 1 ? "" : "s"}`}
                           >
                             {({ hovered }) => (
                               <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
@@ -2257,22 +2299,24 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                                   </View>
                                 </TooltipTrigger>
                                 <TooltipContent>
-                                  {allStashes.length} stash{allStashes.length === 1 ? "" : "es"}
+                                  {currentBranchStashes.length} stash{currentBranchStashes.length === 1 ? "" : "es"}
                                 </TooltipContent>
                               </Tooltip>
                             )}
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="start" width={300}>
-                            {allStashes.map((stash) => (
+                          <DropdownMenuContent align="start" width={240}>
+                            {currentBranchStashes.map((stash, idx) => (
                               <View key={stash.index}>
-                                <View style={styles.stashEntryHeader}>
-                                  <Text
-                                    style={styles.stashEntryBranch}
-                                    numberOfLines={1}
-                                  >
-                                    {stash.branch ?? "unnamed"}
-                                  </Text>
-                                </View>
+                                {currentBranchStashes.length > 1 ? (
+                                  <View style={styles.stashEntryHeader}>
+                                    <Text
+                                      style={styles.stashEntryBranch}
+                                      numberOfLines={1}
+                                    >
+                                      Stash {idx + 1}
+                                    </Text>
+                                  </View>
+                                ) : null}
                                 <DropdownMenuItem
                                   leading={
                                     <Eye size={14} color={theme.colors.foregroundMuted} />
@@ -2298,7 +2342,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                                     void (async () => {
                                       const confirmed = await confirmDialog({
                                         title: "Discard stash?",
-                                        message: `The stashed changes for "${stash.branch ?? "unnamed"}" will be permanently deleted.`,
+                                        message: "The stashed changes will be permanently deleted.",
                                         confirmLabel: "Discard",
                                         destructive: true,
                                       });
@@ -2311,7 +2355,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                                 >
                                   Discard
                                 </DropdownMenuItem>
-                                {stash.index < allStashes[allStashes.length - 1]!.index ? (
+                                {idx < currentBranchStashes.length - 1 ? (
                                   <DropdownMenuSeparator />
                                 ) : null}
                               </View>
@@ -2974,7 +3018,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   stashPreviewLineRemove: {
     backgroundColor: "rgba(239,68,68,0.12)",
-    color: theme.colors.palette.red[400],
+    color: theme.colors.palette.red[500],
   },
   stashPreviewLineHeader: {
     color: theme.colors.foregroundMuted,
