@@ -28,6 +28,11 @@ import type {
   CheckoutPushResponse,
   CheckoutPrCreateResponse,
   CheckoutPrStatusResponse,
+  CheckoutSwitchBranchResponse,
+  StashSaveResponse,
+  StashPopResponse,
+  StashDropResponse,
+  StashListResponse,
   ValidateBranchResponse,
   BranchSuggestionsResponse,
   DirectorySuggestionsResponse,
@@ -217,6 +222,11 @@ type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
 type CheckoutPushPayload = CheckoutPushResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
+type CheckoutSwitchBranchPayload = CheckoutSwitchBranchResponse["payload"];
+type StashSavePayload = StashSaveResponse["payload"];
+type StashPopPayload = StashPopResponse["payload"];
+type StashDropPayload = StashDropResponse["payload"];
+type StashListPayload = StashListResponse["payload"];
 type ValidateBranchPayload = ValidateBranchResponse["payload"];
 type BranchSuggestionsPayload = BranchSuggestionsResponse["payload"];
 type DirectorySuggestionsPayload = DirectorySuggestionsResponse["payload"];
@@ -2371,6 +2381,91 @@ export class DaemonClient {
       },
       responseType: "checkout_pr_status_response",
       timeout: 60000,
+    });
+  }
+
+  async checkoutSwitchBranch(
+    cwd: string,
+    branch: string,
+    requestId?: string,
+  ): Promise<CheckoutSwitchBranchPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout_switch_branch_request",
+        cwd,
+        branch,
+      },
+      responseType: "checkout_switch_branch_response",
+      timeout: 30000,
+    });
+  }
+
+  async stashSave(
+    cwd: string,
+    options?: { branch?: string },
+    requestId?: string,
+  ): Promise<StashSavePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "stash_save_request",
+        cwd,
+        branch: options?.branch,
+      },
+      responseType: "stash_save_response",
+      timeout: 30000,
+    });
+  }
+
+  async stashPop(
+    cwd: string,
+    stashIndex: number,
+    requestId?: string,
+  ): Promise<StashPopPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "stash_pop_request",
+        cwd,
+        stashIndex,
+      },
+      responseType: "stash_pop_response",
+      timeout: 30000,
+    });
+  }
+
+  async stashDrop(
+    cwd: string,
+    stashIndex: number,
+    requestId?: string,
+  ): Promise<StashDropPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "stash_drop_request",
+        cwd,
+        stashIndex,
+      },
+      responseType: "stash_drop_response",
+      timeout: 30000,
+    });
+  }
+
+  async stashList(
+    cwd: string,
+    options?: { paseoOnly?: boolean },
+    requestId?: string,
+  ): Promise<StashListPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "stash_list_request",
+        cwd,
+        paseoOnly: options?.paseoOnly,
+      },
+      responseType: "stash_list_response",
+      timeout: 10000,
     });
   }
 

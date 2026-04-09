@@ -1746,6 +1746,26 @@ export class Session {
           this.handleUnsubscribeCheckoutDiffRequest(msg);
           break;
 
+        case "checkout_switch_branch_request":
+          await this.handleCheckoutSwitchBranchRequest(msg);
+          break;
+
+        case "stash_save_request":
+          await this.handleStashSaveRequest(msg);
+          break;
+
+        case "stash_pop_request":
+          await this.handleStashPopRequest(msg);
+          break;
+
+        case "stash_drop_request":
+          await this.handleStashDropRequest(msg);
+          break;
+
+        case "stash_list_request":
+          await this.handleStashListRequest(msg);
+          break;
+
         case "checkout_commit_request":
           await this.handleCheckoutCommitRequest(msg);
           break;
@@ -4425,6 +4445,152 @@ export class Session {
   private handleUnsubscribeCheckoutDiffRequest(msg: UnsubscribeCheckoutDiffRequest): void {
     this.checkoutDiffSubscriptions.get(msg.subscriptionId)?.();
     this.checkoutDiffSubscriptions.delete(msg.subscriptionId);
+  }
+
+  private async handleCheckoutSwitchBranchRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_switch_branch_request" }>,
+  ): Promise<void> {
+    const { cwd, branch, requestId } = msg;
+
+    try {
+      await this.checkoutExistingBranch(cwd, branch);
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+
+      this.emit({
+        type: "checkout_switch_branch_response",
+        payload: {
+          cwd,
+          success: true,
+          branch,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_switch_branch_response",
+        payload: {
+          cwd,
+          success: false,
+          branch,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stash handlers
+  // ---------------------------------------------------------------------------
+
+  private static readonly PASEO_STASH_PREFIX = "paseo-auto-stash:";
+
+  private async handleStashSaveRequest(
+    msg: Extract<SessionInboundMessage, { type: "stash_save_request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+    try {
+      const branchLabel = msg.branch?.trim() ?? "";
+      const message = branchLabel
+        ? `${Session.PASEO_STASH_PREFIX} ${branchLabel}`
+        : `${Session.PASEO_STASH_PREFIX} unnamed`;
+      await execFileAsync("git", ["stash", "push", "-m", message], { cwd });
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.emit({
+        type: "stash_save_response",
+        payload: { cwd, success: true, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "stash_save_response",
+        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
+  private async handleStashPopRequest(
+    msg: Extract<SessionInboundMessage, { type: "stash_pop_request" }>,
+  ): Promise<void> {
+    const { cwd, stashIndex, requestId } = msg;
+    try {
+      await execFileAsync("git", ["stash", "pop", `stash@{${stashIndex}}`], { cwd });
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.emit({
+        type: "stash_pop_response",
+        payload: { cwd, success: true, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "stash_pop_response",
+        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
+  private async handleStashDropRequest(
+    msg: Extract<SessionInboundMessage, { type: "stash_drop_request" }>,
+  ): Promise<void> {
+    const { cwd, stashIndex, requestId } = msg;
+    try {
+      await execFileAsync("git", ["stash", "drop", `stash@{${stashIndex}}`], { cwd });
+      this.emit({
+        type: "stash_drop_response",
+        payload: { cwd, success: true, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "stash_drop_response",
+        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
+  private async handleStashListRequest(
+    msg: Extract<SessionInboundMessage, { type: "stash_list_request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+    const paseoOnly = msg.paseoOnly !== false;
+    try {
+      const { stdout } = await execAsync("git stash list --format=%gd%x00%s", {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      });
+      const lines = stdout.trim().split("\n").filter(Boolean);
+      const entries: Array<{
+        index: number;
+        message: string;
+        branch: string | null;
+        isPaseo: boolean;
+      }> = [];
+
+      for (const line of lines) {
+        const sepIdx = line.indexOf("\0");
+        if (sepIdx < 0) continue;
+        const refPart = line.slice(0, sepIdx);
+        const subject = line.slice(sepIdx + 1);
+        const indexMatch = refPart.match(/\{(\d+)\}/);
+        if (!indexMatch) continue;
+        const index = Number(indexMatch[1]);
+        const isPaseo = subject.startsWith(Session.PASEO_STASH_PREFIX);
+        const branch = isPaseo
+          ? subject.slice(Session.PASEO_STASH_PREFIX.length).trim() || null
+          : null;
+
+        if (paseoOnly && !isPaseo) continue;
+        entries.push({ index, message: subject, branch, isPaseo });
+      }
+
+      this.emit({
+        type: "stash_list_response",
+        payload: { cwd, entries, error: null, requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "stash_list_response",
+        payload: { cwd, entries: [], error: toCheckoutError(error), requestId },
+      });
+    }
   }
 
   private async handleCheckoutCommitRequest(
