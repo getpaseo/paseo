@@ -123,6 +123,7 @@ import {
 } from "@/screens/workspace/workspace-bulk-close";
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
+import { Fonts } from "@/constants/theme";
 
 const TERMINALS_QUERY_STALE_TIME = 5_000;
 const NEW_TAB_AGENT_OPTION_ID = "__new_tab_agent__";
@@ -2942,12 +2943,12 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
-    fontFamily: theme.fontFamily.mono,
+    fontFamily: Fonts.mono,
     flex: 1,
   },
   stashPreviewFileStats: {
     fontSize: theme.fontSize.xs,
-    fontFamily: theme.fontFamily.mono,
+    fontFamily: Fonts.mono,
     marginLeft: theme.spacing[2],
   },
   stashPreviewBinaryLabel: {
@@ -2962,7 +2963,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   stashPreviewLine: {
     fontSize: theme.fontSize.xs,
-    fontFamily: theme.fontFamily.mono,
+    fontFamily: Fonts.mono,
     color: theme.colors.foreground,
     paddingHorizontal: theme.spacing[2],
     paddingVertical: 1,
