@@ -170,7 +170,6 @@ import {
   toCheckoutError,
 } from "./checkout-git-utils.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import { parseDiff } from "./utils/diff-highlighter.js";
 import type { LocalSpeechModelId } from "./speech/providers/local/models.js";
 import { toResolver, type Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot, SpeechReadinessState } from "./speech/speech-runtime.js";
@@ -1759,16 +1758,8 @@ export class Session {
           await this.handleStashPopRequest(msg);
           break;
 
-        case "stash_drop_request":
-          await this.handleStashDropRequest(msg);
-          break;
-
         case "stash_list_request":
           await this.handleStashListRequest(msg);
-          break;
-
-        case "stash_show_request":
-          await this.handleStashShowRequest(msg);
           break;
 
         case "checkout_commit_request":
@@ -4537,24 +4528,6 @@ export class Session {
     }
   }
 
-  private async handleStashDropRequest(
-    msg: Extract<SessionInboundMessage, { type: "stash_drop_request" }>,
-  ): Promise<void> {
-    const { cwd, stashIndex, requestId } = msg;
-    try {
-      await execFileAsync("git", ["stash", "drop", `stash@{${stashIndex}}`], { cwd });
-      this.emit({
-        type: "stash_drop_response",
-        payload: { cwd, success: true, error: null, requestId },
-      });
-    } catch (error) {
-      this.emit({
-        type: "stash_drop_response",
-        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
-      });
-    }
-  }
-
   private async handleStashListRequest(
     msg: Extract<SessionInboundMessage, { type: "stash_list_request" }>,
   ): Promise<void> {
@@ -4599,28 +4572,6 @@ export class Session {
       this.emit({
         type: "stash_list_response",
         payload: { cwd, entries: [], error: toCheckoutError(error), requestId },
-      });
-    }
-  }
-
-  private async handleStashShowRequest(
-    msg: Extract<SessionInboundMessage, { type: "stash_show_request" }>,
-  ): Promise<void> {
-    const { cwd, stashIndex, requestId } = msg;
-    try {
-      const { stdout } = await execAsync(
-        `git stash show -p --no-color "stash@{${stashIndex}}"`,
-        { cwd, env: READ_ONLY_GIT_ENV, maxBuffer: 4 * 1024 * 1024 },
-      );
-      const files = parseDiff(stdout);
-      this.emit({
-        type: "stash_show_response",
-        payload: { cwd, stashIndex, files, error: null, requestId },
-      });
-    } catch (error) {
-      this.emit({
-        type: "stash_show_response",
-        payload: { cwd, stashIndex, files: [], error: toCheckoutError(error), requestId },
       });
     }
   }

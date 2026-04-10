@@ -1080,26 +1080,11 @@ export const StashPopRequestSchema = z.object({
   requestId: z.string(),
 });
 
-export const StashDropRequestSchema = z.object({
-  type: z.literal("stash_drop_request"),
-  cwd: z.string(),
-  /** Zero-based index from stash_list_response. */
-  stashIndex: z.number().int().min(0),
-  requestId: z.string(),
-});
-
 export const StashListRequestSchema = z.object({
   type: z.literal("stash_list_request"),
   cwd: z.string(),
   /** If true, only return paseo-created stashes. Default true. */
   paseoOnly: z.boolean().optional(),
-  requestId: z.string(),
-});
-
-export const StashShowRequestSchema = z.object({
-  type: z.literal("stash_show_request"),
-  cwd: z.string(),
-  stashIndex: z.number().int().min(0),
   requestId: z.string(),
 });
 
@@ -1441,9 +1426,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutSwitchBranchRequestSchema,
   StashSaveRequestSchema,
   StashPopRequestSchema,
-  StashDropRequestSchema,
   StashListRequestSchema,
-  StashShowRequestSchema,
   ValidateBranchRequestSchema,
   BranchSuggestionsRequestSchema,
   DirectorySuggestionsRequestSchema,
@@ -2282,32 +2265,11 @@ export const StashPopResponseSchema = z.object({
   }),
 });
 
-export const StashDropResponseSchema = z.object({
-  type: z.literal("stash_drop_response"),
-  payload: z.object({
-    cwd: z.string(),
-    success: z.boolean(),
-    error: CheckoutErrorSchema.nullable(),
-    requestId: z.string(),
-  }),
-});
-
 export const StashListResponseSchema = z.object({
   type: z.literal("stash_list_response"),
   payload: z.object({
     cwd: z.string(),
     entries: z.array(StashEntrySchema),
-    error: CheckoutErrorSchema.nullable(),
-    requestId: z.string(),
-  }),
-});
-
-export const StashShowResponseSchema = z.object({
-  type: z.literal("stash_show_response"),
-  payload: z.object({
-    cwd: z.string(),
-    stashIndex: z.number(),
-    files: z.array(ParsedDiffFileSchema),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),
@@ -2702,9 +2664,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutSwitchBranchResponseSchema,
   StashSaveResponseSchema,
   StashPopResponseSchema,
-  StashDropResponseSchema,
   StashListResponseSchema,
-  StashShowResponseSchema,
   ValidateBranchResponseSchema,
   BranchSuggestionsResponseSchema,
   DirectorySuggestionsResponseSchema,
@@ -2926,12 +2886,8 @@ export type StashSaveRequest = z.infer<typeof StashSaveRequestSchema>;
 export type StashSaveResponse = z.infer<typeof StashSaveResponseSchema>;
 export type StashPopRequest = z.infer<typeof StashPopRequestSchema>;
 export type StashPopResponse = z.infer<typeof StashPopResponseSchema>;
-export type StashDropRequest = z.infer<typeof StashDropRequestSchema>;
-export type StashDropResponse = z.infer<typeof StashDropResponseSchema>;
 export type StashListRequest = z.infer<typeof StashListRequestSchema>;
 export type StashListResponse = z.infer<typeof StashListResponseSchema>;
-export type StashShowRequest = z.infer<typeof StashShowRequestSchema>;
-export type StashShowResponse = z.infer<typeof StashShowResponseSchema>;
 export type StashEntry = z.infer<typeof StashEntrySchema>;
 export type ValidateBranchRequest = z.infer<typeof ValidateBranchRequestSchema>;
 export type ValidateBranchResponse = z.infer<typeof ValidateBranchResponseSchema>;
