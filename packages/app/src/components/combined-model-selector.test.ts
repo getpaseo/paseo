@@ -69,6 +69,6 @@ describe("combined model selector helpers", () => {
 
   it("builds an explicit trigger label for the selected provider and model", () => {
     expect(resolveProviderLabel(providerDefinitions, "codex")).toBe("Codex");
-    expect(buildSelectedTriggerLabel("Codex", "GPT-5.4")).toBe("Codex: GPT-5.4");
+    expect(buildSelectedTriggerLabel("Codex", "GPT-5.4")).toBe("GPT-5.4");
   });
 });
