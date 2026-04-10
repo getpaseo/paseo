@@ -109,6 +109,7 @@ export function ToastViewport({
 }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const isMobile = useIsCompactFormFactor();
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-8)).current;
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -182,7 +183,6 @@ export function ToastViewport({
     return null;
   }
 
-  const isMobile = useIsCompactFormFactor();
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
   const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const topOffset =
