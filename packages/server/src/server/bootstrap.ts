@@ -633,7 +633,6 @@ export async function createPaseoDaemon(
       scheduleService,
       checkoutDiffManager,
       mcpServerStore,
-      checkoutDiffManager,
     );
 
     logger.info({ elapsed: elapsed() }, "Bootstrap complete, ready to start listening");

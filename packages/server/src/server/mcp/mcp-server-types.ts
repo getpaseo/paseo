@@ -1,4 +1,5 @@
 import type { McpServerConfig } from "../agent/agent-sdk-types.js";
+export type { McpServerConfig } from "../agent/agent-sdk-types.js";
 
 /**
  * MCP server record persisted to disk.
