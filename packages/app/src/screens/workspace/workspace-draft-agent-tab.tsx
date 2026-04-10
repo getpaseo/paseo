@@ -25,7 +25,7 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: false,
   supportsDynamicModes: false,
-  supportsMcpServers: false,
+  supportsMcpServers: true,
   supportsReasoningStream: false,
   supportsToolInvocations: false,
 };
