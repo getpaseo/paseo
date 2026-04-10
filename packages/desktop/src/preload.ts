@@ -47,8 +47,35 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   },
   notification: {
     isSupported: () => ipcRenderer.invoke("paseo:notification:isSupported"),
-    sendNotification: (payload: { title: string; body?: string; data?: Record<string, unknown> }) =>
-      ipcRenderer.invoke("paseo:notification:send", payload),
+    sendNotification: (payload: {
+      title: string;
+      body?: string;
+      data?: Record<string, unknown>;
+      actions?: Array<{ text: string }>;
+    }) => ipcRenderer.invoke("paseo:notification:send", payload),
+    onAction: (
+      handler: (payload: {
+        action: string;
+        notificationId: string;
+        data?: Record<string, unknown>;
+      }) => void,
+    ): (() => void) => {
+      const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
+        handler(
+          payload as {
+            action: string;
+            notificationId: string;
+            data?: Record<string, unknown>;
+          },
+        );
+      };
+      ipcRenderer.on("paseo:event:notification-action", listener);
+      return () => {
+        ipcRenderer.removeListener("paseo:event:notification-action", listener);
+      };
+    },
+    incrementBadge: () => ipcRenderer.invoke("paseo:notification:incrementBadge"),
+    clearBadge: () => ipcRenderer.invoke("paseo:notification:clearBadge"),
   },
   opener: {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),
