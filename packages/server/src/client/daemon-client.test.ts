@@ -548,7 +548,11 @@ describe("DaemonClient", () => {
     };
     expect(subscribeRequest.message.type).toBe("subscribe_checkout_diff_request");
     expect(subscribeRequest.message.cwd).toBe("/tmp/project");
-    expect(subscribeRequest.message.compare).toEqual({ mode: "base", baseRef: "main", ignoreWhitespace: false });
+    expect(subscribeRequest.message.compare).toEqual({
+      mode: "base",
+      baseRef: "main",
+      ignoreWhitespace: false,
+    });
 
     mock.triggerMessage(
       JSON.stringify({
