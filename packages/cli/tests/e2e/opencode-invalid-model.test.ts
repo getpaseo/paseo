@@ -27,13 +27,14 @@ async function cleanup(): Promise<void> {
 }
 
 async function test_invalid_opencode_model_does_not_report_completed_while_still_running() {
-  const result = await ctx.paseo(
-    ["run", "--provider", "opencode/adklasldkdas", "hello"],
-    { timeout: 45_000 },
-  );
+  const result = await ctx.paseo(["run", "--provider", "opencode/adklasldkdas", "hello"], {
+    timeout: 45_000,
+  });
 
   const output = `${result.stdout}\n${result.stderr}`;
-  const agentId = output.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
+  const agentId = output.match(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+  )?.[0];
 
   if (result.exitCode !== 0) {
     assert(
@@ -46,7 +47,11 @@ async function test_invalid_opencode_model_does_not_report_completed_while_still
   assert(agentId, `expected run output to include an agent id\nstdout:\n${result.stdout}`);
 
   const inspect = await ctx.paseo(["inspect", agentId], { timeout: 15_000 });
-  assert.strictEqual(inspect.exitCode, 0, `inspect failed\nstdout:\n${inspect.stdout}\nstderr:\n${inspect.stderr}`);
+  assert.strictEqual(
+    inspect.exitCode,
+    0,
+    `inspect failed\nstdout:\n${inspect.stdout}\nstderr:\n${inspect.stderr}`,
+  );
 
   const runReportedCompleted = result.stdout.includes("completed");
   const inspectStillRunning = inspect.stdout.includes("Status              running");

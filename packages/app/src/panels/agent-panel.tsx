@@ -254,7 +254,7 @@ function AgentPanelBody({
 
   const agentState = useSessionStore(
     useShallow((state) => {
-      const agent = agentId ? state.sessions[serverId]?.agents?.get(agentId) ?? null : null;
+      const agent = agentId ? (state.sessions[serverId]?.agents?.get(agentId) ?? null) : null;
       return {
         serverId: agent?.serverId ?? null,
         id: agent?.id ?? null,
@@ -702,7 +702,6 @@ function AgentPanelBody({
     setPendingPermissions,
     shouldUseOptimisticStream,
   ]);
-
 
   if (viewState.tag === "not_found") {
     return (

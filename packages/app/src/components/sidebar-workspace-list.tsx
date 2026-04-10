@@ -100,7 +100,10 @@ const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = 0;
 const EMPHASIZED_STATUS_DOT_OFFSET = -1;
-function getWorkspacePrIconColor(theme: ReturnType<typeof useUnistyles>["theme"], state: PrHint["state"]) {
+function getWorkspacePrIconColor(
+  theme: ReturnType<typeof useUnistyles>["theme"],
+  state: PrHint["state"],
+) {
   switch (state) {
     case "merged":
       return theme.colors.palette.purple[500];
@@ -198,19 +201,10 @@ function WorkspacePrBadge({ hint }: { hint: PrHint }) {
       onPress={handlePress}
       onPointerEnter={() => setIsHovered(true)}
       onPointerLeave={() => setIsHovered(false)}
-      style={({ pressed }) => [
-        styles.workspacePrBadge,
-        pressed && styles.workspacePrBadgePressed,
-      ]}
+      style={({ pressed }) => [styles.workspacePrBadge, pressed && styles.workspacePrBadgePressed]}
     >
       <GitPullRequest size={12} color={iconColor} />
-      <Text
-        style={[
-          styles.workspacePrBadgeText,
-          { color: textColor },
-        ]}
-        numberOfLines={1}
-      >
+      <Text style={[styles.workspacePrBadgeText, { color: textColor }]} numberOfLines={1}>
         #{hint.number}
       </Text>
       {isHovered && <ExternalLink size={10} color={textColor} />}
@@ -255,11 +249,7 @@ function WorkspaceStatusIndicator({
   }
 
   const KindIcon =
-    workspaceKind === "local_checkout"
-      ? Monitor
-      : workspaceKind === "worktree"
-        ? FolderGit2
-        : null;
+    workspaceKind === "local_checkout" ? Monitor : workspaceKind === "worktree" ? FolderGit2 : null;
   if (!KindIcon) return null;
 
   const dotColor = getStatusDotColor({ theme, bucket, showDoneAsInactive: false });
@@ -1798,34 +1788,31 @@ export function SidebarWorkspaceList({
     [getWorkspaceOrder, serverId, setWorkspaceOrder],
   );
 
-  const handleWorktreeCreated = useCallback(
-    (workspaceId: string) => {
-      setCreatingWorkspaceIds((current) => {
-        const next = new Set(current);
-        next.add(workspaceId);
-        return next;
-      });
-      const existingTimeout = creatingWorkspaceTimeoutsRef.current.get(workspaceId);
-      if (existingTimeout) {
-        clearTimeout(existingTimeout);
-      }
-      creatingWorkspaceTimeoutsRef.current.set(
-        workspaceId,
-        setTimeout(() => {
-          creatingWorkspaceTimeoutsRef.current.delete(workspaceId);
-          setCreatingWorkspaceIds((current) => {
-            if (!current.has(workspaceId)) {
-              return current;
-            }
-            const next = new Set(current);
-            next.delete(workspaceId);
-            return next;
-          });
-        }, 3000),
-      );
-    },
-    [],
-  );
+  const handleWorktreeCreated = useCallback((workspaceId: string) => {
+    setCreatingWorkspaceIds((current) => {
+      const next = new Set(current);
+      next.add(workspaceId);
+      return next;
+    });
+    const existingTimeout = creatingWorkspaceTimeoutsRef.current.get(workspaceId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+    creatingWorkspaceTimeoutsRef.current.set(
+      workspaceId,
+      setTimeout(() => {
+        creatingWorkspaceTimeoutsRef.current.delete(workspaceId);
+        setCreatingWorkspaceIds((current) => {
+          if (!current.has(workspaceId)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.delete(workspaceId);
+          return next;
+        });
+      }, 3000),
+    );
+  }, []);
 
   const renderProject = useCallback(
     ({ item, drag, isActive, dragHandleProps }: DraggableRenderItemInfo<SidebarProjectEntry>) => {
@@ -1875,12 +1862,7 @@ export function SidebarWorkspaceList({
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle}>No projects yet</Text>
           <Text style={styles.emptyText}>Add a project to get started</Text>
-          <Button
-            variant="ghost"
-            size="sm"
-            leftIcon={Plus}
-            onPress={onAddProject}
-          >
+          <Button variant="ghost" size="sm" leftIcon={Plus} onPress={onAddProject}>
             Add project
           </Button>
         </View>

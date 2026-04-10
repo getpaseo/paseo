@@ -238,13 +238,21 @@ export async function getCliInstallStatus(): Promise<InstallStatus> {
 // Skills Installation
 // ---------------------------------------------------------------------------
 
-async function copySkillFile(sourceFile: string, destDir: string, skillName: string): Promise<void> {
+async function copySkillFile(
+  sourceFile: string,
+  destDir: string,
+  skillName: string,
+): Promise<void> {
   const destSkillDir = path.join(destDir, skillName);
   await fs.mkdir(destSkillDir, { recursive: true });
   await fs.copyFile(sourceFile, path.join(destSkillDir, "SKILL.md"));
 }
 
-async function symlinkSkillDir(skillName: string, targetDir: string, linkParentDir: string): Promise<void> {
+async function symlinkSkillDir(
+  skillName: string,
+  targetDir: string,
+  linkParentDir: string,
+): Promise<void> {
   await fs.mkdir(linkParentDir, { recursive: true });
   const target = path.join(targetDir, skillName);
   const linkPath = path.join(linkParentDir, skillName);

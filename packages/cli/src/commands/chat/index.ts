@@ -20,9 +20,9 @@ export function createChatCommand(): Command {
       .option("--purpose <text>", "Room purpose/description"),
   ).action(withOutput(runCreateCommand));
 
-  addJsonAndDaemonHostOptions(
-    chat.command("ls").description("List chat rooms"),
-  ).action(withOutput(runLsCommand));
+  addJsonAndDaemonHostOptions(chat.command("ls").description("List chat rooms")).action(
+    withOutput(runLsCommand),
+  );
 
   addJsonAndDaemonHostOptions(
     chat

@@ -470,11 +470,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         // wake; if none arrives within the expected sleep window, verify the
         // agent settled to idle (notification was already processed).
         const autonomousWake = await client
-          .waitForAgentUpsert(
-            agent.id,
-            (snapshot) => snapshot.status === "running",
-            15_000,
-          )
+          .waitForAgentUpsert(agent.id, (snapshot) => snapshot.status === "running", 15_000)
           .catch(() => null);
 
         if (autonomousWake) {
@@ -539,11 +535,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         // HELLO. When it races with HELLO, the notification is handled during
         // the foreground turn and there is no separate autonomous running edge.
         const autonomousWake = await client
-          .waitForAgentUpsert(
-            agent.id,
-            (snapshot) => snapshot.status === "running",
-            15_000,
-          )
+          .waitForAgentUpsert(agent.id, (snapshot) => snapshot.status === "running", 15_000)
           .catch(() => null);
 
         if (autonomousWake) {

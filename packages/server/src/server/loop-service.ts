@@ -598,7 +598,9 @@ export class LoopService {
     iteration: LoopIterationRecord,
     signal: AbortSignal,
   ): Promise<boolean> {
-    const agent = await this.options.agentManager.createAgent(this.buildWorkerConfig(loop, iteration));
+    const agent = await this.options.agentManager.createAgent(
+      this.buildWorkerConfig(loop, iteration),
+    );
     iteration.workerAgentId = agent.id;
     loop.activeWorkerAgentId = agent.id;
     loop.updatedAt = nowIso();
@@ -688,9 +690,7 @@ export class LoopService {
         iteration: iteration.index,
         source: "verify-check",
         level: result.passed ? "info" : "error",
-        text: output
-          ? `exit ${result.exitCode}\n${output}`
-          : `exit ${result.exitCode}`,
+        text: output ? `exit ${result.exitCode}\n${output}` : `exit ${result.exitCode}`,
       });
       loop.updatedAt = nowIso();
       await this.persist();
@@ -736,7 +736,10 @@ export class LoopService {
     try {
       const result = await getStructuredAgentResponse({
         caller: async (nextPrompt) => {
-          const run = await this.options.agentManager.runAgent(verifierAgent.id, this.toPrompt(nextPrompt));
+          const run = await this.options.agentManager.runAgent(
+            verifierAgent.id,
+            this.toPrompt(nextPrompt),
+          );
           return this.resolveFinalText(run.timeline, run.finalText);
         },
         prompt: loop.verifyPrompt,
@@ -788,7 +791,10 @@ export class LoopService {
     };
   }
 
-  private buildVerifierConfig(loop: LoopRecord, iteration: LoopIterationRecord): AgentSessionConfig {
+  private buildVerifierConfig(
+    loop: LoopRecord,
+    iteration: LoopIterationRecord,
+  ): AgentSessionConfig {
     return {
       provider: loop.verifierProvider ?? loop.provider,
       cwd: loop.cwd,
@@ -815,7 +821,11 @@ export class LoopService {
     return text;
   }
 
-  private finishLoop(loop: LoopRecord, status: Exclude<LoopStatus, "running">, message: string): void {
+  private finishLoop(
+    loop: LoopRecord,
+    status: Exclude<LoopStatus, "running">,
+    message: string,
+  ): void {
     loop.status = status;
     loop.completedAt = nowIso();
     loop.updatedAt = loop.completedAt;
@@ -830,10 +840,7 @@ export class LoopService {
     });
   }
 
-  private appendLog(
-    loop: LoopRecord,
-    entry: Omit<LoopLogEntry, "seq" | "timestamp">,
-  ): void {
+  private appendLog(loop: LoopRecord, entry: Omit<LoopLogEntry, "seq" | "timestamp">): void {
     loop.logs.push({
       seq: loop.nextLogSeq,
       timestamp: nowIso(),
@@ -852,7 +859,9 @@ export class LoopService {
     if (exact) {
       return exact;
     }
-    const matches = Array.from(this.loops.values()).filter((record) => record.id.startsWith(trimmed));
+    const matches = Array.from(this.loops.values()).filter((record) =>
+      record.id.startsWith(trimmed),
+    );
     if (matches.length === 1) {
       return matches[0]!;
     }

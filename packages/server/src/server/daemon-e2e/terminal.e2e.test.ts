@@ -1073,7 +1073,12 @@ describe("daemon E2E terminal", () => {
         type: "input",
         data: "echo hello world\r",
       });
-      await waitForTerminalOutput(ctx.client, terminalId, (text) => text.includes("hello world"), 15000);
+      await waitForTerminalOutput(
+        ctx.client,
+        terminalId,
+        (text) => text.includes("hello world"),
+        15000,
+      );
 
       const capture = await ctx.client.captureTerminal(terminalId);
 
@@ -1155,7 +1160,12 @@ describe("daemon E2E terminal", () => {
         type: "input",
         data: "printf '\\033[31mred text\\033[0m\\n'\r",
       });
-      await waitForTerminalOutput(ctx.client, terminalId, (text) => text.includes("red text"), 15000);
+      await waitForTerminalOutput(
+        ctx.client,
+        terminalId,
+        (text) => text.includes("red text"),
+        15000,
+      );
 
       const capture = await ctx.client.captureTerminal(terminalId);
       const capturedText = capture.lines.join("\n");

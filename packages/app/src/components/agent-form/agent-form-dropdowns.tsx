@@ -773,7 +773,8 @@ export function ModelDropdown({
   const [isOpen, setIsOpen] = useState(false);
   const anchorRef = useRef<View>(null);
 
-  const selectedLabel = models.find((model) => model.id === selectedModel)?.label ?? selectedModel ?? "Select model";
+  const selectedLabel =
+    models.find((model) => model.id === selectedModel)?.label ?? selectedModel ?? "Select model";
   const placeholder = isLoading && models.length === 0 ? "Loading..." : "Select model";
   const helperText = error
     ? undefined

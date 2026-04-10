@@ -26,9 +26,7 @@ describe("OpenCode assistant message", () => {
 
         const result = await session.run("Say hello back in one sentence.");
 
-        const assistantItems = result.timeline.filter(
-          (item) => item.type === "assistant_message",
-        );
+        const assistantItems = result.timeline.filter((item) => item.type === "assistant_message");
         expect(assistantItems.length).toBeGreaterThan(0);
         expect(result.finalText.length).toBeGreaterThan(0);
       } finally {
@@ -69,5 +67,4 @@ describe("OpenCode assistant message", () => {
     },
     60_000,
   );
-
 });

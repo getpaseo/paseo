@@ -122,22 +122,18 @@ let recentSupervisorLogs = "";
 try {
   console.log("Test 1: start supervisor-entrypoint in dev mode with isolated PASEO_HOME");
 
-  supervisorProcess = spawn(
-    "npx",
-    ["tsx", "../server/scripts/supervisor-entrypoint.ts", "--dev"],
-    {
-      cwd: cliRoot,
-      env: {
-        ...process.env,
-        ...testEnv,
-        PASEO_HOME: paseoHome,
-        PASEO_LISTEN: `127.0.0.1:${port}`,
-        PASEO_RELAY_ENABLED: "false",
-        CI: "true",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
+  supervisorProcess = spawn("npx", ["tsx", "../server/scripts/supervisor-entrypoint.ts", "--dev"], {
+    cwd: cliRoot,
+    env: {
+      ...process.env,
+      ...testEnv,
+      PASEO_HOME: paseoHome,
+      PASEO_LISTEN: `127.0.0.1:${port}`,
+      PASEO_RELAY_ENABLED: "false",
+      CI: "true",
     },
-  );
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
   supervisorProcess.stdout?.on("data", (chunk) => {
     recentSupervisorLogs = (recentSupervisorLogs + chunk.toString()).slice(-8000);
@@ -165,8 +161,7 @@ try {
   const command = readProcessCommand(daemonPid);
   assert(command !== null, "pid lock pid should resolve to a running process command");
   assert(
-    command.includes("supervisor-entrypoint.ts") ||
-      command.includes("supervisor-entrypoint.js"),
+    command.includes("supervisor-entrypoint.ts") || command.includes("supervisor-entrypoint.js"),
     `pid lock pid should be supervisor-entrypoint process, got: ${command}`,
   );
   console.log(`✓ dev daemon started with daemon pid ${daemonPid}\n`);

@@ -64,9 +64,9 @@ describe("daemon E2E (real opencode) - initial prompt wait", () => {
         );
 
         expect(assistantMessages.length).toBeGreaterThan(0);
-        expect(
-          assistantMessages.some((entry) => entry.item.text.includes("BIG_PICKLE_OK")),
-        ).toBe(true);
+        expect(assistantMessages.some((entry) => entry.item.text.includes("BIG_PICKLE_OK"))).toBe(
+          true,
+        );
       } finally {
         await client.close().catch(() => undefined);
         await daemon.close();

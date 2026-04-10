@@ -51,7 +51,10 @@ export function loadConfig(
   // - unix:///path/to/socket (Unix socket)
   // Default is TCP at 127.0.0.1:6767
   const listen =
-    options?.cli?.listen ?? env.PASEO_LISTEN ?? persisted.daemon?.listen ?? `127.0.0.1:${env.PORT ?? DEFAULT_PORT}`;
+    options?.cli?.listen ??
+    env.PASEO_LISTEN ??
+    persisted.daemon?.listen ??
+    `127.0.0.1:${env.PORT ?? DEFAULT_PORT}`;
 
   const envCorsOrigins = env.PASEO_CORS_ORIGINS
     ? env.PASEO_CORS_ORIGINS.split(",").map((s) => s.trim())

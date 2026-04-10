@@ -27,12 +27,7 @@ try {
 
   {
     console.log("Test 2: chat post/read/wait work");
-    const posted = await ctx.paseo([
-      "chat",
-      "post",
-      "coord-room",
-      "first message for @agent-1",
-    ], {
+    const posted = await ctx.paseo(["chat", "post", "coord-room", "first message for @agent-1"], {
       env: { PASEO_AGENT_ID: "00000000-0000-4000-8000-000000000111" },
     });
     assert.strictEqual(posted.exitCode, 0, posted.stderr);

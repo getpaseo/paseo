@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
-import { buildHostAgentDetailRoute, buildHostSessionsRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
+import {
+  buildHostAgentDetailRoute,
+  buildHostSessionsRoute,
+  buildHostWorkspaceRoute,
+} from "@/utils/host-routes";
 
 export type ArchiveTabAgent = {
   id: string;
@@ -68,8 +72,7 @@ async function loadDaemonClientConstructor(): Promise<
     clientType: "cli";
   }) => ArchiveTabDaemonClient
 > {
-  const moduleUrl = new URL("../../../server/dist/server/server/exports.js", import.meta.url)
-    .href;
+  const moduleUrl = new URL("../../../server/dist/server/server/exports.js", import.meta.url).href;
   const mod = (await import(moduleUrl)) as {
     DaemonClient: new (config: {
       url: string;

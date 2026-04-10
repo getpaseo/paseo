@@ -505,8 +505,7 @@ async function main() {
       dragRegionCheck.candidate.explicitNoDragInteractive.length > 0,
     details: {
       candidate: dragRegionCheck.candidate,
-      explicitNoDragInteractive:
-        dragRegionCheck.candidate?.explicitNoDragInteractive ?? [],
+      explicitNoDragInteractive: dragRegionCheck.candidate?.explicitNoDragInteractive ?? [],
     },
     screenshot: dragScreenshot,
   };

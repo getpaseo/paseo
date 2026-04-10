@@ -4,12 +4,13 @@ import type { Logger } from "pino";
 import { AgentManager } from "../agent/agent-manager.js";
 import type { ManagedAgent } from "../agent/agent-manager.js";
 import { AgentStorage } from "../agent/agent-storage.js";
-import type {
-  AgentPromptInput,
-  AgentSessionConfig,
-} from "../agent/agent-sdk-types.js";
+import type { AgentPromptInput, AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
-import { buildConfigOverrides, buildSessionConfig, extractTimestamps } from "../persistence-hooks.js";
+import {
+  buildConfigOverrides,
+  buildSessionConfig,
+  extractTimestamps,
+} from "../persistence-hooks.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {

@@ -33,11 +33,7 @@ export async function connectScheduleClient(
   }
 }
 
-export function toScheduleCommandError(
-  code: string,
-  action: string,
-  error: unknown,
-): CommandError {
+export function toScheduleCommandError(code: string, action: string, error: unknown): CommandError {
   if (error && typeof error === "object" && "code" in error) {
     return error as CommandError;
   }

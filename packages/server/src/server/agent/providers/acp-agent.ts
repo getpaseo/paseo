@@ -1,7 +1,4 @@
-import {
-  type ChildProcess,
-  type ChildProcessWithoutNullStreams,
-} from "node:child_process";
+import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -107,8 +104,7 @@ const ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
   terminal: true,
 };
 
-const COPILOT_AUTOPILOT_MODE =
-  "https://agentclientprotocol.com/protocol/session-modes#autopilot";
+const COPILOT_AUTOPILOT_MODE = "https://agentclientprotocol.com/protocol/session-modes#autopilot";
 
 type ACPAgentClientOptions = {
   provider: string;
@@ -485,14 +481,15 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async spawnProcess(
-    launchEnv?: Record<string, string>,
-  ): Promise<SpawnedACPProcess> {
+  protected async spawnProcess(launchEnv?: Record<string, string>): Promise<SpawnedACPProcess> {
     const { command, args } = await this.resolveLaunchCommand();
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
       env: {
-        ...applyProviderEnv(process.env as Record<string, string | undefined>, this.runtimeSettings),
+        ...applyProviderEnv(
+          process.env as Record<string, string | undefined>,
+          this.runtimeSettings,
+        ),
         ...(launchEnv ?? {}),
       },
       stdio: ["pipe", "pipe", "pipe"],
@@ -804,7 +801,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     };
   }
 
-  async startTurn(prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<{ turnId: string }> {
+  async startTurn(
+    prompt: AgentPromptInput,
+    _options?: AgentRunOptions,
+  ): Promise<{ turnId: string }> {
     if (this.closed) {
       throw new Error(`${this.provider} session is closed`);
     }
@@ -1155,9 +1155,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.activeForegroundTurnId = null;
   }
 
-  async requestPermission(
-    params: RequestPermissionRequest,
-  ): Promise<RequestPermissionResponse> {
+  async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     if (shouldAutoApprovePermissionRequest(this.provider, this.currentMode)) {
       const selectedOption = selectPermissionOption(params.options, { behavior: "allow" });
       return selectedOption
@@ -1177,12 +1175,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.toolSnapshotTransformer) {
       toolSnapshot = this.toolSnapshotTransformer(toolSnapshot);
     }
-    const request = mapPermissionRequest(
-      this.provider,
-      requestId,
-      params,
-      toolSnapshot,
-    );
+    const request = mapPermissionRequest(this.provider, requestId, params, toolSnapshot);
 
     const promise = new Promise<RequestPermissionResponse>((resolve, reject) => {
       this.pendingPermissions.set(requestId, {
@@ -1242,11 +1235,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   async createTerminal(params: CreateTerminalRequest): Promise<{ terminalId: string }> {
     const terminalId = randomUUID();
-    const env = Object.fromEntries((params.env ?? []).map((entry: EnvVariable) => [entry.name, entry.value]));
+    const env = Object.fromEntries(
+      (params.env ?? []).map((entry: EnvVariable) => [entry.name, entry.value]),
+    );
     const child = spawnProcess(params.command, params.args ?? [], {
       cwd: params.cwd ?? this.config.cwd,
       env: {
-        ...applyProviderEnv(process.env as Record<string, string | undefined>, this.runtimeSettings),
+        ...applyProviderEnv(
+          process.env as Record<string, string | undefined>,
+          this.runtimeSettings,
+        ),
         ...env,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -1271,9 +1269,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       rejectExit,
     };
 
-    child.stdout!.on("data", (chunk: Buffer | string) => appendTerminalOutput(entry, chunk.toString()));
-    child.stderr!.on("data", (chunk: Buffer | string) => appendTerminalOutput(entry, chunk.toString()));
-    child.once("error", (error) => rejectExit(error instanceof Error ? error : new Error(String(error))));
+    child.stdout!.on("data", (chunk: Buffer | string) =>
+      appendTerminalOutput(entry, chunk.toString()),
+    );
+    child.stderr!.on("data", (chunk: Buffer | string) =>
+      appendTerminalOutput(entry, chunk.toString()),
+    );
+    child.once("error", (error) =>
+      rejectExit(error instanceof Error ? error : new Error(String(error))),
+    );
     child.once("exit", (code, signal) => {
       const exit = { exitCode: code, signal };
       entry.exit = exit;
@@ -1328,7 +1332,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const child = spawnProcess(command, args, {
       cwd: this.config.cwd,
       env: {
-        ...applyProviderEnv(process.env as Record<string, string | undefined>, this.runtimeSettings),
+        ...applyProviderEnv(
+          process.env as Record<string, string | undefined>,
+          this.runtimeSettings,
+        ),
         ...(this.launchEnv ?? {}),
       },
       stdio: ["pipe", "pipe", "pipe"],
@@ -1518,7 +1525,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private deriveAvailableModels(
     models: SessionModelState | null | undefined,
   ): AgentModelDefinition[] {
-    const availableModels = deriveModelDefinitionsFromACP(this.provider, models, this.configOptions);
+    const availableModels = deriveModelDefinitionsFromACP(
+      this.provider,
+      models,
+      this.configOptions,
+    );
     return this.modelTransformer ? this.modelTransformer(availableModels) : availableModels;
   }
 
@@ -1578,7 +1589,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private finishTurn(event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>): void {
+  private finishTurn(
+    event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
+  ): void {
     this.activeForegroundTurnId = null;
     this.suppressUserEchoMessageId = null;
     this.suppressUserEchoText = null;
@@ -1623,7 +1636,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return parts.length > 0 ? parts.join(" | ") : undefined;
   }
 
-  private getSelectConfigOption(category: string): Extract<SessionConfigOption, { type: "select" }> | null {
+  private getSelectConfigOption(
+    category: string,
+  ): Extract<SessionConfigOption, { type: "select" }> | null {
     const option = this.configOptions.find(
       (entry): entry is Extract<SessionConfigOption, { type: "select" }> =>
         entry.type === "select" && entry.category === category,
@@ -1643,7 +1658,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 function flattenSelectOptions(
   options: Extract<SessionConfigOption, { type: "select" }>["options"],
 ): Array<{ value: string; name: string; description?: string | null; group?: string }> {
-  const flattened: Array<{ value: string; name: string; description?: string | null; group?: string }> = [];
+  const flattened: Array<{
+    value: string;
+    name: string;
+    description?: string | null;
+    group?: string;
+  }> = [];
   for (const option of options) {
     if ("value" in option) {
       flattened.push(option);
@@ -1752,7 +1772,9 @@ function extractPromptText(prompt: AgentPromptInput): string {
     return prompt;
   }
   return prompt
-    .filter((block): block is Extract<AgentPromptContentBlock, { type: "text" }> => block.type === "text")
+    .filter(
+      (block): block is Extract<AgentPromptContentBlock, { type: "text" }> => block.type === "text",
+    )
     .map((block) => block.text)
     .join("");
 }
@@ -1764,7 +1786,9 @@ function contentBlockToText(content: ContentBlock): string {
     case "resource_link":
       return content.title ?? content.uri;
     case "resource":
-      return "text" in content.resource ? content.resource.text : `[resource:${content.resource.mimeType ?? "binary"}]`;
+      return "text" in content.resource
+        ? content.resource.text
+        : `[resource:${content.resource.mimeType ?? "binary"}]`;
     case "image":
       return "[image]";
     case "audio":
@@ -1785,8 +1809,8 @@ function mergeToolSnapshot(
     title: (update.title ?? previous?.title ?? toolCallId) as string,
     kind: update.kind ?? previous?.kind ?? null,
     status: update.status ?? previous?.status ?? null,
-    content: update.content !== undefined ? update.content : previous?.content ?? null,
-    locations: update.locations !== undefined ? update.locations : previous?.locations ?? null,
+    content: update.content !== undefined ? update.content : (previous?.content ?? null),
+    locations: update.locations !== undefined ? update.locations : (previous?.locations ?? null),
     rawInput: update.rawInput !== undefined ? update.rawInput : previous?.rawInput,
     rawOutput: update.rawOutput !== undefined ? update.rawOutput : previous?.rawOutput,
     ...(isFull ? {} : {}),
@@ -1853,7 +1877,10 @@ function mapToolStatus(status: ToolCallStatus | null | undefined): ToolCallTimel
   }
 }
 
-function mapToolDetail(snapshot: ACPToolSnapshot, terminals: Map<string, TerminalEntry>): ToolCallDetail {
+function mapToolDetail(
+  snapshot: ACPToolSnapshot,
+  terminals: Map<string, TerminalEntry>,
+): ToolCallDetail {
   const firstLocation = snapshot.locations?.[0]?.path;
   const textContent = extractToolText(snapshot.content);
   const diffContent = extractDiffContent(snapshot.content);
@@ -1881,7 +1908,7 @@ function mapToolDetail(snapshot: ACPToolSnapshot, terminals: Map<string, Termina
         newString:
           snapshot.kind === "delete"
             ? ""
-            : diffContent?.newText ?? readString(rawInput, ["newText", "newString"]),
+            : (diffContent?.newText ?? readString(rawInput, ["newText", "newString"])),
         unifiedDiff: textContent ?? undefined,
       };
     case "search":
@@ -1971,7 +1998,9 @@ function extractToolText(content: ToolCallContent[] | null | undefined): string 
 function extractDiffContent(
   content: ToolCallContent[] | null | undefined,
 ): { oldText?: string | null; newText: string } | null {
-  const diff = content?.find((item): item is Extract<ToolCallContent, { type: "diff" }> => item.type === "diff");
+  const diff = content?.find(
+    (item): item is Extract<ToolCallContent, { type: "diff" }> => item.type === "diff",
+  );
   return diff ? { oldText: diff.oldText ?? undefined, newText: diff.newText } : null;
 }
 
@@ -2063,10 +2092,7 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function readString(
-  record: Record<string, unknown> | null,
-  keys: string[],
-): string | undefined {
+function readString(record: Record<string, unknown> | null, keys: string[]): string | undefined {
   if (!record) {
     return undefined;
   }
@@ -2079,10 +2105,7 @@ function readString(
   return undefined;
 }
 
-function readNumber(
-  record: Record<string, unknown> | null,
-  keys: string[],
-): number | undefined {
+function readNumber(record: Record<string, unknown> | null, keys: string[]): number | undefined {
   if (!record) {
     return undefined;
   }
@@ -2131,7 +2154,9 @@ function stringifyUnknown(value: unknown): string | undefined {
   }
 }
 
-function coerceSessionConfigMetadata(metadata: AgentMetadata | undefined): Partial<AgentSessionConfig> {
+function coerceSessionConfigMetadata(
+  metadata: AgentMetadata | undefined,
+): Partial<AgentSessionConfig> {
   if (!metadata || typeof metadata !== "object") {
     return {};
   }

@@ -2,9 +2,7 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 
 export type DesktopBadgeWorkspaceStatus = WorkspaceDescriptor["status"];
 
-export function isWorkspaceActionableForDesktopBadge(
-  status: DesktopBadgeWorkspaceStatus,
-): boolean {
+export function isWorkspaceActionableForDesktopBadge(status: DesktopBadgeWorkspaceStatus): boolean {
   return status === "attention" || status === "needs_input" || status === "failed";
 }
 

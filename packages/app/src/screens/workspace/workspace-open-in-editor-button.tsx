@@ -3,10 +3,7 @@ import { ActivityIndicator, Platform, Pressable, Text, View } from "react-native
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type {
-  EditorTargetDescriptorPayload,
-  EditorTargetId,
-} from "@server/shared/messages";
+import type { EditorTargetDescriptorPayload, EditorTargetId } from "@server/shared/messages";
 import { EditorAppIcon } from "@/components/icons/editor-app-icons";
 import {
   DropdownMenu,
@@ -16,10 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import {
-  resolvePreferredEditorId,
-  usePreferredEditor,
-} from "@/hooks/use-preferred-editor";
+import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
 import { isAbsolutePath } from "@/utils/path";
 
 interface WorkspaceOpenInEditorButtonProps {
@@ -27,10 +21,7 @@ interface WorkspaceOpenInEditorButtonProps {
   cwd: string;
 }
 
-export function WorkspaceOpenInEditorButton({
-  serverId,
-  cwd,
-}: WorkspaceOpenInEditorButtonProps) {
+export function WorkspaceOpenInEditorButton({ serverId, cwd }: WorkspaceOpenInEditorButtonProps) {
   const { theme } = useUnistyles();
   const toast = useToast();
   const client = useHostRuntimeClient(serverId);
@@ -173,9 +164,9 @@ export function WorkspaceOpenInEditorButton({
                     />
                   }
                   trailing={
-                    editor.id === effectivePreferredEditorId
-                      ? <Check size={16} color={theme.colors.foregroundMuted} />
-                      : undefined
+                    editor.id === effectivePreferredEditorId ? (
+                      <Check size={16} color={theme.colors.foregroundMuted} />
+                    ) : undefined
                   }
                   onSelect={() => handleOpenEditor(editor.id)}
                 >

@@ -141,9 +141,7 @@ interface ApplyArchivedAgentCloseResultsInput {
   results: ArchivedAgentCloseResult[];
 }
 
-export function applyArchivedAgentCloseResults(
-  input: ApplyArchivedAgentCloseResultsInput,
-): void {
+export function applyArchivedAgentCloseResults(input: ApplyArchivedAgentCloseResultsInput): void {
   if (input.results.length === 0) {
     return;
   }

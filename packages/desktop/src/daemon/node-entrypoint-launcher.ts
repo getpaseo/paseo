@@ -70,7 +70,13 @@ export function createNodeEntrypointInvocation(
 
     return {
       command: input.execPath,
-      args: ["--disable-warning=DEP0040", input.packagedRunnerPath, input.argvMode, input.entrypoint.entryPath, ...input.args],
+      args: [
+        "--disable-warning=DEP0040",
+        input.packagedRunnerPath,
+        input.argvMode,
+        input.entrypoint.entryPath,
+        ...input.args,
+      ],
       env,
     };
   }

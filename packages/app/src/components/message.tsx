@@ -1938,7 +1938,11 @@ export const ToolCall = memo(function ToolCall({
 
   if (effectiveDetail?.type === "plan") {
     return (
-      <PlanCard title="Plan" text={effectiveDetail.text} disableOuterSpacing={disableOuterSpacing} />
+      <PlanCard
+        title="Plan"
+        text={effectiveDetail.text}
+        disableOuterSpacing={disableOuterSpacing}
+      />
     );
   }
 

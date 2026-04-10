@@ -162,10 +162,7 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
     }
 
     try {
-      this.logger.debug(
-        { phase: this.phase.state },
-        "[VAD] Flushing remaining audio",
-      );
+      this.logger.debug({ phase: this.phase.state }, "[VAD] Flushing remaining audio");
       this.vad.flush();
       this.stepStateMachine();
       if (this.phase.state === "speaking" || this.phase.state === "ending") {
@@ -205,10 +202,7 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
     switch (this.phase.state) {
       case "idle": {
         if (detected) {
-          this.logger.debug(
-            { now },
-            "[VAD] idle → confirming (detection started)",
-          );
+          this.logger.debug({ now }, "[VAD] idle → confirming (detection started)");
           this.phase = { state: "confirming", startedAt: now };
         }
         break;
@@ -238,10 +232,7 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
 
       case "speaking": {
         if (!detected) {
-          this.logger.debug(
-            { now },
-            "[VAD] speaking → ending (silence started)",
-          );
+          this.logger.debug({ now }, "[VAD] speaking → ending (silence started)");
           this.phase = { state: "ending", startedAt: now };
         }
         break;

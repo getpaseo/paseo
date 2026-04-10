@@ -1208,12 +1208,7 @@ describe("HostRuntimeStore", () => {
         archivedAt: stale.archivedAt ? new Date(stale.archivedAt) : null,
         attentionTimestamp: stale.attentionTimestamp ? new Date(stale.attentionTimestamp) : null,
       };
-      return new Map([
-        [
-          stale.id,
-          staleAgent,
-        ],
-      ]);
+      return new Map([[stale.id, staleAgent]]);
     });
 
     store.syncHosts([host]);

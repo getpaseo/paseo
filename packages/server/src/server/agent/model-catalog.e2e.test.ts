@@ -16,10 +16,7 @@ function isBinaryInstalled(binary: string): boolean {
 const hasCodex = isBinaryInstalled("codex");
 const hasOpenCode = isBinaryInstalled("opencode");
 
-function modelMatchesFamily(
-  model: AgentModelDefinition,
-  family: "sonnet" | "haiku",
-): boolean {
+function modelMatchesFamily(model: AgentModelDefinition, family: "sonnet" | "haiku"): boolean {
   const haystacks = [model.id, model.label, model.description ?? ""].map((value) =>
     value.toLowerCase(),
   );

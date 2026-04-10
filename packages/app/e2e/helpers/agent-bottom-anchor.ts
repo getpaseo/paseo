@@ -88,8 +88,7 @@ async function loadDaemonClientConstructor(): Promise<
     clientType: "cli";
   }) => DaemonClientInstance
 > {
-  const moduleUrl = new URL("../../../server/dist/server/server/exports.js", import.meta.url)
-    .href;
+  const moduleUrl = new URL("../../../server/dist/server/server/exports.js", import.meta.url).href;
   const mod = (await import(moduleUrl)) as {
     DaemonClient: new (config: {
       url: string;

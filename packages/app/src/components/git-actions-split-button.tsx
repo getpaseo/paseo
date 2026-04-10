@@ -98,9 +98,9 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
                         testID={`changes-menu-${action.id}`}
                         leading={action.icon}
                         trailing={
-                          action.id === "archive-worktree" && archiveShortcutKeys
-                            ? <Shortcut chord={archiveShortcutKeys} />
-                            : undefined
+                          action.id === "archive-worktree" && archiveShortcutKeys ? (
+                            <Shortcut chord={archiveShortcutKeys} />
+                          ) : undefined
                         }
                         disabled={action.disabled}
                         muted={Boolean(action.unavailableMessage)}

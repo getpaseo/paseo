@@ -593,7 +593,9 @@ const x = 1;
 
     writeFileSync(join(repoDir, "conflict.txt"), "local\n");
     execSync("git add conflict.txt", { cwd: repoDir });
-    execSync("git -c commit.gpgsign=false commit -m 'local rebase conflict commit'", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'local rebase conflict commit'", {
+      cwd: repoDir,
+    });
 
     const otherClone = join(tempDir, "other-clone");
     execSync(`git clone ${remoteDir} ${otherClone}`);

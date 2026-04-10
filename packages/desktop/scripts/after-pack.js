@@ -76,7 +76,11 @@ function pruneSharpLibvips(nodeModules, platform, arch) {
   if (!fs.existsSync(imgDir)) return;
 
   for (const entry of fs.readdirSync(imgDir)) {
-    if (entry.startsWith("sharp-") && entry !== prefix && !entry.startsWith(`sharp-${platform}-${arch}`)) {
+    if (
+      entry.startsWith("sharp-") &&
+      entry !== prefix &&
+      !entry.startsWith(`sharp-${platform}-${arch}`)
+    ) {
       rmSafe(path.join(imgDir, entry));
     }
   }

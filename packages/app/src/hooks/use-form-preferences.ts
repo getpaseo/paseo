@@ -31,12 +31,14 @@ const providerPreferencesSchema = z.object({
 const formPreferencesSchema = z.object({
   provider: z.string().optional(),
   providerPreferences: z.record(providerPreferencesSchema).optional(),
-  favoriteModels: z.array(
-    z.object({
-      provider: z.string(),
-      modelId: z.string(),
-    }),
-  ).optional(),
+  favoriteModels: z
+    .array(
+      z.object({
+        provider: z.string(),
+        modelId: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 export type ProviderPreferences = z.infer<typeof providerPreferencesSchema>;
@@ -148,8 +150,7 @@ export function useFormPreferences(): UseFormPreferencesReturn {
       const prev =
         queryClient.getQueryData<FormPreferences>(FORM_PREFERENCES_QUERY_KEY) ??
         DEFAULT_FORM_PREFERENCES;
-      const next =
-        typeof updates === "function" ? updates(prev) : { ...prev, ...updates };
+      const next = typeof updates === "function" ? updates(prev) : { ...prev, ...updates };
       queryClient.setQueryData<FormPreferences>(FORM_PREFERENCES_QUERY_KEY, next);
       await AsyncStorage.setItem(FORM_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
     },

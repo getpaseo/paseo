@@ -26,11 +26,7 @@ export function BranchSwitcher({
 
   if (!currentBranchName) {
     return (
-      <Text
-        testID="workspace-header-title"
-        style={styles.headerTitle}
-        numberOfLines={1}
-      >
+      <Text testID="workspace-header-title" style={styles.headerTitle} numberOfLines={1}>
         {title}
       </Text>
     );
@@ -48,21 +44,11 @@ export function BranchSwitcher({
         accessibilityRole="button"
         accessibilityLabel={`Current branch: ${currentBranchName}. Press to switch branch.`}
       >
-        <GitBranch
-          size={14}
-          color={theme.colors.foregroundMuted}
-        />
-        <Text
-          testID="workspace-header-title"
-          style={styles.headerTitle}
-          numberOfLines={1}
-        >
+        <GitBranch size={14} color={theme.colors.foregroundMuted} />
+        <Text testID="workspace-header-title" style={styles.headerTitle} numberOfLines={1}>
           {title}
         </Text>
-        <ChevronDown
-          size={12}
-          color={theme.colors.foregroundMuted}
-        />
+        <ChevronDown size={12} color={theme.colors.foregroundMuted} />
       </Pressable>
       <Combobox
         options={branchOptions}
@@ -86,12 +72,7 @@ export function BranchSwitcher({
             selected={selected}
             active={active}
             onPress={onPress}
-            leadingSlot={
-              <GitBranch
-                size={14}
-                color={theme.colors.foregroundMuted}
-              />
-            }
+            leadingSlot={<GitBranch size={14} color={theme.colors.foregroundMuted} />}
           />
         )}
       />

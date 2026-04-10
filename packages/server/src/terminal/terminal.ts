@@ -120,10 +120,7 @@ export function ensureNodePtySpawnHelperExecutableForCurrentPlatform(
 }
 
 export function resolveDefaultTerminalShell(
-  options: {
-    platform?: NodeJS.Platform;
-    env?: NodeJS.ProcessEnv;
-  } = {},
+  options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {},
 ): string {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
@@ -259,7 +256,10 @@ function extractCursorState(terminal: TerminalType): TerminalState["cursor"] {
 }
 
 function cellsToPlainText(cells: TerminalCell[], options: { stripAnsi: boolean }): string {
-  const text = cells.map((cell) => cell.char).join("").trimEnd();
+  const text = cells
+    .map((cell) => cell.char)
+    .join("")
+    .trimEnd();
   return options.stripAnsi ? stripAnsi(text) : text;
 }
 
@@ -313,14 +313,7 @@ export function captureTerminalLines(
 }
 
 export async function createTerminal(options: CreateTerminalOptions): Promise<TerminalSession> {
-  const {
-    cwd,
-    shell,
-    env = {},
-    rows = 24,
-    cols = 80,
-    name = "Terminal",
-  } = options;
+  const { cwd, shell, env = {}, rows = 24, cols = 80, name = "Terminal" } = options;
   const resolvedShell = shell ?? resolveDefaultTerminalShell();
 
   const id = randomUUID();

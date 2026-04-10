@@ -60,7 +60,9 @@ function renderChatMessageBlock(message: ChatMessageRow): string {
   const authorLabel = message.authorName
     ? `${message.authorName} (${message.author})`
     : message.author;
-  const lines = [`┌─ ${authorLabel} ── ${formatTimestamp(message.createdAt)} ── [msg ${message.id}]`];
+  const lines = [
+    `┌─ ${authorLabel} ── ${formatTimestamp(message.createdAt)} ── [msg ${message.id}]`,
+  ];
 
   if (message.replyTo !== "-") {
     lines.push(`│  reply-to: msg ${message.replyTo}`);

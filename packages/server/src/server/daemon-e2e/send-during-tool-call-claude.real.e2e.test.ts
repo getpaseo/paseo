@@ -71,7 +71,10 @@ function getAgentStatuses(messages: SessionOutboundMessage[], agentId: string): 
     .map((message) => message.payload.agent.status);
 }
 
-function getStatusesBeforeFirstAssistant(messages: SessionOutboundMessage[], agentId: string): string[] {
+function getStatusesBeforeFirstAssistant(
+  messages: SessionOutboundMessage[],
+  agentId: string,
+): string[] {
   const firstAssistantIndex = messages.findIndex(
     (message) =>
       message.type === "agent_stream" &&
@@ -126,7 +129,9 @@ async function waitForRunningToolCall(
         .map((entry) => entry.item.text) ?? [];
     const limitText = assistantTexts.find((text) => hasProviderLimitText(text));
     if (limitText) {
-      throw new Error(`Claude could not reach the tool call because the provider rejected the run: ${limitText}`);
+      throw new Error(
+        `Claude could not reach the tool call because the provider rejected the run: ${limitText}`,
+      );
     }
     if (
       timeline?.entries.some(
@@ -252,9 +257,7 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
           });
 
         // No system error messages should leak into the timeline
-        const hasSystemError = assistantTexts.some((text) =>
-          text.includes("[System Error]"),
-        );
+        const hasSystemError = assistantTexts.some((text) => text.includes("[System Error]"));
         expect(hasSystemError).toBe(false);
         expect(postSendAssistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
 

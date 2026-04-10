@@ -42,10 +42,13 @@ function getServerId(): string {
 }
 
 async function loadDaemonClientConstructor(): Promise<
-  new (config: { url: string; clientId: string; clientType: "cli" }) => TerminalPerfDaemonClient
+  new (config: {
+    url: string;
+    clientId: string;
+    clientType: "cli";
+  }) => TerminalPerfDaemonClient
 > {
-  const moduleUrl = new URL("../../../server/dist/server/server/exports.js", import.meta.url)
-    .href;
+  const moduleUrl = new URL("../../../server/dist/server/server/exports.js", import.meta.url).href;
   const mod = (await import(moduleUrl)) as {
     DaemonClient: new (config: {
       url: string;
@@ -118,7 +121,10 @@ export async function navigateToTerminal(
   await page.goto(workspaceRoute);
 
   // Wait for daemon connection (sidebar shows host label)
-  await page.getByText("localhost", { exact: true }).first().waitFor({ state: "visible", timeout: 15_000 });
+  await page
+    .getByText("localhost", { exact: true })
+    .first()
+    .waitFor({ state: "visible", timeout: 15_000 });
 
   // The workspace should now query listTerminals and discover our terminal.
   // Click the terminal tab if it auto-appeared, or wait for it.

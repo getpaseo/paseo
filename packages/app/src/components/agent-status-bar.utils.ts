@@ -52,8 +52,7 @@ export function resolveAgentModelSelection(input: {
       : null;
   const preferredModelId =
     runtimeSelectedModel?.id ?? normalizedConfiguredModelId ?? normalizedRuntimeModelId;
-  const fallbackModel =
-    models?.find((model) => model.isDefault) ?? models?.[0] ?? null;
+  const fallbackModel = models?.find((model) => model.isDefault) ?? models?.[0] ?? null;
   const selectedModel =
     models && preferredModelId
       ? (models.find((model) => model.id === preferredModelId) ?? fallbackModel ?? null)

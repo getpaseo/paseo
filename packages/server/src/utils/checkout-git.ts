@@ -157,7 +157,6 @@ type CheckoutFileChange = {
   isUntracked?: boolean;
 };
 
-
 function normalizeBranchSuggestionName(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) {
@@ -683,9 +682,7 @@ async function getMainRepoRoot(cwd: string): Promise<string> {
     env: READ_ONLY_GIT_ENV,
   });
   const worktrees = parseWorktreeList(worktreeOut);
-  const nonBareNonPaseo = worktrees.filter(
-    (wt) => !wt.isBare && !isPaseoWorktreePath(wt.path),
-  );
+  const nonBareNonPaseo = worktrees.filter((wt) => !wt.isBare && !isPaseoWorktreePath(wt.path));
   const childrenOfBareRepo = nonBareNonPaseo.filter((wt) => isDescendantPath(wt.path, normalized));
   const mainChild = childrenOfBareRepo.find((wt) => basename(wt.path) === "main");
   return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonPaseo[0]?.path ?? normalized;
@@ -1533,11 +1530,7 @@ export async function getCheckoutDiff(
     if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
       break;
     }
-    const { text, truncated, stat } = await getUntrackedDiffText(
-      cwd,
-      change,
-      ignoreWhitespace,
-    );
+    const { text, truncated, stat } = await getUntrackedDiffText(cwd, change, ignoreWhitespace);
 
     if (!compare.includeStructured) {
       if (stat?.isBinary) {
@@ -1927,7 +1920,6 @@ async function resolveGitHubRepo(cwd: string): Promise<string | null> {
   return null;
 }
 
-
 export async function createPullRequest(
   cwd: string,
   options: CreatePullRequestOptions,
@@ -2016,12 +2008,7 @@ async function getPullRequestStatusUncached(cwd: string): Promise<PullRequestSta
   try {
     const { stdout } = await execFileAsync(
       ghPath,
-      [
-        "pr",
-        "view",
-        "--json",
-        "url,title,state,baseRefName,headRefName,mergedAt",
-      ],
+      ["pr", "view", "--json", "url,title,state,baseRefName,headRefName,mergedAt"],
       { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
     );
     const pr = JSON.parse(stdout.trim());
@@ -2029,9 +2016,7 @@ async function getPullRequestStatusUncached(cwd: string): Promise<PullRequestSta
       return { status: null, githubFeaturesEnabled: true };
     }
     const mergedAt =
-      typeof pr.mergedAt === "string" && pr.mergedAt.trim().length > 0
-        ? pr.mergedAt
-        : null;
+      typeof pr.mergedAt === "string" && pr.mergedAt.trim().length > 0 ? pr.mergedAt : null;
     const state =
       mergedAt !== null
         ? "merged"

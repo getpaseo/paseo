@@ -42,14 +42,25 @@ describe("combined model selector helpers", () => {
   ];
 
   it("keeps enough data to search by model and provider name", async () => {
-    const rows = buildModelRows(providerDefinitions, new Map([
-      ["claude", claudeModels],
-      ["codex", codexModels],
-    ]));
+    const rows = buildModelRows(
+      providerDefinitions,
+      new Map([
+        ["claude", claudeModels],
+        ["codex", codexModels],
+      ]),
+    );
 
     expect(rows).toEqual([
-      expect.objectContaining({ providerLabel: "Claude", modelLabel: "Sonnet 4.6", modelId: "sonnet-4.6" }),
-      expect.objectContaining({ providerLabel: "Codex", modelLabel: "GPT-5.4", modelId: "gpt-5.4" }),
+      expect.objectContaining({
+        providerLabel: "Claude",
+        modelLabel: "Sonnet 4.6",
+        modelId: "sonnet-4.6",
+      }),
+      expect.objectContaining({
+        providerLabel: "Codex",
+        modelLabel: "GPT-5.4",
+        modelId: "gpt-5.4",
+      }),
     ]);
 
     expect(matchesSearch(rows[0]!, "claude")).toBe(true);

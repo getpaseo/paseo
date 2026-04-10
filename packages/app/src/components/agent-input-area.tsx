@@ -596,14 +596,14 @@ export function AgentInputArea({
           )}
         </TooltipTrigger>
         <TooltipContent side="top" align="center" offset={8}>
-            <View style={styles.tooltipRow}>
-              <Text style={styles.tooltipText}>Interrupt</Text>
-              {dictationCancelKeys ? (
-                <Shortcut chord={dictationCancelKeys} style={styles.tooltipShortcut} />
-              ) : null}
-            </View>
-          </TooltipContent>
-        </Tooltip>
+          <View style={styles.tooltipRow}>
+            <Text style={styles.tooltipText}>Interrupt</Text>
+            {dictationCancelKeys ? (
+              <Shortcut chord={dictationCancelKeys} style={styles.tooltipShortcut} />
+            ) : null}
+          </View>
+        </TooltipContent>
+      </Tooltip>
     ) : null;
 
   const rightContent = (
@@ -645,9 +645,7 @@ export function AgentInputArea({
     typeof agentState.contextWindowMaxTokens === "number" &&
     typeof agentState.contextWindowUsedTokens === "number";
   const contextWindowMaxTokens = hasContextWindowMeter ? agentState.contextWindowMaxTokens : null;
-  const contextWindowUsedTokens = hasContextWindowMeter
-    ? agentState.contextWindowUsedTokens
-    : null;
+  const contextWindowUsedTokens = hasContextWindowMeter ? agentState.contextWindowUsedTokens : null;
 
   const beforeVoiceContent = (
     <View style={styles.contextWindowMeterSlot}>

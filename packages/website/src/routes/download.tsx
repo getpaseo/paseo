@@ -90,9 +90,7 @@ function Download() {
         </header>
 
         <h1 className="text-3xl md:text-4xl font-semibold tracking-tight mb-2">Download</h1>
-        <p className="text-muted-foreground mb-10">
-          v{version}
-        </p>
+        <p className="text-muted-foreground mb-10">v{version}</p>
 
         {/* Desktop */}
         <section className="rounded-xl border border-border bg-card/40 p-6 md:p-8 mb-6">
@@ -130,10 +128,7 @@ function Download() {
                 <span className="font-medium">Windows</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                <DownloadPill
-                  href={urls.windowsExe}
-                  label="Download"
-                />
+                <DownloadPill href={urls.windowsExe} label="Download" />
               </div>
             </div>
 
@@ -144,10 +139,7 @@ function Download() {
                 <span className="font-medium">Linux</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                <DownloadPill
-                  href={urls.linuxAppImage}
-                  label="AppImage"
-                />
+                <DownloadPill href={urls.linuxAppImage} label="AppImage" />
                 <DownloadPill href={urls.linuxDeb} label="DEB" />
                 <DownloadPill href={urls.linuxRpm} label="RPM" />
               </div>
@@ -170,15 +162,8 @@ function Download() {
                 <span className="font-medium">Android</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                <DownloadPill
-                  href={playStoreUrl}
-                  label="Play Store"
-                  external
-                />
-                <DownloadPill
-                  href={urls.androidApk}
-                  label="APK"
-                />
+                <DownloadPill href={playStoreUrl} label="Play Store" external />
+                <DownloadPill href={urls.androidApk} label="APK" />
               </div>
             </div>
 
@@ -189,11 +174,7 @@ function Download() {
                 <span className="font-medium">iOS</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                <DownloadPill
-                  href={appStoreUrl}
-                  label="App Store"
-                  external
-                />
+                <DownloadPill href={appStoreUrl} label="App Store" external />
               </div>
             </div>
           </div>
@@ -213,11 +194,7 @@ function Download() {
                 <span className="font-medium">Web App</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                <DownloadPill
-                  href={webAppUrl}
-                  label="Open"
-                  external
-                />
+                <DownloadPill href={webAppUrl} label="Open" external />
               </div>
             </div>
 

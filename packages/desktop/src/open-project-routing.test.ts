@@ -57,11 +57,7 @@ describe("open-project-routing", () => {
 
     expect(
       parseOpenProjectPathFromArgv({
-        argv: [
-          "/Applications/Paseo.app/Contents/MacOS/Paseo",
-          "--open-project",
-          projectPath,
-        ],
+        argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo", "--open-project", projectPath],
         isDefaultApp: false,
       }),
     ).toBe(projectPath);

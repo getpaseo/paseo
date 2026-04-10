@@ -1,7 +1,11 @@
 import type { Command } from "commander";
 import type { ListResult } from "../../output/index.js";
 import { scheduleLogSchema, toScheduleLogRow, type ScheduleLogRow } from "./schema.js";
-import { connectScheduleClient, toScheduleCommandError, type ScheduleCommandOptions } from "./shared.js";
+import {
+  connectScheduleClient,
+  toScheduleCommandError,
+  type ScheduleCommandOptions,
+} from "./shared.js";
 
 export async function runLogsCommand(
   id: string,
