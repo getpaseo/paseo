@@ -1,4 +1,12 @@
-import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -101,6 +109,27 @@ function getFallbackTabLabel(tab: WorkspaceTabDescriptor): string {
   return "Agent";
 }
 
+function useMiddleClickClose(onClose: () => void) {
+  const ref = useRef<View>(null);
+
+  useEffect(() => {
+    const node = ref.current as unknown as HTMLElement | null;
+    if (!node) return;
+
+    function handleAuxClick(event: MouseEvent) {
+      if (event.button === 1) {
+        event.preventDefault();
+        onClose();
+      }
+    }
+
+    node.addEventListener("auxclick", handleAuxClick);
+    return () => node.removeEventListener("auxclick", handleAuxClick);
+  }, [onClose]);
+
+  return ref;
+}
+
 function TabChip({
   tab,
   isActive,
@@ -140,6 +169,9 @@ function TabChip({
 }) {
   const { theme } = useUnistyles();
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
+  const middleClickRef = useMiddleClickClose(
+    useCallback(() => void onCloseTab(tab.tabId), [onCloseTab, tab.tabId]),
+  );
   const [hovered, setHovered] = useState(false);
   const isHighlighted = isActive || hovered || isCloseHovered;
   const closeButtonDragBlockers =
@@ -155,6 +187,7 @@ function TabChip({
       : undefined;
 
   return (
+    <View ref={middleClickRef}>
     <ContextMenu key={tab.key}>
       <Tooltip delayDuration={400} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild triggerRefProp="triggerRef">
@@ -325,6 +358,7 @@ function TabChip({
         )}
       </ContextMenuContent>
     </ContextMenu>
+    </View>
   );
 }
 
