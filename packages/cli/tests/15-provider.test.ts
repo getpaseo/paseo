@@ -32,6 +32,11 @@ type ProviderModel = {
 
 const EXPECTED_CLAUDE_MODELS = [
   {
+    id: "claude-opus-4-6[1m]",
+    model: "Opus 4.6 1M",
+    descriptionFragment: "1M context window",
+  },
+  {
     id: "claude-sonnet-4-6",
     model: "Sonnet 4.6",
     descriptionFragment: "Best for everyday tasks",
@@ -135,7 +140,7 @@ try {
     assert.strictEqual(result.exitCode, 0, "should exit 0");
     const data = JSON.parse(result.stdout.trim());
     assert(Array.isArray(data), "output should be an array");
-    assert.strictEqual(data.length, 3, "should have 3 providers");
+    assert.strictEqual(data.length, 5, "should have 5 providers");
     assert(
       data.some((p: { provider: string }) => p.provider === "claude"),
       "should include claude",
@@ -148,6 +153,14 @@ try {
       data.some((p: { provider: string }) => p.provider === "opencode"),
       "should include opencode",
     );
+    assert(
+      data.some((p: { provider: string }) => p.provider === "copilot"),
+      "should include copilot",
+    );
+    assert(
+      data.some((p: { provider: string }) => p.provider === "pi"),
+      "should include pi",
+    );
     console.log("✓ provider ls --json outputs valid JSON\n");
   }
 
@@ -157,10 +170,12 @@ try {
     const result = await ctx.paseo(["provider", "ls", "--quiet"]);
     assert.strictEqual(result.exitCode, 0, "should exit 0");
     const lines = result.stdout.trim().split("\n");
-    assert.strictEqual(lines.length, 3, "should have 3 lines");
+    assert.strictEqual(lines.length, 5, "should have 5 lines");
     assert(lines.includes("claude"), "should include claude");
     assert(lines.includes("codex"), "should include codex");
     assert(lines.includes("opencode"), "should include opencode");
+    assert(lines.includes("copilot"), "should include copilot");
+    assert(lines.includes("pi"), "should include pi");
     console.log("✓ provider ls --quiet outputs provider names only\n");
   }
 
@@ -176,13 +191,13 @@ try {
   {
     console.log("Test 6: provider models codex includes concrete codex model IDs");
     const data = await runProviderModelsJson("codex");
-    assert(data.length >= 6, "codex model list should include current codex lineup");
+    assert(data.length >= 5, "codex model list should include current codex lineup");
     const ids = data.map((m) => m.id);
     assert.strictEqual(new Set(ids).size, ids.length, "codex model IDs should be unique");
     assert(ids.includes("gpt-5.3-codex"), "codex output should include gpt-5.3-codex");
     assert(ids.includes("gpt-5.3-codex-spark"), "codex output should include gpt-5.3-codex-spark");
-    assert(ids.includes("gpt-5.1-codex-max"), "codex output should include gpt-5.1-codex-max");
-    assert(ids.includes("gpt-5.1-codex-mini"), "codex output should include gpt-5.1-codex-mini");
+    assert(ids.includes("gpt-5.4"), "codex output should include gpt-5.4");
+    assert(ids.includes("gpt-5.4-mini"), "codex output should include gpt-5.4-mini");
     console.log("✓ provider models codex includes concrete codex model IDs\n");
   }
 
