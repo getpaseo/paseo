@@ -14,6 +14,7 @@ import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { PortalProvider } from "@gorhom/portal";
 import { VoiceProvider } from "@/contexts/voice-context";
 import { useAppSettings } from "@/hooks/use-settings";
+import { THEME_TO_UNISTYLES } from "@/styles/theme";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { View, Text } from "react-native";
 import { UnistylesRuntime, useUnistyles } from "react-native-unistyles";
@@ -561,7 +562,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       UnistylesRuntime.setAdaptiveThemes(true);
     } else {
       UnistylesRuntime.setAdaptiveThemes(false);
-      UnistylesRuntime.setTheme(settings.theme);
+      UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[settings.theme]);
     }
   }, [settingsLoading, settings.theme]);
 

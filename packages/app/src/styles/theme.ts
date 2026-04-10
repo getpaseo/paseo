@@ -103,6 +103,8 @@ export const baseColors = {
   },
 } as const;
 
+export type ThemeName = "light" | "dark" | "zinc" | "midnight" | "claude" | "ghostty";
+
 // Semantic color tokens - Layer-based system
 const lightSemanticColors = {
   // Surfaces (layers) - shifted one step lighter
@@ -113,10 +115,11 @@ const lightSemanticColors = {
   surface4: "#d4d4d8", // Extra emphasis (was zinc-400, now zinc-300)
   surfaceDiffEmpty: "#f6f6f6", // Empty side of split diff rows, between surface1 and surface2 and biased toward surface2
   surfaceSidebar: "#f4f4f5", // Sidebar background (darker than main)
+  surfaceSidebarHover: "#e9e9ec", // Sidebar hover (darker in light mode)
   surfaceWorkspace: "#ffffff", // Workspace main background
 
   // Text
-  foreground: "#09090b",
+  foreground: "#1a1a1e",
   foregroundMuted: "#71717a",
 
   // Controls
@@ -140,11 +143,11 @@ const lightSemanticColors = {
   // Legacy aliases (for gradual migration)
   background: "#ffffff",
   popover: "#ffffff",
-  popoverForeground: "#09090b",
+  popoverForeground: "#1a1a1e",
   primary: "#18181b",
   primaryForeground: "#fafafa",
   secondary: "#f4f4f5",
-  secondaryForeground: "#09090b",
+  secondaryForeground: "#1a1a1e",
   muted: "#f4f4f5",
   mutedForeground: "#71717a",
   accentBorder: "#ececf1",
@@ -153,13 +156,13 @@ const lightSemanticColors = {
 
   terminal: {
     background: "#ffffff",
-    foreground: "#09090b",
-    cursor: "#09090b",
+    foreground: "#1a1a1e",
+    cursor: "#1a1a1e",
     cursorAccent: "#ffffff",
     selectionBackground: "rgba(0, 0, 0, 0.15)",
-    selectionForeground: "#09090b",
+    selectionForeground: "#1a1a1e",
 
-    black: "#09090b",
+    black: "#1a1a1e",
     red: "#dc2626",
     green: "#16a34a",
     yellow: "#ca8a04",
@@ -179,80 +182,194 @@ const lightSemanticColors = {
   },
 } as const;
 
-const darkSemanticColors = {
-  // Surfaces (layers) — subtle teal tint
-  surface0: "#181B1A", // App background
-  surface1: "#1E2120", // Subtle hover
-  surface2: "#272A29", // Elevated: badges, inputs, sheets
-  surface3: "#434645", // Highest elevation
-  surface4: "#595B5B", // Extra emphasis
-  surfaceDiffEmpty: "#252827", // Empty side of split diff rows, between surface1 and surface2 and biased toward surface2
-  surfaceSidebar: "#141716", // Sidebar background (darker than main)
-  surfaceWorkspace: "#1E2120", // Workspace main background (surface1)
+// ---------------------------------------------------------------------------
+// Dark theme variant builder
+// ---------------------------------------------------------------------------
 
-  // Text
-  foreground: "#fafafa",
+interface DarkThemeConfig {
+  surface0: string;
+  surface1: string;
+  surface2: string;
+  surface3: string;
+  surface4: string;
+  surfaceDiffEmpty: string;
+  surfaceSidebar: string;
+  surfaceSidebarHover: string;
+  foregroundMuted: string;
+  scrollbarHandle: string;
+  border: string;
+  borderAccent: string;
+  accent: string;
+  accentBright: string;
+}
+
+const darkTerminalAnsi = {
+  red: "#e07070",
+  green: "#5dba80",
+  yellow: "#d4a44a",
+  blue: "#6a9de0",
+  magenta: "#b07ad0",
+  cyan: "#4aabb8",
+  white: "#d4d4d8",
+  brightRed: "#e89090",
+  brightGreen: "#7ecf9a",
+  brightYellow: "#e0be6e",
+  brightBlue: "#8ab4e8",
+  brightMagenta: "#c49ae0",
+  brightCyan: "#6ec2cc",
+  brightWhite: "#f0f0f2",
+} as const;
+
+function buildDarkSemanticColors(tint: DarkThemeConfig) {
+  return {
+    surface0: tint.surface0,
+    surface1: tint.surface1,
+    surface2: tint.surface2,
+    surface3: tint.surface3,
+    surface4: tint.surface4,
+    surfaceDiffEmpty: tint.surfaceDiffEmpty,
+    surfaceSidebar: tint.surfaceSidebar,
+    surfaceSidebarHover: tint.surfaceSidebarHover,
+    surfaceWorkspace: tint.surface1,
+
+    foreground: "#fafafa",
+    foregroundMuted: tint.foregroundMuted,
+
+    scrollbarHandle: tint.scrollbarHandle,
+
+    border: tint.border,
+    borderAccent: tint.borderAccent,
+
+    accent: tint.accent,
+    accentBright: tint.accentBright,
+    accentForeground: "#ffffff",
+
+    destructive: "#ef4444",
+    destructiveForeground: "#ffffff",
+    success: tint.accent,
+    successForeground: "#ffffff",
+
+    // Legacy aliases (for gradual migration)
+    background: tint.surface0,
+    popover: tint.surface2,
+    popoverForeground: "#fafafa",
+    primary: "#fafafa",
+    primaryForeground: tint.surface0,
+    secondary: tint.surface2,
+    secondaryForeground: "#fafafa",
+    muted: tint.surface2,
+    mutedForeground: tint.foregroundMuted,
+    accentBorder: tint.borderAccent,
+    input: tint.surface2,
+    ring: "#d4d4d8",
+
+    terminal: {
+      background: tint.surface0,
+      foreground: "#fafafa",
+      cursor: "#fafafa",
+      cursorAccent: tint.surface0,
+      selectionBackground: "rgba(255, 255, 255, 0.2)",
+      selectionForeground: "#fafafa",
+      black: tint.surfaceSidebar,
+      ...darkTerminalAnsi,
+      brightBlack: tint.surface3,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Dark tint definitions
+// ---------------------------------------------------------------------------
+
+// Paseo — subtle teal-green tint (default)
+const paseoDarkColors = buildDarkSemanticColors({
+  surface0: "#181B1A",
+  surface1: "#1E2120",
+  surface2: "#272A29",
+  surface3: "#434645",
+  surface4: "#595B5B",
+  surfaceDiffEmpty: "#252827",
+  surfaceSidebar: "#141716",
+  surfaceSidebarHover: "#1c1f1e",
   foregroundMuted: "#A1A5A4",
-
-  // Controls
-  scrollbarHandle: "#717574", // zinc-500 w/ teal tint
-
-  // Borders
+  scrollbarHandle: "#717574",
   border: "#252B2A",
   borderAccent: "#2F3534",
-
-  // Brand
   accent: "#20744A",
   accentBright: "#7ccba0",
-  accentForeground: "#ffffff",
+});
 
-  // Semantic
-  destructive: "#ef4444",
-  destructiveForeground: "#ffffff",
-  success: "#20744A",
-  successForeground: "#ffffff",
+// Zinc — neutral gray, no tint
+const zincDarkColors = buildDarkSemanticColors({
+  surface0: "#18181b",
+  surface1: "#1f1f22",
+  surface2: "#27272a",
+  surface3: "#3f3f46",
+  surface4: "#52525b",
+  surfaceDiffEmpty: "#242427",
+  surfaceSidebar: "#131316",
+  surfaceSidebarHover: "#1b1b1e",
+  foregroundMuted: "#a1a1aa",
+  scrollbarHandle: "#71717a",
+  border: "#27272a",
+  borderAccent: "#303036",
+  accent: "#20744A",
+  accentBright: "#7ccba0",
+});
 
-  // Legacy aliases (for gradual migration)
-  background: "#181B1A",
-  popover: "#272A29",
-  popoverForeground: "#fafafa",
-  primary: "#fafafa",
-  primaryForeground: "#181B1A",
-  secondary: "#272A29",
-  secondaryForeground: "#fafafa",
-  muted: "#272A29",
-  mutedForeground: "#A1A5A4",
-  accentBorder: "#2F3534",
-  input: "#272A29",
-  ring: "#d4d4d8",
+// Midnight — subtle blue tint
+const midnightDarkColors = buildDarkSemanticColors({
+  surface0: "#161820",
+  surface1: "#1c1e27",
+  surface2: "#252731",
+  surface3: "#3c3e4c",
+  surface4: "#535564",
+  surfaceDiffEmpty: "#222430",
+  surfaceSidebar: "#121420",
+  surfaceSidebarHover: "#1a1c28",
+  foregroundMuted: "#9a9db0",
+  scrollbarHandle: "#6b6e82",
+  border: "#242636",
+  borderAccent: "#2e3040",
+  accent: "#3b6fcf",
+  accentBright: "#7eaaeb",
+});
 
-  terminal: {
-    background: "#181B1A",
-    foreground: "#fafafa",
-    cursor: "#fafafa",
-    cursorAccent: "#181B1A",
-    selectionBackground: "rgba(255, 255, 255, 0.2)",
-    selectionForeground: "#fafafa",
+// Claude — warm neutral with subtle orange undertone
+const claudeDarkColors = buildDarkSemanticColors({
+  surface0: "#1f1f1e",
+  surface1: "#262523",
+  surface2: "#2f2d2b",
+  surface3: "#4a4745",
+  surface4: "#605d5b",
+  surfaceDiffEmpty: "#2a2826",
+  surfaceSidebar: "#1a1918",
+  surfaceSidebarHover: "#222120",
+  foregroundMuted: "#ada9a5",
+  scrollbarHandle: "#78746f",
+  border: "#2c2a27",
+  borderAccent: "#36332f",
+  accent: "#d97757",
+  accentBright: "#e89a7f",
+});
 
-    black: "#141716",
-    red: "#ef4444",
-    green: "#22c55e",
-    yellow: "#f59e0b",
-    blue: "#3b82f6",
-    magenta: "#a855f7",
-    cyan: "#06b6d4",
-    white: "#e4e4e7",
-
-    brightBlack: "#434645",
-    brightRed: "#f87171",
-    brightGreen: "#4ade80",
-    brightYellow: "#fbbf24",
-    brightBlue: "#60a5fa",
-    brightMagenta: "#c084fc",
-    brightCyan: "#22d3ee",
-    brightWhite: "#ffffff",
-  },
-} as const;
+// Ghostty — blue-tinted dark based on Ghostty default background
+const ghosttyDarkColors = buildDarkSemanticColors({
+  surface0: "#282c34",
+  surface1: "#2f333d",
+  surface2: "#383c48",
+  surface3: "#4a4f5e",
+  surface4: "#5b6175",
+  surfaceDiffEmpty: "#323643",
+  surfaceSidebar: "#21252d",
+  surfaceSidebarHover: "#292d36",
+  foregroundMuted: "#c8ccd8",
+  scrollbarHandle: "#a0a4b2",
+  border: "#353a47",
+  borderAccent: "#3f4454",
+  accent: "#89b4fa",
+  accentBright: "#b4d0fc",
+});
 
 const commonTheme = {
   spacing: {
@@ -323,34 +440,44 @@ const commonTheme = {
   },
 } as const;
 
-export const darkTheme = {
-  colorScheme: "dark" as const,
-  colors: {
-    ...darkSemanticColors,
-    palette: baseColors,
+const darkShadow = {
+  sm: {
+    shadowColor: "rgba(0, 0, 0, 0.25)",
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 2,
   },
-  shadow: {
-    sm: {
-      shadowColor: "rgba(0, 0, 0, 0.25)",
-      shadowOffset: { width: 0, height: 2 },
-      shadowRadius: 4,
-      elevation: 2,
-    },
-    md: {
-      shadowColor: "rgba(0, 0, 0, 0.20)",
-      shadowOffset: { width: 0, height: 4 },
-      shadowRadius: 8,
-      elevation: 8,
-    },
-    lg: {
-      shadowColor: "rgba(0, 0, 0, 0.40)",
-      shadowOffset: { width: 0, height: 12 },
-      shadowRadius: 24,
-      elevation: 8,
-    },
+  md: {
+    shadowColor: "rgba(0, 0, 0, 0.20)",
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    elevation: 8,
   },
-  ...commonTheme,
+  lg: {
+    shadowColor: "rgba(0, 0, 0, 0.40)",
+    shadowOffset: { width: 0, height: 12 },
+    shadowRadius: 24,
+    elevation: 8,
+  },
 } as const;
+
+function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemanticColors>) {
+  return {
+    colorScheme: "dark" as const,
+    colors: {
+      ...semanticColors,
+      palette: baseColors,
+    },
+    shadow: darkShadow,
+    ...commonTheme,
+  } as const;
+}
+
+export const darkTheme = buildDarkTheme(paseoDarkColors);
+export const darkZincTheme = buildDarkTheme(zincDarkColors);
+export const darkMidnightTheme = buildDarkTheme(midnightDarkColors);
+export const darkClaudeTheme = buildDarkTheme(claudeDarkColors);
+export const darkGhosttyTheme = buildDarkTheme(ghosttyDarkColors);
 
 export const lightTheme = {
   colorScheme: "light" as const,
@@ -386,3 +513,23 @@ export const theme = darkTheme;
 
 // Export a union type that works for both themes
 export type Theme = typeof darkTheme | typeof lightTheme;
+
+type UnistylesThemeKey = "light" | "dark" | "darkZinc" | "darkMidnight" | "darkClaude" | "darkGhostty";
+
+export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
+  light: "light",
+  dark: "dark",
+  zinc: "darkZinc",
+  midnight: "darkMidnight",
+  claude: "darkClaude",
+  ghostty: "darkGhostty",
+};
+
+export const THEME_SWATCHES: Record<ThemeName, string> = {
+  light: "#ffffff",
+  dark: "#2D8B62",
+  zinc: "#808080",
+  midnight: "#4A6BA8",
+  claude: "#D97757",
+  ghostty: "#8caaee",
+};

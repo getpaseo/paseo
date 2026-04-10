@@ -6,10 +6,14 @@ export const APP_SETTINGS_KEY = "@paseo:app-settings";
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 
+import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
+
 export type SendBehavior = "interrupt" | "queue";
 
+const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
+
 export interface AppSettings {
-  theme: "dark" | "light" | "auto";
+  theme: ThemeName | "auto";
   manageBuiltInDaemon: boolean;
   sendBehavior: SendBehavior;
 }
@@ -78,6 +82,9 @@ export async function loadSettingsFromStorage(): Promise<AppSettings> {
     const stored = await AsyncStorage.getItem(APP_SETTINGS_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as Partial<AppSettings>;
+      if (parsed.theme && !VALID_THEMES.has(parsed.theme)) {
+        parsed.theme = DEFAULT_APP_SETTINGS.theme;
+      }
       return { ...DEFAULT_APP_SETTINGS, ...parsed };
     }
 

@@ -885,10 +885,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   newAgentButtonHovered: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   newAgentButtonActive: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   hostTrigger: {
     flexDirection: "row",
@@ -901,7 +901,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
   },
   hostTriggerHovered: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   hostStatusDot: {
     width: 8,

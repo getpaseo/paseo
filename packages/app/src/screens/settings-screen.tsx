@@ -10,6 +10,7 @@ import {
   Sun,
   Moon,
   Monitor,
+  ChevronDown,
   Globe,
   Settings,
   RotateCw,
@@ -24,6 +25,7 @@ import {
   Smartphone,
 } from "lucide-react-native";
 import { useAppSettings, type AppSettings, type SendBehavior } from "@/hooks/use-settings";
+import { THEME_SWATCHES, type ThemeName } from "@/styles/theme";
 import type { HostProfile, HostConnection } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
@@ -47,6 +49,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
@@ -362,11 +365,53 @@ interface GeneralSectionProps {
   handleSendBehaviorChange: (behavior: SendBehavior) => void;
 }
 
+function ThemeIcon({ theme, size, color }: { theme: AppSettings["theme"]; size: number; color: string }) {
+  switch (theme) {
+    case "light":
+      return <Sun size={size} color={color} />;
+    case "dark":
+      return <Moon size={size} color={color} />;
+    case "auto":
+      return <Monitor size={size} color={color} />;
+    default:
+      return <ThemeSwatch color={THEME_SWATCHES[theme]} size={size} />;
+  }
+}
+
+function ThemeSwatch({ color, size }: { color: string; size: number }) {
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: color,
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.15)",
+      }}
+    />
+  );
+}
+
+const THEME_LABELS: Record<AppSettings["theme"], string> = {
+  light: "Light",
+  dark: "Dark",
+  zinc: "Zinc",
+  midnight: "Midnight",
+  claude: "Claude",
+  ghostty: "Ghostty",
+  auto: "System",
+};
+
 function GeneralSection({
   settings,
   handleThemeChange,
   handleSendBehaviorChange,
 }: GeneralSectionProps) {
+  const { theme } = useUnistyles();
+  const iconSize = theme.iconSize.md;
+  const iconColor = theme.colors.foregroundMuted;
+
   return (
     <View style={settingsStyles.section}>
       <Text style={settingsStyles.sectionTitle}>General</Text>
@@ -375,29 +420,43 @@ function GeneralSection({
           <View style={styles.audioRowContent}>
             <Text style={styles.audioRowTitle}>Theme</Text>
           </View>
-          <SegmentedControl
-            size="sm"
-            hideLabels={Platform.OS !== "web"}
-            value={settings.theme}
-            onValueChange={handleThemeChange}
-            options={[
-              {
-                value: "light",
-                label: "Light",
-                icon: ({ color, size }) => <Sun size={size} color={color} />,
-              },
-              {
-                value: "dark",
-                label: "Dark",
-                icon: ({ color, size }) => <Moon size={size} color={color} />,
-              },
-              {
-                value: "auto",
-                label: "System",
-                icon: ({ color, size }) => <Monitor size={size} color={color} />,
-              },
-            ]}
-          />
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              style={({ pressed }) => [
+                styles.themeTrigger,
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              <ThemeIcon theme={settings.theme} size={iconSize} color={iconColor} />
+              <Text style={styles.themeTriggerText}>
+                {THEME_LABELS[settings.theme]}
+              </Text>
+              <ChevronDown size={theme.iconSize.sm} color={iconColor} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="bottom" align="end" width={200}>
+              {(["light", "dark", "auto"] as const).map((t) => (
+                <DropdownMenuItem
+                  key={t}
+                  selected={settings.theme === t}
+                  onSelect={() => handleThemeChange(t)}
+                  leading={<ThemeIcon theme={t} size={iconSize} color={iconColor} />}
+                >
+                  {THEME_LABELS[t]}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              {(["zinc", "midnight", "claude", "ghostty"] as const).map((t) => (
+                <DropdownMenuItem
+                  key={t}
+                  selected={settings.theme === t}
+                  onSelect={() => handleThemeChange(t)}
+                  leading={<ThemeIcon theme={t} size={iconSize} color={iconColor} />}
+                >
+                  {THEME_LABELS[t]}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </View>
         <View style={styles.audioRow}>
           <View style={styles.audioRowContent}>
@@ -1805,6 +1864,20 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
+  },
+  themeTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  themeTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   disabled: {
     opacity: theme.opacity[50],
