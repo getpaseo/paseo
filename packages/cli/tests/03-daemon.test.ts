@@ -60,7 +60,7 @@ try {
     const result = await daemonCommand(["status"]);
     assert.strictEqual(result.exitCode, 0, "status should succeed when daemon is stopped");
     const output = result.stdout.toLowerCase();
-    assert(output.includes("status"), "status table should include Status row");
+    assert(output.includes("local daemon"), "status table should include Local Daemon row");
     assert(output.includes("stopped"), "status should report stopped");
     console.log("✓ daemon status reports stopped when not running\n");
   }
@@ -84,7 +84,7 @@ try {
     assert.strictEqual(result.exitCode, 0, "--json status should succeed");
     const status = JSON.parse(result.stdout);
     assert.strictEqual(typeof status.serverId, "string", "json status should include serverId");
-    assert.strictEqual(status.status, "stopped", "json status should report stopped");
+    assert.strictEqual(status.localDaemon, "stopped", "json status should report stopped");
     assert.strictEqual(status.home, paseoHome, "json status should reflect the isolated home");
     assert.strictEqual(
       status.hostname,
