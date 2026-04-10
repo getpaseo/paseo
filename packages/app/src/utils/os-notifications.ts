@@ -7,6 +7,8 @@ type OsNotificationPayload = {
   title: string;
   body?: string;
   data?: Record<string, unknown>;
+  sound?: string;
+  actions?: Array<{ text: string }>;
 };
 
 export type WebNotificationClickDetail = {
@@ -27,6 +29,8 @@ function getDesktopNotificationSender():
       title: string;
       body?: string;
       data?: Record<string, unknown>;
+      sound?: string;
+      actions?: Array<{ text: string }>;
     }) => Promise<boolean>)
   | null {
   const sendNotification = getDesktopHost()?.notification?.sendNotification;
@@ -35,6 +39,8 @@ function getDesktopNotificationSender():
         title: string;
         body?: string;
         data?: Record<string, unknown>;
+        sound?: string;
+        actions?: Array<{ text: string }>;
       }) => Promise<boolean>)
     : null;
 }

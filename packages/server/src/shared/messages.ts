@@ -1383,6 +1383,69 @@ export const CaptureTerminalRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// ============================================================================
+// MCP Server Messages (inbound)
+// ============================================================================
+
+export const ListMcpServersRequestMessageSchema = z.object({
+  type: z.literal("list_mcp_servers_request"),
+  requestId: z.string(),
+});
+
+export const CreateMcpServerRequestMessageSchema = z.object({
+  type: z.literal("create_mcp_server_request"),
+  payload: z.object({
+    requestId: z.string(),
+    server: z.object({
+      name: z.string(),
+      type: z.enum(["stdio", "http", "sse"]),
+      config: McpServerConfigSchema,
+      enabled: z.boolean().optional(),
+      tags: z.array(z.string()).optional(),
+      description: z.string().optional(),
+    }),
+  }),
+});
+
+export const UpdateMcpServerRequestMessageSchema = z.object({
+  type: z.literal("update_mcp_server_request"),
+  payload: z.object({
+    requestId: z.string(),
+    id: z.string(),
+    updates: z
+      .object({
+        name: z.string().optional(),
+        type: z.enum(["stdio", "http", "sse"]).optional(),
+        config: McpServerConfigSchema.optional(),
+        enabled: z.boolean().optional(),
+        tags: z.array(z.string()).optional(),
+        description: z.string().optional(),
+      })
+      .partial(),
+  }),
+});
+
+export const DeleteMcpServerRequestMessageSchema = z.object({
+  type: z.literal("delete_mcp_server_request"),
+  payload: z.object({
+    requestId: z.string(),
+    id: z.string(),
+  }),
+});
+
+export const ToggleMcpServerRequestMessageSchema = z.object({
+  type: z.literal("toggle_mcp_server_request"),
+  payload: z.object({
+    requestId: z.string(),
+    id: z.string(),
+    enabled: z.boolean(),
+  }),
+});
+
+// ============================================================================
+// Session Inbound Message Schema
+// ============================================================================
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
@@ -1480,6 +1543,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectRequestSchema,
   LoopLogsRequestSchema,
   LoopStopRequestSchema,
+  ListMcpServersRequestMessageSchema,
+  CreateMcpServerRequestMessageSchema,
+  UpdateMcpServerRequestMessageSchema,
+  DeleteMcpServerRequestMessageSchema,
+  ToggleMcpServerRequestMessageSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -2629,6 +2697,69 @@ export const TerminalStreamExitSchema = z.object({
   }),
 });
 
+// ============================================================================
+// MCP Server Messages (outbound)
+// ============================================================================
+
+const McpServerRecordSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.enum(["stdio", "http", "sse"]),
+  config: McpServerConfigSchema,
+  enabled: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  tags: z.array(z.string()).optional(),
+  description: z.string().optional(),
+});
+
+export const ListMcpServersResponseMessageSchema = z.object({
+  type: z.literal("list_mcp_servers_response"),
+  payload: z.object({
+    requestId: z.string(),
+    servers: z.array(McpServerRecordSchema),
+    error: z.string().nullable(),
+  }),
+});
+
+export const CreateMcpServerResponseMessageSchema = z.object({
+  type: z.literal("create_mcp_server_response"),
+  payload: z.object({
+    requestId: z.string(),
+    server: McpServerRecordSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const UpdateMcpServerResponseMessageSchema = z.object({
+  type: z.literal("update_mcp_server_response"),
+  payload: z.object({
+    requestId: z.string(),
+    server: McpServerRecordSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const DeleteMcpServerResponseMessageSchema = z.object({
+  type: z.literal("delete_mcp_server_response"),
+  payload: z.object({
+    requestId: z.string(),
+    id: z.string(),
+    deleted: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ToggleMcpServerResponseMessageSchema = z.object({
+  type: z.literal("toggle_mcp_server_response"),
+  payload: z.object({
+    requestId: z.string(),
+    id: z.string(),
+    enabled: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -2727,6 +2858,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectResponseSchema,
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
+  ListMcpServersResponseMessageSchema,
+  CreateMcpServerResponseMessageSchema,
+  UpdateMcpServerResponseMessageSchema,
+  DeleteMcpServerResponseMessageSchema,
+  ToggleMcpServerResponseMessageSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -2816,6 +2952,11 @@ export type LoopListResponse = z.infer<typeof LoopListResponseSchema>;
 export type LoopInspectResponse = z.infer<typeof LoopInspectResponseSchema>;
 export type LoopLogsResponse = z.infer<typeof LoopLogsResponseSchema>;
 export type LoopStopResponse = z.infer<typeof LoopStopResponseSchema>;
+export type ListMcpServersResponse = z.infer<typeof ListMcpServersResponseMessageSchema>;
+export type CreateMcpServerResponse = z.infer<typeof CreateMcpServerResponseMessageSchema>;
+export type UpdateMcpServerResponse = z.infer<typeof UpdateMcpServerResponseMessageSchema>;
+export type DeleteMcpServerResponse = z.infer<typeof DeleteMcpServerResponseMessageSchema>;
+export type ToggleMcpServerResponse = z.infer<typeof ToggleMcpServerResponseMessageSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
@@ -2835,9 +2976,7 @@ export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessage
 export type ListProviderModelsRequestMessage = z.infer<
   typeof ListProviderModelsRequestMessageSchema
 >;
-export type ListProviderModesRequestMessage = z.infer<
-  typeof ListProviderModesRequestMessageSchema
->;
+export type ListProviderModesRequestMessage = z.infer<typeof ListProviderModesRequestMessageSchema>;
 export type ListProviderFeaturesRequestMessage = z.infer<
   typeof ListProviderFeaturesRequestMessageSchema
 >;
@@ -2937,6 +3076,11 @@ export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>;
 export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>;
 export type RegisterPushTokenMessage = z.infer<typeof RegisterPushTokenMessageSchema>;
+export type ListMcpServersRequestMessage = z.infer<typeof ListMcpServersRequestMessageSchema>;
+export type CreateMcpServerRequestMessage = z.infer<typeof CreateMcpServerRequestMessageSchema>;
+export type UpdateMcpServerRequestMessage = z.infer<typeof UpdateMcpServerRequestMessageSchema>;
+export type DeleteMcpServerRequestMessage = z.infer<typeof DeleteMcpServerRequestMessageSchema>;
+export type ToggleMcpServerRequestMessage = z.infer<typeof ToggleMcpServerRequestMessageSchema>;
 
 // Terminal message types
 export type ListTerminalsRequest = z.infer<typeof ListTerminalsRequestSchema>;

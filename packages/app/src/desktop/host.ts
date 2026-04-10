@@ -29,8 +29,25 @@ export interface DesktopDialogBridge {
 export interface DesktopNotificationBridge {
   isSupported?: () => Promise<boolean>;
   sendNotification?: (
-    payload: string | { title: string; body?: string; data?: Record<string, unknown> },
+    payload:
+      | string
+      | {
+          title: string;
+          body?: string;
+          data?: Record<string, unknown>;
+          sound?: string;
+          actions?: Array<{ text: string }>;
+        },
   ) => Promise<boolean>;
+  onAction?: (
+    handler: (payload: {
+      action: string;
+      notificationId: string;
+      data?: Record<string, unknown>;
+    }) => void,
+  ) => () => void;
+  incrementBadge?: () => Promise<void>;
+  clearBadge?: () => Promise<void>;
 }
 
 export interface DesktopOpenerBridge {
@@ -38,10 +55,7 @@ export interface DesktopOpenerBridge {
 }
 
 export interface DesktopMenuBridge {
-  showContextMenu?: (input?: {
-    kind?: "terminal";
-    hasSelection?: boolean;
-  }) => Promise<void>;
+  showContextMenu?: (input?: { kind?: "terminal"; hasSelection?: boolean }) => Promise<void>;
 }
 
 export interface DesktopWindowControlsOverlayUpdate {

@@ -9,6 +9,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { GestureDetector } from "react-native-gesture-handler";
 import Animated from "react-native-reanimated";
 import { Folder, GitBranch, PanelRight } from "lucide-react-native";
+import { McpServerSelector, buildMcpServersConfig } from "@/components/mcp-server-selector";
+import { useMcpServers } from "@/hooks/use-mcp-servers";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { AgentInputArea } from "@/components/agent-input-area";
@@ -63,7 +65,7 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: false,
   supportsDynamicModes: false,
-  supportsMcpServers: false,
+  supportsMcpServers: true,
   supportsReasoningStream: false,
   supportsToolInvocations: false,
 };
@@ -274,6 +276,7 @@ function DraftAgentScreenContent({
   const worktreeAnchorRef = useRef<View>(null);
   const branchAnchorRef = useRef<View>(null);
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
+  const [selectedMcpServerIds, setSelectedMcpServerIds] = useState<string[]>([]);
 
   useEffect(() => {
     const trimmed = branchSearchQuery.trim();
@@ -334,6 +337,7 @@ function DraftAgentScreenContent({
   const runtimeClient = useHostRuntimeClient(selectedServerId ?? "");
   const isHostOnline = useHostRuntimeIsConnected(selectedServerId ?? "");
   const sessionClient = runtimeClient;
+  const { servers: mcpServers } = useMcpServers(selectedServerId);
   const trimmedWorkingDir = workingDir.trim();
   const shouldInspectRepo = trimmedWorkingDir.length > 0;
   const canQuerySelectedHost = Boolean(selectedServerId) && Boolean(sessionClient) && isHostOnline;
@@ -906,6 +910,9 @@ function DraftAgentScreenContent({
         isAttachWorktree && selectedWorktreePath ? selectedWorktreePath : trimmedPath;
 
       const modeId = modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
+      const mcpServersConfig = mcpServers
+        ? buildMcpServersConfig(mcpServers, selectedMcpServerIds)
+        : undefined;
       const config: AgentSessionConfig = {
         provider: selectedProvider,
         cwd: resolvedWorkingDir,
@@ -915,6 +922,7 @@ function DraftAgentScreenContent({
           ? { thinkingOptionId: effectiveDraftThinkingOptionId }
           : {}),
         ...(draftFeatureValues ? { featureValues: draftFeatureValues } : {}),
+        ...(mcpServersConfig ? { mcpServers: mcpServersConfig } : {}),
       };
 
       const effectiveBaseBranch = baseBranch.trim();
@@ -1225,6 +1233,15 @@ function DraftAgentScreenContent({
                   }}
                   anchorRef={branchAnchorRef}
                 />
+
+                {selectedServerId && (
+                  <McpServerSelector
+                    serverId={selectedServerId}
+                    selectedIds={selectedMcpServerIds}
+                    onSelectionChange={setSelectedMcpServerIds}
+                    disabled={isSubmitting}
+                  />
+                )}
 
                 {formErrorMessage ? (
                   <View style={styles.errorContainer}>

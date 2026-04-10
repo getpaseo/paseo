@@ -23,14 +23,12 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
-import {
-  asUint8Array,
-  decodeTerminalStreamFrame,
-} from "../shared/terminal-stream-protocol.js";
+import { asUint8Array, decodeTerminalStreamFrame } from "../shared/terminal-stream-protocol.js";
 import type { AllowedHostsConfig } from "./allowed-hosts.js";
 import { isHostAllowed } from "./allowed-hosts.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
+import { McpServerStore } from "./mcp/mcp-server-store.js";
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { buildProviderRegistry } from "./agent/provider-registry.js";
@@ -259,6 +257,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
+  private readonly mcpServerStore: McpServerStore | undefined;
   private serverCapabilities: ServerCapabilities | undefined;
   private runtimeWindowStartedAt = Date.now();
   private readonly runtimeCounters: WebSocketRuntimeCounters = {
@@ -313,6 +312,7 @@ export class VoiceAssistantWebSocketServer {
     loopService?: LoopService,
     scheduleService?: ScheduleService,
     checkoutDiffManager?: CheckoutDiffManager,
+    mcpServerStore?: McpServerStore,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -340,6 +340,7 @@ export class VoiceAssistantWebSocketServer {
       throw new Error("VoiceAssistantWebSocketServer requires a checkout diff manager.");
     }
     this.checkoutDiffManager = checkoutDiffManager;
+    this.mcpServerStore = mcpServerStore;
     this.backgroundGitFetchManager = new BackgroundGitFetchManager({
       logger: this.logger,
     });
@@ -362,9 +363,10 @@ export class VoiceAssistantWebSocketServer {
     this.serverCapabilities = buildServerCapabilities({
       readiness: this.speech?.getReadiness() ?? null,
     });
-    this.unsubscribeSpeechReadiness = this.speech?.onReadinessChange((snapshot) => {
-      this.publishSpeechReadiness(snapshot);
-    }) ?? null;
+    this.unsubscribeSpeechReadiness =
+      this.speech?.onReadinessChange((snapshot) => {
+        this.publishSpeechReadiness(snapshot);
+      }) ?? null;
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(pushLogger, join(paseoHome, "push-tokens.json"));
@@ -527,10 +529,7 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private sendBinaryToClient(
-    ws: WebSocketLike,
-    frame: Uint8Array,
-  ): void {
+  private sendBinaryToClient(ws: WebSocketLike, frame: Uint8Array): void {
     if (ws.readyState !== 1) {
       return;
     }
@@ -543,10 +542,7 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private sendBinaryToConnection(
-    connection: SessionConnection,
-    frame: Uint8Array,
-  ): void {
+  private sendBinaryToConnection(connection: SessionConnection, frame: Uint8Array): void {
     for (const ws of connection.sockets) {
       this.sendBinaryToClient(ws, frame);
     }
@@ -643,6 +639,7 @@ export class VoiceAssistantWebSocketServer {
       paseoHome: this.paseoHome,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
+      mcpServerStore: this.mcpServerStore,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       chatService: this.chatService,

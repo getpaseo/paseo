@@ -9,6 +9,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
+import { McpServerStore } from "./mcp/mcp-server-store.js";
 
 export type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -175,6 +176,7 @@ export type PaseoDaemonConfig = {
   mcpDebug: boolean;
   agentClients: Partial<Record<AgentProvider, AgentClient>>;
   agentStoragePath: string;
+  mcpServersPath: string;
   relayEnabled?: boolean;
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
@@ -338,6 +340,7 @@ export async function createPaseoDaemon(
     const httpServer = createHTTPServer(app);
 
     const agentStorage = new AgentStorage(config.agentStoragePath, logger);
+    const mcpServerStore = new McpServerStore(config.mcpServersPath, logger);
     const projectRegistry = new FileBackedProjectRegistry(
       path.join(config.paseoHome, "projects", "projects.json"),
       logger,
@@ -370,6 +373,8 @@ export async function createPaseoDaemon(
     );
     await agentStorage.initialize();
     logger.info({ elapsed: elapsed() }, "Agent storage initialized");
+    await mcpServerStore.initialize();
+    logger.info({ elapsed: elapsed() }, "MCP server store initialized");
     await bootstrapWorkspaceRegistries({
       paseoHome: config.paseoHome,
       agentStorage,
@@ -627,6 +632,7 @@ export async function createPaseoDaemon(
       loopService,
       scheduleService,
       checkoutDiffManager,
+      mcpServerStore,
     );
 
     logger.info({ elapsed: elapsed() }, "Bootstrap complete, ready to start listening");

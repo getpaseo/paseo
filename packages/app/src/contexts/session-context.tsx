@@ -40,6 +40,7 @@ import { useDraftStore } from "@/stores/draft-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import { sendOsNotification } from "@/utils/os-notifications";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
+import { getDesktopHost } from "@/desktop/host";
 import {
   getInitKey,
   getInitDeferred,
@@ -282,6 +283,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
   const updateSessionClient = useSessionStore((state) => state.updateSessionClient);
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
+  const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
 
   // Track focused agent for heartbeat
   const focusedAgentId = useSessionStore(
@@ -623,6 +625,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         title: notification.title,
         body: notification.body,
         data: notification.data,
+        ...(params.reason === "permission"
+          ? {
+              actions: [{ text: "Approve" }, { text: "Deny" }, { text: "View" }],
+            }
+          : {}),
       });
     },
     [serverId],
@@ -1740,6 +1747,37 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     },
     [client],
   );
+
+  // Handle notification actions (Approve/Deny/View)
+  useEffect(() => {
+    const desktopHost = getDesktopHost();
+    if (!desktopHost) return;
+
+    const unsubAction = desktopHost.notification?.onAction?.(
+      (payload: { action: string; notificationId: string; data?: Record<string, unknown> }) => {
+        const { action, data } = payload;
+        const agentId = data?.agentId as string | undefined;
+
+        if (action === "View" && agentId) {
+          setFocusedAgentId(serverId, agentId);
+        }
+      },
+    );
+
+    return () => {
+      unsubAction?.();
+    };
+  }, [serverId, setFocusedAgentId]);
+
+  // Handle badge count when attention_required arrives
+  useEffect(() => {
+    if (!focusedAgentId) return;
+
+    const desktopHost = getDesktopHost();
+    if (!desktopHost) return;
+
+    desktopHost.notification?.clearBadge?.();
+  }, [focusedAgentId]);
 
   // Cleanup on unmount
   useEffect(() => {

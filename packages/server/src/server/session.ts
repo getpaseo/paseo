@@ -111,6 +111,7 @@ import type {
 } from "./agent/agent-sdk-types.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import { isValidAgentProvider, AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
+import { McpServerStore } from "./mcp/mcp-server-store.js";
 import {
   buildProjectPlacementForCwd,
   detectStaleWorkspaces,
@@ -145,9 +146,7 @@ import {
 } from "./file-explorer/service.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
-import {
-  type WorktreeConfig,
-} from "../utils/worktree.js";
+import { type WorktreeConfig } from "../utils/worktree.js";
 import { runAsyncWorktreeBootstrap } from "./worktree-bootstrap.js";
 import {
   getCheckoutDiff,
@@ -165,21 +164,14 @@ import {
 import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
-import {
-  READ_ONLY_GIT_ENV,
-  resolveCheckoutGitDir,
-  toCheckoutError,
-} from "./checkout-git-utils.js";
+import { READ_ONLY_GIT_ENV, resolveCheckoutGitDir, toCheckoutError } from "./checkout-git-utils.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { LocalSpeechModelId } from "./speech/providers/local/models.js";
 import { toResolver, type Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot, SpeechReadinessState } from "./speech/speech-runtime.js";
 import type pino from "pino";
 import { resolveClientMessageId } from "./client-message-id.js";
-import {
-  ChatServiceError,
-  FileBackedChatService,
-} from "./chat/chat-service.js";
+import { ChatServiceError, FileBackedChatService } from "./chat/chat-service.js";
 import { notifyChatMentions } from "./chat/chat-mentions.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
@@ -413,6 +405,7 @@ export type SessionOptions = {
   paseoHome: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  mcpServerStore?: McpServerStore;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   chatService: FileBackedChatService;
@@ -598,6 +591,7 @@ export class Session {
   private agentTools: ToolSet | null = null;
   private agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
+  private readonly mcpServerStore: McpServerStore | undefined;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly chatService: FileBackedChatService;
@@ -665,6 +659,7 @@ export class Session {
       paseoHome,
       agentManager,
       agentStorage,
+      mcpServerStore,
       projectRegistry,
       workspaceRegistry,
       chatService,
@@ -693,6 +688,7 @@ export class Session {
     this.paseoHome = paseoHome;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    this.mcpServerStore = mcpServerStore;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.chatService = chatService;
@@ -1072,7 +1068,10 @@ export class Session {
     if (storedUpdatedAt) {
       const liveUpdatedAt = Date.parse(payload.updatedAt);
       const persistedUpdatedAt = Date.parse(storedUpdatedAt);
-      if (!Number.isNaN(persistedUpdatedAt) && (Number.isNaN(liveUpdatedAt) || persistedUpdatedAt > liveUpdatedAt)) {
+      if (
+        !Number.isNaN(persistedUpdatedAt) &&
+        (Number.isNaN(liveUpdatedAt) || persistedUpdatedAt > liveUpdatedAt)
+      ) {
         payload.updatedAt = storedUpdatedAt;
       }
     }
@@ -1179,16 +1178,40 @@ export class Session {
       const handle = toAgentPersistenceHandle(this.sessionLogger, record.persistence);
       let snapshot: ManagedAgent;
       if (handle) {
-        snapshot = await this.agentManager.resumeAgentFromPersistence(
-          handle,
-          buildConfigOverrides(record),
-          agentId,
-          extractTimestamps(record),
-        );
-        this.sessionLogger.info(
-          { agentId, provider: record.provider },
-          "Agent resumed from persistence",
-        );
+        try {
+          snapshot = await this.agentManager.resumeAgentFromPersistence(
+            handle,
+            buildConfigOverrides(record),
+            agentId,
+            extractTimestamps(record),
+          );
+          this.sessionLogger.info(
+            { agentId, provider: record.provider },
+            "Agent resumed from persistence",
+          );
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const isWorkingDirectoryNotExist =
+            error instanceof Error &&
+            "code" in error &&
+            (error as NodeJS.ErrnoException).code === "ENOENT";
+          if (
+            isWorkingDirectoryNotExist ||
+            errorMessage.includes("Working directory does not exist")
+          ) {
+            const workspaceId = normalizePersistedWorkspaceId(record.cwd);
+            this.sessionLogger.warn(
+              { agentId, workspaceId, cwd: record.cwd },
+              "Agent resume failed because worktree no longer exists; archiving workspace and agent",
+            );
+            await this.archiveWorkspaceRecord(workspaceId);
+            await this.agentManager.archiveAgent(agentId);
+            throw new Error(
+              `Session worktree no longer exists: ${record.cwd}. The workspace and agent have been archived.`,
+            );
+          }
+          throw error;
+        }
       } else {
         const config = buildSessionConfig(record);
         snapshot = await this.agentManager.createAgent(config, agentId, { labels: record.labels });
@@ -1409,7 +1432,9 @@ export class Session {
     const placement = await this.buildProjectPlacement(normalizedCwd);
     const resolvedWorkspaceId = deriveWorkspaceId(normalizedCwd, placement.checkout);
     const staleWorkspace =
-      resolvedWorkspaceId === normalizedCwd ? null : await this.workspaceRegistry.get(normalizedCwd);
+      resolvedWorkspaceId === normalizedCwd
+        ? null
+        : await this.workspaceRegistry.get(normalizedCwd);
     const existing = (await this.workspaceRegistry.get(resolvedWorkspaceId)) ?? staleWorkspace;
     await this.syncWorkspaceGitWatchTarget(resolvedWorkspaceId, {
       isGit: placement.checkout.isGit,
@@ -1564,467 +1589,487 @@ export class Session {
       this.peakInflightRequests = this.inflightRequests;
     }
     try {
-    this.sessionLogger.trace(
-      { messageType: msg.type, payloadBytes: JSON.stringify(msg).length },
-      "inbound message",
-    );
-    try {
-      switch (msg.type) {
-        case "voice_audio_chunk":
-          await this.handleAudioChunk(msg);
-          break;
+      this.sessionLogger.trace(
+        { messageType: msg.type, payloadBytes: JSON.stringify(msg).length },
+        "inbound message",
+      );
+      try {
+        switch (msg.type) {
+          case "voice_audio_chunk":
+            await this.handleAudioChunk(msg);
+            break;
 
-        case "abort_request":
-          await this.handleAbort();
-          break;
+          case "abort_request":
+            await this.handleAbort();
+            break;
 
-        case "audio_played":
-          this.handleAudioPlayed(msg.id);
-          break;
+          case "audio_played":
+            this.handleAudioPlayed(msg.id);
+            break;
 
-        case "fetch_agents_request":
-          await this.handleFetchAgents(msg);
-          break;
+          case "fetch_agents_request":
+            await this.handleFetchAgents(msg);
+            break;
 
-        case "fetch_workspaces_request":
-          await this.handleFetchWorkspacesRequest(msg);
-          break;
+          case "fetch_workspaces_request":
+            await this.handleFetchWorkspacesRequest(msg);
+            break;
 
-        case "fetch_agent_request":
-          await this.handleFetchAgent(msg.agentId, msg.requestId);
-          break;
+          case "fetch_agent_request":
+            await this.handleFetchAgent(msg.agentId, msg.requestId);
+            break;
 
-        case "delete_agent_request":
-          await this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
-          break;
+          case "delete_agent_request":
+            await this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
+            break;
 
-        case "archive_agent_request":
-          await this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
-          break;
+          case "archive_agent_request":
+            await this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
+            break;
 
-        case "close_items_request":
-          await this.handleCloseItemsRequest(msg);
-          break;
+          case "close_items_request":
+            await this.handleCloseItemsRequest(msg);
+            break;
 
-        case "update_agent_request":
-          await this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
-          break;
+          case "update_agent_request":
+            await this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
+            break;
 
-        case "set_voice_mode":
-          await this.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
-          break;
+          case "set_voice_mode":
+            await this.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
+            break;
 
-        case "send_agent_message_request":
-          await this.handleSendAgentMessageRequest(msg);
-          break;
+          case "send_agent_message_request":
+            await this.handleSendAgentMessageRequest(msg);
+            break;
 
-        case "wait_for_finish_request":
-          await this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
-          break;
+          case "wait_for_finish_request":
+            await this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
+            break;
 
-        case "dictation_stream_start":
-          {
-            const unavailable = this.resolveVoiceFeatureUnavailableContext("dictation");
-            if (unavailable) {
-              this.emit({
-                type: "dictation_stream_error",
-                payload: {
-                  dictationId: msg.dictationId,
-                  error: unavailable.message,
-                  retryable: unavailable.retryable,
-                  reasonCode: unavailable.reasonCode,
-                  missingModelIds: unavailable.missingModelIds,
-                },
-              });
-              break;
+          case "dictation_stream_start":
+            {
+              const unavailable = this.resolveVoiceFeatureUnavailableContext("dictation");
+              if (unavailable) {
+                this.emit({
+                  type: "dictation_stream_error",
+                  payload: {
+                    dictationId: msg.dictationId,
+                    error: unavailable.message,
+                    retryable: unavailable.retryable,
+                    reasonCode: unavailable.reasonCode,
+                    missingModelIds: unavailable.missingModelIds,
+                  },
+                });
+                break;
+              }
             }
+            await this.dictationStreamManager.handleStart(msg.dictationId, msg.format);
+            break;
+
+          case "dictation_stream_chunk":
+            await this.dictationStreamManager.handleChunk({
+              dictationId: msg.dictationId,
+              seq: msg.seq,
+              audioBase64: msg.audio,
+              format: msg.format,
+            });
+            break;
+
+          case "dictation_stream_finish":
+            await this.dictationStreamManager.handleFinish(msg.dictationId, msg.finalSeq);
+            break;
+
+          case "dictation_stream_cancel":
+            this.dictationStreamManager.handleCancel(msg.dictationId);
+            break;
+
+          case "create_agent_request":
+            await this.handleCreateAgentRequest(msg);
+            break;
+
+          case "resume_agent_request":
+            await this.handleResumeAgentRequest(msg);
+            break;
+
+          case "refresh_agent_request":
+            await this.handleRefreshAgentRequest(msg);
+            break;
+
+          case "cancel_agent_request":
+            await this.handleCancelAgentRequest(msg.agentId);
+            break;
+
+          case "restart_server_request":
+            await this.handleRestartServerRequest(msg.requestId, msg.reason);
+            break;
+
+          case "shutdown_server_request":
+            await this.handleShutdownServerRequest(msg.requestId);
+            break;
+
+          case "fetch_agent_timeline_request":
+            await this.handleFetchAgentTimelineRequest(msg);
+            break;
+
+          case "set_agent_mode_request":
+            await this.handleSetAgentModeRequest(msg.agentId, msg.modeId, msg.requestId);
+            break;
+
+          case "set_agent_model_request":
+            await this.handleSetAgentModelRequest(msg.agentId, msg.modelId, msg.requestId);
+            break;
+
+          case "set_agent_feature_request":
+            await this.handleSetAgentFeatureRequest(
+              msg.agentId,
+              msg.featureId,
+              msg.value,
+              msg.requestId,
+            );
+            break;
+
+          case "set_agent_thinking_request":
+            await this.handleSetAgentThinkingRequest(
+              msg.agentId,
+              msg.thinkingOptionId,
+              msg.requestId,
+            );
+            break;
+
+          case "agent_permission_response":
+            await this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
+            break;
+
+          case "checkout_status_request":
+            await this.handleCheckoutStatusRequest(msg);
+            break;
+
+          case "validate_branch_request":
+            await this.handleValidateBranchRequest(msg);
+            break;
+
+          case "branch_suggestions_request":
+            await this.handleBranchSuggestionsRequest(msg);
+            break;
+
+          case "directory_suggestions_request":
+            await this.handleDirectorySuggestionsRequest(msg);
+            break;
+
+          case "subscribe_checkout_diff_request":
+            await this.handleSubscribeCheckoutDiffRequest(msg);
+            break;
+
+          case "unsubscribe_checkout_diff_request":
+            this.handleUnsubscribeCheckoutDiffRequest(msg);
+            break;
+
+          case "checkout_switch_branch_request":
+            await this.handleCheckoutSwitchBranchRequest(msg);
+            break;
+
+          case "stash_save_request":
+            await this.handleStashSaveRequest(msg);
+            break;
+
+          case "stash_pop_request":
+            await this.handleStashPopRequest(msg);
+            break;
+
+          case "stash_list_request":
+            await this.handleStashListRequest(msg);
+            break;
+
+          case "checkout_commit_request":
+            await this.handleCheckoutCommitRequest(msg);
+            break;
+
+          case "checkout_merge_request":
+            await this.handleCheckoutMergeRequest(msg);
+            break;
+
+          case "checkout_merge_from_base_request":
+            await this.handleCheckoutMergeFromBaseRequest(msg);
+            break;
+
+          case "checkout_pull_request":
+            await this.handleCheckoutPullRequest(msg);
+            break;
+
+          case "checkout_push_request":
+            await this.handleCheckoutPushRequest(msg);
+            break;
+
+          case "checkout_pr_create_request":
+            await this.handleCheckoutPrCreateRequest(msg);
+            break;
+
+          case "checkout_pr_status_request":
+            await this.handleCheckoutPrStatusRequest(msg);
+            break;
+
+          case "paseo_worktree_list_request":
+            await this.handlePaseoWorktreeListRequest(msg);
+            break;
+
+          case "paseo_worktree_archive_request":
+            await this.handlePaseoWorktreeArchiveRequest(msg);
+            break;
+
+          case "create_paseo_worktree_request":
+            await this.handleCreatePaseoWorktreeRequest(msg);
+            break;
+
+          case "list_available_editors_request":
+            await this.handleListAvailableEditorsRequest(msg);
+            break;
+
+          case "open_in_editor_request":
+            await this.handleOpenInEditorRequest(msg);
+            break;
+
+          case "open_project_request":
+            await this.handleOpenProjectRequest(msg);
+            break;
+
+          case "archive_workspace_request":
+            await this.handleArchiveWorkspaceRequest(msg);
+            break;
+
+          case "file_explorer_request":
+            await this.handleFileExplorerRequest(msg);
+            break;
+
+          case "project_icon_request":
+            await this.handleProjectIconRequest(msg);
+            break;
+
+          case "file_download_token_request":
+            await this.handleFileDownloadTokenRequest(msg);
+            break;
+
+          case "list_provider_models_request":
+            await this.handleListProviderModelsRequest(msg);
+            break;
+
+          case "list_provider_modes_request":
+            await this.handleListProviderModesRequest(msg);
+            break;
+
+          case "list_provider_features_request":
+            await this.handleListProviderFeaturesRequest(msg);
+            break;
+
+          case "list_available_providers_request":
+            await this.handleListAvailableProvidersRequest(msg);
+            break;
+
+          case "get_providers_snapshot_request":
+            await this.handleGetProvidersSnapshotRequest(msg);
+            break;
+
+          case "refresh_providers_snapshot_request":
+            await this.handleRefreshProvidersSnapshotRequest(msg);
+            break;
+
+          case "provider_diagnostic_request":
+            await this.handleProviderDiagnosticRequest(msg);
+            break;
+
+          case "clear_agent_attention":
+            await this.handleClearAgentAttention(msg.agentId);
+            break;
+
+          case "client_heartbeat":
+            this.handleClientHeartbeat(msg);
+            break;
+
+          case "ping": {
+            const now = Date.now();
+            this.emit({
+              type: "pong",
+              payload: {
+                requestId: msg.requestId,
+                clientSentAt: msg.clientSentAt,
+                serverReceivedAt: now,
+                serverSentAt: now,
+              },
+            });
+            break;
           }
-          await this.dictationStreamManager.handleStart(msg.dictationId, msg.format);
-          break;
 
-        case "dictation_stream_chunk":
-          await this.dictationStreamManager.handleChunk({
-            dictationId: msg.dictationId,
-            seq: msg.seq,
-            audioBase64: msg.audio,
-            format: msg.format,
-          });
-          break;
+          case "list_commands_request":
+            await this.handleListCommandsRequest(msg);
+            break;
 
-        case "dictation_stream_finish":
-          await this.dictationStreamManager.handleFinish(msg.dictationId, msg.finalSeq);
-          break;
+          case "register_push_token":
+            this.handleRegisterPushToken(msg.token);
+            break;
 
-        case "dictation_stream_cancel":
-          this.dictationStreamManager.handleCancel(msg.dictationId);
-          break;
+          case "subscribe_terminals_request":
+            this.handleSubscribeTerminalsRequest(msg);
+            break;
 
-        case "create_agent_request":
-          await this.handleCreateAgentRequest(msg);
-          break;
+          case "unsubscribe_terminals_request":
+            this.handleUnsubscribeTerminalsRequest(msg);
+            break;
 
-        case "resume_agent_request":
-          await this.handleResumeAgentRequest(msg);
-          break;
+          case "list_terminals_request":
+            await this.handleListTerminalsRequest(msg);
+            break;
 
-        case "refresh_agent_request":
-          await this.handleRefreshAgentRequest(msg);
-          break;
+          case "create_terminal_request":
+            await this.handleCreateTerminalRequest(msg);
+            break;
 
-        case "cancel_agent_request":
-          await this.handleCancelAgentRequest(msg.agentId);
-          break;
+          case "subscribe_terminal_request":
+            await this.handleSubscribeTerminalRequest(msg);
+            break;
 
-        case "restart_server_request":
-          await this.handleRestartServerRequest(msg.requestId, msg.reason);
-          break;
+          case "unsubscribe_terminal_request":
+            this.handleUnsubscribeTerminalRequest(msg);
+            break;
 
-        case "shutdown_server_request":
-          await this.handleShutdownServerRequest(msg.requestId);
-          break;
+          case "terminal_input":
+            this.handleTerminalInput(msg);
+            break;
 
-        case "fetch_agent_timeline_request":
-          await this.handleFetchAgentTimelineRequest(msg);
-          break;
+          case "kill_terminal_request":
+            await this.handleKillTerminalRequest(msg);
+            break;
 
-        case "set_agent_mode_request":
-          await this.handleSetAgentModeRequest(msg.agentId, msg.modeId, msg.requestId);
-          break;
+          case "capture_terminal_request":
+            await this.handleCaptureTerminalRequest(msg);
+            break;
 
-        case "set_agent_model_request":
-          await this.handleSetAgentModelRequest(msg.agentId, msg.modelId, msg.requestId);
-          break;
+          case "chat/create":
+            await this.handleChatCreateRequest(msg);
+            break;
 
-        case "set_agent_feature_request":
-          await this.handleSetAgentFeatureRequest(
-            msg.agentId,
-            msg.featureId,
-            msg.value,
-            msg.requestId,
-          );
-          break;
+          case "chat/list":
+            await this.handleChatListRequest(msg);
+            break;
 
-        case "set_agent_thinking_request":
-          await this.handleSetAgentThinkingRequest(
-            msg.agentId,
-            msg.thinkingOptionId,
-            msg.requestId,
-          );
-          break;
+          case "chat/inspect":
+            await this.handleChatInspectRequest(msg);
+            break;
 
-        case "agent_permission_response":
-          await this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
-          break;
+          case "chat/delete":
+            await this.handleChatDeleteRequest(msg);
+            break;
 
-        case "checkout_status_request":
-          await this.handleCheckoutStatusRequest(msg);
-          break;
+          case "chat/post":
+            await this.handleChatPostRequest(msg);
+            break;
 
-        case "validate_branch_request":
-          await this.handleValidateBranchRequest(msg);
-          break;
+          case "chat/read":
+            await this.handleChatReadRequest(msg);
+            break;
 
-        case "branch_suggestions_request":
-          await this.handleBranchSuggestionsRequest(msg);
-          break;
+          case "chat/wait":
+            await this.handleChatWaitRequest(msg);
+            break;
 
-        case "directory_suggestions_request":
-          await this.handleDirectorySuggestionsRequest(msg);
-          break;
+          case "schedule/create":
+            await this.handleScheduleCreateRequest(msg);
+            break;
 
-        case "subscribe_checkout_diff_request":
-          await this.handleSubscribeCheckoutDiffRequest(msg);
-          break;
+          case "schedule/list":
+            await this.handleScheduleListRequest(msg);
+            break;
 
-        case "unsubscribe_checkout_diff_request":
-          this.handleUnsubscribeCheckoutDiffRequest(msg);
-          break;
+          case "schedule/inspect":
+            await this.handleScheduleInspectRequest(msg);
+            break;
 
-        case "checkout_switch_branch_request":
-          await this.handleCheckoutSwitchBranchRequest(msg);
-          break;
+          case "schedule/logs":
+            await this.handleScheduleLogsRequest(msg);
+            break;
 
-        case "stash_save_request":
-          await this.handleStashSaveRequest(msg);
-          break;
+          case "schedule/pause":
+            await this.handleSchedulePauseRequest(msg);
+            break;
 
-        case "stash_pop_request":
-          await this.handleStashPopRequest(msg);
-          break;
+          case "schedule/resume":
+            await this.handleScheduleResumeRequest(msg);
+            break;
 
-        case "stash_list_request":
-          await this.handleStashListRequest(msg);
-          break;
+          case "schedule/delete":
+            await this.handleScheduleDeleteRequest(msg);
+            break;
 
-        case "checkout_commit_request":
-          await this.handleCheckoutCommitRequest(msg);
-          break;
+          case "loop/run":
+            await this.handleLoopRunRequest(msg);
+            break;
 
-        case "checkout_merge_request":
-          await this.handleCheckoutMergeRequest(msg);
-          break;
+          case "loop/list":
+            await this.handleLoopListRequest(msg);
+            break;
 
-        case "checkout_merge_from_base_request":
-          await this.handleCheckoutMergeFromBaseRequest(msg);
-          break;
+          case "loop/inspect":
+            await this.handleLoopInspectRequest(msg);
+            break;
 
-        case "checkout_pull_request":
-          await this.handleCheckoutPullRequest(msg);
-          break;
+          case "loop/logs":
+            await this.handleLoopLogsRequest(msg);
+            break;
 
-        case "checkout_push_request":
-          await this.handleCheckoutPushRequest(msg);
-          break;
+          case "loop/stop":
+            await this.handleLoopStopRequest(msg);
+            break;
 
-        case "checkout_pr_create_request":
-          await this.handleCheckoutPrCreateRequest(msg);
-          break;
+          case "list_mcp_servers_request":
+            await this.handleListMcpServersRequest(msg);
+            break;
 
-        case "checkout_pr_status_request":
-          await this.handleCheckoutPrStatusRequest(msg);
-          break;
+          case "create_mcp_server_request":
+            await this.handleCreateMcpServerRequest(msg);
+            break;
 
-        case "paseo_worktree_list_request":
-          await this.handlePaseoWorktreeListRequest(msg);
-          break;
+          case "update_mcp_server_request":
+            await this.handleUpdateMcpServerRequest(msg);
+            break;
 
-        case "paseo_worktree_archive_request":
-          await this.handlePaseoWorktreeArchiveRequest(msg);
-          break;
+          case "delete_mcp_server_request":
+            await this.handleDeleteMcpServerRequest(msg);
+            break;
 
-        case "create_paseo_worktree_request":
-          await this.handleCreatePaseoWorktreeRequest(msg);
-          break;
+          case "toggle_mcp_server_request":
+            await this.handleToggleMcpServerRequest(msg);
+            break;
+        }
+      } catch (error: any) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        this.sessionLogger.error({ err }, "Error handling message");
 
-        case "list_available_editors_request":
-          await this.handleListAvailableEditorsRequest(msg);
-          break;
-
-        case "open_in_editor_request":
-          await this.handleOpenInEditorRequest(msg);
-          break;
-
-        case "open_project_request":
-          await this.handleOpenProjectRequest(msg);
-          break;
-
-        case "archive_workspace_request":
-          await this.handleArchiveWorkspaceRequest(msg);
-          break;
-
-        case "file_explorer_request":
-          await this.handleFileExplorerRequest(msg);
-          break;
-
-        case "project_icon_request":
-          await this.handleProjectIconRequest(msg);
-          break;
-
-        case "file_download_token_request":
-          await this.handleFileDownloadTokenRequest(msg);
-          break;
-
-        case "list_provider_models_request":
-          await this.handleListProviderModelsRequest(msg);
-          break;
-
-        case "list_provider_modes_request":
-          await this.handleListProviderModesRequest(msg);
-          break;
-
-        case "list_provider_features_request":
-          await this.handleListProviderFeaturesRequest(msg);
-          break;
-
-        case "list_available_providers_request":
-          await this.handleListAvailableProvidersRequest(msg);
-          break;
-
-        case "get_providers_snapshot_request":
-          await this.handleGetProvidersSnapshotRequest(msg);
-          break;
-
-        case "refresh_providers_snapshot_request":
-          await this.handleRefreshProvidersSnapshotRequest(msg);
-          break;
-
-        case "provider_diagnostic_request":
-          await this.handleProviderDiagnosticRequest(msg);
-          break;
-
-        case "clear_agent_attention":
-          await this.handleClearAgentAttention(msg.agentId);
-          break;
-
-        case "client_heartbeat":
-          this.handleClientHeartbeat(msg);
-          break;
-
-        case "ping": {
-          const now = Date.now();
-          this.emit({
-            type: "pong",
-            payload: {
-              requestId: msg.requestId,
-              clientSentAt: msg.clientSentAt,
-              serverReceivedAt: now,
-              serverSentAt: now,
-            },
-          });
-          break;
+        const requestId = (msg as { requestId?: unknown }).requestId;
+        if (typeof requestId === "string") {
+          try {
+            this.emit({
+              type: "rpc_error",
+              payload: {
+                requestId,
+                requestType: msg.type,
+                error: `Request failed: ${err.message}`,
+                code: "handler_error",
+              },
+            });
+          } catch (emitError) {
+            this.sessionLogger.error({ err: emitError }, "Failed to emit rpc_error");
+          }
         }
 
-        case "list_commands_request":
-          await this.handleListCommandsRequest(msg);
-          break;
-
-        case "register_push_token":
-          this.handleRegisterPushToken(msg.token);
-          break;
-
-        case "subscribe_terminals_request":
-          this.handleSubscribeTerminalsRequest(msg);
-          break;
-
-        case "unsubscribe_terminals_request":
-          this.handleUnsubscribeTerminalsRequest(msg);
-          break;
-
-        case "list_terminals_request":
-          await this.handleListTerminalsRequest(msg);
-          break;
-
-        case "create_terminal_request":
-          await this.handleCreateTerminalRequest(msg);
-          break;
-
-        case "subscribe_terminal_request":
-          await this.handleSubscribeTerminalRequest(msg);
-          break;
-
-        case "unsubscribe_terminal_request":
-          this.handleUnsubscribeTerminalRequest(msg);
-          break;
-
-        case "terminal_input":
-          this.handleTerminalInput(msg);
-          break;
-
-        case "kill_terminal_request":
-          await this.handleKillTerminalRequest(msg);
-          break;
-
-        case "capture_terminal_request":
-          await this.handleCaptureTerminalRequest(msg);
-          break;
-
-        case "chat/create":
-          await this.handleChatCreateRequest(msg);
-          break;
-
-        case "chat/list":
-          await this.handleChatListRequest(msg);
-          break;
-
-        case "chat/inspect":
-          await this.handleChatInspectRequest(msg);
-          break;
-
-        case "chat/delete":
-          await this.handleChatDeleteRequest(msg);
-          break;
-
-        case "chat/post":
-          await this.handleChatPostRequest(msg);
-          break;
-
-        case "chat/read":
-          await this.handleChatReadRequest(msg);
-          break;
-
-        case "chat/wait":
-          await this.handleChatWaitRequest(msg);
-          break;
-
-        case "schedule/create":
-          await this.handleScheduleCreateRequest(msg);
-          break;
-
-        case "schedule/list":
-          await this.handleScheduleListRequest(msg);
-          break;
-
-        case "schedule/inspect":
-          await this.handleScheduleInspectRequest(msg);
-          break;
-
-        case "schedule/logs":
-          await this.handleScheduleLogsRequest(msg);
-          break;
-
-        case "schedule/pause":
-          await this.handleSchedulePauseRequest(msg);
-          break;
-
-        case "schedule/resume":
-          await this.handleScheduleResumeRequest(msg);
-          break;
-
-        case "schedule/delete":
-          await this.handleScheduleDeleteRequest(msg);
-          break;
-
-        case "loop/run":
-          await this.handleLoopRunRequest(msg);
-          break;
-
-        case "loop/list":
-          await this.handleLoopListRequest(msg);
-          break;
-
-        case "loop/inspect":
-          await this.handleLoopInspectRequest(msg);
-          break;
-
-        case "loop/logs":
-          await this.handleLoopLogsRequest(msg);
-          break;
-
-        case "loop/stop":
-          await this.handleLoopStopRequest(msg);
-          break;
+        this.emit({
+          type: "activity_log",
+          payload: {
+            id: uuidv4(),
+            timestamp: new Date(),
+            type: "error",
+            content: `Error: ${err.message}`,
+          },
+        });
       }
-    } catch (error: any) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.sessionLogger.error({ err }, "Error handling message");
-
-      const requestId = (msg as { requestId?: unknown }).requestId;
-      if (typeof requestId === "string") {
-        try {
-          this.emit({
-            type: "rpc_error",
-            payload: {
-              requestId,
-              requestType: msg.type,
-              error: `Request failed: ${err.message}`,
-              code: "handler_error",
-            },
-          });
-        } catch (emitError) {
-          this.sessionLogger.error({ err: emitError }, "Failed to emit rpc_error");
-        }
-      }
-
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Error: ${err.message}`,
-        },
-      });
-    }
     } finally {
       this.inflightRequests--;
     }
@@ -3267,9 +3312,7 @@ export class Session {
       cwd: expandTilde(draftConfig.cwd),
       ...(draftConfig.modeId ? { modeId: draftConfig.modeId } : {}),
       ...(draftConfig.model ? { model: draftConfig.model } : {}),
-      ...(draftConfig.thinkingOptionId
-        ? { thinkingOptionId: draftConfig.thinkingOptionId }
-        : {}),
+      ...(draftConfig.thinkingOptionId ? { thinkingOptionId: draftConfig.thinkingOptionId } : {}),
       ...(draftConfig.featureValues ? { featureValues: draftConfig.featureValues } : {}),
     };
   }
@@ -5649,9 +5692,11 @@ export class Session {
 
   private async listWorkspaceDescriptorsSnapshot(): Promise<WorkspaceDescriptorPayload[]> {
     return Array.from(
-      (await this.buildWorkspaceDescriptorMap({
-        includeGitData: false,
-      })).values(),
+      (
+        await this.buildWorkspaceDescriptorMap({
+          includeGitData: false,
+        })
+      ).values(),
     );
   }
 
@@ -7217,14 +7262,9 @@ export class Session {
       return;
     }
 
-    await this.handleSendAgentMessage(
-      agentId,
-      result.text,
-      undefined,
-      undefined,
-      undefined,
-      { spokenInput: true },
-    );
+    await this.handleSendAgentMessage(agentId, result.text, undefined, undefined, undefined, {
+      spokenInput: true,
+    });
     await this.flushPendingAudioSegments("transcription complete");
   }
 
@@ -7595,8 +7635,7 @@ export class Session {
   }
 
   private emitChatRpcError(request: { requestId: string; type: string }, error: unknown): void {
-    const message =
-      error instanceof Error ? error.message : "Chat request failed";
+    const message = error instanceof Error ? error.message : "Chat request failed";
     const code = error instanceof ChatServiceError ? error.code : "chat_request_failed";
     this.sessionLogger.error({ err: error, requestType: request.type }, "Chat request failed");
     this.emit({
@@ -7774,7 +7813,10 @@ export class Session {
 
   private toScheduleSummary(
     schedule: Awaited<ReturnType<ScheduleService["inspect"]>>,
-  ): Extract<SessionOutboundMessage, { type: "schedule/list/response" }>["payload"]["schedules"][number] {
+  ): Extract<
+    SessionOutboundMessage,
+    { type: "schedule/list/response" }
+  >["payload"]["schedules"][number] {
     const { runs: _runs, ...summary } = schedule;
     return summary;
   }
@@ -8072,6 +8114,229 @@ export class Session {
       });
     } catch (error) {
       this.emitLoopRpcError(request, error);
+    }
+  }
+
+  private async handleListMcpServersRequest(
+    request: Extract<SessionInboundMessage, { type: "list_mcp_servers_request" }>,
+  ): Promise<void> {
+    if (!this.mcpServerStore) {
+      this.emit({
+        type: "list_mcp_servers_response",
+        payload: {
+          requestId: request.requestId,
+          servers: [],
+          error: "MCP server store not available",
+        },
+      });
+      return;
+    }
+    try {
+      const servers = await this.mcpServerStore.list();
+      this.emit({
+        type: "list_mcp_servers_response",
+        payload: {
+          requestId: request.requestId,
+          servers,
+          error: null,
+        },
+      });
+    } catch (error: any) {
+      this.emit({
+        type: "list_mcp_servers_response",
+        payload: {
+          requestId: request.requestId,
+          servers: [],
+          error: error?.message ?? "Failed to list MCP servers",
+        },
+      });
+    }
+  }
+
+  private async handleCreateMcpServerRequest(
+    request: Extract<SessionInboundMessage, { type: "create_mcp_server_request" }>,
+  ): Promise<void> {
+    if (!this.mcpServerStore) {
+      this.emit({
+        type: "create_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          server: null,
+          error: "MCP server store not available",
+        },
+      });
+      return;
+    }
+    try {
+      const server = await this.mcpServerStore.add(request.payload.server);
+      this.emit({
+        type: "create_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          server,
+          error: null,
+        },
+      });
+    } catch (error: any) {
+      this.emit({
+        type: "create_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          server: null,
+          error: error?.message ?? "Failed to create MCP server",
+        },
+      });
+    }
+  }
+
+  private async handleUpdateMcpServerRequest(
+    request: Extract<SessionInboundMessage, { type: "update_mcp_server_request" }>,
+  ): Promise<void> {
+    if (!this.mcpServerStore) {
+      this.emit({
+        type: "update_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          server: null,
+          error: "MCP server store not available",
+        },
+      });
+      return;
+    }
+    try {
+      const server = await this.mcpServerStore.update(request.payload.id, request.payload.updates);
+      if (!server) {
+        this.emit({
+          type: "update_mcp_server_response",
+          payload: {
+            requestId: request.payload.requestId,
+            server: null,
+            error: "MCP server not found",
+          },
+        });
+        return;
+      }
+      this.emit({
+        type: "update_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          server,
+          error: null,
+        },
+      });
+    } catch (error: any) {
+      this.emit({
+        type: "update_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          server: null,
+          error: error?.message ?? "Failed to update MCP server",
+        },
+      });
+    }
+  }
+
+  private async handleDeleteMcpServerRequest(
+    request: Extract<SessionInboundMessage, { type: "delete_mcp_server_request" }>,
+  ): Promise<void> {
+    if (!this.mcpServerStore) {
+      this.emit({
+        type: "delete_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          id: request.payload.id,
+          deleted: false,
+          error: "MCP server store not available",
+        },
+      });
+      return;
+    }
+    try {
+      const deleted = await this.mcpServerStore.delete(request.payload.id);
+      if (!deleted) {
+        this.emit({
+          type: "delete_mcp_server_response",
+          payload: {
+            requestId: request.payload.requestId,
+            id: request.payload.id,
+            deleted: false,
+            error: "MCP server not found",
+          },
+        });
+        return;
+      }
+      this.emit({
+        type: "delete_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          id: request.payload.id,
+          deleted: true,
+          error: null,
+        },
+      });
+    } catch (error: any) {
+      this.emit({
+        type: "delete_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          id: request.payload.id,
+          deleted: false,
+          error: error?.message ?? "Failed to delete MCP server",
+        },
+      });
+    }
+  }
+
+  private async handleToggleMcpServerRequest(
+    request: Extract<SessionInboundMessage, { type: "toggle_mcp_server_request" }>,
+  ): Promise<void> {
+    if (!this.mcpServerStore) {
+      this.emit({
+        type: "toggle_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          id: request.payload.id,
+          enabled: request.payload.enabled,
+          error: "MCP server store not available",
+        },
+      });
+      return;
+    }
+    try {
+      const success = request.payload.enabled
+        ? await this.mcpServerStore.enable(request.payload.id)
+        : await this.mcpServerStore.disable(request.payload.id);
+      if (!success) {
+        this.emit({
+          type: "toggle_mcp_server_response",
+          payload: {
+            requestId: request.payload.requestId,
+            id: request.payload.id,
+            enabled: request.payload.enabled,
+            error: "MCP server not found",
+          },
+        });
+        return;
+      }
+      this.emit({
+        type: "toggle_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          id: request.payload.id,
+          enabled: request.payload.enabled,
+          error: null,
+        },
+      });
+    } catch (error: any) {
+      this.emit({
+        type: "toggle_mcp_server_response",
+        payload: {
+          requestId: request.payload.requestId,
+          id: request.payload.id,
+          enabled: request.payload.enabled,
+          error: error?.message ?? "Failed to toggle MCP server",
+        },
+      });
     }
   }
 
@@ -8549,5 +8814,4 @@ export class Session {
       this.detachTerminalStream(terminalId, { emitExit: false });
     }
   }
-
 }

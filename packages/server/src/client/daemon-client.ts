@@ -62,6 +62,11 @@ import type {
   SessionInboundMessage,
   SessionOutboundMessage,
   EditorTargetId,
+  ListMcpServersResponse,
+  CreateMcpServerResponse,
+  UpdateMcpServerResponse,
+  DeleteMcpServerResponse,
+  ToggleMcpServerResponse,
 } from "../shared/messages.js";
 import type {
   AgentPermissionRequest,
@@ -70,6 +75,7 @@ import type {
   AgentProvider,
   AgentSessionConfig,
 } from "../server/agent/agent-sdk-types.js";
+import type { McpServerRecord } from "../server/mcp/mcp-server-types.js";
 import { getAgentProviderDefinition } from "../server/agent/provider-manifest.js";
 import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
 import {
@@ -273,10 +279,7 @@ type ChatCreatePayload = Extract<
   SessionOutboundMessage,
   { type: "chat/create/response" }
 >["payload"];
-type ChatListPayload = Extract<
-  SessionOutboundMessage,
-  { type: "chat/list/response" }
->["payload"];
+type ChatListPayload = Extract<SessionOutboundMessage, { type: "chat/list/response" }>["payload"];
 type ChatInspectPayload = Extract<
   SessionOutboundMessage,
   { type: "chat/inspect/response" }
@@ -285,38 +288,17 @@ type ChatDeletePayload = Extract<
   SessionOutboundMessage,
   { type: "chat/delete/response" }
 >["payload"];
-type ChatPostPayload = Extract<
-  SessionOutboundMessage,
-  { type: "chat/post/response" }
->["payload"];
-type ChatReadPayload = Extract<
-  SessionOutboundMessage,
-  { type: "chat/read/response" }
->["payload"];
-type ChatWaitPayload = Extract<
-  SessionOutboundMessage,
-  { type: "chat/wait/response" }
->["payload"];
-type LoopRunPayload = Extract<
-  SessionOutboundMessage,
-  { type: "loop/run/response" }
->["payload"];
-type LoopListPayload = Extract<
-  SessionOutboundMessage,
-  { type: "loop/list/response" }
->["payload"];
+type ChatPostPayload = Extract<SessionOutboundMessage, { type: "chat/post/response" }>["payload"];
+type ChatReadPayload = Extract<SessionOutboundMessage, { type: "chat/read/response" }>["payload"];
+type ChatWaitPayload = Extract<SessionOutboundMessage, { type: "chat/wait/response" }>["payload"];
+type LoopRunPayload = Extract<SessionOutboundMessage, { type: "loop/run/response" }>["payload"];
+type LoopListPayload = Extract<SessionOutboundMessage, { type: "loop/list/response" }>["payload"];
 type LoopInspectPayload = Extract<
   SessionOutboundMessage,
   { type: "loop/inspect/response" }
 >["payload"];
-type LoopLogsPayload = Extract<
-  SessionOutboundMessage,
-  { type: "loop/logs/response" }
->["payload"];
-type LoopStopPayload = Extract<
-  SessionOutboundMessage,
-  { type: "loop/stop/response" }
->["payload"];
+type LoopLogsPayload = Extract<SessionOutboundMessage, { type: "loop/logs/response" }>["payload"];
+type LoopStopPayload = Extract<SessionOutboundMessage, { type: "loop/stop/response" }>["payload"];
 type ScheduleCreatePayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/create/response" }
@@ -502,6 +484,26 @@ export type WaitForFinishResult = {
   error: string | null;
   lastMessage: string | null;
 };
+
+export type ListMcpServersResult = ListMcpServersResponse["payload"];
+
+export type CreateMcpServerResult = CreateMcpServerResponse["payload"];
+
+export type UpdateMcpServerResult = UpdateMcpServerResponse["payload"];
+
+export type DeleteMcpServerResult = DeleteMcpServerResponse["payload"];
+
+export type ToggleMcpServerResult = ToggleMcpServerResponse["payload"];
+
+export type CreateMcpServerOptions = Omit<McpServerRecord, "id" | "createdAt" | "updatedAt">;
+
+export type UpdateMcpServerOptions = Partial<
+  Omit<McpServerRecord, "id" | "createdAt" | "updatedAt">
+>;
+
+export type DeleteMcpServerOptions = string;
+
+export type ToggleMcpServerOptions = { id: string; enabled: boolean };
 
 type Waiter<T> = {
   predicate: (msg: SessionOutboundMessage) => T | null;
@@ -2430,11 +2432,7 @@ export class DaemonClient {
     });
   }
 
-  async stashPop(
-    cwd: string,
-    stashIndex: number,
-    requestId?: string,
-  ): Promise<StashPopPayload> {
+  async stashPop(cwd: string, stashIndex: number, requestId?: string): Promise<StashPopPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
@@ -3351,8 +3349,7 @@ export class DaemonClient {
   }
 
   async loopLogs(options: string | LoopLogsOptions, afterSeq?: number): Promise<LoopLogsPayload> {
-    const normalized =
-      typeof options === "string" ? { id: options, afterSeq } : options;
+    const normalized = typeof options === "string" ? { id: options, afterSeq } : options;
     return this.sendCorrelatedSessionRequest({
       requestId: normalized.requestId,
       message: {
@@ -3901,6 +3898,142 @@ export class DaemonClient {
     };
 
     return { promise, cancel };
+  }
+
+  async listMcpServers(): Promise<{
+    requestId: string;
+    servers: McpServerRecord[];
+    error: string | null;
+  }> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "list_mcp_servers_request",
+      requestId,
+    });
+    return await this.sendRequest({
+      requestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: false },
+      select: (msg) => {
+        if (msg.type !== "list_mcp_servers_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async createMcpServer(options: CreateMcpServerOptions): Promise<CreateMcpServerResult> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "create_mcp_server_request",
+      payload: {
+        requestId,
+        server: options,
+      },
+    });
+    return await this.sendRequest({
+      requestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: false },
+      select: (msg) => {
+        if (msg.type !== "create_mcp_server_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async updateMcpServer(
+    id: string,
+    options: UpdateMcpServerOptions,
+  ): Promise<UpdateMcpServerResult> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "update_mcp_server_request",
+      payload: {
+        requestId,
+        id,
+        updates: options,
+      },
+    });
+    return await this.sendRequest({
+      requestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: false },
+      select: (msg) => {
+        if (msg.type !== "update_mcp_server_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async deleteMcpServer(options: DeleteMcpServerOptions): Promise<DeleteMcpServerResult> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "delete_mcp_server_request",
+      payload: {
+        requestId,
+        id: options,
+      },
+    });
+    return await this.sendRequest({
+      requestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: false },
+      select: (msg) => {
+        if (msg.type !== "delete_mcp_server_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async toggleMcpServer(options: ToggleMcpServerOptions): Promise<ToggleMcpServerResult> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "toggle_mcp_server_request",
+      payload: {
+        requestId,
+        id: options.id,
+        enabled: options.enabled,
+      },
+    });
+    return await this.sendRequest({
+      requestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: false },
+      select: (msg) => {
+        if (msg.type !== "toggle_mcp_server_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
   }
 }
 
