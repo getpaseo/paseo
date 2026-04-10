@@ -1440,23 +1440,16 @@ describe("workspace aggregation", () => {
         requestId: "req-open-worktree",
       });
 
-      expect(workspaces.get(mainWorkspaceId)?.projectId).toBe(remoteProjectId);
+      expect(workspaces.get(mainWorkspaceId)?.projectId).toBe(localProjectId);
       expect(workspaces.get(worktreeWorkspaceId)?.projectId).toBe(remoteProjectId);
-      expect(projects.get(localProjectId)?.archivedAt).toBeTruthy();
+      expect(projects.get(localProjectId)?.archivedAt).toBeFalsy();
 
       const workspaceUpdates = emitted.filter(
         (message) => message.type === "workspace_update",
       ) as any[];
-      expect(workspaceUpdates).toHaveLength(2);
-      expect(workspaceUpdates.map((message) => message.payload.workspace.id).sort()).toEqual([
-        mainWorkspaceId,
-        worktreeWorkspaceId,
-      ]);
-      expect(
-        workspaceUpdates.every(
-          (message) => message.payload.workspace.projectId === remoteProjectId,
-        ),
-      ).toBe(true);
+      expect(workspaceUpdates).toHaveLength(1);
+      expect(workspaceUpdates[0]?.payload.workspace.id).toBe(worktreeWorkspaceId);
+      expect(workspaceUpdates[0]?.payload.workspace.projectId).toBe(remoteProjectId);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -1541,6 +1534,9 @@ describe("workspace aggregation", () => {
     });
 
     try {
+      await session.reconcileWorkspaceRecord(mainWorkspaceId);
+      await session.reconcileWorkspaceRecord(worktreeWorkspaceId);
+
       const result = await session.listFetchWorkspacesEntries({
         type: "fetch_workspaces_request",
         requestId: "req-fetch-reconcile",

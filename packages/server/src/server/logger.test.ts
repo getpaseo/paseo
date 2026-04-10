@@ -25,13 +25,13 @@ describe("resolveLogConfig", () => {
   it("returns dual-sink defaults when no config or env vars", () => {
     const result = resolveLogConfig(undefined, { paseoHome });
     expect(result).toEqual({
-      level: "trace",
+      level: "debug",
       console: {
         level: "info",
         format: "pretty",
       },
       file: {
-        level: "trace",
+        level: "debug",
         path: path.join(paseoHome, "daemon.log"),
         rotate: {
           maxSize: "10m",
@@ -179,13 +179,13 @@ describe("resolveLogConfig", () => {
 
     const result = resolveLogConfig(config, { paseoHome });
     expect(result).toEqual({
-      level: "trace",
+      level: "debug",
       console: {
         level: "warn",
         format: "pretty",
       },
       file: {
-        level: "trace",
+        level: "debug",
         path: path.join(paseoHome, "daemon.log"),
         rotate: {
           maxSize: "10m",
