@@ -20,7 +20,6 @@ import {
   Copy,
   Ellipsis,
   EllipsisVertical,
-  GitBranch,
   PanelRight,
   RotateCw,
   SquarePen,
@@ -35,7 +34,8 @@ import invariant from "tiny-invariant";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { ScreenHeader } from "@/components/headers/screen-header";
-import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+import { BranchSwitcher } from "@/components/branch-switcher";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
   DropdownMenu,
@@ -81,6 +81,7 @@ import type { ListTerminalsResponse } from "@server/shared/messages";
 import { upsertTerminalListEntry } from "@/utils/terminal-list";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { useBranchSwitcher } from "@/hooks/use-branch-switcher";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
@@ -761,134 +762,22 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       ? trimNonEmpty(checkoutQuery.data.currentBranch)
       : null;
 
-  // Branch switcher state
-  const [isBranchSwitcherOpen, setIsBranchSwitcherOpen] = useState(false);
-  const branchSwitcherAnchorRef = useRef<View>(null);
-
-  const branchSuggestionsQuery = useQuery({
-    queryKey: ["branchSuggestions", normalizedServerId, normalizedWorkspaceId],
-    queryFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client unavailable");
-      }
-      const payload = await client.getBranchSuggestions({
-        cwd: normalizedWorkspaceId,
-        limit: 200,
-      });
-      if (payload.error) {
-        throw new Error(payload.error);
-      }
-      return payload.branches ?? [];
-    },
-    enabled: isBranchSwitcherOpen && isGitCheckout && Boolean(client) && isConnected,
-    retry: false,
-    staleTime: 15_000,
+  const {
+    branchOptions,
+    isOpen: isBranchSwitcherOpen,
+    setIsOpen: setIsBranchSwitcherOpen,
+    handleBranchSelect,
+    invalidateStashAndCheckout,
+  } = useBranchSwitcher({
+    client,
+    normalizedServerId,
+    normalizedWorkspaceId,
+    currentBranchName,
+    isGitCheckout,
+    isConnected,
+    toast,
+    queryClient,
   });
-
-  const branchOptions = useMemo<ComboboxOption[]>(() => {
-    const branches = branchSuggestionsQuery.data ?? [];
-    return branches.map((name) => ({ id: name, label: name }));
-  }, [branchSuggestionsQuery.data]);
-
-  const stashListQueryKey = useMemo(
-    () => ["stashList", normalizedServerId, normalizedWorkspaceId] as const,
-    [normalizedServerId, normalizedWorkspaceId],
-  );
-
-  const invalidateStashAndCheckout = useCallback(async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: stashListQueryKey }),
-      queryClient.invalidateQueries({
-        queryKey: checkoutStatusQueryKey(normalizedServerId, normalizedWorkspaceId),
-      }),
-    ]);
-  }, [queryClient, stashListQueryKey, normalizedServerId, normalizedWorkspaceId]);
-
-  // ---- Branch switch with stash-awareness ----
-
-  const stashAndSwitch = useCallback(
-    async (branchId: string) => {
-      if (!client) return;
-      const shouldStash = await confirmDialog({
-        title: "Uncommitted changes",
-        message:
-          "You have uncommitted changes. Stash them before switching branches?",
-        confirmLabel: "Stash & Switch",
-        cancelLabel: "Cancel",
-      });
-      if (!shouldStash) return;
-
-      try {
-        const stashPayload = await client.stashSave(normalizedWorkspaceId, {
-          branch: currentBranchName ?? undefined,
-        });
-        if (stashPayload.error) {
-          toast.error(stashPayload.error.message);
-          return;
-        }
-        await invalidateStashAndCheckout();
-        const switchPayload = await client.checkoutSwitchBranch(normalizedWorkspaceId, branchId);
-        if (switchPayload.error) {
-          toast.error(switchPayload.error.message);
-          return;
-        }
-        await invalidateStashAndCheckout();
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to stash changes");
-      }
-    },
-    [client, currentBranchName, invalidateStashAndCheckout, normalizedWorkspaceId, toast],
-  );
-
-  const handleBranchSelect = useCallback(
-    (branchId: string) => {
-      if (branchId === currentBranchName) return;
-
-      void (async () => {
-        if (!client) return;
-        try {
-          const payload = await client.checkoutSwitchBranch(normalizedWorkspaceId, branchId);
-          if (payload.error) {
-            // If the error is about uncommitted changes, offer the stash dialog
-            if (payload.error.message.toLowerCase().includes("uncommitted")) {
-              await stashAndSwitch(branchId);
-              return;
-            }
-            toast.error(payload.error.message);
-            return;
-          }
-          // Success — refresh and check for stashes on the target branch
-          await invalidateStashAndCheckout();
-          try {
-            const stashPayload = await client.stashList(normalizedWorkspaceId, { paseoOnly: true });
-            const targetStash = stashPayload.entries.find((e) => e.branch === branchId);
-            if (targetStash) {
-              const shouldRestore = await confirmDialog({
-                title: "Restore stashed changes?",
-                message: "This branch has stashed changes from a previous session. Would you like to restore them?",
-                confirmLabel: "Restore",
-                cancelLabel: "Later",
-              });
-              if (shouldRestore) {
-                const popPayload = await client.stashPop(normalizedWorkspaceId, targetStash.index);
-                if (popPayload.error) {
-                  toast.error(popPayload.error.message);
-                } else {
-                  toast.show("Stashed changes restored");
-                }
-                await invalidateStashAndCheckout();
-              }
-            }
-          } catch {
-            // Non-critical — user can still restore on next branch switch
-          }
-        } catch (err) {
-          toast.error(err instanceof Error ? err.message : "Failed to switch branch");
-        }
-      })();
-    },
-    [client, currentBranchName, invalidateStashAndCheckout, normalizedWorkspaceId, stashAndSwitch, toast],
-  );
 
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
@@ -2079,75 +1968,14 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                     </>
                   ) : (
                     <>
-                      {currentBranchName ? (
-                        <View ref={branchSwitcherAnchorRef} collapsable={false}>
-                          <Pressable
-                            testID="workspace-header-branch-switcher"
-                            onPress={() => setIsBranchSwitcherOpen(true)}
-                            style={({ hovered, pressed }) => [
-                              styles.branchSwitcherTrigger,
-                              (hovered || pressed) && styles.branchSwitcherTriggerHovered,
-                            ]}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Current branch: ${currentBranchName}. Press to switch branch.`}
-                          >
-                            <GitBranch
-                              size={14}
-                              color={theme.colors.foregroundMuted}
-                            />
-                            <Text
-                              testID="workspace-header-title"
-                              style={styles.headerTitle}
-                              numberOfLines={1}
-                            >
-                              {workspaceHeader.title}
-                            </Text>
-                            <ChevronDown
-                              size={12}
-                              color={theme.colors.foregroundMuted}
-                            />
-                          </Pressable>
-                          <Combobox
-                            options={branchOptions}
-                            value={currentBranchName ?? ""}
-                            onSelect={handleBranchSelect}
-                            searchable
-                            placeholder="Switch branch..."
-                            searchPlaceholder="Filter branches..."
-                            emptyText="No branches found."
-                            title="Switch branch"
-                            open={isBranchSwitcherOpen}
-                            onOpenChange={setIsBranchSwitcherOpen}
-                            anchorRef={branchSwitcherAnchorRef}
-                            desktopPlacement="bottom-start"
-                            desktopPreventInitialFlash
-                            desktopMinWidth={280}
-                            renderOption={({ option, selected, active, onPress }) => (
-                              <ComboboxItem
-                                key={option.id}
-                                label={option.label}
-                                selected={selected}
-                                active={active}
-                                onPress={onPress}
-                                leadingSlot={
-                                  <GitBranch
-                                    size={14}
-                                    color={theme.colors.foregroundMuted}
-                                  />
-                                }
-                              />
-                            )}
-                          />
-                        </View>
-                      ) : (
-                        <Text
-                          testID="workspace-header-title"
-                          style={styles.headerTitle}
-                          numberOfLines={1}
-                        >
-                          {workspaceHeader.title}
-                        </Text>
-                      )}
+                      <BranchSwitcher
+                        currentBranchName={currentBranchName}
+                        title={workspaceHeader.title}
+                        branchOptions={branchOptions}
+                        isOpen={isBranchSwitcherOpen}
+                        onOpenChange={setIsBranchSwitcherOpen}
+                        onBranchSelect={handleBranchSelect}
+                      />
                       <Text
                         testID="workspace-header-subtitle"
                         style={styles.headerProjectTitle}
@@ -2516,19 +2344,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
-  },
-  branchSwitcherTrigger: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  branchSwitcherTriggerHovered: {
-    backgroundColor: theme.colors.surface1,
   },
   sourceControlButton: {
     flexDirection: "row",
