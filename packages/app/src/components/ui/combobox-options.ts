@@ -40,12 +40,23 @@ export function buildVisibleComboboxOptions(
 ): ComboboxOptionModel[] {
   const normalizedSearch = input.searchable ? input.searchQuery.trim().toLowerCase() : "";
   const filteredOptions = normalizedSearch
-    ? input.options.filter(
-        (opt) =>
-          opt.label.toLowerCase().includes(normalizedSearch) ||
-          opt.id.toLowerCase().includes(normalizedSearch) ||
-          opt.description?.toLowerCase().includes(normalizedSearch),
-      )
+    ? input.options
+        .filter(
+          (opt) =>
+            opt.label.toLowerCase().includes(normalizedSearch) ||
+            opt.id.toLowerCase().includes(normalizedSearch) ||
+            opt.description?.toLowerCase().includes(normalizedSearch),
+        )
+        .sort((a, b) => {
+          const aPrefix =
+            a.label.toLowerCase().startsWith(normalizedSearch) ||
+            a.id.toLowerCase().startsWith(normalizedSearch);
+          const bPrefix =
+            b.label.toLowerCase().startsWith(normalizedSearch) ||
+            b.id.toLowerCase().startsWith(normalizedSearch);
+          if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
+          return 0;
+        })
     : input.options;
 
   const sanitizedSearchValue = input.searchQuery.trim();

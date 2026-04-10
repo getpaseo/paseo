@@ -40,7 +40,7 @@ import invariant from "tiny-invariant";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { ScreenHeader } from "@/components/headers/screen-header";
-import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
+import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
   DropdownMenu,
@@ -769,30 +769,17 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
 
   // Branch switcher state
   const [isBranchSwitcherOpen, setIsBranchSwitcherOpen] = useState(false);
-  const [branchSearchQuery, setBranchSearchQuery] = useState("");
-  const [debouncedBranchSearchQuery, setDebouncedBranchSearchQuery] = useState("");
   const branchSwitcherAnchorRef = useRef<View>(null);
-  useEffect(() => {
-    const trimmed = branchSearchQuery.trim();
-    const timer = setTimeout(() => setDebouncedBranchSearchQuery(trimmed), 180);
-    return () => clearTimeout(timer);
-  }, [branchSearchQuery]);
 
   const branchSuggestionsQuery = useQuery({
-    queryKey: [
-      "branchSuggestions",
-      normalizedServerId,
-      normalizedWorkspaceId,
-      debouncedBranchSearchQuery,
-    ],
+    queryKey: ["branchSuggestions", normalizedServerId, normalizedWorkspaceId],
     queryFn: async () => {
       if (!client) {
         throw new Error("Daemon client unavailable");
       }
       const payload = await client.getBranchSuggestions({
         cwd: normalizedWorkspaceId,
-        query: debouncedBranchSearchQuery || undefined,
-        limit: 50,
+        limit: 200,
       });
       if (payload.error) {
         throw new Error(payload.error);
@@ -2250,7 +2237,6 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                             options={branchOptions}
                             value={currentBranchName ?? ""}
                             onSelect={handleBranchSelect}
-                            onSearchQueryChange={setBranchSearchQuery}
                             searchable
                             placeholder="Switch branch..."
                             searchPlaceholder="Filter branches..."
@@ -2262,6 +2248,21 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                             desktopPlacement="bottom-start"
                             desktopPreventInitialFlash
                             desktopMinWidth={280}
+                            renderOption={({ option, selected, active, onPress }) => (
+                              <ComboboxItem
+                                key={option.id}
+                                label={option.label}
+                                selected={selected}
+                                active={active}
+                                onPress={onPress}
+                                leadingSlot={
+                                  <GitBranch
+                                    size={14}
+                                    color={theme.colors.foregroundMuted}
+                                  />
+                                }
+                              />
+                            )}
                           />
                         </View>
                       ) : (

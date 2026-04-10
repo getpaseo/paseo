@@ -157,7 +157,6 @@ type CheckoutFileChange = {
   isUntracked?: boolean;
 };
 
-type BranchSuggestionRefOrigin = "local" | "remote";
 
 function normalizeBranchSuggestionName(raw: string): string | null {
   const trimmed = raw.trim();
@@ -176,47 +175,57 @@ function normalizeBranchSuggestionName(raw: string): string | null {
     normalized = normalized.slice("origin/".length);
   }
 
-  if (!normalized || normalized === "HEAD") {
+  if (!normalized || normalized === "HEAD" || normalized === "origin") {
     return null;
   }
 
   return normalized;
 }
 
-async function listGitRefs(cwd: string, refPrefix: string): Promise<string[]> {
-  const { stdout } = await execGit(`git for-each-ref --format="%(refname:short)" ${refPrefix}`, {
-    cwd,
-    env: READ_ONLY_GIT_ENV,
-  });
+interface GitRef {
+  name: string;
+  committerDate: number;
+}
+
+async function listGitRefs(cwd: string, refPrefix: string): Promise<GitRef[]> {
+  const { stdout } = await execGit(
+    `git for-each-ref --sort=-committerdate --format="%(refname)%09%(committerdate:unix)" ${refPrefix}`,
+    { cwd, env: READ_ONLY_GIT_ENV },
+  );
   return stdout
     .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return null;
+      const [name, dateStr] = trimmed.split("\t");
+      if (!name) return null;
+      return { name, committerDate: Number(dateStr) || 0 };
+    })
+    .filter((ref): ref is GitRef => ref !== null);
 }
 
 function sortBranchSuggestions(
   branchNames: string[],
-  localBranchNames: Set<string>,
+  branchMeta: Map<string, { isLocal: boolean; committerDate: number }>,
   query: string,
 ): string[] {
   const normalizedQuery = query.trim().toLowerCase();
   const hasQuery = normalizedQuery.length > 0;
   return branchNames.sort((a, b) => {
-    const aLower = a.toLowerCase();
-    const bLower = b.toLowerCase();
-
     if (hasQuery) {
-      const aPrefix = aLower.startsWith(normalizedQuery);
-      const bPrefix = bLower.startsWith(normalizedQuery);
+      const aPrefix = a.toLowerCase().startsWith(normalizedQuery);
+      const bPrefix = b.toLowerCase().startsWith(normalizedQuery);
       if (aPrefix !== bPrefix) {
         return aPrefix ? -1 : 1;
       }
     }
 
-    const aIsLocal = localBranchNames.has(a);
-    const bIsLocal = localBranchNames.has(b);
-    if (aIsLocal !== bIsLocal) {
-      return aIsLocal ? -1 : 1;
+    const aMeta = branchMeta.get(a);
+    const bMeta = branchMeta.get(b);
+    const aDate = aMeta?.committerDate ?? 0;
+    const bDate = bMeta?.committerDate ?? 0;
+    if (aDate !== bDate) {
+      return bDate - aDate;
     }
 
     return a.localeCompare(b);
@@ -238,41 +247,40 @@ export async function listBranchSuggestions(
     listGitRefs(cwd, "refs/remotes/origin"),
   ]);
 
-  const merged = new Map<string, Set<BranchSuggestionRefOrigin>>();
-  for (const localRef of localRefs) {
-    const normalized = normalizeBranchSuggestionName(localRef);
-    if (!normalized) {
-      continue;
-    }
-    const origins = merged.get(normalized) ?? new Set<BranchSuggestionRefOrigin>();
-    origins.add("local");
-    merged.set(normalized, origins);
-  }
-  for (const remoteRef of remoteRefs) {
-    const normalized = normalizeBranchSuggestionName(remoteRef);
-    if (!normalized) {
-      continue;
-    }
-    const origins = merged.get(normalized) ?? new Set<BranchSuggestionRefOrigin>();
-    origins.add("remote");
-    merged.set(normalized, origins);
+  const branchMeta = new Map<string, { isLocal: boolean; committerDate: number }>();
+
+  for (const ref of localRefs) {
+    const normalized = normalizeBranchSuggestionName(ref.name);
+    if (!normalized) continue;
+    const existing = branchMeta.get(normalized);
+    branchMeta.set(normalized, {
+      isLocal: true,
+      committerDate: Math.max(ref.committerDate, existing?.committerDate ?? 0),
+    });
   }
 
-  const filteredNames = Array.from(merged.keys()).filter((name) =>
+  for (const ref of remoteRefs) {
+    const normalized = normalizeBranchSuggestionName(ref.name);
+    if (!normalized) continue;
+    const existing = branchMeta.get(normalized);
+    if (!existing) {
+      branchMeta.set(normalized, { isLocal: false, committerDate: ref.committerDate });
+    } else {
+      branchMeta.set(normalized, {
+        ...existing,
+        committerDate: Math.max(ref.committerDate, existing.committerDate),
+      });
+    }
+  }
+
+  const filteredNames = Array.from(branchMeta.keys()).filter((name) =>
     query ? name.toLowerCase().includes(query) : true,
   );
   if (filteredNames.length === 0) {
     return [];
   }
 
-  const localBranchNames = new Set<string>();
-  for (const [name, origins] of merged) {
-    if (origins.has("local")) {
-      localBranchNames.add(name);
-    }
-  }
-
-  const ordered = sortBranchSuggestions(filteredNames, localBranchNames, query);
+  const ordered = sortBranchSuggestions(filteredNames, branchMeta, query);
   return ordered.slice(0, limit);
 }
 
