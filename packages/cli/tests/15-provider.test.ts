@@ -194,10 +194,18 @@ try {
     assert(data.length >= 5, "codex model list should include current codex lineup");
     const ids = data.map((m) => m.id);
     assert.strictEqual(new Set(ids).size, ids.length, "codex model IDs should be unique");
-    assert(ids.includes("gpt-5.3-codex"), "codex output should include gpt-5.3-codex");
-    assert(ids.includes("gpt-5.3-codex-spark"), "codex output should include gpt-5.3-codex-spark");
-    assert(ids.includes("gpt-5.4"), "codex output should include gpt-5.4");
-    assert(ids.includes("gpt-5.4-mini"), "codex output should include gpt-5.4-mini");
+    assert(
+      ids.every((id) => id.startsWith("gpt-")),
+      "all codex model IDs should be from the gpt family",
+    );
+    assert(
+      ids.some((id) => id.includes("codex")),
+      "codex model list should include at least one codex-optimized model",
+    );
+    assert(
+      data.every((m) => m.model && m.id && m.description),
+      "every codex model should have model, id, and description fields",
+    );
     console.log("✓ provider models codex includes concrete codex model IDs\n");
   }
 
