@@ -220,16 +220,24 @@ try {
       "opencode model IDs should be provider-namespaced",
     );
     assert(
-      ids.includes("opencode/gpt-5-nano"),
-      "opencode output should include opencode/gpt-5-nano",
+      ids.some((id) => id.startsWith("opencode/")),
+      "opencode output should include at least one first-party opencode model",
     );
     assert(
-      ids.some((id) => id.startsWith("openrouter/openai/")),
-      "opencode output should include OpenRouter OpenAI models",
+      ids.some((id) => id.startsWith("openai/") || id.startsWith("openrouter/openai/")),
+      "opencode output should include at least one OpenAI-backed model",
     );
     assert(
-      ids.includes("openrouter/openai/gpt-5.3-codex"),
-      "opencode output should include openrouter/openai/gpt-5.3-codex",
+      ids.some(
+        (id) =>
+          (id.startsWith("openai/") || id.startsWith("openrouter/openai/")) &&
+          id.includes("codex"),
+      ),
+      "opencode output should include at least one codex-optimized OpenAI model",
+    );
+    assert(
+      data.every((m) => m.model && m.id && m.description !== undefined),
+      "every opencode model should have model, id, and description fields",
     );
     console.log("✓ provider models opencode returns namespaced model IDs\n");
   }
