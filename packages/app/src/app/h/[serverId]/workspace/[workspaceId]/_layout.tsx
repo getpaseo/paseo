@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "react";
-import { useGlobalSearchParams, useLocalSearchParams, useRouter } from "expo-router";
+import {
+  useGlobalSearchParams,
+  useLocalSearchParams,
+  useRootNavigationState,
+  useRouter,
+} from "expo-router";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import {
@@ -36,6 +41,7 @@ function getOpenIntentTarget(openIntent: WorkspaceOpenIntent): WorkspaceTabTarge
 
 export default function HostWorkspaceLayout() {
   const router = useRouter();
+  const rootNavigationState = useRootNavigationState();
   const consumedIntentRef = useRef<string | null>(null);
   const params = useLocalSearchParams<{
     serverId?: string | string[];
@@ -53,6 +59,9 @@ export default function HostWorkspaceLayout() {
 
   useEffect(() => {
     if (!openValue) {
+      return;
+    }
+    if (!rootNavigationState?.key) {
       return;
     }
 
@@ -73,7 +82,7 @@ export default function HostWorkspaceLayout() {
       : buildHostWorkspaceRoute(serverId, workspaceId);
 
     router.replace(route as any);
-  }, [openValue, router, serverId, workspaceId]);
+  }, [openValue, rootNavigationState?.key, router, serverId, workspaceId]);
 
   if (openValue) {
     return null;
