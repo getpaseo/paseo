@@ -137,9 +137,7 @@ export async function navigateToTerminal(
   // then replaces the URL with the clean workspace route after preparing the tab.
   const cleanWorkspaceRoute = buildWorkspaceUrl(input.cwd);
   await page.waitForURL(
-    (url) =>
-      url.pathname === cleanWorkspaceRoute &&
-      !url.searchParams.has("open"),
+    (url) => url.pathname === cleanWorkspaceRoute && !url.searchParams.has("open"),
     { timeout: 15_000 },
   );
 
