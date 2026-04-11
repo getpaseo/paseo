@@ -131,7 +131,7 @@ export async function seedBottomAnchorAgent(input: {
   const lineCount = Math.max(14, input.lineCount ?? 14);
   const created = await input.client.createAgent({
     provider: "codex",
-    model: "gpt-5.1-codex-mini",
+    model: "gpt-5.4-mini",
     thinkingOptionId: "low",
     modeId: "full-access",
     cwd: input.cwd,

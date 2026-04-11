@@ -109,7 +109,7 @@ export async function createIdleAgent(
 ): Promise<ArchiveTabAgent> {
   const created = await client.createAgent({
     provider: "codex",
-    model: "gpt-5.1-codex-mini",
+    model: "gpt-5.4-mini",
     thinkingOptionId: "low",
     modeId: "full-access",
     cwd: input.cwd,

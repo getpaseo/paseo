@@ -34,7 +34,7 @@ export const agentConfigs = {
   },
   codex: {
     provider: "codex",
-    model: "gpt-5.1-codex-mini",
+    model: "gpt-5.4-mini",
     thinkingOptionId: "low",
     modes: {
       full: "full-access",

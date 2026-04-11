@@ -2,7 +2,7 @@ export const TEST_HOST_LABEL = "localhost";
 
 export const TEST_PROVIDER_PREFERENCES = {
   claude: { model: "haiku" },
-  codex: { model: "gpt-5.1-codex-mini", thinkingOptionId: "low" },
+  codex: { model: "gpt-5.4-mini", thinkingOptionId: "low" },
 } as const;
 
 export function buildDirectTcpConnection(endpoint: string) {

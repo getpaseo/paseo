@@ -214,7 +214,7 @@ paseo terminal kill "$id"
 
 **Codex:**
 - `--provider codex/gpt-5.4` — Latest frontier agentic coding model (preferred for all engineering tasks)
-- `--provider codex/gpt-5.1-codex-mini` — Cheaper, faster, but less capable
+- `--provider codex/gpt-5.4-mini` — Cheaper, faster, but less capable
 
 ## Permissions
 
