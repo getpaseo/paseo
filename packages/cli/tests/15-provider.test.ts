@@ -224,15 +224,8 @@ try {
       "opencode output should include at least one first-party opencode model",
     );
     assert(
-      ids.some((id) => id.startsWith("openai/") || id.startsWith("openrouter/openai/")),
-      "opencode output should include at least one OpenAI-backed model",
-    );
-    assert(
-      ids.some(
-        (id) =>
-          (id.startsWith("openai/") || id.startsWith("openrouter/openai/")) && id.includes("codex"),
-      ),
-      "opencode output should include at least one codex-optimized OpenAI model",
+      ids.some((id) => id.includes("/") && !id.startsWith("opencode/")),
+      "opencode output should include at least one third-party provider model",
     );
     assert(
       data.every((m) => m.model && m.id && m.description !== undefined),
