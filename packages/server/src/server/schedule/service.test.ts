@@ -206,9 +206,7 @@ describe("ScheduleService", () => {
     await service2.start();
 
     const inspected = await service2.inspect(created.id);
-    expect(
-      new Date(inspected.nextRunAt!).getTime(),
-    ).toBeGreaterThan(now.getTime());
+    expect(new Date(inspected.nextRunAt!).getTime()).toBeGreaterThan(now.getTime());
     await service2.stop();
   });
 

@@ -255,9 +255,7 @@ export class ScheduleService {
       let dirty = false;
 
       // Mark any in-flight runs as failed
-      const runningIndex = updated.runs.findIndex(
-        (run) => run.status === "running",
-      );
+      const runningIndex = updated.runs.findIndex((run) => run.status === "running");
       if (runningIndex !== -1) {
         const runs = [...updated.runs];
         runs[runningIndex] = {
@@ -276,10 +274,7 @@ export class ScheduleService {
         updated.nextRunAt &&
         new Date(updated.nextRunAt).getTime() <= now.getTime()
       ) {
-        let nextRunAt = computeNextRunAt(
-          updated.cadence,
-          new Date(updated.nextRunAt),
-        );
+        let nextRunAt = computeNextRunAt(updated.cadence, new Date(updated.nextRunAt));
         while (nextRunAt.getTime() <= now.getTime()) {
           nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
         }
