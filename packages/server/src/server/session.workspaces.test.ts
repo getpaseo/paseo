@@ -1428,9 +1428,9 @@ describe("workspace aggregation", () => {
         requestId: "req-open-worktree",
       });
 
-      expect(workspaces.get(mainWorkspaceId)?.projectId).toBe(localProjectId);
+      expect(workspaces.get(mainWorkspaceId)?.projectId).toBe(remoteProjectId);
       expect(workspaces.get(worktreeWorkspaceId)?.projectId).toBe(remoteProjectId);
-      expect(projects.get(localProjectId)?.archivedAt).toBeFalsy();
+      expect(projects.get(localProjectId)?.archivedAt).toBeTruthy();
 
       const workspaceUpdates = emitted.filter(
         (message) => message.type === "workspace_update",
