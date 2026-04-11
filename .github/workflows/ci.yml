@@ -163,6 +163,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install agent CLIs for provider tests
+        run: npm install -g @openai/codex opencode-ai
+
       - name: Build highlight dependency
         run: npm run build --workspace=@getpaseo/highlight
 
