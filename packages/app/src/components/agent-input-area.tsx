@@ -551,7 +551,12 @@ export function AgentInputArea({
 
   // Handle keyboard navigation for command autocomplete and stop action.
   const handleCommandKeyPress = useCallback(
-    (event: { key: string; preventDefault: () => void }) => {
+    (event: { key: string; preventDefault: () => void; nativeEvent?: any }) => {
+      // Skip processing if this is from an IME composition
+      if (event.nativeEvent && event.nativeEvent.isComposing) {
+        return false;
+      }
+
       if (
         event.key === "Escape" &&
         isAgentRunning &&

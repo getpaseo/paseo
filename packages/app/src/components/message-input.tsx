@@ -886,6 +886,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     markScrollInvestigationEvent(investigationComponentId, "keyPress");
     if (!shouldHandleDesktopSubmit) return;
 
+    // Skip processing if this is from an IME composition
+    // In React Native web, nativeEvent.isComposing tells us if we are in the middle of IME input
+    if ((event.nativeEvent as any).isComposing) {
+      return;
+    }
+
     // Allow parent to intercept key events (e.g., for autocomplete navigation)
     if (onKeyPressCallback) {
       const handled = onKeyPressCallback({
