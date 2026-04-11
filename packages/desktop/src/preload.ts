@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   },
   window: {
     getCurrentWindow: () => ({
+      getWorkspaceState: () => ipcRenderer.invoke("paseo:window:getWorkspaceState"),
+      claimWorkspace: (input: { serverId: string; workspaceId: string }) =>
+        ipcRenderer.invoke("paseo:window:claimWorkspace", input),
+      moveWorkspaceToNewWindow: (input: { serverId: string; workspaceId: string }) =>
+        ipcRenderer.invoke("paseo:window:moveWorkspaceToNewWindow", input),
       toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
       isFullscreen: () => ipcRenderer.invoke("paseo:window:isFullscreen"),
       updateWindowControls: (update: {

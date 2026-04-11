@@ -1,5 +1,5 @@
 import { type ChildProcess } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { app, ipcMain } from "electron";
 import log from "electron-log/main";
@@ -31,6 +31,7 @@ import {
 } from "./runtime-paths.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
+const DEV_DAEMON_METADATA_FILENAME = "desktop-daemon-dev.json";
 const PID_POLL_INTERVAL_MS = 100;
 const STARTUP_POLL_INTERVAL_MS = 200;
 const STARTUP_POLL_MAX_ATTEMPTS = 150;
@@ -63,6 +64,10 @@ type DesktopPairingOffer = {
   qr: string | null;
 };
 
+type DesktopDevDaemonMetadata = {
+  devOrigin: string | null;
+};
+
 type DesktopCommandHandler = (args?: Record<string, unknown>) => Promise<unknown> | unknown;
 
 // ---------------------------------------------------------------------------
@@ -75,6 +80,10 @@ function getPaseoHome(): string {
 
 function logFilePath(): string {
   return path.join(getPaseoHome(), DAEMON_LOG_FILENAME);
+}
+
+function devDaemonMetadataPath(): string {
+  return path.join(getPaseoHome(), DEV_DAEMON_METADATA_FILENAME);
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -147,6 +156,62 @@ function logDesktopDaemonLifecycle(message: string, details?: Record<string, unk
     pid: process.pid,
     ...(details ?? {}),
   });
+}
+
+function appendCsvEnvValue(existingValue: string | undefined, nextValue: string): string {
+  const values = (existingValue ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  if (!values.includes(nextValue)) {
+    values.push(nextValue);
+  }
+
+  return values.join(",");
+}
+
+function getExpectedDevOrigin(): string | null {
+  if (app.isPackaged || !process.env.EXPO_DEV_URL) {
+    return null;
+  }
+
+  try {
+    return new URL(process.env.EXPO_DEV_URL).origin;
+  } catch {
+    return null;
+  }
+}
+
+function readDevDaemonMetadata(): DesktopDevDaemonMetadata {
+  try {
+    const payload = JSON.parse(readFileSync(devDaemonMetadataPath(), "utf-8")) as {
+      devOrigin?: unknown;
+    };
+    return {
+      devOrigin: typeof payload.devOrigin === "string" ? payload.devOrigin : null,
+    };
+  } catch {
+    return {
+      devOrigin: null,
+    };
+  }
+}
+
+function writeDevDaemonMetadata(metadata: DesktopDevDaemonMetadata): void {
+  try {
+    writeFileSync(devDaemonMetadataPath(), JSON.stringify(metadata, null, 2));
+  } catch {
+    // Ignore metadata persistence failures; daemon can still run.
+  }
+}
+
+function clearDevDaemonMetadata(): void {
+  try {
+    rmSync(devDaemonMetadataPath(), { force: true });
+  } catch {
+    // Ignore metadata cleanup failures.
+  }
 }
 
 
@@ -231,9 +296,16 @@ function normalizeVersion(version: string | null): string | null {
 
 async function startDaemon(): Promise<DesktopDaemonStatus> {
   const current = await resolveStatus();
+  const expectedDevOrigin = getExpectedDevOrigin();
   if (current.status === "running") {
     const appVersion = normalizeVersion(resolveDesktopAppVersion());
     const daemonVersion = normalizeVersion(current.version);
+    const currentDevOrigin = current.desktopManaged ? readDevDaemonMetadata().devOrigin : null;
+    const requiresDevOriginRestart =
+      !app.isPackaged &&
+      current.desktopManaged &&
+      expectedDevOrigin !== null &&
+      currentDevOrigin !== expectedDevOrigin;
     if (
       current.desktopManaged &&
       appVersion &&
@@ -243,6 +315,12 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
       logDesktopDaemonLifecycle("daemon version mismatch, restarting", {
         appVersion,
         daemonVersion,
+      });
+      await stopDaemon();
+    } else if (requiresDevOriginRestart) {
+      logDesktopDaemonLifecycle("desktop dev origin changed, restarting daemon", {
+        previousDevOrigin: currentDevOrigin,
+        nextDevOrigin: expectedDevOrigin,
       });
       await stopDaemon();
     } else {
@@ -257,6 +335,23 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     args: [],
     baseEnv: process.env,
   });
+  const daemonEnv: NodeJS.ProcessEnv = {
+    ...invocation.env,
+    PASEO_DESKTOP_MANAGED: "1",
+  };
+
+  // In desktop dev, avoid colliding with an already-running local daemon on 6767.
+  // The server will publish its actual ephemeral listen address via the PID lock.
+  if (!app.isPackaged && !daemonEnv.PASEO_LISTEN) {
+    daemonEnv.PASEO_LISTEN = "127.0.0.1:0";
+  }
+
+  if (expectedDevOrigin) {
+    daemonEnv.PASEO_CORS_ORIGINS = appendCsvEnvValue(
+      daemonEnv.PASEO_CORS_ORIGINS,
+      expectedDevOrigin,
+    );
+  }
 
   logDesktopDaemonLifecycle("starting detached daemon", {
     appIsPackaged: app.isPackaged,
@@ -264,11 +359,13 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     daemonRunnerExecArgv: daemonRunner.execArgv,
     command: invocation.command,
     args: invocation.args,
+    listen: daemonEnv.PASEO_LISTEN ?? null,
+    corsOrigins: daemonEnv.PASEO_CORS_ORIGINS ?? null,
   });
 
   const child: ChildProcess = spawnProcess(invocation.command, invocation.args, {
     detached: true,
-    env: { ...invocation.env, PASEO_DESKTOP_MANAGED: "1" },
+    env: daemonEnv,
     stdio: ["ignore", "ignore", "ignore"],
   });
 
@@ -329,7 +426,10 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
         serverId: status.serverId || null,
       });
     }
-    if (status.status === "running" && status.serverId && status.listen) return status;
+    if (status.status === "running" && status.serverId && status.listen) {
+      writeDevDaemonMetadata({ devOrigin: expectedDevOrigin });
+      return status;
+    }
     await sleep(STARTUP_POLL_INTERVAL_MS);
   }
 
@@ -353,6 +453,7 @@ async function stopDaemon(): Promise<DesktopDaemonStatus> {
     throw new Error(`Timed out waiting for daemon PID ${pid} to stop`);
   }
 
+  clearDevDaemonMetadata();
   return await resolveStatus();
 }
 

@@ -8,6 +8,10 @@ import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
+import {
+  isWorkspaceVisibleInDesktopWindow,
+  useDesktopWorkspaceWindowState,
+} from "@/desktop/window-workspace-state";
 
 const EMPTY_ORDER: string[] = [];
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
@@ -270,6 +274,7 @@ export function useSidebarWorkspacesList(options?: {
   enabled?: boolean;
 }): SidebarWorkspacesListResult {
   const runtime = getHostRuntimeStore();
+  const desktopWorkspaceWindowState = useDesktopWorkspaceWindowState();
 
   const serverId = useMemo(() => {
     const value = options?.serverId;
@@ -313,13 +318,27 @@ export function useSidebarWorkspacesList(options?: {
     if (!sessionWorkspaces || sessionWorkspaces.size === 0 || !serverId) {
       return EMPTY_PROJECTS;
     }
+
+    const visibleWorkspaces = Array.from(sessionWorkspaces.values()).filter((workspace) =>
+      isWorkspaceVisibleInDesktopWindow(desktopWorkspaceWindowState, serverId, workspace.id),
+    );
+    if (visibleWorkspaces.length === 0) {
+      return EMPTY_PROJECTS;
+    }
+
     return buildSidebarProjectsFromWorkspaces({
       serverId,
-      workspaces: sessionWorkspaces.values(),
+      workspaces: visibleWorkspaces,
       projectOrder: persistedProjectOrder,
       workspaceOrderByScope: persistedWorkspaceOrderByScope,
     });
-  }, [persistedProjectOrder, persistedWorkspaceOrderByScope, serverId, sessionWorkspaces]);
+  }, [
+    desktopWorkspaceWindowState,
+    persistedProjectOrder,
+    persistedWorkspaceOrderByScope,
+    serverId,
+    sessionWorkspaces,
+  ]);
 
   useEffect(() => {
     if (!serverId || projects.length === 0) {

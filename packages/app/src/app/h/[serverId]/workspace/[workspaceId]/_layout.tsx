@@ -3,12 +3,17 @@ import { useGlobalSearchParams, useLocalSearchParams, useRouter } from "expo-rou
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import {
+  buildHostRootRoute,
   buildHostWorkspaceRoute,
   decodeWorkspaceIdFromPathSegment,
   parseWorkspaceOpenIntent,
   type WorkspaceOpenIntent,
 } from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import {
+  isWorkspaceVisibleInDesktopWindow,
+  useDesktopWorkspaceWindowState,
+} from "@/desktop/window-workspace-state";
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {
@@ -50,6 +55,7 @@ export default function HostWorkspaceLayout() {
     ? (decodeWorkspaceIdFromPathSegment(workspaceValue) ?? "")
     : "";
   const openValue = getParamValue(globalParams.open);
+  const desktopWorkspaceWindowState = useDesktopWorkspaceWindowState();
 
   useEffect(() => {
     if (!openValue) {
@@ -74,6 +80,16 @@ export default function HostWorkspaceLayout() {
 
     router.replace(route as any);
   }, [openValue, router, serverId, workspaceId]);
+
+  useEffect(() => {
+    if (!serverId || !workspaceId || !desktopWorkspaceWindowState.isReady) {
+      return;
+    }
+    if (isWorkspaceVisibleInDesktopWindow(desktopWorkspaceWindowState, serverId, workspaceId)) {
+      return;
+    }
+    router.replace(buildHostRootRoute(serverId));
+  }, [desktopWorkspaceWindowState, router, serverId, workspaceId]);
 
   if (openValue) {
     return null;

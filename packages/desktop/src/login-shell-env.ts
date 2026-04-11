@@ -8,6 +8,7 @@ import { userInfo } from "node:os";
 import { basename } from "node:path";
 
 const RESOLVE_TIMEOUT_MS = 10_000;
+const PRESERVED_ENV_PREFIXES = ["EXPO_", "PASEO_"] as const;
 
 function getSystemShell(): string {
   const shell = process.env.SHELL;
@@ -103,9 +104,18 @@ function resolveShellEnv(): Record<string, string> | undefined {
  */
 export function inheritLoginShellEnv(): void {
   try {
+    const preservedEntries = Object.entries(process.env).filter(([key, value]) => {
+      return (
+        typeof value === "string" &&
+        PRESERVED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))
+      );
+    });
     const env = resolveShellEnv();
     if (env) {
       Object.assign(process.env, env);
+      for (const [key, value] of preservedEntries) {
+        process.env[key] = value;
+      }
     }
   } catch {
     // Keep inherited environment if shell lookup fails.

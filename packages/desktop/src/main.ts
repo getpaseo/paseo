@@ -25,6 +25,7 @@ import {
   setupDefaultContextMenu,
   setupDragDropPrevention,
 } from "./window/window-manager.js";
+import { registerWorkspaceWindowManager } from "./window/workspace-window-manager.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
   registerNotificationHandlers,
@@ -33,11 +34,11 @@ import {
 import { registerOpenerHandlers } from "./features/opener.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
+import { PendingOpenProjectStore } from "./pending-open-project-store.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
-const OPEN_PROJECT_EVENT = "paseo:event:open-project";
-app.setName("Paseo");
+const BASE_APP_NAME = "Paseo";
 
 // In dev mode, detect git worktrees and isolate each instance so multiple
 // Electron windows can run side-by-side (separate userData = separate lock).
@@ -70,6 +71,15 @@ if (!app.isPackaged) {
   }
 }
 
+const configuredDevAppName = process.env.PASEO_DEV_APP_NAME?.trim();
+const runtimeAppName =
+  app.isPackaged || !configuredDevAppName
+    ? !app.isPackaged && devWorktreeName
+      ? `${BASE_APP_NAME} (${devWorktreeName})`
+      : BASE_APP_NAME
+    : configuredDevAppName;
+app.setName(runtimeAppName);
+
 // Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
 // rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
 // Must run before app.whenReady().
@@ -86,6 +96,7 @@ let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   argv: process.argv,
   isDefaultApp: process.defaultApp,
 });
+const pendingOpenProjectStore = new PendingOpenProjectStore();
 
 log.info("[open-project] argv:", process.argv);
 log.info("[open-project] isDefaultApp:", process.defaultApp);
@@ -93,10 +104,13 @@ log.info("[open-project] pendingOpenProjectPath:", pendingOpenProjectPath);
 
 // The renderer pulls the pending path on mount via IPC — this avoids
 // a race where the push event arrives before React registers its listener.
-ipcMain.handle("paseo:get-pending-open-project", () => {
-  log.info("[open-project] renderer requested pending path:", pendingOpenProjectPath);
-  const result = pendingOpenProjectPath;
-  pendingOpenProjectPath = null;
+ipcMain.handle("paseo:get-pending-open-project", (event) => {
+  const webContentsId = event.sender.id;
+  const result = pendingOpenProjectStore.take(webContentsId);
+  log.info("[open-project] renderer requested pending path:", {
+    webContentsId,
+    pendingPath: result,
+  });
   return result;
 });
 
@@ -155,11 +169,14 @@ function applyAppIcon(): void {
   app.dock?.setIcon(icon);
 }
 
-async function createMainWindow(): Promise<void> {
+async function createMainWindow(options: {
+  pendingOpenProjectPath?: string | null;
+  initialPath?: string | null;
+} = {}): Promise<BrowserWindow> {
   const iconPath = getWindowIconPath();
   const systemTheme = resolveSystemWindowTheme();
 
-  const title = devWorktreeName ? `Paseo (${devWorktreeName})` : "Paseo";
+  const title = runtimeAppName;
   const mainWindow = new BrowserWindow({
     title,
     width: 1200,
@@ -177,6 +194,11 @@ async function createMainWindow(): Promise<void> {
       nodeIntegration: false,
     },
   });
+  const webContentsId = mainWindow.webContents.id;
+  pendingOpenProjectStore.set(webContentsId, options.pendingOpenProjectPath);
+  mainWindow.on("closed", () => {
+    pendingOpenProjectStore.delete(webContentsId);
+  });
 
   if (devWorktreeName) {
     app.dock?.setBadge(devWorktreeName);
@@ -193,32 +215,26 @@ async function createMainWindow(): Promise<void> {
   if (!app.isPackaged) {
     const { loadReactDevTools } = await import("./features/react-devtools.js");
     await loadReactDevTools();
-    await mainWindow.loadURL(DEV_SERVER_URL);
+    await mainWindow.loadURL(new URL(options.initialPath ?? "/", `${DEV_SERVER_URL}/`).toString());
     mainWindow.webContents.openDevTools({ mode: "detach" });
-    return;
+    return mainWindow;
   }
 
-  await mainWindow.loadURL(`${APP_SCHEME}://app/`);
-}
-
-function sendOpenProjectEvent(win: BrowserWindow, projectPath: string): void {
-  const send = () => {
-    log.info("[open-project] sending event to renderer:", projectPath);
-    win.webContents.send(OPEN_PROJECT_EVENT, { path: projectPath });
-  };
-
-  if (win.webContents.isLoadingMainFrame()) {
-    log.info("[open-project] waiting for did-finish-load before sending event");
-    win.webContents.once("did-finish-load", send);
-    return;
-  }
-
-  send();
+  const initialPath = options.initialPath?.trim() || "/";
+  await mainWindow.loadURL(`${APP_SCHEME}://app${initialPath.startsWith("/") ? initialPath : `/${initialPath}`}`);
+  return mainWindow;
 }
 
 // ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
+
+type OpenTrackedWindowFn = (options?: {
+  pendingOpenProjectPath?: string | null;
+  initialPath?: string | null;
+}) => Promise<BrowserWindow>;
+
+let openTrackedWindow: OpenTrackedWindowFn | null = null;
 
 function setupSingleInstanceLock(): boolean {
   const gotLock = app.requestSingleInstanceLock();
@@ -234,15 +250,17 @@ function setupSingleInstanceLock(): boolean {
       isDefaultApp: false,
     });
     log.info("[open-project] second-instance openProjectPath:", openProjectPath);
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
-      win.show();
-      if (win.isMinimized()) win.restore();
-      win.focus();
-      if (openProjectPath) {
-        sendOpenProjectEvent(win, openProjectPath);
-      }
-    }
+    void app
+      .whenReady()
+      .then(() => {
+        if (!openTrackedWindow) {
+          throw new Error("Tracked window opener not ready");
+        }
+        return openTrackedWindow({ pendingOpenProjectPath: openProjectPath });
+      })
+      .catch((error) => {
+        log.error("[window] failed to create new window from second-instance", error);
+      });
   });
 
   return true;
@@ -305,18 +323,43 @@ async function bootstrap(): Promise<void> {
   });
 
   applyAppIcon();
-  setupApplicationMenu();
+  setupApplicationMenu({
+    onNewWindow: () => {
+      void (openTrackedWindow?.() ?? Promise.reject(new Error("Window manager not ready"))).catch(
+        (error) => {
+          log.error("[window] failed to create new window from menu", error);
+        },
+      );
+    },
+  });
   ensureNotificationCenterRegistration();
   registerDaemonManager();
   registerWindowManager();
+  const workspaceWindowManager = registerWorkspaceWindowManager({
+    createWindow: async (options) => {
+      if (!openTrackedWindow) {
+        throw new Error("Tracked window opener not ready");
+      }
+      return await openTrackedWindow(options);
+    },
+  });
+  openTrackedWindow = async (options) => {
+    const win = await createMainWindow(options);
+    workspaceWindowManager.trackWindow(win);
+    return win;
+  };
   registerDialogHandlers();
   registerNotificationHandlers();
   registerOpenerHandlers();
-  await createMainWindow();
+  await openTrackedWindow({ pendingOpenProjectPath });
+  pendingOpenProjectPath = null;
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      await createMainWindow();
+      if (!openTrackedWindow) {
+        return;
+      }
+      await openTrackedWindow();
     }
   });
 }
