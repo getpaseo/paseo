@@ -54,11 +54,13 @@ interface WorkspaceLayoutStore {
   layoutByWorkspace: Record<string, WorkspaceLayout>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
+  tabLabelsByWorkspace: Record<string, Record<string, string>>;
   openTab: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
   retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
   reorderTabs: (workspaceKey: string, tabIds: string[]) => void;
+  renameTab: (workspaceKey: string, tabId: string, label: string) => void;
   getWorkspaceTabs: (workspaceKey: string) => WorkspaceTab[];
   splitPane: (
     workspaceKey: string,
@@ -106,6 +108,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
+      tabLabelsByWorkspace: {},
       openTab: (workspaceKey, target) => {
         const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
         const normalizedTarget = normalizeWorkspaceTabTarget(target);
@@ -221,6 +224,52 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
               [normalizedWorkspaceKey]: nextLayout,
+            },
+          };
+        });
+      },
+      renameTab: (workspaceKey, tabId, label) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        const normalizedTabId = trimNonEmpty(tabId);
+        if (!normalizedWorkspaceKey || !normalizedTabId) {
+          return;
+        }
+
+        const normalizedLabel = trimNonEmpty(label);
+        set((state) => {
+          const currentWorkspaceLabels = state.tabLabelsByWorkspace[normalizedWorkspaceKey] ?? {};
+          const currentLabel = currentWorkspaceLabels[normalizedTabId] ?? null;
+          if (currentLabel === normalizedLabel) {
+            return state;
+          }
+
+          if (!normalizedLabel) {
+            if (!(normalizedTabId in currentWorkspaceLabels)) {
+              return state;
+            }
+            const nextWorkspaceLabels = { ...currentWorkspaceLabels };
+            delete nextWorkspaceLabels[normalizedTabId];
+            if (Object.keys(nextWorkspaceLabels).length === 0) {
+              const { [normalizedWorkspaceKey]: _removed, ...rest } = state.tabLabelsByWorkspace;
+              return {
+                tabLabelsByWorkspace: rest,
+              };
+            }
+            return {
+              tabLabelsByWorkspace: {
+                ...state.tabLabelsByWorkspace,
+                [normalizedWorkspaceKey]: nextWorkspaceLabels,
+              },
+            };
+          }
+
+          return {
+            tabLabelsByWorkspace: {
+              ...state.tabLabelsByWorkspace,
+              [normalizedWorkspaceKey]: {
+                ...currentWorkspaceLabels,
+                [normalizedTabId]: normalizedLabel,
+              },
             },
           };
         });
@@ -464,9 +513,27 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
         for (const key in state.layoutByWorkspace) {
           layoutByWorkspace[key] = normalizeLayout(state.layoutByWorkspace[key]);
         }
+        const tabLabelsByWorkspace: Record<string, Record<string, string>> = {};
+        for (const key in state.tabLabelsByWorkspace) {
+          const labels = state.tabLabelsByWorkspace[key] ?? {};
+          const normalizedEntries = Object.entries(labels)
+            .map(([tabId, label]) => {
+              const normalizedTabId = trimNonEmpty(tabId);
+              const normalizedLabel = trimNonEmpty(label);
+              if (!normalizedTabId || !normalizedLabel) {
+                return null;
+              }
+              return [normalizedTabId, normalizedLabel] as const;
+            })
+            .filter((entry): entry is readonly [string, string] => entry !== null);
+          if (normalizedEntries.length > 0) {
+            tabLabelsByWorkspace[key] = Object.fromEntries(normalizedEntries);
+          }
+        }
         return {
           layoutByWorkspace,
           splitSizesByWorkspace: state.splitSizesByWorkspace,
+          tabLabelsByWorkspace,
         };
       },
     },

@@ -16,6 +16,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     const onCopyResumeCommand = vi.fn();
     const onCopyAgentId = vi.fn();
     const onReloadAgent = vi.fn();
+    const onRenameTab = vi.fn();
     const onCloseTab = vi.fn();
     const onCloseTabsBefore = vi.fn();
     const onCloseTabsAfter = vi.fn();
@@ -30,6 +31,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand,
       onCopyAgentId,
       onReloadAgent,
+      onRenameTab,
       onCloseTab,
       onCloseTabsBefore,
       onCloseTabsAfter,
@@ -39,6 +41,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
       "Copy resume command",
       "Copy agent id",
+      "Rename",
       "Close to the left",
       "Close to the right",
       "Close other tabs",
@@ -57,6 +60,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -66,6 +70,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
       "Copy resume command",
       "Copy agent id",
+      "Rename",
       "Close tabs above",
       "Close tabs below",
       "Close other tabs",
@@ -89,6 +94,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -96,6 +102,9 @@ describe("buildWorkspaceTabMenuEntries", () => {
     });
 
     expect(entries.some((entry) => entry.kind === "item" && entry.label === "Copy agent id")).toBe(
+      false,
+    );
+    expect(entries.some((entry) => entry.kind === "item" && entry.label === "Rename")).toBe(
       false,
     );
     expect(entries.some((entry) => entry.kind === "item" && entry.label === "Reload agent")).toBe(
@@ -114,6 +123,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -125,6 +135,37 @@ describe("buildWorkspaceTabMenuEntries", () => {
         kind: "item",
         key: "reload-agent",
         tooltip: "Reload agent to update skills, MCPs or login status.",
+      }),
+    );
+  });
+
+  it("includes rename for terminal tabs", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: {
+        key: "terminal_term-1",
+        tabId: "terminal_term-1",
+        kind: "terminal",
+        target: { kind: "terminal", terminalId: "term-1" },
+      },
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-terminal_term-1",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        kind: "item",
+        key: "rename",
+        label: "Rename",
       }),
     );
   });

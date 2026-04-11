@@ -81,6 +81,7 @@ type WorkspaceDesktopTabsRowProps = {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRenameTab: (input: { tab: WorkspaceTabDescriptor; currentLabel: string }) => Promise<void> | void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
@@ -334,6 +335,8 @@ function TabChip({
                     return <Copy size={16} color={iconColor} />;
                   case "rotate-cw":
                     return <RotateCw size={16} color={iconColor} />;
+                  case "square-pen":
+                    return <SquarePen size={16} color={iconColor} />;
                   case "arrow-left-to-line":
                     return <ArrowLeftToLine size={16} color={iconColor} />;
                   case "arrow-right-to-line":
@@ -375,6 +378,7 @@ export function WorkspaceDesktopTabsRow({
   onCopyResumeCommand,
   onCopyAgentId,
   onReloadAgent,
+  onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -498,6 +502,7 @@ export function WorkspaceDesktopTabsRow({
                 onCopyResumeCommand={onCopyResumeCommand}
                 onCopyAgentId={onCopyAgentId}
                 onReloadAgent={onReloadAgent}
+                onRenameTab={onRenameTab}
                 onCloseTabsToLeft={onCloseTabsToLeft}
                 onCloseTabsToRight={onCloseTabsToRight}
                 onCloseOtherTabs={onCloseOtherTabs}
@@ -627,6 +632,7 @@ function ResolvedDesktopTabChip({
   onCopyResumeCommand,
   onCopyAgentId,
   onReloadAgent,
+  onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -651,6 +657,7 @@ function ResolvedDesktopTabChip({
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRenameTab: (input: { tab: WorkspaceTabDescriptor; currentLabel: string }) => Promise<void> | void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
@@ -665,34 +672,6 @@ function ResolvedDesktopTabChip({
   showDropIndicatorBefore: boolean;
   showDropIndicatorAfter: boolean;
 }) {
-  const resolvedTab = useMemo(
-    () =>
-      buildWorkspaceDesktopTabActions({
-        tab: item.tab,
-        index,
-        tabCount,
-        onCopyResumeCommand,
-        onCopyAgentId,
-        onReloadAgent,
-        onCloseTab,
-        onCloseTabsToLeft,
-        onCloseTabsToRight,
-        onCloseOtherTabs,
-      }),
-    [
-      index,
-      item.tab,
-      onCloseOtherTabs,
-      onCloseTab,
-      onCloseTabsToLeft,
-      onCloseTabsToRight,
-      onCopyAgentId,
-      onCopyResumeCommand,
-      onReloadAgent,
-      tabCount,
-    ],
-  );
-
   return (
     <WorkspaceTabPresentationResolver
       tab={item.tab}
@@ -700,6 +679,24 @@ function ResolvedDesktopTabChip({
       workspaceId={normalizedWorkspaceId}
     >
       {(presentation) => {
+        const resolvedTab = buildWorkspaceDesktopTabActions({
+          tab: item.tab,
+          index,
+          tabCount,
+          onCopyResumeCommand,
+          onCopyAgentId,
+          onReloadAgent,
+          onRenameTab: () => {
+            void onRenameTab({
+              tab: item.tab,
+              currentLabel: presentation.label,
+            });
+          },
+          onCloseTab,
+          onCloseTabsToLeft,
+          onCloseTabsToRight,
+          onCloseOtherTabs,
+        });
         const tooltipLabel =
           presentation.titleState === "loading" ? "Loading agent title" : presentation.label;
 
