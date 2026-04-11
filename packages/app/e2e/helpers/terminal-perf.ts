@@ -1,4 +1,6 @@
 import type { Page } from "@playwright/test";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
@@ -48,7 +50,10 @@ async function loadDaemonClientConstructor(): Promise<
     clientType: "cli";
   }) => TerminalPerfDaemonClient
 > {
-  const moduleUrl = new URL("../../../server/dist/server/server/exports.js", import.meta.url).href;
+  const repoRoot = path.resolve(__dirname, "../../../../");
+  const moduleUrl = pathToFileURL(
+    path.join(repoRoot, "packages/server/dist/server/server/exports.js"),
+  ).href;
   const mod = (await import(moduleUrl)) as {
     DaemonClient: new (config: {
       url: string;
