@@ -15,7 +15,8 @@ export function isPathLikeArg(arg: string): boolean {
     arg.startsWith("/") ||
     arg === "~" ||
     arg.startsWith("~/") ||
-    /^[A-Za-z]:[\\/]/.test(arg)
+    /^[A-Za-z]:[\\/]/.test(arg) ||
+    arg.startsWith("\\\\")
   );
 }
 

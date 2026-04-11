@@ -80,7 +80,7 @@ function createInspectSchema(agent: AgentInspect): OutputSchema<InspectRow> {
 /** Shorten home directory in path */
 function shortenPath(path: string): string {
   const home = process.env.HOME;
-  if (home && path.startsWith(home)) {
+  if (home && (path === home || path.startsWith(home + "/") || path.startsWith(home + "\\"))) {
     return "~" + path.slice(home.length);
   }
   return path;
