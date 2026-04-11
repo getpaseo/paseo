@@ -29,10 +29,7 @@ import { captureTerminalLines } from "../../terminal/terminal.js";
 import { createAgentWorktree, runAsyncWorktreeBootstrap } from "../worktree-bootstrap.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { ScheduleSummarySchema, StoredScheduleSchema } from "../schedule/types.js";
-import {
-  AGENT_PROVIDER_DEFINITIONS,
-  type ProviderDefinition,
-} from "./provider-registry.js";
+import { AGENT_PROVIDER_DEFINITIONS, type ProviderDefinition } from "./provider-registry.js";
 import { deletePaseoWorktree, listPaseoWorktrees } from "../../utils/worktree.js";
 import {
   AgentModelSchema,
@@ -290,15 +287,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     agentType: AgentProviderEnum.optional().describe(
       "Optional agent implementation to spawn. Defaults to 'claude'.",
     ),
-    model: z
-      .string()
-      .optional()
-      .describe("Model to use (e.g. claude-sonnet-4-20250514)"),
+    model: z.string().optional().describe("Model to use (e.g. claude-sonnet-4-20250514)"),
     thinking: z.string().optional().describe("Thinking option ID"),
-    labels: z
-      .record(z.string(), z.string())
-      .optional()
-      .describe("Labels to set on the agent"),
+    labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
     initialPrompt: z
       .string()
       .trim()
@@ -333,15 +324,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     agentType: AgentProviderEnum.optional().describe(
       "Optional agent implementation to spawn. Defaults to 'claude'.",
     ),
-    model: z
-      .string()
-      .optional()
-      .describe("Model to use (e.g. claude-sonnet-4-20250514)"),
+    model: z.string().optional().describe("Model to use (e.g. claude-sonnet-4-20250514)"),
     thinking: z.string().optional().describe("Thinking option ID"),
-    labels: z
-      .record(z.string(), z.string())
-      .optional()
-      .describe("Labels to set on the agent"),
+    labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
     initialPrompt: z
       .string()
       .trim()
@@ -956,10 +941,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       inputSchema: {
         agentId: z.string(),
         name: z.string().optional(),
-        labels: z
-          .record(z.string(), z.string())
-          .optional()
-          .describe("Labels to set on the agent"),
+        labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
       },
       outputSchema: {
         success: z.boolean(),
@@ -1001,10 +983,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           .string()
           .optional()
           .describe("Optional working directory. Defaults to the caller agent cwd."),
-        all: z
-          .boolean()
-          .optional()
-          .describe("List terminals across all working directories."),
+        all: z.boolean().optional().describe("List terminals across all working directories."),
       },
       outputSchema: {
         terminals: z.array(TerminalSummarySchema),
@@ -1019,7 +998,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         ? (
             await Promise.all(
               terminalManager.listDirectories().map(async (directory) =>
-                (await terminalManager.getTerminals(directory)).map((terminal) => ({
+                (
+                  await terminalManager.getTerminals(directory)
+                ).map((terminal) => ({
                   id: terminal.id,
                   name: terminal.name,
                   cwd: terminal.cwd,
@@ -1260,7 +1241,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         throw new Error("Schedule service is not configured");
       }
 
-      const schedules = (await scheduleService.list()).map((schedule) => toScheduleSummary(schedule));
+      const schedules = (await scheduleService.list()).map((schedule) =>
+        toScheduleSummary(schedule),
+      );
       return {
         content: [],
         structuredContent: ensureValidJson({ schedules }),

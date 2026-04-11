@@ -927,7 +927,9 @@ export class Session {
   private async initializeAgentMcp(): Promise<void> {
     try {
       if (!this.mcpBaseUrl) {
-        this.sessionLogger.info("Skipping Agent MCP initialization because no MCP base URL is configured");
+        this.sessionLogger.info(
+          "Skipping Agent MCP initialization because no MCP base URL is configured",
+        );
         return;
       }
       const transport = new StreamableHTTPClientTransport(new URL(this.mcpBaseUrl));

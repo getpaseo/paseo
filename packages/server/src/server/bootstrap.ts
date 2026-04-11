@@ -578,7 +578,7 @@ export async function createPaseoDaemon(
               logger.info(
                 { path: boundListenTarget.path, elapsed: elapsed() },
                 `Server listening on ${boundListenTarget.path}`,
-                );
+              );
             }
 
             wsServer = new VoiceAssistantWebSocketServer(
@@ -631,8 +631,8 @@ export async function createPaseoDaemon(
                 relay: { endpoint: relayPublicEndpoint },
               });
 
-              encodeOfferToFragmentUrl({ offer, appBaseUrl });
-              logger.info("pairing_offer");
+              const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
+              logger.info({ url }, "pairing_offer");
 
               relayTransport?.stop().catch(() => undefined);
               relayTransport = startRelayTransport({

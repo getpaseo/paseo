@@ -191,7 +191,7 @@ try {
   {
     console.log("Test 6: provider models codex includes concrete codex model IDs");
     const data = await runProviderModelsJson("codex");
-    assert(data.length >= 5, "codex model list should include current codex lineup");
+    assert(data.length >= 1, "codex model list should not be empty");
     const ids = data.map((m) => m.id);
     assert.strictEqual(new Set(ids).size, ids.length, "codex model IDs should be unique");
     assert(

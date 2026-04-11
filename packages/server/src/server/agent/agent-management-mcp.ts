@@ -48,10 +48,7 @@ import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { createAgentWorktree, runAsyncWorktreeBootstrap } from "../worktree-bootstrap.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { ScheduleSummarySchema, StoredScheduleSchema } from "../schedule/types.js";
-import {
-  AGENT_PROVIDER_DEFINITIONS,
-  type ProviderDefinition,
-} from "./provider-registry.js";
+import { AGENT_PROVIDER_DEFINITIONS, type ProviderDefinition } from "./provider-registry.js";
 import {
   AgentModelSchema,
   AgentProviderEnum,
@@ -84,10 +81,7 @@ export async function createAgentManagementMcpServer(
     component: "agent-management-mcp",
   });
   const waitTracker = new WaitForAgentTracker(logger);
-  const resolveNewAgentScheduleTarget = (params?: {
-    provider?: AgentProvider;
-    cwd?: string;
-  }) => ({
+  const resolveNewAgentScheduleTarget = (params?: { provider?: AgentProvider; cwd?: string }) => ({
     type: "new-agent" as const,
     config: {
       provider: params?.provider ?? ("claude" as AgentProvider),
@@ -113,15 +107,9 @@ export async function createAgentManagementMcpServer(
     agentType: AgentProviderEnum.optional().describe(
       "Optional agent implementation to spawn. Defaults to 'claude'.",
     ),
-    model: z
-      .string()
-      .optional()
-      .describe("Model to use (e.g. claude-sonnet-4-20250514)"),
+    model: z.string().optional().describe("Model to use (e.g. claude-sonnet-4-20250514)"),
     thinking: z.string().optional().describe("Thinking option ID"),
-    labels: z
-      .record(z.string(), z.string())
-      .optional()
-      .describe("Labels to set on the agent"),
+    labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
     initialPrompt: z
       .string()
       .optional()
@@ -622,10 +610,7 @@ export async function createAgentManagementMcpServer(
       inputSchema: {
         agentId: z.string(),
         name: z.string().optional(),
-        labels: z
-          .record(z.string(), z.string())
-          .optional()
-          .describe("Labels to set on the agent"),
+        labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
       },
       outputSchema: {
         success: z.boolean(),
@@ -723,7 +708,9 @@ export async function createAgentManagementMcpServer(
         throw new Error("Schedule service is not configured");
       }
 
-      const schedules = (await scheduleService.list()).map((schedule) => toScheduleSummary(schedule));
+      const schedules = (await scheduleService.list()).map((schedule) =>
+        toScheduleSummary(schedule),
+      );
       return {
         content: [],
         structuredContent: ensureValidJson({ schedules }),

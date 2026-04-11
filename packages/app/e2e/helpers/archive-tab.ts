@@ -117,7 +117,9 @@ export async function createIdleAgent(
   });
   const finished = await client.waitForFinish(created.id, 120_000);
   if (finished.status !== "idle") {
-    throw new Error(`Expected agent ${created.id} to become idle, got ${finished.status}. Error: ${JSON.stringify((finished as Record<string, unknown>).error ?? "unknown")}`);
+    throw new Error(
+      `Expected agent ${created.id} to become idle, got ${finished.status}. Error: ${JSON.stringify((finished as Record<string, unknown>).error ?? "unknown")}`,
+    );
   }
   return {
     id: created.id,

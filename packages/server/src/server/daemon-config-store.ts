@@ -3,10 +3,7 @@ import {
   savePersistedConfig,
   type PersistedConfig,
 } from "./persisted-config.js";
-import {
-  MutableDaemonConfigSchema,
-  MutableDaemonConfigPatchSchema,
-} from "../shared/messages.js";
+import { MutableDaemonConfigSchema, MutableDaemonConfigPatchSchema } from "../shared/messages.js";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
 
@@ -29,7 +26,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function deepMerge<T extends Record<string, unknown>>(current: T, patch: Record<string, unknown>): T {
+function deepMerge<T extends Record<string, unknown>>(
+  current: T,
+  patch: Record<string, unknown>,
+): T {
   const next: Record<string, unknown> = { ...current };
 
   for (const [key, patchValue] of Object.entries(patch)) {
@@ -64,11 +64,7 @@ export class DaemonConfigStore {
   private readonly changeListeners = new Set<ConfigListener>();
   private readonly fieldChangeHandlers = new Map<string, Set<FieldChangeHandler>>();
 
-  constructor(
-    paseoHome: string,
-    initial: MutableDaemonConfig,
-    logger?: LoggerLike,
-  ) {
+  constructor(paseoHome: string, initial: MutableDaemonConfig, logger?: LoggerLike) {
     this.paseoHome = paseoHome;
     this.logger = getLogger(logger);
     this.current = MutableDaemonConfigSchema.parse(initial);

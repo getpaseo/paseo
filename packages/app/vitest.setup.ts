@@ -67,6 +67,28 @@ vi.mock("@xterm/addon-ligatures", () => ({
   LigaturesAddon: class LigaturesAddon {},
 }));
 
+vi.mock("react-native-svg", () => {
+  const Stub = () => null;
+  return {
+    __esModule: true,
+    default: Stub,
+    Circle: Stub,
+    Defs: Stub,
+    G: Stub,
+    Line: Stub,
+    LinearGradient: Stub,
+    Path: Stub,
+    Rect: Stub,
+    Stop: Stub,
+    SvgCss: Stub,
+    SvgCssUri: Stub,
+    SvgFromXml: Stub,
+    SvgUri: Stub,
+    SvgXml: Stub,
+    Use: Stub,
+  };
+});
+
 vi.mock("expo-linking", () => ({
   openURL: vi.fn().mockResolvedValue(undefined),
 }));

@@ -70,10 +70,7 @@ import type {
   AgentProvider,
   AgentSessionConfig,
 } from "../server/agent/agent-sdk-types.js";
-import type {
-  MutableDaemonConfig,
-  MutableDaemonConfigPatch,
-} from "../shared/messages.js";
+import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
 import { getAgentProviderDefinition } from "../server/agent/provider-manifest.js";
 import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
 import {

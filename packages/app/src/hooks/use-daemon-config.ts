@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type {
-  MutableDaemonConfig,
-  MutableDaemonConfigPatch,
-} from "@server/shared/messages";
+import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@server/shared/messages";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 
 export function daemonConfigQueryKey(serverId: string | null) {

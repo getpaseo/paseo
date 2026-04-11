@@ -6,18 +6,17 @@ import pino from "pino";
 
 import { ClaudeAgentClient } from "../src/server/agent/providers/claude-agent.js";
 import { CodexAppServerAgentClient } from "../src/server/agent/providers/codex-app-server-agent.js";
-import { getFullAccessConfig, isProviderAvailable } from "../src/server/daemon-e2e/agent-configs.js";
+import {
+  getFullAccessConfig,
+  isProviderAvailable,
+} from "../src/server/daemon-e2e/agent-configs.js";
 import { DaemonClient } from "../src/server/test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../src/server/test-utils/paseo-daemon.js";
 
-function collectAssistantText(
-  entries: Array<{ item: { type: string; text?: string } }>,
-): string {
+function collectAssistantText(entries: Array<{ item: { type: string; text?: string } }>): string {
   return entries
     .filter(
-      (
-        entry,
-      ): entry is { item: { type: "assistant_message"; text: string } } =>
+      (entry): entry is { item: { type: "assistant_message"; text: string } } =>
         entry.item.type === "assistant_message" && typeof entry.item.text === "string",
     )
     .map((entry) => entry.item.text)
@@ -137,9 +136,7 @@ async function main(): Promise<void> {
   const daemon = await createTestPaseoDaemon({
     agentClients: {
       claude: new ClaudeAgentClient({ logger }),
-      ...(isProviderAvailable("codex")
-        ? { codex: new CodexAppServerAgentClient(logger) }
-        : {}),
+      ...(isProviderAvailable("codex") ? { codex: new CodexAppServerAgentClient(logger) } : {}),
     },
     logger,
   });

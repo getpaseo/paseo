@@ -27,7 +27,10 @@ function formatHostForHttpUrl(host: string): string {
 }
 
 function buildExpectedAgentMcpUrl(params: { host: string; port: number; agentId: string }): string {
-  const baseUrl = new URL("/mcp/agents", `http://${formatHostForHttpUrl(params.host)}:${params.port}`);
+  const baseUrl = new URL(
+    "/mcp/agents",
+    `http://${formatHostForHttpUrl(params.host)}:${params.port}`,
+  );
   baseUrl.searchParams.set("callerAgentId", params.agentId);
   return baseUrl.toString();
 }
@@ -510,11 +513,15 @@ describe("MCP parity end-to-end", () => {
         scheduleId = created.id as string;
 
         await callToolStructured(topLevelClient, "pause_schedule", { id: scheduleId });
-        const paused = await callToolStructured(topLevelClient, "inspect_schedule", { id: scheduleId });
+        const paused = await callToolStructured(topLevelClient, "inspect_schedule", {
+          id: scheduleId,
+        });
         expect(paused.status).toBe("paused");
 
         await callToolStructured(topLevelClient, "resume_schedule", { id: scheduleId });
-        const resumed = await callToolStructured(topLevelClient, "inspect_schedule", { id: scheduleId });
+        const resumed = await callToolStructured(topLevelClient, "inspect_schedule", {
+          id: scheduleId,
+        });
         expect(resumed.status).toBe("active");
       } finally {
         await deleteScheduleIfPresent(scheduleId);

@@ -224,10 +224,7 @@ describe("agent MCP end-to-end (offline)", () => {
       agentClients: createTestAgentClients(),
       agentStoragePath: path.join(disabledPaseoHome, "agents"),
     };
-    const disabledDaemon = await createPaseoDaemon(
-      disabledDaemonConfig,
-      pino({ level: "silent" }),
-    );
+    const disabledDaemon = await createPaseoDaemon(disabledDaemonConfig, pino({ level: "silent" }));
     await disabledDaemon.start();
 
     const disabledTransport = new StreamableHTTPClientTransport(

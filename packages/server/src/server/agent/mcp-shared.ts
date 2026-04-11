@@ -307,9 +307,7 @@ export function parseDurationString(input: string): number {
   }
 
   if (!hasMatch) {
-    throw new Error(
-      `Invalid duration format: ${input}. Use formats like: 5m, 30s, 1h, 2h30m`,
-    );
+    throw new Error(`Invalid duration format: ${input}. Use formats like: 5m, 30s, 1h, 2h30m`);
   }
 
   return totalMs;
