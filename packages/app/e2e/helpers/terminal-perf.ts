@@ -126,7 +126,7 @@ export async function navigateToTerminal(
   // Boot the app at the workspace route directly.
   // The fixtures.ts beforeEach addInitScript seeds localStorage on every navigation,
   // so the daemon registry is already configured when the app starts.
-  const workspaceRoute = buildHostWorkspaceRoute(getServerId(), input.cwd);
+  const workspaceRoute = buildTerminalWorkspaceUrl(input.cwd, input.terminalId);
   await page.goto(workspaceRoute);
 
   // Wait for daemon connection (sidebar shows host label)
@@ -142,7 +142,7 @@ export async function navigateToTerminal(
 
   if (!surfaceVisible) {
     // Terminal tab might not be focused — look for it in the tab row and click it
-    const terminalTab = page.locator(`[data-testid="workspace-tab-terminal:${input.terminalId}"]`);
+    const terminalTab = page.locator(`[data-testid="workspace-tab-terminal_${input.terminalId}"]`);
     const tabExists = await terminalTab.isVisible({ timeout: 5_000 }).catch(() => false);
 
     if (tabExists) {
