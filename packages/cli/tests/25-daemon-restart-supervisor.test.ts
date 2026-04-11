@@ -148,9 +148,7 @@ try {
     async () => {
       const status = await readDaemonStatus(paseoHome);
       return (
-        status.localDaemon === "running" &&
-        status.pid !== null &&
-        isProcessRunning(status.pid)
+        status.localDaemon === "running" && status.pid !== null && isProcessRunning(status.pid)
       );
     },
     120000,
