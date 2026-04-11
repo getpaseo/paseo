@@ -35,6 +35,8 @@ import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { BranchSwitcher } from "@/components/branch-switcher";
+import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
+import { Button } from "@/components/ui/button";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
@@ -133,6 +135,13 @@ type WorkspaceScreenProps = {
   workspaceId: string;
 };
 
+type RenameableWorkspaceTabKind = "agent" | "terminal";
+
+interface RenameTabDialogState {
+  tabId: string;
+  kind: RenameableWorkspaceTabKind;
+}
+
 function trimNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
@@ -187,6 +196,7 @@ type MobileWorkspaceTabSwitcherProps = {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRenameTab: (input: { tab: WorkspaceTabDescriptor; currentLabel: string }) => Promise<void> | void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
   onCloseTabsBelow: (tabId: string) => Promise<void> | void;
@@ -263,6 +273,71 @@ function WorkspaceDocumentTitleEffect({
   return null;
 }
 
+function RenameTabDialog({
+  visible,
+  kind,
+  value,
+  onChangeValue,
+  onClose,
+  onSave,
+}: {
+  visible: boolean;
+  kind: RenameableWorkspaceTabKind | null;
+  value: string;
+  onChangeValue: (value: string) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  const { theme } = useUnistyles();
+
+  return (
+    <AdaptiveModalSheet
+      title={kind ? getRenameTabDialogTitle(kind) : "Rename tab"}
+      visible={visible}
+      onClose={onClose}
+      testID="workspace-rename-tab-modal"
+    >
+      <View style={styles.renameTabField}>
+        <Text style={styles.renameTabLabel}>Name</Text>
+        <AdaptiveTextInput
+          testID="workspace-rename-tab-input"
+          style={styles.renameTabInput}
+          value={value}
+          onChangeText={onChangeValue}
+          placeholder={kind === "terminal" ? "Terminal" : "Agent"}
+          placeholderTextColor={theme.colors.foregroundMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          onSubmitEditing={() => {
+            onSave();
+          }}
+        />
+        <Text style={styles.renameTabHint}>
+          Delete the name and save to restore the default title.
+        </Text>
+      </View>
+      <View style={styles.renameTabActions}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onPress={onClose}
+          testID="workspace-rename-tab-cancel"
+        >
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          variant="default"
+          onPress={onSave}
+          testID="workspace-rename-tab-save"
+        >
+          Save
+        </Button>
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
+
 function MobileWorkspaceTabOption({
   tab,
   tabIndex,
@@ -275,6 +350,7 @@ function MobileWorkspaceTabOption({
   onCopyResumeCommand,
   onCopyAgentId,
   onReloadAgent,
+  onRenameTab,
   onCloseTab,
   onCloseTabsAbove,
   onCloseTabsBelow,
@@ -291,6 +367,7 @@ function MobileWorkspaceTabOption({
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRenameTab: (input: { tab: WorkspaceTabDescriptor; currentLabel: string }) => Promise<void> | void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
   onCloseTabsBelow: (tabId: string) => Promise<void> | void;
@@ -298,20 +375,6 @@ function MobileWorkspaceTabOption({
 }) {
   const { theme } = useUnistyles();
   const menuTestIDBase = `workspace-tab-menu-${tab.key}`;
-  const menuEntries = buildWorkspaceTabMenuEntries({
-    surface: "mobile",
-    tab,
-    index: tabIndex,
-    tabCount,
-    menuTestIDBase,
-    onCopyResumeCommand,
-    onCopyAgentId,
-    onReloadAgent,
-    onCloseTab,
-    onCloseTabsBefore: onCloseTabsAbove,
-    onCloseTabsAfter: onCloseTabsBelow,
-    onCloseOtherTabs,
-  });
 
   return (
     <WorkspaceTabPresentationResolver
@@ -319,74 +382,103 @@ function MobileWorkspaceTabOption({
       serverId={normalizedServerId}
       workspaceId={normalizedWorkspaceId}
     >
-      {(presentation) => (
-        <WorkspaceTabOptionRow
-          presentation={presentation}
-          selected={selected}
-          active={active}
-          onPress={onPress}
-          trailingAccessory={
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                testID={`${menuTestIDBase}-trigger`}
-                accessibilityRole="button"
-                accessibilityLabel={`Open menu for ${presentation.label}`}
-                hitSlop={8}
-                style={({ open, pressed }) => [
-                  styles.mobileTabMenuTrigger,
-                  (open || pressed) && styles.mobileTabMenuTriggerActive,
-                ]}
-              >
-                <Ellipsis size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side="bottom" align="end" width={220} testID={menuTestIDBase}>
-                {menuEntries.map((entry) =>
-                  entry.kind === "separator" ? (
-                    <DropdownMenuSeparator key={entry.key} />
-                  ) : (
-                    <DropdownMenuItem
-                      key={entry.key}
-                      testID={entry.testID}
-                      disabled={entry.disabled}
-                      destructive={entry.destructive}
-                      onSelect={entry.onSelect}
-                      tooltip={entry.tooltip}
-                      leading={(() => {
-                        const iconColor = theme.colors.foregroundMuted;
-                        switch (entry.icon) {
-                          case "copy":
-                            return <Copy size={16} color={iconColor} />;
-                          case "rotate-cw":
-                            return <RotateCw size={16} color={iconColor} />;
-                          case "arrow-left-to-line":
-                            return <ArrowLeftToLine size={16} color={iconColor} />;
-                          case "arrow-right-to-line":
-                            return <ArrowRightToLine size={16} color={iconColor} />;
-                          case "copy-x":
-                            return <CopyX size={16} color={iconColor} />;
-                          case "x":
-                            return <X size={16} color={iconColor} />;
-                          default:
-                            return undefined;
+      {(presentation) => {
+        const menuEntries = buildWorkspaceTabMenuEntries({
+          surface: "mobile",
+          tab,
+          index: tabIndex,
+          tabCount,
+          menuTestIDBase,
+          onCopyResumeCommand,
+          onCopyAgentId,
+          onReloadAgent,
+          onRenameTab: () => {
+            void onRenameTab({
+              tab,
+              currentLabel: presentation.label,
+            });
+          },
+          onCloseTab,
+          onCloseTabsBefore: onCloseTabsAbove,
+          onCloseTabsAfter: onCloseTabsBelow,
+          onCloseOtherTabs,
+        });
+
+        return (
+          <WorkspaceTabOptionRow
+            presentation={presentation}
+            selected={selected}
+            active={active}
+            onPress={onPress}
+            trailingAccessory={
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  testID={`${menuTestIDBase}-trigger`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open menu for ${presentation.label}`}
+                  hitSlop={8}
+                  style={({ open, pressed }) => [
+                    styles.mobileTabMenuTrigger,
+                    (open || pressed) && styles.mobileTabMenuTriggerActive,
+                  ]}
+                >
+                  <Ellipsis size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="bottom" align="end" width={220} testID={menuTestIDBase}>
+                  {menuEntries.map((entry) =>
+                    entry.kind === "separator" ? (
+                      <DropdownMenuSeparator key={entry.key} />
+                    ) : (
+                      <DropdownMenuItem
+                        key={entry.key}
+                        testID={entry.testID}
+                        disabled={entry.disabled}
+                        destructive={entry.destructive}
+                        onSelect={entry.onSelect}
+                        tooltip={entry.tooltip}
+                        leading={(() => {
+                          const iconColor = theme.colors.foregroundMuted;
+                          switch (entry.icon) {
+                            case "copy":
+                              return <Copy size={16} color={iconColor} />;
+                            case "rotate-cw":
+                              return <RotateCw size={16} color={iconColor} />;
+                            case "square-pen":
+                              return <SquarePen size={16} color={iconColor} />;
+                            case "arrow-left-to-line":
+                              return <ArrowLeftToLine size={16} color={iconColor} />;
+                            case "arrow-right-to-line":
+                              return <ArrowRightToLine size={16} color={iconColor} />;
+                            case "copy-x":
+                              return <CopyX size={16} color={iconColor} />;
+                            case "x":
+                              return <X size={16} color={iconColor} />;
+                            default:
+                              return undefined;
+                          }
+                        })()}
+                        trailing={
+                          entry.hint ? (
+                            <Text style={styles.menuItemHint}>{entry.hint}</Text>
+                          ) : undefined
                         }
-                      })()}
-                      trailing={
-                        entry.hint ? (
-                          <Text style={styles.menuItemHint}>{entry.hint}</Text>
-                        ) : undefined
-                      }
-                    >
-                      {entry.label}
-                    </DropdownMenuItem>
-                  ),
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          }
-        />
-      )}
+                      >
+                        {entry.label}
+                      </DropdownMenuItem>
+                    ),
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            }
+          />
+        );
+      }}
     </WorkspaceTabPresentationResolver>
   );
+}
+
+function getRenameTabDialogTitle(kind: RenameableWorkspaceTabKind): string {
+  return kind === "agent" ? "Rename agent tab" : "Rename terminal tab";
 }
 
 const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
@@ -401,6 +493,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   onCopyResumeCommand,
   onCopyAgentId,
   onReloadAgent,
+  onRenameTab,
   onCloseTab,
   onCloseTabsAbove,
   onCloseTabsBelow,
@@ -473,6 +566,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
               onCopyResumeCommand={onCopyResumeCommand}
               onCopyAgentId={onCopyAgentId}
               onReloadAgent={onReloadAgent}
+              onRenameTab={onRenameTab}
               onCloseTab={onCloseTab}
               onCloseTabsAbove={onCloseTabsAbove}
               onCloseTabsBelow={onCloseTabsBelow}
@@ -871,6 +965,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   const paneFocusSuppressedRef = useRef(false);
   const resizeWorkspaceSplit = useWorkspaceLayoutStore((state) => state.resizeSplit);
   const reorderWorkspaceTabsInPane = useWorkspaceLayoutStore((state) => state.reorderTabsInPane);
+  const renameWorkspaceTab = useWorkspaceLayoutStore((state) => state.renameTab);
   const pinnedAgentIds = useWorkspaceLayoutStore((state) =>
     persistenceKey
       ? (state.pinnedAgentIdsByWorkspace[persistenceKey] ?? EMPTY_PINNED_AGENT_IDS)
@@ -1128,6 +1223,8 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
 
   const [hoveredTabKey, setHoveredTabKey] = useState<string | null>(null);
   const [hoveredCloseTabKey, setHoveredCloseTabKey] = useState<string | null>(null);
+  const [renameTabDialog, setRenameTabDialog] = useState<RenameTabDialogState | null>(null);
+  const [renameTabDraft, setRenameTabDraft] = useState("");
 
   const tabByKey = useMemo(() => {
     const map = new Map<string, WorkspaceTabDescriptor>();
@@ -1397,6 +1494,34 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     },
     [client, isConnected, toast],
   );
+
+  const handleRequestRenameTab = useCallback(
+    (input: { tab: WorkspaceTabDescriptor; currentLabel: string }) => {
+      if (input.tab.target.kind !== "agent" && input.tab.target.kind !== "terminal") {
+        return;
+      }
+      setRenameTabDialog({
+        tabId: input.tab.tabId,
+        kind: input.tab.target.kind,
+      });
+      setRenameTabDraft(input.currentLabel);
+    },
+    [],
+  );
+
+  const handleCloseRenameTabDialog = useCallback(() => {
+    setRenameTabDialog(null);
+    setRenameTabDraft("");
+  }, []);
+
+  const handleSaveRenameTab = useCallback(() => {
+    if (!renameTabDialog || !persistenceKey) {
+      handleCloseRenameTabDialog();
+      return;
+    }
+    renameWorkspaceTab(persistenceKey, renameTabDialog.tabId, renameTabDraft);
+    handleCloseRenameTabDialog();
+  }, [handleCloseRenameTabDialog, persistenceKey, renameTabDialog, renameTabDraft, renameWorkspaceTab]);
 
   const handleCopyWorkspacePath = useCallback(async () => {
     if (!isAbsolutePath(normalizedWorkspaceId)) {
@@ -2185,6 +2310,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
               onCopyResumeCommand={handleCopyResumeCommand}
               onCopyAgentId={handleCopyAgentId}
               onReloadAgent={handleReloadAgent}
+              onRenameTab={handleRequestRenameTab}
               onCloseTab={handleCloseTabById}
               onCloseTabsAbove={handleCloseTabsToLeft}
               onCloseTabsBelow={handleCloseTabsToRight}
@@ -2206,6 +2332,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
               onCopyResumeCommand={handleCopyResumeCommand}
               onCopyAgentId={handleCopyAgentId}
               onReloadAgent={handleReloadAgent}
+              onRenameTab={handleRequestRenameTab}
               onCloseTabsToLeft={handleCloseTabsToLeft}
               onCloseTabsToRight={handleCloseTabsToRight}
               onCloseOtherTabs={handleCloseOtherTabs}
@@ -2243,6 +2370,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                     onCopyResumeCommand={handleCopyResumeCommand}
                     onCopyAgentId={handleCopyAgentId}
                     onReloadAgent={handleReloadAgent}
+                    onRenameTab={handleRequestRenameTab}
                     onCloseTabsToLeft={handleCloseTabsToLeftInPane}
                     onCloseTabsToRight={handleCloseTabsToRightInPane}
                     onCloseOtherTabs={handleCloseOtherTabsInPane}
@@ -2276,6 +2404,14 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
           />
         )}
       </View>
+      <RenameTabDialog
+        visible={renameTabDialog !== null}
+        kind={renameTabDialog?.kind ?? null}
+        value={renameTabDraft}
+        onChangeValue={setRenameTabDraft}
+        onClose={handleCloseRenameTabDialog}
+        onSave={handleSaveRenameTab}
+      />
     </View>
   );
 }
@@ -2466,6 +2602,34 @@ const styles = StyleSheet.create((theme) => ({
   menuItemHint: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+  },
+  renameTabField: {
+    gap: theme.spacing[2],
+  },
+  renameTabLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  renameTabInput: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface0,
+    color: theme.colors.foreground,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    fontSize: theme.fontSize.sm,
+  },
+  renameTabHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  renameTabActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+    marginTop: theme.spacing[1],
   },
   tabsContainer: {
     borderBottomWidth: 1,

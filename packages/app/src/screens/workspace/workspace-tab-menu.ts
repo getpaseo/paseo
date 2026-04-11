@@ -11,6 +11,7 @@ export type WorkspaceTabMenuEntry =
       icon?:
         | "copy"
         | "rotate-cw"
+        | "square-pen"
         | "arrow-left-to-line"
         | "arrow-right-to-line"
         | "copy-x"
@@ -36,6 +37,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRenameTab: (tab: WorkspaceTabDescriptor) => Promise<void> | void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
@@ -49,6 +51,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRenameTab: (tab: WorkspaceTabDescriptor) => Promise<void> | void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
@@ -90,6 +93,10 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 
+function canRenameTab(tab: WorkspaceTabDescriptor): boolean {
+  return tab.target.kind === "agent" || tab.target.kind === "terminal";
+}
+
 export function buildWorkspaceTabMenuEntries(
   input: BuildWorkspaceTabMenuEntriesInput,
 ): WorkspaceTabMenuEntry[] {
@@ -102,6 +109,7 @@ export function buildWorkspaceTabMenuEntries(
     onCopyResumeCommand,
     onCopyAgentId,
     onReloadAgent,
+    onRenameTab,
     onCloseTab,
     onCloseTabsBefore,
     onCloseTabsAfter,
@@ -138,6 +146,23 @@ export function buildWorkspaceTabMenuEntries(
     entries.push({
       kind: "separator",
       key: "copy-separator",
+    });
+  }
+
+  if (canRenameTab(tab)) {
+    entries.push({
+      kind: "item",
+      key: "rename",
+      label: "Rename",
+      icon: "square-pen",
+      testID: `${menuTestIDBase}-rename`,
+      onSelect: () => {
+        void onRenameTab(tab);
+      },
+    });
+    entries.push({
+      kind: "separator",
+      key: "rename-separator",
     });
   }
 
@@ -217,6 +242,7 @@ export function buildWorkspaceDesktopTabActions(
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
       onReloadAgent: input.onReloadAgent,
+      onRenameTab: input.onRenameTab,
       onCloseTab: input.onCloseTab,
       onCloseTabsBefore: input.onCloseTabsToLeft,
       onCloseTabsAfter: input.onCloseTabsToRight,

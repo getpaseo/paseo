@@ -224,6 +224,7 @@ describe("workspace-layout-store actions", () => {
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
+      tabLabelsByWorkspace: {},
     });
     vi.restoreAllMocks();
   });
@@ -700,6 +701,22 @@ describe("workspace-layout-store actions", () => {
     expect(partialize?.(state)).toEqual({
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
+      tabLabelsByWorkspace: {},
     });
+  });
+
+  it("renames workspace tabs and clears labels when the saved name is empty", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = useWorkspaceLayoutStore.getState();
+    const tabId = store.openTab(workspaceKey, { kind: "terminal", terminalId: "term-1" });
+
+    expect(tabId).toBe("terminal_term-1");
+    store.renameTab(workspaceKey, tabId!, " Build shell ");
+    expect(useWorkspaceLayoutStore.getState().tabLabelsByWorkspace[workspaceKey]).toEqual({
+      [tabId as string]: "Build shell",
+    });
+
+    store.renameTab(workspaceKey, tabId!, "   ");
+    expect(useWorkspaceLayoutStore.getState().tabLabelsByWorkspace[workspaceKey]).toBeUndefined();
   });
 });

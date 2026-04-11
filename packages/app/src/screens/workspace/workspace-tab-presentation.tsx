@@ -7,6 +7,10 @@ import { SyncedLoader } from "@/components/synced-loader";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import {
+  buildWorkspaceTabPersistenceKey,
+  useWorkspaceLayoutStore,
+} from "@/stores/workspace-layout-store";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor, isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
@@ -67,6 +71,13 @@ function WorkspaceTabPresentationResolverInner({
   workspaceId,
   children,
 }: WorkspaceTabPresentationResolverInnerProps): ReactElement {
+  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+  const customLabel = useWorkspaceLayoutStore((state) => {
+    if (!workspaceKey) {
+      return null;
+    }
+    return state.tabLabelsByWorkspace[workspaceKey]?.[tab.tabId] ?? null;
+  });
   const descriptor = registration.useDescriptor(tab.target as never, {
     serverId,
     workspaceId,
@@ -76,13 +87,14 @@ function WorkspaceTabPresentationResolverInner({
     () => ({
       key: tab.key,
       kind: tab.kind,
-      label: descriptor.label,
+      label: customLabel ?? descriptor.label,
       subtitle: descriptor.subtitle,
-      titleState: descriptor.titleState,
+      titleState: customLabel ? "ready" : descriptor.titleState,
       icon: descriptor.icon,
       statusBucket: descriptor.statusBucket,
     }),
     [
+      customLabel,
       descriptor.icon,
       descriptor.label,
       descriptor.statusBucket,
