@@ -251,23 +251,46 @@ export class ScheduleService {
     const schedules = await this.store.list();
     const now = this.now();
     for (const schedule of schedules) {
-      const runningIndex = schedule.runs.findIndex((run) => run.status === "running");
-      if (runningIndex === -1) {
-        continue;
+      let updated = { ...schedule };
+      let dirty = false;
+
+      // Mark any in-flight runs as failed
+      const runningIndex = updated.runs.findIndex(
+        (run) => run.status === "running",
+      );
+      if (runningIndex !== -1) {
+        const runs = [...updated.runs];
+        runs[runningIndex] = {
+          ...runs[runningIndex],
+          status: "failed",
+          endedAt: now.toISOString(),
+          error: "Daemon restarted before the scheduled run completed",
+        };
+        updated = { ...updated, runs };
+        dirty = true;
       }
-      const runs = [...schedule.runs];
-      runs[runningIndex] = {
-        ...runs[runningIndex],
-        status: "failed",
-        endedAt: now.toISOString(),
-        error: "Daemon restarted before the scheduled run completed",
-      };
-      const nextSchedule = {
-        ...schedule,
-        runs,
-        updatedAt: now.toISOString(),
-      };
-      await this.store.put(nextSchedule);
+
+      // Advance stale nextRunAt for active schedules
+      if (
+        updated.status === "active" &&
+        updated.nextRunAt &&
+        new Date(updated.nextRunAt).getTime() <= now.getTime()
+      ) {
+        let nextRunAt = computeNextRunAt(
+          updated.cadence,
+          new Date(updated.nextRunAt),
+        );
+        while (nextRunAt.getTime() <= now.getTime()) {
+          nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
+        }
+        updated = { ...updated, nextRunAt: nextRunAt.toISOString() };
+        dirty = true;
+      }
+
+      if (dirty) {
+        updated = { ...updated, updatedAt: now.toISOString() };
+        await this.store.put(updated);
+      }
     }
   }
 
