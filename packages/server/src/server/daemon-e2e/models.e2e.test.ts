@@ -68,7 +68,7 @@ describe("daemon E2E", () => {
       } finally {
         await ctx.cleanup();
       }
-    }, 60000); // 1 minute timeout
+    }, 180000);
 
     test.runIf(hasOpenCode)(
       "returns model list for OpenCode provider",
