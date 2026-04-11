@@ -12,6 +12,7 @@ export interface DaemonStartOptions {
   foreground?: boolean;
   relay?: boolean;
   mcp?: boolean;
+  injectMcp?: boolean;
   allowedHosts?: string;
 }
 
@@ -94,6 +95,9 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
 
   if (options.mcp === false) {
     args.push("--no-mcp");
+  }
+  if (options.injectMcp === false) {
+    args.push("--no-inject-mcp");
   }
 
   return args;

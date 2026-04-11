@@ -1,6 +1,5 @@
 import { WebSocketServer } from "ws";
 import type { Server as HTTPServer } from "http";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { join } from "path";
 import { hostname as getHostname } from "node:os";
 import type { AgentManager } from "./agent/agent-manager.js";
@@ -14,6 +13,7 @@ import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import { BackgroundGitFetchManager } from "./background-git-fetch-manager.js";
+import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
   type ServerInfoStatusPayload,
   type WSHelloMessage,
@@ -37,7 +37,7 @@ import { buildProviderRegistry } from "./agent/provider-registry.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
-import type { VoiceCallerContext, VoiceMcpStdioConfig, VoiceSpeakHandler } from "./voice-types.js";
+import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import {
   computeShouldNotifyClient,
   computeShouldSendPush,
@@ -49,7 +49,6 @@ import {
   findLatestPermissionRequest,
 } from "../shared/agent-attention-notification.js";
 
-export type AgentMcpTransportFactory = () => Promise<Transport>;
 export type ExternalSocketMetadata = {
   transport: "relay";
   externalSessionKey?: string;
@@ -241,18 +240,14 @@ export class VoiceAssistantWebSocketServer {
   private readonly backgroundGitFetchManager: BackgroundGitFetchManager;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
+  private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushService: PushService;
-  private readonly createAgentMcpTransport: AgentMcpTransportFactory;
+  private readonly mcpBaseUrl: string | null;
   private readonly speech: SpeechService | null;
   private readonly terminalManager: TerminalManager | null;
   private readonly dictation: {
     finalTimeoutMs?: number;
-  } | null;
-  private readonly voice: {
-    voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
-    ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
-    removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
   } | null;
   private readonly voiceSpeakHandlers = new Map<string, VoiceSpeakHandler>();
   private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
@@ -283,6 +278,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly requestLatencies = new Map<string, number[]>();
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
+  private unsubscribeDaemonConfigChange: (() => void) | null = null;
 
   constructor(
     server: HTTPServer,
@@ -292,15 +288,11 @@ export class VoiceAssistantWebSocketServer {
     agentStorage: AgentStorage,
     downloadTokenStore: DownloadTokenStore,
     paseoHome: string,
-    createAgentMcpTransport: AgentMcpTransportFactory,
+    daemonConfigStore: DaemonConfigStore,
+    mcpBaseUrl: string | null,
     wsConfig: WebSocketServerConfig,
     speech?: SpeechService | null,
     terminalManager?: TerminalManager | null,
-    voice?: {
-      voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
-      ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
-      removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
-    },
     dictation?: {
       finalTimeoutMs?: number;
     },
@@ -345,10 +337,10 @@ export class VoiceAssistantWebSocketServer {
     });
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
-    this.createAgentMcpTransport = createAgentMcpTransport;
+    this.daemonConfigStore = daemonConfigStore;
+    this.mcpBaseUrl = mcpBaseUrl;
     this.speech = speech ?? null;
     this.terminalManager = terminalManager ?? null;
-    this.voice = voice ?? null;
     this.dictation = dictation ?? null;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     const providerSnapshotLogger = this.logger.child({ module: "provider-snapshot-manager" });
@@ -365,6 +357,9 @@ export class VoiceAssistantWebSocketServer {
     this.unsubscribeSpeechReadiness = this.speech?.onReadinessChange((snapshot) => {
       this.publishSpeechReadiness(snapshot);
     }) ?? null;
+    this.unsubscribeDaemonConfigChange = this.daemonConfigStore.onChange((config) => {
+      this.broadcastDaemonConfigChanged(config);
+    });
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(pushLogger, join(paseoHome, "push-tokens.json"));
@@ -455,6 +450,8 @@ export class VoiceAssistantWebSocketServer {
   public async close(): Promise<void> {
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
+    this.unsubscribeDaemonConfigChange?.();
+    this.unsubscribeDaemonConfigChange = null;
     if (this.runtimeMetricsInterval) {
       clearInterval(this.runtimeMetricsInterval);
       this.runtimeMetricsInterval = null;
@@ -650,13 +647,13 @@ export class VoiceAssistantWebSocketServer {
       scheduleService: this.scheduleService,
       checkoutDiffManager: this.checkoutDiffManager,
       backgroundGitFetchManager: this.backgroundGitFetchManager,
-      createAgentMcpTransport: this.createAgentMcpTransport,
+      daemonConfigStore: this.daemonConfigStore,
+      mcpBaseUrl: this.mcpBaseUrl,
       stt: () => this.speech?.resolveStt() ?? null,
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
       voice: {
-        ...(this.voice ?? {}),
         turnDetection: () => this.speech?.resolveTurnDetection() ?? null,
       },
       voiceBridge: {
@@ -672,8 +669,6 @@ export class VoiceAssistantWebSocketServer {
         unregisterVoiceCallerContext: (agentId) => {
           this.voiceCallerContexts.delete(agentId);
         },
-        ensureVoiceMcpSocketForAgent: this.voice?.ensureVoiceMcpSocketForAgent,
-        removeVoiceMcpSocketForAgent: this.voice?.removeVoiceMcpSocketForAgent,
       },
       dictation:
         this.dictation || this.speech
@@ -818,8 +813,22 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
+  private createDaemonConfigChangedMessage(config: MutableDaemonConfig): WSOutboundMessage {
+    return wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "daemon_config_changed",
+        config,
+      },
+    });
+  }
+
   private broadcastCapabilitiesUpdate(): void {
     this.broadcast(this.createServerInfoMessage());
+  }
+
+  private broadcastDaemonConfigChanged(config: MutableDaemonConfig): void {
+    this.broadcast(this.createDaemonConfigChangedMessage(config));
   }
 
   private bindSocketHandlers(ws: WebSocketLike): void {

@@ -47,6 +47,29 @@ import {
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
 } from "../server/loop/rpc-schemas.js";
+// ---------------------------------------------------------------------------
+// Mutable daemon config schemas (shared between server store and client)
+// ---------------------------------------------------------------------------
+
+export const MutableDaemonConfigSchema = z
+  .object({
+    mcp: z
+      .object({
+        injectIntoAgents: z.boolean(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+export const MutableDaemonConfigPatchSchema = z
+  .object({
+    mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
+  })
+  .partial()
+  .passthrough();
+
+export type MutableDaemonConfig = z.infer<typeof MutableDaemonConfigSchema>;
+export type MutableDaemonConfigPatch = z.infer<typeof MutableDaemonConfigPatchSchema>;
 import type { LiteralUnion } from "./literal-union.js";
 import type {
   AgentCapabilityFlags,
@@ -725,6 +748,17 @@ export const WaitForFinishRequestSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 
+export const GetDaemonConfigRequestMessageSchema = z.object({
+  type: z.literal("get_daemon_config_request"),
+  requestId: z.string(),
+});
+
+export const SetDaemonConfigRequestMessageSchema = z.object({
+  type: z.literal("set_daemon_config_request"),
+  requestId: z.string(),
+  config: MutableDaemonConfigPatchSchema,
+});
+
 // ============================================================================
 // Dictation Streaming (lossless, resumable)
 // ============================================================================
@@ -1397,6 +1431,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
+  GetDaemonConfigRequestMessageSchema,
+  SetDaemonConfigRequestMessageSchema,
   DictationStreamStartMessageSchema,
   DictationStreamChunkMessageSchema,
   DictationStreamFinishMessageSchema,
@@ -1732,6 +1768,13 @@ export const ShutdownRequestedStatusPayloadSchema = z.object({
   requestId: z.string(),
 });
 
+export const DaemonConfigChangedStatusPayloadSchema = z
+  .object({
+    status: z.literal("daemon_config_changed"),
+    config: MutableDaemonConfigSchema,
+  })
+  .passthrough();
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -1739,6 +1782,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentRefreshedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
+  DaemonConfigChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
@@ -2026,6 +2070,26 @@ export const WaitForFinishResponseMessageSchema = z.object({
     error: z.string().nullable(),
     lastMessage: z.string().nullable(),
   }),
+});
+
+export const GetDaemonConfigResponseMessageSchema = z.object({
+  type: z.literal("get_daemon_config_response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      config: MutableDaemonConfigSchema,
+    })
+    .passthrough(),
+});
+
+export const SetDaemonConfigResponseMessageSchema = z.object({
+  type: z.literal("set_daemon_config_response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      config: MutableDaemonConfigSchema,
+    })
+    .passthrough(),
 });
 
 export const AgentPermissionRequestMessageSchema = z.object({
@@ -2658,6 +2722,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentTimelineResponseMessageSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
+  GetDaemonConfigResponseMessageSchema,
+  SetDaemonConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,

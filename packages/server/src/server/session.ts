@@ -65,11 +65,11 @@ import {
   extractTimestamps,
 } from "./persistence-hooks.js";
 import { experimental_createMCPClient } from "ai";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { VoiceCallerContext, VoiceMcpStdioConfig, VoiceSpeakHandler } from "./voice-types.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import { BackgroundGitFetchManager } from "./background-git-fetch-manager.js";
+import type { DaemonConfigStore } from "./daemon-config-store.js";
 
-export type AgentMcpTransportFactory = () => Promise<Transport>;
 import { buildProviderRegistry } from "./agent/provider-registry.js";
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
@@ -102,7 +102,6 @@ import type {
   AgentPromptContentBlock,
   AgentPromptInput,
   AgentRunOptions,
-  McpServerConfig,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentProvider,
@@ -132,7 +131,6 @@ import {
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
 import {
-  buildVoiceAgentMcpServerConfig,
   buildVoiceModeSystemPrompt,
   stripVoiceModeSystemPrompt,
   wrapSpokenInput,
@@ -374,12 +372,10 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS,
 );
 const AgentIdSchema = z.string().uuid();
-const VOICE_MCP_SERVER_NAME = "paseo_voice";
 const VOICE_INTERRUPT_CONFIRMATION_MS = 500;
 
 type VoiceModeBaseConfig = {
   systemPrompt?: string;
-  mcpServers?: Record<string, McpServerConfig>;
 };
 
 interface AudioBufferState {
@@ -420,13 +416,13 @@ export type SessionOptions = {
   loopService: LoopService;
   checkoutDiffManager: CheckoutDiffManager;
   backgroundGitFetchManager: BackgroundGitFetchManager;
-  createAgentMcpTransport: AgentMcpTransportFactory;
+  daemonConfigStore: DaemonConfigStore;
+  mcpBaseUrl?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager?: ProviderSnapshotManager;
   voice?: {
-    voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
   };
   voiceBridge?: {
@@ -434,8 +430,6 @@ export type SessionOptions = {
     unregisterVoiceSpeakHandler?: (agentId: string) => void;
     registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
     unregisterVoiceCallerContext?: (agentId: string) => void;
-    ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
-    removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
   };
   dictation?: {
     finalTimeoutMs?: number;
@@ -605,7 +599,8 @@ export class Session {
   private readonly loopService: LoopService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly backgroundGitFetchManager: BackgroundGitFetchManager;
-  private readonly createAgentMcpTransport: AgentMcpTransportFactory;
+  private readonly daemonConfigStore: DaemonConfigStore;
+  private readonly mcpBaseUrl: string | null;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly providerRegistry: ReturnType<typeof buildProviderRegistry>;
@@ -634,7 +629,6 @@ export class Session {
   private readonly checkoutDiffSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitWatchTargets = new Map<string, WorkspaceGitWatchTarget>();
   private readonly workspaceGitFetchSubscriptions = new Map<string, () => void>();
-  private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null;
   private readonly registerVoiceSpeakHandler?: (
     agentId: string,
     handler: VoiceSpeakHandler,
@@ -645,8 +639,6 @@ export class Session {
     context: VoiceCallerContext,
   ) => void;
   private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
-  private readonly ensureVoiceMcpSocketForAgent?: (agentId: string) => Promise<string>;
-  private readonly removeVoiceMcpSocketForAgent?: (agentId: string) => Promise<void>;
   private readonly getSpeechReadiness?: () => SpeechReadinessSnapshot;
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private voiceModeAgentId: string | null = null;
@@ -672,7 +664,8 @@ export class Session {
       loopService,
       checkoutDiffManager,
       backgroundGitFetchManager,
-      createAgentMcpTransport,
+      daemonConfigStore,
+      mcpBaseUrl,
       stt,
       tts,
       terminalManager,
@@ -700,7 +693,8 @@ export class Session {
     this.loopService = loopService;
     this.checkoutDiffManager = checkoutDiffManager;
     this.backgroundGitFetchManager = backgroundGitFetchManager;
-    this.createAgentMcpTransport = createAgentMcpTransport;
+    this.daemonConfigStore = daemonConfigStore;
+    this.mcpBaseUrl = mcpBaseUrl ?? null;
     this.terminalManager = terminalManager;
     this.providerSnapshotManager = providerSnapshotManager ?? null;
     if (this.terminalManager) {
@@ -728,14 +722,11 @@ export class Session {
         this.providerSnapshotManager?.off("change", handleProviderSnapshotChange);
       };
     }
-    this.voiceAgentMcpStdio = voice?.voiceAgentMcpStdio ?? null;
     this.resolveVoiceTurnDetection = toResolver(voice?.turnDetection ?? null);
     this.registerVoiceSpeakHandler = voiceBridge?.registerVoiceSpeakHandler;
     this.unregisterVoiceSpeakHandler = voiceBridge?.unregisterVoiceSpeakHandler;
     this.registerVoiceCallerContext = voiceBridge?.registerVoiceCallerContext;
     this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext;
-    this.ensureVoiceMcpSocketForAgent = voiceBridge?.ensureVoiceMcpSocketForAgent;
-    this.removeVoiceMcpSocketForAgent = voiceBridge?.removeVoiceMcpSocketForAgent;
     this.getSpeechReadiness = dictation?.getSpeechReadiness;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.abortController = new AbortController();
@@ -940,12 +931,15 @@ export class Session {
   }
 
   /**
-   * Initialize Agent MCP client for this session using in-memory transport
+   * Initialize Agent MCP client for this session using the daemon's HTTP MCP endpoint.
    */
   private async initializeAgentMcp(): Promise<void> {
     try {
-      // Create an in-memory transport connected to the Agent MCP server
-      const transport = await this.createAgentMcpTransport();
+      if (!this.mcpBaseUrl) {
+        this.sessionLogger.info("Skipping Agent MCP initialization because no MCP base URL is configured");
+        return;
+      }
+      const transport = new StreamableHTTPClientTransport(new URL(this.mcpBaseUrl));
 
       this.agentMcpClient = await experimental_createMCPClient({
         transport,
@@ -1620,6 +1614,26 @@ export class Session {
 
         case "wait_for_finish_request":
           await this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
+          break;
+
+        case "get_daemon_config_request":
+          this.emit({
+            type: "get_daemon_config_response",
+            payload: {
+              requestId: msg.requestId,
+              config: this.daemonConfigStore.get(),
+            },
+          });
+          break;
+
+        case "set_daemon_config_request":
+          this.emit({
+            type: "set_daemon_config_response",
+            payload: {
+              requestId: msg.requestId,
+              config: this.daemonConfigStore.patch(msg.config),
+            },
+          });
           break;
 
         case "dictation_stream_start":
@@ -2615,41 +2629,8 @@ export class Session {
     return parsed.data;
   }
 
-  private cloneMcpServers(
-    servers: Record<string, McpServerConfig> | undefined,
-  ): Record<string, McpServerConfig> | undefined {
-    if (!servers) {
-      return undefined;
-    }
-    return JSON.parse(JSON.stringify(servers)) as Record<string, McpServerConfig>;
-  }
-
-  private buildVoiceModeMcpServers(
-    existing: Record<string, McpServerConfig> | undefined,
-    socketPath: string,
-  ): Record<string, McpServerConfig> {
-    const mcpStdio = this.voiceAgentMcpStdio;
-    if (!mcpStdio) {
-      throw new Error("Voice MCP stdio bridge is not configured");
-    }
-    return {
-      ...(existing ?? {}),
-      [VOICE_MCP_SERVER_NAME]: buildVoiceAgentMcpServerConfig({
-        command: mcpStdio.command,
-        baseArgs: mcpStdio.baseArgs,
-        socketPath,
-        env: mcpStdio.env,
-      }),
-    };
-  }
-
   private async enableVoiceModeForAgent(agentId: string): Promise<string> {
     const startedAt = Date.now();
-    const ensureVoiceSocket = this.ensureVoiceMcpSocketForAgent;
-    if (!ensureVoiceSocket) {
-      throw new Error("Voice MCP socket bridge is not configured");
-    }
-
     this.sessionLogger.info({ agentId }, "enableVoiceModeForAgent.ensureAgentLoaded.start");
     const existing = await this.ensureAgentLoaded(agentId);
     this.sessionLogger.info(
@@ -2657,22 +2638,14 @@ export class Session {
       "enableVoiceModeForAgent.ensureAgentLoaded.done",
     );
 
-    this.sessionLogger.info({ agentId }, "enableVoiceModeForAgent.ensureVoiceSocket.start");
-    const socketPath = await ensureVoiceSocket(agentId);
-    this.sessionLogger.info(
-      { agentId, socketPath, elapsedMs: Date.now() - startedAt },
-      "enableVoiceModeForAgent.ensureVoiceSocket.done",
-    );
     this.registerVoiceBridgeForAgent(agentId);
 
     const baseConfig: VoiceModeBaseConfig = {
       systemPrompt: stripVoiceModeSystemPrompt(existing.config.systemPrompt),
-      mcpServers: this.cloneMcpServers(existing.config.mcpServers),
     };
     this.voiceModeBaseConfig = baseConfig;
     const refreshOverrides: Partial<AgentSessionConfig> = {
       systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true),
-      mcpServers: this.buildVoiceModeMcpServers(baseConfig.mcpServers, socketPath),
     };
 
     try {
@@ -2689,7 +2662,6 @@ export class Session {
     } catch (error) {
       this.unregisterVoiceSpeakHandler?.(agentId);
       this.unregisterVoiceCallerContext?.(agentId);
-      await this.removeVoiceMcpSocketForAgent?.(agentId).catch(() => undefined);
       this.voiceModeBaseConfig = null;
       throw error;
     }
@@ -2706,19 +2678,12 @@ export class Session {
 
     this.unregisterVoiceSpeakHandler?.(agentId);
     this.unregisterVoiceCallerContext?.(agentId);
-    await this.removeVoiceMcpSocketForAgent?.(agentId).catch((error) => {
-      this.sessionLogger.warn(
-        { err: error, agentId },
-        "Failed to remove voice MCP socket bridge on disable",
-      );
-    });
 
     if (restoreAgentConfig && this.voiceModeBaseConfig) {
       const baseConfig = this.voiceModeBaseConfig;
       try {
         await this.agentManager.reloadAgentSession(agentId, {
           systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
-          mcpServers: this.cloneMcpServers(baseConfig.mcpServers),
         });
       } catch (error) {
         this.sessionLogger.warn(

@@ -76,6 +76,7 @@ export type AgentManagerOptions = {
   idFactory?: () => string;
   registry?: AgentStorage;
   onAgentAttention?: AgentAttentionCallback;
+  mcpBaseUrl?: string;
   logger: Logger;
 };
 
@@ -331,6 +332,7 @@ export class AgentManager {
   private readonly registry?: AgentStorage;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
+  private mcpBaseUrl: string | null;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
 
@@ -345,6 +347,7 @@ export class AgentManager {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.onAgentAttention = options?.onAgentAttention;
+    this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     if (options?.clients) {
       for (const [provider, client] of Object.entries(options.clients)) {
@@ -361,6 +364,10 @@ export class AgentManager {
 
   setAgentAttentionCallback(callback: AgentAttentionCallback): void {
     this.onAgentAttention = callback;
+  }
+
+  setMcpBaseUrl(url: string | null): void {
+    this.mcpBaseUrl = url;
   }
 
   public getMetricsSnapshot(): AgentMetricsSnapshot {
@@ -731,9 +738,21 @@ export class AgentManager {
     agentId?: string,
     options?: { labels?: Record<string, string> },
   ): Promise<ManagedAgent> {
-    // Generate agent ID early so we can use it in MCP config
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
-    const normalizedConfig = await this.normalizeConfig(config);
+    const injectedConfig =
+      this.mcpBaseUrl == null
+        ? config
+        : {
+            ...config,
+            mcpServers: {
+              paseo: {
+                type: "http" as const,
+                url: `${this.mcpBaseUrl}?callerAgentId=${resolvedAgentId}`,
+              },
+              ...(config.mcpServers ?? {}),
+            },
+          };
+    const normalizedConfig = await this.normalizeConfig(injectedConfig);
     const launchContext = this.buildLaunchContext(resolvedAgentId);
     const client = this.requireClient(normalizedConfig.provider);
     const available = await client.isAvailable();

@@ -65,6 +65,7 @@ import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { AGENT_PROVIDER_DEFINITIONS } from "@server/server/agent/provider-manifest";
@@ -360,6 +361,7 @@ function HostsSection(props: HostsSectionProps) {
 }
 
 interface GeneralSectionProps {
+  routeServerId: string;
   settings: AppSettings;
   handleThemeChange: (theme: AppSettings["theme"]) => void;
   handleSendBehaviorChange: (behavior: SendBehavior) => void;
@@ -404,11 +406,14 @@ const THEME_LABELS: Record<AppSettings["theme"], string> = {
 };
 
 function GeneralSection({
+  routeServerId,
   settings,
   handleThemeChange,
   handleSendBehaviorChange,
 }: GeneralSectionProps) {
   const { theme } = useUnistyles();
+  const isConnected = useHostRuntimeIsConnected(routeServerId);
+  const { config, patchConfig } = useDaemonConfig(routeServerId);
   const iconSize = theme.iconSize.md;
   const iconColor = theme.colors.foregroundMuted;
 
@@ -475,6 +480,31 @@ function GeneralSection({
             ]}
           />
         </View>
+        {routeServerId.length > 0 && isConnected ? (
+          <View style={[styles.audioRow, styles.audioRowBorder]}>
+            <View style={styles.audioRowContent}>
+              <Text style={styles.audioRowTitle}>Inject Paseo tools</Text>
+              <Text style={styles.audioRowSubtitle}>
+                Automatically inject Paseo MCP tools into new agents
+              </Text>
+            </View>
+            <SegmentedControl
+              size="sm"
+              value={config?.mcp.injectIntoAgents === false ? "off" : "on"}
+              onValueChange={(value) => {
+                void patchConfig({
+                  mcp: {
+                    injectIntoAgents: value === "on",
+                  },
+                });
+              }}
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+            />
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -1107,6 +1137,7 @@ export default function SettingsScreen() {
   };
 
   const generalProps: GeneralSectionProps = {
+    routeServerId,
     settings,
     handleThemeChange,
     handleSendBehaviorChange,

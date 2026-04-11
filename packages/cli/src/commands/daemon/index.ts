@@ -34,6 +34,7 @@ export function createDaemonCommand(): Command {
     .option("--port <port>", "Port for restarted daemon listen target")
     .option("--no-relay", "Disable relay on restarted daemon")
     .option("--no-mcp", "Disable Agent MCP on restarted daemon")
+    .option("--no-inject-mcp", "Disable auto-injecting the Paseo MCP into created agents")
     .option(
       "--allowed-hosts <hosts>",
       'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")',

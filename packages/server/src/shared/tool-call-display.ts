@@ -1,4 +1,8 @@
 import type { ToolCallTimelineItem } from "../server/agent/agent-sdk-types.js";
+import {
+  getPaseoToolLeafName,
+  isPaseoToolName,
+} from "../server/agent/tool-name-normalization.js";
 import { stripCwdPrefix } from "./path-utils.js";
 
 export type ToolCallDisplayInput = Pick<
@@ -31,6 +35,12 @@ function humanizeToolName(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) {
     return name;
+  }
+  if (isPaseoToolName(trimmed)) {
+    const leaf = getPaseoToolLeafName(trimmed);
+    if (leaf) {
+      return humanizeToolName(leaf);
+    }
   }
   if (/[:./]/.test(trimmed) || trimmed.includes("__")) {
     return trimmed;

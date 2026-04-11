@@ -182,9 +182,7 @@ function createSessionForWorkspaceGitWatchTests(): {
       dispose: () => {},
     } as any,
     backgroundGitFetchManager: backgroundGitFetchManager as any,
-    createAgentMcpTransport: async () => {
-      throw new Error("not used");
-    },
+    mcpBaseUrl: null,
     stt: null,
     tts: null,
     terminalManager: null,

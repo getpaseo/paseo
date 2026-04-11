@@ -70,6 +70,10 @@ import type {
   AgentProvider,
   AgentSessionConfig,
 } from "../server/agent/agent-sdk-types.js";
+import type {
+  MutableDaemonConfig,
+  MutableDaemonConfigPatch,
+} from "../shared/messages.js";
 import { getAgentProviderDefinition } from "../server/agent/provider-manifest.js";
 import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
 import {
@@ -516,10 +520,18 @@ type WaitHandle<T> = {
 };
 
 type RpcWaitResult<T> = { kind: "ok"; value: T } | { kind: "error"; error: DaemonRpcError };
-type CorrelatedResponseMessage = Extract<
+type GetDaemonConfigResponse = Extract<
   SessionOutboundMessage,
-  { payload: { requestId: string } }
+  { type: "get_daemon_config_response" }
 >;
+type SetDaemonConfigResponse = Extract<
+  SessionOutboundMessage,
+  { type: "set_daemon_config_response" }
+>;
+type CorrelatedResponseMessage =
+  | Extract<SessionOutboundMessage, { payload: { requestId: string } }>
+  | GetDaemonConfigResponse
+  | SetDaemonConfigResponse;
 type CorrelatedResponseType = CorrelatedResponseMessage["type"];
 type CorrelatedResponsePayload<TType extends CorrelatedResponseType> = Extract<
   CorrelatedResponseMessage,
@@ -2702,6 +2714,34 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "get_providers_snapshot_response",
+      timeout: 10000,
+    });
+  }
+
+  async getDaemonConfig(
+    requestId?: string,
+  ): Promise<{ requestId: string; config: MutableDaemonConfig }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "get_daemon_config_request",
+      },
+      responseType: "get_daemon_config_response",
+      timeout: 10000,
+    });
+  }
+
+  async patchDaemonConfig(
+    config: MutableDaemonConfigPatch,
+    requestId?: string,
+  ): Promise<{ requestId: string; config: MutableDaemonConfig }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "set_daemon_config_request",
+        config,
+      },
+      responseType: "set_daemon_config_response",
       timeout: 10000,
     });
   }
