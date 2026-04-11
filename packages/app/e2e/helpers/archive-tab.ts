@@ -23,7 +23,7 @@ type ArchiveTabDaemonClient = {
   createAgent(options: {
     provider: string;
     model: string;
-    thinkingOptionId: string;
+    thinkingOptionId?: string;
     modeId: string;
     cwd: string;
     title: string;
@@ -108,10 +108,9 @@ export async function createIdleAgent(
   input: { cwd: string; title: string },
 ): Promise<ArchiveTabAgent> {
   const created = await client.createAgent({
-    provider: "codex",
-    model: "gpt-5.4-mini",
-    thinkingOptionId: "low",
-    modeId: "full-access",
+    provider: "opencode",
+    model: "opencode/gpt-5-nano",
+    modeId: "default",
     cwd: input.cwd,
     title: input.title,
     initialPrompt: "Reply with exactly READY.",
