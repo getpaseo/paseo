@@ -147,6 +147,9 @@ function createLogger() {
 
 function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | null }) {
   const speechReadiness = options?.speechReadiness ?? null;
+  const daemonConfigStore = {
+    onChange: vi.fn(() => () => {}),
+  };
   return new VoiceAssistantWebSocketServer(
     {} as any,
     createLogger() as any,
@@ -165,7 +168,8 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     {} as any,
     {} as any,
     "/tmp/paseo-test",
-    async () => ({}) as any,
+    daemonConfigStore as any,
+    null,
     { allowedOrigins: new Set() },
     speechReadiness
       ? {
@@ -173,7 +177,6 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
           onReadinessChange: vi.fn(() => () => {}),
         }
       : undefined,
-    undefined,
     undefined,
     undefined,
     undefined,

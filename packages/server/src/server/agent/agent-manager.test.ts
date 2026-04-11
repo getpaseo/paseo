@@ -300,6 +300,100 @@ describe("AgentManager", () => {
     });
   });
 
+  test("createAgent injects paseo MCP server when manager has an MCP base URL", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class CaptureClient extends TestAgentClient {
+      lastConfig: AgentSessionConfig | null = null;
+
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        this.lastConfig = config;
+        return new TestAgentSession(config);
+      }
+    }
+
+    const client = new CaptureClient();
+    const manager = new AgentManager({
+      clients: {
+        codex: client,
+      },
+      registry: storage,
+      logger,
+      mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+      idFactory: () => "00000000-0000-4000-8000-000000000103",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      mcpServers: {
+        custom: {
+          type: "stdio",
+          command: "custom-mcp",
+        },
+      },
+    });
+
+    expect(snapshot.config.mcpServers).toEqual({
+      paseo: {
+        type: "http",
+        url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+      },
+      custom: {
+        type: "stdio",
+        command: "custom-mcp",
+      },
+    });
+    expect(client.lastConfig?.mcpServers).toEqual(snapshot.config.mcpServers);
+  });
+
+  test("createAgent preserves a user-provided paseo MCP config", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class CaptureClient extends TestAgentClient {
+      lastConfig: AgentSessionConfig | null = null;
+
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        this.lastConfig = config;
+        return new TestAgentSession(config);
+      }
+    }
+
+    const client = new CaptureClient();
+    const manager = new AgentManager({
+      clients: {
+        codex: client,
+      },
+      registry: storage,
+      logger,
+      mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+      idFactory: () => "00000000-0000-4000-8000-000000000104",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      mcpServers: {
+        paseo: {
+          type: "http",
+          url: "https://example.com/custom-paseo",
+        },
+      },
+    });
+
+    expect(snapshot.config.mcpServers).toEqual({
+      paseo: {
+        type: "http",
+        url: "https://example.com/custom-paseo",
+      },
+    });
+    expect(client.lastConfig?.mcpServers).toEqual(snapshot.config.mcpServers);
+  });
+
   test("createAgent fails when cwd does not exist", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");

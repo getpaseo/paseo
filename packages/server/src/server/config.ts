@@ -20,6 +20,7 @@ export type CliConfigOverrides = Partial<{
   listen: string;
   relayEnabled: boolean;
   mcpEnabled: boolean;
+  mcpInjectIntoAgents: boolean;
   allowedHosts: AllowedHostsConfig;
 }>;
 
@@ -68,7 +69,9 @@ export function loadConfig(
     options?.cli?.allowedHosts,
   ]);
 
-  const mcpEnabled = options?.cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? false;
+  const mcpEnabled = options?.cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true;
+  const mcpInjectIntoAgents =
+    options?.cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? true;
 
   const relayEnabled = options?.cli?.relayEnabled ?? persisted.daemon?.relay?.enabled ?? true;
 
@@ -103,6 +106,7 @@ export function loadConfig(
     ),
     allowedHosts,
     mcpEnabled,
+    mcpInjectIntoAgents,
     mcpDebug: env.MCP_DEBUG === "1",
     agentStoragePath: path.join(paseoHome, "agents"),
     staticDir: "public",

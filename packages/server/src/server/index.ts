@@ -42,6 +42,9 @@ async function main() {
   if (process.argv.includes("--no-mcp")) {
     config.mcpEnabled = false;
   }
+  if (process.argv.includes("--no-inject-mcp")) {
+    config.mcpInjectIntoAgents = false;
+  }
 
   const installExitHook = () => {
     if (exitHookInstalled || !shutdownPromise) {

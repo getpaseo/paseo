@@ -123,9 +123,7 @@ function createSessionForWorkspaceTests(options: { appVersion?: string | null } 
       }),
       dispose: () => {},
     } as any,
-    createAgentMcpTransport: async () => {
-      throw new Error("not used");
-    },
+    mcpBaseUrl: null,
     stt: null,
     tts: null,
     terminalManager: null,
@@ -230,9 +228,7 @@ describe("workspace aggregation", () => {
         }),
         dispose: () => {},
       } as any,
-      createAgentMcpTransport: async () => {
-        throw new Error("not used");
-      },
+      mcpBaseUrl: null,
       stt: null,
       tts: null,
       terminalManager: null,
@@ -375,9 +371,7 @@ describe("workspace aggregation", () => {
         }),
         dispose: () => {},
       } as any,
-      createAgentMcpTransport: async () => {
-        throw new Error("not used");
-      },
+      mcpBaseUrl: null,
       stt: null,
       tts: null,
       terminalManager: {
@@ -538,9 +532,7 @@ describe("workspace aggregation", () => {
         }),
         dispose: () => {},
       } as any,
-      createAgentMcpTransport: async () => {
-        throw new Error("not used");
-      },
+      mcpBaseUrl: null,
       stt: null,
       tts: null,
       terminalManager: {
@@ -674,9 +666,7 @@ describe("workspace aggregation", () => {
         }),
         dispose: () => {},
       } as any,
-      createAgentMcpTransport: async () => {
-        throw new Error("not used");
-      },
+      mcpBaseUrl: null,
       stt: null,
       tts: null,
       terminalManager: {
@@ -943,9 +933,7 @@ describe("workspace aggregation", () => {
         }),
         dispose: () => {},
       } as any,
-      createAgentMcpTransport: async () => {
-        throw new Error("not used");
-      },
+      mcpBaseUrl: null,
       stt: null,
       tts: null,
       terminalManager: null,

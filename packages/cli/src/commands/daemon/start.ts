@@ -18,6 +18,7 @@ export function startCommand(): Command {
     .option("--foreground", "Run in foreground (don't daemonize)")
     .option("--no-relay", "Disable relay connection")
     .option("--no-mcp", "Disable the Agent MCP HTTP endpoint")
+    .option("--no-inject-mcp", "Disable auto-injecting the Paseo MCP into created agents")
     .option(
       "--allowed-hosts <hosts>",
       'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")',
