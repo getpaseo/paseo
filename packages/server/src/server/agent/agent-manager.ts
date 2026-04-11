@@ -2180,7 +2180,7 @@ export class AgentManager {
         void this.refreshRuntimeInfo(agent);
         break;
       case "turn_failed":
-        this.logger.trace(
+        this.logger.warn(
           {
             agentId: agent.id,
             lifecycle: agent.lifecycle,

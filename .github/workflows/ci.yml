@@ -120,7 +120,7 @@ jobs:
         run: npm run build --workspace=@getpaseo/server
 
       - name: Install agent CLIs for provider tests
-        run: npm install -g @openai/codex opencode-ai
+        run: npm install -g @openai/codex@0.105.0 opencode-ai
 
       - name: Run Playwright E2E tests
         run: npm run test:e2e --workspace=@getpaseo/app
@@ -170,7 +170,7 @@ jobs:
         run: npm install
 
       - name: Install agent CLIs for provider tests
-        run: npm install -g @openai/codex opencode-ai
+        run: npm install -g @openai/codex@0.105.0 opencode-ai
 
       - name: Build highlight dependency
         run: npm run build --workspace=@getpaseo/highlight
