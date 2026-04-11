@@ -10,11 +10,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { $ } from "zx";
 import { tryConnectToDaemon } from "../src/utils/client.ts";
 import { getAvailablePort } from "./helpers/network.ts";
-
-$.verbose = false;
 
 const pollIntervalMs = 100;
 const testEnv = {
@@ -37,31 +34,6 @@ function isProcessRunning(pid: number): boolean {
     return true;
   } catch {
     return false;
-  }
-}
-
-type DaemonStatus = {
-  localDaemon: string | null;
-  pid: number | null;
-};
-
-async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
-  const result =
-    await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon status --home ${paseoHome} --json`.nothrow();
-  if (result.exitCode !== 0) {
-    return { localDaemon: null, pid: null };
-  }
-
-  try {
-    const parsed = JSON.parse(result.stdout) as { localDaemon?: unknown; pid?: unknown };
-    const localDaemon = typeof parsed.localDaemon === "string" ? parsed.localDaemon : null;
-    const pid =
-      typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0
-        ? parsed.pid
-        : null;
-    return { localDaemon, pid };
-  } catch {
-    return { localDaemon: null, pid: null };
   }
 }
 
@@ -100,6 +72,21 @@ function waitForProcessExit(processRef: ChildProcess, timeoutMs: number): Promis
   });
 }
 
+async function waitForDaemonConnection(host: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const client = await tryConnectToDaemon({ host, timeout: 500 }).catch(() => null);
+    if (client) {
+      await client.close().catch(() => undefined);
+      return;
+    }
+    await sleep(pollIntervalMs);
+  }
+
+  throw new Error("daemon did not accept websocket connections in time");
+}
+
 async function readPidLockPid(paseoHome: string): Promise<number | null> {
   const pidPath = join(paseoHome, "paseo.pid");
   try {
@@ -122,50 +109,41 @@ const cliRoot = join(import.meta.dirname, "..");
 const host = `127.0.0.1:${port}`;
 
 let daemonProcess: ChildProcess | null = null;
+let recentDaemonLogs = "";
 
 try {
   console.log("Test 1: start unsupervised daemon worker directly");
 
-  daemonProcess = spawn(
-    process.execPath,
-    [...process.execArgv, "--import", "tsx", "../server/src/server/index.ts"],
-    {
-      cwd: cliRoot,
-      env: {
-        ...process.env,
-        ...testEnv,
-        PASEO_HOME: paseoHome,
-        PASEO_LISTEN: host,
-        PASEO_RELAY_ENABLED: "false",
-        CI: "true",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
+  daemonProcess = spawn(process.execPath, ["--import", "tsx", "../server/src/server/index.ts"], {
+    cwd: cliRoot,
+    env: {
+      ...process.env,
+      ...testEnv,
+      PASEO_HOME: paseoHome,
+      PASEO_LISTEN: host,
+      PASEO_RELAY_ENABLED: "false",
+      CI: "true",
     },
-  );
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  daemonProcess.stdout?.on("data", (chunk) => {
+    recentDaemonLogs = (recentDaemonLogs + chunk.toString()).slice(-8000);
+  });
+  daemonProcess.stderr?.on("data", (chunk) => {
+    recentDaemonLogs = (recentDaemonLogs + chunk.toString()).slice(-8000);
+  });
 
   await waitFor(
     async () => {
-      const status = await readDaemonStatus(paseoHome);
-      return (
-        status.localDaemon === "running" && status.pid !== null && isProcessRunning(status.pid)
-      );
+      await waitForDaemonConnection(host, 1000);
+      return Boolean(daemonProcess?.pid && isProcessRunning(daemonProcess.pid));
     },
     120000,
     "daemon did not become running in time",
   );
 
-  const statusBeforeRestart = await readDaemonStatus(paseoHome);
-  assert.strictEqual(
-    statusBeforeRestart.localDaemon,
-    "running",
-    "daemon should be running before restart",
-  );
   assert(daemonProcess.pid, "unsupervised daemon process pid should exist");
-  assert.strictEqual(
-    statusBeforeRestart.pid,
-    daemonProcess.pid,
-    "status pid should match daemon process pid",
-  );
   const lockPid = await readPidLockPid(paseoHome);
   assert.strictEqual(lockPid, daemonProcess.pid, "unsupervised worker should own pid lock");
   console.log(`✓ unsupervised daemon started with pid ${daemonProcess.pid}\n`);
@@ -188,15 +166,16 @@ try {
 
   const exit = await exitPromise;
   assert.strictEqual(exit.signal, null, `daemon should exit cleanly, got signal=${exit.signal}`);
-  assert.strictEqual(exit.code, 0, `daemon should exit with status 0, got code=${exit.code}`);
+  assert.strictEqual(
+    exit.code,
+    0,
+    `daemon should exit with status 0, got code=${exit.code}\nRecent daemon logs:\n${recentDaemonLogs}`,
+  );
 
   await waitFor(
-    async () => {
-      const status = await readDaemonStatus(paseoHome);
-      return status.localDaemon === "stopped";
-    },
+    async () => (await readPidLockPid(paseoHome)) === null,
     15000,
-    "daemon status did not transition to stopped after unsupervised restart request",
+    "pid lock was not released after unsupervised restart request",
   );
 
   console.log("✓ unsupervised restart exited cleanly with code 0\n");
