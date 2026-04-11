@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
+import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
 import {
   buildHostAgentDetailRoute,
@@ -67,33 +68,36 @@ function buildSeededStoragePayload() {
   };
 }
 
+type ArchiveTabDaemonClientConfig = {
+  url: string;
+  clientId: string;
+  clientType: "cli";
+  webSocketFactory?: NodeWebSocketFactory;
+};
+
 async function loadDaemonClientConstructor(): Promise<
-  new (config: {
-    url: string;
-    clientId: string;
-    clientType: "cli";
-  }) => ArchiveTabDaemonClient
+  new (
+    config: ArchiveTabDaemonClientConfig,
+  ) => ArchiveTabDaemonClient
 > {
   const repoRoot = path.resolve(__dirname, "../../../../");
   const moduleUrl = pathToFileURL(
     path.join(repoRoot, "packages/server/dist/server/server/exports.js"),
   ).href;
   const mod = (await import(moduleUrl)) as {
-    DaemonClient: new (config: {
-      url: string;
-      clientId: string;
-      clientType: "cli";
-    }) => ArchiveTabDaemonClient;
+    DaemonClient: new (config: ArchiveTabDaemonClientConfig) => ArchiveTabDaemonClient;
   };
   return mod.DaemonClient;
 }
 
 export async function connectArchiveTabDaemonClient(): Promise<ArchiveTabDaemonClient> {
   const DaemonClient = await loadDaemonClientConstructor();
+  const webSocketFactory = createNodeWebSocketFactory();
   const client = new DaemonClient({
     url: getDaemonWsUrl(),
     clientId: `app-e2e-archive-tab-${randomUUID()}`,
     clientType: "cli",
+    webSocketFactory,
   });
   await client.connect();
   return client;

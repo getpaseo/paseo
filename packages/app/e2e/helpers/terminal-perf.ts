@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
 export type TerminalPerfDaemonClient = {
@@ -43,33 +44,36 @@ function getServerId(): string {
   return serverId;
 }
 
+type TerminalPerfDaemonClientConfig = {
+  url: string;
+  clientId: string;
+  clientType: "cli";
+  webSocketFactory?: NodeWebSocketFactory;
+};
+
 async function loadDaemonClientConstructor(): Promise<
-  new (config: {
-    url: string;
-    clientId: string;
-    clientType: "cli";
-  }) => TerminalPerfDaemonClient
+  new (
+    config: TerminalPerfDaemonClientConfig,
+  ) => TerminalPerfDaemonClient
 > {
   const repoRoot = path.resolve(__dirname, "../../../../");
   const moduleUrl = pathToFileURL(
     path.join(repoRoot, "packages/server/dist/server/server/exports.js"),
   ).href;
   const mod = (await import(moduleUrl)) as {
-    DaemonClient: new (config: {
-      url: string;
-      clientId: string;
-      clientType: "cli";
-    }) => TerminalPerfDaemonClient;
+    DaemonClient: new (config: TerminalPerfDaemonClientConfig) => TerminalPerfDaemonClient;
   };
   return mod.DaemonClient;
 }
 
 export async function connectTerminalClient(): Promise<TerminalPerfDaemonClient> {
   const DaemonClient = await loadDaemonClientConstructor();
+  const webSocketFactory = createNodeWebSocketFactory();
   const client = new DaemonClient({
     url: getDaemonWsUrl(),
     clientId: `terminal-perf-${randomUUID()}`,
     clientType: "cli",
+    webSocketFactory,
   });
   await client.connect();
   return client;

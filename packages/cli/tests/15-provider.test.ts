@@ -230,8 +230,7 @@ try {
     assert(
       ids.some(
         (id) =>
-          (id.startsWith("openai/") || id.startsWith("openrouter/openai/")) &&
-          id.includes("codex"),
+          (id.startsWith("openai/") || id.startsWith("openrouter/openai/")) && id.includes("codex"),
       ),
       "opencode output should include at least one codex-optimized OpenAI model",
     );

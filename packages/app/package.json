@@ -108,6 +108,7 @@
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "@types/react": "~19.2.0",
+    "@types/ws": "^8.18.1",
     "eas-cli": "^16.24.1",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
@@ -115,6 +116,7 @@
     "playwright": "^1.56.1",
     "typescript": "~5.9.2",
     "vitest": "^3.2.4",
-    "wrangler": "^4.59.1"
+    "wrangler": "^4.59.1",
+    "ws": "^8.20.0"
   }
 }
