@@ -85,6 +85,10 @@ export function buildTerminalWorkspaceUrl(cwd: string, terminalId: string): stri
   return `${route}?open=${encodeURIComponent(`terminal:${terminalId}`)}`;
 }
 
+function buildWorkspaceUrl(cwd: string): string {
+  return buildHostWorkspaceRoute(getServerId(), cwd);
+}
+
 export async function getTerminalBufferText(page: Page): Promise<string> {
   return page.evaluate(() => {
     const term = (window as any).__paseoTerminal;
@@ -129,33 +133,28 @@ export async function navigateToTerminal(
   const workspaceRoute = buildTerminalWorkspaceUrl(input.cwd, input.terminalId);
   await page.goto(workspaceRoute);
 
+  // The workspace layout consumes `?open=...`, returns null during the effect,
+  // then replaces the URL with the clean workspace route after preparing the tab.
+  const cleanWorkspaceRoute = buildWorkspaceUrl(input.cwd);
+  await page.waitForURL(
+    (url) =>
+      url.pathname === cleanWorkspaceRoute &&
+      !url.searchParams.has("open"),
+    { timeout: 15_000 },
+  );
+
   // Wait for daemon connection (sidebar shows host label)
   await page
     .getByText("localhost", { exact: true })
     .first()
     .waitFor({ state: "visible", timeout: 15_000 });
 
-  // The workspace should now query listTerminals and discover our terminal.
-  // Click the terminal tab if it auto-appeared, or wait for it.
+  // The open intent should have prepared and focused the exact pre-created terminal tab.
+  const terminalTab = page.locator(`[data-testid="workspace-tab-terminal_${input.terminalId}"]`);
+  await terminalTab.waitFor({ state: "visible", timeout: 15_000 });
+  await terminalTab.click();
+
   const terminalSurface = page.locator('[data-testid="terminal-surface"]');
-  const surfaceVisible = await terminalSurface.isVisible().catch(() => false);
-
-  if (!surfaceVisible) {
-    // Terminal tab might not be focused — look for it in the tab row and click it
-    const terminalTab = page.locator(`[data-testid="workspace-tab-terminal_${input.terminalId}"]`);
-    const tabExists = await terminalTab.isVisible({ timeout: 5_000 }).catch(() => false);
-
-    if (tabExists) {
-      await terminalTab.click();
-    } else {
-      // Terminal tab not yet created — click "New terminal tab" to create one through the UI
-      const newTerminalBtn = page.getByRole("button", { name: "New terminal tab" });
-      await newTerminalBtn.waitFor({ state: "visible", timeout: 10_000 });
-      await newTerminalBtn.click();
-    }
-  }
-
-  // Wait for terminal surface to be visible
   await terminalSurface.waitFor({ state: "visible", timeout: 15_000 });
 
   // Wait for loading overlay to disappear (terminal attached)
@@ -166,6 +165,7 @@ export async function navigateToTerminal(
       // overlay may never appear if attachment is instant
     });
 
+  await terminalSurface.scrollIntoViewIfNeeded();
   await terminalSurface.click();
 }
 
