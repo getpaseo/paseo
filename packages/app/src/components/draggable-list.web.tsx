@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactElement } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { ScrollView, View } from "react-native";
 import {
   DndContext,
@@ -126,6 +126,7 @@ export function DraggableList<T>({
   enableDesktopWebScrollbar = false,
   scrollEnabled = true,
   useDragHandle = false,
+  webLongPressDelayMs = 0,
   // simultaneousGestureRef is native-only, ignored on web
   onDragBegin,
   nestable: _nestable = false,
@@ -139,11 +140,21 @@ export function DraggableList<T>({
     enabled: showCustomScrollbar,
   });
 
+  const pointerActivationConstraint = useMemo(() => {
+    if (webLongPressDelayMs > 0) {
+      return {
+        delay: webLongPressDelayMs,
+        tolerance: 6,
+      } as const;
+    }
+    return {
+      distance: 8,
+    } as const;
+  }, [webLongPressDelayMs]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8,
-      },
+      activationConstraint: pointerActivationConstraint,
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,

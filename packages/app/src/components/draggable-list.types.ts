@@ -42,6 +42,11 @@ export interface DraggableListProps<T> {
    * passed to `renderItem` (prevents nested lists from fighting).
    */
   useDragHandle?: boolean;
+  /**
+   * Web-only: when > 0, requires press-and-hold before a drag starts.
+   * Falls back to distance-based activation when omitted.
+   */
+  webLongPressDelayMs?: number;
   refreshing?: boolean;
   onRefresh?: () => void;
   /** Fill remaining space when content is smaller than container */

@@ -27,6 +27,7 @@ import { type GestureType } from "react-native-gesture-handler";
 import * as Clipboard from "expo-clipboard";
 import {
   Archive,
+  Check,
   CircleAlert,
   ChevronDown,
   ChevronRight,
@@ -34,6 +35,7 @@ import {
   ExternalLink,
   FolderPlus,
   FolderGit2,
+  GitBranch,
   GitPullRequest,
   Monitor,
   MoreVertical,
@@ -60,6 +62,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { SyncedLoader } from "@/components/synced-loader";
 import { useToast } from "@/contexts/toast-context";
@@ -73,6 +76,7 @@ import { getStatusDotColor, isEmphasizedStatusDotBucket } from "@/utils/status-d
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
+import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
@@ -100,6 +104,49 @@ const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = 0;
 const EMPHASIZED_STATUS_DOT_OFFSET = -1;
+const PROJECT_LIST_WEB_LONG_PRESS_DELAY_MS = 180;
+
+function trimNonEmpty(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveProjectBranchWorkspace(project: SidebarProjectEntry): SidebarWorkspaceEntry | null {
+  if (project.projectKind !== "git" || project.workspaces.length === 0) {
+    return null;
+  }
+  return (
+    project.workspaces.find((workspace) => workspace.workspaceKind === "local_checkout") ??
+    project.workspaces.find((workspace) => workspace.workspaceKind === "worktree") ??
+    project.workspaces[0] ??
+    null
+  );
+}
+
+function normalizeBranchOptions(input: {
+  branchNames: string[];
+  currentBranchName: string | null;
+}): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  if (input.currentBranchName) {
+    seen.add(input.currentBranchName);
+    normalized.push(input.currentBranchName);
+  }
+  for (const candidate of input.branchNames) {
+    const normalizedBranchName = trimNonEmpty(candidate);
+    if (!normalizedBranchName || seen.has(normalizedBranchName)) {
+      continue;
+    }
+    seen.add(normalizedBranchName);
+    normalized.push(normalizedBranchName);
+  }
+  return normalized;
+}
+
 function getWorkspacePrIconColor(theme: ReturnType<typeof useUnistyles>["theme"], state: PrHint["state"]) {
   switch (state) {
     case "merged":
@@ -145,9 +192,17 @@ interface ProjectHeaderRowProps {
   isDragging: boolean;
   isArchiving?: boolean;
   menuController: ReturnType<typeof useContextMenu> | null;
+  onSwitchBranch?: () => void;
+  switchBranchStatus?: "idle" | "pending";
   onRemoveProject?: () => void;
   removeProjectStatus?: "idle" | "pending";
   dragHandleProps?: DraggableListDragHandleProps;
+}
+
+interface ProjectBranchSwitchDialogState {
+  projectKey: string;
+  projectName: string;
+  workspaceId: string;
 }
 
 interface WorkspaceRowInnerProps {
@@ -471,6 +526,111 @@ function NewWorktreeButton({
   );
 }
 
+function ProjectBranchSwitchDialog({
+  visible,
+  projectName,
+  searchQuery,
+  onSearchQueryChange,
+  branchOptions,
+  currentBranchName,
+  loading,
+  switching,
+  onSelectBranch,
+  onClose,
+}: {
+  visible: boolean;
+  projectName: string | null;
+  searchQuery: string;
+  onSearchQueryChange: (value: string) => void;
+  branchOptions: string[];
+  currentBranchName: string | null;
+  loading: boolean;
+  switching: boolean;
+  onSelectBranch: (branchName: string) => void;
+  onClose: () => void;
+}) {
+  const { theme } = useUnistyles();
+
+  return (
+    <AdaptiveModalSheet
+      title={projectName ? `Switch branch - ${projectName}` : "Switch branch"}
+      visible={visible}
+      onClose={onClose}
+      testID="sidebar-project-branch-switch-modal"
+    >
+      <View style={styles.projectBranchField}>
+        <Text style={styles.projectBranchLabel}>Branch</Text>
+        <AdaptiveTextInput
+          testID="sidebar-project-branch-switch-search"
+          style={styles.projectBranchSearchInput}
+          placeholder="Filter branches..."
+          placeholderTextColor={theme.colors.foregroundMuted}
+          value={searchQuery}
+          onChangeText={onSearchQueryChange}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {currentBranchName ? (
+          <Text style={styles.projectBranchCurrent}>Current: {currentBranchName}</Text>
+        ) : null}
+      </View>
+
+      <View style={styles.projectBranchList}>
+        {loading ? (
+          <View style={styles.projectBranchStateRow}>
+            <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+            <Text style={styles.projectBranchStateText}>Loading branches...</Text>
+          </View>
+        ) : branchOptions.length === 0 ? (
+          <Text style={styles.projectBranchStateText}>No branches found.</Text>
+        ) : (
+          branchOptions.map((branchName) => {
+            const isCurrent = currentBranchName === branchName;
+            return (
+              <Pressable
+                key={branchName}
+                disabled={switching}
+                onPress={() => onSelectBranch(branchName)}
+                style={({ hovered, pressed }) => [
+                  styles.projectBranchOption,
+                  isCurrent && styles.projectBranchOptionCurrent,
+                  (hovered || pressed) && styles.projectBranchOptionHovered,
+                  switching && styles.projectBranchOptionDisabled,
+                ]}
+                testID={`sidebar-project-branch-option-${branchName.replaceAll("/", "_")}`}
+              >
+                <GitBranch size={14} color={theme.colors.foregroundMuted} />
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.projectBranchOptionText,
+                    isCurrent && styles.projectBranchOptionTextCurrent,
+                  ]}
+                >
+                  {branchName}
+                </Text>
+                {isCurrent ? (
+                  <View style={styles.projectBranchCurrentBadge}>
+                    <Check size={12} color={theme.colors.foregroundMuted} />
+                    <Text style={styles.projectBranchCurrentBadgeText}>Current</Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            );
+          })
+        )}
+      </View>
+
+      {switching ? (
+        <View style={styles.projectBranchStateRow}>
+          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          <Text style={styles.projectBranchStateText}>Switching branch...</Text>
+        </View>
+      ) : null}
+    </AdaptiveModalSheet>
+  );
+}
+
 function useLongPressDragInteraction(input: {
   drag: () => void;
   menuController: ReturnType<typeof useContextMenu> | null;
@@ -707,6 +867,8 @@ function ProjectHeaderRow({
   isDragging,
   isArchiving = false,
   menuController,
+  onSwitchBranch,
+  switchBranchStatus = "idle",
   onRemoveProject,
   removeProjectStatus = "idle",
   dragHandleProps,
@@ -833,6 +995,18 @@ function ProjectHeaderRow({
                 )}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" width={220}>
+                {onSwitchBranch ? (
+                  <DropdownMenuItem
+                    testID={`sidebar-project-menu-switch-branch-${project.projectKey}`}
+                    leading={<GitBranch size={14} color={theme.colors.foregroundMuted} />}
+                    status={switchBranchStatus}
+                    pendingLabel="Switching..."
+                    onSelect={onSwitchBranch}
+                  >
+                    Switch branch
+                  </DropdownMenuItem>
+                ) : null}
+                {onSwitchBranch ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem
                   testID={`sidebar-project-menu-remove-${project.projectKey}`}
                   leading={<Trash2 size={14} color={theme.colors.foregroundMuted} />}
@@ -1269,6 +1443,8 @@ function FlattenedProjectRow({
   isDragging,
   dragHandleProps,
   isProjectActive = false,
+  onSwitchBranch,
+  switchBranchStatus,
   onRemoveProject,
   removeProjectStatus,
 }: {
@@ -1286,6 +1462,8 @@ function FlattenedProjectRow({
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
   isProjectActive?: boolean;
+  onSwitchBranch?: () => void;
+  switchBranchStatus?: "idle" | "pending";
   onRemoveProject?: () => void;
   removeProjectStatus?: "idle" | "pending";
 }) {
@@ -1308,6 +1486,8 @@ function FlattenedProjectRow({
       drag={drag}
       isDragging={isDragging}
       menuController={null}
+      onSwitchBranch={onSwitchBranch}
+      switchBranchStatus={switchBranchStatus}
       onRemoveProject={onRemoveProject}
       removeProjectStatus={removeProjectStatus}
       dragHandleProps={dragHandleProps}
@@ -1368,6 +1548,8 @@ function ProjectBlock({
   onWorkspacePress,
   onWorkspaceReorder,
   onWorktreeCreated,
+  onSwitchProjectBranch,
+  isSwitchingProjectBranch,
   drag,
   isDragging,
   dragHandleProps,
@@ -1387,6 +1569,10 @@ function ProjectBlock({
   onWorkspacePress?: () => void;
   onWorkspaceReorder: (projectKey: string, workspaces: SidebarWorkspaceEntry[]) => void;
   onWorktreeCreated?: (workspaceId: string) => void;
+  onSwitchProjectBranch?: (
+    input: ProjectBranchSwitchDialogState & { workspaceName: string | null },
+  ) => void;
+  isSwitchingProjectBranch?: boolean;
   drag: () => void;
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
@@ -1482,6 +1668,28 @@ function ProjectBlock({
 
   const toast = useToast();
   const [isRemovingProject, setIsRemovingProject] = useState(false);
+  const switchBranchWorkspace = useMemo(
+    () => resolveProjectBranchWorkspace(project),
+    [project],
+  );
+  const handleSwitchBranch = useCallback(() => {
+    if (!switchBranchWorkspace) {
+      return;
+    }
+    onSwitchProjectBranch?.({
+      projectKey: project.projectKey,
+      projectName: displayName,
+      workspaceId: switchBranchWorkspace.workspaceId,
+      workspaceName: trimNonEmpty(switchBranchWorkspace.name),
+    });
+  }, [
+    displayName,
+    onSwitchProjectBranch,
+    project.projectKey,
+    switchBranchWorkspace,
+  ]);
+  const switchBranchStatus =
+    isSwitchingProjectBranch && switchBranchWorkspace ? "pending" : "idle";
 
   const handleRemoveProject = useCallback(() => {
     if (isRemovingProject || !serverId) {
@@ -1546,6 +1754,8 @@ function ProjectBlock({
           isDragging={isDragging}
           dragHandleProps={dragHandleProps}
           isProjectActive={isProjectActive}
+          onSwitchBranch={switchBranchWorkspace ? handleSwitchBranch : undefined}
+          switchBranchStatus={switchBranchStatus}
           onRemoveProject={handleRemoveProject}
           removeProjectStatus={isRemovingProject ? "pending" : "idle"}
         />
@@ -1564,6 +1774,8 @@ function ProjectBlock({
             isProjectActive={isProjectActive}
             onWorkspacePress={onWorkspacePress}
             onWorktreeCreated={onWorktreeCreated}
+            onSwitchBranch={switchBranchWorkspace ? handleSwitchBranch : undefined}
+            switchBranchStatus={switchBranchStatus}
             drag={drag}
             isDragging={isDragging}
             isArchiving={isRemovingProject}
@@ -1609,8 +1821,17 @@ export function SidebarWorkspaceList({
   const isMobile = useIsCompactFormFactor();
   const isNative = Platform.OS !== "web";
   const pathname = usePathname();
+  const toast = useToast();
   const activeWorkspaceSelection = useNavigationActiveWorkspaceSelection();
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
+  const [projectBranchDialog, setProjectBranchDialog] =
+    useState<ProjectBranchSwitchDialogState | null>(null);
+  const [projectBranchSearchQuery, setProjectBranchSearchQuery] = useState("");
+  const [projectBranchOptions, setProjectBranchOptions] = useState<string[]>([]);
+  const [projectBranchCurrentName, setProjectBranchCurrentName] = useState<string | null>(null);
+  const [isProjectBranchLoading, setIsProjectBranchLoading] = useState(false);
+  const [isProjectBranchSwitching, setIsProjectBranchSwitching] = useState(false);
+  const projectBranchFetchRequestIdRef = useRef(0);
   const creatingWorkspaceTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
@@ -1623,6 +1844,192 @@ export function SidebarWorkspaceList({
   const setProjectOrder = useSidebarOrderStore((state) => state.setProjectOrder);
   const getWorkspaceOrder = useSidebarOrderStore((state) => state.getWorkspaceOrder);
   const setWorkspaceOrder = useSidebarOrderStore((state) => state.setWorkspaceOrder);
+
+  const filteredProjectBranchOptions = useMemo(() => {
+    const normalizedQuery = projectBranchSearchQuery.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return projectBranchOptions;
+    }
+    return projectBranchOptions.filter((branchName) =>
+      branchName.toLowerCase().includes(normalizedQuery),
+    );
+  }, [projectBranchOptions, projectBranchSearchQuery]);
+
+  const handleCloseProjectBranchDialog = useCallback(() => {
+    setProjectBranchDialog(null);
+    setProjectBranchSearchQuery("");
+    setProjectBranchOptions([]);
+    setProjectBranchCurrentName(null);
+    setIsProjectBranchLoading(false);
+    setIsProjectBranchSwitching(false);
+  }, []);
+
+  const handleRequestProjectBranchSwitch = useCallback(
+    (input: ProjectBranchSwitchDialogState & { workspaceName: string | null }) => {
+      if (!serverId) {
+        return;
+      }
+      setProjectBranchDialog({
+        projectKey: input.projectKey,
+        projectName: input.projectName,
+        workspaceId: input.workspaceId,
+      });
+      setProjectBranchSearchQuery("");
+      setProjectBranchOptions([]);
+      setProjectBranchCurrentName(trimNonEmpty(input.workspaceName));
+      setIsProjectBranchLoading(true);
+    },
+    [serverId],
+  );
+
+  useEffect(() => {
+    if (!projectBranchDialog || !serverId) {
+      return;
+    }
+
+    const client = getHostRuntimeStore().getClient(serverId);
+    const connection = getHostRuntimeStore().getSnapshot(serverId);
+    if (!client || !isHostRuntimeConnected(connection)) {
+      toast.error("Host is not connected");
+      handleCloseProjectBranchDialog();
+      return;
+    }
+
+    const requestId = projectBranchFetchRequestIdRef.current + 1;
+    projectBranchFetchRequestIdRef.current = requestId;
+    setIsProjectBranchLoading(true);
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const checkoutStatus = await client.getCheckoutStatus(projectBranchDialog.workspaceId);
+        if (cancelled || requestId !== projectBranchFetchRequestIdRef.current) {
+          return;
+        }
+        if (!checkoutStatus.isGit) {
+          throw new Error("Selected project is not a Git checkout");
+        }
+        const currentBranchName =
+          checkoutStatus.currentBranch === "HEAD"
+            ? null
+            : trimNonEmpty(checkoutStatus.currentBranch);
+        setProjectBranchCurrentName(currentBranchName);
+
+        const branchSuggestions = await client.getBranchSuggestions({
+          cwd: projectBranchDialog.workspaceId,
+          limit: 200,
+        });
+        if (cancelled || requestId !== projectBranchFetchRequestIdRef.current) {
+          return;
+        }
+        if (branchSuggestions.error) {
+          throw new Error(branchSuggestions.error);
+        }
+
+        setProjectBranchOptions(
+          normalizeBranchOptions({
+            branchNames: branchSuggestions.branches ?? [],
+            currentBranchName,
+          }),
+        );
+      } catch (error) {
+        if (cancelled || requestId !== projectBranchFetchRequestIdRef.current) {
+          return;
+        }
+        toast.error(error instanceof Error ? error.message : "Failed to load branches");
+        handleCloseProjectBranchDialog();
+      } finally {
+        if (!cancelled && requestId === projectBranchFetchRequestIdRef.current) {
+          setIsProjectBranchLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [handleCloseProjectBranchDialog, projectBranchDialog, serverId, toast]);
+
+  const handleSelectProjectBranch = useCallback(
+    (branchName: string) => {
+      const normalizedBranchName = trimNonEmpty(branchName);
+      if (
+        !projectBranchDialog ||
+        !serverId ||
+        !normalizedBranchName ||
+        isProjectBranchSwitching
+      ) {
+        return;
+      }
+      if (projectBranchCurrentName === normalizedBranchName) {
+        handleCloseProjectBranchDialog();
+        return;
+      }
+
+      const client = getHostRuntimeStore().getClient(serverId);
+      if (!client) {
+        toast.error("Host is not connected");
+        return;
+      }
+
+      const workspaceId = projectBranchDialog.workspaceId;
+      setIsProjectBranchSwitching(true);
+      void (async () => {
+        try {
+          const payload = await client.checkoutSwitchBranch(workspaceId, normalizedBranchName);
+          if (payload.error) {
+            const errorMessage = payload.error.message;
+            if (!errorMessage.toLowerCase().includes("uncommitted")) {
+              toast.error(errorMessage);
+              return;
+            }
+            const shouldStash = await confirmDialog({
+              title: "Uncommitted changes",
+              message:
+                "You have uncommitted changes. Stash them before switching branches?",
+              confirmLabel: "Stash & Switch",
+              cancelLabel: "Cancel",
+            });
+            if (!shouldStash) {
+              return;
+            }
+            const stashPayload = await client.stashSave(workspaceId, {
+              branch: projectBranchCurrentName ?? undefined,
+            });
+            if (stashPayload.error) {
+              toast.error(stashPayload.error.message);
+              return;
+            }
+            const switchPayload = await client.checkoutSwitchBranch(
+              workspaceId,
+              normalizedBranchName,
+            );
+            if (switchPayload.error) {
+              toast.error(switchPayload.error.message);
+              return;
+            }
+          }
+
+          toast.show(`Switched to ${normalizedBranchName}`, { variant: "success" });
+          onRefresh?.();
+          handleCloseProjectBranchDialog();
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Failed to switch branch");
+        } finally {
+          setIsProjectBranchSwitching(false);
+        }
+      })();
+    },
+    [
+      handleCloseProjectBranchDialog,
+      isProjectBranchSwitching,
+      onRefresh,
+      projectBranchCurrentName,
+      projectBranchDialog,
+      serverId,
+      toast,
+    ],
+  );
 
   const isWorkspaceRoute = useMemo(
     () => Boolean(pathname && parseHostWorkspaceRouteFromPathname(pathname)),
@@ -1844,6 +2251,10 @@ export function SidebarWorkspaceList({
           onWorkspacePress={onWorkspacePress}
           onWorkspaceReorder={handleWorkspaceReorder}
           onWorktreeCreated={handleWorktreeCreated}
+          onSwitchProjectBranch={handleRequestProjectBranchSwitch}
+          isSwitchingProjectBranch={
+            isProjectBranchSwitching && projectBranchDialog?.projectKey === item.projectKey
+          }
           drag={drag}
           isDragging={isActive}
           dragHandleProps={dragHandleProps}
@@ -1856,7 +2267,10 @@ export function SidebarWorkspaceList({
       collapsedProjectKeys,
       effectiveActiveWorkspaceSelection,
       handleWorktreeCreated,
+      handleRequestProjectBranchSwitch,
       handleWorkspaceReorder,
+      isProjectBranchSwitching,
+      projectBranchDialog,
       onWorkspacePress,
       onToggleProjectCollapsed,
       parentGestureRef,
@@ -1893,6 +2307,7 @@ export function SidebarWorkspaceList({
           onDragEnd={handleProjectDragEnd}
           scrollEnabled={false}
           useDragHandle
+          webLongPressDelayMs={PROJECT_LIST_WEB_LONG_PRESS_DELAY_MS}
           nestable={isNative}
           simultaneousGestureRef={parentGestureRef}
           containerStyle={styles.projectListContainer}
@@ -1923,6 +2338,18 @@ export function SidebarWorkspaceList({
           {content}
         </ScrollView>
       )}
+      <ProjectBranchSwitchDialog
+        visible={projectBranchDialog !== null}
+        projectName={projectBranchDialog?.projectName ?? null}
+        searchQuery={projectBranchSearchQuery}
+        onSearchQueryChange={setProjectBranchSearchQuery}
+        branchOptions={filteredProjectBranchOptions}
+        currentBranchName={projectBranchCurrentName}
+        loading={isProjectBranchLoading}
+        switching={isProjectBranchSwitching}
+        onSelectBranch={handleSelectProjectBranch}
+        onClose={handleCloseProjectBranchDialog}
+      />
     </View>
   );
 }
@@ -1944,6 +2371,81 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectBlock: {
     marginBottom: theme.spacing[1],
+  },
+  projectBranchField: {
+    gap: theme.spacing[2],
+  },
+  projectBranchLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  projectBranchSearchInput: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface0,
+    color: theme.colors.foreground,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    fontSize: theme.fontSize.sm,
+  },
+  projectBranchCurrent: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  projectBranchList: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    overflow: "hidden",
+    backgroundColor: theme.colors.surface0,
+  },
+  projectBranchOption: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  projectBranchOptionHovered: {
+    backgroundColor: theme.colors.surface1,
+  },
+  projectBranchOptionCurrent: {
+    backgroundColor: theme.colors.surface1,
+  },
+  projectBranchOptionDisabled: {
+    opacity: 0.6,
+  },
+  projectBranchOptionText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    flexShrink: 1,
+  },
+  projectBranchOptionTextCurrent: {
+    fontWeight: theme.fontWeight.medium,
+  },
+  projectBranchCurrentBadge: {
+    marginLeft: "auto",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  projectBranchCurrentBadgeText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  projectBranchStateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  projectBranchStateText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   workspaceListContainer: {},
   emptyContainer: {

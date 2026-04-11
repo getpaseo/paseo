@@ -25,6 +25,7 @@ export function DraggableList<T>({
   enableDesktopWebScrollbar: _enableDesktopWebScrollbar = false,
   scrollEnabled = true,
   useDragHandle: _useDragHandle = false,
+  webLongPressDelayMs: _webLongPressDelayMs = 0,
   refreshing,
   onRefresh,
   simultaneousGestureRef,
