@@ -72,19 +72,19 @@ function waitForProcessExit(processRef: ChildProcess, timeoutMs: number): Promis
   });
 }
 
-async function waitForDaemonConnection(host: string, timeoutMs: number): Promise<void> {
+async function canConnectToDaemon(host: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
     const client = await tryConnectToDaemon({ host, timeout: 500 }).catch(() => null);
     if (client) {
       await client.close().catch(() => undefined);
-      return;
+      return true;
     }
     await sleep(pollIntervalMs);
   }
 
-  throw new Error("daemon did not accept websocket connections in time");
+  return false;
 }
 
 async function readPidLockPid(paseoHome: string): Promise<number | null> {
@@ -135,10 +135,9 @@ try {
   });
 
   await waitFor(
-    async () => {
-      await waitForDaemonConnection(host, 1000);
-      return Boolean(daemonProcess?.pid && isProcessRunning(daemonProcess.pid));
-    },
+    async () =>
+      Boolean(daemonProcess?.pid && isProcessRunning(daemonProcess.pid)) &&
+      (await canConnectToDaemon(host, 1000)),
     120000,
     "daemon did not become running in time",
   );
