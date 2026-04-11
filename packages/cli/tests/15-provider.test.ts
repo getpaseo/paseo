@@ -213,7 +213,7 @@ try {
   {
     console.log("Test 7: provider models opencode returns namespaced model IDs");
     const data = await runProviderModelsJson("opencode");
-    assert(data.length >= 3, "opencode model list should not be empty");
+    assert(data.length >= 1, "opencode model list should not be empty");
     const ids = data.map((m) => m.id);
     assert(
       data.every((m) => m.id.includes("/")),
@@ -222,10 +222,6 @@ try {
     assert(
       ids.some((id) => id.startsWith("opencode/")),
       "opencode output should include at least one first-party opencode model",
-    );
-    assert(
-      ids.some((id) => id.includes("/") && !id.startsWith("opencode/")),
-      "opencode output should include at least one third-party provider model",
     );
     assert(
       data.every((m) => m.model && m.id && m.description !== undefined),

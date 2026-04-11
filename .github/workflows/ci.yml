@@ -119,6 +119,9 @@ jobs:
       - name: Build server dependency
         run: npm run build --workspace=@getpaseo/server
 
+      - name: Install agent CLIs for provider tests
+        run: npm install -g @openai/codex opencode-ai
+
       - name: Run Playwright E2E tests
         run: npm run test:e2e --workspace=@getpaseo/app
         env:
