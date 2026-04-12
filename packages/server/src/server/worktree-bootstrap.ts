@@ -1,7 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
 import type { Logger } from "pino";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import { sep } from "node:path";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
@@ -50,7 +48,11 @@ const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_OPTIONAL_LOCKS: "0",
 };
-const execAsync = promisify(exec);
+import { gitExec } from "../utils/git-process-pool.js";
+const execAsync = (
+  command: string,
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number } = {},
+) => gitExec(command, options);
 const worktreeSetupEligibility = new WeakMap<WorktreeConfig, boolean>();
 
 type MiddleTruncationAccumulator = {

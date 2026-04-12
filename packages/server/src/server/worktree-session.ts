@@ -1,5 +1,3 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import type { Logger } from "pino";
 import { v4 as uuidv4 } from "uuid";
 
@@ -38,7 +36,11 @@ import {
 } from "../utils/worktree.js";
 import { READ_ONLY_GIT_ENV, toCheckoutError } from "./checkout-git-utils.js";
 
-const execAsync = promisify(exec);
+import { gitExec } from "../utils/git-process-pool.js";
+const execAsync = (
+  command: string,
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number } = {},
+) => gitExec(command, options);
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
 
 export type NormalizedGitOptions = {

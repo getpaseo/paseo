@@ -13,6 +13,7 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
+import { gitExec } from "./git-process-pool.js";
 
 interface PaseoConfig {
   worktree?: {
@@ -22,7 +23,20 @@ interface PaseoConfig {
   };
 }
 
-const execAsync = promisify(exec);
+const rawExecAsync = promisify(exec);
+
+function execAsync(
+  command: string,
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; shell?: string },
+): Promise<{ stdout: string; stderr: string }> {
+  if (options.shell) {
+    return rawExecAsync(command, { ...options, timeout: options.timeout ?? 120_000 }).then((r) => ({
+      stdout: String(r.stdout),
+      stderr: String(r.stderr),
+    }));
+  }
+  return gitExec(command, options);
+}
 const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_OPTIONAL_LOCKS: "0",

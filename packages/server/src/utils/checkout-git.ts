@@ -10,9 +10,22 @@ import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
 import { findExecutable } from "./executable.js";
 import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
 import { requirePaseoWorktreeBaseRefName } from "./worktree-metadata.js";
+import { gitExec, gitExecFile, acquireGitSlot } from "./git-process-pool.js";
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
+const rawExecAsync = promisify(exec);
+const rawExecFileAsync = promisify(execFile);
+
+// Pool-aware wrappers: concurrency-limited + 30s default timeout.
+const execAsync = (
+  command: string,
+  options: Parameters<typeof rawExecAsync>[1] & { timeout?: number } = {},
+) => gitExec(command, options as Parameters<typeof gitExec>[1]);
+
+const execFileAsync = (
+  file: string,
+  args: string[],
+  options: Parameters<typeof rawExecFileAsync>[2] & { timeout?: number } = {},
+) => gitExecFile(file, args, options as Parameters<typeof gitExecFile>[2]);
 const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_OPTIONAL_LOCKS: "0",
@@ -77,6 +90,8 @@ type LimitedTextResult = {
   signal: NodeJS.Signals | null;
 };
 
+const SPAWN_TIMEOUT_MS = 30_000;
+
 async function spawnLimitedText(params: {
   cmd: string;
   args: string[];
@@ -87,65 +102,89 @@ async function spawnLimitedText(params: {
 }): Promise<LimitedTextResult> {
   const accept = new Set(params.acceptExitCodes ?? [0]);
 
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawnProcess(params.cmd, params.args, {
-      cwd: params.cwd,
-      env: params.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+  const slot = await acquireGitSlot();
+  try {
+    return await new Promise<LimitedTextResult>((resolvePromise, rejectPromise) => {
+      const child = spawnProcess(params.cmd, params.args, {
+        cwd: params.cwd,
+        env: params.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
 
-    const stdoutChunks: Buffer[] = [];
-    let stdoutBytes = 0;
-    let truncated = false;
+      const stdoutChunks: Buffer[] = [];
+      let stdoutBytes = 0;
+      let truncated = false;
+      let settled = false;
 
-    const stop = () => {
-      if (child.killed) return;
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // ignore
-      }
-    };
+      const stop = () => {
+        if (child.killed) return;
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      };
 
-    child.stdout!.on("data", (chunk: Buffer) => {
-      if (truncated) return;
-      stdoutBytes += chunk.length;
-      if (stdoutBytes > params.maxBytes) {
-        truncated = true;
-        stop();
-        return;
-      }
-      stdoutChunks.push(chunk);
-    });
+      const timer = setTimeout(() => {
+        if (!settled) {
+          stop();
+          settled = true;
+          rejectPromise(
+            new Error(
+              `Timed out after ${SPAWN_TIMEOUT_MS}ms: ${params.cmd} ${params.args.join(" ")}`,
+            ),
+          );
+        }
+      }, SPAWN_TIMEOUT_MS);
 
-    // We don't buffer stderr (it can be large too). Keep it minimal for debugging.
-    let stderrPreview = "";
-    child.stderr!.on("data", (chunk: Buffer) => {
-      if (stderrPreview.length > 2048) return;
-      stderrPreview += chunk.toString("utf8");
-    });
+      child.stdout!.on("data", (chunk: Buffer) => {
+        if (truncated) return;
+        stdoutBytes += chunk.length;
+        if (stdoutBytes > params.maxBytes) {
+          truncated = true;
+          stop();
+          return;
+        }
+        stdoutChunks.push(chunk);
+      });
 
-    child.on("error", (error) => {
-      rejectPromise(error);
-    });
+      // We don't buffer stderr (it can be large too). Keep it minimal for debugging.
+      let stderrPreview = "";
+      child.stderr!.on("data", (chunk: Buffer) => {
+        if (stderrPreview.length > 2048) return;
+        stderrPreview += chunk.toString("utf8");
+      });
 
-    child.on("close", (code, signal) => {
-      if (code !== null && !accept.has(code) && !truncated) {
-        rejectPromise(
-          new Error(
-            `Command failed: ${params.cmd} ${params.args.join(" ")} (code ${code})\n${stderrPreview}`,
-          ),
-        );
-        return;
-      }
-      resolvePromise({
-        text: Buffer.concat(stdoutChunks).toString("utf8"),
-        truncated,
-        exitCode: code,
-        signal,
+      child.on("error", (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        rejectPromise(error);
+      });
+
+      child.on("close", (code, signal) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (code !== null && !accept.has(code) && !truncated) {
+          rejectPromise(
+            new Error(
+              `Command failed: ${params.cmd} ${params.args.join(" ")} (code ${code})\n${stderrPreview}`,
+            ),
+          );
+          return;
+        }
+        resolvePromise({
+          text: Buffer.concat(stdoutChunks).toString("utf8"),
+          truncated,
+          exitCode: code,
+          signal,
+        });
       });
     });
-  });
+  } finally {
+    slot.release();
+  }
 }
 
 type CheckoutFileChange = {
@@ -1817,7 +1856,7 @@ export async function pullCurrentBranch(cwd: string): Promise<void> {
     throw new Error("Remote 'origin' is not configured.");
   }
   try {
-    await execAsync("git pull", { cwd });
+    await execAsync("git pull", { cwd, timeout: 120_000 });
   } catch (error) {
     await abortGitPullConflictState(cwd);
     throw error;
@@ -1834,7 +1873,7 @@ export async function pushCurrentBranch(cwd: string): Promise<void> {
   if (!hasRemote) {
     throw new Error("Remote 'origin' is not configured.");
   }
-  await execAsync(`git push -u origin ${currentBranch}`, { cwd });
+  await execAsync(`git push -u origin ${currentBranch}`, { cwd, timeout: 120_000 });
 }
 
 export interface CreatePullRequestOptions {
@@ -1954,7 +1993,7 @@ export async function createPullRequest(
     throw new Error(`Base ref mismatch: expected ${base}, got ${options.base}`);
   }
 
-  await execAsync(`git push -u origin ${head}`, { cwd });
+  await execAsync(`git push -u origin ${head}`, { cwd, timeout: 120_000 });
 
   const ghEnv: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
   const args = ["api", "-X", "POST", `repos/${repo}/pulls`, "-f", `title=${options.title}`];

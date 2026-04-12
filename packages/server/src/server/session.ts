@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { stat } from "fs/promises";
 import { exec, execFile } from "node:child_process";
 import { promisify } from "util";
+import { gitExec, gitExecFile } from "../utils/git-process-pool.js";
 import { resolve, sep } from "path";
 import { homedir } from "node:os";
 import { z } from "zod";
@@ -181,8 +182,19 @@ import {
   registerPendingWorktreeWorkspace as registerPendingWorktreeWorkspaceSession,
 } from "./worktree-session.js";
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
+const rawExecAsync = promisify(exec);
+const rawExecFileAsync = promisify(execFile);
+
+const execAsync = (
+  command: string,
+  options: Parameters<typeof rawExecAsync>[1] & { timeout?: number } = {},
+) => gitExec(command, options as Parameters<typeof gitExec>[1]);
+
+const execFileAsync = (
+  file: string,
+  args: string[],
+  options: Parameters<typeof rawExecFileAsync>[2] & { timeout?: number } = {},
+) => gitExecFile(file, args, options as Parameters<typeof gitExecFile>[2]);
 const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
 const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
