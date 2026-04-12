@@ -246,8 +246,8 @@ describe("AgentManager", () => {
       cwd: workdir,
     });
 
-    expect(snapshot.model).toBe("gpt-5.4");
-    expect(snapshot.currentModeId).toBe("auto");
+    expect(snapshot.config.model).toBe("gpt-5.4");
+    expect(snapshot.config.modeId).toBe("auto");
   });
 
   test("normalizeConfig strips legacy 'default' model id", async () => {
@@ -269,8 +269,8 @@ describe("AgentManager", () => {
       model: "default",
     });
 
-    expect(snapshot.model).toBe("gpt-5.4");
-    expect(snapshot.currentModeId).toBe("auto");
+    expect(snapshot.config.model).toBe("gpt-5.4");
+    expect(snapshot.config.modeId).toBe("auto");
   });
 
   test("createAgent passes daemon launch env through the provider launch context", async () => {
@@ -1452,7 +1452,7 @@ describe("AgentManager", () => {
       cwd: workdir,
     });
 
-    expect(snapshot.runtimeInfo?.model ?? null).toBeNull();
+    expect(snapshot.runtimeInfo?.model).toBe("gpt-5.4");
 
     await manager.runAgent(snapshot.id, "hello");
 

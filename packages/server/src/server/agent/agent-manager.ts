@@ -2568,7 +2568,7 @@ export class AgentManager {
 
     if (typeof normalized.model === "string") {
       const trimmed = normalized.model.trim();
-      normalized.model = trimmed.length > 0 ? trimmed : undefined;
+      normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
     if (!normalized.model) {
