@@ -2141,7 +2141,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (this.config.model) {
-      base.model = this.config.model;
+      base.model = this.runtimeSettings?.defaultModel ?? this.config.model;
     }
     this.lastOptionsModel = base.model ?? null;
     if (this.claudeSessionId) {

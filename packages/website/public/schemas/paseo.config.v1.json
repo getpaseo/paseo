@@ -166,6 +166,9 @@
                     "additionalProperties": {
                       "type": "string"
                     }
+                  },
+                  "defaultModel": {
+                    "type": "string"
                   }
                 },
                 "additionalProperties": false
