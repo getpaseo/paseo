@@ -1,6 +1,6 @@
 /**
  * Shared agent configurations for e2e tests.
- * Enables running the same tests against Claude, Codex, and OpenCode providers.
+ * Enables running the same tests against real provider implementations.
  */
 import { existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
@@ -49,6 +49,9 @@ export const agentConfigs = {
       ask: "https://agentclientprotocol.com/protocol/session-modes#agent",
     },
   },
+  hermes: {
+    provider: "hermes",
+  },
   opencode: {
     provider: "opencode",
     model: "opencode/glm-5-free",
@@ -70,12 +73,14 @@ export type AgentProvider = keyof typeof agentConfigs;
  */
 export function getFullAccessConfig(provider: AgentProvider) {
   const config = agentConfigs[provider];
+  const model = "model" in config ? config.model : undefined;
   const thinkingOptionId = "thinkingOptionId" in config ? config.thinkingOptionId : undefined;
+  const modes = "modes" in config ? config.modes : undefined;
   return {
     provider: config.provider,
-    ...(config.model ? { model: config.model } : {}),
+    ...(model ? { model } : {}),
     ...(thinkingOptionId ? { thinkingOptionId } : {}),
-    ...(config.modes?.full ? { modeId: config.modes.full } : {}),
+    ...(modes?.full ? { modeId: modes.full } : {}),
   };
 }
 
@@ -84,12 +89,14 @@ export function getFullAccessConfig(provider: AgentProvider) {
  */
 export function getAskModeConfig(provider: AgentProvider) {
   const config = agentConfigs[provider];
+  const model = "model" in config ? config.model : undefined;
   const thinkingOptionId = "thinkingOptionId" in config ? config.thinkingOptionId : undefined;
+  const modes = "modes" in config ? config.modes : undefined;
   return {
     provider: config.provider,
-    ...(config.model ? { model: config.model } : {}),
+    ...(model ? { model } : {}),
     ...(thinkingOptionId ? { thinkingOptionId } : {}),
-    ...(config.modes?.ask ? { modeId: config.modes.ask } : {}),
+    ...(modes?.ask ? { modeId: modes.ask } : {}),
   };
 }
 
@@ -115,6 +122,8 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
       );
     case "copilot":
       return isCommandAvailableSync("copilot");
+    case "hermes":
+      return isCommandAvailableSync("hermes");
     case "opencode":
       return isCommandAvailableSync("opencode");
     case "pi":
@@ -135,6 +144,7 @@ export const allProviders: AgentProvider[] = [
   "claude",
   "codex",
   "copilot",
+  "hermes",
   "opencode",
   "pi",
 ];

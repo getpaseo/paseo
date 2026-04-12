@@ -116,6 +116,8 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const HERMES_MODES: AgentProviderModeDefinition[] = [];
+
 export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   {
     id: "claude",
@@ -158,6 +160,13 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
       enabled: true,
       defaultModeId: "build",
     },
+  },
+  {
+    id: "hermes",
+    label: "Hermes",
+    description: "Hermes Agent via ACP, using your local Hermes profile and tools",
+    defaultModeId: null,
+    modes: HERMES_MODES,
   },
   {
     id: "pi",

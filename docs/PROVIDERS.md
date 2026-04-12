@@ -8,7 +8,7 @@ This guide walks through adding a new agent provider end-to-end. There are two i
 
 Extend `ACPAgentClient`. The base class handles process spawning, stdio transport, session lifecycle, streaming, permissions, and model discovery. You provide configuration (command, modes, capabilities) and optionally override `isAvailable()` for auth checks.
 
-Existing ACP providers: `claude-acp`, `copilot`.
+Existing ACP providers: `copilot`, `hermes`, `pi`.
 
 ### Direct
 
@@ -357,3 +357,19 @@ Tests use `isProviderAvailable(provider)` to skip when the binary or credentials
 **`defaultCommand` is a tuple.** The first element is the binary name, the rest are default arguments. The base class uses this to find the executable and spawn the process.
 
 **Runtime settings can override the command.** Users can configure custom binary paths or environment variables per provider via `ProviderRuntimeSettings`. Your factory in the registry should pass `runtimeSettings?.["your-provider"]` through to the constructor.
+
+For example, a Hermes provider can use runtime env overrides to target a non-default profile without adding a new provider ID:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "hermes": {
+        "env": {
+          "HERMES_HOME": "/Users/you/.hermes/profiles/work"
+        }
+      }
+    }
+  }
+}
+```

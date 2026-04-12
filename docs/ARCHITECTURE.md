@@ -157,6 +157,7 @@ Each provider implements a common `AgentClient` interface:
 |---|---|---|
 | Claude | Anthropic Agent SDK | `~/.claude/projects/{cwd}/{session-id}.jsonl` |
 | Codex | CodexAppServer | `~/.codex/sessions/{date}/rollout-{ts}-{id}.jsonl` |
+| Hermes | Hermes ACP | Provider-managed under `$HERMES_HOME` |
 | OpenCode | OpenCode CLI | Provider-managed |
 
 All providers:

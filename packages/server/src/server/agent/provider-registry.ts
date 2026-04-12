@@ -11,6 +11,7 @@ import type { Logger } from "pino";
 
 import { ClaudeAgentClient } from "./providers/claude-agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
+import { HermesACPAgentClient } from "./providers/hermes-acp-agent.js";
 import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { PiACPAgentClient } from "./providers/pi-acp-agent.js";
@@ -51,6 +52,11 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
     new CopilotACPAgentClient({
       logger,
       runtimeSettings: runtimeSettings?.copilot,
+    }),
+  hermes: (logger, runtimeSettings) =>
+    new HermesACPAgentClient({
+      logger,
+      runtimeSettings: runtimeSettings?.hermes,
     }),
   opencode: (logger, runtimeSettings) =>
     new OpenCodeAgentClient(logger, runtimeSettings?.opencode),

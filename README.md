@@ -19,7 +19,7 @@
   </a>
 </p>
 
-<p align="center">One interface for all your Claude Code, Codex and OpenCode agents.</p>
+<p align="center">One interface for all your Claude Code, Codex, OpenCode, and Hermes agents.</p>
 
 <p align="center">
   <img src="https://paseo.sh/hero-mockup.png" alt="Paseo app screenshot" width="100%">
@@ -34,7 +34,7 @@
 Run agents in parallel on your own machines. Ship from your phone or your desk.
 
 - **Self-hosted:** Agents run on your machine with your full dev environment. Use your tools, your configs, and your skills.
-- **Multi-provider:** Claude Code, Codex, and OpenCode through the same interface. Pick the right model for each job.
+- **Multi-provider:** Claude Code, Codex, OpenCode, and Hermes through the same interface. Pick the right model for each job.
 - **Voice control:** Dictate tasks or talk through problems in voice mode. Hands-free when you need it.
 - **Cross-device:** iOS, Android, desktop, web, and CLI. Start work at your desk, check in from your phone, script it from the terminal.
 - **Privacy-first:** Paseo doesn't have any telemetry, tracking, or forced log-ins.
@@ -50,6 +50,23 @@ You need at least one agent CLI installed and configured with your credentials:
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex](https://github.com/openai/codex)
 - [OpenCode](https://github.com/anomalyco/opencode)
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+
+Hermes is launched through ACP with `hermes acp`. If you use multiple Hermes profiles, point Paseo at a non-default profile by setting `agents.providers.hermes.env.HERMES_HOME` in your Paseo config:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "hermes": {
+        "env": {
+          "HERMES_HOME": "/Users/you/.hermes/profiles/work"
+        }
+      }
+    }
+  }
+}
+```
 
 ### Desktop app (recommended)
 
