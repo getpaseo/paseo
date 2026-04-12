@@ -52,9 +52,9 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       logger,
       runtimeSettings: runtimeSettings?.copilot,
     }),
-  opencode: (logger, runtimeSettings) =>
-    new OpenCodeAgentClient(logger, runtimeSettings?.opencode),
-  pi: (logger, runtimeSettings) => new PiACPAgentClient({ logger, runtimeSettings: runtimeSettings?.pi }),
+  opencode: (logger, runtimeSettings) => new OpenCodeAgentClient(logger, runtimeSettings?.opencode),
+  pi: (logger, runtimeSettings) =>
+    new PiACPAgentClient({ logger, runtimeSettings: runtimeSettings?.pi }),
 };
 
 function getProviderClientFactory(provider: string): ProviderClientFactory {

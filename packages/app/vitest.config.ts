@@ -15,6 +15,7 @@ export default defineConfig({
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],
+    setupFiles: [path.resolve(__dirname, "vitest.setup.ts")],
     /**
      * Expo pulls in native tooling (xcode, etc.) that executes files relying on `process.send`.
      * Vitest's default worker pool uses worker_threads, which intentionally stub that API and
@@ -52,6 +53,10 @@ export default defineConfig({
       {
         find: "react-dom",
         replacement: resolvePackageEntry("react-dom"),
+      },
+      {
+        find: "@xterm/addon-ligatures",
+        replacement: path.resolve(__dirname, "test-stubs/xterm-addon-ligatures.ts"),
       },
     ],
   },

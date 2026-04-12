@@ -16,10 +16,27 @@ const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
 
+function parseBooleanEnv(value: string | undefined): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return undefined;
+}
+
 export type CliConfigOverrides = Partial<{
   listen: string;
   relayEnabled: boolean;
   mcpEnabled: boolean;
+  mcpInjectIntoAgents: boolean;
   allowedHosts: AllowedHostsConfig;
 }>;
 
@@ -51,7 +68,10 @@ export function loadConfig(
   // - unix:///path/to/socket (Unix socket)
   // Default is TCP at 127.0.0.1:6767
   const listen =
-    options?.cli?.listen ?? env.PASEO_LISTEN ?? persisted.daemon?.listen ?? `127.0.0.1:${env.PORT ?? DEFAULT_PORT}`;
+    options?.cli?.listen ??
+    env.PASEO_LISTEN ??
+    persisted.daemon?.listen ??
+    `127.0.0.1:${env.PORT ?? DEFAULT_PORT}`;
 
   const envCorsOrigins = env.PASEO_CORS_ORIGINS
     ? env.PASEO_CORS_ORIGINS.split(",").map((s) => s.trim())
@@ -65,9 +85,15 @@ export function loadConfig(
     options?.cli?.allowedHosts,
   ]);
 
-  const mcpEnabled = options?.cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? false;
+  const mcpEnabled = options?.cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true;
+  const mcpInjectIntoAgents =
+    options?.cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? true;
 
-  const relayEnabled = options?.cli?.relayEnabled ?? persisted.daemon?.relay?.enabled ?? true;
+  const relayEnabled =
+    options?.cli?.relayEnabled ??
+    parseBooleanEnv(env.PASEO_RELAY_ENABLED) ??
+    persisted.daemon?.relay?.enabled ??
+    true;
 
   const relayEndpoint =
     env.PASEO_RELAY_ENDPOINT ?? persisted.daemon?.relay?.endpoint ?? DEFAULT_RELAY_ENDPOINT;
@@ -100,6 +126,7 @@ export function loadConfig(
     ),
     allowedHosts,
     mcpEnabled,
+    mcpInjectIntoAgents,
     mcpDebug: env.MCP_DEBUG === "1",
     agentStoragePath: path.join(paseoHome, "agents"),
     staticDir: "public",

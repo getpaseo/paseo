@@ -2,6 +2,7 @@ import type { AgentSnapshotPayload } from "../messages.js";
 import type { SerializableAgentConfig, StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentCapabilityFlags,
+  AgentFeature,
   AgentMetadata,
   AgentMode,
   AgentPermissionRequest,
@@ -61,7 +62,7 @@ export function toStoredAgentRecord(
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
     config: config ?? null,
     runtimeInfo,
-    features: agent.features,
+    features: normalizeFeatures(agent.features),
     persistence,
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention ? agent.attention.attentionReason : null,
@@ -98,7 +99,7 @@ export function toAgentPayload(
     capabilities: cloneCapabilities(agent.capabilities),
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),
-    features: agent.features,
+    features: normalizeFeatures(agent.features),
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
     persistence: sanitizePersistenceHandle(agent.persistence),
     title: options?.title ?? null,
@@ -198,6 +199,10 @@ function cloneCapabilities(capabilities: AgentCapabilityFlags): AgentCapabilityF
 
 function cloneAvailableModes(modes: AgentMode[]): AgentMode[] {
   return modes.map((mode) => ({ ...mode }));
+}
+
+function normalizeFeatures(features: AgentFeature[] | null | undefined): AgentFeature[] {
+  return Array.isArray(features) ? features.map((feature) => ({ ...feature })) : [];
 }
 
 function sanitizeOptionalJson(value: unknown): JsonValue | undefined {

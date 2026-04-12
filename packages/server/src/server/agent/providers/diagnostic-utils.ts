@@ -10,17 +10,11 @@ type DiagnosticEntry = {
   value: string;
 };
 
-export function formatProviderDiagnostic(
-  providerName: string,
-  entries: DiagnosticEntry[],
-): string {
+export function formatProviderDiagnostic(providerName: string, entries: DiagnosticEntry[]): string {
   return [providerName, ...entries.map((entry) => `  ${entry.label}: ${entry.value}`)].join("\n");
 }
 
-export function formatProviderDiagnosticError(
-  providerName: string,
-  error: unknown,
-): string {
+export function formatProviderDiagnosticError(providerName: string, error: unknown): string {
   return formatProviderDiagnostic(providerName, [
     {
       label: "Error",

@@ -10,9 +10,3 @@ export type VoiceCallerContext = {
   allowCustomCwd?: boolean;
   enableVoiceTools?: boolean;
 };
-
-export type VoiceMcpStdioConfig = {
-  command: string;
-  baseArgs: string[];
-  env?: Record<string, string>;
-};

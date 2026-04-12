@@ -1,11 +1,6 @@
 import { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
-import type {
-  CommandOptions,
-  CommandError,
-  OutputSchema,
-  ListResult,
-} from "../../output/index.js";
+import type { CommandOptions, CommandError, OutputSchema, ListResult } from "../../output/index.js";
 import type { LoopDaemonClient, LoopRecord } from "./types.js";
 
 interface InspectRow {
@@ -44,10 +39,16 @@ function toRows(loop: LoopRecord): InspectRow[] {
     { key: "VerifierModel", value: loop.verifierModel ?? "null" },
     { key: "Prompt", value: loop.prompt },
     { key: "VerifyPrompt", value: loop.verifyPrompt ?? "null" },
-    { key: "VerifyChecks", value: loop.verifyChecks.length > 0 ? loop.verifyChecks.join(" | ") : "[]" },
+    {
+      key: "VerifyChecks",
+      value: loop.verifyChecks.length > 0 ? loop.verifyChecks.join(" | ") : "[]",
+    },
     { key: "Archive", value: String(loop.archive) },
     { key: "SleepMs", value: String(loop.sleepMs) },
-    { key: "MaxIterations", value: loop.maxIterations === null ? "null" : String(loop.maxIterations) },
+    {
+      key: "MaxIterations",
+      value: loop.maxIterations === null ? "null" : String(loop.maxIterations),
+    },
     { key: "MaxTimeMs", value: loop.maxTimeMs === null ? "null" : String(loop.maxTimeMs) },
     { key: "CreatedAt", value: loop.createdAt },
     { key: "UpdatedAt", value: loop.updatedAt },

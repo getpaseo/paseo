@@ -3,19 +3,13 @@ import { resolve } from "node:path";
 
 import type { Logger } from "pino";
 
-import type {
-  AgentProvider,
-  ProviderSnapshotEntry,
-} from "./agent-sdk-types.js";
+import type { AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 import { AGENT_PROVIDER_IDS } from "./provider-manifest.js";
 
 const DEFAULT_CWD_KEY = "__default__";
 
-type ProviderSnapshotChangeListener = (
-  entries: ProviderSnapshotEntry[],
-  cwd?: string,
-) => void;
+type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd?: string) => void;
 
 export class ProviderSnapshotManager {
   private readonly snapshots = new Map<string, Map<AgentProvider, ProviderSnapshotEntry>>();
@@ -146,7 +140,10 @@ export class ProviderSnapshotManager {
         status: "error",
         error: toErrorMessage(error),
       });
-      this.logger.warn({ err: error, provider, cwd: cwdKey }, "Failed to refresh provider snapshot");
+      this.logger.warn(
+        { err: error, provider, cwd: cwdKey },
+        "Failed to refresh provider snapshot",
+      );
       this.emitChange(cwdKey);
     }
   }

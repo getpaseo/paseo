@@ -104,18 +104,8 @@ describe("useArchiveAgent", () => {
 
   it("applies archived agent close results to session state and cached lists", async () => {
     const queryClient = new QueryClient();
-    useSessionStore
-      .getState()
-      .initializeSession("server-a", {} as DaemonClient);
-    useSessionStore.getState().setAgents(
-      "server-a",
-      new Map([
-        [
-          "agent-1",
-          makeAgent(),
-        ],
-      ]),
-    );
+    useSessionStore.getState().initializeSession("server-a", {} as DaemonClient);
+    useSessionStore.getState().setAgents("server-a", new Map([["agent-1", makeAgent()]]));
     queryClient.setQueryData(["sidebarAgentsList", "server-a"], {
       entries: [{ agent: { id: "agent-1" } }, { agent: { id: "agent-2" } }],
     });
@@ -130,7 +120,10 @@ describe("useArchiveAgent", () => {
     });
 
     expect(
-      useSessionStore.getState().sessions["server-a"]?.agents.get("agent-1")?.archivedAt?.toISOString(),
+      useSessionStore
+        .getState()
+        .sessions["server-a"]?.agents.get("agent-1")
+        ?.archivedAt?.toISOString(),
     ).toBe("2026-04-01T04:00:00.000Z");
     expect(queryClient.getQueryData(["sidebarAgentsList", "server-a"])).toEqual({
       entries: [{ agent: { id: "agent-2" } }],

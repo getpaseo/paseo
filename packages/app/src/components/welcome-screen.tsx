@@ -326,10 +326,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
             <Text style={styles.setupHint}>
               You need the Paseo desktop app or server running on your computer first.
             </Text>
-            <Pressable
-              style={styles.setupLink}
-              onPress={() => openExternalUrl("https://paseo.sh")}
-            >
+            <Pressable style={styles.setupLink} onPress={() => openExternalUrl("https://paseo.sh")}>
               <Text style={styles.setupLinkText}>Get started at paseo.sh</Text>
               <ExternalLink size={14} color={theme.colors.accent} />
             </Pressable>

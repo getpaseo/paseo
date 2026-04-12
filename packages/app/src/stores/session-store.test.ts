@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  mergeWorkspaceSnapshotWithExisting,
-  type WorkspaceDescriptor,
-} from "./session-store";
+import { mergeWorkspaceSnapshotWithExisting, type WorkspaceDescriptor } from "./session-store";
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
@@ -16,7 +13,6 @@ function createWorkspace(
     workspaceKind: input.workspaceKind ?? "local_checkout",
     name: input.name ?? "main",
     status: input.status ?? "done",
-    activityAt: input.activityAt ?? null,
     diffStat: input.diffStat ?? null,
   };
 }

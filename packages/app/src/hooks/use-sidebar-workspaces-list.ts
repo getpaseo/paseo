@@ -7,6 +7,7 @@ import {
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { WorkspaceDescriptorPayload } from "@server/shared/messages";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 
 const EMPTY_ORDER: string[] = [];
@@ -21,7 +22,6 @@ export interface SidebarWorkspaceEntry {
   workspaceId: string;
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
-  activityAt: Date | null;
   statusBucket: SidebarStateBucket;
   diffStat: { additions: number; deletions: number } | null;
 }
@@ -34,7 +34,6 @@ export interface SidebarProjectEntry {
   statusBucket: SidebarStateBucket;
   activeCount: number;
   totalWorkspaces: number;
-  latestActivityAt: Date | null;
   workspaces: SidebarWorkspaceEntry[];
 }
 
@@ -67,15 +66,6 @@ function compareWorkspaceBaseline(
   left: SidebarWorkspaceEntry,
   right: SidebarWorkspaceEntry,
 ): number {
-  if (left.activityAt && right.activityAt) {
-    const dateDelta = right.activityAt.getTime() - left.activityAt.getTime();
-    if (dateDelta !== 0) {
-      return dateDelta;
-    }
-  } else if (left.activityAt || right.activityAt) {
-    return left.activityAt ? -1 : 1;
-  }
-
   const nameDelta = left.name.localeCompare(right.name, undefined, {
     numeric: true,
     sensitivity: "base",
@@ -91,15 +81,6 @@ function compareWorkspaceBaseline(
 }
 
 function compareProjectBaseline(left: SidebarProjectEntry, right: SidebarProjectEntry): number {
-  if (left.latestActivityAt && right.latestActivityAt) {
-    const dateDelta = right.latestActivityAt.getTime() - left.latestActivityAt.getTime();
-    if (dateDelta !== 0) {
-      return dateDelta;
-    }
-  } else if (left.latestActivityAt || right.latestActivityAt) {
-    return left.latestActivityAt ? -1 : 1;
-  }
-
   return left.projectName.localeCompare(right.projectName, undefined, {
     numeric: true,
     sensitivity: "base",
@@ -126,7 +107,6 @@ export function buildSidebarProjectsFromWorkspaces(input: {
         statusBucket: "done",
         activeCount: 0,
         totalWorkspaces: 0,
-        latestActivityAt: null,
         workspaces: [],
       } satisfies SidebarProjectEntry);
 
@@ -136,7 +116,6 @@ export function buildSidebarProjectsFromWorkspaces(input: {
       workspaceId: workspace.id,
       workspaceKind: workspace.workspaceKind,
       name: workspace.name,
-      activityAt: workspace.activityAt,
       statusBucket: workspace.status,
       diffStat: workspace.diffStat,
     };
@@ -147,12 +126,6 @@ export function buildSidebarProjectsFromWorkspaces(input: {
       project.activeCount += 1;
     }
     project.statusBucket = aggregateBucket(project.statusBucket, workspace.status);
-    if (
-      !project.latestActivityAt ||
-      (workspace.activityAt && workspace.activityAt.getTime() > project.latestActivityAt.getTime())
-    ) {
-      project.latestActivityAt = workspace.activityAt;
-    }
 
     byProject.set(workspace.projectId, project);
   }
@@ -251,17 +224,7 @@ function getWorkspaceOrderScopeKey(serverId: string, projectKey: string): string
   return `${serverId.trim()}::${projectKey.trim()}`;
 }
 
-function toWorkspaceDescriptor(payload: {
-  id: string;
-  projectId: string;
-  projectDisplayName: string;
-  projectRootPath: string;
-  projectKind: WorkspaceDescriptor["projectKind"];
-  workspaceKind: WorkspaceDescriptor["workspaceKind"];
-  name: string;
-  status: WorkspaceDescriptor["status"];
-  activityAt: string | null;
-}): WorkspaceDescriptor {
+function toWorkspaceDescriptor(payload: WorkspaceDescriptorPayload): WorkspaceDescriptor {
   return normalizeWorkspaceDescriptor(payload);
 }
 

@@ -552,7 +552,7 @@ describe("HostRuntimeController", () => {
     unsubscribe();
   });
 
-  it("logs typed reason codes for connection transitions", async () => {
+  it("does not emit legacy typed reason-code transition logs", async () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
       const host = makeHost({
@@ -586,7 +586,7 @@ describe("HostRuntimeController", () => {
         .map((call) => call[1] as { reasonCode?: string | null });
       const lastTransition = transitionPayloads[transitionPayloads.length - 1] ?? null;
 
-      expect(lastTransition?.reasonCode).toBe("transport_error");
+      expect(lastTransition?.reasonCode).toBeUndefined();
     } finally {
       infoSpy.mockRestore();
     }
@@ -1208,12 +1208,7 @@ describe("HostRuntimeStore", () => {
         archivedAt: stale.archivedAt ? new Date(stale.archivedAt) : null,
         attentionTimestamp: stale.attentionTimestamp ? new Date(stale.attentionTimestamp) : null,
       };
-      return new Map([
-        [
-          stale.id,
-          staleAgent,
-        ],
-      ]);
+      return new Map([[stale.id, staleAgent]]);
     });
 
     store.syncHosts([host]);
@@ -1329,7 +1324,7 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
-  it("keeps a custom host label when re-pairing with an advertised hostname", async () => {
+  it("uses the latest advertised hostname when re-pairing an existing relay host", async () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
@@ -1352,7 +1347,7 @@ describe("HostRuntimeStore", () => {
     await store.upsertConnectionFromOffer(makeOffer(), "mbp");
 
     const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
-    expect(pairedHost?.label).toBe("Custom name");
+    expect(pairedHost?.label).toBe("mbp");
 
     store.syncHosts([]);
   });

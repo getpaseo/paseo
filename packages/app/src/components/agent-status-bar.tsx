@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { View, Text, Platform, Pressable, Keyboard } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
@@ -300,7 +300,8 @@ function ControlledStatusBar({
     );
     return map;
   }, [modelOptions, provider]);
-  const effectiveProviderDefinitions = providerDefinitions ??
+  const effectiveProviderDefinitions =
+    providerDefinitions ??
     (PROVIDER_DEFINITION_MAP.has(provider) ? [PROVIDER_DEFINITION_MAP.get(provider)!] : []);
   const effectiveAllProviderModels = allProviderModels ?? fallbackAllProviderModels;
   const canSelectProviderInModelMenu = canSelectModelProvider ?? (() => true);
@@ -670,10 +671,7 @@ function ControlledStatusBar({
                   onClose={onDropdownClose}
                   renderTrigger={({ selectedModelLabel }) => (
                     <View
-                      style={[
-                        styles.sheetSelect,
-                        modelDisabled && styles.disabledSheetSelect,
-                      ]}
+                      style={[styles.sheetSelect, modelDisabled && styles.disabledSheetSelect]}
                       pointerEvents="none"
                       testID="agent-preferences-model"
                     >
@@ -850,7 +848,11 @@ function ControlledStatusBar({
 
 const EMPTY_MODES: AgentMode[] = [];
 
-export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStatusBarProps) {
+export const AgentStatusBar = memo(function AgentStatusBar({
+  agentId,
+  serverId,
+  onDropdownClose,
+}: AgentStatusBarProps) {
   const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
     useShallow((state) => {
@@ -929,7 +931,10 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
     return (models ?? []).map((model) => ({ id: model.id, label: model.label }));
   }, [models]);
   const favoriteKeys = useMemo(
-    () => new Set((preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite))),
+    () =>
+      new Set(
+        (preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite)),
+      ),
     [preferences.favoriteModels],
   );
 
@@ -948,7 +953,9 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
     <ControlledStatusBar
       provider={agent.provider}
       modeOptions={
-        modeOptions.length > 0 ? modeOptions : [{ id: agent.currentModeId ?? "", label: displayMode }]
+        modeOptions.length > 0
+          ? modeOptions
+          : [{ id: agent.currentModeId ?? "", label: displayMode }]
       }
       selectedModeId={agent.currentModeId ?? undefined}
       providerDefinitions={agentProviderDefinitions}
@@ -967,15 +974,14 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
         if (!client) {
           return;
         }
-        void updatePreferences(
-          (current) =>
-            mergeProviderPreferences({
-              preferences: current,
-              provider: agent.provider,
-              updates: {
-                model: modelId,
-              },
-            }),
+        void updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: agent.provider,
+            updates: {
+              model: modelId,
+            },
+          }),
         ).catch((error) => {
           console.warn("[AgentStatusBar] persist model preference failed", error);
         });
@@ -985,7 +991,9 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
       }}
       favoriteKeys={favoriteKeys}
       onToggleFavoriteModel={(provider, modelId) => {
-        void updatePreferences((current) => toggleFavoriteModel({ preferences: current, provider, modelId })).catch((error) => {
+        void updatePreferences((current) =>
+          toggleFavoriteModel({ preferences: current, provider, modelId }),
+        ).catch((error) => {
           console.warn("[AgentStatusBar] toggle favorite model failed", error);
         });
       }}
@@ -997,18 +1005,17 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
         }
         const activeModelId = modelSelection.activeModelId;
         if (activeModelId) {
-          void updatePreferences(
-            (current) =>
-              mergeProviderPreferences({
-                preferences: current,
-                provider: agent.provider,
-                updates: {
-                  model: activeModelId,
-                  thinkingByModel: {
-                    [activeModelId]: thinkingOptionId,
-                  },
+          void updatePreferences((current) =>
+            mergeProviderPreferences({
+              preferences: current,
+              provider: agent.provider,
+              updates: {
+                model: activeModelId,
+                thinkingByModel: {
+                  [activeModelId]: thinkingOptionId,
                 },
-              }),
+              },
+            }),
           ).catch((error) => {
             console.warn("[AgentStatusBar] persist thinking preference failed", error);
           });
@@ -1022,17 +1029,16 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
         if (!client) {
           return;
         }
-        void updatePreferences(
-          (current) =>
-            mergeProviderPreferences({
-              preferences: current,
-              provider: agent.provider,
-              updates: {
-                featureValues: {
-                  [featureId]: value,
-                },
+        void updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: agent.provider,
+            updates: {
+              featureValues: {
+                [featureId]: value,
               },
-            }),
+            },
+          }),
         ).catch((error) => {
           console.warn("[AgentStatusBar] persist feature preference failed", error);
         });
@@ -1046,7 +1052,7 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
       disabled={!client}
     />
   );
-}
+});
 
 export function DraftAgentStatusBar({
   providerDefinitions,
@@ -1088,7 +1094,10 @@ export function DraftAgentStatusBar({
     return thinkingOptions.map((option) => ({ id: option.id, label: option.label }));
   }, [thinkingOptions]);
   const favoriteKeys = useMemo(
-    () => new Set((preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite))),
+    () =>
+      new Set(
+        (preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite)),
+      ),
     [preferences.favoriteModels],
   );
 
@@ -1107,7 +1116,9 @@ export function DraftAgentStatusBar({
           onSelect={onSelectProviderAndModel}
           favoriteKeys={favoriteKeys}
           onToggleFavorite={(provider, modelId) => {
-            void updatePreferences((current) => toggleFavoriteModel({ preferences: current, provider, modelId })).catch((error) => {
+            void updatePreferences((current) =>
+              toggleFavoriteModel({ preferences: current, provider, modelId }),
+            ).catch((error) => {
               console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
             });
           }}
@@ -1154,7 +1165,9 @@ export function DraftAgentStatusBar({
         isModelLoading={isAllModelsLoading}
         favoriteKeys={favoriteKeys}
         onToggleFavoriteModel={(provider, modelId) => {
-          void updatePreferences((current) => toggleFavoriteModel({ preferences: current, provider, modelId })).catch((error) => {
+          void updatePreferences((current) =>
+            toggleFavoriteModel({ preferences: current, provider, modelId }),
+          ).catch((error) => {
             console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
           });
         }}

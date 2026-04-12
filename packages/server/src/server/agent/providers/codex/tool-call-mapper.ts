@@ -68,7 +68,10 @@ const CodexEditToolNameSchema = z.union([
   z.literal("apply_diff"),
 ]);
 const CodexSearchToolNameSchema = z.union([z.literal("search"), z.literal("web_search")]);
-const CodexSpeakToolNameSchema = z.string().min(1).refine((name) => isSpeakToolName(name.trim()));
+const CodexSpeakToolNameSchema = z
+  .string()
+  .min(1)
+  .refine((name) => isSpeakToolName(name.trim()));
 
 const CodexToolKindSchema = z.enum([
   "shell",
@@ -734,9 +737,10 @@ function parseFileChangeEntries(
     .filter((entry): entry is CodexFileChangeEntry => entry !== null);
 }
 
-function resolveFileChangeTextFields(
-  file: CodexFileChangeEntry | undefined,
-): { unifiedDiff?: string; newString?: string } {
+function resolveFileChangeTextFields(file: CodexFileChangeEntry | undefined): {
+  unifiedDiff?: string;
+  newString?: string;
+} {
   if (!file) {
     return {};
   }

@@ -153,7 +153,7 @@ describe("tool-call-display", () => {
     });
 
     expect(display).toEqual({
-      displayName: "Interacted with terminal",
+      displayName: "Terminal",
     });
   });
 
@@ -170,7 +170,7 @@ describe("tool-call-display", () => {
     });
 
     expect(display).toEqual({
-      displayName: "Interacted with terminal",
+      displayName: "Terminal",
       summary: "npm run test",
     });
   });

@@ -17,8 +17,7 @@ interface SidebarAnimationTargets {
 
 export function shouldSyncSidebarAnimation(input: SidebarAnimationSyncInput): boolean {
   return (
-    input.previousIsOpen !== input.nextIsOpen ||
-    input.previousWindowWidth !== input.nextWindowWidth
+    input.previousIsOpen !== input.nextIsOpen || input.previousWindowWidth !== input.nextWindowWidth
   );
 }
 

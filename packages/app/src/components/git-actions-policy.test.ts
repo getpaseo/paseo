@@ -91,7 +91,8 @@ describe("git-actions-policy", () => {
 
     expect(pushAction).toMatchObject({
       disabled: false,
-      unavailableMessage: "Push isn't available yet because there are newer changes to bring in first",
+      unavailableMessage:
+        "Push isn't available yet because there are newer changes to bring in first",
     });
   });
 
@@ -152,9 +153,9 @@ describe("git-actions-policy", () => {
       "merge-branch",
       "pr",
     ]);
-    expect(actions.secondary.some((action) => action.id === "pr" && action.label === "View PR")).toBe(
-      true,
-    );
+    expect(
+      actions.secondary.some((action) => action.id === "pr" && action.label === "View PR"),
+    ).toBe(true);
   });
 
   it("only shows archive worktree for paseo worktrees", () => {

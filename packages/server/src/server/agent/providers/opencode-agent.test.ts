@@ -124,7 +124,7 @@ const hasOpenCode = isBinaryInstalled("opencode");
         m.id.includes("gpt-4.1-nano") ||
         m.id.includes("gpt-4.1-mini") ||
         m.id.includes("gpt-5-nano") ||
-        m.id.includes("gpt-5.1-codex-mini") ||
+        m.id.includes("gpt-5.4-mini") ||
         m.id.includes("gpt-4o-mini"),
     );
 

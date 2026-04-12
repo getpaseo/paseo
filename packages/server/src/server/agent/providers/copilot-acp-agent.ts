@@ -97,7 +97,10 @@ export class CopilotACPAgentClient extends ACPAgentClient {
             label: "Binary",
             value: resolvedBinary ?? "not found",
           },
-          { label: "Version", value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown" },
+          {
+            label: "Version",
+            value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown",
+          },
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
         ]),

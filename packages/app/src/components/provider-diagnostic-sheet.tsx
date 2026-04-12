@@ -24,7 +24,8 @@ export function ProviderDiagnosticSheet({
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const providerLabel = AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === provider)?.label ?? provider;
+  const providerLabel =
+    AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === provider)?.label ?? provider;
 
   const fetchDiagnostic = useCallback(async () => {
     if (!client || !provider) return;

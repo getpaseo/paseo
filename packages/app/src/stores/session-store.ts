@@ -120,14 +120,12 @@ export interface WorkspaceDescriptor {
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   name: string;
   status: WorkspaceDescriptorPayload["status"];
-  activityAt: Date | null;
   diffStat: { additions: number; deletions: number } | null;
 }
 
 export function normalizeWorkspaceDescriptor(
   payload: WorkspaceDescriptorPayload,
 ): WorkspaceDescriptor {
-  const activityAt = payload.activityAt ? new Date(payload.activityAt) : null;
   return {
     id: normalizeWorkspaceIdentity(payload.id) ?? payload.id,
     projectId: payload.projectId,
@@ -137,7 +135,6 @@ export function normalizeWorkspaceDescriptor(
     workspaceKind: payload.workspaceKind,
     name: payload.name,
     status: payload.status,
-    activityAt: activityAt && !Number.isNaN(activityAt.getTime()) ? activityAt : null,
     diffStat: payload.diffStat ?? null,
   };
 }

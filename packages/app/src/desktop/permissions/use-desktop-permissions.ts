@@ -128,7 +128,9 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
         body: "If you can see this, desktop notifications work.",
       });
       if (!sent) {
-        setTestNotificationError("Notification was not delivered. Check System Settings > Notifications.");
+        setTestNotificationError(
+          "Notification was not delivered. Check System Settings > Notifications.",
+        );
       }
     } catch (error) {
       setTestNotificationError("Failed to send notification.");

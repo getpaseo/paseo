@@ -94,7 +94,9 @@ function readOverlayColor(input: unknown): string | null {
   return input;
 }
 
-export function readWindowControlsOverlayUpdate(input: unknown): WindowControlsOverlayUpdate | null {
+export function readWindowControlsOverlayUpdate(
+  input: unknown,
+): WindowControlsOverlayUpdate | null {
   if (!input || typeof input !== "object") {
     return null;
   }

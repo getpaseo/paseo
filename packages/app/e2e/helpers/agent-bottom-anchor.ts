@@ -2,6 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
 const NEAR_BOTTOM_THRESHOLD_PX = 72;
@@ -83,33 +84,36 @@ export function createReplyTurn(label: string): {
   };
 }
 
+type DaemonClientConfig = {
+  url: string;
+  clientId: string;
+  clientType: "cli";
+  webSocketFactory?: NodeWebSocketFactory;
+};
+
 async function loadDaemonClientConstructor(): Promise<
-  new (config: {
-    url: string;
-    clientId: string;
-    clientType: "cli";
-  }) => DaemonClientInstance
+  new (
+    config: DaemonClientConfig,
+  ) => DaemonClientInstance
 > {
-  const repoRoot = path.resolve(process.cwd(), "../..");
+  const repoRoot = path.resolve(__dirname, "../../../../");
   const moduleUrl = pathToFileURL(
     path.join(repoRoot, "packages/server/dist/server/server/exports.js"),
   ).href;
   const mod = (await import(moduleUrl)) as {
-    DaemonClient: new (config: {
-      url: string;
-      clientId: string;
-      clientType: "cli";
-    }) => DaemonClientInstance;
+    DaemonClient: new (config: DaemonClientConfig) => DaemonClientInstance;
   };
   return mod.DaemonClient;
 }
 
 export async function connectDaemonClient(): Promise<DaemonClientInstance> {
   const DaemonClient = await loadDaemonClientConstructor();
+  const webSocketFactory = createNodeWebSocketFactory();
   const client = new DaemonClient({
     url: getDaemonWsUrl(),
     clientId: `app-e2e-${randomUUID()}`,
     clientType: "cli",
+    webSocketFactory,
   });
   await client.connect();
   return client;
@@ -127,7 +131,7 @@ export async function seedBottomAnchorAgent(input: {
   const lineCount = Math.max(14, input.lineCount ?? 14);
   const created = await input.client.createAgent({
     provider: "codex",
-    model: "gpt-5.1-codex-mini",
+    model: "gpt-5.4-mini",
     thinkingOptionId: "low",
     modeId: "full-access",
     cwd: input.cwd,

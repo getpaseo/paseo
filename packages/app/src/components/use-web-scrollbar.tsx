@@ -105,7 +105,9 @@ export function useWebElementScrollbar(
 
   if (!enabled) return null;
 
-  return <WebDesktopScrollbarOverlay enabled metrics={metrics} onScrollToOffset={onScrollToOffset} />;
+  return (
+    <WebDesktopScrollbarOverlay enabled metrics={metrics} onScrollToOffset={onScrollToOffset} />
+  );
 }
 
 // ── RN ScrollView / FlatList scrollbar ───────────────────────────────

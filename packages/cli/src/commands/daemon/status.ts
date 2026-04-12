@@ -2,11 +2,7 @@ import type { Command } from "commander";
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
-import {
-  getOrCreateServerId,
-  findExecutable,
-  applyProviderEnv,
-} from "@getpaseo/server";
+import { getOrCreateServerId, findExecutable, applyProviderEnv } from "@getpaseo/server";
 
 const execFileAsync = promisify(execFile);
 import { tryConnectToDaemon } from "../../utils/client.js";
@@ -173,7 +169,9 @@ const PROVIDER_BINARIES: { label: string; binary: string }[] = [
   { label: "OpenCode", binary: "opencode" },
 ];
 
-async function checkProviderBinary(binary: string): Promise<{ path: string | null; version: string | null }> {
+async function checkProviderBinary(
+  binary: string,
+): Promise<{ path: string | null; version: string | null }> {
   const binaryPath = await findExecutable(binary);
   if (!binaryPath) {
     return { path: null, version: null };

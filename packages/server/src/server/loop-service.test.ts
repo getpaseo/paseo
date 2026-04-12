@@ -102,7 +102,10 @@ class ScriptedAgentSession implements AgentSession {
     };
   }
 
-  async startTurn(prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<{ turnId: string }> {
+  async startTurn(
+    prompt: AgentPromptInput,
+    _options?: AgentRunOptions,
+  ): Promise<{ turnId: string }> {
     const promptText = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
     const turnId = `turn-${++this.turnCount}`;
     this.interrupted = false;
@@ -183,7 +186,12 @@ class ScriptedAgentSession implements AgentSession {
         turnId,
       });
       if (this.interrupted) {
-        this.emit({ type: "turn_canceled", provider: this.provider, reason: "interrupted", turnId });
+        this.emit({
+          type: "turn_canceled",
+          provider: this.provider,
+          reason: "interrupted",
+          turnId,
+        });
         return;
       }
       this.emit({
@@ -236,7 +244,7 @@ describe("LoopService", () => {
             if (config.title?.includes("worker")) {
               return `worker run ${state.workerRuns}`;
             }
-            return "{\"passed\":true,\"reason\":\"not used\"}";
+            return '{"passed":true,"reason":"not used"}';
           },
         }),
       },
@@ -282,7 +290,7 @@ describe("LoopService", () => {
         claude: new ScriptedAgentClient("claude", {
           async onRun({ config }) {
             verifierConfigs.push(config);
-            return "{\"passed\":true,\"reason\":\"verified\"}";
+            return '{"passed":true,"reason":"verified"}';
           },
         }),
       },
@@ -338,7 +346,7 @@ describe("LoopService", () => {
               writeFileSync(path.join(workspaceDir, "done.txt"), "ok");
               return "created done.txt";
             }
-            return "{\"passed\":true,\"reason\":\"done.txt exists\"}";
+            return '{"passed":true,"reason":"done.txt exists"}';
           },
         }),
       },
@@ -394,8 +402,8 @@ describe("LoopService", () => {
             }
             const exists = pathExists(path.join(workspaceDir, "done.txt"));
             return exists
-              ? "{\"passed\":true,\"reason\":\"done.txt exists\"}"
-              : "{\"passed\":false,\"reason\":\"done.txt missing\"}";
+              ? '{"passed":true,"reason":"done.txt exists"}'
+              : '{"passed":false,"reason":"done.txt missing"}';
           },
         }),
       },
@@ -437,7 +445,7 @@ describe("LoopService", () => {
               await blocker;
               return "finished";
             }
-            return "{\"passed\":true,\"reason\":\"ok\"}";
+            return '{"passed":true,"reason":"ok"}';
           },
         }),
       },

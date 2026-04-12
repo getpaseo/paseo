@@ -66,10 +66,12 @@ export function findExecutableSync(
 
   if (deps.platform() === "win32") {
     try {
-      const out = deps.execFileSync("where.exe", [trimmed], {
-        encoding: "utf8",
-        windowsHide: true,
-      }).trim();
+      const out = deps
+        .execFileSync("where.exe", [trimmed], {
+          encoding: "utf8",
+          windowsHide: true,
+        })
+        .trim();
       return (
         out
           .split(/\r?\n/)
@@ -160,4 +162,3 @@ export function quoteWindowsArgument(argument: string): string {
   if (argument.startsWith('"') && argument.endsWith('"')) return argument;
   return `"${argument}"`;
 }
-

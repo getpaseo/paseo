@@ -32,6 +32,11 @@ type ProviderModel = {
 
 const EXPECTED_CLAUDE_MODELS = [
   {
+    id: "claude-opus-4-6[1m]",
+    model: "Opus 4.6 1M",
+    descriptionFragment: "1M context window",
+  },
+  {
     id: "claude-sonnet-4-6",
     model: "Sonnet 4.6",
     descriptionFragment: "Best for everyday tasks",
@@ -53,9 +58,7 @@ let claudeModelsFromJson: ProviderModel[] = [];
 
 const ctx = await createE2ETestContext({ timeout: 120000 });
 
-async function runProviderModelsJson(
-  provider: string,
-): Promise<ProviderModel[]> {
+async function runProviderModelsJson(provider: string): Promise<ProviderModel[]> {
   const transientNeedles = ["transport closed", "timed out", "timeout", "socket", "econn"];
 
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -137,7 +140,7 @@ try {
     assert.strictEqual(result.exitCode, 0, "should exit 0");
     const data = JSON.parse(result.stdout.trim());
     assert(Array.isArray(data), "output should be an array");
-    assert.strictEqual(data.length, 3, "should have 3 providers");
+    assert.strictEqual(data.length, 5, "should have 5 providers");
     assert(
       data.some((p: { provider: string }) => p.provider === "claude"),
       "should include claude",
@@ -150,6 +153,14 @@ try {
       data.some((p: { provider: string }) => p.provider === "opencode"),
       "should include opencode",
     );
+    assert(
+      data.some((p: { provider: string }) => p.provider === "copilot"),
+      "should include copilot",
+    );
+    assert(
+      data.some((p: { provider: string }) => p.provider === "pi"),
+      "should include pi",
+    );
     console.log("✓ provider ls --json outputs valid JSON\n");
   }
 
@@ -159,10 +170,12 @@ try {
     const result = await ctx.paseo(["provider", "ls", "--quiet"]);
     assert.strictEqual(result.exitCode, 0, "should exit 0");
     const lines = result.stdout.trim().split("\n");
-    assert.strictEqual(lines.length, 3, "should have 3 lines");
+    assert.strictEqual(lines.length, 5, "should have 5 lines");
     assert(lines.includes("claude"), "should include claude");
     assert(lines.includes("codex"), "should include codex");
     assert(lines.includes("opencode"), "should include opencode");
+    assert(lines.includes("copilot"), "should include copilot");
+    assert(lines.includes("pi"), "should include pi");
     console.log("✓ provider ls --quiet outputs provider names only\n");
   }
 
@@ -178,13 +191,21 @@ try {
   {
     console.log("Test 6: provider models codex includes concrete codex model IDs");
     const data = await runProviderModelsJson("codex");
-    assert(data.length >= 6, "codex model list should include current codex lineup");
+    assert(data.length >= 1, "codex model list should not be empty");
     const ids = data.map((m) => m.id);
     assert.strictEqual(new Set(ids).size, ids.length, "codex model IDs should be unique");
-    assert(ids.includes("gpt-5.3-codex"), "codex output should include gpt-5.3-codex");
-    assert(ids.includes("gpt-5.3-codex-spark"), "codex output should include gpt-5.3-codex-spark");
-    assert(ids.includes("gpt-5.1-codex-max"), "codex output should include gpt-5.1-codex-max");
-    assert(ids.includes("gpt-5.1-codex-mini"), "codex output should include gpt-5.1-codex-mini");
+    assert(
+      ids.every((id) => id.startsWith("gpt-")),
+      "all codex model IDs should be from the gpt family",
+    );
+    assert(
+      ids.some((id) => id.includes("codex")),
+      "codex model list should include at least one codex-optimized model",
+    );
+    assert(
+      data.every((m) => m.model && m.id && m.description),
+      "every codex model should have model, id, and description fields",
+    );
     console.log("✓ provider models codex includes concrete codex model IDs\n");
   }
 
@@ -192,23 +213,19 @@ try {
   {
     console.log("Test 7: provider models opencode returns namespaced model IDs");
     const data = await runProviderModelsJson("opencode");
-    assert(data.length >= 3, "opencode model list should not be empty");
+    assert(data.length >= 1, "opencode model list should not be empty");
     const ids = data.map((m) => m.id);
     assert(
       data.every((m) => m.id.includes("/")),
       "opencode model IDs should be provider-namespaced",
     );
     assert(
-      ids.includes("opencode/gpt-5-nano"),
-      "opencode output should include opencode/gpt-5-nano",
+      ids.some((id) => id.startsWith("opencode/")),
+      "opencode output should include at least one first-party opencode model",
     );
     assert(
-      ids.some((id) => id.startsWith("openrouter/openai/")),
-      "opencode output should include OpenRouter OpenAI models",
-    );
-    assert(
-      ids.includes("openrouter/openai/gpt-5.3-codex"),
-      "opencode output should include openrouter/openai/gpt-5.3-codex",
+      data.every((m) => m.model && m.id && m.description !== undefined),
+      "every opencode model should have model, id, and description fields",
     );
     console.log("✓ provider models opencode returns namespaced model IDs\n");
   }

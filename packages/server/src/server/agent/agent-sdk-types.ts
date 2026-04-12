@@ -312,7 +312,12 @@ export type AgentStreamEvent =
     }
   | { type: "turn_canceled"; provider: AgentProvider; reason: string; turnId?: string }
   | { type: "timeline"; item: AgentTimelineItem; provider: AgentProvider; turnId?: string }
-  | { type: "permission_requested"; provider: AgentProvider; request: AgentPermissionRequest; turnId?: string }
+  | {
+      type: "permission_requested";
+      provider: AgentProvider;
+      request: AgentPermissionRequest;
+      turnId?: string;
+    }
   | {
       type: "permission_resolved";
       provider: AgentProvider;

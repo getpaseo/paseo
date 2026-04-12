@@ -162,7 +162,12 @@ export const LeftSidebar = memo(function LeftSidebar({
     [daemons],
   );
   const renderHostOption = useCallback(
-    ({ option, selected, active, onPress }: {
+    ({
+      option,
+      selected,
+      active,
+      onPress,
+    }: {
       option: ComboboxOption;
       selected: boolean;
       active: boolean;
@@ -187,11 +192,8 @@ export const LeftSidebar = memo(function LeftSidebar({
     serverId: activeServerId,
     enabled: isOpen,
   });
-  const {
-    collapsedProjectKeys,
-    shortcutIndexByWorkspaceKey,
-    toggleProjectCollapsed,
-  } = useSidebarShortcutModel(projects);
+  const { collapsedProjectKeys, shortcutIndexByWorkspaceKey, toggleProjectCollapsed } =
+    useSidebarShortcutModel(projects);
 
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 
@@ -533,7 +535,12 @@ function MobileSidebar({
 
       <GestureDetector gesture={closeGesture} touchAction="pan-y">
         <Animated.View
-          style={[staticStyles.mobileSidebar, mobileSidebarInsetStyle, sidebarAnimatedStyle, { backgroundColor: theme.colors.surfaceSidebar }]}
+          style={[
+            staticStyles.mobileSidebar,
+            mobileSidebarInsetStyle,
+            sidebarAnimatedStyle,
+            { backgroundColor: theme.colors.surfaceSidebar },
+          ]}
           pointerEvents="auto"
         >
           <View style={styles.sidebarContent} pointerEvents="auto">
@@ -550,7 +557,6 @@ function MobileSidebar({
                 serverId={activeServerId}
                 collapsedProjectKeys={collapsedProjectKeys}
                 onToggleProjectCollapsed={toggleProjectCollapsed}
-
                 shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
                 projects={projects}
                 isRefreshing={isManualRefresh && isRevalidating}
@@ -719,116 +725,121 @@ function DesktopSidebar({
   }
 
   return (
-    <Animated.View style={[staticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insetsTop }]}>
+    <Animated.View
+      style={[staticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insetsTop }]}
+    >
       <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
-      <View style={styles.sidebarDragArea}>
-        <TitlebarDragRegion />
-        {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
-        <View style={styles.sidebarHeader}>
-          <View style={styles.sidebarHeaderRow}>
-            <SessionsButton onPress={handleViewMore} />
+        <View style={styles.sidebarDragArea}>
+          <TitlebarDragRegion />
+          {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
+          <View style={styles.sidebarHeader}>
+            <View style={styles.sidebarHeaderRow}>
+              <SessionsButton onPress={handleViewMore} />
+            </View>
           </View>
         </View>
-      </View>
 
-      {isInitialLoad ? (
-        <SidebarAgentListSkeleton />
-      ) : (
-        <SidebarWorkspaceList
-          serverId={activeServerId}
-          collapsedProjectKeys={collapsedProjectKeys}
-          onToggleProjectCollapsed={toggleProjectCollapsed}
-          shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-          projects={projects}
-          isRefreshing={isManualRefresh && isRevalidating}
-          onRefresh={handleRefresh}
-          onAddProject={handleOpenProject}
-        />
-      )}
+        {isInitialLoad ? (
+          <SidebarAgentListSkeleton />
+        ) : (
+          <SidebarWorkspaceList
+            serverId={activeServerId}
+            collapsedProjectKeys={collapsedProjectKeys}
+            onToggleProjectCollapsed={toggleProjectCollapsed}
+            shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+            projects={projects}
+            isRefreshing={isManualRefresh && isRevalidating}
+            onRefresh={handleRefresh}
+            onAddProject={handleOpenProject}
+          />
+        )}
 
-      <View style={styles.sidebarFooter}>
-        <View style={styles.footerHostSlot}>
-          <Pressable
-            ref={hostTriggerRef}
-            style={({ hovered = false }) => [
-              styles.hostTrigger,
-              hovered && styles.hostTriggerHovered,
+        <View style={styles.sidebarFooter}>
+          <View style={styles.footerHostSlot}>
+            <Pressable
+              ref={hostTriggerRef}
+              style={({ hovered = false }) => [
+                styles.hostTrigger,
+                hovered && styles.hostTriggerHovered,
+              ]}
+              onPress={() => setIsHostPickerOpen(true)}
+              disabled={hostOptions.length === 0}
+            >
+              <View style={hostStatusDotStyle} />
+              <Text style={styles.hostTriggerText} numberOfLines={1}>
+                {activeHostLabel}
+              </Text>
+            </Pressable>
+          </View>
+          <View style={styles.footerIconRow}>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Pressable
+                  style={styles.footerIconButton}
+                  testID="sidebar-add-project"
+                  nativeID="sidebar-add-project"
+                  collapsable={false}
+                  accessible
+                  accessibilityLabel="Add project"
+                  accessibilityRole="button"
+                  onPress={handleOpenProject}
+                >
+                  {({ hovered }) => (
+                    <Plus
+                      size={theme.iconSize.md}
+                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                    />
+                  )}
+                </Pressable>
+              </TooltipTrigger>
+              <TooltipContent side="top" align="center" offset={8}>
+                <View style={styles.tooltipRow}>
+                  <Text style={styles.tooltipText}>Add project</Text>
+                  {newAgentKeys ? <Shortcut chord={newAgentKeys} /> : null}
+                </View>
+              </TooltipContent>
+            </Tooltip>
+            <Pressable
+              style={styles.footerIconButton}
+              testID="sidebar-settings"
+              nativeID="sidebar-settings"
+              collapsable={false}
+              accessible
+              accessibilityLabel="Settings"
+              accessibilityRole="button"
+              onPress={handleSettings}
+            >
+              {({ hovered }) => (
+                <Settings
+                  size={theme.iconSize.md}
+                  color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                />
+              )}
+            </Pressable>
+          </View>
+          <Combobox
+            options={hostOptions}
+            value={activeServerId ?? ""}
+            onSelect={handleHostSelect}
+            renderOption={renderHostOption}
+            searchable={false}
+            title="Switch host"
+            searchPlaceholder="Search hosts..."
+            open={isHostPickerOpen}
+            onOpenChange={setIsHostPickerOpen}
+            anchorRef={hostTriggerRef}
+          />
+        </View>
+
+        {/* Resize handle - absolutely positioned over right border */}
+        <GestureDetector gesture={resizeGesture}>
+          <View
+            style={[
+              styles.resizeHandle,
+              Platform.OS === "web" && ({ cursor: "col-resize" } as any),
             ]}
-            onPress={() => setIsHostPickerOpen(true)}
-            disabled={hostOptions.length === 0}
-          >
-            <View style={hostStatusDotStyle} />
-            <Text style={styles.hostTriggerText} numberOfLines={1}>
-              {activeHostLabel}
-            </Text>
-          </Pressable>
-        </View>
-        <View style={styles.footerIconRow}>
-          <Tooltip delayDuration={300}>
-            <TooltipTrigger asChild>
-              <Pressable
-                style={styles.footerIconButton}
-                testID="sidebar-add-project"
-                nativeID="sidebar-add-project"
-                collapsable={false}
-                accessible
-                accessibilityLabel="Add project"
-                accessibilityRole="button"
-                onPress={handleOpenProject}
-              >
-                {({ hovered }) => (
-                  <Plus
-                    size={theme.iconSize.md}
-                    color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                  />
-                )}
-              </Pressable>
-            </TooltipTrigger>
-            <TooltipContent side="top" align="center" offset={8}>
-              <View style={styles.tooltipRow}>
-                <Text style={styles.tooltipText}>Add project</Text>
-                {newAgentKeys ? <Shortcut chord={newAgentKeys} /> : null}
-              </View>
-            </TooltipContent>
-          </Tooltip>
-          <Pressable
-            style={styles.footerIconButton}
-            testID="sidebar-settings"
-            nativeID="sidebar-settings"
-            collapsable={false}
-            accessible
-            accessibilityLabel="Settings"
-            accessibilityRole="button"
-            onPress={handleSettings}
-          >
-            {({ hovered }) => (
-              <Settings
-                size={theme.iconSize.md}
-                color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-              />
-            )}
-          </Pressable>
-        </View>
-        <Combobox
-          options={hostOptions}
-          value={activeServerId ?? ""}
-          onSelect={handleHostSelect}
-          renderOption={renderHostOption}
-          searchable={false}
-          title="Switch host"
-          searchPlaceholder="Search hosts..."
-          open={isHostPickerOpen}
-          onOpenChange={setIsHostPickerOpen}
-          anchorRef={hostTriggerRef}
-        />
-      </View>
-
-      {/* Resize handle - absolutely positioned over right border */}
-      <GestureDetector gesture={resizeGesture}>
-        <View
-          style={[styles.resizeHandle, Platform.OS === "web" && ({ cursor: "col-resize" } as any)]}
-        />
-      </GestureDetector>
+          />
+        </GestureDetector>
       </View>
     </Animated.View>
   );

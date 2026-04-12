@@ -165,8 +165,7 @@ describe("convertClaudeHistoryEntry", () => {
       type: "user",
       message: {
         role: "user",
-        content:
-          "<local-command-stdout>Set model to claude-opus-4-6</local-command-stdout>",
+        content: "<local-command-stdout>Set model to claude-opus-4-6</local-command-stdout>",
       },
       userType: "external",
     };
@@ -176,7 +175,7 @@ describe("convertClaudeHistoryEntry", () => {
       message: {
         role: "user",
         content:
-          '<local-command-stdout>Set model to \u001b[1mopus (claude-opus-4-6)\u001b[22m</local-command-stdout>',
+          "<local-command-stdout>Set model to \u001b[1mopus (claude-opus-4-6)\u001b[22m</local-command-stdout>",
       },
     };
 

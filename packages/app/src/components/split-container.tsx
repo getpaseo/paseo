@@ -177,7 +177,6 @@ const MountedTabSlot = memo(function MountedTabSlot({
   paneId,
   buildPaneContentModel,
 }: MountedTabSlotProps) {
-
   const content = useMemo(
     () =>
       buildPaneContentModel({
@@ -877,12 +876,7 @@ function SplitPaneView({
 
   return (
     <View ref={paneRef} collapsable={false} style={styles.pane}>
-      <View
-        style={[
-          styles.paneTabs,
-          { paddingLeft: padding.left, paddingRight: padding.right },
-        ]}
-      >
+      <View style={[styles.paneTabs, { paddingLeft: padding.left, paddingRight: padding.right }]}>
         <TitlebarDragRegion />
         <WorkspaceDesktopTabsRow
           paneId={pane.id}
@@ -920,27 +914,25 @@ function SplitPaneView({
       </View>
 
       <View style={styles.paneContent}>
-        {mountedPaneTabIds.length > 0 ? (
-          mountedPaneTabIds.map((tabId) => {
-            const tabDescriptor = tabDescriptorMap.get(tabId);
-            if (!tabDescriptor) {
-              return null;
-            }
+        {mountedPaneTabIds.length > 0
+          ? mountedPaneTabIds.map((tabId) => {
+              const tabDescriptor = tabDescriptorMap.get(tabId);
+              if (!tabDescriptor) {
+                return null;
+              }
 
-            return (
-              <MountedTabSlot
-                key={tabId}
-                tabDescriptor={tabDescriptor}
-                isVisible={tabId === activeTabDescriptor?.tabId}
-                isPaneFocused={isFocused && tabId === activeTabDescriptor?.tabId}
-                paneId={pane.id}
-                buildPaneContentModel={buildPaneContentModel}
-              />
-            );
-          })
-        ) : (
-          (renderPaneEmptyState?.() ?? null)
-        )}
+              return (
+                <MountedTabSlot
+                  key={tabId}
+                  tabDescriptor={tabDescriptor}
+                  isVisible={tabId === activeTabDescriptor?.tabId}
+                  isPaneFocused={isFocused && tabId === activeTabDescriptor?.tabId}
+                  paneId={pane.id}
+                  buildPaneContentModel={buildPaneContentModel}
+                />
+              );
+            })
+          : (renderPaneEmptyState?.() ?? null)}
         <SplitDropZone paneId={pane.id} active={showDropZones} preview={dropPreview} />
       </View>
     </View>

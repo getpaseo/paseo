@@ -15,7 +15,6 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     workspaceId: "/repo",
     workspaceKind: "directory",
     name: "paseo",
-    activityAt: null,
     statusBucket: "done",
     diffStat: null,
     ...overrides,
@@ -31,7 +30,6 @@ function project(overrides: Partial<SidebarProjectEntry> = {}): SidebarProjectEn
     statusBucket: "done",
     activeCount: 0,
     totalWorkspaces: 1,
-    latestActivityAt: null,
     workspaces: [workspace()],
     ...overrides,
   };
@@ -87,7 +85,7 @@ describe("buildSidebarProjectRowModel", () => {
     });
   });
 
-  it("flattens git projects with a single workspace and keeps the new worktree action", () => {
+  it("keeps single-workspace git projects as sections with the new worktree action", () => {
     const flattenedWorkspace = workspace({
       workspaceId: "/repo/main",
       workspaceKind: "local_checkout",
@@ -102,10 +100,8 @@ describe("buildSidebarProjectRowModel", () => {
     });
 
     expect(result).toEqual({
-      kind: "workspace_link",
-      workspace: flattenedWorkspace,
-      selected: false,
-      chevron: null,
+      kind: "project_section",
+      chevron: "expand",
       trailingAction: "new_worktree",
     });
   });
@@ -131,10 +127,10 @@ describe("buildSidebarProjectRowModel", () => {
 });
 
 describe("isSidebarProjectFlattened", () => {
-  it("returns true for single-workspace projects regardless of kind", () => {
+  it("returns true only for single-workspace non-git projects", () => {
     expect(
       isSidebarProjectFlattened(project({ projectKind: "git", workspaces: [workspace()] })),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isSidebarProjectFlattened(project({ projectKind: "non_git", workspaces: [workspace()] })),
     ).toBe(true);

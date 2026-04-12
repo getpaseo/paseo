@@ -75,23 +75,19 @@ describe("deriveModesFromACP", () => {
   });
 
   test("falls back to config options when explicit mode state is absent", () => {
-    const result = deriveModesFromACP(
-      [{ id: "fallback", label: "Fallback" }],
-      null,
-      [
-        {
-          id: "mode",
-          name: "Mode",
-          category: "mode",
-          type: "select",
-          currentValue: "acceptEdits",
-          options: [
-            { value: "default", name: "Always Ask" },
-            { value: "acceptEdits", name: "Accept File Edits" },
-          ],
-        },
-      ],
-    );
+    const result = deriveModesFromACP([{ id: "fallback", label: "Fallback" }], null, [
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: "acceptEdits",
+        options: [
+          { value: "default", name: "Always Ask" },
+          { value: "acceptEdits", name: "Accept File Edits" },
+        ],
+      },
+    ]);
 
     expect(result).toEqual({
       modes: [
@@ -103,13 +99,43 @@ describe("deriveModesFromACP", () => {
   });
 
   test("returns an empty mode list when fallback modes are empty and config only exposes thought levels", () => {
-    const result = deriveModesFromACP(
-      [],
-      null,
+    const result = deriveModesFromACP([], null, [
+      {
+        id: "thought_level",
+        name: "Thinking",
+        category: "thought_level",
+        type: "select",
+        currentValue: "medium",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "medium", name: "Medium" },
+          { value: "high", name: "High" },
+        ],
+      },
+    ]);
+
+    expect(result).toEqual({
+      modes: [],
+      currentModeId: null,
+    });
+  });
+});
+
+describe("deriveModelDefinitionsFromACP", () => {
+  test("attaches shared thinking options to ACP model state", () => {
+    const result = deriveModelDefinitionsFromACP(
+      "claude-acp",
+      {
+        availableModels: [
+          { modelId: "haiku", name: "Haiku", description: "Fast" },
+          { modelId: "sonnet", name: "Sonnet", description: "Balanced" },
+        ],
+        currentModelId: "haiku",
+      },
       [
         {
-          id: "thought_level",
-          name: "Thinking",
+          id: "reasoning",
+          name: "Reasoning",
           category: "thought_level",
           type: "select",
           currentValue: "medium",
@@ -122,36 +148,6 @@ describe("deriveModesFromACP", () => {
       ],
     );
 
-    expect(result).toEqual({
-      modes: [],
-      currentModeId: null,
-    });
-  });
-});
-
-describe("deriveModelDefinitionsFromACP", () => {
-  test("attaches shared thinking options to ACP model state", () => {
-    const result = deriveModelDefinitionsFromACP("claude-acp", {
-      availableModels: [
-        { modelId: "haiku", name: "Haiku", description: "Fast" },
-        { modelId: "sonnet", name: "Sonnet", description: "Balanced" },
-      ],
-      currentModelId: "haiku",
-    }, [
-      {
-        id: "reasoning",
-        name: "Reasoning",
-        category: "thought_level",
-        type: "select",
-        currentValue: "medium",
-        options: [
-          { value: "low", name: "Low" },
-          { value: "medium", name: "Medium" },
-          { value: "high", name: "High" },
-        ],
-      },
-    ]);
-
     expect(result).toEqual([
       {
         provider: "claude-acp",
@@ -160,9 +156,27 @@ describe("deriveModelDefinitionsFromACP", () => {
         description: "Fast",
         isDefault: true,
         thinkingOptions: [
-          { id: "low", label: "Low", description: undefined, isDefault: false, metadata: undefined },
-          { id: "medium", label: "Medium", description: undefined, isDefault: true, metadata: undefined },
-          { id: "high", label: "High", description: undefined, isDefault: false, metadata: undefined },
+          {
+            id: "low",
+            label: "Low",
+            description: undefined,
+            isDefault: false,
+            metadata: undefined,
+          },
+          {
+            id: "medium",
+            label: "Medium",
+            description: undefined,
+            isDefault: true,
+            metadata: undefined,
+          },
+          {
+            id: "high",
+            label: "High",
+            description: undefined,
+            isDefault: false,
+            metadata: undefined,
+          },
         ],
         defaultThinkingOptionId: "medium",
       },
@@ -173,9 +187,27 @@ describe("deriveModelDefinitionsFromACP", () => {
         description: "Balanced",
         isDefault: false,
         thinkingOptions: [
-          { id: "low", label: "Low", description: undefined, isDefault: false, metadata: undefined },
-          { id: "medium", label: "Medium", description: undefined, isDefault: true, metadata: undefined },
-          { id: "high", label: "High", description: undefined, isDefault: false, metadata: undefined },
+          {
+            id: "low",
+            label: "Low",
+            description: undefined,
+            isDefault: false,
+            metadata: undefined,
+          },
+          {
+            id: "medium",
+            label: "Medium",
+            description: undefined,
+            isDefault: true,
+            metadata: undefined,
+          },
+          {
+            id: "high",
+            label: "High",
+            description: undefined,
+            isDefault: false,
+            metadata: undefined,
+          },
         ],
         defaultThinkingOptionId: "medium",
       },
@@ -604,9 +636,7 @@ describe("ACPAgentSession", () => {
           thinkingOptionId: null,
           modeId: "xhigh",
         })),
-        getAvailableModes: vi.fn(async () => [
-          { id: "xhigh", label: "xhigh" },
-        ]),
+        getAvailableModes: vi.fn(async () => [{ id: "xhigh", label: "xhigh" }]),
         getCurrentMode: vi.fn(async () => "xhigh"),
         setMode: vi.fn(),
         getPendingPermissions: vi.fn(() => []),

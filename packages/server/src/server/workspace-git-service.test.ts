@@ -1,0 +1,435 @@
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { CheckoutStatusGit, PullRequestStatusResult } from "../utils/checkout-git.js";
+import {
+  WorkspaceGitServiceImpl,
+  type WorkspaceGitRuntimeSnapshot,
+} from "./workspace-git-service.js";
+
+function createLogger() {
+  const logger = {
+    child: () => logger,
+    debug: vi.fn(),
+    warn: vi.fn(),
+  };
+  return logger;
+}
+
+function createSnapshot(
+  cwd: string,
+  overrides?: {
+    git?: Partial<WorkspaceGitRuntimeSnapshot["git"]>;
+    github?: Partial<WorkspaceGitRuntimeSnapshot["github"]>;
+  },
+): WorkspaceGitRuntimeSnapshot {
+  const base: WorkspaceGitRuntimeSnapshot = {
+    cwd,
+    git: {
+      isGit: true,
+      repoRoot: cwd,
+      mainRepoRoot: null,
+      currentBranch: "main",
+      remoteUrl: "https://github.com/acme/repo.git",
+      isPaseoOwnedWorktree: false,
+      isDirty: false,
+      aheadBehind: { ahead: 0, behind: 0 },
+      aheadOfOrigin: 0,
+      behindOfOrigin: 0,
+      diffStat: { additions: 1, deletions: 0 },
+    },
+    github: {
+      featuresEnabled: true,
+      pullRequest: {
+        url: "https://github.com/acme/repo/pull/123",
+        title: "Update feature",
+        state: "open",
+        baseRefName: "main",
+        headRefName: "feature",
+        isMerged: false,
+      },
+      error: null,
+      refreshedAt: "2026-04-12T00:00:00.000Z",
+    },
+  };
+
+  return {
+    cwd,
+    git: {
+      ...base.git,
+      ...overrides?.git,
+    },
+    github: {
+      ...base.github,
+      ...overrides?.github,
+      pullRequest:
+        overrides?.github && "pullRequest" in overrides.github
+          ? (overrides.github.pullRequest ?? null)
+          : base.github.pullRequest,
+      error:
+        overrides?.github && "error" in overrides.github
+          ? (overrides.github.error ?? null)
+          : base.github.error,
+    },
+  };
+}
+
+function createCheckoutStatus(
+  cwd: string,
+  overrides?: Partial<CheckoutStatusGit>,
+): CheckoutStatusGit {
+  return {
+    isGit: true,
+    repoRoot: cwd,
+    currentBranch: "main",
+    isDirty: false,
+    baseRef: "main",
+    aheadBehind: { ahead: 0, behind: 0 },
+    aheadOfOrigin: 0,
+    behindOfOrigin: 0,
+    hasRemote: true,
+    remoteUrl: "https://github.com/acme/repo.git",
+    isPaseoOwnedWorktree: false,
+    ...overrides,
+  };
+}
+
+function createPullRequestStatusResult(
+  overrides?: Partial<PullRequestStatusResult>,
+): PullRequestStatusResult {
+  return {
+    status: {
+      url: "https://github.com/acme/repo/pull/123",
+      title: "Update feature",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature",
+      isMerged: false,
+    },
+    githubFeaturesEnabled: true,
+    ...overrides,
+  };
+}
+
+function createWatcher() {
+  return {
+    close: vi.fn(),
+    on: vi.fn().mockReturnThis(),
+  };
+}
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function createService(options?: {
+  getCheckoutStatus?: ReturnType<typeof vi.fn>;
+  getCheckoutShortstat?: ReturnType<typeof vi.fn>;
+  getPullRequestStatus?: ReturnType<typeof vi.fn>;
+  resolveGhPath?: ReturnType<typeof vi.fn>;
+  resolveAbsoluteGitDir?: ReturnType<typeof vi.fn>;
+  hasOriginRemote?: ReturnType<typeof vi.fn>;
+  runGitFetch?: ReturnType<typeof vi.fn>;
+  watch?: ReturnType<typeof vi.fn>;
+  now?: () => Date;
+}) {
+  return new WorkspaceGitServiceImpl({
+    logger: createLogger() as any,
+    paseoHome: "/tmp/paseo-test",
+    deps: {
+      watch: options?.watch ?? ((() => createWatcher()) as unknown as any),
+      getCheckoutStatus:
+        options?.getCheckoutStatus ?? vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
+      getCheckoutShortstat:
+        options?.getCheckoutShortstat ??
+        vi.fn(async () => ({
+          additions: 1,
+          deletions: 0,
+        })),
+      getPullRequestStatus:
+        options?.getPullRequestStatus ?? vi.fn(async () => createPullRequestStatusResult()),
+      resolveGhPath: options?.resolveGhPath ?? vi.fn(async () => "/usr/bin/gh"),
+      resolveAbsoluteGitDir: options?.resolveAbsoluteGitDir ?? vi.fn(async () => "/tmp/repo/.git"),
+      hasOriginRemote: options?.hasOriginRemote ?? vi.fn(async () => false),
+      runGitFetch: options?.runGitFetch ?? vi.fn(async () => {}),
+      now: options?.now ?? (() => new Date("2026-04-12T00:00:00.000Z")),
+    },
+  });
+}
+
+describe("WorkspaceGitServiceImpl", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("subscribe returns an initial workspace runtime snapshot", async () => {
+    const service = createService();
+
+    const listener = vi.fn();
+    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+
+    expect(subscription.initial).toEqual(createSnapshot("/tmp/repo"));
+    expect(listener).not.toHaveBeenCalled();
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("getSnapshot populates github pull request state in the runtime snapshot", async () => {
+    const getPullRequestStatus = vi.fn(async () =>
+      createPullRequestStatusResult({
+        status: {
+          url: "https://github.com/acme/repo/pull/999",
+          title: "Ship runtime centralization",
+          state: "open",
+          baseRefName: "main",
+          headRefName: "workspace-git-service",
+          isMerged: false,
+        },
+      }),
+    );
+
+    const service = createService({
+      getPullRequestStatus,
+      now: () => new Date("2026-04-12T02:03:04.000Z"),
+    });
+
+    await expect(service.getSnapshot("/tmp/repo")).resolves.toEqual(
+      createSnapshot("/tmp/repo", {
+        github: {
+          pullRequest: {
+            url: "https://github.com/acme/repo/pull/999",
+            title: "Ship runtime centralization",
+            state: "open",
+            baseRefName: "main",
+            headRefName: "workspace-git-service",
+            isMerged: false,
+          },
+          refreshedAt: "2026-04-12T02:03:04.000Z",
+        },
+      }),
+    );
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+
+    service.dispose();
+  });
+
+  test("multiple listeners on the same workspace share one GitHub pull request lookup", async () => {
+    const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
+    const resolveAbsoluteGitDir = vi.fn(async () => "/tmp/repo/.git");
+
+    const service = createService({
+      getPullRequestStatus,
+      resolveAbsoluteGitDir,
+    });
+
+    const [first, second] = await Promise.all([
+      service.subscribe({ cwd: "/tmp/repo" }, vi.fn()),
+      service.subscribe({ cwd: "/tmp/repo" }, vi.fn()),
+    ]);
+
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
+    expect((service as any).workspaceTargets.size).toBe(1);
+
+    first.unsubscribe();
+    second.unsubscribe();
+    service.dispose();
+  });
+
+  test("equivalent cwd strings share one workspace target across service entry points", async () => {
+    const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
+    const resolveAbsoluteGitDir = vi.fn(async () => "/tmp/repo/.git");
+
+    const service = createService({
+      getPullRequestStatus,
+      resolveAbsoluteGitDir,
+    });
+
+    const subscription = await service.subscribe({ cwd: "/tmp/repo/." }, vi.fn());
+
+    expect(subscription.initial).toEqual(createSnapshot("/tmp/repo"));
+    expect(service.peekSnapshot("/tmp/repo")).toEqual(createSnapshot("/tmp/repo"));
+
+    await service.refresh("/tmp/repo");
+    await expect(service.getSnapshot("/tmp/repo/.")).resolves.toEqual(createSnapshot("/tmp/repo"));
+
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
+    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
+    expect((service as any).workspaceTargets.size).toBe(1);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("repo-level fetch intervals are shared for workspaces in the same repo", async () => {
+    const runGitFetch = vi.fn(async () => {});
+    const hasOriginRemote = vi.fn(async () => true);
+
+    const service = createService({
+      resolveAbsoluteGitDir: vi.fn(async () => "/tmp/repo/.git"),
+      hasOriginRemote,
+      runGitFetch,
+    });
+
+    const first = await service.subscribe({ cwd: "/tmp/repo" }, vi.fn());
+    const second = await service.subscribe({ cwd: "/tmp/repo/packages/server" }, vi.fn());
+    await flushPromises();
+
+    expect(hasOriginRemote).toHaveBeenCalledTimes(1);
+    expect(runGitFetch).toHaveBeenCalledTimes(1);
+    expect((service as any).repoTargets.size).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(180_000);
+    await flushPromises();
+
+    expect(runGitFetch).toHaveBeenCalledTimes(2);
+
+    first.unsubscribe();
+    second.unsubscribe();
+    service.dispose();
+  });
+
+  test("explicit refresh recomputes github state and notifies listeners", async () => {
+    const getPullRequestStatus = vi
+      .fn<() => Promise<PullRequestStatusResult>>()
+      .mockResolvedValueOnce(
+        createPullRequestStatusResult({
+          status: {
+            url: "https://github.com/acme/repo/pull/123",
+            title: "Before refresh",
+            state: "open",
+            baseRefName: "main",
+            headRefName: "feature",
+            isMerged: false,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createPullRequestStatusResult({
+          status: {
+            url: "https://github.com/acme/repo/pull/123",
+            title: "After refresh",
+            state: "merged",
+            baseRefName: "main",
+            headRefName: "feature",
+            isMerged: true,
+          },
+        }),
+      );
+
+    const nowValues = [new Date("2026-04-12T00:00:00.000Z"), new Date("2026-04-12T00:05:00.000Z")];
+    const service = createService({
+      getPullRequestStatus,
+      now: () => nowValues.shift() ?? new Date("2026-04-12T00:05:00.000Z"),
+    });
+
+    const listener = vi.fn();
+    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+
+    expect(subscription.initial.github.pullRequest?.title).toBe("Before refresh");
+
+    service.refresh("/tmp/repo");
+    await (service as any).workspaceTargets.get("/tmp/repo")?.refreshPromise;
+    await flushPromises();
+
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(
+      createSnapshot("/tmp/repo", {
+        github: {
+          pullRequest: {
+            url: "https://github.com/acme/repo/pull/123",
+            title: "After refresh",
+            state: "merged",
+            baseRefName: "main",
+            headRefName: "feature",
+            isMerged: true,
+          },
+          refreshedAt: "2026-04-12T00:05:00.000Z",
+        },
+      }),
+    );
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("unchanged runtime snapshots do not emit duplicate updates", async () => {
+    const getCheckoutStatus = vi
+      .fn<() => Promise<CheckoutStatusGit>>()
+      .mockResolvedValueOnce(createCheckoutStatus("/tmp/repo"))
+      .mockResolvedValueOnce(
+        createCheckoutStatus("/tmp/repo", {
+          currentBranch: "feature/runtime-payloads",
+          aheadBehind: { ahead: 2, behind: 0 },
+          aheadOfOrigin: 2,
+        }),
+      )
+      .mockResolvedValueOnce(
+        createCheckoutStatus("/tmp/repo", {
+          currentBranch: "feature/runtime-payloads",
+          aheadBehind: { ahead: 2, behind: 0 },
+          aheadOfOrigin: 2,
+        }),
+      );
+    const getPullRequestStatus = vi.fn<() => Promise<PullRequestStatusResult>>().mockResolvedValue(
+      createPullRequestStatusResult({
+        status: {
+          url: "https://github.com/acme/repo/pull/123",
+          title: "Runtime payloads",
+          state: "open",
+          baseRefName: "main",
+          headRefName: "feature/runtime-payloads",
+          isMerged: false,
+        },
+      }),
+    );
+
+    const service = createService({
+      getCheckoutStatus,
+      getPullRequestStatus,
+      now: () => new Date("2026-04-12T00:00:00.000Z"),
+    });
+
+    const listener = vi.fn();
+    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+
+    expect(subscription.initial.git.currentBranch).toBe("main");
+
+    service.refresh("/tmp/repo");
+    await (service as any).workspaceTargets.get("/tmp/repo")?.refreshPromise;
+    await flushPromises();
+
+    service.refresh("/tmp/repo");
+    await (service as any).workspaceTargets.get("/tmp/repo")?.refreshPromise;
+    await flushPromises();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(
+      createSnapshot("/tmp/repo", {
+        git: {
+          currentBranch: "feature/runtime-payloads",
+          aheadBehind: { ahead: 2, behind: 0 },
+          aheadOfOrigin: 2,
+        },
+        github: {
+          pullRequest: {
+            url: "https://github.com/acme/repo/pull/123",
+            title: "Runtime payloads",
+            state: "open",
+            baseRefName: "main",
+            headRefName: "feature/runtime-payloads",
+            isMerged: false,
+          },
+        },
+      }),
+    );
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+});

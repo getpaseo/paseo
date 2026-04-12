@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import {
-  findExecutableSync,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "./executable.js";
+import { findExecutableSync, quoteWindowsArgument, quoteWindowsCommand } from "./executable.js";
 
 type FindExecutableDependencies = NonNullable<Parameters<typeof findExecutableSync>[1]>;
 
@@ -46,20 +42,18 @@ describe("findExecutableSync", () => {
       "C:\\nvm4w\\nodejs\\codex\r\nC:\\nvm4w\\nodejs\\codex.cmd\r\n",
     );
 
-    expect(findExecutableSync("codex", findExecutableDependencies)).toBe("C:\\nvm4w\\nodejs\\codex");
+    expect(findExecutableSync("codex", findExecutableDependencies)).toBe(
+      "C:\\nvm4w\\nodejs\\codex",
+    );
   });
 
   test("on Unix, uses the last line from which output", () => {
-    findExecutableDependencies.execFileSync.mockReturnValue(
-      "/usr/local/bin/codex\n",
-    );
+    findExecutableDependencies.execFileSync.mockReturnValue("/usr/local/bin/codex\n");
 
     expect(findExecutableSync("codex", findExecutableDependencies)).toBe("/usr/local/bin/codex");
-    expect(findExecutableDependencies.execFileSync).toHaveBeenCalledWith(
-      "which",
-      ["codex"],
-      { encoding: "utf8" },
-    );
+    expect(findExecutableDependencies.execFileSync).toHaveBeenCalledWith("which", ["codex"], {
+      encoding: "utf8",
+    });
   });
 
   test("warns and returns null when the final which line is not an absolute path", () => {

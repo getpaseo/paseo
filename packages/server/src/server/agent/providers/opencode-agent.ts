@@ -378,13 +378,16 @@ function buildOpenCodeModelDefinition(
 }
 
 function resolveOpenCodeSelectedModelContextWindow(
-  providers: {
-    connected?: string[];
-    all?: Array<{
-      id: string;
-      models?: Record<string, unknown>;
-    }>;
-  } | null | undefined,
+  providers:
+    | {
+        connected?: string[];
+        all?: Array<{
+          id: string;
+          models?: Record<string, unknown>;
+        }>;
+      }
+    | null
+    | undefined,
   modelId: string | null | undefined,
 ): number | undefined {
   if (!providers) {
@@ -398,13 +401,18 @@ function resolveOpenCodeSelectedModelContextWindow(
   return lookup.get(modelLookupKey);
 }
 
-function buildOpenCodeModelContextWindowLookup(providers: {
-  connected?: string[];
-  all?: Array<{
-    id: string;
-    models?: Record<string, unknown>;
-  }>;
-} | null | undefined): Map<string, number> {
+function buildOpenCodeModelContextWindowLookup(
+  providers:
+    | {
+        connected?: string[];
+        all?: Array<{
+          id: string;
+          models?: Record<string, unknown>;
+        }>;
+      }
+    | null
+    | undefined,
+): Map<string, number> {
   const lookup = new Map<string, number>();
   if (!providers) {
     return lookup;
@@ -876,16 +884,10 @@ export class OpenCodeAgentClient implements AgentClient {
     const client = createOpencodeClient({ baseUrl: url, directory });
 
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error("OpenCode app.agents timed out after 10s")),
-        10_000,
-      );
+      setTimeout(() => reject(new Error("OpenCode app.agents timed out after 10s")), 10_000);
     });
 
-    const response = await Promise.race([
-      client.app.agents({ directory }),
-      timeoutPromise,
-    ]);
+    const response = await Promise.race([client.app.agents({ directory }), timeoutPromise]);
 
     if (response.error || !response.data) {
       return DEFAULT_MODES;
@@ -965,7 +967,10 @@ export class OpenCodeAgentClient implements AgentClient {
             label: "Binary",
             value: resolvedBinary ?? "not found",
           },
-          { label: "Version", value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown" },
+          {
+            label: "Version",
+            value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown",
+          },
           { label: "Server", value: serverStatus },
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
@@ -1038,8 +1043,6 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-
-
 export function translateOpenCodeEvent(
   event: OpenCodeEvent,
   state: OpenCodeEventTranslationState,
@@ -1075,10 +1078,7 @@ export function translateOpenCodeEvent(
           }
         }
 
-        if (
-          !state.emittedStructuredMessageIds.has(info.id) &&
-          info.time?.completed !== undefined
-        ) {
+        if (!state.emittedStructuredMessageIds.has(info.id) && info.time?.completed !== undefined) {
           const text = stringifyStructuredAssistantMessage(info.structured);
           if (text) {
             state.emittedStructuredMessageIds.add(info.id);
@@ -1224,16 +1224,19 @@ export function translateOpenCodeEvent(
         if (!q.question || !q.header) {
           return [];
         }
-        const options = q.options?.map((o) => ({
-          label: o.label,
-          ...(o.description ? { description: o.description } : {}),
-        })) ?? [];
-        return [{
-          question: q.question,
-          header: q.header,
-          options,
-          ...(q.multiple === true ? { multiSelect: true } : {}),
-        }];
+        const options =
+          q.options?.map((o) => ({
+            label: o.label,
+            ...(o.description ? { description: o.description } : {}),
+          })) ?? [];
+        return [
+          {
+            question: q.question,
+            header: q.header,
+            options,
+            ...(q.multiple === true ? { multiSelect: true } : {}),
+          },
+        ];
       });
 
       if (questions.length === 0) {
@@ -1357,8 +1360,9 @@ class OpenCodeAgentSession implements AgentSession {
     this.logger = logger;
     this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
-    this.selectedModelContextWindowMaxTokens =
-      this.resolveConfiguredModelContextWindowMaxTokens(config.model);
+    this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
+      config.model,
+    );
   }
 
   get id(): string | null {
@@ -1378,8 +1382,9 @@ class OpenCodeAgentSession implements AgentSession {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
     this.config.model = normalizedModelId ?? undefined;
-    this.selectedModelContextWindowMaxTokens =
-      this.resolveConfiguredModelContextWindowMaxTokens(this.config.model);
+    this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
+      this.config.model,
+    );
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -1494,8 +1499,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.abortController = turnAbortController;
     await this.ensureMcpServersConfigured();
     const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
-    this.accumulatedUsage =
-      contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
+    this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
 
     const parts = buildOpenCodePromptParts(prompt);
     const model = this.parseModel(this.config.model);
@@ -1515,71 +1519,77 @@ class OpenCodeAgentSession implements AgentSession {
       // Handle both success and error in the response handler as a fallback —
       // finishForegroundTurn's guard prevents duplicate terminal events if the
       // SSE stream already delivered the event.
-      void this.client.session.command({
-        sessionID: this.sessionId,
-        directory: this.config.cwd,
-        command: slashCommand.commandName,
-        arguments: slashCommand.args ?? "",
-        ...(this.config.model ? { model: this.config.model } : {}),
-        ...(effectiveMode ? { agent: effectiveMode } : {}),
-        ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-      }).then((response) => {
-        if (response.error) {
-          const errorMsg = normalizeTurnFailureError(response.error);
+      void this.client.session
+        .command({
+          sessionID: this.sessionId,
+          directory: this.config.cwd,
+          command: slashCommand.commandName,
+          arguments: slashCommand.args ?? "",
+          ...(this.config.model ? { model: this.config.model } : {}),
+          ...(effectiveMode ? { agent: effectiveMode } : {}),
+          ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+        })
+        .then((response) => {
+          if (response.error) {
+            const errorMsg = normalizeTurnFailureError(response.error);
+            this.finishForegroundTurn(
+              { type: "turn_failed", provider: "opencode", error: errorMsg },
+              turnId,
+            );
+          } else {
+            this.finishForegroundTurn(
+              { type: "turn_completed", provider: "opencode", usage: undefined },
+              turnId,
+            );
+          }
+        })
+        .catch((err) => {
           this.finishForegroundTurn(
-            { type: "turn_failed", provider: "opencode", error: errorMsg },
+            { type: "turn_failed", provider: "opencode", error: normalizeTurnFailureError(err) },
             turnId,
           );
-        } else {
-          this.finishForegroundTurn(
-            { type: "turn_completed", provider: "opencode", usage: undefined },
-            turnId,
-          );
-        }
-      }).catch((err) => {
-        this.finishForegroundTurn(
-          { type: "turn_failed", provider: "opencode", error: normalizeTurnFailureError(err) },
-          turnId,
-        );
-      });
+        });
     } else {
-      void this.client.session.promptAsync({
-        sessionID: this.sessionId,
-        directory: this.config.cwd,
-        parts,
-        ...(options?.outputSchema
-          ? {
-              format: {
-                type: "json_schema" as const,
-                schema: options.outputSchema as Record<string, unknown>,
+      void this.client.session
+        .promptAsync({
+          sessionID: this.sessionId,
+          directory: this.config.cwd,
+          parts,
+          ...(options?.outputSchema
+            ? {
+                format: {
+                  type: "json_schema" as const,
+                  schema: options.outputSchema as Record<string, unknown>,
+                },
+              }
+            : {}),
+          ...(this.config.systemPrompt ? { system: this.config.systemPrompt } : {}),
+          ...(model ? { model } : {}),
+          ...(effectiveMode ? { agent: effectiveMode } : {}),
+          ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+        })
+        .then((promptResponse) => {
+          if (promptResponse.error) {
+            this.finishForegroundTurn(
+              {
+                type: "turn_failed",
+                provider: "opencode",
+                error: normalizeTurnFailureError(promptResponse.error),
               },
-            }
-          : {}),
-        ...(this.config.systemPrompt ? { system: this.config.systemPrompt } : {}),
-        ...(model ? { model } : {}),
-        ...(effectiveMode ? { agent: effectiveMode } : {}),
-        ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-      }).then((promptResponse) => {
-        if (promptResponse.error) {
+              turnId,
+            );
+          }
+        })
+        .catch((error) => {
           this.finishForegroundTurn(
             {
               type: "turn_failed",
               provider: "opencode",
-              error: normalizeTurnFailureError(promptResponse.error),
+              error: normalizeTurnFailureError(error),
             },
             turnId,
           );
-        }
-      }).catch((error) => {
-        this.finishForegroundTurn(
-          {
-            type: "turn_failed",
-            provider: "opencode",
-            error: normalizeTurnFailureError(error),
-          },
-          turnId,
-        );
-      });
+        });
     }
 
     return { turnId };
@@ -1615,7 +1625,11 @@ class OpenCodeAgentSession implements AgentSession {
           if (e.type === "timeline" && e.item.type === "tool_call") {
             this.trackToolCall(e.item);
           }
-          if (e.type === "turn_completed" || e.type === "turn_failed" || e.type === "turn_canceled") {
+          if (
+            e.type === "turn_completed" ||
+            e.type === "turn_failed" ||
+            e.type === "turn_canceled"
+          ) {
             if (e.type === "turn_failed") {
               this.finishForegroundTurn(
                 {
@@ -2065,12 +2079,9 @@ class OpenCodeAgentSession implements AgentSession {
         if (hasNormalizedOpenCodeUsage(this.accumulatedUsage)) {
           translatedEvent.usage = this.accumulatedUsage;
         }
-        const contextWindowMaxTokens =
-          this.resolveSelectedModelContextWindowMaxTokens();
+        const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
         this.accumulatedUsage =
-          contextWindowMaxTokens !== undefined
-            ? { contextWindowMaxTokens }
-            : {};
+          contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
       }
     }
 

@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
-import { useGlobalSearchParams, useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useRef, useState } from "react";
+import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
+import { Platform } from "react-native";
+import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import {
-  buildHostWorkspaceRoute,
   decodeWorkspaceIdFromPathSegment,
   parseWorkspaceOpenIntent,
   type WorkspaceOpenIntent,
@@ -35,8 +36,17 @@ function getOpenIntentTarget(openIntent: WorkspaceOpenIntent): WorkspaceTabTarge
 }
 
 export default function HostWorkspaceLayout() {
-  const router = useRouter();
+  return (
+    <HostRouteBootstrapBoundary>
+      <HostWorkspaceLayoutContent />
+    </HostRouteBootstrapBoundary>
+  );
+}
+
+function HostWorkspaceLayoutContent() {
+  const rootNavigationState = useRootNavigationState();
   const consumedIntentRef = useRef<string | null>(null);
+  const [intentConsumed, setIntentConsumed] = useState(false);
   const params = useLocalSearchParams<{
     serverId?: string | string[];
     workspaceId?: string | string[];
@@ -55,6 +65,9 @@ export default function HostWorkspaceLayout() {
     if (!openValue) {
       return;
     }
+    if (!rootNavigationState?.key) {
+      return;
+    }
 
     const consumptionKey = `${serverId}:${workspaceId}:${openValue}`;
     if (consumedIntentRef.current === consumptionKey) {
@@ -63,19 +76,30 @@ export default function HostWorkspaceLayout() {
     consumedIntentRef.current = consumptionKey;
 
     const openIntent = parseWorkspaceOpenIntent(openValue);
-    const route = openIntent
-      ? prepareWorkspaceTab({
-          serverId,
-          workspaceId,
-          target: getOpenIntentTarget(openIntent),
-          pin: openIntent.kind === "agent",
-        })
-      : buildHostWorkspaceRoute(serverId, workspaceId);
+    if (openIntent) {
+      prepareWorkspaceTab({
+        serverId,
+        workspaceId,
+        target: getOpenIntentTarget(openIntent),
+        pin: openIntent.kind === "agent",
+      });
+    }
 
-    router.replace(route as any);
-  }, [openValue, router, serverId, workspaceId]);
+    // Expo Router's replace ignores query-param-only changes (findDivergentState
+    // skips search params). Strip ?open from the browser URL directly so the
+    // address bar reflects the clean workspace route.
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("open")) {
+        url.searchParams.delete("open");
+        window.history.replaceState(null, "", url.toString());
+      }
+    }
 
-  if (openValue) {
+    setIntentConsumed(true);
+  }, [openValue, rootNavigationState?.key, serverId, workspaceId]);
+
+  if (openValue && !intentConsumed) {
     return null;
   }
 

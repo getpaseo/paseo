@@ -11,7 +11,7 @@ import { createAllClients, shutdownProviders } from "./provider-registry.js";
 import { generateAndApplyAgentMetadata } from "./agent-metadata-generator.js";
 import { createWorktree, validateBranchSlug } from "../../utils/worktree.js";
 
-const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
+const CODEX_TEST_MODEL = "gpt-5.4-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
 
 const shouldRun = !process.env.CI && !!process.env.OPENAI_API_KEY;

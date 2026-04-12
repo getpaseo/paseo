@@ -24,17 +24,11 @@ const EDITOR_APP_IMAGES: Record<KnownEditorTargetId, ImageSourcePropType> = {
 };
 /* eslint-enable @typescript-eslint/no-require-imports */
 
-export function hasBundledEditorAppIcon(
-  editorId: EditorTargetId,
-): editorId is KnownEditorTargetId {
+export function hasBundledEditorAppIcon(editorId: EditorTargetId): editorId is KnownEditorTargetId {
   return isKnownEditorTargetId(editorId);
 }
 
-export function EditorAppIcon({
-  editorId,
-  size = 16,
-  color,
-}: EditorAppIconProps) {
+export function EditorAppIcon({ editorId, size = 16, color }: EditorAppIconProps) {
   if (!hasBundledEditorAppIcon(editorId)) {
     return <SquareTerminal size={size} color={color} />;
   }
