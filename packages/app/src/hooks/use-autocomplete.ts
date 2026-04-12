@@ -16,7 +16,11 @@ interface UseAutocompleteInput<TOption> {
 
 interface UseAutocompleteResult {
   selectedIndex: number;
-  onKeyPress: (event: { key: string; preventDefault: () => void }) => boolean;
+  onKeyPress: (event: {
+    key: string;
+    preventDefault: () => void;
+    isComposing?: boolean;
+  }) => boolean;
 }
 
 export function useAutocomplete<TOption>(
@@ -56,10 +60,12 @@ export function useAutocomplete<TOption>(
   }, [input.isVisible, input.options.length, input.query, input.optionsPosition]);
 
   const onKeyPress = useCallback(
-    (event: { key: string; preventDefault: () => void }) => {
+    (event: { key: string; preventDefault: () => void; isComposing?: boolean }) => {
       if (!input.isVisible || input.options.length === 0) {
         return false;
       }
+
+      if (event.isComposing) return false;
 
       if (event.key === "ArrowUp") {
         event.preventDefault();

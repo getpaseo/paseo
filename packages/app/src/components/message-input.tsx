@@ -95,7 +95,11 @@ export interface MessageInputProps {
   /** Optional handler used when submit button is in loading state. */
   onSubmitLoadingPress?: () => void;
   /** Intercept key press events before default handling. Return true to prevent default. */
-  onKeyPress?: (event: { key: string; preventDefault: () => void }) => boolean;
+  onKeyPress?: (event: {
+    key: string;
+    preventDefault: () => void;
+    isComposing?: boolean;
+  }) => boolean;
   /** Reports cursor selection updates from the underlying input. */
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   onFocusChange?: (focused: boolean) => void;
@@ -122,6 +126,8 @@ type WebTextInputKeyPressEvent = NativeSyntheticEvent<
     metaKey?: boolean;
     ctrlKey?: boolean;
     shiftKey?: boolean;
+    isComposing?: boolean;
+    keyCode?: number;
   }
 >;
 
@@ -890,6 +896,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     if (onKeyPressCallback) {
       const handled = onKeyPressCallback({
         key: event.nativeEvent.key,
+        isComposing: event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229,
         preventDefault: () => event.preventDefault(),
       });
       if (handled) return;
@@ -898,6 +905,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
 
     if (event.nativeEvent.key !== "Enter") return;
+
+    // IME composition in progress — Enter confirms character selection, not send.
+    // keyCode 229 is the fallback for browsers that clear isComposing before the keydown fires.
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
 
     // Shift+Enter: add newline (default behavior, don't intercept)
     if (shiftKey) return;
