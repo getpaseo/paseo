@@ -89,6 +89,7 @@ import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
+import type { FunASRConfig } from "./speech/providers/funasr/config.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
@@ -171,6 +172,7 @@ export type PaseoDaemonConfig = {
   appBaseUrl?: string;
   openai?: PaseoOpenAIConfig;
   speech?: PaseoSpeechConfig;
+  funasr?: FunASRConfig;
   voiceLlmProvider?: AgentProvider | null;
   voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
@@ -538,6 +540,7 @@ export async function createPaseoDaemon(
       logger,
       openaiConfig: config.openai,
       speechConfig: config.speech,
+      funasrConfig: config.funasr,
     });
     logger.info({ elapsed: elapsed() }, "Speech service created");
 

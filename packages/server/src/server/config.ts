@@ -103,7 +103,7 @@ export function loadConfig(
 
   const appBaseUrl = env.PASEO_APP_BASE_URL ?? persisted.app?.baseUrl ?? DEFAULT_APP_BASE_URL;
 
-  const { openai, speech } = resolveSpeechConfig({
+  const { openai, speech, funasr } = resolveSpeechConfig({
     paseoHome,
     env,
     persisted,
@@ -137,6 +137,7 @@ export function loadConfig(
     appBaseUrl,
     openai,
     speech,
+    funasr,
     voiceLlmProvider,
     voiceLlmProviderExplicit,
     voiceLlmModel,

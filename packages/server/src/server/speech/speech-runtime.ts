@@ -15,6 +15,8 @@ import {
   initializeOpenAiSpeechServices,
   validateOpenAiCredentialRequirements,
 } from "./providers/openai/runtime.js";
+import { FunASRSTT } from "./providers/funasr/stt.js";
+import type { FunASRConfig } from "./providers/funasr/config.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech-provider.js";
 import type { RequestedSpeechProviders } from "./speech-types.js";
 import type { TurnDetectionProvider } from "./turn-detection-provider.js";
@@ -352,10 +354,12 @@ export function createSpeechService(params: {
   logger: Logger;
   openaiConfig?: PaseoOpenAIConfig;
   speechConfig?: PaseoSpeechConfig;
+  funasrConfig?: FunASRConfig;
 }): SpeechService {
   const logger = params.logger.child({ module: "speech-runtime" });
   const speechConfig = params.speechConfig ?? null;
   const openaiConfig = params.openaiConfig;
+  const funasrConfig = params.funasrConfig;
   const providers = resolveRequestedSpeechProviders(speechConfig);
   const requestedProviders = describeRequestedProviders(providers);
 
@@ -518,6 +522,25 @@ export function createSpeechService(params: {
     localVoiceTtsProvider = nextLocalSpeech.localVoiceTtsProvider;
     localCleanup = nextLocalSpeech.cleanup;
     previousLocalCleanup();
+
+    // FunASR overlay: if funasr is configured and the relevant slots are still empty
+    if (funasrConfig) {
+      const funasrStt = new FunASRSTT(funasrConfig, logger);
+      if (
+        providers.dictationStt.enabled !== false &&
+        providers.dictationStt.provider === "funasr" &&
+        !dictationSttService
+      ) {
+        dictationSttService = funasrStt;
+      }
+      if (
+        providers.voiceStt.enabled !== false &&
+        providers.voiceStt.provider === "funasr" &&
+        !sttService
+      ) {
+        sttService = funasrStt;
+      }
+    }
 
     await refreshMissingLocalModels();
 
