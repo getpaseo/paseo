@@ -114,7 +114,10 @@ import { startRelayTransport, type RelayTransportController } from "./relay-tran
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
-import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
+import type {
+  AgentProviderRuntimeSettingsMap,
+  ProviderOverride,
+} from "./agent/provider-launch-config.js";
 import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
@@ -177,6 +180,7 @@ export type PaseoDaemonConfig = {
   dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
+  providerOverrides?: Record<string, ProviderOverride>;
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
 };
 
@@ -351,6 +355,7 @@ export async function createPaseoDaemon(
       clients: {
         ...createAllClients(logger, {
           runtimeSettings: config.agentProviderSettings,
+          providerOverrides: config.providerOverrides,
         }),
         ...config.agentClients,
       },
@@ -359,6 +364,7 @@ export async function createPaseoDaemon(
     });
     const providerRegistry = buildProviderRegistry(logger, {
       runtimeSettings: config.agentProviderSettings,
+      providerOverrides: config.providerOverrides,
     });
 
     const terminalManager = createTerminalManager();
@@ -598,6 +604,7 @@ export async function createPaseoDaemon(
                 finalTimeoutMs: config.dictationFinalTimeoutMs,
               },
               config.agentProviderSettings,
+              config.providerOverrides,
               daemonVersion,
               (intent) => {
                 try {
@@ -677,6 +684,7 @@ export async function createPaseoDaemon(
       await agentStorage.flush().catch(() => undefined);
       await shutdownProviders(logger, {
         runtimeSettings: config.agentProviderSettings,
+        providerOverrides: config.providerOverrides,
       });
       terminalManager.killAll();
       speechService.stop();

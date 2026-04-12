@@ -1,12 +1,70 @@
 import { describe, expect, it } from "vitest";
 import { __private__ } from "./use-agent-form-state";
+import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   type AgentProviderDefinition,
 } from "@server/server/agent/provider-manifest";
-import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type {
+  AgentModelDefinition,
+  AgentProvider,
+  ProviderSnapshotEntry,
+} from "@server/server/agent/agent-sdk-types";
 
 describe("useAgentFormState", () => {
+  describe("buildProviderDefinitions", () => {
+    it("returns static definitions when snapshot data is unavailable", () => {
+      expect(buildProviderDefinitions(undefined)).toBe(AGENT_PROVIDER_DEFINITIONS);
+      expect(buildProviderDefinitions([])).toBe(AGENT_PROVIDER_DEFINITIONS);
+    });
+
+    it("builds custom provider definitions from snapshot metadata with built-in fallbacks", () => {
+      const entries: ProviderSnapshotEntry[] = [
+        {
+          provider: "zai",
+          status: "ready",
+          label: "ZAI",
+          description: "Claude with ZAI config",
+          defaultModeId: "default",
+          modes: [{ id: "default", label: "Default", description: "Safe mode" }],
+        },
+        {
+          provider: "claude",
+          status: "ready",
+          modes: [{ id: "default", label: "Always Ask" }],
+        },
+      ];
+
+      const definitions = buildProviderDefinitions(entries);
+
+      expect(definitions).toEqual([
+        {
+          id: "zai",
+          label: "ZAI",
+          description: "Claude with ZAI config",
+          defaultModeId: "default",
+          modes: [
+            {
+              id: "default",
+              label: "Default",
+              description: "Safe mode",
+              icon: "ShieldCheck",
+              colorTier: "moderate",
+            },
+          ],
+          voice: undefined,
+        },
+        expect.objectContaining({
+          id: "claude",
+          label: "Claude",
+          description: expect.any(String),
+          defaultModeId: "default",
+          voice: expect.any(Object),
+        }),
+      ]);
+    });
+  });
+
   describe("__private__.combineInitialValues", () => {
     it("returns undefined when no initial values and no initial server id", () => {
       expect(__private__.combineInitialValues(undefined, null)).toBeUndefined();

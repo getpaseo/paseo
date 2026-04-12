@@ -71,7 +71,10 @@ import type { DaemonConfigStore } from "./daemon-config-store.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 
 import { buildProviderRegistry } from "./agent/provider-registry.js";
-import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
+import type {
+  AgentProviderRuntimeSettingsMap,
+  ProviderOverride,
+} from "./agent/provider-launch-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
@@ -109,7 +112,6 @@ import type {
   ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
-import { isValidAgentProvider, AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
 import {
   buildProjectPlacementForCwd,
   detectStaleWorkspaces,
@@ -185,7 +187,7 @@ const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
 const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
-const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
+const DEFAULT_AGENT_PROVIDER = "claude";
 
 // TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
@@ -416,6 +418,7 @@ export type SessionOptions = {
     getSpeechReadiness?: () => SpeechReadinessSnapshot;
   };
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
+  providerOverrides?: Record<string, ProviderOverride>;
 };
 
 export type SessionLifecycleIntent =
@@ -487,8 +490,20 @@ function convertPCMToWavBuffer(
   return wavBuffer;
 }
 
-function coerceAgentProvider(logger: pino.Logger, value: string, agentId?: string): AgentProvider {
-  if (isValidAgentProvider(value)) {
+function isRegisteredProvider(
+  providerRegistry: ReturnType<typeof buildProviderRegistry>,
+  value: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(providerRegistry, value);
+}
+
+function coerceAgentProvider(
+  logger: pino.Logger,
+  providerRegistry: ReturnType<typeof buildProviderRegistry>,
+  value: string,
+  agentId?: string,
+): AgentProvider {
+  if (isRegisteredProvider(providerRegistry, value)) {
     return value;
   }
   logger.warn(
@@ -500,13 +515,14 @@ function coerceAgentProvider(logger: pino.Logger, value: string, agentId?: strin
 
 function toAgentPersistenceHandle(
   logger: pino.Logger,
+  providerRegistry: ReturnType<typeof buildProviderRegistry>,
   handle: StoredAgentRecord["persistence"],
 ): AgentPersistenceHandle | null {
   if (!handle) {
     return null;
   }
   const provider = handle.provider;
-  if (!isValidAgentProvider(provider)) {
+  if (!isRegisteredProvider(providerRegistry, provider)) {
     logger.warn({ provider }, `Ignoring persistence handle with unknown provider '${provider}'`);
     return null;
   }
@@ -619,6 +635,7 @@ export class Session {
   private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
   private readonly getSpeechReadiness?: () => SpeechReadinessSnapshot;
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
+  private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
@@ -652,6 +669,7 @@ export class Session {
       voiceBridge,
       dictation,
       agentProviderRuntimeSettings,
+      providerOverrides,
     } = options;
     this.clientId = clientId;
     this.appVersion = appVersion;
@@ -707,6 +725,7 @@ export class Session {
     this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext;
     this.getSpeechReadiness = dictation?.getSpeechReadiness;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
+    this.providerOverrides = providerOverrides;
     this.abortController = new AbortController();
     this.sessionLogger = logger.child({
       module: "session",
@@ -715,6 +734,7 @@ export class Session {
     });
     this.providerRegistry = buildProviderRegistry(this.sessionLogger, {
       runtimeSettings: this.agentProviderRuntimeSettings,
+      providerOverrides: this.providerOverrides,
     });
 
     // Initialize per-session managers
@@ -1071,10 +1091,20 @@ export class Session {
     const updatedAt = new Date(this.resolveStoredAgentPayloadUpdatedAt(record));
     const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
 
-    const provider = coerceAgentProvider(this.sessionLogger, record.provider, record.id);
+    const provider = coerceAgentProvider(
+      this.sessionLogger,
+      this.providerRegistry,
+      record.provider,
+      record.id,
+    );
     const runtimeInfo = record.runtimeInfo
       ? {
-          provider: coerceAgentProvider(this.sessionLogger, record.runtimeInfo.provider, record.id),
+          provider: coerceAgentProvider(
+            this.sessionLogger,
+            this.providerRegistry,
+            record.runtimeInfo.provider,
+            record.id,
+          ),
           sessionId: record.runtimeInfo.sessionId,
           ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "model")
             ? { model: record.runtimeInfo.model ?? null }
@@ -1107,7 +1137,11 @@ export class Session {
       currentModeId: record.lastModeId ?? null,
       availableModes: [],
       pendingPermissions: [],
-      persistence: toAgentPersistenceHandle(this.sessionLogger, record.persistence),
+      persistence: toAgentPersistenceHandle(
+        this.sessionLogger,
+        this.providerRegistry,
+        record.persistence,
+      ),
       lastUsage: undefined,
       lastError: undefined,
       title: record.title ?? record.config?.title ?? null,
@@ -1153,7 +1187,11 @@ export class Session {
         throw new Error(`Agent not found: ${agentId}`);
       }
 
-      const handle = toAgentPersistenceHandle(this.sessionLogger, record.persistence);
+      const handle = toAgentPersistenceHandle(
+        this.sessionLogger,
+        this.providerRegistry,
+        record.persistence,
+      );
       let snapshot: ManagedAgent;
       if (handle) {
         snapshot = await this.agentManager.resumeAgentFromPersistence(
@@ -1167,7 +1205,13 @@ export class Session {
           "Agent resumed from persistence",
         );
       } else {
-        const config = buildSessionConfig(record);
+        const config = buildSessionConfig(record, {
+          validProviders: Object.keys(this.providerRegistry),
+          logger: this.sessionLogger,
+        });
+        if (!config) {
+          throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
+        }
         snapshot = await this.agentManager.createAgent(config, agentId, { labels: record.labels });
         this.sessionLogger.info(
           { agentId, provider: record.provider },
@@ -3065,7 +3109,11 @@ export class Session {
         if (!record) {
           throw new Error(`Agent not found: ${agentId}`);
         }
-        const handle = toAgentPersistenceHandle(this.sessionLogger, record.persistence);
+        const handle = toAgentPersistenceHandle(
+          this.sessionLogger,
+          this.providerRegistry,
+          record.persistence,
+        );
         if (!handle) {
           throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
         }

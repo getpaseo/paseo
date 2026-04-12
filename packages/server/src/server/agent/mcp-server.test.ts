@@ -7,6 +7,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
+import type { ProviderDefinition } from "./provider-registry.js";
 
 type TestDeps = {
   agentManager: AgentManager;
@@ -50,6 +51,20 @@ function createTestDeps(): TestDeps {
       agentManager: agentManagerSpies,
       agentStorage: agentStorageSpies,
     },
+  };
+}
+
+function createProviderDefinition(overrides: Partial<ProviderDefinition>): ProviderDefinition {
+  return {
+    id: "claude",
+    label: "Claude",
+    description: "Test provider",
+    defaultModeId: "default",
+    modes: [],
+    createClient: vi.fn() as ProviderDefinition["createClient"],
+    fetchModels: vi.fn().mockResolvedValue([]),
+    fetchModes: vi.fn().mockResolvedValue([]),
+    ...overrides,
   };
 }
 
@@ -213,6 +228,22 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("accepts custom provider IDs in create_agent input validation", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const tool = (server as any)._registeredTools["create_agent"];
+
+    const parsed = await tool.inputSchema.safeParseAsync({
+      cwd: existingCwd,
+      title: "Custom provider agent",
+      initialMode: "default",
+      agentType: "zai",
+      initialPrompt: "Do work",
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   it("allows caller agents to override cwd and applies caller context labels", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const baseDir = await mkdtemp(join(tmpdir(), "paseo-mcp-test-"));
@@ -299,6 +330,52 @@ describe("create_agent MCP tool", () => {
     expect(configArg.mcpServers).toBeUndefined();
     expect(agentIdArg).toBeUndefined();
     expect(optionsArg).toBeUndefined();
+  });
+});
+
+describe("provider listing MCP tool", () => {
+  const logger = createTestLogger();
+
+  it("returns providers from the registry, including custom providers", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const providerRegistry = {
+      claude: createProviderDefinition({
+        id: "claude",
+        label: "Claude",
+        modes: [{ id: "default", label: "Default", description: "Built-in mode" }],
+      }),
+      zai: createProviderDefinition({
+        id: "zai",
+        label: "ZAI",
+        description: "Custom Claude profile",
+        defaultModeId: "default",
+        modes: [{ id: "default", label: "Default", description: "Custom mode" }],
+      }),
+    };
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerRegistry,
+      logger,
+    });
+    const tool = (server as any)._registeredTools["list_providers"];
+    const response = await tool.callback({});
+
+    expect(response.structuredContent).toEqual({
+      providers: [
+        {
+          id: "claude",
+          label: "Claude",
+          modes: [{ id: "default", label: "Default", description: "Built-in mode" }],
+        },
+        {
+          id: "zai",
+          label: "ZAI",
+          modes: [{ id: "default", label: "Default", description: "Custom mode" }],
+        },
+      ],
+    });
   });
 });
 

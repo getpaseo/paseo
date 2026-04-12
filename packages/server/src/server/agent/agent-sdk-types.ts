@@ -73,6 +73,9 @@ export interface ProviderSnapshotEntry {
   models?: AgentModelDefinition[];
   modes?: AgentMode[];
   fetchedAt?: string;
+  label?: string;
+  description?: string;
+  defaultModeId?: string | null;
 }
 
 export type AgentFeatureToggle = {

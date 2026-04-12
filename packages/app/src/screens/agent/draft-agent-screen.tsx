@@ -49,7 +49,6 @@ import type {
   AgentCapabilityFlags,
   AgentSessionConfig,
 } from "@server/server/agent/agent-sdk-types";
-import { AGENT_PROVIDER_DEFINITIONS } from "@server/server/agent/provider-manifest";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
@@ -67,10 +66,6 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsReasoningStream: false,
   supportsToolInvocations: false,
 };
-const PROVIDER_DEFINITION_MAP = new Map(
-  AGENT_PROVIDER_DEFINITIONS.map((definition) => [definition.id, definition]),
-);
-
 function getParamValue(value: string | string[] | undefined) {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -91,16 +86,14 @@ function getValidProvider(value: string | undefined) {
   if (!value) {
     return undefined;
   }
-  return PROVIDER_DEFINITION_MAP.has(value as AgentProvider) ? (value as AgentProvider) : undefined;
+  return value as AgentProvider;
 }
 
 function getValidMode(provider: AgentProvider | undefined, value: string | undefined) {
   if (!provider || !value) {
     return undefined;
   }
-  const definition = PROVIDER_DEFINITION_MAP.get(provider);
-  const modes = definition?.modes ?? [];
-  return modes.some((mode) => mode.id === value) ? value : undefined;
+  return value;
 }
 
 type DraftAgentParams = {

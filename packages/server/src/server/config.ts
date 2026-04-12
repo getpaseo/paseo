@@ -4,6 +4,11 @@ import { z } from "zod";
 import type { PaseoDaemonConfig } from "./bootstrap.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
+import type {
+  AgentProviderRuntimeSettingsMap,
+  ProviderOverride,
+} from "./agent/provider-launch-config.js";
+import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { AgentProviderSchema } from "./agent/provider-manifest.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import {
@@ -50,6 +55,55 @@ const OptionalVoiceLlmProviderSchema = z
 function parseOptionalVoiceLlmProvider(value: unknown): AgentProvider | null {
   const parsed = OptionalVoiceLlmProviderSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
+}
+
+function extractProviderOverrides(
+  providers: Record<string, unknown> | undefined,
+): Record<string, ProviderOverride> | undefined {
+  if (!providers) {
+    return undefined;
+  }
+
+  const providerOverrides = Object.entries(providers).flatMap(([providerId, provider]) => {
+    const parsed = ProviderOverrideSchema.safeParse(provider);
+    return parsed.success ? [[providerId, parsed.data] as const] : [];
+  });
+
+  return providerOverrides.length > 0 ? Object.fromEntries(providerOverrides) : undefined;
+}
+
+function extractAgentProviderSettings(
+  providerOverrides: Record<string, ProviderOverride> | undefined,
+): AgentProviderRuntimeSettingsMap | undefined {
+  if (!providerOverrides) {
+    return undefined;
+  }
+
+  const runtimeSettings = Object.entries(providerOverrides).flatMap(([providerId, provider]) => {
+    const parsedProviderId = AgentProviderSchema.safeParse(providerId);
+    if (!parsedProviderId.success || (!provider.command && !provider.env)) {
+      return [];
+    }
+
+    return [
+      [
+        parsedProviderId.data,
+        {
+          command: provider.command
+            ? {
+                mode: "replace" as const,
+                argv: provider.command,
+              }
+            : undefined,
+          env: provider.env,
+        },
+      ] as const,
+    ];
+  });
+
+  return runtimeSettings.length > 0
+    ? (Object.fromEntries(runtimeSettings) as AgentProviderRuntimeSettingsMap)
+    : undefined;
 }
 
 export function loadConfig(
@@ -117,6 +171,9 @@ export function loadConfig(
   const voiceLlmProviderExplicit =
     envVoiceLlmProvider !== null || persistedVoiceLlmProvider !== null;
   const voiceLlmModel = persisted.features?.voiceMode?.llm?.model ?? null;
+  const providerOverrides = extractProviderOverrides(
+    persisted.agents?.providers as Record<string, unknown> | undefined,
+  );
 
   return {
     listen,
@@ -140,6 +197,7 @@ export function loadConfig(
     voiceLlmProvider,
     voiceLlmProviderExplicit,
     voiceLlmModel,
-    agentProviderSettings: persisted.agents?.providers,
+    agentProviderSettings: extractAgentProviderSettings(providerOverrides),
+    providerOverrides,
   };
 }

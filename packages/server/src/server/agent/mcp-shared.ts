@@ -1,20 +1,14 @@
 import { z } from "zod";
 import type { Logger } from "pino";
 
-import type { AgentPromptInput, AgentProvider, AgentPermissionRequest } from "./agent-sdk-types.js";
+import type { AgentPromptInput, AgentPermissionRequest } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent, WaitForAgentResult } from "./agent-manager.js";
 import { curateAgentActivity } from "./activity-curator.js";
-import { AGENT_PROVIDER_DEFINITIONS } from "./provider-registry.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { serializeAgentSnapshot } from "../messages.js";
 import { StoredScheduleSchema } from "../schedule/types.js";
 
-export const AgentProviderEnum = z.enum(
-  AGENT_PROVIDER_DEFINITIONS.map((definition) => definition.id) as [
-    AgentProvider,
-    ...AgentProvider[],
-  ],
-);
+export const AgentProviderEnum = z.string();
 
 export const AgentStatusEnum = z.enum(["initializing", "idle", "running", "error", "closed"]);
 

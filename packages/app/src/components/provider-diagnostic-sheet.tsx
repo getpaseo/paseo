@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { View, Text, ActivityIndicator, ScrollView } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { resolveProviderLabel } from "@/utils/provider-definitions";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
-import { AGENT_PROVIDER_DEFINITIONS } from "@server/server/agent/provider-manifest";
 
 interface ProviderDiagnosticSheetProps {
   provider: string;
@@ -21,11 +22,11 @@ export function ProviderDiagnosticSheet({
 }: ProviderDiagnosticSheetProps) {
   const { theme } = useUnistyles();
   const client = useHostRuntimeClient(serverId);
+  const { entries: snapshotEntries } = useProvidersSnapshot(serverId);
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const providerLabel =
-    AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === provider)?.label ?? provider;
+  const providerLabel = resolveProviderLabel(provider, snapshotEntries);
 
   const fetchDiagnostic = useCallback(async () => {
     if (!client || !provider) return;

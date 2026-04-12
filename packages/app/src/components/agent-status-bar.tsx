@@ -17,6 +17,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import {
   buildFavoriteModelKey,
   mergeProviderPreferences,
@@ -40,7 +41,6 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import {
-  AGENT_PROVIDER_DEFINITIONS,
   getModeVisuals,
   type AgentModeColorTier,
   type AgentModeIcon,
@@ -58,10 +58,6 @@ type StatusOption = {
 };
 
 type StatusSelector = "provider" | "mode" | "model" | "thinking" | `feature-${string}`;
-
-const PROVIDER_DEFINITION_MAP = new Map(
-  AGENT_PROVIDER_DEFINITIONS.map((definition) => [definition.id, definition]),
-);
 
 type ControlledAgentStatusBarProps = {
   provider: string;
@@ -300,9 +296,7 @@ function ControlledStatusBar({
     );
     return map;
   }, [modelOptions, provider]);
-  const effectiveProviderDefinitions =
-    providerDefinitions ??
-    (PROVIDER_DEFINITION_MAP.has(provider) ? [PROVIDER_DEFINITION_MAP.get(provider)!] : []);
+  const effectiveProviderDefinitions = providerDefinitions ?? [];
   const effectiveAllProviderModels = allProviderModels ?? fallbackAllProviderModels;
   const canSelectProviderInModelMenu = canSelectModelProvider ?? (() => true);
   const comboboxThinkingOptions = useMemo<ComboboxOption[]>(
@@ -896,9 +890,11 @@ export const AgentStatusBar = memo(function AgentStatusBar({
   const models = snapshotModels;
 
   const agentProviderDefinitions = useMemo(() => {
-    const definition = AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === agent?.provider);
+    const definition = agent?.provider
+      ? resolveProviderDefinition(agent.provider, snapshotEntries)
+      : undefined;
     return definition ? [definition] : [];
-  }, [agent?.provider]);
+  }, [agent?.provider, snapshotEntries]);
 
   const agentProviderModels = useMemo(() => {
     const map = new Map<string, AgentModelDefinition[]>();

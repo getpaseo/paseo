@@ -470,7 +470,14 @@ export class ScheduleService {
           extractTimestamps(record),
         );
       } else {
-        snapshot = await this.agentManager.createAgent(buildSessionConfig(record), agentId, {
+        const config = buildSessionConfig(record, {
+          validProviders: this.agentManager.getRegisteredProviderIds(),
+          logger: this.logger,
+        });
+        if (!config) {
+          throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
+        }
+        snapshot = await this.agentManager.createAgent(config, agentId, {
           labels: record.labels,
         });
       }

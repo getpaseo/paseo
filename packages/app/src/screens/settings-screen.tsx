@@ -68,10 +68,10 @@ import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { AGENT_PROVIDER_DEFINITIONS } from "@server/server/agent/provider-manifest";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ProviderDiagnosticSheet } from "@/components/provider-diagnostic-sheet";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { buildProviderDefinitions } from "@/utils/provider-definitions";
 
 // ---------------------------------------------------------------------------
 // Section definitions
@@ -522,6 +522,7 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
   const isConnected = useHostRuntimeIsConnected(routeServerId);
   const { entries, isLoading, isFetching, refresh } = useProvidersSnapshot(routeServerId);
   const [diagnosticProvider, setDiagnosticProvider] = useState<string | null>(null);
+  const providerDefinitions = buildProviderDefinitions(entries);
 
   const hasServer = routeServerId.length > 0;
 
@@ -557,7 +558,7 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
           </View>
         ) : (
           <View style={[settingsStyles.card, styles.audioCard]}>
-            {AGENT_PROVIDER_DEFINITIONS.map((def) => {
+            {providerDefinitions.map((def) => {
               const entry = entries?.find((e) => e.provider === def.id);
               const status = entry?.status ?? "unavailable";
               const ProviderIcon = getProviderIcon(def.id);

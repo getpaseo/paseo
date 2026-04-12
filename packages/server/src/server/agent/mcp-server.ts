@@ -29,7 +29,7 @@ import { captureTerminalLines } from "../../terminal/terminal.js";
 import { createAgentWorktree, runAsyncWorktreeBootstrap } from "../worktree-bootstrap.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { ScheduleSummarySchema, StoredScheduleSchema } from "../schedule/types.js";
-import { AGENT_PROVIDER_DEFINITIONS, type ProviderDefinition } from "./provider-registry.js";
+import type { ProviderDefinition } from "./provider-registry.js";
 import { deletePaseoWorktree, listPaseoWorktrees } from "../../utils/worktree.js";
 import {
   AgentModelSchema,
@@ -1362,7 +1362,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     async () => ({
       content: [],
       structuredContent: ensureValidJson({
-        providers: AGENT_PROVIDER_DEFINITIONS.map((provider) => ({
+        providers: Object.values(providerRegistry ?? {}).map((provider) => ({
           id: provider.id,
           label: provider.label,
           modes: provider.modes.map((mode) => ({

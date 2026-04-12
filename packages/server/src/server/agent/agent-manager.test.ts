@@ -255,6 +255,37 @@ describe("AgentManager", () => {
     expect(snapshot.model).toBeUndefined();
   });
 
+  test("listProviderAvailability uses registered client keys, including custom providers", async () => {
+    const customClient: AgentClient = {
+      provider: "zai",
+      capabilities: TEST_CAPABILITIES,
+      async isAvailable() {
+        return true;
+      },
+      async createSession() {
+        throw new Error("not implemented");
+      },
+      async resumeSession() {
+        throw new Error("not implemented");
+      },
+    };
+
+    const manager = new AgentManager({
+      clients: {
+        zai: customClient,
+      },
+      logger,
+    });
+
+    await expect(manager.listProviderAvailability()).resolves.toEqual([
+      {
+        provider: "zai",
+        available: true,
+        error: null,
+      },
+    ]);
+  });
+
   test("createAgent passes daemon launch env through the provider launch context", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");

@@ -19,6 +19,9 @@ type Deferred<T> = {
 
 type MockProviderOptions = {
   provider: AgentProvider;
+  label?: string;
+  description?: string;
+  defaultModeId?: string | null;
   isAvailable?: () => Promise<boolean>;
   fetchModels?: (cwd?: string) => Promise<AgentModelDefinition[]>;
   fetchModes?: (cwd?: string) => Promise<AgentMode[]>;
@@ -58,10 +61,21 @@ describe("ProviderSnapshotManager", () => {
 
     const snapshot = manager.getSnapshot("/tmp/project");
 
-    expect(snapshot).toEqual([
-      { provider: "claude", status: "loading" },
-      { provider: "codex", status: "loading" },
-    ]);
+    expect(snapshot.map((entry) => entry.provider)).toEqual(["codex", "claude"]);
+    expect(getProviderEntry(snapshot, "claude")).toMatchObject({
+      provider: "claude",
+      status: "loading",
+      label: "claude",
+      description: "claude test provider",
+      defaultModeId: null,
+    });
+    expect(getProviderEntry(snapshot, "codex")).toMatchObject({
+      provider: "codex",
+      status: "loading",
+      label: "codex",
+      description: "codex test provider",
+      defaultModeId: null,
+    });
 
     await vi.waitFor(() => {
       expect(handles.claude?.isAvailable).toHaveBeenCalledTimes(1);
@@ -101,12 +115,18 @@ describe("ProviderSnapshotManager", () => {
       status: "ready",
       models: [createModel("codex", "gpt-5.2")],
       modes: [createMode("auto")],
+      label: "codex",
+      description: "codex test provider",
+      defaultModeId: null,
     });
     expect(getProviderEntry(snapshot, "claude")).toMatchObject({
       provider: "claude",
       status: "ready",
       models: [createModel("claude", "sonnet")],
       modes: [createMode("default")],
+      label: "claude",
+      description: "claude test provider",
+      defaultModeId: null,
     });
     expect(getProviderEntry(snapshot, "codex")?.fetchedAt).toEqual(expect.any(String));
 
@@ -126,7 +146,13 @@ describe("ProviderSnapshotManager", () => {
 
     await vi.waitFor(() => {
       expect(manager.getSnapshot("/tmp/project")).toEqual([
-        { provider: "codex", status: "unavailable" },
+        {
+          provider: "codex",
+          status: "unavailable",
+          label: "codex",
+          description: "codex test provider",
+          defaultModeId: null,
+        },
       ]);
     });
 
@@ -155,6 +181,9 @@ describe("ProviderSnapshotManager", () => {
           provider: "codex",
           status: "error",
           error: "model lookup failed",
+          label: "codex",
+          description: "codex test provider",
+          defaultModeId: null,
         },
       ]);
     });
@@ -236,7 +265,15 @@ describe("ProviderSnapshotManager", () => {
     });
 
     manager.refresh("/tmp/project");
-    expect(manager.getSnapshot("/tmp/project")).toEqual([{ provider: "codex", status: "loading" }]);
+    expect(manager.getSnapshot("/tmp/project")).toEqual([
+      {
+        provider: "codex",
+        status: "loading",
+        label: "codex",
+        description: "codex test provider",
+        defaultModeId: null,
+      },
+    ]);
 
     await vi.waitFor(() => {
       expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")?.models?.[0]?.id).toBe(
@@ -265,7 +302,15 @@ describe("ProviderSnapshotManager", () => {
 
     manager.refresh("/tmp/project");
 
-    expect(manager.getSnapshot("/tmp/project")).toEqual([{ provider: "codex", status: "loading" }]);
+    expect(manager.getSnapshot("/tmp/project")).toEqual([
+      {
+        provider: "codex",
+        status: "loading",
+        label: "codex",
+        description: "codex test provider",
+        defaultModeId: null,
+      },
+    ]);
 
     manager.refresh("/tmp/project");
     manager.refresh("/tmp/project");
@@ -361,6 +406,89 @@ describe("ProviderSnapshotManager", () => {
 
     manager.destroy();
   });
+
+  test("snapshot includes user-defined providers from the registry", async () => {
+    const { registry } = createRegistry([
+      createMockProvider({ provider: "claude" }),
+      createMockProvider({
+        provider: "zai",
+        label: "ZAI",
+        description: "Custom Claude profile",
+        defaultModeId: "default",
+        fetchModes: async () => [createMode("default")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot("/tmp/project");
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "zai")?.status).toBe("ready");
+    });
+
+    expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "zai")).toMatchObject({
+      provider: "zai",
+      status: "ready",
+      label: "ZAI",
+      description: "Custom Claude profile",
+      defaultModeId: "default",
+    });
+
+    manager.destroy();
+  });
+
+  test("enabled false providers are omitted when absent from the registry", () => {
+    const { registry } = createRegistry([createMockProvider({ provider: "claude" })]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    const snapshot = manager.getSnapshot("/tmp/project");
+
+    expect(snapshot.map((entry) => entry.provider)).toEqual(["claude"]);
+    expect(getProviderEntry(snapshot, "zai")).toBeUndefined();
+
+    manager.destroy();
+  });
+
+  test("snapshot entries include label and description from the registry", async () => {
+    const models = deferred<AgentModelDefinition[]>();
+    const modes = deferred<AgentMode[]>();
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "zai",
+        label: "ZAI",
+        description: "Custom Claude profile",
+        defaultModeId: "plan",
+        fetchModels: async () => models.promise,
+        fetchModes: async () => modes.promise,
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    expect(manager.getSnapshot("/tmp/project")).toEqual([
+      {
+        provider: "zai",
+        status: "loading",
+        label: "ZAI",
+        description: "Custom Claude profile",
+        defaultModeId: "plan",
+      },
+    ]);
+
+    models.resolve([createModel("zai", "zai-fast")]);
+    modes.resolve([createMode("plan")]);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "zai")).toMatchObject({
+        provider: "zai",
+        status: "ready",
+        label: "ZAI",
+        description: "Custom Claude profile",
+        defaultModeId: "plan",
+      });
+    });
+
+    manager.destroy();
+  });
 });
 
 function deferred<T>(): Deferred<T> {
@@ -403,9 +531,9 @@ function createMockProvider(options: MockProviderOptions): MockProviderHandle {
 
   const definition: ProviderDefinition = {
     id: options.provider,
-    label: options.provider,
-    description: `${options.provider} test provider`,
-    defaultModeId: null,
+    label: options.label ?? options.provider,
+    description: options.description ?? `${options.provider} test provider`,
+    defaultModeId: options.defaultModeId ?? null,
     modes: [],
     createClient: () =>
       ({

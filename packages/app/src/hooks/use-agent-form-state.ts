@@ -10,6 +10,7 @@ import type {
   ProviderSnapshotEntry,
 } from "@server/server/agent/agent-sdk-types";
 import { useHosts } from "@/runtime/host-runtime";
+import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
   useFormPreferences,
@@ -99,11 +100,11 @@ type UseAgentFormStateResult = {
   persistFormPreferences: () => Promise<void>;
 };
 
-const allProviderDefinitions = AGENT_PROVIDER_DEFINITIONS;
-const allProviderDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
-  allProviderDefinitions.map((definition) => [definition.id, definition]),
+const staticProviderDefinitions = AGENT_PROVIDER_DEFINITIONS;
+const staticProviderDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
+  staticProviderDefinitions.map((definition) => [definition.id, definition]),
 );
-const fallbackDefinition = allProviderDefinitions[0];
+const fallbackDefinition = staticProviderDefinitions[0];
 const DEFAULT_PROVIDER: AgentProvider = fallbackDefinition?.id ?? "claude";
 const DEFAULT_MODE_FOR_DEFAULT_PROVIDER = fallbackDefinition?.defaultModeId ?? "";
 
@@ -180,7 +181,7 @@ function resolveFormState(
   userModified: UserModifiedFields,
   currentState: FormState,
   validServerIds: Set<string>,
-  allowedProviderMap: Map<AgentProvider, AgentProviderDefinition> = allProviderDefinitionMap,
+  allowedProviderMap: Map<AgentProvider, AgentProviderDefinition> = staticProviderDefinitionMap,
 ): FormState {
   // Start with current state - we only update non-user-modified fields
   const result = { ...currentState };
@@ -376,10 +377,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   } = useProvidersSnapshot(formState.serverId);
 
   const allProviderEntries = useMemo(() => snapshotEntries ?? [], [snapshotEntries]);
-  const snapshotProviderDefinitions = useMemo(() => {
-    const snapshotProviders = new Set((snapshotEntries ?? []).map((entry) => entry.provider));
-    return allProviderDefinitions.filter((definition) => snapshotProviders.has(definition.id));
-  }, [snapshotEntries]);
+  const snapshotProviderDefinitions = useMemo(
+    () => buildProviderDefinitions(snapshotEntries),
+    [snapshotEntries],
+  );
   const snapshotProviderDefinitionMap = useMemo(
     () =>
       new Map<AgentProvider, AgentProviderDefinition>(
@@ -388,17 +389,18 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     [snapshotProviderDefinitions],
   );
   const snapshotSelectableProviderDefinitionMap = useMemo(() => {
+    if (!snapshotEntries?.length) {
+      return snapshotProviderDefinitionMap;
+    }
     const readyProviders = new Set(
-      (snapshotEntries ?? [])
-        .filter((entry) => entry.status === "ready")
-        .map((entry) => entry.provider),
+      snapshotEntries.filter((entry) => entry.status === "ready").map((entry) => entry.provider),
     );
     return new Map<AgentProvider, AgentProviderDefinition>(
       snapshotProviderDefinitions
         .filter((definition) => readyProviders.has(definition.id))
         .map((definition) => [definition.id, definition]),
     );
-  }, [snapshotEntries, snapshotProviderDefinitions]);
+  }, [snapshotEntries, snapshotProviderDefinitionMap, snapshotProviderDefinitions]);
   const snapshotAllProviderModels = useMemo(() => {
     const map = new Map<string, AgentModelDefinition[]>();
     for (const entry of snapshotEntries ?? []) {
