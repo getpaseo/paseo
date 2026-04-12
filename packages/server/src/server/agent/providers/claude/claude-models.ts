@@ -18,6 +18,13 @@ const CLAUDE_OPUS_4_7_THINKING_OPTIONS = [
 const CLAUDE_MODELS: AgentModelDefinition[] = [
   {
     provider: "claude",
+    id: "default",
+    label: "default",
+    description: "From ~/.claude/settings.json",
+    isDefault: true,
+  },
+  {
+    provider: "claude",
     id: "claude-opus-4-7[1m]",
     label: "Opus 4.7 1M",
     description: "Opus 4.7 with 1M context window",
@@ -42,21 +49,28 @@ const CLAUDE_MODELS: AgentModelDefinition[] = [
     id: "claude-opus-4-6",
     label: "Opus 4.6",
     description: "Opus 4.6 · Most capable for complex work",
-    isDefault: true,
     thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
   },
   {
     provider: "claude",
-    id: "claude-sonnet-4-6",
-    label: "Sonnet 4.6",
-    description: "Sonnet 4.6 · Best for everyday tasks",
+    id: "claude-sonnet-4-5[1m]",
+    label: "Sonnet 4.5 1M",
+    description: "Sonnet 4.5 with 1M context window",
+    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
+  },
+  {
+    provider: "claude",
+    id: "claude-sonnet-4-5",
+    label: "Sonnet 4.5",
+    description: "Sonnet 4.5 · Balanced capabilities",
     thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
   },
   {
     provider: "claude",
     id: "claude-haiku-4-5",
     label: "Haiku 4.5",
-    description: "Haiku 4.5 · Fastest for quick answers",
+    description: "Haiku 4.5 · Lightweight tasks",
+    thinkingOptions: [],
   },
 ];
 

@@ -2578,6 +2578,7 @@ export class AgentManager {
 
     if (typeof normalized.model === "string") {
       const trimmed = normalized.model.trim();
+      // "default" means use the provider's default (e.g., from ~/.claude/settings.json)
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
