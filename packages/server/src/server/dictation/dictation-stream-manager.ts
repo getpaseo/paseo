@@ -275,9 +275,11 @@ export class DictationStreamManager {
     );
 
     const outputRate = stt.requiredSampleRate;
+    // FunASR has its own VAD — skip auto-commit so it receives the full audio
+    const effectiveAutoCommitSeconds = sttProvider.id === "funasr" ? 0 : this.autoCommitSeconds;
     const autoCommitBytes =
-      this.autoCommitSeconds > 0
-        ? Math.max(1, Math.round(this.autoCommitSeconds * outputRate * 2))
+      effectiveAutoCommitSeconds > 0
+        ? Math.max(1, Math.round(effectiveAutoCommitSeconds * outputRate * 2))
         : 0;
 
     this.streams.set(dictationId, {
