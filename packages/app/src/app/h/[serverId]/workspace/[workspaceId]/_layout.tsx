@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState } from "react";
-import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
+import {
+  useGlobalSearchParams,
+  useLocalSearchParams,
+  useRootNavigationState,
+  useRouter,
+} from "expo-router";
 import { Platform } from "react-native";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import {
+  buildHostRootRoute,
   decodeWorkspaceIdFromPathSegment,
   parseWorkspaceOpenIntent,
   type WorkspaceOpenIntent,
 } from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import {
+  isWorkspaceVisibleInDesktopWindow,
+  useDesktopWorkspaceWindowState,
+} from "@/desktop/window-workspace-state";
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {
@@ -44,6 +54,7 @@ export default function HostWorkspaceLayout() {
 }
 
 function HostWorkspaceLayoutContent() {
+  const router = useRouter();
   const rootNavigationState = useRootNavigationState();
   const consumedIntentRef = useRef<string | null>(null);
   const [intentConsumed, setIntentConsumed] = useState(false);
@@ -60,6 +71,7 @@ function HostWorkspaceLayoutContent() {
     ? (decodeWorkspaceIdFromPathSegment(workspaceValue) ?? "")
     : "";
   const openValue = getParamValue(globalParams.open);
+  const desktopWorkspaceWindowState = useDesktopWorkspaceWindowState();
 
   useEffect(() => {
     if (!openValue) {
@@ -98,6 +110,16 @@ function HostWorkspaceLayoutContent() {
 
     setIntentConsumed(true);
   }, [openValue, rootNavigationState?.key, serverId, workspaceId]);
+
+  useEffect(() => {
+    if (!serverId || !workspaceId || !desktopWorkspaceWindowState.isReady) {
+      return;
+    }
+    if (isWorkspaceVisibleInDesktopWindow(desktopWorkspaceWindowState, serverId, workspaceId)) {
+      return;
+    }
+    router.replace(buildHostRootRoute(serverId));
+  }, [desktopWorkspaceWindowState, router, serverId, workspaceId]);
 
   if (openValue && !intentConsumed) {
     return null;

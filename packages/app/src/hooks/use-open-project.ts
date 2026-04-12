@@ -4,6 +4,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import { claimWorkspaceInCurrentWindow } from "@/desktop/window-workspace-state";
 
 export function useOpenProject(serverId: string | null): (path: string) => Promise<boolean> {
   const normalizedServerId = serverId?.trim() ?? "";
@@ -27,6 +28,7 @@ export function useOpenProject(serverId: string | null): (path: string) => Promi
 
         mergeWorkspaces(normalizedServerId, [normalizeWorkspaceDescriptor(payload.workspace)]);
         setHasHydratedWorkspaces(normalizedServerId, true);
+        await claimWorkspaceInCurrentWindow(normalizedServerId, payload.workspace.id);
         router.replace(
           prepareWorkspaceTab({
             serverId: normalizedServerId,

@@ -47,8 +47,20 @@ export interface DesktopWindowControlsOverlayUpdate {
   foregroundColor?: string;
 }
 
+export interface DesktopWorkspaceWindowState {
+  windowId: number;
+  isPrimary: boolean;
+  workspaceOwners: Record<string, number>;
+}
+
 export interface DesktopWindowBridge {
   label?: string;
+  getWorkspaceState?: () => Promise<DesktopWorkspaceWindowState>;
+  claimWorkspace?: (input: { serverId: string; workspaceId: string }) => Promise<boolean>;
+  moveWorkspaceToNewWindow?: (input: {
+    serverId: string;
+    workspaceId: string;
+  }) => Promise<boolean>;
   toggleMaximize?: () => Promise<void>;
   isFullscreen?: () => Promise<boolean>;
   updateWindowControls?: (update: DesktopWindowControlsOverlayUpdate) => Promise<void>;

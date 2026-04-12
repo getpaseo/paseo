@@ -44,7 +44,7 @@ import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
 import { getHostRuntimeStore, isHostRuntimeConnected } from "@/runtime/host-runtime";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
 import { projectIconQueryKey } from "@/hooks/use-project-icon-query";
 import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
@@ -83,6 +83,10 @@ import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-
 import { createNameId } from "mnemonic-id";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 import { openExternalUrl } from "@/utils/open-external-url";
+import {
+  claimWorkspaceInCurrentWindow,
+  moveWorkspaceToNewDesktopWindow,
+} from "@/desktop/window-workspace-state";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -149,6 +153,7 @@ interface ProjectHeaderRowProps {
   isArchiving?: boolean;
   menuController: ReturnType<typeof useContextMenu> | null;
   onRemoveProject?: () => void;
+  onMoveWorkspaceToNewWindow?: () => void;
   removeProjectStatus?: "idle" | "pending";
   dragHandleProps?: DraggableListDragHandleProps;
 }
@@ -169,6 +174,7 @@ interface WorkspaceRowInnerProps {
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
   onArchive?: () => void;
+  onMoveToNewWindow?: () => void;
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
@@ -698,6 +704,7 @@ function ProjectHeaderRow({
   isArchiving = false,
   menuController,
   onRemoveProject,
+  onMoveWorkspaceToNewWindow,
   removeProjectStatus = "idle",
   dragHandleProps,
 }: ProjectHeaderRowProps) {
@@ -725,8 +732,9 @@ function ProjectHeaderRow({
       }
       return payload.workspace;
     },
-    onSuccess: (workspace) => {
+    onSuccess: async (workspace) => {
       mergeWorkspaces(serverId!, [normalizeWorkspaceDescriptor(workspace)]);
+      await claimWorkspaceInCurrentWindow(serverId!, workspace.id);
       onWorktreeCreated?.(workspace.id);
       onWorkspacePress?.();
       router.navigate(
@@ -799,7 +807,7 @@ function ProjectHeaderRow({
             testID={`sidebar-project-new-worktree-${project.projectKey}`}
           />
         ) : null}
-        {onRemoveProject ? (
+        {onRemoveProject || (workspace && onMoveWorkspaceToNewWindow) ? (
           <View
             style={!(isHovered || isMobileBreakpoint) && styles.projectKebabButtonHidden}
             pointerEvents={isHovered || isMobileBreakpoint ? "auto" : "none"}
@@ -823,15 +831,26 @@ function ProjectHeaderRow({
                 )}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" width={220}>
-                <DropdownMenuItem
-                  testID={`sidebar-project-menu-remove-${project.projectKey}`}
-                  leading={<Trash2 size={14} color={theme.colors.foregroundMuted} />}
-                  status={removeProjectStatus}
-                  pendingLabel="Removing..."
-                  onSelect={onRemoveProject}
-                >
-                  Remove project
-                </DropdownMenuItem>
+                {workspace && onMoveWorkspaceToNewWindow ? (
+                  <DropdownMenuItem
+                    testID={`sidebar-project-menu-move-to-new-window-${workspace.workspaceKey}`}
+                    leading={<ExternalLink size={14} color={theme.colors.foregroundMuted} />}
+                    onSelect={onMoveWorkspaceToNewWindow}
+                  >
+                    Move to new window
+                  </DropdownMenuItem>
+                ) : null}
+                {onRemoveProject ? (
+                  <DropdownMenuItem
+                    testID={`sidebar-project-menu-remove-${project.projectKey}`}
+                    leading={<Trash2 size={14} color={theme.colors.foregroundMuted} />}
+                    status={removeProjectStatus}
+                    pendingLabel="Removing..."
+                    onSelect={onRemoveProject}
+                  >
+                    Remove project
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           </View>
@@ -907,6 +926,7 @@ function WorkspaceRowInner({
   archiveStatus = "idle",
   archivePendingLabel,
   onArchive,
+  onMoveToNewWindow,
   onCopyBranchName,
   onCopyPath,
   archiveShortcutKeys,
@@ -998,6 +1018,15 @@ function WorkspaceRowInner({
                   )}
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" width={260}>
+                  {onMoveToNewWindow ? (
+                    <DropdownMenuItem
+                      testID={`sidebar-workspace-menu-move-to-new-window-${workspace.workspaceKey}`}
+                      leading={<ExternalLink size={14} color={theme.colors.foregroundMuted} />}
+                      onSelect={onMoveToNewWindow}
+                    >
+                      Move to new window
+                    </DropdownMenuItem>
+                  ) : null}
                   {onCopyPath ? (
                     <DropdownMenuItem
                       testID={`sidebar-workspace-menu-copy-path-${workspace.workspaceKey}`}
@@ -1062,6 +1091,7 @@ function WorkspaceRowWithMenu({
   dragHandleProps,
   canCopyBranchName,
   isCreating = false,
+  onMoveToNewWindow,
 }: {
   workspace: SidebarWorkspaceEntry;
   selected: boolean;
@@ -1073,6 +1103,7 @@ function WorkspaceRowWithMenu({
   dragHandleProps?: DraggableListDragHandleProps;
   canCopyBranchName: boolean;
   isCreating?: boolean;
+  onMoveToNewWindow?: () => void;
 }) {
   const toast = useToast();
   const activeWorkspaceSelection = useNavigationActiveWorkspaceSelection();
@@ -1237,6 +1268,7 @@ function WorkspaceRowWithMenu({
       archiveStatus={isWorktree ? archiveStatus : isArchivingWorkspace ? "pending" : "idle"}
       archivePendingLabel={isWorktree ? "Archiving..." : "Hiding..."}
       onArchive={isWorktree ? handleArchiveWorktree : handleArchiveWorkspace}
+      onMoveToNewWindow={onMoveToNewWindow}
       onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
       onCopyPath={handleCopyPath}
       archiveShortcutKeys={selected ? archiveShortcutKeys : null}
@@ -1260,6 +1292,7 @@ function FlattenedProjectRow({
   dragHandleProps,
   isProjectActive = false,
   onRemoveProject,
+  onMoveWorkspaceToNewWindow,
   removeProjectStatus,
 }: {
   project: SidebarProjectEntry;
@@ -1277,6 +1310,7 @@ function FlattenedProjectRow({
   dragHandleProps?: DraggableListDragHandleProps;
   isProjectActive?: boolean;
   onRemoveProject?: () => void;
+  onMoveWorkspaceToNewWindow?: () => void;
   removeProjectStatus?: "idle" | "pending";
 }) {
   return (
@@ -1299,6 +1333,7 @@ function FlattenedProjectRow({
       isDragging={isDragging}
       menuController={null}
       onRemoveProject={onRemoveProject}
+      onMoveWorkspaceToNewWindow={onMoveWorkspaceToNewWindow}
       removeProjectStatus={removeProjectStatus}
       dragHandleProps={dragHandleProps}
     />
@@ -1316,6 +1351,7 @@ function WorkspaceRow({
   dragHandleProps,
   canCopyBranchName,
   isCreating = false,
+  onMoveToNewWindow,
 }: {
   workspace: SidebarWorkspaceEntry;
   selected: boolean;
@@ -1327,6 +1363,7 @@ function WorkspaceRow({
   dragHandleProps?: DraggableListDragHandleProps;
   canCopyBranchName: boolean;
   isCreating?: boolean;
+  onMoveToNewWindow?: () => void;
 }) {
   return (
     <WorkspaceRowWithMenu
@@ -1340,6 +1377,7 @@ function WorkspaceRow({
       dragHandleProps={dragHandleProps}
       canCopyBranchName={canCopyBranchName}
       isCreating={isCreating}
+      onMoveToNewWindow={onMoveToNewWindow}
     />
   );
 }
@@ -1401,6 +1439,29 @@ function ProjectBlock({
     return project.workspaces.some((w) => w.workspaceId === activeWorkspaceSelection.workspaceId);
   }, [serverId, activeWorkspaceSelection, project.workspaces]);
 
+  const supportsWorkspaceMoveToNewWindow = getIsElectronRuntime();
+  const toast = useToast();
+  const [isRemovingProject, setIsRemovingProject] = useState(false);
+
+  const handleMoveWorkspaceToNewWindow = useCallback(
+    (workspace: SidebarWorkspaceEntry) => {
+      if (!supportsWorkspaceMoveToNewWindow) {
+        return;
+      }
+
+      void moveWorkspaceToNewDesktopWindow(workspace.serverId, workspace.workspaceId)
+        .then((didMove) => {
+          if (!didMove) {
+            toast.error("Failed to move workspace to a new window");
+          }
+        })
+        .catch((error) => {
+          toast.error(error instanceof Error ? error.message : "Failed to move workspace");
+        });
+    },
+    [supportsWorkspaceMoveToNewWindow, toast],
+  );
+
   const renderWorkspaceRow = useCallback(
     (
       item: SidebarWorkspaceEntry,
@@ -1408,6 +1469,7 @@ function ProjectBlock({
         drag?: () => void;
         isDragging?: boolean;
         dragHandleProps?: DraggableListDragHandleProps;
+        onMoveToNewWindow?: () => void;
       },
     ) => {
       const isSelected =
@@ -1433,6 +1495,7 @@ function ProjectBlock({
           drag={input?.drag ?? (() => {})}
           isDragging={input?.isDragging ?? false}
           dragHandleProps={input?.dragHandleProps}
+          onMoveToNewWindow={input?.onMoveToNewWindow}
         />
       );
     },
@@ -1458,9 +1521,12 @@ function ProjectBlock({
         drag: workspaceDrag,
         isDragging: isActive,
         dragHandleProps: workspaceDragHandleProps,
+        onMoveToNewWindow: supportsWorkspaceMoveToNewWindow
+          ? () => handleMoveWorkspaceToNewWindow(item)
+          : undefined,
       });
     },
-    [renderWorkspaceRow],
+    [handleMoveWorkspaceToNewWindow, renderWorkspaceRow, supportsWorkspaceMoveToNewWindow],
   );
 
   const handleWorkspaceDragEnd = useCallback(
@@ -1469,9 +1535,6 @@ function ProjectBlock({
     },
     [onWorkspaceReorder, project.projectKey],
   );
-
-  const toast = useToast();
-  const [isRemovingProject, setIsRemovingProject] = useState(false);
 
   const handleRemoveProject = useCallback(() => {
     if (isRemovingProject || !serverId) {
@@ -1537,6 +1600,11 @@ function ProjectBlock({
           dragHandleProps={dragHandleProps}
           isProjectActive={isProjectActive}
           onRemoveProject={handleRemoveProject}
+          onMoveWorkspaceToNewWindow={
+            supportsWorkspaceMoveToNewWindow
+              ? () => handleMoveWorkspaceToNewWindow(rowModel.workspace)
+              : undefined
+          }
           removeProjectStatus={isRemovingProject ? "pending" : "idle"}
         />
       ) : (
@@ -1570,6 +1638,9 @@ function ProjectBlock({
               keyExtractor={workspaceKeyExtractor}
               renderItem={renderWorkspace}
               onDragEnd={handleWorkspaceDragEnd}
+              onDragEndOutside={
+                supportsWorkspaceMoveToNewWindow ? handleMoveWorkspaceToNewWindow : undefined
+              }
               scrollEnabled={false}
               useDragHandle
               nestable={useNestable}
@@ -1870,6 +1941,15 @@ export function SidebarWorkspaceList({
           keyExtractor={projectKeyExtractor}
           renderItem={renderProject}
           onDragEnd={handleProjectDragEnd}
+          onDragEndOutside={(project) => {
+            const onlyWorkspace = project.workspaces[0];
+            if (project.workspaces.length === 1 && onlyWorkspace) {
+              void moveWorkspaceToNewDesktopWindow(
+                onlyWorkspace.serverId,
+                onlyWorkspace.workspaceId,
+              ).catch(() => undefined);
+            }
+          }}
           scrollEnabled={false}
           useDragHandle
           nestable={isNative}

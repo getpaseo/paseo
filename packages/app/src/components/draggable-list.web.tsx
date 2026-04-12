@@ -115,6 +115,7 @@ export function DraggableList<T>({
   keyExtractor,
   renderItem,
   onDragEnd,
+  onDragEndOutside,
   style,
   containerStyle,
   contentContainerStyle,
@@ -162,11 +163,19 @@ export function DraggableList<T>({
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
+      const activeItem = items.find((item, i) => keyExtractor(item, i) === active.id);
 
       setActiveId(null);
       setDragItems(null);
 
-      if (over && active.id !== over.id) {
+      if (!over) {
+        if (activeItem) {
+          onDragEndOutside?.(activeItem);
+        }
+        return;
+      }
+
+      if (active.id !== over.id) {
         const oldIndex = items.findIndex((item, i) => keyExtractor(item, i) === active.id);
         const newIndex = items.findIndex((item, i) => keyExtractor(item, i) === over.id);
 
@@ -176,7 +185,7 @@ export function DraggableList<T>({
         }
       }
     },
-    [items, keyExtractor, onDragEnd],
+    [items, keyExtractor, onDragEnd, onDragEndOutside],
   );
 
   const ids = items.map((item, index) => keyExtractor(item, index));

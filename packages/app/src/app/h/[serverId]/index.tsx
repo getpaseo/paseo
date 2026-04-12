@@ -9,6 +9,10 @@ import {
   buildHostWorkspaceRoute,
 } from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import {
+  isWorkspaceVisibleInDesktopWindow,
+  useDesktopWorkspaceWindowState,
+} from "@/desktop/window-workspace-state";
 
 const HOST_ROOT_REDIRECT_DELAY_MS = 300;
 
@@ -32,12 +36,19 @@ function HostIndexRouteContent() {
   const sessionWorkspaces = useSessionStore((state) =>
     serverId ? state.sessions[serverId]?.workspaces : undefined,
   );
+  const hasHydratedWorkspaces = useSessionStore((state) =>
+    serverId ? state.sessions[serverId]?.hasHydratedWorkspaces ?? false : false,
+  );
+  const desktopWorkspaceWindowState = useDesktopWorkspaceWindowState();
 
   useEffect(() => {
     if (preferencesLoading) {
       return;
     }
     if (!serverId) {
+      return;
+    }
+    if (!desktopWorkspaceWindowState.isReady) {
       return;
     }
     const rootRoute = buildHostRootRoute(serverId);
@@ -50,13 +61,48 @@ function HostIndexRouteContent() {
       }
 
       const visibleAgents = sessionAgents
-        ? Array.from(sessionAgents.values()).filter((agent) => !agent.archivedAt)
+        ? Array.from(sessionAgents.values()).filter((agent) => {
+            if (agent.archivedAt) {
+              return false;
+            }
+            if (!agent.cwd?.trim()) {
+              return true;
+            }
+            return isWorkspaceVisibleInDesktopWindow(
+              desktopWorkspaceWindowState,
+              serverId,
+              agent.cwd.trim(),
+            );
+          })
         : [];
       visibleAgents.sort(
         (left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime(),
       );
 
-      const visibleWorkspaces = sessionWorkspaces ? Array.from(sessionWorkspaces.values()) : [];
+      const ownedWorkspaceIdsForWindow =
+        desktopWorkspaceWindowState.windowId === null
+          ? []
+          : Object.entries(desktopWorkspaceWindowState.workspaceOwners)
+              .filter(([workspaceKey, ownerWindowId]) => {
+                return (
+                  ownerWindowId === desktopWorkspaceWindowState.windowId &&
+                  workspaceKey.startsWith(`${serverId}:`)
+                );
+              })
+              .map(([workspaceKey]) => workspaceKey.slice(serverId.length + 1));
+      if (ownedWorkspaceIdsForWindow.length > 0 && !hasHydratedWorkspaces) {
+        return;
+      }
+
+      const visibleWorkspaces = sessionWorkspaces
+        ? Array.from(sessionWorkspaces.values()).filter((workspace) =>
+            isWorkspaceVisibleInDesktopWindow(
+              desktopWorkspaceWindowState,
+              serverId,
+              workspace.id,
+            ),
+          )
+        : [];
 
       const primaryAgent = visibleAgents[0];
       if (primaryAgent?.cwd?.trim()) {
@@ -80,7 +126,16 @@ function HostIndexRouteContent() {
     }, HOST_ROOT_REDIRECT_DELAY_MS);
 
     return () => clearTimeout(timer);
-  }, [pathname, preferencesLoading, router, serverId, sessionAgents, sessionWorkspaces]);
+  }, [
+    desktopWorkspaceWindowState,
+    pathname,
+    preferencesLoading,
+    router,
+    serverId,
+    hasHydratedWorkspaces,
+    sessionAgents,
+    sessionWorkspaces,
+  ]);
 
   return null;
 }

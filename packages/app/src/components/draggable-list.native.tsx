@@ -14,6 +14,7 @@ export function DraggableList<T>({
   keyExtractor,
   renderItem,
   onDragEnd,
+  onDragEndOutside: _onDragEndOutside,
   style,
   containerStyle,
   contentContainerStyle,
