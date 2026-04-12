@@ -5,6 +5,18 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PATH="$SCRIPT_DIR/../node_modules/.bin:$PATH"
 
+ensure_workspace_dist() {
+  local workspace="$1"
+  local dist_entry="$2"
+
+  if [ -f "$SCRIPT_DIR/../$dist_entry" ]; then
+    return
+  fi
+
+  echo "Building $workspace..."
+  npm run build --workspace="$workspace"
+}
+
 # Derive PASEO_HOME: stable name for worktrees, temporary dir otherwise
 if [ -z "${PASEO_HOME}" ]; then
   export PASEO_HOME
@@ -34,6 +46,15 @@ echo "════════════════════════�
 echo "  Home:    ${PASEO_HOME}"
 echo "  Models:  ${PASEO_LOCAL_MODELS_DIR}"
 echo "══════════════════════════════════════════════════════"
+
+# Fresh checkouts need these workspace packages built because the daemon resolves
+# them from their published dist entries instead of src.
+ensure_workspace_dist "@getpaseo/highlight" "packages/highlight/dist/index.js"
+ensure_workspace_dist "@getpaseo/relay" "packages/relay/dist/index.js"
+
+# Ensure the shared portless proxy is running before resolving service URLs.
+# In non-interactive shells, portless falls back to an unprivileged port automatically.
+portless proxy start --https >/dev/null
 
 # Configure the daemon for the Portless app origin and let the app bootstrap
 # through the daemon's Portless URL instead of a fixed localhost port.
