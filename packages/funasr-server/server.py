@@ -3,16 +3,19 @@
 Uses SenseVoiceSmall (234M) with Apple Silicon MPS acceleration.
 Provides:
 - POST /transcribe — batch transcription (file upload)
-- WS /ws/transcribe — streaming 2-pass transcription
+- WS /ws/transcribe — streaming hybrid transcription (timer + silence)
 - GET /health — readiness check
 """
 
+import asyncio
 import io
 import json
 import logging
 import os
 import re
 import tempfile
+import threading
+import time
 import wave
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -30,101 +33,79 @@ vad_model: Optional[object] = None
 SAMPLE_RATE = 16000
 MIN_SPEECH_SAMPLES = int(0.3 * SAMPLE_RATE)  # 300ms minimum
 
-# SenseVoiceSmall adds special tags like <|zh|><|NEUTRAL|><|Speech|><|withitn|>
+# --- Streaming config (env var overridable) ---
+TIMER_INTERVAL_S = float(os.environ.get("FUNASR_TIMER_INTERVAL", "1.5"))
+SILENCE_THRESHOLD = int(os.environ.get("FUNASR_SILENCE_THRESHOLD", "500"))
+SILENCE_DURATION_MS = int(os.environ.get("FUNASR_SILENCE_DURATION_MS", "600"))
+SILENCE_DURATION_SAMPLES = int(SILENCE_DURATION_MS * SAMPLE_RATE / 1000)
+OVERLAP_S = float(os.environ.get("FUNASR_OVERLAP", "0.5"))
+OVERLAP_SAMPLES = int(OVERLAP_S * SAMPLE_RATE)
+
 _SENSEVOICE_TAG_RE = re.compile(r"<\|[^|]*\|>")
 
 
-def _clean_sensevoice_text(text: str) -> str:
-    """Remove SenseVoiceSmall's special tags from output."""
+def _clean(text: str) -> str:
     return _SENSEVOICE_TAG_RE.sub("", text).strip()
 
 
-def _wrap_pcm_in_wav(pcm_bytes: bytes, sample_rate: int = 16000, channels: int = 1, sample_width: int = 2) -> bytes:
-    """Wrap raw PCM data in a WAV header."""
+def _pcm_to_wav(pcm: bytes) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
-        wf.setnchannels(channels)
-        wf.setsampwidth(sample_width)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm_bytes)
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(pcm)
     return buf.getvalue()
 
 
-def _read_wav_as_int16(wav_bytes: bytes) -> np.ndarray:
-    """Read WAV bytes and return mono int16 numpy array."""
-    buf = io.BytesIO(wav_bytes)
-    with wave.open(buf, "rb") as wf:
-        assert wf.getnchannels() == 1, "Expected mono audio"
-        assert wf.getsampwidth() == 2, "Expected 16-bit audio"
-        frames = wf.readframes(wf.getnframes())
-    return np.frombuffer(frames, dtype=np.int16)
-
-
-def _extract_segment(samples: np.ndarray, start_ms: int, end_ms: int, sample_rate: int) -> np.ndarray:
-    """Extract a segment from audio samples given start/end in milliseconds."""
-    start_sample = int(start_ms * sample_rate / 1000)
-    end_sample = int(end_ms * sample_rate / 1000)
-    return samples[start_sample:end_sample]
-
-
-def _transcribe_segment(samples: np.ndarray) -> str:
-    """Transcribe a numpy int16 audio segment. Returns text or empty string."""
+def _transcribe(samples: np.ndarray) -> str:
+    """Transcribe int16 samples. Thread-safe (called from ASR thread)."""
     if len(samples) < MIN_SPEECH_SAMPLES:
         return ""
-    wav_bytes = _wrap_pcm_in_wav(samples.tobytes())
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp.write(wav_bytes)
-        tmp_path = tmp.name
+    wav = _pcm_to_wav(samples.tobytes())
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(wav)
+        path = f.name
     try:
-        result = asr_model.generate(input=tmp_path, language="auto", use_itn=True)
-        if result and isinstance(result, list) and len(result) > 0:
-            entry = result[0]
-            t = entry.get("text", "") if isinstance(entry, dict) else str(entry)
-            return _clean_sensevoice_text(t)
+        r = asr_model.generate(input=path, language="auto", use_itn=True)
+        if r and isinstance(r, list) and len(r) > 0:
+            e = r[0]
+            return _clean(e.get("text", "") if isinstance(e, dict) else str(e))
     finally:
-        os.unlink(tmp_path)
+        os.unlink(path)
     return ""
 
 
-def _transcribe_full_with_vad(all_samples: np.ndarray) -> str:
-    """Run VAD + per-segment ASR on full audio (pass 2). Returns joined text."""
-    if len(all_samples) < MIN_SPEECH_SAMPLES:
+def _transcribe_vad(samples: np.ndarray) -> str:
+    """VAD + per-segment ASR. Thread-safe."""
+    if len(samples) < MIN_SPEECH_SAMPLES:
         return ""
-
-    wav_bytes = _wrap_pcm_in_wav(all_samples.tobytes())
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp.write(wav_bytes)
-        tmp_path = tmp.name
-
+    wav = _pcm_to_wav(samples.tobytes())
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(wav)
+        path = f.name
     try:
-        vad_result = vad_model.generate(input=tmp_path)
+        vr = vad_model.generate(input=path)
     except Exception:
-        os.unlink(tmp_path)
+        os.unlink(path)
         raise
-
-    segments = []
-    if vad_result and isinstance(vad_result, list) and len(vad_result) > 0:
-        segments = vad_result[0].get("value", [])
-
-    if not segments:
-        os.unlink(tmp_path)
+    segs = vr[0].get("value", []) if vr and isinstance(vr, list) and len(vr) > 0 else []
+    if not segs:
+        os.unlink(path)
         return ""
-
     texts = []
-    for start_ms, end_ms in segments:
-        seg = _extract_segment(all_samples, start_ms, end_ms, SAMPLE_RATE)
-        if len(seg) == 0:
-            continue
-        t = _transcribe_segment(seg)
-        if t:
-            texts.append(t)
-
-    os.unlink(tmp_path)
+    for s, e in segs:
+        si, ei = int(s * SAMPLE_RATE / 1000), int(e * SAMPLE_RATE / 1000)
+        seg = samples[si:ei]
+        if len(seg) > 0:
+            t = _transcribe(seg)
+            if t:
+                texts.append(t)
+    os.unlink(path)
     return "".join(texts)
 
 
 def _resolve_device() -> str:
-    """Pick best available device: MPS (Apple Silicon) > CPU."""
     try:
         import torch
         if torch.backends.mps.is_available():
@@ -134,27 +115,50 @@ def _resolve_device() -> str:
     return "cpu"
 
 
+class SilenceDetector:
+    def __init__(self):
+        self.speech_active = False
+        self.silence_count = 0
+        self.speech_start = 0
+
+    def feed(self, samples: np.ndarray, offset: int) -> list[tuple[int, int]]:
+        boundaries = []
+        w = int(SAMPLE_RATE * 0.03)
+        for i in range(0, len(samples), w):
+            chunk = samples[i:i + w]
+            if len(chunk) == 0:
+                continue
+            peak = int(np.max(np.abs(chunk)))
+            pos = offset + i
+            if not self.speech_active:
+                if peak >= SILENCE_THRESHOLD:
+                    self.speech_active = True
+                    self.speech_start = pos
+                    self.silence_count = 0
+            else:
+                if peak < SILENCE_THRESHOLD:
+                    self.silence_count += len(chunk)
+                    if self.silence_count >= SILENCE_DURATION_SAMPLES:
+                        end = pos - self.silence_count + len(chunk)
+                        boundaries.append((self.speech_start, end))
+                        self.speech_active = False
+                        self.silence_count = 0
+                else:
+                    self.silence_count = 0
+        return boundaries
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load models on startup."""
     global asr_model, vad_model
     from funasr import AutoModel
-
     device = _resolve_device()
     logger.info(f"Using device: {device}")
-
     logger.info("Loading VAD model...")
     vad_model = AutoModel(model="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch", disable_update=True)
-
     logger.info("Loading SenseVoiceSmall model...")
-    asr_model = AutoModel(
-        model="iic/SenseVoiceSmall",
-        trust_remote_code=True,
-        device=device,
-        disable_update=True,
-    )
-    logger.info(f"Models loaded successfully (ASR on {device})")
+    asr_model = AutoModel(model="iic/SenseVoiceSmall", trust_remote_code=True, device=device, disable_update=True)
+    logger.info(f"Models loaded (ASR on {device}, timer={TIMER_INTERVAL_S}s, silence={SILENCE_DURATION_MS}ms)")
     yield
     asr_model = None
     vad_model = None
@@ -170,101 +174,181 @@ async def health():
 
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):
-    """Batch transcription endpoint."""
     if asr_model is None or vad_model is None:
         return JSONResponse(status_code=503, content={"error": "Models not loaded"})
-
-    audio_bytes = await file.read()
-
-    is_pcm = False
-    if file.content_type and "pcm" in file.content_type:
-        is_pcm = True
-    if file.filename and file.filename.endswith(".pcm"):
-        is_pcm = True
-
+    audio = await file.read()
+    is_pcm = (file.content_type and "pcm" in file.content_type) or (
+        file.filename and file.filename.endswith(".pcm"))
     if is_pcm:
-        audio_bytes = _wrap_pcm_in_wav(audio_bytes)
-
-    samples = _read_wav_as_int16(audio_bytes)
-    text = _transcribe_full_with_vad(samples)
+        audio = _pcm_to_wav(audio)
+    buf = io.BytesIO(audio)
+    with wave.open(buf, "rb") as wf:
+        frames = wf.readframes(wf.getnframes())
+    samples = np.frombuffer(frames, dtype=np.int16)
+    text = _transcribe_vad(samples)
     return {"text": text}
 
 
 @app.websocket("/ws/transcribe")
 async def ws_transcribe(ws: WebSocket):
-    """Streaming 2-pass transcription.
+    """Streaming hybrid transcription.
 
-    Client sends:
-      - Binary frames: PCM16 16kHz mono audio chunks
-      - Text frame: {"type": "finish"} when recording ends
-
-    Server sends:
-      - {"type": "partial", "text": "..."} every ~1s with latest transcription
-      - {"type": "final", "text": "..."}  full VAD re-transcription (pass 2)
+    ASR runs in a dedicated thread so it never blocks WebSocket IO.
+    The main asyncio loop receives audio and manages state; the ASR
+    thread picks up transcription requests from a queue.
     """
-    import asyncio
-
     await ws.accept()
-
     if asr_model is None or vad_model is None:
         await ws.send_json({"type": "error", "error": "Models not loaded"})
         await ws.close()
         return
 
-    all_samples_list: list[np.ndarray] = []
-    total_samples_received = 0
-    last_transcribed_samples = 0
-    last_partial_text = ""
-    finished = False
-    # Minimum new audio before re-transcribing (1 second at 16kHz)
-    PARTIAL_INTERVAL_SAMPLES = SAMPLE_RATE * 1
-
     loop = asyncio.get_event_loop()
 
-    async def periodic_transcribe():
-        """Run ASR on new audio chunks every ~1 second, append to running text."""
-        nonlocal last_transcribed_samples, last_partial_text
-        committed_texts: list[str] = []
+    # Shared state (protected by lock)
+    lock = threading.Lock()
+    all_samples: list[np.ndarray] = []
+    total_samples = 0
+    committed: list[str] = []
+    current_text = ""
+    sentence_start = 0
+    last_timer_at = 0
+    last_sent_text = ""
 
-        while not finished:
-            await asyncio.sleep(0.5)
-            if finished:
-                break
-            new_samples = total_samples_received - last_transcribed_samples
-            if new_samples < PARTIAL_INTERVAL_SAMPLES:
-                continue
-            if not all_samples_list:
-                continue
+    detector = SilenceDetector()
+    finished_event = threading.Event()
 
+    # Queue of ASR requests: ("timer", chunk) or ("silence", seg) or ("final", full)
+    asr_queue: list[tuple[str, np.ndarray]] = []
+    asr_has_work = threading.Event()
+
+    # Results queue: (kind, text) to be sent as partials/finals
+    result_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+
+    def asr_worker():
+        """Dedicated ASR thread — processes requests sequentially."""
+        while True:
+            asr_has_work.wait()
+            asr_has_work.clear()
+
+            while True:
+                with lock:
+                    if not asr_queue:
+                        break
+                    kind, samples_arr = asr_queue.pop(0)
+
+                if kind == "timer":
+                    text = _transcribe(samples_arr)
+                    loop.call_soon_threadsafe(result_queue.put_nowait, ("timer", text))
+                elif kind == "silence":
+                    text = _transcribe(samples_arr)
+                    loop.call_soon_threadsafe(result_queue.put_nowait, ("silence", text))
+                elif kind == "final":
+                    text = _transcribe_vad(samples_arr)
+                    loop.call_soon_threadsafe(result_queue.put_nowait, ("final", text))
+
+            if finished_event.is_set():
+                # Check if queue is truly empty
+                with lock:
+                    if not asr_queue:
+                        break
+
+    worker = threading.Thread(target=asr_worker, daemon=True)
+    worker.start()
+
+    def _enqueue(kind: str, arr: np.ndarray):
+        with lock:
+            asr_queue.append((kind, arr.copy()))
+        asr_has_work.set()
+
+    def _check_timer():
+        nonlocal last_timer_at
+        with lock:
+            ts = total_samples
+            ss = sentence_start
+            lt = last_timer_at
+        if ts - lt < int(TIMER_INTERVAL_S * SAMPLE_RATE):
+            return
+        if not all_samples:
+            return
+        with lock:
+            full = np.concatenate(all_samples)
+            chunk_start = max(0, ss - OVERLAP_SAMPLES)
+            chunk = full[chunk_start:ts]
+            last_timer_at = ts
+        if len(chunk) >= MIN_SPEECH_SAMPLES:
+            _enqueue("timer", chunk)
+
+    def _check_silence(new_samples: np.ndarray, offset: int):
+        boundaries = detector.feed(new_samples, offset)
+        for bstart, bend in boundaries:
+            with lock:
+                full = np.concatenate(all_samples)
+                seg = full[bstart:bend]
+            if len(seg) >= MIN_SPEECH_SAMPLES:
+                _enqueue("silence", seg)
+            with lock:
+                nonlocal sentence_start, last_timer_at, current_text
+                sentence_start = total_samples
+                last_timer_at = total_samples
+                current_text = ""
+
+    async def process_results():
+        """Process ASR results and send to WebSocket."""
+        nonlocal current_text, last_sent_text
+        while True:
             try:
-                full_so_far = np.concatenate(all_samples_list)
-                # Only transcribe the new chunk since last transcription
-                new_chunk = full_so_far[last_transcribed_samples:]
-                text = await loop.run_in_executor(None, _transcribe_segment, new_chunk)
-                last_transcribed_samples = total_samples_received
-                if text:
-                    committed_texts.append(text)
-                    combined = "".join(committed_texts)
-                    if combined != last_partial_text:
-                        last_partial_text = combined
-                        await ws.send_json({"type": "partial", "text": combined})
-            except Exception as e:
-                logger.error(f"Periodic transcription error: {e}")
+                kind, text = await asyncio.wait_for(result_queue.get(), timeout=0.05)
+            except asyncio.TimeoutError:
+                return  # no results right now
 
-    transcribe_task = asyncio.create_task(periodic_transcribe())
+            if kind == "timer":
+                if text:
+                    with lock:
+                        current_text = text
+            elif kind == "silence":
+                with lock:
+                    current_text = ""
+                    if text:
+                        committed.append(text)
+            elif kind == "final":
+                await ws.send_json({"type": "final", "text": text})
+                return
+
+            # Send partial
+            with lock:
+                parts = committed[:]
+                if current_text:
+                    parts.append(current_text)
+            partial = "".join(parts)
+            if partial and partial != last_sent_text:
+                last_sent_text = partial
+                await ws.send_json({"type": "partial", "text": partial})
 
     try:
         while True:
-            message = await ws.receive()
+            # Process any pending ASR results
+            await process_results()
+
+            try:
+                message = await asyncio.wait_for(ws.receive(), timeout=0.05)
+            except asyncio.TimeoutError:
+                _check_timer()
+                continue
 
             if message["type"] == "websocket.disconnect":
                 break
 
             if "bytes" in message and message["bytes"]:
-                pcm_bytes = message["bytes"]
-                samples = np.frombuffer(pcm_bytes, dtype=np.int16)
-                all_samples_list.append(samples)
-                total_samples_received += len(samples)
+                pcm = message["bytes"]
+                samples_arr = np.frombuffer(pcm, dtype=np.int16)
+                offset = total_samples
+                with lock:
+                    all_samples.append(samples_arr)
+                    total_samples += len(samples_arr)
+
+                _check_silence(samples_arr, offset)
+                _check_timer()
 
             elif "text" in message and message["text"]:
                 try:
@@ -273,25 +357,42 @@ async def ws_transcribe(ws: WebSocket):
                     continue
 
                 if data.get("type") == "finish":
-                    finished = True
-                    transcribe_task.cancel()
-                    try:
-                        await transcribe_task
-                    except asyncio.CancelledError:
-                        pass
+                    with lock:
+                        if all_samples:
+                            full = np.concatenate(all_samples)
+                        else:
+                            full = np.array([], dtype=np.int16)
+                    _enqueue("final", full)
+                    finished_event.set()
+                    asr_has_work.set()
 
-                    # Pass 2: full re-transcription with VAD model (in thread pool)
-                    if all_samples_list:
-                        full_audio = np.concatenate(all_samples_list)
-                        final_text = await loop.run_in_executor(None, _transcribe_full_with_vad, full_audio)
-                    else:
-                        final_text = ""
-
-                    await ws.send_json({"type": "final", "text": final_text})
+                    # Wait for final result
+                    while True:
+                        kind, text = await result_queue.get()
+                        if kind == "final":
+                            await ws.send_json({"type": "final", "text": text})
+                            break
+                        # Process any remaining partials
+                        if kind == "timer" and text:
+                            with lock:
+                                current_text = text
+                        elif kind == "silence":
+                            with lock:
+                                current_text = ""
+                                if text:
+                                    committed.append(text)
+                        with lock:
+                            parts = committed[:]
+                            if current_text:
+                                parts.append(current_text)
+                        partial = "".join(parts)
+                        if partial and partial != last_sent_text:
+                            last_sent_text = partial
+                            await ws.send_json({"type": "partial", "text": partial})
                     break
 
     except WebSocketDisconnect:
-        logger.debug("WebSocket client disconnected")
+        pass
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         try:
@@ -299,6 +400,8 @@ async def ws_transcribe(ws: WebSocket):
         except Exception:
             pass
     finally:
+        finished_event.set()
+        asr_has_work.set()
         try:
             await ws.close()
         except Exception:
