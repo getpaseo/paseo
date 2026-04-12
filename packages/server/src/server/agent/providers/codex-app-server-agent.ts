@@ -3175,7 +3175,10 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   private emitBufferedAssistantMessages(): void {
-    for (const [itemId, text] of this.pendingAgentMessages.entries()) {
+    const bufferedMessages = [...this.pendingAgentMessages.entries()];
+    this.pendingAgentMessages.clear();
+
+    for (const [itemId, text] of bufferedMessages) {
       if (!text) {
         continue;
       }
@@ -3186,7 +3189,6 @@ class CodexAppServerAgentSession implements AgentSession {
       });
       this.emittedItemCompletedIds.add(itemId);
     }
-    this.pendingAgentMessages.clear();
   }
 
   private createTurnId(): string {

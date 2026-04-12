@@ -346,14 +346,19 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("emits buffered assistant text before task_complete closes the turn", () => {
+  test("emits all buffered assistant text before task_complete closes the turn", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
     ;(session as any).handleNotification("item/agentMessage/delta", {
-      itemId: "msg-late-final",
-      delta: "COMPLEX_REPRO_OK",
+      itemId: "msg-late-final-1",
+      delta: "FIRST_BUFFERED_MESSAGE",
+    });
+
+    ;(session as any).handleNotification("item/agentMessage/delta", {
+      itemId: "msg-late-final-2",
+      delta: "SECOND_BUFFERED_MESSAGE",
     });
 
     ;(session as any).handleNotification("codex/event/task_complete", {
@@ -367,7 +372,16 @@ describe("Codex app-server provider", () => {
         turnId: "test-turn",
         item: {
           type: "assistant_message",
-          text: "COMPLEX_REPRO_OK",
+          text: "FIRST_BUFFERED_MESSAGE",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "assistant_message",
+          text: "SECOND_BUFFERED_MESSAGE",
         },
       },
       {
