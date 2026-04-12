@@ -770,6 +770,29 @@ export class AgentManager {
     });
   }
 
+  async adoptSession(
+    session: AgentSession,
+    config: AgentSessionConfig,
+    agentId: string,
+    options?: {
+      createdAt?: Date;
+      updatedAt?: Date;
+      lastUserMessageAt?: Date | null;
+      labels?: Record<string, string>;
+      timeline?: AgentTimelineItem[];
+      timelineRows?: AgentTimelineRow[];
+      timelineEpoch?: string;
+      timelineNextSeq?: number;
+      historyPrimed?: boolean;
+      lastUsage?: AgentUsage;
+      lastError?: string;
+      attention?: AttentionState;
+    },
+  ): Promise<ManagedAgent> {
+    const normalizedConfig = await this.normalizeConfig(config);
+    return this.registerSession(session, normalizedConfig, agentId, options);
+  }
+
   // Reconstruct an agent from provider persistence. Callers should explicitly
   // hydrate timeline history after resume.
   async resumeAgentFromPersistence(

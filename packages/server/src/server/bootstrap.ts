@@ -120,6 +120,8 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
+import { TmuxCodexBridgeService } from "./tmux-codex-bridge-service.js";
+import { CodexProcessBridgeService } from "./codex-process-bridge-service.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -418,6 +420,22 @@ export async function createPaseoDaemon(
       { elapsed: elapsed() },
       `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
     );
+    const tmuxCodexBridge = new TmuxCodexBridgeService({
+      logger,
+      paseoHome: config.paseoHome,
+      agentManager,
+      projectRegistry,
+      workspaceRegistry,
+    });
+    await tmuxCodexBridge.start();
+    const codexProcessBridge = new CodexProcessBridgeService({
+      logger,
+      paseoHome: config.paseoHome,
+      agentManager,
+      projectRegistry,
+      workspaceRegistry,
+    });
+    await codexProcessBridge.start();
     logger.info(
       "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
     );
@@ -693,6 +711,8 @@ export async function createPaseoDaemon(
         runtimeSettings: config.agentProviderSettings,
         providerOverrides: config.providerOverrides,
       });
+      await codexProcessBridge.stop().catch(() => undefined);
+      await tmuxCodexBridge.stop().catch(() => undefined);
       terminalManager.killAll();
       speechService.stop();
       await scheduleService.stop().catch(() => undefined);
