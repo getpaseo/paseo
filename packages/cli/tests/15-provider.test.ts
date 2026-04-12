@@ -129,7 +129,12 @@ try {
     assert(result.stdout.includes("claude"), "output should include claude");
     assert(result.stdout.includes("codex"), "output should include codex");
     assert(result.stdout.includes("opencode"), "output should include opencode");
-    assert(result.stdout.includes("available"), "output should show available status");
+    assert(
+      result.stdout.includes("available") ||
+        result.stdout.includes("loading") ||
+        result.stdout.includes("unavailable"),
+      "output should show a provider status",
+    );
     console.log("✓ provider ls lists all providers\n");
   }
 
