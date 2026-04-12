@@ -23,6 +23,11 @@ export default defineConfig({
      * keeps `process.send` intact so the app tests can boot before hitting the intentional failures.
      */
     pool: "forks",
+    poolOptions: {
+      forks: {
+        maxForks: 2,
+      },
+    },
     server: {
       deps: {
         fallbackCJS: true,

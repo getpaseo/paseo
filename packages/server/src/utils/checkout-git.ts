@@ -1005,7 +1005,16 @@ async function getAheadOfOrigin(cwd: string, currentBranch: string): Promise<num
     const count = Number.parseInt(stdout.trim(), 10);
     return Number.isNaN(count) ? null : count;
   } catch {
-    return null;
+    try {
+      const { stdout } = await execAsync(
+        `git rev-list --count ${currentBranch}`,
+        { cwd, env: READ_ONLY_GIT_ENV },
+      );
+      const count = Number.parseInt(stdout.trim(), 10);
+      return Number.isNaN(count) ? null : count;
+    } catch {
+      return null;
+    }
   }
 }
 
