@@ -1099,7 +1099,7 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    return getClaudeModels();
+    return await getClaudeModels();
   }
 
   async listPersistedAgents(
