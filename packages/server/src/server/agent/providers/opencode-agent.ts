@@ -1139,23 +1139,15 @@ export class OpenCodeAgentClient implements AgentClient {
           continue;
         }
 
-        for (const [modelId, model] of Object.entries(provider.models)) {
-          const definition = buildOpenCodeModelDefinition(provider, modelId, model);
-          const contextWindowMaxTokens = extractOpenCodeModelContextWindow(model);
-          if (contextWindowMaxTokens !== undefined) {
-            this.modelContextWindows.set(
-              buildOpenCodeModelLookupKey(provider.id, modelId),
-              contextWindowMaxTokens,
-            );
-          }
-          models.push(definition);
-        }
-      }
-
-      return models;
-    } finally {
-      acquisition.release();
-    }
+    // Insert default option that uses config file settings
+    const defaultEntry: AgentModelDefinition = {
+      provider: "opencode",
+      id: "default",
+      label: "default",
+      description: "From ~/.opencode/opencode.json",
+      isDefault: true,
+    };
+    return [defaultEntry, ...models];
   }
 
   async listModes(options: ListModesOptions): Promise<AgentMode[]> {

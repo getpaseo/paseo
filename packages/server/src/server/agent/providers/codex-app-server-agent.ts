@@ -2764,7 +2764,8 @@ class CodexAppServerAgentSession implements AgentSession {
       .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
       .join("\n\n");
     if (developerInstructions) settings.developer_instructions = developerInstructions;
-    if (this.config.model) settings.model = this.config.model;
+    // "default" means use the model from ~/.codex/config.toml (don't override)
+    if (this.config.model && this.config.model !== "default") settings.model = this.config.model;
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (thinkingOptionId) settings.reasoning_effort = thinkingOptionId;
     return { mode: match.mode ?? "code", settings, name: match.name };
@@ -3040,7 +3041,8 @@ class CodexAppServerAgentSession implements AgentSession {
       ),
     };
 
-    if (this.config.model) {
+    // "default" means use the model from ~/.codex/config.toml (don't override)
+    if (this.config.model && this.config.model !== "default") {
       params.model = this.config.model;
     }
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
@@ -4718,17 +4720,12 @@ export class CodexAppServerAgentClient implements AgentClient {
         typeof configuredDefaultModelId === "string"
           ? models.some((model) => model?.id === configuredDefaultModelId)
           : false;
-      return models.map((model) =>
-        buildCodexModelDefinition(model, {
-          configuredDefaultModelId,
-          configuredDefaultThinkingOptionId,
-          hasConfiguredDefaultModel,
-        }),
-      );
-    } finally {
-      await client.dispose();
-    }
-  }
+      const mappedModels = models.map((model) => {
+        const defaultReasoningEffort = normalizeCodexThinkingOptionId(
+          typeof model.defaultReasoningEffort === "string" ? model.defaultReasoningEffort : null,
+        );
+        const resolvedDefaultReasoningEffort =
+          configuredDefaultThinkingOptionId ?? defaultReasoningEffort;
 
   async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
     const threadId = handle.nativeHandle ?? handle.sessionId;
@@ -4737,10 +4734,42 @@ export class CodexAppServerAgentClient implements AgentClient {
     const child = await this.spawnAppServer();
     const client = new CodexAppServerClient(child, this.logger);
 
-    try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
-      await client.request("thread/archive", { threadId });
+        const thinkingOptions = Array.from(thinkingById.values()).map((option) => ({
+          ...option,
+          isDefault: option.id === resolvedDefaultReasoningEffort,
+        }));
+        const defaultThinkingOptionId =
+          resolvedDefaultReasoningEffort ??
+          thinkingOptions.find((option) => option.isDefault)?.id ??
+          thinkingOptions[0]?.id;
+        const isDefaultModel = hasConfiguredDefaultModel
+          ? model.id === configuredDefaultModelId
+          : model.isDefault;
+
+        return {
+          provider: CODEX_PROVIDER,
+          id: model.id,
+          label: normalizeCodexModelLabel(model.displayName),
+          description: model.description,
+          isDefault: isDefaultModel,
+          thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
+          defaultThinkingOptionId,
+          metadata: {
+            model: model.model,
+            defaultReasoningEffort: model.defaultReasoningEffort,
+            supportedReasoningEfforts: model.supportedReasoningEfforts,
+          },
+        };
+      });
+      // Insert default option that uses config file settings
+      const defaultEntry: AgentModelDefinition = {
+        provider: CODEX_PROVIDER,
+        id: "default",
+        label: "default",
+        description: "From ~/.codex/config.toml",
+        isDefault: true,
+      };
+      return [defaultEntry, ...mappedModels];
     } finally {
       await client.dispose();
     }

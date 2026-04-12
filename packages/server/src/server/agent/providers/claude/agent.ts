@@ -1747,10 +1747,12 @@ class ClaudeAgentSession implements AgentSession {
   async setModel(modelId: string | null): Promise<void> {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
-    const activeQuery = await this.ensureQuery();
-    await activeQuery.setModel(normalizedModelId ?? undefined);
-    this.config.model = normalizedModelId ?? undefined;
-    this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
+    // "default" means use the model from ~/.claude/settings.json (don't override)
+    const effectiveModelId = normalizedModelId === "default" ? null : normalizedModelId;
+    const query = await this.ensureQuery();
+    await query.setModel(effectiveModelId ?? undefined);
+    this.config.model = effectiveModelId ?? undefined;
+    this.lastOptionsModel = effectiveModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
     this.cachedRuntimeInfo = null;
     // Model change affects persistence metadata, so invalidate cached handle.
