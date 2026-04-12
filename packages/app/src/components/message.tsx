@@ -9,6 +9,7 @@ import {
   ViewStyle,
   Platform,
 } from "react-native";
+import * as React from "react";
 import {
   useState,
   useEffect,
@@ -23,7 +24,7 @@ import {
   cloneElement,
 } from "react";
 import type { ReactNode, ComponentType } from "react";
-import Markdown, { MarkdownIt } from "react-native-markdown-display";
+import Markdown, { MarkdownIt, type RenderRules } from "react-native-markdown-display";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
   Circle,
@@ -72,6 +73,7 @@ import {
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { markScrollInvestigationEvent } from "@/utils/scroll-jank-investigation";
+import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 export type { InlinePathTarget } from "@/utils/inline-path";
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
@@ -712,6 +714,28 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
+interface MemoizedMarkdownBlockProps {
+  text: string;
+  styles: ReturnType<typeof createMarkdownStyles>;
+  rules: RenderRules;
+  parser: MarkdownIt;
+  onLinkPress: (url: string) => boolean;
+}
+
+const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
+  text,
+  styles,
+  rules,
+  parser,
+  onLinkPress,
+}: MemoizedMarkdownBlockProps) {
+  return (
+    <Markdown style={styles} rules={rules} markdownit={parser} onLinkPress={onLinkPress}>
+      {text}
+    </Markdown>
+  );
+});
+
 export const AssistantMessage = memo(function AssistantMessage({
   message,
   timestamp,
@@ -895,6 +919,8 @@ export const AssistantMessage = memo(function AssistantMessage({
     };
   }, [handleLinkPress, markdownParser, onInlinePathPress]);
 
+  const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
+
   return (
     <View
       testID="assistant-message"
@@ -903,14 +929,20 @@ export const AssistantMessage = memo(function AssistantMessage({
         !resolvedDisableOuterSpacing && assistantMessageStylesheet.containerSpacing,
       ]}
     >
-      <Markdown
-        style={markdownStyles}
-        rules={markdownRules}
-        markdownit={markdownParser}
-        onLinkPress={handleLinkPress}
-      >
-        {message}
-      </Markdown>
+      {blocks.map((block, index) => (
+        <View
+          key={index}
+          style={index < blocks.length - 1 ? { marginBottom: theme.spacing[3] } : undefined}
+        >
+          <MemoizedMarkdownBlock
+            text={block}
+            styles={markdownStyles}
+            rules={markdownRules}
+            parser={markdownParser}
+            onLinkPress={handleLinkPress}
+          />
+        </View>
+      ))}
     </View>
   );
 });
