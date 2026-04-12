@@ -68,6 +68,7 @@ CLAUDE.local.md
 # Local agent/tooling artifacts (do not commit)
 PLAN.md
 .valknut/
+.serena/
 valknut-report.html/
 valknut-report.json/
 **/.playwright-mcp/

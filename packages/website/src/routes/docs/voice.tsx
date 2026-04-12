@@ -136,6 +136,16 @@ function VoiceDocs() {
             <code className="font-mono">PASEO_VOICE_LOCAL_TTS_SPEED</code> — optional local voice
             TTS tuning
           </li>
+          <li>
+            <code className="font-mono">PASEO_DICTATION_LANGUAGE</code> — dictation STT language
+            (ISO 639-1, e.g. <code className="font-mono">en</code>,{" "}
+            <code className="font-mono">pt</code>, <code className="font-mono">es</code>). Default:{" "}
+            <code className="font-mono">en</code>
+          </li>
+          <li>
+            <code className="font-mono">PASEO_VOICE_LANGUAGE</code> — voice mode STT language
+            override (falls back to <code className="font-mono">PASEO_DICTATION_LANGUAGE</code>)
+          </li>
         </ul>
       </section>
 

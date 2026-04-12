@@ -172,11 +172,13 @@ export class DictationStreamManager {
       process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT ??
       "Transcribe only what the speaker says. Do not add words. Preserve punctuation and casing. If the audio is silence or non-speech noise, return an empty transcript.";
 
+    const language = process.env.PASEO_DICTATION_LANGUAGE?.trim() || "en";
+
     let stt: ReturnType<SpeechToTextProvider["createSession"]>;
     try {
       stt = sttProvider.createSession({
         logger: this.logger.child({ dictationId }),
-        language: "en",
+        language,
         prompt: transcriptionPrompt,
       });
     } catch (error) {

@@ -11,13 +11,15 @@ import type {
 
 class FakeStt implements SpeechToTextProvider {
   public readonly id = "fake";
+  public lastLanguage?: string;
   constructor(private readonly result: TranscriptionResult) {}
 
-  createSession(_params: {
+  createSession(params: {
     logger: any;
     language?: string;
     prompt?: string;
   }): StreamingTranscriptionSession {
+    this.lastLanguage = params.language;
     const emitter = new EventEmitter();
     const result = this.result;
     let segmentId = "seg-1";
@@ -121,6 +123,94 @@ describe("STTManager", () => {
     expect(result.text).toBe("hello world");
     expect(result.language).toBe("en");
     expect(result.byteLength).toBe(4);
+  });
+
+  it("defaults to English when no language env vars are set", async () => {
+    const original = {
+      voice: process.env.PASEO_VOICE_LANGUAGE,
+      dictation: process.env.PASEO_DICTATION_LANGUAGE,
+    };
+    delete process.env.PASEO_VOICE_LANGUAGE;
+    delete process.env.PASEO_DICTATION_LANGUAGE;
+
+    try {
+      const fakeStt = new FakeStt({ text: "hi", isLowConfidence: false });
+      const manager = new STTManager("s1", pino({ level: "silent" }), fakeStt);
+      await manager.transcribe(Buffer.alloc(2), "audio/pcm;rate=24000");
+      expect(fakeStt.lastLanguage).toBe("en");
+    } finally {
+      if (original.voice !== undefined) process.env.PASEO_VOICE_LANGUAGE = original.voice;
+      else delete process.env.PASEO_VOICE_LANGUAGE;
+      if (original.dictation !== undefined)
+        process.env.PASEO_DICTATION_LANGUAGE = original.dictation;
+      else delete process.env.PASEO_DICTATION_LANGUAGE;
+    }
+  });
+
+  it("uses PASEO_VOICE_LANGUAGE over PASEO_DICTATION_LANGUAGE", async () => {
+    const original = {
+      voice: process.env.PASEO_VOICE_LANGUAGE,
+      dictation: process.env.PASEO_DICTATION_LANGUAGE,
+    };
+    process.env.PASEO_VOICE_LANGUAGE = "pt";
+    process.env.PASEO_DICTATION_LANGUAGE = "es";
+
+    try {
+      const fakeStt = new FakeStt({ text: "oi", isLowConfidence: false });
+      const manager = new STTManager("s1", pino({ level: "silent" }), fakeStt);
+      await manager.transcribe(Buffer.alloc(2), "audio/pcm;rate=24000");
+      expect(fakeStt.lastLanguage).toBe("pt");
+    } finally {
+      if (original.voice !== undefined) process.env.PASEO_VOICE_LANGUAGE = original.voice;
+      else delete process.env.PASEO_VOICE_LANGUAGE;
+      if (original.dictation !== undefined)
+        process.env.PASEO_DICTATION_LANGUAGE = original.dictation;
+      else delete process.env.PASEO_DICTATION_LANGUAGE;
+    }
+  });
+
+  it("falls back to PASEO_DICTATION_LANGUAGE when PASEO_VOICE_LANGUAGE is unset", async () => {
+    const original = {
+      voice: process.env.PASEO_VOICE_LANGUAGE,
+      dictation: process.env.PASEO_DICTATION_LANGUAGE,
+    };
+    delete process.env.PASEO_VOICE_LANGUAGE;
+    process.env.PASEO_DICTATION_LANGUAGE = "pt";
+
+    try {
+      const fakeStt = new FakeStt({ text: "oi", isLowConfidence: false });
+      const manager = new STTManager("s1", pino({ level: "silent" }), fakeStt);
+      await manager.transcribe(Buffer.alloc(2), "audio/pcm;rate=24000");
+      expect(fakeStt.lastLanguage).toBe("pt");
+    } finally {
+      if (original.voice !== undefined) process.env.PASEO_VOICE_LANGUAGE = original.voice;
+      else delete process.env.PASEO_VOICE_LANGUAGE;
+      if (original.dictation !== undefined)
+        process.env.PASEO_DICTATION_LANGUAGE = original.dictation;
+      else delete process.env.PASEO_DICTATION_LANGUAGE;
+    }
+  });
+
+  it("treats empty env vars as unset and falls back to default", async () => {
+    const original = {
+      voice: process.env.PASEO_VOICE_LANGUAGE,
+      dictation: process.env.PASEO_DICTATION_LANGUAGE,
+    };
+    process.env.PASEO_VOICE_LANGUAGE = "";
+    process.env.PASEO_DICTATION_LANGUAGE = "  ";
+
+    try {
+      const fakeStt = new FakeStt({ text: "hi", isLowConfidence: false });
+      const manager = new STTManager("s1", pino({ level: "silent" }), fakeStt);
+      await manager.transcribe(Buffer.alloc(2), "audio/pcm;rate=24000");
+      expect(fakeStt.lastLanguage).toBe("en");
+    } finally {
+      if (original.voice !== undefined) process.env.PASEO_VOICE_LANGUAGE = original.voice;
+      else delete process.env.PASEO_VOICE_LANGUAGE;
+      if (original.dictation !== undefined)
+        process.env.PASEO_DICTATION_LANGUAGE = original.dictation;
+      else delete process.env.PASEO_DICTATION_LANGUAGE;
+    }
   });
 
   it("uses streaming segmentation for batch transcription and concatenates segment finals", async () => {

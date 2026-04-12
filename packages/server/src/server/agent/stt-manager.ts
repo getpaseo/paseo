@@ -87,9 +87,14 @@ export class STTManager {
       this.logger.warn({ err: error }, "Failed to persist debug audio");
     }
 
+    const language =
+      process.env.PASEO_VOICE_LANGUAGE?.trim() ||
+      process.env.PASEO_DICTATION_LANGUAGE?.trim() ||
+      "en";
+
     const session = stt.createSession({
       logger: this.logger.child({ component: "stt-session" }),
-      language: "en",
+      language,
     });
 
     let inputRate: number;

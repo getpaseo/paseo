@@ -51,12 +51,14 @@ class FakeRealtimeSession extends EventEmitter implements StreamingTranscription
 
 class FakeSttProvider implements SpeechToTextProvider {
   public readonly id = "fake";
+  public lastLanguage?: string;
   constructor(private readonly session: FakeRealtimeSession) {}
-  createSession(_params: {
+  createSession(params: {
     logger: any;
     language?: string;
     prompt?: string;
   }): StreamingTranscriptionSession {
+    this.lastLanguage = params.language;
     return this.session;
   }
 }
@@ -262,6 +264,72 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     const finishAccepted = emitted.find((msg) => msg.type === "dictation_stream_finish_accepted");
     expect(finishAccepted).toBeDefined();
     expect(finishAccepted?.payload.timeoutMs).toBeGreaterThan(5000);
+  });
+
+  it("defaults to English when PASEO_DICTATION_LANGUAGE is unset", async () => {
+    const original = process.env.PASEO_DICTATION_LANGUAGE;
+    delete process.env.PASEO_DICTATION_LANGUAGE;
+
+    try {
+      const session = new FakeRealtimeSession();
+      const sttProvider = new FakeSttProvider(session);
+      const manager = new DictationStreamManager({
+        logger: pino({ level: "silent" }),
+        emit: () => {},
+        sessionId: "s1",
+        stt: sttProvider,
+      });
+
+      await manager.handleStart("d-lang-default", "audio/pcm;rate=24000;bits=16");
+      expect(sttProvider.lastLanguage).toBe("en");
+    } finally {
+      if (original !== undefined) process.env.PASEO_DICTATION_LANGUAGE = original;
+      else delete process.env.PASEO_DICTATION_LANGUAGE;
+    }
+  });
+
+  it("uses PASEO_DICTATION_LANGUAGE when set to pt for Brazilian Portuguese", async () => {
+    const original = process.env.PASEO_DICTATION_LANGUAGE;
+    process.env.PASEO_DICTATION_LANGUAGE = "pt";
+
+    try {
+      const session = new FakeRealtimeSession();
+      const sttProvider = new FakeSttProvider(session);
+      const manager = new DictationStreamManager({
+        logger: pino({ level: "silent" }),
+        emit: () => {},
+        sessionId: "s1",
+        stt: sttProvider,
+      });
+
+      await manager.handleStart("d-lang-pt", "audio/pcm;rate=24000;bits=16");
+      expect(sttProvider.lastLanguage).toBe("pt");
+    } finally {
+      if (original !== undefined) process.env.PASEO_DICTATION_LANGUAGE = original;
+      else delete process.env.PASEO_DICTATION_LANGUAGE;
+    }
+  });
+
+  it("treats empty PASEO_DICTATION_LANGUAGE as unset and falls back to default", async () => {
+    const original = process.env.PASEO_DICTATION_LANGUAGE;
+    process.env.PASEO_DICTATION_LANGUAGE = "  ";
+
+    try {
+      const session = new FakeRealtimeSession();
+      const sttProvider = new FakeSttProvider(session);
+      const manager = new DictationStreamManager({
+        logger: pino({ level: "silent" }),
+        emit: () => {},
+        sessionId: "s1",
+        stt: sttProvider,
+      });
+
+      await manager.handleStart("d-lang-empty", "audio/pcm;rate=24000;bits=16");
+      expect(sttProvider.lastLanguage).toBe("en");
+    } finally {
+      if (original !== undefined) process.env.PASEO_DICTATION_LANGUAGE = original;
+      else delete process.env.PASEO_DICTATION_LANGUAGE;
+    }
   });
 
   it("drops dangling uncommitted non-final transcripts when finishing after silence tail clear", async () => {
