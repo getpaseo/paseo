@@ -40,6 +40,22 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("allows same-host origins across different ports for HTTP requests", async () => {
+    const daemonHandle = await createTestPaseoDaemon();
+    const origin = "http://127.0.0.1:5173";
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/health`, {
+        headers: { Origin: origin },
+      });
+
+      expect(response.ok).toBe(true);
+      expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
   test("fails fast when OpenAI speech provider is configured without credentials", async () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-openai-config-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
