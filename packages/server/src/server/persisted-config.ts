@@ -50,10 +50,17 @@ const LocalSpeechProviderSchema = z
   })
   .strict();
 
+const FunASRProviderSchema = z
+  .object({
+    url: z.string().min(1).optional(),
+  })
+  .strict();
+
 const ProvidersSchema = z
   .object({
     openai: ProviderCredentialsSchema.optional(),
     local: LocalSpeechProviderSchema.optional(),
+    funasr: FunASRProviderSchema.optional(),
   })
   .strict();
 
@@ -61,7 +68,7 @@ const SpeechProviderIdSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .pipe(z.enum(["openai", "local"]));
+  .pipe(z.enum(["openai", "local", "funasr"]));
 
 const FeatureDictationSchema = z
   .object({
