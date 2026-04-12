@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
 import { Platform } from "react-native";
+import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import {
@@ -35,6 +36,14 @@ function getOpenIntentTarget(openIntent: WorkspaceOpenIntent): WorkspaceTabTarge
 }
 
 export default function HostWorkspaceLayout() {
+  return (
+    <HostRouteBootstrapBoundary>
+      <HostWorkspaceLayoutContent />
+    </HostRouteBootstrapBoundary>
+  );
+}
+
+function HostWorkspaceLayoutContent() {
   const rootNavigationState = useRootNavigationState();
   const consumedIntentRef = useRef<string | null>(null);
   const [intentConsumed, setIntentConsumed] = useState(false);

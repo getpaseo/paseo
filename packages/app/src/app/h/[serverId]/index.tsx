@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
+import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { useSessionStore } from "@/stores/session-store";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import {
@@ -12,6 +13,14 @@ import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 const HOST_ROOT_REDIRECT_DELAY_MS = 300;
 
 export default function HostIndexRoute() {
+  return (
+    <HostRouteBootstrapBoundary>
+      <HostIndexRouteContent />
+    </HostRouteBootstrapBoundary>
+  );
+}
+
+function HostIndexRouteContent() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useLocalSearchParams<{ serverId?: string }>();
