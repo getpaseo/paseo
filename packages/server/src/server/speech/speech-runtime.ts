@@ -1,15 +1,10 @@
-import { stat } from "node:fs/promises";
-import { join } from "node:path";
 import type { Logger } from "pino";
 
 import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
 import type { LocalSpeechModelId } from "./providers/local/config.js";
-import {
-  ensureLocalSpeechModels,
-  getLocalSpeechModelDir,
-  listLocalSpeechModels,
-} from "./providers/local/models.js";
+import { ensureLocalSpeechModels, listLocalSpeechModels } from "./providers/local/models.js";
 import { initializeLocalSpeechServices } from "./providers/local/runtime.js";
+import { isSherpaOnnxModelReady } from "./providers/local/sherpa/model-downloader.js";
 import {
   getOpenAiSpeechAvailability,
   initializeOpenAiSpeechServices,
@@ -76,18 +71,6 @@ function resolveRequestedSpeechProviders(
   };
 }
 
-async function hasRequiredLocalModelFile(filePath: string): Promise<boolean> {
-  try {
-    const fileStat = await stat(filePath);
-    if (fileStat.isDirectory()) {
-      return true;
-    }
-    return fileStat.isFile() && fileStat.size > 0;
-  } catch {
-    return false;
-  }
-}
-
 async function findMissingRequiredLocalModels(params: {
   modelsDir: string | null;
   requiredModelIds: LocalSpeechModelId[];
@@ -106,13 +89,8 @@ async function findMissingRequiredLocalModels(params: {
       missing.add(modelId);
       continue;
     }
-    const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
-    for (const relPath of spec.requiredFiles) {
-      const filePath = join(modelDir, relPath);
-      if (!(await hasRequiredLocalModelFile(filePath))) {
-        missing.add(modelId);
-        break;
-      }
+    if (!(await isSherpaOnnxModelReady({ modelsDir, modelId }))) {
+      missing.add(modelId);
     }
   }
 

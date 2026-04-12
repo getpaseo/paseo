@@ -31,6 +31,7 @@ describe("sherpa model downloader", () => {
     writeFileSync(path.join(modelDir, "model.fp16.onnx"), "x");
     writeFileSync(path.join(modelDir, "voices.bin"), "x");
     writeFileSync(path.join(modelDir, "tokens.txt"), "x");
+    writeFileSync(path.join(modelDir, ".paseo-model-ready"), "ready\n");
 
     const out = await ensureSherpaOnnxModel({
       modelsDir,
@@ -39,6 +40,39 @@ describe("sherpa model downloader", () => {
     });
 
     expect(out).toBe(modelDir);
+  });
+
+  test("ensureSherpaOnnxModel re-downloads when files exist without a ready marker", async () => {
+    const modelsDir = makeTmpDir();
+    const modelDir = getSherpaOnnxModelDir(modelsDir, "pocket-tts-onnx-int8");
+
+    mkdirSync(path.join(modelDir, "onnx"), { recursive: true });
+    writeFileSync(path.join(modelDir, "onnx/mimi_encoder.onnx"), "stale");
+    writeFileSync(path.join(modelDir, "onnx/text_conditioner.onnx"), "stale");
+    writeFileSync(path.join(modelDir, "onnx/flow_lm_main_int8.onnx"), "stale");
+    writeFileSync(path.join(modelDir, "onnx/flow_lm_flow_int8.onnx"), "stale");
+    writeFileSync(path.join(modelDir, "onnx/mimi_decoder_int8.onnx"), "stale");
+    writeFileSync(path.join(modelDir, "tokenizer.model"), "stale");
+    writeFileSync(path.join(modelDir, "reference_sample.wav"), "stale");
+
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async (_url: string | URL | Request) => {
+      return new Response(Buffer.from("fresh"), { status: 200 });
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const out = await ensureSherpaOnnxModel({
+        modelsDir,
+        modelId: "pocket-tts-onnx-int8",
+        logger,
+      });
+
+      expect(out).toBe(modelDir);
+      expect(fetchMock).toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("ensureSherpaOnnxModel logs lifecycle events without progress spam", async () => {
