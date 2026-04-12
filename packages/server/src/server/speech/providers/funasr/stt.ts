@@ -45,8 +45,8 @@ export class FunASRSTT implements SpeechToTextProvider {
     let connected = false;
     let segmentId = v4();
     let previousSegmentId: string | null = null;
-    // Track partial segment IDs so DictationStreamManager can aggregate them
-    let partialSegmentId = v4();
+    // The segment ID that the next "final" response should be emitted on
+    let pendingFinalSegmentId: string | null = null;
 
     return {
       requiredSampleRate,
@@ -86,16 +86,19 @@ export class FunASRSTT implements SpeechToTextProvider {
 
             if (parsed.type === "partial" && parsed.text !== undefined) {
               logger.debug({ text: parsed.text }, "FunASR partial transcript");
+              // Use same segmentId as final — DictationStreamManager tracks by segment,
+              // and final (isFinal:true) will replace partial (isFinal:false)
               (emitter as any).emit("transcript", {
-                segmentId: partialSegmentId,
+                segmentId: pendingFinalSegmentId ?? segmentId,
                 transcript: parsed.text,
                 isFinal: false,
               });
             } else if (parsed.type === "final" && parsed.text !== undefined) {
-              logger.debug({ text: parsed.text }, "FunASR final transcript");
-              // Emit the final result on the committed segment ID
+              const finalId = pendingFinalSegmentId ?? segmentId;
+              pendingFinalSegmentId = null;
+              logger.debug({ text: parsed.text, segmentId: finalId }, "FunASR final transcript");
               (emitter as any).emit("transcript", {
-                segmentId,
+                segmentId: finalId,
                 transcript: parsed.text,
                 isFinal: true,
               });
@@ -143,6 +146,7 @@ export class FunASRSTT implements SpeechToTextProvider {
 
         const committedId = segmentId;
         const prev = previousSegmentId;
+        pendingFinalSegmentId = committedId;
         (emitter as any).emit("committed", { segmentId: committedId, previousSegmentId: prev });
 
         // Send finish signal — server will respond with final transcript
@@ -165,12 +169,10 @@ export class FunASRSTT implements SpeechToTextProvider {
 
         previousSegmentId = committedId;
         segmentId = v4();
-        partialSegmentId = v4();
       },
 
       clear() {
         segmentId = v4();
-        partialSegmentId = v4();
       },
 
       close() {

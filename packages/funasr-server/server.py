@@ -1,5 +1,6 @@
 """Standalone FunASR server for Chinese/English/Japanese speech-to-text.
 
+Uses SenseVoiceSmall (234M) with Apple Silicon MPS acceleration.
 Provides:
 - POST /transcribe — batch transcription (file upload)
 - WS /ws/transcribe — streaming 2-pass transcription
@@ -10,12 +11,10 @@ import io
 import json
 import logging
 import os
-import struct
-import sys
+import re
 import tempfile
 import wave
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -28,19 +27,16 @@ logger = logging.getLogger("funasr-server")
 asr_model: Optional[object] = None
 vad_model: Optional[object] = None
 
-# Fun-ASR repo must be on sys.path for model.py's sibling imports (ctc, tools.utils)
-_FUN_ASR_DIR = str(Path(__file__).resolve().parent / "Fun-ASR")
-if _FUN_ASR_DIR not in sys.path:
-    sys.path.insert(0, _FUN_ASR_DIR)
-
 SAMPLE_RATE = 16000
-BYTES_PER_SAMPLE = 2  # 16-bit
-# Silence detection for streaming: peak < threshold for this duration triggers sentence boundary
-SILENCE_THRESHOLD = 500  # int16 peak amplitude
-SILENCE_DURATION_MS = 600  # ms of silence to trigger sentence end
-SILENCE_DURATION_SAMPLES = int(SILENCE_DURATION_MS * SAMPLE_RATE / 1000)
-# Minimum speech duration to bother transcribing (avoid tiny fragments)
-MIN_SPEECH_SAMPLES = int(0.3 * SAMPLE_RATE)  # 300ms
+MIN_SPEECH_SAMPLES = int(0.3 * SAMPLE_RATE)  # 300ms minimum
+
+# SenseVoiceSmall adds special tags like <|zh|><|NEUTRAL|><|Speech|><|withitn|>
+_SENSEVOICE_TAG_RE = re.compile(r"<\|[^|]*\|>")
+
+
+def _clean_sensevoice_text(text: str) -> str:
+    """Remove SenseVoiceSmall's special tags from output."""
+    return _SENSEVOICE_TAG_RE.sub("", text).strip()
 
 
 def _wrap_pcm_in_wav(pcm_bytes: bytes, sample_rate: int = 16000, channels: int = 1, sample_width: int = 2) -> bytes:
@@ -80,11 +76,11 @@ def _transcribe_segment(samples: np.ndarray) -> str:
         tmp.write(wav_bytes)
         tmp_path = tmp.name
     try:
-        result = asr_model.generate(input=tmp_path, cache={}, batch_size=1, itn=True)
+        result = asr_model.generate(input=tmp_path, language="auto", use_itn=True)
         if result and isinstance(result, list) and len(result) > 0:
             entry = result[0]
             t = entry.get("text", "") if isinstance(entry, dict) else str(entry)
-            return t.strip()
+            return _clean_sensevoice_text(t)
     finally:
         os.unlink(tmp_path)
     return ""
@@ -127,48 +123,16 @@ def _transcribe_full_with_vad(all_samples: np.ndarray) -> str:
     return "".join(texts)
 
 
-class StreamingSilenceDetector:
-    """Detects sentence boundaries by tracking silence duration in streaming audio."""
+def _resolve_device() -> str:
+    """Pick best available device: MPS (Apple Silicon) > CPU."""
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
 
-    def __init__(self):
-        self.speech_started = False
-        self.silence_count = 0  # consecutive silent samples
-        self.speech_start_idx = 0  # sample index where current speech started
-        self.total_samples = 0
-
-    def feed(self, samples: np.ndarray) -> list[tuple[int, int]]:
-        """Feed new samples, return list of (start_idx, end_idx) for completed sentences."""
-        boundaries = []
-        # Process in small windows for efficiency
-        window_size = int(SAMPLE_RATE * 0.03)  # 30ms windows
-
-        for i in range(0, len(samples), window_size):
-            window = samples[i:i + window_size]
-            if len(window) == 0:
-                continue
-
-            peak = int(np.max(np.abs(window)))
-            is_silent = peak < SILENCE_THRESHOLD
-
-            if not self.speech_started:
-                if not is_silent:
-                    self.speech_started = True
-                    self.speech_start_idx = self.total_samples + i
-                    self.silence_count = 0
-            else:
-                if is_silent:
-                    self.silence_count += len(window)
-                    if self.silence_count >= SILENCE_DURATION_SAMPLES:
-                        # Sentence boundary detected
-                        end_idx = self.total_samples + i - self.silence_count + len(window)
-                        boundaries.append((self.speech_start_idx, end_idx))
-                        self.speech_started = False
-                        self.silence_count = 0
-                else:
-                    self.silence_count = 0
-
-        self.total_samples += len(samples)
-        return boundaries
 
 
 @asynccontextmanager
@@ -177,17 +141,20 @@ async def lifespan(app: FastAPI):
     global asr_model, vad_model
     from funasr import AutoModel
 
+    device = _resolve_device()
+    logger.info(f"Using device: {device}")
+
     logger.info("Loading VAD model...")
     vad_model = AutoModel(model="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch", disable_update=True)
 
-    logger.info("Loading Fun-ASR-Nano-2512 model...")
+    logger.info("Loading SenseVoiceSmall model...")
     asr_model = AutoModel(
-        model="FunAudioLLM/Fun-ASR-Nano-2512",
+        model="iic/SenseVoiceSmall",
         trust_remote_code=True,
-        remote_code=os.path.join(_FUN_ASR_DIR, "model.py"),
+        device=device,
         disable_update=True,
     )
-    logger.info("Models loaded successfully")
+    logger.info(f"Models loaded successfully (ASR on {device})")
     yield
     asr_model = None
     vad_model = None
@@ -203,7 +170,7 @@ async def health():
 
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):
-    """Batch transcription endpoint (kept for non-streaming use)."""
+    """Batch transcription endpoint."""
     if asr_model is None or vad_model is None:
         return JSONResponse(status_code=503, content={"error": "Models not loaded"})
 
@@ -232,9 +199,11 @@ async def ws_transcribe(ws: WebSocket):
       - Text frame: {"type": "finish"} when recording ends
 
     Server sends:
-      - {"type": "partial", "text": "..."} per detected sentence (pass 1)
-      - {"type": "final", "text": "..."}  full re-transcription (pass 2)
+      - {"type": "partial", "text": "..."} every ~1s with latest transcription
+      - {"type": "final", "text": "..."}  full VAD re-transcription (pass 2)
     """
+    import asyncio
+
     await ws.accept()
 
     if asr_model is None or vad_model is None:
@@ -242,10 +211,47 @@ async def ws_transcribe(ws: WebSocket):
         await ws.close()
         return
 
-    detector = StreamingSilenceDetector()
-    all_chunks: list[bytes] = []  # raw PCM bytes for full buffer
-    all_samples_list: list[np.ndarray] = []  # numpy arrays for indexing
-    partial_texts: list[str] = []
+    all_samples_list: list[np.ndarray] = []
+    total_samples_received = 0
+    last_transcribed_samples = 0
+    last_partial_text = ""
+    finished = False
+    # Minimum new audio before re-transcribing (1 second at 16kHz)
+    PARTIAL_INTERVAL_SAMPLES = SAMPLE_RATE * 1
+
+    loop = asyncio.get_event_loop()
+
+    async def periodic_transcribe():
+        """Run ASR on new audio chunks every ~1 second, append to running text."""
+        nonlocal last_transcribed_samples, last_partial_text
+        committed_texts: list[str] = []
+
+        while not finished:
+            await asyncio.sleep(0.5)
+            if finished:
+                break
+            new_samples = total_samples_received - last_transcribed_samples
+            if new_samples < PARTIAL_INTERVAL_SAMPLES:
+                continue
+            if not all_samples_list:
+                continue
+
+            try:
+                full_so_far = np.concatenate(all_samples_list)
+                # Only transcribe the new chunk since last transcription
+                new_chunk = full_so_far[last_transcribed_samples:]
+                text = await loop.run_in_executor(None, _transcribe_segment, new_chunk)
+                last_transcribed_samples = total_samples_received
+                if text:
+                    committed_texts.append(text)
+                    combined = "".join(committed_texts)
+                    if combined != last_partial_text:
+                        last_partial_text = combined
+                        await ws.send_json({"type": "partial", "text": combined})
+            except Exception as e:
+                logger.error(f"Periodic transcription error: {e}")
+
+    transcribe_task = asyncio.create_task(periodic_transcribe())
 
     try:
         while True:
@@ -256,21 +262,9 @@ async def ws_transcribe(ws: WebSocket):
 
             if "bytes" in message and message["bytes"]:
                 pcm_bytes = message["bytes"]
-                all_chunks.append(pcm_bytes)
                 samples = np.frombuffer(pcm_bytes, dtype=np.int16)
                 all_samples_list.append(samples)
-
-                # Check for sentence boundaries
-                boundaries = detector.feed(samples)
-                if boundaries and len(all_samples_list) > 0:
-                    full_so_far = np.concatenate(all_samples_list)
-                    for start_idx, end_idx in boundaries:
-                        seg = full_so_far[start_idx:end_idx]
-                        text = _transcribe_segment(seg)
-                        if text:
-                            partial_texts.append(text)
-                            combined = "".join(partial_texts)
-                            await ws.send_json({"type": "partial", "text": combined})
+                total_samples_received += len(samples)
 
             elif "text" in message and message["text"]:
                 try:
@@ -279,10 +273,17 @@ async def ws_transcribe(ws: WebSocket):
                     continue
 
                 if data.get("type") == "finish":
-                    # Pass 2: full re-transcription with VAD model
+                    finished = True
+                    transcribe_task.cancel()
+                    try:
+                        await transcribe_task
+                    except asyncio.CancelledError:
+                        pass
+
+                    # Pass 2: full re-transcription with VAD model (in thread pool)
                     if all_samples_list:
                         full_audio = np.concatenate(all_samples_list)
-                        final_text = _transcribe_full_with_vad(full_audio)
+                        final_text = await loop.run_in_executor(None, _transcribe_full_with_vad, full_audio)
                     else:
                         final_text = ""
 
