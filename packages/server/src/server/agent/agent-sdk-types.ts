@@ -433,6 +433,7 @@ export type AgentSessionConfig = {
   extra?: {
     codex?: AgentMetadata;
     claude?: Partial<ClaudeAgentOptions>;
+    cursor?: AgentMetadata;
   };
   mcpServers?: Record<string, McpServerConfig>;
   /**

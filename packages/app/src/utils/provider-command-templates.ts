@@ -17,6 +17,9 @@ export const PROVIDER_COMMAND_TEMPLATES: Record<
   claude: {
     resume: "claude --resume {sessionId}",
   },
+  cursor: {
+    resume: "agent --resume {sessionId}",
+  },
 };
 
 function renderTemplate(template: string, vars: Record<string, string>): string {

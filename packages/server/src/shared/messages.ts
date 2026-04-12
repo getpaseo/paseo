@@ -215,6 +215,7 @@ const AgentSessionConfigSchema = z.object({
     .object({
       codex: z.record(z.unknown()).optional(),
       claude: z.record(z.unknown()).optional(),
+      cursor: z.record(z.unknown()).optional(),
     })
     .partial()
     .optional(),

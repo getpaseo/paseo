@@ -14,6 +14,7 @@ import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js
 import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { PiACPAgentClient } from "./providers/pi-acp-agent.js";
+import { CursorCliAgentClient } from "./providers/cursor-cli-agent.js";
 
 import {
   AGENT_PROVIDER_DEFINITIONS,
@@ -55,6 +56,11 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
   opencode: (logger, runtimeSettings) => new OpenCodeAgentClient(logger, runtimeSettings?.opencode),
   pi: (logger, runtimeSettings) =>
     new PiACPAgentClient({ logger, runtimeSettings: runtimeSettings?.pi }),
+  cursor: (logger, runtimeSettings) =>
+    new CursorCliAgentClient({
+      logger,
+      runtimeSettings: runtimeSettings?.cursor,
+    }),
 };
 
 function getProviderClientFactory(provider: string): ProviderClientFactory {
