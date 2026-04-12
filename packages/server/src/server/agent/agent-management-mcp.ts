@@ -104,7 +104,7 @@ export async function createAgentManagementMcpServer(
       .min(1, "Title is required")
       .max(60, "Title must be 60 characters or fewer")
       .describe("Short descriptive title (<= 60 chars) summarizing the agent's focus."),
-    agentType: AgentProviderEnum.optional().describe(
+    provider: AgentProviderEnum.optional().describe(
       "Optional agent implementation to spawn. Defaults to 'claude'.",
     ),
     model: z.string().optional().describe("Model to use (e.g. claude-sonnet-4-20250514)"),
@@ -114,7 +114,10 @@ export async function createAgentManagementMcpServer(
       .string()
       .optional()
       .describe("Optional task to start immediately after creation (non-blocking)."),
-    initialMode: z.string().describe("Required session mode to configure before the first run."),
+    mode: z
+      .string()
+      .optional()
+      .describe("Optional session mode to configure before the first run."),
     worktreeName: z
       .string()
       .optional()
@@ -159,9 +162,9 @@ export async function createAgentManagementMcpServer(
     async (args) => {
       const {
         cwd,
-        agentType,
+        provider,
         initialPrompt,
-        initialMode,
+        mode,
         worktreeName,
         baseBranch,
         background = false,
@@ -171,9 +174,9 @@ export async function createAgentManagementMcpServer(
         labels,
       } = args as {
         cwd: string;
-        agentType?: AgentProvider;
+        provider?: AgentProvider;
         initialPrompt?: string;
-        initialMode: string;
+        mode?: string;
         worktreeName?: string;
         baseBranch?: string;
         background?: boolean;
@@ -201,13 +204,13 @@ export async function createAgentManagementMcpServer(
         worktreeConfig = worktree;
       }
 
-      const provider: AgentProvider = agentType ?? "claude";
+      const resolvedProvider: AgentProvider = provider ?? "claude";
       const normalizedTitle = title?.trim() ?? null;
       const snapshot = await agentManager.createAgent(
         {
-          provider,
+          provider: resolvedProvider,
           cwd: resolvedCwd,
-          modeId: initialMode,
+          modeId: mode,
           title: normalizedTitle ?? undefined,
           model,
           thinkingOptionId: thinking,

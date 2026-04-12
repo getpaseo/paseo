@@ -284,7 +284,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .min(1, "Title is required")
       .max(60, "Title must be 60 characters or fewer")
       .describe("Short descriptive title (<= 60 chars) summarizing the agent's focus."),
-    agentType: AgentProviderEnum.optional().describe(
+    provider: AgentProviderEnum.optional().describe(
       "Optional agent implementation to spawn. Defaults to 'claude'.",
     ),
     model: z.string().optional().describe("Model to use (e.g. claude-sonnet-4-20250514)"),
@@ -321,7 +321,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .min(1, "Title is required")
       .max(60, "Title must be 60 characters or fewer")
       .describe("Short descriptive title (<= 60 chars) summarizing the agent's focus."),
-    agentType: AgentProviderEnum.optional().describe(
+    provider: AgentProviderEnum.optional().describe(
       "Optional agent implementation to spawn. Defaults to 'claude'.",
     ),
     model: z.string().optional().describe("Model to use (e.g. claude-sonnet-4-20250514)"),
@@ -332,7 +332,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .trim()
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
-    initialMode: z.string().describe("Required session mode to configure before the first run."),
+    mode: z
+      .string()
+      .optional()
+      .describe("Optional session mode to configure before the first run."),
     worktreeName: z
       .string()
       .optional()
@@ -359,10 +362,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
   const createAgentInputSchema = callerAgentId ? agentToAgentInputSchema : topLevelInputSchema;
   const agentToAgentCreateAgentArgsSchema = z.object(agentToAgentInputSchema);
-  const topLevelCreateAgentArgsSchema = z.object({
-    ...topLevelInputSchema,
-    initialMode: topLevelInputSchema.initialMode.optional(),
-  });
+  const topLevelCreateAgentArgsSchema = z.object(topLevelInputSchema);
 
   if (options.voiceOnly || options.enableVoiceTools || callerContext?.enableVoiceTools) {
     server.registerTool(
@@ -447,7 +447,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
       if (callerAgentId) {
         const callerArgs = agentToAgentCreateAgentArgsSchema.parse(args);
-        provider = callerArgs.agentType ?? "claude";
+        provider = callerArgs.provider ?? "claude";
         initialPrompt = callerArgs.initialPrompt;
         background = callerArgs.background ?? false;
         normalizedTitle = callerArgs.title.trim();
@@ -472,7 +472,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         }
       } else {
         const topLevelArgs = topLevelCreateAgentArgsSchema.parse(args);
-        provider = topLevelArgs.agentType ?? "claude";
+        provider = topLevelArgs.provider ?? "claude";
         initialPrompt = topLevelArgs.initialPrompt;
         background = topLevelArgs.background ?? false;
         normalizedTitle = topLevelArgs.title.trim();
@@ -480,7 +480,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         thinking = topLevelArgs.thinking;
         labels = topLevelArgs.labels;
         notifyOnFinish = topLevelArgs.notifyOnFinish ?? false;
-        const { cwd, initialMode, worktreeName, baseBranch } = topLevelArgs;
+        const { cwd, mode, worktreeName, baseBranch } = topLevelArgs;
 
         resolvedCwd = expandUserPath(cwd);
 
@@ -499,7 +499,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           worktreeConfig = worktree;
         }
 
-        resolvedMode = initialMode;
+        resolvedMode = mode;
       }
 
       const childAgentDefaultLabels = callerContext?.childAgentDefaultLabels;

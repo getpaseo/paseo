@@ -121,9 +121,9 @@ describe("MCP parity end-to-end", () => {
     const payload = await callToolStructured(topLevelClient, "create_agent", {
       cwd,
       title: "Parity agent",
-      agentType: "claude",
+      provider: "claude",
       initialPrompt: "say done and stop",
-      initialMode: "bypassPermissions",
+      mode: "bypassPermissions",
       background: true,
       ...args,
     });
@@ -133,7 +133,7 @@ describe("MCP parity end-to-end", () => {
   async function createChildAgent(args?: Partial<StructuredContent>): Promise<string> {
     const payload = await callToolStructured(agentScopedClient, "create_agent", {
       title: "Parity child",
-      agentType: "claude",
+      provider: "claude",
       initialPrompt: "say done and stop",
       background: true,
       ...args,
@@ -207,9 +207,9 @@ describe("MCP parity end-to-end", () => {
     const parentPayload = await callToolStructured(topLevelClient, "create_agent", {
       cwd: parentAgentCwd,
       title: "MCP parity parent",
-      agentType: "claude",
+      provider: "claude",
       initialPrompt: "say done and stop",
-      initialMode: "bypassPermissions",
+      mode: "bypassPermissions",
       background: true,
     });
     parentAgentId = parentPayload.agentId as string;

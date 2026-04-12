@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import {
   getStructuredAgentResponse,
   StructuredAgentResponseError,
@@ -22,7 +22,8 @@ export function addRunOptions(cmd: Command): Command {
     .description("Create and start an agent with a task")
     .argument("<prompt>", "The task/prompt for the agent")
     .option("-d, --detach", "Run in background (detached)")
-    .option("--name <name>", "Assign a name/title to the agent")
+    .option("--title <title>", "Assign a title to the agent")
+    .addOption(new Option("--name <name>", "Hidden alias for --title").hideHelp())
     .option(
       "--provider <provider>",
       "Agent provider, or provider/model (e.g. codex or codex/gpt-5.4)",
@@ -82,6 +83,7 @@ export const agentRunSchema: OutputSchema<AgentRunResult> = {
 
 export interface AgentRunOptions extends CommandOptions {
   detach?: boolean;
+  title?: string;
   name?: string;
   provider?: string;
   model?: string;
@@ -325,6 +327,7 @@ export async function runRunCommand(
   }
 
   const resolvedProviderModel = resolveProviderAndModel(options);
+  const resolvedTitle = options.title ?? options.name;
 
   let client;
   try {
@@ -414,7 +417,7 @@ export async function runRunCommand(
           structuredAgent = await client.createAgent({
             provider: resolvedProviderModel.provider,
             cwd,
-            title: options.name,
+            title: resolvedTitle,
             modeId: options.mode,
             model: resolvedProviderModel.model,
             thinkingOptionId,
@@ -513,7 +516,7 @@ export async function runRunCommand(
     const agent = await client.createAgent({
       provider: resolvedProviderModel.provider,
       cwd,
-      title: options.name,
+      title: resolvedTitle,
       modeId: options.mode,
       model: resolvedProviderModel.model,
       thinkingOptionId,
