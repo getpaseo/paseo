@@ -1,13 +1,13 @@
 import { z } from "zod";
-
+import type { PaseoMiniMaxConfig, PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
 import type { PersistedConfig } from "../persisted-config.js";
-import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
 import { resolveLocalSpeechConfig } from "./providers/local/config.js";
+import { resolveMiniMaxSpeechConfig } from "./providers/minimax/config.js";
 import { resolveOpenAiSpeechConfig } from "./providers/openai/config.js";
 import {
-  SpeechProviderIdSchema,
   type RequestedSpeechProvider,
   type RequestedSpeechProviders,
+  SpeechProviderIdSchema,
 } from "./speech-types.js";
 
 const OptionalSpeechProviderSchema = z
@@ -134,6 +134,7 @@ export function resolveSpeechConfig(params: {
   persisted: PersistedConfig;
 }): {
   openai: PaseoOpenAIConfig | undefined;
+  minimax: PaseoMiniMaxConfig | undefined;
   speech: PaseoSpeechConfig;
 } {
   const providers = resolveRequestedSpeechProviders({
@@ -154,8 +155,13 @@ export function resolveSpeechConfig(params: {
     providers,
   });
 
+  const minimax = resolveMiniMaxSpeechConfig({
+    env: params.env,
+  });
+
   return {
     openai,
+    minimax,
     speech: {
       providers,
       ...(local.local ? { local: local.local } : {}),
