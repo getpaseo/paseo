@@ -19,8 +19,8 @@ function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
 }
 
-// Use gpt-5.1-codex-mini with low thinking preset for faster test execution
-const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
+// Use gpt-5.4-mini with low thinking preset for faster test execution
+const CODEX_TEST_MODEL = "gpt-5.4-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
 
 describe("daemon E2E", () => {

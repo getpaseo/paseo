@@ -22,7 +22,10 @@ import { SherpaParakeetRealtimeTranscriptionSession } from "./sherpa/sherpa-para
 import { SherpaRealtimeTranscriptionSession } from "./sherpa/sherpa-realtime-session.js";
 import { SherpaOnnxSTT } from "./sherpa/sherpa-stt.js";
 import { SherpaOnnxTTS } from "./sherpa/sherpa-tts.js";
-import { ensureSileroVadModel, SherpaSileroTurnDetectionProvider } from "./sherpa/silero-vad-provider.js";
+import {
+  ensureSileroVadModel,
+  SherpaSileroTurnDetectionProvider,
+} from "./sherpa/silero-vad-provider.js";
 
 type LocalSttEngine =
   | { kind: "offline"; engine: SherpaOfflineRecognizerEngine }
@@ -244,7 +247,10 @@ export async function initializeLocalSpeechServices(params: {
         logger.warn({ err }, "Failed to provision Silero VAD model, falling back to bundled");
       }
     }
-    turnDetectionService = new SherpaSileroTurnDetectionProvider({ modelPath: vadModelPath }, logger);
+    turnDetectionService = new SherpaSileroTurnDetectionProvider(
+      { modelPath: vadModelPath },
+      logger,
+    );
   }
 
   if (providers.voiceStt.enabled !== false && providers.voiceStt.provider === "local") {

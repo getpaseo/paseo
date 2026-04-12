@@ -149,7 +149,7 @@ export function startRelayTransport({
         clearTimeout(controlReadyTimeout);
         controlReadyTimeout = null;
       }
-      relayLogger.info({ url, connectionId }, "relay_control_connected");
+      relayLogger.info({ connectionId }, "relay_control_connected");
     };
 
     socket.on("open", () => {
@@ -203,7 +203,7 @@ export function startRelayTransport({
         try {
           socket.send(JSON.stringify({ type: "ping", ts: now }));
         } catch (error) {
-          relayLogger.warn({ err: error, url, connectionId }, "relay_control_ping_send_failed");
+          relayLogger.warn({ err: error, connectionId }, "relay_control_ping_send_failed");
           try {
             socket.terminate();
           } catch {
@@ -214,14 +214,14 @@ export function startRelayTransport({
       try {
         socket.send(JSON.stringify({ type: "ping", ts: Date.now() }));
       } catch (error) {
-        relayLogger.warn({ err: error, url, connectionId }, "relay_control_ping_send_failed");
+        relayLogger.warn({ err: error, connectionId }, "relay_control_ping_send_failed");
         try {
           socket.terminate();
         } catch {
           // ignore
         }
       }
-      relayLogger.debug({ url, connectionId }, "relay_control_open_waiting_for_ready");
+      relayLogger.debug({ connectionId }, "relay_control_open_waiting_for_ready");
     });
 
     socket.on("close", (code, reason) => {
@@ -244,7 +244,7 @@ export function startRelayTransport({
 
     socket.on("error", (err) => {
       if (controlWs !== socket) return;
-      relayLogger.warn({ err, url, connectionId }, "relay_error");
+      relayLogger.warn({ err, connectionId }, "relay_error");
       // close event will schedule reconnect
     });
 
@@ -319,7 +319,7 @@ export function startRelayTransport({
     const openTimeout = setTimeout(() => {
       if (stopped) return;
       if (socket.readyState === WebSocket.OPEN) return;
-      relayLogger.warn({ url, connectionId }, "relay_data_open_timeout_terminating");
+      relayLogger.warn({ connectionId }, "relay_data_open_timeout_terminating");
       try {
         socket.terminate();
       } catch {
@@ -329,7 +329,7 @@ export function startRelayTransport({
 
     socket.on("open", () => {
       clearTimeout(openTimeout);
-      relayLogger.info({ url, connectionId }, "relay_data_connected");
+      relayLogger.info({ connectionId }, "relay_data_connected");
       if (attached) return;
       attached = true;
       const externalMetadata: ExternalSocketMetadata = {
@@ -361,7 +361,7 @@ export function startRelayTransport({
     });
 
     socket.on("error", (err) => {
-      relayLogger.warn({ err, url, connectionId }, "relay_data_error");
+      relayLogger.warn({ err, connectionId }, "relay_data_error");
     });
   };
 

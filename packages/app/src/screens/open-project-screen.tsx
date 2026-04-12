@@ -8,7 +8,12 @@ import { MenuHeader } from "@/components/headers/menu-header";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
-import { useIsCompactFormFactor, HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE, HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
+import {
+  useIsCompactFormFactor,
+  HEADER_INNER_HEIGHT,
+  HEADER_INNER_HEIGHT_MOBILE,
+  HEADER_TOP_PADDING_MOBILE,
+} from "@/constants/layout";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
 export function OpenProjectScreen({ serverId }: { serverId: string }) {
@@ -42,7 +47,12 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
           ) : null}
         </View>
         <View style={styles.cta}>
-          <Button variant="default" leftIcon={FolderOpen} onPress={() => void openProjectPicker()} testID="open-project-submit">
+          <Button
+            variant="default"
+            leftIcon={FolderOpen}
+            onPress={() => void openProjectPicker()}
+            testID="open-project-submit"
+          >
             Add a project
           </Button>
         </View>

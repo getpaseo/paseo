@@ -17,7 +17,6 @@ function workspace(
     workspaceKind: input.workspaceKind ?? "worktree",
     name: input.name ?? input.id,
     status: input.status ?? "done",
-    activityAt: input.activityAt ?? null,
     diffStat: input.diffStat ?? null,
   };
 }

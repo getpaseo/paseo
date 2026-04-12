@@ -489,7 +489,7 @@ describe("DaemonClient", () => {
     expect(request.message.type).toBe("subscribe_checkout_diff_request");
     expect(request.message.subscriptionId).toBe("checkout-sub-1");
     expect(request.message.cwd).toBe("/tmp/project");
-    expect(request.message.compare).toEqual({ mode: "uncommitted" });
+    expect(request.message.compare).toEqual({ mode: "uncommitted", ignoreWhitespace: false });
 
     mock.triggerMessage(
       JSON.stringify({
@@ -548,7 +548,11 @@ describe("DaemonClient", () => {
     };
     expect(subscribeRequest.message.type).toBe("subscribe_checkout_diff_request");
     expect(subscribeRequest.message.cwd).toBe("/tmp/project");
-    expect(subscribeRequest.message.compare).toEqual({ mode: "base", baseRef: "main" });
+    expect(subscribeRequest.message.compare).toEqual({
+      mode: "base",
+      baseRef: "main",
+      ignoreWhitespace: false,
+    });
 
     mock.triggerMessage(
       JSON.stringify({

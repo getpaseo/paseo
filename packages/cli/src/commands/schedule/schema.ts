@@ -19,7 +19,9 @@ export interface ScheduleInspectRow {
   value: string;
 }
 
-export function createScheduleInspectSchema(record: ScheduleRecord): OutputSchema<ScheduleInspectRow> {
+export function createScheduleInspectSchema(
+  record: ScheduleRecord,
+): OutputSchema<ScheduleInspectRow> {
   return {
     idField: "key",
     columns: [

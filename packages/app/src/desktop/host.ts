@@ -38,10 +38,7 @@ export interface DesktopOpenerBridge {
 }
 
 export interface DesktopMenuBridge {
-  showContextMenu?: (input?: {
-    kind?: "terminal";
-    hasSelection?: boolean;
-  }) => Promise<void>;
+  showContextMenu?: (input?: { kind?: "terminal"; hasSelection?: boolean }) => Promise<void>;
 }
 
 export interface DesktopWindowControlsOverlayUpdate {

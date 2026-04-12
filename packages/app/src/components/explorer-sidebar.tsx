@@ -270,7 +270,11 @@ export function ExplorerSidebar({
           <Animated.View
             style={[
               explorerStaticStyles.mobileSidebar,
-              { width: windowWidth, paddingTop: insets.top, backgroundColor: theme.colors.surfaceSidebar },
+              {
+                width: windowWidth,
+                paddingTop: insets.top,
+                backgroundColor: theme.colors.surfaceSidebar,
+              },
               sidebarAnimatedStyle,
               mobileKeyboardInsetStyle,
             ]}
@@ -299,12 +303,17 @@ export function ExplorerSidebar({
   }
 
   return (
-    <Animated.View style={[explorerStaticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }]}>
+    <Animated.View
+      style={[explorerStaticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }]}
+    >
       <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
         {/* Resize handle - absolutely positioned over left border */}
         <GestureDetector gesture={resizeGesture}>
           <View
-            style={[styles.resizeHandle, Platform.OS === "web" && ({ cursor: "col-resize" } as any)]}
+            style={[
+              styles.resizeHandle,
+              Platform.OS === "web" && ({ cursor: "col-resize" } as any),
+            ]}
           />
         </GestureDetector>
 

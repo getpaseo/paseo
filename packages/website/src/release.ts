@@ -28,8 +28,7 @@ function versionFromTag(tag: string): string {
   return tag.replace(/^v/, "");
 }
 
-const GITHUB_RELEASES_URL =
-  "https://api.github.com/repos/getpaseo/paseo/releases?per_page=10";
+const GITHUB_RELEASES_URL = "https://api.github.com/repos/getpaseo/paseo/releases?per_page=10";
 
 async function fetchLatestReadyRelease(): Promise<string> {
   const fallback = websitePackage.version.replace(/-.*$/, "");
@@ -52,18 +51,14 @@ async function fetchLatestReadyRelease(): Promise<string> {
     if (!res.ok) return fallback;
 
     const releases = (await res.json()) as GitHubRelease[];
-    const ready = releases.find(
-      (r) => !r.prerelease && !r.draft && hasRequiredAssets(r),
-    );
+    const ready = releases.find((r) => !r.prerelease && !r.draft && hasRequiredAssets(r));
     return ready ? versionFromTag(ready.tag_name) : fallback;
   } catch {
     return fallback;
   }
 }
 
-export const getLatestRelease = createServerFn({ method: "GET" }).handler(
-  async () => {
-    const version = await fetchLatestReadyRelease();
-    return { version };
-  },
-);
+export const getLatestRelease = createServerFn({ method: "GET" }).handler(async () => {
+  const version = await fetchLatestReadyRelease();
+  return { version };
+});

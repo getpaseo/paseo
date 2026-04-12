@@ -32,13 +32,71 @@ export function createWebSocketTransportFactory(factory: WebSocketFactory): Daem
         }
         ws.send(data);
       },
-      close: (code?: number, reason?: string) => ws.close(code, reason),
+      close: (code?: number, reason?: string) => {
+        // Node's `ws` may emit an `error` when a connecting socket is closed before the
+        // handshake completes. Keep a temporary no-op handler attached so cleanup during
+        // connect timeouts does not crash the CLI with an unhandled error event.
+        const suppressEarlyCloseError = bindTemporaryEarlyCloseErrorHandler(ws);
+        try {
+          ws.close(code, reason);
+        } finally {
+          if (typeof ws.on !== "function" && typeof ws.addEventListener !== "function") {
+            suppressEarlyCloseError();
+          }
+        }
+      },
       onOpen: (handler) => bindWsHandler(ws, "open", handler),
       onClose: (handler) => bindWsHandler(ws, "close", handler),
       onError: (handler) => bindWsHandler(ws, "error", handler),
       onMessage: (handler) => bindWsHandler(ws, "message", handler),
     };
   };
+}
+
+function bindTemporaryEarlyCloseErrorHandler(ws: WebSocketLike): () => void {
+  const noop = () => {};
+
+  if (typeof ws.addEventListener === "function") {
+    ws.addEventListener("error", noop);
+    const removeOnClose = bindWsHandler(ws, "close", () => {
+      removeOnClose();
+      if (typeof ws.removeEventListener === "function") {
+        ws.removeEventListener("error", noop);
+      }
+    });
+    return () => {
+      removeOnClose();
+      if (typeof ws.removeEventListener === "function") {
+        ws.removeEventListener("error", noop);
+      }
+    };
+  }
+
+  if (typeof ws.on === "function") {
+    ws.on("error", noop);
+    const removeOnClose = bindWsHandler(ws, "close", () => {
+      removeOnClose();
+      if (typeof ws.off === "function") {
+        ws.off("error", noop);
+        return;
+      }
+      if (typeof ws.removeListener === "function") {
+        ws.removeListener("error", noop);
+      }
+    });
+    return () => {
+      removeOnClose();
+      if (typeof ws.off === "function") {
+        ws.off("error", noop);
+        return;
+      }
+      if (typeof ws.removeListener === "function") {
+        ws.removeListener("error", noop);
+      }
+    };
+  }
+
+  return () => {};
 }
 
 export function bindWsHandler(

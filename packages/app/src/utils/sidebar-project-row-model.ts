@@ -50,8 +50,7 @@ export function buildSidebarProjectRowModel(input: {
     };
   }
 
-  const collapsible =
-    input.project.projectKind === "git" || input.project.workspaces.length > 1;
+  const collapsible = input.project.projectKind === "git" || input.project.workspaces.length > 1;
 
   return {
     kind: "project_section",

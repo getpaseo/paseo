@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDiffContentText, formatDiffGutterText, hasVisibleDiffTokens } from "./diff-rendering";
+import {
+  formatDiffContentText,
+  formatDiffGutterText,
+  hasVisibleDiffTokens,
+} from "./diff-rendering";
 
 describe("diff-rendering", () => {
   it("keeps header gutters tall even when they do not show a line number", () => {

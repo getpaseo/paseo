@@ -529,7 +529,13 @@ export const theme = darkTheme;
 // Export a union type that works for both themes
 export type Theme = typeof darkTheme | typeof lightTheme;
 
-type UnistylesThemeKey = "light" | "dark" | "darkZinc" | "darkMidnight" | "darkClaude" | "darkGhostty";
+type UnistylesThemeKey =
+  | "light"
+  | "dark"
+  | "darkZinc"
+  | "darkMidnight"
+  | "darkClaude"
+  | "darkGhostty";
 
 export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
   light: "light",

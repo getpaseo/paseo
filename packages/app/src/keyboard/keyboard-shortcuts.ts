@@ -33,12 +33,7 @@ export type KeyboardShortcutHelpRow = {
   note?: string;
 };
 
-export type ShortcutSectionId =
-  | "navigation"
-  | "tabs-panes"
-  | "projects"
-  | "panels"
-  | "agent-input";
+export type ShortcutSectionId = "navigation" | "tabs-panes" | "projects" | "panels" | "agent-input";
 
 export type KeyboardShortcutHelpSection = {
   id: ShortcutSectionId;
@@ -52,7 +47,6 @@ type KeyboardShortcutPlatformContext = {
   isMac: boolean;
   isDesktop: boolean;
 };
-
 
 interface ShortcutWhen {
   /** true = mac only, false = non-mac only */
@@ -924,9 +918,7 @@ function parseBinding(binding: ShortcutBinding): ParsedShortcutBinding {
 export const DEFAULT_BINDINGS: readonly ParsedShortcutBinding[] =
   SHORTCUT_BINDINGS.map(parseBinding);
 
-export function buildEffectiveBindings(
-  overrides: Record<string, string>,
-): ParsedShortcutBinding[] {
+export function buildEffectiveBindings(overrides: Record<string, string>): ParsedShortcutBinding[] {
   return DEFAULT_BINDINGS.map(function (binding) {
     const override = overrides[binding.id];
     if (override === undefined) {
@@ -1252,7 +1244,13 @@ export function buildKeyboardShortcutHelpSections(
     });
   }
 
-  const sectionOrder: ShortcutSectionId[] = ["navigation", "tabs-panes", "projects", "panels", "agent-input"];
+  const sectionOrder: ShortcutSectionId[] = [
+    "navigation",
+    "tabs-panes",
+    "projects",
+    "panels",
+    "agent-input",
+  ];
 
   return sectionOrder.flatMap((sectionId) => {
     const rows = rowsBySection.get(sectionId) ?? [];

@@ -221,7 +221,7 @@ describe("useAgentFormState", () => {
       expect(resolved.thinkingOptionId).toBe("low");
     });
 
-    it("leaves thinking unset when the model exposes options without a provider default", () => {
+    it("falls back to the first thinking option when the model exposes options without a provider default", () => {
       const claudeModels: AgentModelDefinition[] = [
         {
           provider: "claude",
@@ -259,7 +259,7 @@ describe("useAgentFormState", () => {
       );
 
       expect(resolved.model).toBe("default");
-      expect(resolved.thinkingOptionId).toBe("");
+      expect(resolved.thinkingOptionId).toBe("low");
     });
 
     it("resolves provider only from allowed provider map", () => {

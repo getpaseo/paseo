@@ -213,8 +213,6 @@ function clearDevDaemonMetadata(): void {
     // Ignore metadata cleanup failures.
   }
 }
-
-
 function toTrimmedString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -306,12 +304,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
       current.desktopManaged &&
       expectedDevOrigin !== null &&
       currentDevOrigin !== expectedDevOrigin;
-    if (
-      current.desktopManaged &&
-      appVersion &&
-      daemonVersion &&
-      appVersion !== daemonVersion
-    ) {
+    if (current.desktopManaged && appVersion && daemonVersion && appVersion !== daemonVersion) {
       logDesktopDaemonLifecycle("daemon version mismatch, restarting", {
         appVersion,
         daemonVersion,

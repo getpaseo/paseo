@@ -70,6 +70,7 @@ import type {
   AgentProvider,
   AgentSessionConfig,
 } from "../server/agent/agent-sdk-types.js";
+import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
 import { getAgentProviderDefinition } from "../server/agent/provider-manifest.js";
 import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
 import {
@@ -273,10 +274,7 @@ type ChatCreatePayload = Extract<
   SessionOutboundMessage,
   { type: "chat/create/response" }
 >["payload"];
-type ChatListPayload = Extract<
-  SessionOutboundMessage,
-  { type: "chat/list/response" }
->["payload"];
+type ChatListPayload = Extract<SessionOutboundMessage, { type: "chat/list/response" }>["payload"];
 type ChatInspectPayload = Extract<
   SessionOutboundMessage,
   { type: "chat/inspect/response" }
@@ -285,38 +283,17 @@ type ChatDeletePayload = Extract<
   SessionOutboundMessage,
   { type: "chat/delete/response" }
 >["payload"];
-type ChatPostPayload = Extract<
-  SessionOutboundMessage,
-  { type: "chat/post/response" }
->["payload"];
-type ChatReadPayload = Extract<
-  SessionOutboundMessage,
-  { type: "chat/read/response" }
->["payload"];
-type ChatWaitPayload = Extract<
-  SessionOutboundMessage,
-  { type: "chat/wait/response" }
->["payload"];
-type LoopRunPayload = Extract<
-  SessionOutboundMessage,
-  { type: "loop/run/response" }
->["payload"];
-type LoopListPayload = Extract<
-  SessionOutboundMessage,
-  { type: "loop/list/response" }
->["payload"];
+type ChatPostPayload = Extract<SessionOutboundMessage, { type: "chat/post/response" }>["payload"];
+type ChatReadPayload = Extract<SessionOutboundMessage, { type: "chat/read/response" }>["payload"];
+type ChatWaitPayload = Extract<SessionOutboundMessage, { type: "chat/wait/response" }>["payload"];
+type LoopRunPayload = Extract<SessionOutboundMessage, { type: "loop/run/response" }>["payload"];
+type LoopListPayload = Extract<SessionOutboundMessage, { type: "loop/list/response" }>["payload"];
 type LoopInspectPayload = Extract<
   SessionOutboundMessage,
   { type: "loop/inspect/response" }
 >["payload"];
-type LoopLogsPayload = Extract<
-  SessionOutboundMessage,
-  { type: "loop/logs/response" }
->["payload"];
-type LoopStopPayload = Extract<
-  SessionOutboundMessage,
-  { type: "loop/stop/response" }
->["payload"];
+type LoopLogsPayload = Extract<SessionOutboundMessage, { type: "loop/logs/response" }>["payload"];
+type LoopStopPayload = Extract<SessionOutboundMessage, { type: "loop/stop/response" }>["payload"];
 type ScheduleCreatePayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/create/response" }
@@ -516,10 +493,18 @@ type WaitHandle<T> = {
 };
 
 type RpcWaitResult<T> = { kind: "ok"; value: T } | { kind: "error"; error: DaemonRpcError };
-type CorrelatedResponseMessage = Extract<
+type GetDaemonConfigResponse = Extract<
   SessionOutboundMessage,
-  { payload: { requestId: string } }
+  { type: "get_daemon_config_response" }
 >;
+type SetDaemonConfigResponse = Extract<
+  SessionOutboundMessage,
+  { type: "set_daemon_config_response" }
+>;
+type CorrelatedResponseMessage =
+  | Extract<SessionOutboundMessage, { payload: { requestId: string } }>
+  | GetDaemonConfigResponse
+  | SetDaemonConfigResponse;
 type CorrelatedResponseType = CorrelatedResponseMessage["type"];
 type CorrelatedResponsePayload<TType extends CorrelatedResponseType> = Extract<
   CorrelatedResponseMessage,
@@ -2430,11 +2415,7 @@ export class DaemonClient {
     });
   }
 
-  async stashPop(
-    cwd: string,
-    stashIndex: number,
-    requestId?: string,
-  ): Promise<StashPopPayload> {
+  async stashPop(cwd: string, stashIndex: number, requestId?: string): Promise<StashPopPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
@@ -2702,6 +2683,34 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "get_providers_snapshot_response",
+      timeout: 10000,
+    });
+  }
+
+  async getDaemonConfig(
+    requestId?: string,
+  ): Promise<{ requestId: string; config: MutableDaemonConfig }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "get_daemon_config_request",
+      },
+      responseType: "get_daemon_config_response",
+      timeout: 10000,
+    });
+  }
+
+  async patchDaemonConfig(
+    config: MutableDaemonConfigPatch,
+    requestId?: string,
+  ): Promise<{ requestId: string; config: MutableDaemonConfig }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "set_daemon_config_request",
+        config,
+      },
+      responseType: "set_daemon_config_response",
       timeout: 10000,
     });
   }
@@ -3351,8 +3360,7 @@ export class DaemonClient {
   }
 
   async loopLogs(options: string | LoopLogsOptions, afterSeq?: number): Promise<LoopLogsPayload> {
-    const normalized =
-      typeof options === "string" ? { id: options, afterSeq } : options;
+    const normalized = typeof options === "string" ? { id: options, afterSeq } : options;
     return this.sendCorrelatedSessionRequest({
       requestId: normalized.requestId,
       message: {

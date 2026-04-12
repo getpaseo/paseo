@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.53 - 2026-04-12
+
+### Added
+- Agents get Paseo tools automatically — every new agent gets access to terminals, schedules, worktrees, and other agents through MCP. Toggle it off in Settings under "Inject Paseo tools".
+- Git pull — pull remote changes directly from the workspace header. Promoted to the primary action when your branch is behind origin.
+- Child agent notifications — parent agents are automatically notified when a child agent finishes, errors, or needs permission approval.
+- Agent reload — `paseo agent reload` restarts an agent's underlying process from the CLI.
+- Middle-click to close tabs on desktop.
+- Keyboard shortcut to cycle themes.
+
+### Improved
+- Unavailable git actions now explain why in a toast instead of being silently greyed out.
+- Streaming markdown on mobile renders significantly faster.
+- Sidebar, branch switcher, and agent panel no longer re-render unnecessarily — noticeable on large workspaces.
+- Paseo tool calls in agent timelines show the Paseo logo and human-readable names.
+- Relay and pairing URLs are stripped from daemon logs.
+
+### Fixed
+- Closed agent tabs no longer reappear after reconnecting.
+- Desktop notification badge counts match across all workspaces.
+- Host switcher status syncs correctly when switching between hosts.
+
 ## 0.1.52 - 2026-04-10
 
 ### Added

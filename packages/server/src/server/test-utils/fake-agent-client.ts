@@ -243,7 +243,10 @@ class FakeAgentSession implements AgentSession {
   private async resolveSlashCommandInput(
     prompt: AgentPromptInput,
   ): Promise<{ commandName: string; args?: string } | null> {
-    if ((this.providerName !== "codex" && this.providerName !== "opencode") || typeof prompt !== "string") {
+    if (
+      (this.providerName !== "codex" && this.providerName !== "opencode") ||
+      typeof prompt !== "string"
+    ) {
       return null;
     }
     const parsed = this.parseSlashCommandInput(prompt);
@@ -911,8 +914,8 @@ class FakeAgentClient implements AgentClient {
       return [
         {
           provider: this.provider,
-          id: "gpt-5.1-codex-mini",
-          label: "gpt-5.1-codex-mini",
+          id: "gpt-5.4-mini",
+          label: "gpt-5.4-mini",
           isDefault: true,
         },
       ];

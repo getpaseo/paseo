@@ -10,7 +10,7 @@ export interface ConnectOptions {
 }
 
 const DEFAULT_HOST = "localhost:6767";
-const DEFAULT_TIMEOUT = 5000;
+const DEFAULT_TIMEOUT = 15000;
 const PID_FILENAME = "paseo.pid";
 
 type DaemonTarget =
@@ -207,6 +207,7 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
       url: target.url,
       clientId,
       clientType: "cli",
+      connectTimeoutMs: timeout,
       webSocketFactory: (url: string, config?: { headers?: Record<string, string> }) =>
         nodeWebSocketFactory(url, {
           headers: config?.headers,
@@ -216,23 +217,11 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
     } as unknown as ConstructorParameters<typeof DaemonClient>[0]);
 
     const connectPromise = client.connect();
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(() => {
-        reject(new Error(`Connection timeout after ${timeout}ms`));
-      }, timeout);
-    });
 
     try {
-      await Promise.race([connectPromise, timeoutPromise]);
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
-      }
+      await connectPromise;
       return client;
     } catch (err) {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
-      }
       lastError = err;
       await client.close().catch(() => {});
     }

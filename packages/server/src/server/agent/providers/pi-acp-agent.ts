@@ -3,11 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { Logger } from "pino";
-import type {
-  ClientSideConnection,
-  SessionConfigOption,
-  ToolKind,
-} from "@agentclientprotocol/sdk";
+import type { ClientSideConnection, SessionConfigOption, ToolKind } from "@agentclientprotocol/sdk";
 
 import type {
   AgentLaunchContext,
@@ -30,11 +26,7 @@ import type {
 } from "../agent-sdk-types.js";
 import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
-import {
-  ACPAgentClient,
-  type ACPToolSnapshot,
-  type SessionStateResponse,
-} from "./acp-agent.js";
+import { ACPAgentClient, type ACPToolSnapshot, type SessionStateResponse } from "./acp-agent.js";
 import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
@@ -102,9 +94,7 @@ function transformPiToolSnapshot(snapshot: ACPToolSnapshot): ACPToolSnapshot {
  * This transformer remaps them so the base ACP class treats them as thinking
  * options instead of permission modes.
  */
-export function transformPiSessionResponse(
-  response: SessionStateResponse,
-): SessionStateResponse {
+export function transformPiSessionResponse(response: SessionStateResponse): SessionStateResponse {
   const modes = response.modes;
   if (!modes?.availableModes?.length) {
     return response;
@@ -126,10 +116,7 @@ export function transformPiSessionResponse(
   return {
     ...response,
     modes: undefined,
-    configOptions: [
-      thinkingOption,
-      ...(response.configOptions ?? []),
-    ],
+    configOptions: [thinkingOption, ...(response.configOptions ?? [])],
   };
 }
 
@@ -228,10 +215,7 @@ class PiACPAgentSession implements AgentSession {
     return this.inner.getPendingPermissions();
   }
 
-  async respondToPermission(
-    requestId: string,
-    response: AgentPermissionResponse,
-  ): Promise<void> {
+  async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
     await this.inner.respondToPermission(requestId, response);
   }
 

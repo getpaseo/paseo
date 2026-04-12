@@ -65,11 +65,7 @@ describe("node-entrypoint-launcher", () => {
     it("passes --open-project through as a normal CLI arg", () => {
       expect(
         parseCliPassthroughArgsFromArgv({
-          argv: [
-            "/Applications/Paseo.app/Contents/MacOS/Paseo",
-            "--open-project",
-            "/tmp/project",
-          ],
+          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo", "--open-project", "/tmp/project"],
           isDefaultApp: false,
           forceCli: false,
         }),
@@ -93,7 +89,8 @@ describe("node-entrypoint-launcher", () => {
         createNodeEntrypointInvocation({
           execPath: "/Applications/Paseo.app/Contents/MacOS/Paseo",
           isPackaged: true,
-          packagedRunnerPath: "/Applications/Paseo.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
+          packagedRunnerPath:
+            "/Applications/Paseo.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
           entrypoint: CLI_ENTRYPOINT,
           argvMode: "node-script",
           args: ["ls", "--json"],
@@ -142,7 +139,8 @@ describe("node-entrypoint-launcher", () => {
         createNodeEntrypointInvocation({
           execPath: "/Applications/Paseo.app/Contents/MacOS/Paseo",
           isPackaged: true,
-          packagedRunnerPath: "/Applications/Paseo.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
+          packagedRunnerPath:
+            "/Applications/Paseo.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
           entrypoint: CLI_ENTRYPOINT,
           argvMode: "node-script",
           args: ["--dev"],

@@ -77,7 +77,13 @@ function resolvePackagedAsarPath(): string {
 }
 
 function resolvePackagedNodeEntrypointRunnerPath(): string {
-  return path.join(process.resourcesPath, "app.asar.unpacked", "dist", "daemon", "node-entrypoint-runner.js");
+  return path.join(
+    process.resourcesPath,
+    "app.asar.unpacked",
+    "dist",
+    "daemon",
+    "node-entrypoint-runner.js",
+  );
 }
 
 function assertPathExists(input: { label: string; filePath: string }): string {
@@ -116,12 +122,7 @@ export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
   }
 
   const serverPackage = resolveServerPackageInfo();
-  const distRunner = path.join(
-    serverPackage.root,
-    "dist",
-    "scripts",
-    "supervisor-entrypoint.js",
-  );
+  const distRunner = path.join(serverPackage.root, "dist", "scripts", "supervisor-entrypoint.js");
   if (existsSync(distRunner)) {
     return {
       entryPath: distRunner,
@@ -284,7 +285,9 @@ export async function runCliTextCommand(args: string[]): Promise<string> {
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
-    throw new Error(stderr.length > 0 ? stderr : `CLI command failed with exit code ${result.exitCode}`);
+    throw new Error(
+      stderr.length > 0 ? stderr : `CLI command failed with exit code ${result.exitCode}`,
+    );
   }
 
   return result.stdout.trimEnd();
@@ -298,7 +301,9 @@ export async function runCliJsonCommand(args: string[]): Promise<unknown> {
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
-    throw new Error(stderr.length > 0 ? stderr : `CLI command failed with exit code ${result.exitCode}`);
+    throw new Error(
+      stderr.length > 0 ? stderr : `CLI command failed with exit code ${result.exitCode}`,
+    );
   }
 
   const stdout = result.stdout.trim();

@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   format:
@@ -88,6 +89,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Build highlight dependency
+        run: npm run build --workspace=@getpaseo/highlight
+
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
 
@@ -112,6 +116,12 @@ jobs:
 
       - name: Build relay dependency
         run: npm run build --workspace=@getpaseo/relay
+
+      - name: Build server dependency
+        run: npm run build --workspace=@getpaseo/server
+
+      - name: Install agent CLIs for provider tests
+        run: npm install -g @openai/codex@0.105.0 opencode-ai
 
       - name: Run Playwright E2E tests
         run: npm run test:e2e --workspace=@getpaseo/app
@@ -159,6 +169,9 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+
+      - name: Install agent CLIs for provider tests
+        run: npm install -g @openai/codex@0.105.0 opencode-ai
 
       - name: Build highlight dependency
         run: npm run build --workspace=@getpaseo/highlight

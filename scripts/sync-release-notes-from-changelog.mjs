@@ -178,11 +178,32 @@ function main() {
   const notesPath = path.join(tempDir, `${targetTag}-notes.md`);
   writeFileSync(notesPath, notes);
 
+  const editArgs = ["release", "edit", targetTag, "--repo", args.repo, "--notes-file", notesPath];
+  const createArgs = [
+    "release",
+    "create",
+    targetTag,
+    "--repo",
+    args.repo,
+    "--title",
+    `Paseo ${targetTag}`,
+    "--notes-file",
+    notesPath,
+    "--verify-tag",
+    ...(parseReleaseVersion(releaseInfo.version).isPrerelease ? ["--prerelease"] : []),
+  ];
+
   try {
     if (hasRelease(targetTag, args.repo)) {
-      runGh(["release", "edit", targetTag, "--repo", args.repo, "--notes-file", notesPath]);
-      console.log(`Updated release notes for ${targetTag}.`);
-      return;
+      try {
+        runGh(editArgs);
+        console.log(`Updated release notes for ${targetTag}.`);
+        return;
+      } catch {
+        console.warn(
+          `Edit failed for ${targetTag} (release may have been recreated by another workflow); falling through to create.`,
+        );
+      }
     }
 
     if (!args.createIfMissing) {
@@ -193,25 +214,13 @@ function main() {
     }
 
     try {
-      runGh([
-        "release",
-        "create",
-        targetTag,
-        "--repo",
-        args.repo,
-        "--title",
-        `Paseo ${targetTag}`,
-        "--notes-file",
-        notesPath,
-        "--verify-tag",
-        ...(parseReleaseVersion(releaseInfo.version).isPrerelease ? ["--prerelease"] : []),
-      ]);
+      runGh(createArgs);
       console.log(`Created release ${targetTag} with changelog notes.`);
     } catch (createError) {
       console.warn(
         `Release creation failed for ${targetTag}; attempting edit in case another workflow created it concurrently.`,
       );
-      runGh(["release", "edit", targetTag, "--repo", args.repo, "--notes-file", notesPath]);
+      runGh(editArgs);
       console.log(`Updated release notes for ${targetTag} after create race.`);
 
       if (createError instanceof Error) {

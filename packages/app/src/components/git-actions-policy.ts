@@ -110,8 +110,9 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
     successLabel: "Merged",
     disabled: input.runtime["merge-branch"].disabled,
     status: input.runtime["merge-branch"].status,
-    unavailableMessage:
-      input.runtime["merge-branch"].disabled ? undefined : getMergeBranchUnavailableMessage(input),
+    unavailableMessage: input.runtime["merge-branch"].disabled
+      ? undefined
+      : getMergeBranchUnavailableMessage(input),
     icon: input.runtime["merge-branch"].icon,
     handler: input.runtime["merge-branch"].handler,
   });
@@ -123,10 +124,9 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
     successLabel: "Updated",
     disabled: input.runtime["merge-from-base"].disabled,
     status: input.runtime["merge-from-base"].status,
-    unavailableMessage:
-      input.runtime["merge-from-base"].disabled
-        ? undefined
-        : getMergeFromBaseUnavailableMessage(input),
+    unavailableMessage: input.runtime["merge-from-base"].disabled
+      ? undefined
+      : getMergeFromBaseUnavailableMessage(input),
     icon: input.runtime["merge-from-base"].icon,
     handler: input.runtime["merge-from-base"].handler,
   });
@@ -214,19 +214,16 @@ function buildPrAction(input: BuildGitActionsInput): GitAction {
     successLabel: "PR Created",
     disabled: input.runtime.pr.disabled,
     status: input.runtime.pr.status,
-    unavailableMessage:
-      input.runtime.pr.disabled ? undefined : getCreatePrUnavailableMessage(input),
+    unavailableMessage: input.runtime.pr.disabled
+      ? undefined
+      : getCreatePrUnavailableMessage(input),
     icon: input.runtime.pr.icon,
     handler: input.runtime.pr.handler,
   };
 }
 
 function canPull(input: BuildGitActionsInput): boolean {
-  return (
-    input.hasRemote &&
-    !input.hasUncommittedChanges &&
-    input.behindOfOrigin > 0
-  );
+  return input.hasRemote && !input.hasUncommittedChanges && input.behindOfOrigin > 0;
 }
 
 function canPush(input: BuildGitActionsInput): boolean {

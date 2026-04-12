@@ -261,10 +261,10 @@ describe("keyboard-shortcuts", () => {
       action: "sidebar.toggle.left",
     },
     {
-      name: "keeps Mod+. as sidebar toggle fallback",
+      name: "routes Mod+. to toggle both sidebars on non-mac",
       event: { key: ".", code: "Period", ctrlKey: true },
       context: { isMac: false },
-      action: "sidebar.toggle.left",
+      action: "sidebar.toggle.both",
     },
     {
       name: "routes Mod+D to message-input action outside terminal",
@@ -345,9 +345,9 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: false, focusScope: "terminal" },
     },
     {
-      name: "does not bind Ctrl+B on non-mac",
+      name: "does not bind Ctrl+B on non-mac while terminal is focused",
       event: { key: "b", code: "KeyB", ctrlKey: true },
-      context: { isMac: false },
+      context: { isMac: false, focusScope: "terminal" },
     },
     {
       name: "does not route message-input actions when terminal is focused",
@@ -477,10 +477,10 @@ describe("keyboard-shortcut help sections", () => {
       },
     },
     {
-      name: "uses mod+period as non-mac left sidebar shortcut",
+      name: "uses mod+b as non-mac left sidebar shortcut",
       context: { isMac: false, isDesktop: false },
       expectedKeys: {
-        "toggle-left-sidebar": ["mod", "."],
+        "toggle-left-sidebar": ["mod", "B"],
       },
     },
   ];

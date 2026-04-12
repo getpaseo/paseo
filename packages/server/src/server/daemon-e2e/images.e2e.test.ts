@@ -19,7 +19,7 @@ function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
 }
 
-const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
+const CODEX_TEST_MODEL = "gpt-5.4-mini";
 
 describe("daemon E2E", () => {
   let ctx: DaemonTestContext;

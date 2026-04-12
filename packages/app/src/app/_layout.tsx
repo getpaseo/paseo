@@ -785,17 +785,14 @@ function RootStack() {
       <Stack.Protected guard={storeReady}>
         <Stack.Screen name="welcome" />
         <Stack.Screen name="settings" />
-        <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
-        <Stack.Screen
-          name="h/[serverId]/agent/[agentId]"
-          options={{ gestureEnabled: false }}
-        />
-        <Stack.Screen name="h/[serverId]/index" />
-        <Stack.Screen name="h/[serverId]/sessions" />
-        <Stack.Screen name="h/[serverId]/open-project" />
-        <Stack.Screen name="h/[serverId]/settings" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
+      <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
+      <Stack.Screen name="h/[serverId]/agent/[agentId]" options={{ gestureEnabled: false }} />
+      <Stack.Screen name="h/[serverId]/index" />
+      <Stack.Screen name="h/[serverId]/sessions" />
+      <Stack.Screen name="h/[serverId]/open-project" />
+      <Stack.Screen name="h/[serverId]/settings" />
       <Stack.Screen name="index" />
     </Stack>
   );

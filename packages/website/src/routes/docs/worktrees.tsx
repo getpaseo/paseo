@@ -172,9 +172,9 @@ function Worktrees() {
           checkout to the worktree.
         </p>
         <p className="text-white/60 leading-relaxed">
-          <code className="font-mono">$PASEO_WORKTREE_PORT</code> is available when the worktree
-          was bootstrapped with a port. That makes it useful for both starting services in setup
-          and stopping them again in teardown.
+          <code className="font-mono">$PASEO_WORKTREE_PORT</code> is available when the worktree was
+          bootstrapped with a port. That makes it useful for both starting services in setup and
+          stopping them again in teardown.
         </p>
       </section>
 

@@ -82,12 +82,7 @@ function terminalScopeKey(input: { serverId: string; cwd: string }): string {
   return `${input.serverId}:${input.cwd}`;
 }
 
-export function TerminalPane({
-  serverId,
-  cwd,
-  terminalId,
-  isPaneFocused,
-}: TerminalPaneProps) {
+export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: TerminalPaneProps) {
   const isScreenFocused = useIsFocused();
   const isAppVisible = useAppVisible();
   const { theme } = useUnistyles();
@@ -108,7 +103,10 @@ export function TerminalPane({
   const scopeKey = useMemo(() => terminalScopeKey({ serverId, cwd }), [serverId, cwd]);
   const lastReportedSizeRef = useRef<{ rows: number; cols: number } | null>(null);
   const streamControllerRef = useRef<TerminalStreamController | null>(null);
-  const workspaceTerminalSession = useMemo(() => getWorkspaceTerminalSession({ scopeKey }), [scopeKey]);
+  const workspaceTerminalSession = useMemo(
+    () => getWorkspaceTerminalSession({ scopeKey }),
+    [scopeKey],
+  );
   const [isAttaching, setIsAttaching] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [modifiers, setModifiers] = useState<ModifierState>(EMPTY_MODIFIERS);
@@ -473,26 +471,32 @@ export function TerminalPane({
     ],
   );
 
-  const handleTerminalResize = useStableEvent(
-    (input: { rows: number; cols: number }) => {
-      const { rows, cols } = input;
-      if (!client || !terminalId || !isPaneFocused || !isScreenFocused || !isAppVisible || rows <= 0 || cols <= 0) {
-        return;
-      }
-      const normalizedRows = Math.floor(rows);
-      const normalizedCols = Math.floor(cols);
-      const previous = lastReportedSizeRef.current;
-      if (previous && previous.rows === normalizedRows && previous.cols === normalizedCols) {
-        return;
-      }
-      lastReportedSizeRef.current = { rows: normalizedRows, cols: normalizedCols };
-      client.sendTerminalInput(terminalId, {
-        type: "resize",
-        rows: normalizedRows,
-        cols: normalizedCols,
-      });
-    },
-  );
+  const handleTerminalResize = useStableEvent((input: { rows: number; cols: number }) => {
+    const { rows, cols } = input;
+    if (
+      !client ||
+      !terminalId ||
+      !isPaneFocused ||
+      !isScreenFocused ||
+      !isAppVisible ||
+      rows <= 0 ||
+      cols <= 0
+    ) {
+      return;
+    }
+    const normalizedRows = Math.floor(rows);
+    const normalizedCols = Math.floor(cols);
+    const previous = lastReportedSizeRef.current;
+    if (previous && previous.rows === normalizedRows && previous.cols === normalizedCols) {
+      return;
+    }
+    lastReportedSizeRef.current = { rows: normalizedRows, cols: normalizedCols };
+    client.sendTerminalInput(terminalId, {
+      type: "resize",
+      rows: normalizedRows,
+      cols: normalizedCols,
+    });
+  });
 
   const handleTerminalKey = useCallback(
     async (input: { key: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean }) => {

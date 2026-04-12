@@ -1,36 +1,49 @@
 import { useRef } from "react";
 import { Pressable, Text, View } from "react-native";
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, GitBranch } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useToast } from "@/contexts/toast-context";
+import { useBranchSwitcher } from "@/hooks/use-branch-switcher";
 
 interface BranchSwitcherProps {
   currentBranchName: string | null;
   title: string;
-  branchOptions: ComboboxOption[];
-  isOpen: boolean;
-  onOpenChange: (open: boolean) => void;
-  onBranchSelect: (branchId: string) => void;
+  serverId: string;
+  workspaceId: string;
+  isGitCheckout: boolean;
 }
 
 export function BranchSwitcher({
   currentBranchName,
   title,
-  branchOptions,
-  isOpen,
-  onOpenChange,
-  onBranchSelect,
+  serverId,
+  workspaceId,
+  isGitCheckout,
 }: BranchSwitcherProps) {
   const { theme } = useUnistyles();
   const anchorRef = useRef<View>(null);
+  const client = useHostRuntimeClient(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const toast = useToast();
+  const queryClient = useQueryClient();
+
+  const { branchOptions, isOpen, setIsOpen, handleBranchSelect } = useBranchSwitcher({
+    client,
+    normalizedServerId: serverId,
+    normalizedWorkspaceId: workspaceId,
+    currentBranchName,
+    isGitCheckout,
+    isConnected,
+    toast,
+    queryClient,
+  });
 
   if (!currentBranchName) {
     return (
-      <Text
-        testID="workspace-header-title"
-        style={styles.headerTitle}
-        numberOfLines={1}
-      >
+      <Text testID="workspace-header-title" style={styles.headerTitle} numberOfLines={1}>
         {title}
       </Text>
     );
@@ -40,7 +53,7 @@ export function BranchSwitcher({
     <View ref={anchorRef} collapsable={false}>
       <Pressable
         testID="workspace-header-branch-switcher"
-        onPress={() => onOpenChange(true)}
+        onPress={() => setIsOpen(true)}
         style={({ hovered, pressed }) => [
           styles.branchSwitcherTrigger,
           (hovered || pressed) && styles.branchSwitcherTriggerHovered,
@@ -48,33 +61,23 @@ export function BranchSwitcher({
         accessibilityRole="button"
         accessibilityLabel={`Current branch: ${currentBranchName}. Press to switch branch.`}
       >
-        <GitBranch
-          size={14}
-          color={theme.colors.foregroundMuted}
-        />
-        <Text
-          testID="workspace-header-title"
-          style={styles.headerTitle}
-          numberOfLines={1}
-        >
+        <GitBranch size={14} color={theme.colors.foregroundMuted} />
+        <Text testID="workspace-header-title" style={styles.headerTitle} numberOfLines={1}>
           {title}
         </Text>
-        <ChevronDown
-          size={12}
-          color={theme.colors.foregroundMuted}
-        />
+        <ChevronDown size={12} color={theme.colors.foregroundMuted} />
       </Pressable>
       <Combobox
         options={branchOptions}
         value={currentBranchName}
-        onSelect={onBranchSelect}
+        onSelect={handleBranchSelect}
         searchable
         placeholder="Switch branch..."
         searchPlaceholder="Filter branches..."
         emptyText="No branches found."
         title="Switch branch"
         open={isOpen}
-        onOpenChange={onOpenChange}
+        onOpenChange={setIsOpen}
         anchorRef={anchorRef}
         desktopPlacement="bottom-start"
         desktopPreventInitialFlash
@@ -86,12 +89,7 @@ export function BranchSwitcher({
             selected={selected}
             active={active}
             onPress={onPress}
-            leadingSlot={
-              <GitBranch
-                size={14}
-                color={theme.colors.foregroundMuted}
-              />
-            }
+            leadingSlot={<GitBranch size={14} color={theme.colors.foregroundMuted} />}
           />
         )}
       />

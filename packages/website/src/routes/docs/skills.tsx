@@ -26,9 +26,9 @@ function Skills() {
         <h1 className="text-3xl font-medium font-title mb-4">Orchestration Skills</h1>
         <p className="text-white/60 leading-relaxed">
           Paseo ships orchestration skills that teach coding agents (Claude Code, Codex) how to use
-          the Paseo CLI to spawn, coordinate, and manage other agents. Skills are slash commands your
-          agent can invoke — they provide the prompts, context, and workflows so agents know how to
-          orchestrate without you writing boilerplate. Install them from the desktop app's
+          the Paseo CLI to spawn, coordinate, and manage other agents. Skills are slash commands
+          your agent can invoke — they provide the prompts, context, and workflows so agents know
+          how to orchestrate without you writing boilerplate. Install them from the desktop app's
           Integrations settings or via the CLI.
         </p>
       </div>
@@ -42,9 +42,10 @@ function Skills() {
             <strong>Desktop app:</strong> Settings → Integrations → Install
           </li>
           <li>
-            <strong>Manual:</strong> <code className="font-mono">npx skills add getpaseo/paseo</code>{" "}
-            — this installs to <code className="font-mono">~/.agents/skills/</code> and sets up
-            symlinks for each agent.
+            <strong>Manual:</strong>{" "}
+            <code className="font-mono">npx skills add getpaseo/paseo</code> — this installs to{" "}
+            <code className="font-mono">~/.agents/skills/</code> and sets up symlinks for each
+            agent.
           </li>
         </ul>
       </section>
@@ -90,8 +91,8 @@ function Skills() {
         </h2>
         <p className="text-white/60 leading-relaxed">
           Runs an agent in a loop with automatic verification until an exit condition is met. Worker
-          runs, verifier checks, repeat until done or max iterations. Supports different providers for
-          worker vs verifier (e.g., Codex implements, Claude verifies).
+          runs, verifier checks, repeat until done or max iterations. Supports different providers
+          for worker vs verifier (e.g., Codex implements, Claude verifies).
         </p>
         <p className="text-white/60 leading-relaxed">
           Stop conditions: <code className="font-mono">--max-iterations</code>,{" "}
@@ -110,8 +111,8 @@ function Skills() {
         </h2>
         <p className="text-white/60 leading-relaxed">
           Builds and manages a team of agents coordinating through a shared chat room. You describe
-          the work, it sets up roles, launches agents, and coordinates through chat. Uses a heartbeat
-          schedule to check progress.
+          the work, it sets up roles, launches agents, and coordinates through chat. Uses a
+          heartbeat schedule to check progress.
         </p>
         <p className="text-white/60 leading-relaxed">
           Cross-provider: typically Codex for implementation, Claude for review.
@@ -127,8 +128,9 @@ function Skills() {
           <code className="font-mono">/paseo-chat</code> — Chat Rooms
         </h2>
         <p className="text-white/60 leading-relaxed">
-          Use persistent chat rooms for asynchronous agent coordination. Create rooms, post messages,
-          read history, wait for replies. Supports @mentions for specific agents or @everyone.
+          Use persistent chat rooms for asynchronous agent coordination. Create rooms, post
+          messages, read history, wait for replies. Supports @mentions for specific agents or
+          @everyone.
         </p>
         <p className="text-white/60 leading-relaxed">
           Typically used by the orchestrator skill, but can be used directly.
@@ -145,9 +147,9 @@ function Skills() {
           <code className="font-mono">/paseo-committee</code> — Committee Planning
         </h2>
         <p className="text-white/60 leading-relaxed">
-          Forms a committee of two high-reasoning agents (Claude Opus + GPT 5.4) to analyze a problem
-          before implementing. Both agents reason in parallel, then plans are merged. Useful when
-          stuck, looping, or facing a hard architectural decision.
+          Forms a committee of two high-reasoning agents (Claude Opus + GPT 5.4) to analyze a
+          problem before implementing. Both agents reason in parallel, then plans are merged. Useful
+          when stuck, looping, or facing a hard architectural decision.
         </p>
         <p className="text-white/60 leading-relaxed">
           Agents are prevented from editing code — they only produce a plan.

@@ -126,8 +126,9 @@ export const PersistedConfigSchema = z
         mcp: z
           .object({
             enabled: z.boolean().optional(),
+            injectIntoAgents: z.boolean().optional(),
           })
-          .strict()
+          .passthrough()
           .optional(),
         cors: z
           .object({

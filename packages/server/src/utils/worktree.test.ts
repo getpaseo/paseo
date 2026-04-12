@@ -11,9 +11,7 @@ import {
   runWorktreeSetupCommands,
   slugify,
 } from "./worktree";
-import {
-  getPaseoWorktreeMetadataPath,
-} from "./worktree-metadata.js";
+import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execSync } from "child_process";
 import { mkdtempSync, rmSync, existsSync, realpathSync, writeFileSync, readFileSync } from "fs";
 import { dirname, join } from "path";
@@ -159,6 +157,7 @@ describe("createWorktree", () => {
     execSync(`git clone ${remoteDir} ${remoteCloneDir}`);
     execSync("git config user.email 'test@test.com'", { cwd: remoteCloneDir });
     execSync("git config user.name 'Test'", { cwd: remoteCloneDir });
+    execSync("git checkout -B main origin/main", { cwd: remoteCloneDir });
     writeFileSync(join(remoteCloneDir, "file.txt"), "from-origin\n");
     execSync("git add file.txt", { cwd: remoteCloneDir });
     execSync("git -c commit.gpgsign=false commit -m 'advance origin main'", {

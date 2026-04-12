@@ -55,7 +55,7 @@ for (const [key, val] of Object.entries(lock.packages || {})) {
       execSync(`npm view ${pkgName}@${version} --json dist`, {
         encoding: "utf8",
         stdio: ["pipe", "pipe", "pipe"],
-      })
+      }),
     );
     if (info.tarball && info.integrity) {
       val.resolved = info.tarball;

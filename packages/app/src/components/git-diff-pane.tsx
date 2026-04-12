@@ -1,12 +1,4 @@
-import {
-  useState,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  memo,
-  type ReactElement,
-} from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, memo, type ReactElement } from "react";
 import { useRouter } from "expo-router";
 import {
   View,
@@ -128,12 +120,7 @@ function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
   };
 
   return (
-    <Text
-      style={[
-        styles.diffLineText,
-        { lineHeight, ...getWrappedTextStyle(wrapLines) },
-      ]}
-    >
+    <Text style={[styles.diffLineText, { lineHeight, ...getWrappedTextStyle(wrapLines) }]}>
       {tokens.map((token, index) => (
         <Text key={index} style={{ color: getTokenColor(token.style), lineHeight }}>
           {token.text}
@@ -183,13 +170,7 @@ function DiffGutterCell({
   );
 }
 
-function DiffTextLine({
-  line,
-  wrapLines,
-}: {
-  line: DiffLine;
-  wrapLines: boolean;
-}) {
+function DiffTextLine({ line, wrapLines }: { line: DiffLine; wrapLines: boolean }) {
   const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
 
   return (
@@ -259,12 +240,7 @@ function DiffLineView({
   const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
 
   return (
-    <View
-      style={[
-        styles.diffLineContainer,
-        lineTypeBackground(line.type),
-      ]}
-    >
+    <View style={[styles.diffLineContainer, lineTypeBackground(line.type)]}>
       <View style={[styles.lineNumberGutter, { width: gutterWidth }]}>
         <Text
           style={[
@@ -308,12 +284,7 @@ function SplitDiffLine({
   const visibleTokens = line && hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
 
   return (
-    <View
-      style={[
-        styles.diffLineContainer,
-        lineTypeBackground(line?.type),
-      ]}
-    >
+    <View style={[styles.diffLineContainer, lineTypeBackground(line?.type)]}>
       <View style={[styles.lineNumberGutter, { width: gutterWidth }]}>
         <Text
           style={[
@@ -387,14 +358,30 @@ function SplitDiffColumn({
   }
 
   return (
-    <View style={[styles.splitCell, showDivider && styles.splitCellWithDivider, styles.splitCellRow]}>
+    <View
+      style={[styles.splitCell, showDivider && styles.splitCellWithDivider, styles.splitCellRow]}
+    >
       <View style={styles.gutterColumn}>
         {rows.map((row, i) => {
           if (row.kind === "header") {
-            return <DiffGutterCell key={`g-${i}`} lineNumber={null} type="header" gutterWidth={gutterWidth} />;
+            return (
+              <DiffGutterCell
+                key={`g-${i}`}
+                lineNumber={null}
+                type="header"
+                gutterWidth={gutterWidth}
+              />
+            );
           }
           const line = side === "left" ? row.left : row.right;
-          return <DiffGutterCell key={`g-${i}`} lineNumber={line?.lineNumber ?? null} type={line?.type} gutterWidth={gutterWidth} />;
+          return (
+            <DiffGutterCell
+              key={`g-${i}`}
+              lineNumber={line?.lineNumber ?? null}
+              type={line?.type}
+              gutterWidth={gutterWidth}
+            />
+          );
         })}
       </View>
       <DiffScroll
@@ -412,7 +399,13 @@ function SplitDiffColumn({
                 </View>
               );
             }
-            return <SplitTextLine key={`t-${i}`} line={side === "left" ? row.left : row.right} wrapLines={false} />;
+            return (
+              <SplitTextLine
+                key={`t-${i}`}
+                line={side === "left" ? row.left : row.right}
+                wrapLines={false}
+              />
+            );
           })}
         </View>
       </DiffScroll>
@@ -541,7 +534,11 @@ function DiffFileBody({
 
         let maxLineNo = 0;
         for (const hunk of file.hunks) {
-          maxLineNo = Math.max(maxLineNo, hunk.oldStart + hunk.oldCount, hunk.newStart + hunk.newCount);
+          maxLineNo = Math.max(
+            maxLineNo,
+            hunk.oldStart + hunk.oldCount,
+            hunk.newStart + hunk.newCount,
+          );
         }
         const gutterWidth = lineNumberGutterWidth(maxLineNo);
 
@@ -549,8 +546,19 @@ function DiffFileBody({
           const rows = buildSplitDiffRows(file);
           return (
             <View style={[styles.diffContent, styles.splitRow]}>
-              <SplitDiffColumn rows={rows} side="left" gutterWidth={gutterWidth} wrapLines={wrapLines} />
-              <SplitDiffColumn rows={rows} side="right" gutterWidth={gutterWidth} wrapLines={wrapLines} showDivider />
+              <SplitDiffColumn
+                rows={rows}
+                side="left"
+                gutterWidth={gutterWidth}
+                wrapLines={wrapLines}
+              />
+              <SplitDiffColumn
+                rows={rows}
+                side="right"
+                gutterWidth={gutterWidth}
+                wrapLines={wrapLines}
+                showDivider
+              />
             </View>
           );
         }
@@ -562,7 +570,13 @@ function DiffFileBody({
             <View style={styles.diffContent}>
               <View style={styles.linesContainer}>
                 {computedLines.map(({ line, lineNumber, key }) => (
-                  <DiffLineView key={key} line={line} lineNumber={lineNumber} gutterWidth={gutterWidth} wrapLines={wrapLines} />
+                  <DiffLineView
+                    key={key}
+                    line={line}
+                    lineNumber={lineNumber}
+                    gutterWidth={gutterWidth}
+                    wrapLines={wrapLines}
+                  />
                 ))}
               </View>
             </View>
@@ -574,7 +588,12 @@ function DiffFileBody({
           <View style={[styles.diffContent, styles.diffContentRow]}>
             <View style={styles.gutterColumn}>
               {computedLines.map(({ line, lineNumber, key }) => (
-                <DiffGutterCell key={key} lineNumber={lineNumber} type={line.type} gutterWidth={gutterWidth} />
+                <DiffGutterCell
+                  key={key}
+                  lineNumber={lineNumber}
+                  type={line.type}
+                  gutterWidth={gutterWidth}
+                />
               ))}
             </View>
             <DiffScroll
@@ -583,7 +602,9 @@ function DiffFileBody({
               style={styles.splitColumnScroll}
               contentContainerStyle={styles.diffContentInner}
             >
-              <View style={[styles.linesContainer, availableWidth > 0 && { minWidth: availableWidth }]}>
+              <View
+                style={[styles.linesContainer, availableWidth > 0 && { minWidth: availableWidth }]}
+              >
                 {computedLines.map(({ line, key }) => (
                   <DiffTextLine key={key} line={line} wrapLines={false} />
                 ))}
@@ -701,10 +722,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const setDiffExpandedPathsForWorkspace = usePanelStore(
     (state) => state.setDiffExpandedPathsForWorkspace,
   );
-  const expandedPaths = useMemo(
-    () => new Set(expandedPathsArray ?? []),
-    [expandedPathsArray],
-  );
+  const expandedPaths = useMemo(() => new Set(expandedPathsArray ?? []), [expandedPathsArray]);
   const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
   const scrollbar = useWebScrollViewScrollbar(diffListRef, {
     enabled: showDesktopWebScrollbar,

@@ -3,15 +3,7 @@ import { ActivityIndicator, Alert, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
-import {
-  ArrowUpRight,
-  Play,
-  Pause,
-  RotateCw,
-  Copy,
-  FileText,
-  Activity,
-} from "lucide-react-native";
+import { ArrowUpRight, Play, Pause, RotateCw, Copy, FileText, Activity } from "lucide-react-native";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -106,7 +98,14 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
         console.error("[Settings] Failed to open desktop daemon action confirmation", error);
         Alert.alert("Error", "Unable to open the daemon confirmation dialog.");
       });
-  }, [daemonActionLabel, daemonStatus?.status, isRestartingDaemon, refetch, setStatus, showSection]);
+  }, [
+    daemonActionLabel,
+    daemonStatus?.status,
+    isRestartingDaemon,
+    refetch,
+    setStatus,
+    showSection,
+  ]);
 
   const handleToggleDaemonManagement = useCallback(() => {
     if (isUpdatingDaemonManagement) {
@@ -394,7 +393,9 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
         snapPoints={["70%", "92%"]}
       >
         <View style={styles.modalBody}>
-          <Text style={settingsStyles.rowHint}>{daemonLogs?.logPath ?? "Log path unavailable."}</Text>
+          <Text style={settingsStyles.rowHint}>
+            {daemonLogs?.logPath ?? "Log path unavailable."}
+          </Text>
           <Text style={styles.logOutput} selectable>
             {daemonLogs?.contents.length ? daemonLogs.contents : "(log file is empty)"}
           </Text>

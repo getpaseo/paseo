@@ -281,11 +281,7 @@ export function buildHostWorkspaceRoute(serverId: string, workspaceId: string) {
   return `/h/${encodeSegment(normalizedServerId)}/workspace/${encodeSegment(encodedWorkspaceId)}` as const;
 }
 
-export function buildHostAgentDetailRoute(
-  serverId: string,
-  agentId: string,
-  workspaceId?: string,
-) {
+export function buildHostAgentDetailRoute(serverId: string, agentId: string, workspaceId?: string) {
   const normalizedWorkspaceId = trimNonEmpty(workspaceId);
   if (normalizedWorkspaceId) {
     const normalizedAgentId = trimNonEmpty(agentId);

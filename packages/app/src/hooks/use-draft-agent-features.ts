@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type {
-  AgentProvider,
-  AgentSessionConfig,
-} from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider, AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
 import {
@@ -100,16 +97,16 @@ export function useDraftAgentFeatures(input: {
   }, [availableFeatures, localFeatureValues]);
 
   const effectiveFeatureValues = Object.keys(featureValues).length > 0 ? featureValues : undefined;
-  const setFeatureValue = useCallback((featureId: string, value: unknown) => {
-    setLocalFeatureValues((current) => {
-      if (Object.is(current[featureId], value)) {
-        return current;
-      }
+  const setFeatureValue = useCallback(
+    (featureId: string, value: unknown) => {
+      setLocalFeatureValues((current) => {
+        if (Object.is(current[featureId], value)) {
+          return current;
+        }
 
-      return { ...current, [featureId]: value };
-    });
-    void updatePreferences(
-      (current) =>
+        return { ...current, [featureId]: value };
+      });
+      void updatePreferences((current) =>
         mergeProviderPreferences({
           preferences: current,
           provider,
@@ -119,10 +116,12 @@ export function useDraftAgentFeatures(input: {
             },
           },
         }),
-    ).catch((error) => {
-      console.warn("[useDraftAgentFeatures] persist feature preference failed", error);
-    });
-  }, [provider, updatePreferences]);
+      ).catch((error) => {
+        console.warn("[useDraftAgentFeatures] persist feature preference failed", error);
+      });
+    },
+    [provider, updatePreferences],
+  );
 
   return {
     features,

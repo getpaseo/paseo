@@ -7,10 +7,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
 import { Fonts } from "@/constants/theme";
-import {
-  getDesktopDaemonLogs,
-  type DesktopDaemonLogs,
-} from "@/desktop/daemon/desktop-daemon";
+import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
 type StartupSplashScreenProps = {
@@ -215,7 +212,11 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
       : phase === "connecting"
         ? [
             { key: "starting-daemon", label: "Started local server", status: "complete" as const },
-            { key: "connecting", label: "Connecting to local server...", status: "active" as const },
+            {
+              key: "connecting",
+              label: "Connecting to local server...",
+              status: "active" as const,
+            },
           ]
         : [
             { key: "starting-daemon", label: "Started local server", status: "complete" as const },
@@ -291,12 +292,11 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
           </View>
 
           <Text style={styles.errorDescription}>
-            The local server failed to start. If this keeps happening, please report the issue on GitHub and include the logs below.
+            The local server failed to start. If this keeps happening, please report the issue on
+            GitHub and include the logs below.
           </Text>
 
-          <Text style={styles.errorMessage}>
-            {bootstrapState.error}
-          </Text>
+          <Text style={styles.errorMessage}>{bootstrapState.error}</Text>
 
           {daemonLogs?.logPath ? <Text style={styles.logsMeta}>{daemonLogs.logPath}</Text> : null}
 

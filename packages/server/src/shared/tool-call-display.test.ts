@@ -141,6 +141,46 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
+  it("humanizes Paseo MCP tool names (Claude Code format)", () => {
+    const display = buildToolCallDisplayModel({
+      name: "mcp__paseo__create_agent",
+      status: "running",
+      error: null,
+      detail: { type: "unknown", input: null, output: null },
+    });
+    expect(display.displayName).toBe("Create Agent");
+  });
+
+  it("humanizes Paseo MCP tool names (Codex format)", () => {
+    const display = buildToolCallDisplayModel({
+      name: "paseo.create_agent",
+      status: "running",
+      error: null,
+      detail: { type: "unknown", input: null, output: null },
+    });
+    expect(display.displayName).toBe("Create Agent");
+  });
+
+  it("humanizes list_agents Paseo tool", () => {
+    const display = buildToolCallDisplayModel({
+      name: "mcp__paseo__list_agents",
+      status: "running",
+      error: null,
+      detail: { type: "unknown", input: null, output: null },
+    });
+    expect(display.displayName).toBe("List Agents");
+  });
+
+  it("does not override speak tool display name", () => {
+    const display = buildToolCallDisplayModel({
+      name: "speak",
+      status: "running",
+      error: null,
+      detail: { type: "unknown", input: null, output: null },
+    });
+    expect(display.displayName).toBe("Speak");
+  });
+
   it("labels plan detail rows as Plan", () => {
     const display = buildToolCallDisplayModel({
       name: "plan",

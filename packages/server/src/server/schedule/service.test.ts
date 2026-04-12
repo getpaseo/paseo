@@ -171,6 +171,45 @@ describe("ScheduleService", () => {
     );
   });
 
+  test("advances stale nextRunAt on daemon restart", async () => {
+    const service1 = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const created = await service1.create({
+      prompt: "Periodic check",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir },
+      },
+    });
+
+    expect(created.nextRunAt).toBe("2026-01-01T00:01:00.000Z");
+    await service1.stop();
+
+    // Simulate daemon restart 10 minutes later
+    now = new Date("2026-01-01T00:10:00.000Z");
+    const service2 = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    await service2.start();
+
+    const inspected = await service2.inspect(created.id);
+    expect(new Date(inspected.nextRunAt!).getTime()).toBeGreaterThan(now.getTime());
+    await service2.stop();
+  });
+
   test("keeps schedules paused when an in-flight run finishes after pause", async () => {
     let releaseRun: (() => void) | null = null;
     const runStarted = new Promise<void>((resolve) => {

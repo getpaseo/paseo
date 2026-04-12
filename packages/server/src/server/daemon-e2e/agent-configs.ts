@@ -34,7 +34,7 @@ export const agentConfigs = {
   },
   codex: {
     provider: "codex",
-    model: "gpt-5.1-codex-mini",
+    model: "gpt-5.4-mini",
     thinkingOptionId: "low",
     modes: {
       full: "full-access",
@@ -131,10 +131,4 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
 /**
  * Helper to run a test for each provider.
  */
-export const allProviders: AgentProvider[] = [
-  "claude",
-  "codex",
-  "copilot",
-  "opencode",
-  "pi",
-];
+export const allProviders: AgentProvider[] = ["claude", "codex", "copilot", "opencode", "pi"];

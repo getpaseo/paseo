@@ -17,7 +17,9 @@ function pickOpenCodeModel(
   models: Array<{ id: string }>,
   preferences: string[] = ["gpt-5-nano", "gpt-4.1-nano", "mini", "free"],
 ): string {
-  const preferred = models.find((model) => preferences.some((fragment) => model.id.includes(fragment)));
+  const preferred = models.find((model) =>
+    preferences.some((fragment) => model.id.includes(fragment)),
+  );
   return preferred?.id ?? models[0]!.id;
 }
 

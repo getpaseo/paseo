@@ -224,6 +224,7 @@ describe("workspace-layout-store actions", () => {
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
+      hiddenAgentIdsByWorkspace: {},
     });
     vi.restoreAllMocks();
   });
@@ -701,5 +702,81 @@ describe("workspace-layout-store actions", () => {
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
     });
+  });
+
+  it("keeps hidden agent intents in memory per workspace without persisting them", () => {
+    const workspaceKey = createWorkspaceKey();
+    const otherWorkspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: SERVER_ID,
+      workspaceId: "/repo/other-worktree",
+    });
+
+    expect(otherWorkspaceKey).toBeTruthy();
+
+    const store = useWorkspaceLayoutStore.getState();
+    store.hideAgent(workspaceKey, "agent-1");
+    store.hideAgent(workspaceKey, "agent-1");
+    store.hideAgent(otherWorkspaceKey as string, "agent-2");
+
+    let state = useWorkspaceLayoutStore.getState();
+    expect(Array.from(state.hiddenAgentIdsByWorkspace[workspaceKey] ?? [])).toEqual(["agent-1"]);
+    expect(Array.from(state.hiddenAgentIdsByWorkspace[otherWorkspaceKey as string] ?? [])).toEqual([
+      "agent-2",
+    ]);
+
+    store.unhideAgent(workspaceKey, "agent-1");
+
+    state = useWorkspaceLayoutStore.getState();
+    expect(state.hiddenAgentIdsByWorkspace[workspaceKey]).toBeUndefined();
+    expect(Array.from(state.hiddenAgentIdsByWorkspace[otherWorkspaceKey as string] ?? [])).toEqual([
+      "agent-2",
+    ]);
+
+    const partialize = useWorkspaceLayoutStore.persist.getOptions().partialize;
+    expect(partialize).toBeTypeOf("function");
+    expect(partialize?.(state)).toEqual({
+      layoutByWorkspace: {},
+      splitSizesByWorkspace: {},
+    });
+  });
+
+  it("explicitly opening an agent tab clears hidden intent", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = useWorkspaceLayoutStore.getState();
+
+    store.hideAgent(workspaceKey, "agent-1");
+    store.openTab(workspaceKey, { kind: "agent", agentId: "agent-1" });
+
+    const state = useWorkspaceLayoutStore.getState();
+    expect(state.hiddenAgentIdsByWorkspace[workspaceKey]).toBeUndefined();
+    expect(state.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual(["agent_agent-1"]);
+  });
+
+  it("pinning an agent clears hidden intent", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = useWorkspaceLayoutStore.getState();
+
+    store.hideAgent(workspaceKey, "agent-1");
+    expect(
+      useWorkspaceLayoutStore.getState().hiddenAgentIdsByWorkspace[workspaceKey],
+    ).toBeDefined();
+
+    store.pinAgent(workspaceKey, "agent-1");
+
+    const state = useWorkspaceLayoutStore.getState();
+    expect(state.hiddenAgentIdsByWorkspace[workspaceKey]).toBeUndefined();
+    expect(Array.from(state.pinnedAgentIdsByWorkspace[workspaceKey] ?? [])).toEqual(["agent-1"]);
+  });
+
+  it("retargeting a tab to an agent clears hidden intent", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = useWorkspaceLayoutStore.getState();
+
+    store.hideAgent(workspaceKey, "agent-1");
+    const tabId = store.openTab(workspaceKey, { kind: "file", path: "/repo/worktree/a.ts" });
+    store.retargetTab(workspaceKey, tabId!, { kind: "agent", agentId: "agent-1" });
+
+    const state = useWorkspaceLayoutStore.getState();
+    expect(state.hiddenAgentIdsByWorkspace[workspaceKey]).toBeUndefined();
   });
 });

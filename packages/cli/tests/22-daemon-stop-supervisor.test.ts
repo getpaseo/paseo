@@ -69,7 +69,7 @@ function readProcessCommand(pid: number): string | null {
 }
 
 type DaemonStatus = {
-  status: string | null;
+  localDaemon: string | null;
   pid: number | null;
 };
 
@@ -77,19 +77,19 @@ async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
   const result =
     await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon status --home ${paseoHome} --json`.nothrow();
   if (result.exitCode !== 0) {
-    return { status: null, pid: null };
+    return { localDaemon: null, pid: null };
   }
 
   try {
-    const parsed = JSON.parse(result.stdout) as { status?: unknown; pid?: unknown };
-    const status = typeof parsed.status === "string" ? parsed.status : null;
+    const parsed = JSON.parse(result.stdout) as { localDaemon?: unknown; pid?: unknown };
+    const localDaemon = typeof parsed.localDaemon === "string" ? parsed.localDaemon : null;
     const pid =
       typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0
         ? parsed.pid
         : null;
-    return { status, pid };
+    return { localDaemon, pid };
   } catch {
-    return { status: null, pid: null };
+    return { localDaemon: null, pid: null };
   }
 }
 
@@ -123,8 +123,8 @@ try {
   console.log("Test 1: start supervisor-entrypoint in dev mode with isolated PASEO_HOME");
 
   supervisorProcess = spawn(
-    "npx",
-    ["tsx", "../server/scripts/supervisor-entrypoint.ts", "--dev"],
+    process.execPath,
+    ["--import", "tsx", "../server/scripts/supervisor-entrypoint.ts", "--dev"],
     {
       cwd: cliRoot,
       env: {
@@ -149,7 +149,9 @@ try {
   await waitFor(
     async () => {
       const status = await readDaemonStatus(paseoHome);
-      return status.status === "running" && status.pid !== null && isProcessRunning(status.pid);
+      return (
+        status.localDaemon === "running" && status.pid !== null && isProcessRunning(status.pid)
+      );
     },
     120000,
     "daemon did not become running in time",
@@ -157,7 +159,11 @@ try {
 
   const statusBeforeStop = await readDaemonStatus(paseoHome);
   const daemonPid = statusBeforeStop.pid;
-  assert.strictEqual(statusBeforeStop.status, "running", "daemon should be running before stop");
+  assert.strictEqual(
+    statusBeforeStop.localDaemon,
+    "running",
+    "daemon should be running before stop",
+  );
   assert(daemonPid !== null, "daemon pid should exist once daemon starts");
   assert(isProcessRunning(daemonPid), "daemon process should be running");
   const pidLockBeforeStop = await readPidLockState(paseoHome);
@@ -165,8 +171,7 @@ try {
   const command = readProcessCommand(daemonPid);
   assert(command !== null, "pid lock pid should resolve to a running process command");
   assert(
-    command.includes("supervisor-entrypoint.ts") ||
-      command.includes("supervisor-entrypoint.js"),
+    command.includes("supervisor-entrypoint.ts") || command.includes("supervisor-entrypoint.js"),
     `pid lock pid should be supervisor-entrypoint process, got: ${command}`,
   );
   console.log(`✓ dev daemon started with daemon pid ${daemonPid}\n`);
@@ -181,7 +186,7 @@ try {
   await waitFor(
     async () => {
       const status = await readDaemonStatus(paseoHome);
-      return status.status === "stopped";
+      return status.localDaemon === "stopped";
     },
     15000,
     "daemon status did not transition to stopped after stop",
@@ -207,7 +212,7 @@ try {
 
   const statusAfterStop = await readDaemonStatus(paseoHome);
   assert.strictEqual(
-    statusAfterStop.status,
+    statusAfterStop.localDaemon,
     "stopped",
     "daemon should remain stopped after stop command",
   );

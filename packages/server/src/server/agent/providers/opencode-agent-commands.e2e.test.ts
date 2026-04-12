@@ -79,10 +79,7 @@ describe("opencode agent commands E2E", () => {
     });
 
     const token = `RAW_PROMPT_TOKEN_${Date.now()}`;
-    await ctx.client.sendMessage(
-      agent.id,
-      `/not-a-real-command respond with exactly: ${token}`,
-    );
+    await ctx.client.sendMessage(agent.id, `/not-a-real-command respond with exactly: ${token}`);
     const state = await ctx.client.waitForFinish(agent.id, 30_000);
 
     expect(state.status).toBe("idle");

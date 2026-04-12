@@ -34,9 +34,7 @@ export function useMountedTabSet(input: UseMountedTabSetInput): UseMountedTabSet
   const allTabIdsKey = allTabIds.join("\u0000");
   const availableTabIds = useMemo(() => new Set(allTabIds), [allTabIdsKey]);
   const [mountedTabIds, setMountedTabIds] = useState(() => createInitialMountedTabIds(input));
-  const lruRef = useRef(
-    activeTabId && allTabIds.includes(activeTabId) ? [activeTabId] : [],
-  );
+  const lruRef = useRef(activeTabId && allTabIds.includes(activeTabId) ? [activeTabId] : []);
 
   useLayoutEffect(() => {
     const nextLru = lruRef.current.filter((tabId) => availableTabIds.has(tabId));

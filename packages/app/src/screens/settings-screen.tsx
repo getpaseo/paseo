@@ -65,6 +65,7 @@ import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { AGENT_PROVIDER_DEFINITIONS } from "@server/server/agent/provider-manifest";
@@ -360,12 +361,21 @@ function HostsSection(props: HostsSectionProps) {
 }
 
 interface GeneralSectionProps {
+  routeServerId: string;
   settings: AppSettings;
   handleThemeChange: (theme: AppSettings["theme"]) => void;
   handleSendBehaviorChange: (behavior: SendBehavior) => void;
 }
 
-function ThemeIcon({ theme, size, color }: { theme: AppSettings["theme"]; size: number; color: string }) {
+function ThemeIcon({
+  theme,
+  size,
+  color,
+}: {
+  theme: AppSettings["theme"];
+  size: number;
+  color: string;
+}) {
   switch (theme) {
     case "light":
       return <Sun size={size} color={color} />;
@@ -404,11 +414,14 @@ const THEME_LABELS: Record<AppSettings["theme"], string> = {
 };
 
 function GeneralSection({
+  routeServerId,
   settings,
   handleThemeChange,
   handleSendBehaviorChange,
 }: GeneralSectionProps) {
   const { theme } = useUnistyles();
+  const isConnected = useHostRuntimeIsConnected(routeServerId);
+  const { config, patchConfig } = useDaemonConfig(routeServerId);
   const iconSize = theme.iconSize.md;
   const iconColor = theme.colors.foregroundMuted;
 
@@ -422,15 +435,10 @@ function GeneralSection({
           </View>
           <DropdownMenu>
             <DropdownMenuTrigger
-              style={({ pressed }) => [
-                styles.themeTrigger,
-                pressed && { opacity: 0.85 },
-              ]}
+              style={({ pressed }) => [styles.themeTrigger, pressed && { opacity: 0.85 }]}
             >
               <ThemeIcon theme={settings.theme} size={iconSize} color={iconColor} />
-              <Text style={styles.themeTriggerText}>
-                {THEME_LABELS[settings.theme]}
-              </Text>
+              <Text style={styles.themeTriggerText}>{THEME_LABELS[settings.theme]}</Text>
               <ChevronDown size={theme.iconSize.sm} color={iconColor} />
             </DropdownMenuTrigger>
             <DropdownMenuContent side="bottom" align="end" width={200}>
@@ -475,11 +483,35 @@ function GeneralSection({
             ]}
           />
         </View>
+        {routeServerId.length > 0 && isConnected ? (
+          <View style={[styles.audioRow, styles.audioRowBorder]}>
+            <View style={styles.audioRowContent}>
+              <Text style={styles.audioRowTitle}>Inject Paseo tools</Text>
+              <Text style={styles.audioRowSubtitle}>
+                Automatically inject Paseo MCP tools into new agents
+              </Text>
+            </View>
+            <SegmentedControl
+              size="sm"
+              value={config?.mcp.injectIntoAgents === false ? "off" : "on"}
+              onValueChange={(value) => {
+                void patchConfig({
+                  mcp: {
+                    injectIntoAgents: value === "on",
+                  },
+                });
+              }}
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+            />
+          </View>
+        ) : null}
       </View>
     </View>
   );
 }
-
 
 interface ProvidersSectionProps {
   routeServerId: string;
@@ -502,10 +534,7 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
             <Pressable
               onPress={refresh}
               disabled={isFetching}
-              style={[
-                settingsStyles.sectionHeaderLink,
-                isFetching ? { opacity: 0.5 } : null,
-              ]}
+              style={[settingsStyles.sectionHeaderLink, isFetching ? { opacity: 0.5 } : null]}
             >
               <Text
                 style={{
@@ -533,7 +562,9 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
               const status = entry?.status ?? "unavailable";
               const ProviderIcon = getProviderIcon(def.id);
               const providerError =
-                status === "error" && typeof entry?.error === "string" && entry.error.trim().length > 0
+                status === "error" &&
+                typeof entry?.error === "string" &&
+                entry.error.trim().length > 0
                   ? entry.error.trim()
                   : null;
 
@@ -564,11 +595,7 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
                               : "Not installed"
                       }
                       variant={
-                        status === "ready"
-                          ? "success"
-                          : status === "error"
-                            ? "error"
-                            : "muted"
+                        status === "ready" ? "success" : status === "error" ? "error" : "muted"
                       }
                     />
                     <Button
@@ -724,10 +751,7 @@ function SettingsMobileLayout({ sections, sectionContentProps }: SettingsLayoutP
   const insets = useSafeAreaInsets();
 
   return (
-    <ScrollView
-      style={styles.scrollView}
-      contentContainerStyle={{ paddingBottom: insets.bottom }}
-    >
+    <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: insets.bottom }}>
       <View style={styles.content}>
         {sections.map((section) => (
           <SettingsSectionContent
@@ -752,8 +776,7 @@ function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayout
         {sections.map((section) => {
           const isSelected = section.id === selectedSectionId;
           const IconComponent = section.icon;
-          const showSeparator =
-            section.id === "integrations" || section.id === "providers";
+          const showSeparator = section.id === "integrations" || section.id === "providers";
           return (
             <View key={section.id}>
               {showSeparator ? <View style={desktopStyles.sidebarSeparator} /> : null}
@@ -789,10 +812,7 @@ function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayout
         contentContainerStyle={{ paddingBottom: insets.bottom }}
       >
         <View style={styles.content}>
-          <SettingsSectionContent
-            sectionId={selectedSectionId}
-            {...sectionContentProps}
-          />
+          <SettingsSectionContent sectionId={selectedSectionId} {...sectionContentProps} />
         </View>
       </ScrollView>
     </View>
@@ -1101,12 +1121,14 @@ export default function SettingsScreen() {
     handleSaveEditDaemon,
     handleRemoveConnection,
     handleRemoveDaemon,
-    restartConfirmationMessage: "This will restart the daemon. The app will reconnect automatically.",
+    restartConfirmationMessage:
+      "This will restart the daemon. The app will reconnect automatically.",
     waitForCondition,
     isMountedRef,
   };
 
   const generalProps: GeneralSectionProps = {
+    routeServerId,
     settings,
     handleThemeChange,
     handleSendBehaviorChange,

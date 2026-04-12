@@ -2,20 +2,31 @@ import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
 import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { getLatestRelease } from "~/release";
+import { getStarCount } from "~/stars";
 
 interface ReleaseContext {
   version: string;
 }
 
+interface StarsContext {
+  stars: string;
+}
+
 const ReleaseCtx = createContext<ReleaseContext>({ version: "" });
+const StarsCtx = createContext<StarsContext>({ stars: "" });
 
 export function useRelease(): ReleaseContext {
   return useContext(ReleaseCtx);
 }
 
+export function useStars(): StarsContext {
+  return useContext(StarsCtx);
+}
+
 export const Route = createRootRoute({
   loader: async () => {
-    return getLatestRelease();
+    const [release, stars] = await Promise.all([getLatestRelease(), getStarCount()]);
+    return { ...release, ...stars };
   },
   head: () => ({
     meta: [
@@ -38,12 +49,14 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
-  const release = Route.useLoaderData();
+  const data = Route.useLoaderData();
   return (
-    <ReleaseCtx value={release}>
-      <RootDocument>
-        <Outlet />
-      </RootDocument>
+    <ReleaseCtx value={data}>
+      <StarsCtx value={data}>
+        <RootDocument>
+          <Outlet />
+        </RootDocument>
+      </StarsCtx>
     </ReleaseCtx>
   );
 }

@@ -12,6 +12,7 @@ export interface DaemonStartOptions {
   foreground?: boolean;
   relay?: boolean;
   mcp?: boolean;
+  injectMcp?: boolean;
   allowedHosts?: string;
 }
 
@@ -95,6 +96,9 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   if (options.mcp === false) {
     args.push("--no-mcp");
   }
+  if (options.injectMcp === false) {
+    args.push("--no-inject-mcp");
+  }
 
   return args;
 }
@@ -125,12 +129,7 @@ function resolveDaemonRunnerEntry(): string {
       try {
         const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: string };
         if (packageJson.name === "@getpaseo/server") {
-          const distRunner = path.join(
-            currentDir,
-            "dist",
-            "scripts",
-            "supervisor-entrypoint.js",
-          );
+          const distRunner = path.join(currentDir, "dist", "scripts", "supervisor-entrypoint.js");
           if (existsSync(distRunner)) {
             return distRunner;
           }

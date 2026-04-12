@@ -12,7 +12,9 @@ const originalGlobals: GlobalSnapshot = {
   Notification: (globalThis as { Notification?: unknown }).Notification,
   navigatorDescriptor: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
   paseoDesktop:
-    typeof window === "undefined" ? undefined : (window as { paseoDesktop?: unknown }).paseoDesktop,
+    typeof globalThis.window === "undefined"
+      ? undefined
+      : (globalThis.window as { paseoDesktop?: unknown }).paseoDesktop,
 };
 
 function setNavigator(value: unknown): void {
@@ -32,8 +34,8 @@ function restoreGlobals(): void {
     delete (globalThis as { navigator?: unknown }).navigator;
   }
 
-  if (typeof window !== "undefined") {
-    (window as { paseoDesktop?: unknown }).paseoDesktop = originalGlobals.paseoDesktop;
+  if (typeof globalThis.window !== "undefined") {
+    (globalThis.window as { paseoDesktop?: unknown }).paseoDesktop = originalGlobals.paseoDesktop;
   }
 }
 
@@ -56,7 +58,7 @@ describe("desktop-permissions", () => {
 
     expect(shouldShowDesktopPermissionSection()).toBe(false);
 
-    (window as { paseoDesktop?: unknown }).paseoDesktop = {};
+    globalThis.window = { paseoDesktop: {} } as unknown as Window & typeof globalThis;
     expect(shouldShowDesktopPermissionSection()).toBe(true);
   });
 

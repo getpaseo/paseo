@@ -254,7 +254,7 @@ function AgentPanelBody({
 
   const agentState = useSessionStore(
     useShallow((state) => {
-      const agent = agentId ? state.sessions[serverId]?.agents?.get(agentId) ?? null : null;
+      const agent = agentId ? (state.sessions[serverId]?.agents?.get(agentId) ?? null) : null;
       return {
         serverId: agent?.serverId ?? null,
         id: agent?.id ?? null,
@@ -483,16 +483,19 @@ function AgentPanelBody({
     isPendingCreateForPanel && (!authoritativeStatus || isAuthoritativeBootstrapping);
   const canFinalizePendingCreate = Boolean(authoritativeStatus) && !isAuthoritativeBootstrapping;
 
-  const agent: AgentScreenAgent | null =
-    agentState.serverId && agentState.id && agentState.status && agentState.cwd
-      ? {
-          serverId: agentState.serverId,
-          id: agentState.id,
-          status: agentState.status,
-          cwd: agentState.cwd,
-          projectPlacement,
-        }
-      : null;
+  const agent = useMemo<AgentScreenAgent | null>(
+    () =>
+      agentState.serverId && agentState.id && agentState.status && agentState.cwd
+        ? {
+            serverId: agentState.serverId,
+            id: agentState.id,
+            status: agentState.status,
+            cwd: agentState.cwd,
+            projectPlacement,
+          }
+        : null,
+    [agentState.serverId, agentState.id, agentState.status, agentState.cwd, projectPlacement],
+  );
 
   const placeholderAgent: AgentScreenAgent | null = useMemo(() => {
     if (!shouldUseOptimisticStream || !agentId) {
@@ -702,7 +705,6 @@ function AgentPanelBody({
     setPendingPermissions,
     shouldUseOptimisticStream,
   ]);
-
 
   if (viewState.tag === "not_found") {
     return (

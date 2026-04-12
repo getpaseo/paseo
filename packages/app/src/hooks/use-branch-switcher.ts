@@ -81,8 +81,7 @@ export function useBranchSwitcher({
       if (!client) return;
       const shouldStash = await confirmDialog({
         title: "Uncommitted changes",
-        message:
-          "You have uncommitted changes. Stash them before switching branches?",
+        message: "You have uncommitted changes. Stash them before switching branches?",
         confirmLabel: "Stash & Switch",
         cancelLabel: "Cancel",
       });
@@ -135,7 +134,8 @@ export function useBranchSwitcher({
             if (targetStash) {
               const shouldRestore = await confirmDialog({
                 title: "Restore stashed changes?",
-                message: "This branch has stashed changes from a previous session. Would you like to restore them?",
+                message:
+                  "This branch has stashed changes from a previous session. Would you like to restore them?",
                 confirmLabel: "Restore",
                 cancelLabel: "Later",
               });
@@ -157,7 +157,14 @@ export function useBranchSwitcher({
         }
       })();
     },
-    [client, currentBranchName, invalidateStashAndCheckout, normalizedWorkspaceId, stashAndSwitch, toast],
+    [
+      client,
+      currentBranchName,
+      invalidateStashAndCheckout,
+      normalizedWorkspaceId,
+      stashAndSwitch,
+      toast,
+    ],
   );
 
   return { branchOptions, isOpen, setIsOpen, handleBranchSelect, invalidateStashAndCheckout };

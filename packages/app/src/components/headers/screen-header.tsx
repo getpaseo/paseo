@@ -23,7 +23,13 @@ interface ScreenHeaderProps {
  * Shared frame for the home/back headers so we only maintain padding, border,
  * and safe-area logic in one place.
  */
-export function ScreenHeader({ left, right, leftStyle, rightStyle, borderless }: ScreenHeaderProps) {
+export function ScreenHeader({
+  left,
+  right,
+  leftStyle,
+  rightStyle,
+  borderless,
+}: ScreenHeaderProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();

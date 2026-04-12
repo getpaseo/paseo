@@ -62,45 +62,39 @@ export function createCli(): Command {
     .option("--no-color", "disable colored output");
 
   // Primary agent commands (top-level)
-  addJsonAndDaemonHostOptions(
-    addLsOptions(program.command("ls")),
-  ).action(withOutput(runLsCommand));
+  addJsonAndDaemonHostOptions(addLsOptions(program.command("ls"))).action(withOutput(runLsCommand));
 
-  addJsonAndDaemonHostOptions(
-    addRunOptions(program.command("run")),
-  ).action(withOutput(runRunCommand));
+  addJsonAndDaemonHostOptions(addRunOptions(program.command("run"))).action(
+    withOutput(runRunCommand),
+  );
 
-  addDaemonHostOption(
-    addAttachOptions(program.command("attach")),
-  ).action(runAttachCommand);
+  addDaemonHostOption(addAttachOptions(program.command("attach"))).action(runAttachCommand);
 
-  addDaemonHostOption(
-    addLogsOptions(program.command("logs")),
-  ).action(runLogsCommand);
+  addDaemonHostOption(addLogsOptions(program.command("logs"))).action(runLogsCommand);
 
-  addJsonAndDaemonHostOptions(
-    addStopOptions(program.command("stop")),
-  ).action(withOutput(runStopCommand));
+  addJsonAndDaemonHostOptions(addStopOptions(program.command("stop"))).action(
+    withOutput(runStopCommand),
+  );
 
-  addJsonAndDaemonHostOptions(
-    addDeleteOptions(program.command("delete")),
-  ).action(withOutput(runDeleteCommand));
+  addJsonAndDaemonHostOptions(addDeleteOptions(program.command("delete"))).action(
+    withOutput(runDeleteCommand),
+  );
 
-  addJsonAndDaemonHostOptions(
-    addSendOptions(program.command("send")),
-  ).action(withOutput(runSendCommand));
+  addJsonAndDaemonHostOptions(addSendOptions(program.command("send"))).action(
+    withOutput(runSendCommand),
+  );
 
-  addJsonAndDaemonHostOptions(
-    addInspectOptions(program.command("inspect")),
-  ).action(withOutput(runInspectCommand));
+  addJsonAndDaemonHostOptions(addInspectOptions(program.command("inspect"))).action(
+    withOutput(runInspectCommand),
+  );
 
-  addJsonAndDaemonHostOptions(
-    addWaitOptions(program.command("wait")),
-  ).action(withOutput(runWaitCommand));
+  addJsonAndDaemonHostOptions(addWaitOptions(program.command("wait"))).action(
+    withOutput(runWaitCommand),
+  );
 
-  addJsonAndDaemonHostOptions(
-    addArchiveOptions(program.command("archive")),
-  ).action(withOutput(runArchiveCommand));
+  addJsonAndDaemonHostOptions(addArchiveOptions(program.command("archive"))).action(
+    withOutput(runArchiveCommand),
+  );
 
   // Top-level local daemon shortcuts
   program.addCommand(onboardCommand());

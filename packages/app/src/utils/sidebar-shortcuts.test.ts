@@ -13,7 +13,6 @@ function workspace(serverId: string, cwd: string): SidebarWorkspaceEntry {
     workspaceId: cwd,
     workspaceKind: "local_checkout",
     name: cwd,
-    activityAt: null,
     statusBucket: "done",
     diffStat: null,
   };
@@ -28,7 +27,6 @@ function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): Sideb
     statusBucket: "done",
     activeCount: 0,
     totalWorkspaces: workspaces.length,
-    latestActivityAt: null,
     workspaces,
   };
 }
@@ -76,7 +74,7 @@ describe("buildSidebarShortcutModel", () => {
     expect(model.shortcutTargets[8]).toEqual({ serverId: "s", workspaceId: "/repo/w9" });
   });
 
-  it("ignores collapsed state for flattened single-workspace projects", () => {
+  it("still excludes collapsed single-workspace git projects because they are not flattened", () => {
     const projects = [project("p1", [workspace("s1", "/repo/main")])];
 
     const model = buildSidebarShortcutModel({
@@ -84,7 +82,7 @@ describe("buildSidebarShortcutModel", () => {
       collapsedProjectKeys: new Set<string>(["p1"]),
     });
 
-    expect(model.visibleTargets).toEqual([{ serverId: "s1", workspaceId: "/repo/main" }]);
-    expect(model.shortcutTargets).toEqual([{ serverId: "s1", workspaceId: "/repo/main" }]);
+    expect(model.visibleTargets).toEqual([]);
+    expect(model.shortcutTargets).toEqual([]);
   });
 });

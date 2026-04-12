@@ -1,8 +1,4 @@
-import {
-  spawn,
-  type ChildProcess,
-  type SpawnOptions,
-} from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 
 /**
  * Platform-aware spawn that centralizes Windows shell and quoting concerns.

@@ -157,10 +157,7 @@ function isObjectSchemaNode(schema: Record<string, unknown>): boolean {
   );
 }
 
-function normalizeCodexOutputSchemaNode(
-  schema: unknown,
-  path: string,
-): unknown {
+function normalizeCodexOutputSchemaNode(schema: unknown, path: string): unknown {
   if (Array.isArray(schema)) {
     return schema.map((entry, index) => normalizeCodexOutputSchemaNode(entry, `${path}[${index}]`));
   }
@@ -819,7 +816,10 @@ function planStepsToMarkdown(steps: Array<{ step: string; status: string }>): st
   return normalizePlanMarkdown(lines.join("\n"));
 }
 
-function mapCodexPlanToToolCall(params: { callId: string; text: string }): ToolCallTimelineItem | null {
+function mapCodexPlanToToolCall(params: {
+  callId: string;
+  text: string;
+}): ToolCallTimelineItem | null {
   const text = normalizePlanMarkdown(params.text);
   if (!text) {
     return null;
@@ -837,9 +837,10 @@ function mapCodexPlanToToolCall(params: { callId: string; text: string }): ToolC
   };
 }
 
-function buildPlanPermissionActions(
-  options?: { includeResumeAction?: boolean; resumeLabel?: string },
-): AgentPermissionAction[] {
+function buildPlanPermissionActions(options?: {
+  includeResumeAction?: boolean;
+  resumeLabel?: string;
+}): AgentPermissionAction[] {
   const actions: AgentPermissionAction[] = [
     {
       id: "reject",
@@ -2559,9 +2560,7 @@ class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
-  private findCollaborationMode(
-    target: "code" | "plan",
-  ): {
+  private findCollaborationMode(target: "code" | "plan"): {
     name: string;
     mode?: string | null;
     model?: string | null;
@@ -3189,7 +3188,9 @@ class CodexAppServerAgentSession implements AgentSession {
 
     const questions = pending.questions ?? [];
     const itemId =
-      typeof pendingRequest?.metadata?.itemId === "string" ? pendingRequest.metadata.itemId : requestId;
+      typeof pendingRequest?.metadata?.itemId === "string"
+        ? pendingRequest.metadata.itemId
+        : requestId;
     if (response.behavior === "allow") {
       const mappedAnswers = mapCodexQuestionResponseByHeader({
         questions,
@@ -3201,9 +3202,7 @@ class CodexAppServerAgentSession implements AgentSession {
           questions
             .map((question) => {
               const fallback = question.options[0]?.label?.trim();
-              return fallback
-                ? [question.id, { answers: [fallback] }]
-                : null;
+              return fallback ? [question.id, { answers: [fallback] }] : null;
             })
             .filter((entry): entry is [string, { answers: string[] }] => entry !== null),
         );
@@ -3999,7 +3998,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly runtimeSettings?: ProviderRuntimeSettings,
   ) {}
 
-  private async spawnAppServer(launchEnv?: Record<string, string>): Promise<ChildProcessWithoutNullStreams> {
+  private async spawnAppServer(
+    launchEnv?: Record<string, string>,
+  ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     this.logger.trace(
       {
@@ -4216,7 +4217,10 @@ export class CodexAppServerAgentClient implements AgentClient {
           label: "Binary",
           value: resolvedBinary ?? "not found",
         },
-        { label: "Version", value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown" },
+        {
+          label: "Version",
+          value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown",
+        },
       ];
       let status = formatDiagnosticStatus(available);
 
