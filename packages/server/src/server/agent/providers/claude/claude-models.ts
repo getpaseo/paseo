@@ -12,6 +12,13 @@ const CLAUDE_THINKING_OPTIONS = [
 const CLAUDE_MODELS: AgentModelDefinition[] = [
   {
     provider: "claude",
+    id: "default",
+    label: "default",
+    description: "From ~/.claude/settings.json",
+    isDefault: true,
+  },
+  {
+    provider: "claude",
     id: "claude-opus-4-6[1m]",
     label: "Opus 4.6 1M",
     description: "Opus 4.6 with 1M context window",
