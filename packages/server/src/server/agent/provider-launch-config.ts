@@ -34,6 +34,7 @@ export const ProviderRuntimeSettingsSchema = z
   .object({
     command: ProviderCommandSchema.optional(),
     env: z.record(z.string()).optional(),
+    modelMap: z.record(z.string()).optional(),
   })
   .strict();
 
@@ -100,6 +101,31 @@ export function applyProviderEnv(
     delete merged[key];
   }
   return merged;
+}
+
+export function resolveModelViaMap(
+  modelId: string | null | undefined,
+  modelMap: Record<string, string> | undefined,
+): string | null | undefined {
+  if (!modelId || !modelMap) {
+    return modelId;
+  }
+  return modelMap[modelId] ?? modelId;
+}
+
+export function reverseResolveModelViaMap(
+  runtimeModel: string,
+  modelMap: Record<string, string> | undefined,
+): string | null {
+  if (!modelMap) {
+    return null;
+  }
+  for (const [paseoId, mappedId] of Object.entries(modelMap)) {
+    if (mappedId === runtimeModel) {
+      return paseoId;
+    }
+  }
+  return null;
 }
 
 export async function isProviderCommandAvailable(

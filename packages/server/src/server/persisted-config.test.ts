@@ -41,6 +41,24 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
     expect(parsed.agents?.providers?.codex?.command?.mode).toBe("replace");
   });
 
+  test("accepts modelMap configuration", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          claude: {
+            modelMap: {
+              "claude-opus-4-6": "qwen3.6-plus",
+              "claude-sonnet-4-6": "qwen3.5-plus",
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.claude?.modelMap?.["claude-opus-4-6"]).toBe("qwen3.6-plus");
+    expect(parsed.agents?.providers?.claude?.modelMap?.["claude-sonnet-4-6"]).toBe("qwen3.5-plus");
+  });
+
   test("rejects replace command without argv", () => {
     const result = PersistedConfigSchema.safeParse({
       agents: {

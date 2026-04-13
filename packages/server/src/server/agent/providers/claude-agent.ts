@@ -72,7 +72,12 @@ import type {
   McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
-import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
+import {
+  applyProviderEnv,
+  resolveModelViaMap,
+  reverseResolveModelViaMap,
+  type ProviderRuntimeSettings,
+} from "../provider-launch-config.js";
 import { findExecutable } from "../../../utils/executable.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
@@ -1633,8 +1638,9 @@ class ClaudeAgentSession implements AgentSession {
   async setModel(modelId: string | null): Promise<void> {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    const mappedModelId = resolveModelViaMap(normalizedModelId, this.runtimeSettings?.modelMap) ?? normalizedModelId;
     const query = await this.ensureQuery();
-    await query.setModel(normalizedModelId ?? undefined);
+    await query.setModel(mappedModelId ?? undefined);
     this.config.model = normalizedModelId ?? undefined;
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
@@ -2141,9 +2147,9 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (this.config.model) {
-      base.model = this.config.model;
+      base.model = resolveModelViaMap(this.config.model, this.runtimeSettings?.modelMap) ?? this.config.model;
     }
-    this.lastOptionsModel = base.model ?? null;
+    this.lastOptionsModel = this.config.model ?? null;
     if (this.claudeSessionId) {
       base.resume = this.claudeSessionId;
     }
@@ -2932,11 +2938,14 @@ class ClaudeAgentSession implements AgentSession {
     this.persistence = null;
     if (message.model) {
       const normalizedRuntimeModel = normalizeClaudeRuntimeModelId(message.model);
+      const reverseMapped = reverseResolveModelViaMap(message.model, this.runtimeSettings?.modelMap);
       this.logger.debug(
-        { runtimeModel: message.model, normalizedRuntimeModel },
+        { runtimeModel: message.model, normalizedRuntimeModel, reverseMapped },
         "Captured runtime model from SDK init",
       );
-      if (normalizedRuntimeModel) {
+      if (reverseMapped) {
+        this.lastOptionsModel = reverseMapped;
+      } else if (normalizedRuntimeModel) {
         this.lastOptionsModel = normalizedRuntimeModel;
       } else if (!this.lastOptionsModel) {
         this.lastOptionsModel = this.config.model ?? null;
