@@ -77,6 +77,17 @@ import { execCommand, spawnProcess } from "../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;
+type ClaudeImageMimeType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+function isClaudeImageMimeType(value: string): value is ClaudeImageMimeType {
+  return (
+    value === "image/jpeg" ||
+    value === "image/png" ||
+    value === "image/gif" ||
+    value === "image/webp"
+  );
+}
+
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
 
 type TurnState = "idle" | "foreground" | "autonomous";
@@ -771,7 +782,7 @@ class TimelineAssembler {
     runId: string | null,
     messageIdHint: string | null,
   ): AgentTimelineItem[] {
-    const event = message.event as Record<string, unknown>;
+    const event = message.event as unknown as Record<string, unknown>;
     const eventType = readTrimmedString(event.type);
     const streamEventMessageId = this.readMessageIdFromStreamEvent(event) ?? messageIdHint;
 
@@ -2165,13 +2176,16 @@ class ClaudeAgentSession implements AgentSession {
   private toSdkUserMessage(prompt: AgentPromptInput): SDKUserMessage {
     const content: Array<
       | { type: "text"; text: string }
-      | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+      | { type: "image"; source: { type: "base64"; media_type: ClaudeImageMimeType; data: string } }
     > = [];
     if (Array.isArray(prompt)) {
       for (const chunk of prompt) {
         if (chunk.type === "text") {
           content.push({ type: "text", text: chunk.text });
         } else if (chunk.type === "image") {
+          if (!isClaudeImageMimeType(chunk.mimeType)) {
+            continue;
+          }
           content.push({
             type: "image",
             source: {
