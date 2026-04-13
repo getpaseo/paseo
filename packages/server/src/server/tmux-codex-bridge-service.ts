@@ -48,6 +48,7 @@ type AgentStorageLike = Pick<AgentStorage, "list" | "remove" | "upsert">;
 const DEFAULT_SCAN_INTERVAL_MS = 2500;
 const DEFAULT_MISSING_SCAN_GRACE = 2;
 const TMUX_CODEX_SOURCE = "tmux_codex";
+const DEFAULT_RELAUNCH_COMMAND = ["codex"] as const;
 
 function parseOptionalDate(value: string | null | undefined): Date | null {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -159,6 +160,17 @@ export interface TmuxCodexBridgeServiceOptions {
   runner?: TmuxCodexCommandRunner;
   scanIntervalMs?: number;
   missingScanGrace?: number;
+  relaunchCommand?: string[];
+}
+
+function normalizeRelaunchCommand(command?: string[]): string[] {
+  const normalized = (command ?? [...DEFAULT_RELAUNCH_COMMAND])
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (normalized.length === 0) {
+    return [...DEFAULT_RELAUNCH_COMMAND];
+  }
+  return normalized;
 }
 
 export class TmuxCodexBridgeService {
@@ -172,6 +184,7 @@ export class TmuxCodexBridgeService {
   private readonly discoveryBridge: TmuxCodexBridge;
   private readonly scanIntervalMs: number;
   private readonly missingScanGrace: number;
+  private readonly relaunchCommand: string[];
   private readonly trackedByAgentId = new Map<string, TrackedTmuxCodexSession>();
   private readonly reservedPaneIds = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -191,6 +204,7 @@ export class TmuxCodexBridgeService {
     });
     this.scanIntervalMs = options.scanIntervalMs ?? DEFAULT_SCAN_INTERVAL_MS;
     this.missingScanGrace = options.missingScanGrace ?? DEFAULT_MISSING_SCAN_GRACE;
+    this.relaunchCommand = normalizeRelaunchCommand(options.relaunchCommand);
   }
 
   async start(): Promise<void> {
@@ -708,7 +722,7 @@ export class TmuxCodexBridgeService {
         sessionName,
         "-c",
         input.cwd,
-        "/usr/local/bin/codex-root-wrapper",
+        ...this.relaunchCommand,
         ...(input.codexSessionId ? ["resume", input.codexSessionId] : []),
       ])
     ).trim();

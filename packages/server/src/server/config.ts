@@ -16,6 +16,9 @@ import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostn
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
+// Keep daemon history residency finite until older history can be fetched from persistence on demand.
+export const DEFAULT_AGENT_TIMELINE_MAX_ITEMS = 1000;
+const DEFAULT_EXTERNAL_CODEX_RELAUNCH_COMMAND = "codex";
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (value === undefined) {
@@ -31,6 +34,33 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
   }
 
   return undefined;
+}
+
+function parseNonNegativeIntegerEnv(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return undefined;
+  }
+
+  return Number.parseInt(trimmed, 10);
+}
+
+function parseCommandExecutableEnv(
+  value: string | undefined,
+  fallback: string,
+): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    return [fallback];
+  }
+  return [normalized];
 }
 
 export type CliConfigOverrides = Partial<{
@@ -145,6 +175,11 @@ export function loadConfig(
     persisted.daemon?.relay?.enabled ??
     true;
 
+  const agentTimelineMaxItems =
+    parseNonNegativeIntegerEnv(env.PASEO_AGENT_TIMELINE_MAX_ITEMS) ??
+    persisted.daemon?.agentTimeline?.maxItems ??
+    DEFAULT_AGENT_TIMELINE_MAX_ITEMS;
+
   const relayEndpoint =
     env.PASEO_RELAY_ENDPOINT ?? persisted.daemon?.relay?.endpoint ?? DEFAULT_RELAY_ENDPOINT;
 
@@ -152,6 +187,11 @@ export function loadConfig(
     env.PASEO_RELAY_PUBLIC_ENDPOINT ?? persisted.daemon?.relay?.publicEndpoint ?? relayEndpoint;
 
   const appBaseUrl = env.PASEO_APP_BASE_URL ?? persisted.app?.baseUrl ?? DEFAULT_APP_BASE_URL;
+  const externalCodexRelaunchCommand = parseCommandExecutableEnv(
+    env.PASEO_EXTERNAL_CODEX_RELAUNCH_COMMAND,
+    DEFAULT_EXTERNAL_CODEX_RELAUNCH_COMMAND,
+  );
+  const tmuxCodexBridgeEnabled = parseBooleanEnv(env.PASEO_TMUX_CODEX_BRIDGE_ENABLED) ?? true;
 
   const { openai, speech } = resolveSpeechConfig({
     paseoHome,
@@ -185,6 +225,7 @@ export function loadConfig(
     staticDir: "public",
     agentClients: {},
     relayEnabled,
+    agentTimelineMaxItems,
     relayEndpoint,
     relayPublicEndpoint,
     appBaseUrl,
@@ -195,5 +236,7 @@ export function loadConfig(
     voiceLlmModel,
     agentProviderSettings: extractAgentProviderSettings(providerOverrides),
     providerOverrides,
+    externalCodexRelaunchCommand,
+    tmuxCodexBridgeEnabled,
   };
 }

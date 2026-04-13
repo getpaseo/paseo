@@ -149,6 +149,7 @@ function createService(params: {
   paneId?: string;
   cwd?: string;
   title?: string;
+  relaunchCommand?: string[];
 }) {
   const { runner, calls, state } = createRunnerMock(params);
   const adoptSession = vi.fn(async (_session, _config, agentId: string) => ({
@@ -181,6 +182,7 @@ function createService(params: {
       upsert: async () => {},
     } as any,
     runner: runner as any,
+    relaunchCommand: params.relaunchCommand,
   });
   activeServices.push(service);
 
@@ -337,7 +339,7 @@ describe("TmuxCodexBridgeService", () => {
         (call) =>
           call.file === "tmux" &&
           call.args[0] === "new-session" &&
-          call.args.includes("/usr/local/bin/codex-root-wrapper") &&
+          call.args.includes("codex") &&
           call.args.includes("resume") &&
           call.args.includes("019d6145-173e-74a0-88bc-e34f12bd3941"),
       ),
@@ -352,5 +354,42 @@ describe("TmuxCodexBridgeService", () => {
       "agent-1",
       expect.anything(),
     );
+  });
+
+  it("uses a configured relaunch command when reopening a recoverable session", async () => {
+    const { service, calls } = createService({
+      title: "project [pts/23]",
+      relaunchCommand: ["/usr/local/bin/codex-root-wrapper"],
+    });
+
+    await service.relaunchFromPersistence({
+      handle: {
+        provider: "codex",
+        sessionId: "/dev/pts/23",
+        metadata: {
+          externalSessionSource: "codex_process",
+          cwd: "/workspace/project",
+          sessionId: "019d6145-173e-74a0-88bc-e34f12bd3941",
+        },
+      },
+      agentId: "agent-1",
+      config: {
+        provider: "codex",
+        cwd: "/workspace/project",
+        modeId: "auto",
+        title: "project [pts/23]",
+      },
+    });
+
+    expect(
+      calls.some(
+        (call) =>
+          call.file === "tmux" &&
+          call.args[0] === "new-session" &&
+          call.args.includes("/usr/local/bin/codex-root-wrapper") &&
+          call.args.includes("resume") &&
+          call.args.includes("019d6145-173e-74a0-88bc-e34f12bd3941"),
+      ),
+    ).toBe(true);
   });
 });
