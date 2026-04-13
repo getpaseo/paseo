@@ -81,12 +81,14 @@ function resolveRequestedSpeechProviders(params: {
     },
     voiceStt: {
       configuredValue:
-        params.env.HUBCODE_VOICE_STT_PROVIDER ?? params.persisted.features?.voiceMode?.stt?.provider,
+        params.env.HUBCODE_VOICE_STT_PROVIDER ??
+        params.persisted.features?.voiceMode?.stt?.provider,
       enabled: voiceModeEnabled,
     },
     voiceTts: {
       configuredValue:
-        params.env.HUBCODE_VOICE_TTS_PROVIDER ?? params.persisted.features?.voiceMode?.tts?.provider,
+        params.env.HUBCODE_VOICE_TTS_PROVIDER ??
+        params.persisted.features?.voiceMode?.tts?.provider,
       enabled: voiceModeEnabled,
     },
   } satisfies Record<

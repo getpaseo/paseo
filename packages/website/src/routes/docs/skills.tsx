@@ -25,11 +25,11 @@ function Skills() {
       <div>
         <h1 className="text-3xl font-medium font-title mb-4">Orchestration Skills</h1>
         <p className="text-white/60 leading-relaxed">
-          Hubcode ships orchestration skills that teach coding agents (Claude Code, Codex) how to use
-          the Hubcode CLI to spawn, coordinate, and manage other agents. Skills are slash commands
-          your agent can invoke — they provide the prompts, context, and workflows so agents know
-          how to orchestrate without you writing boilerplate. Install them from the desktop app's
-          Integrations settings or via the CLI.
+          Hubcode ships orchestration skills that teach coding agents (Claude Code, Codex) how to
+          use the Hubcode CLI to spawn, coordinate, and manage other agents. Skills are slash
+          commands your agent can invoke — they provide the prompts, context, and workflows so
+          agents know how to orchestrate without you writing boilerplate. Install them from the
+          desktop app's Integrations settings or via the CLI.
         </p>
       </div>
 
@@ -56,8 +56,8 @@ function Skills() {
           <code className="font-mono">/hubcode</code> — CLI Reference
         </h2>
         <p className="text-white/60 leading-relaxed">
-          The foundational skill. Loaded automatically by other skills. Contains the full Hubcode CLI
-          command reference so agents know how to run commands.
+          The foundational skill. Loaded automatically by other skills. Contains the full Hubcode
+          CLI command reference so agents know how to run commands.
         </p>
         <p className="text-white/60 leading-relaxed">
           Not typically invoked directly by users — it's a reference that other skills depend on.

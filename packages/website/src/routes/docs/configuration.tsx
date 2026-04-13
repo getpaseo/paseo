@@ -25,16 +25,17 @@ function Configuration() {
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Where config lives</h2>
         <p className="text-white/60 leading-relaxed">
-          By default, Hubcode uses <code className="font-mono">~/.hubcode</code> as its home directory.
-          The configuration file is:
+          By default, Hubcode uses <code className="font-mono">~/.hubcode</code> as its home
+          directory. The configuration file is:
         </p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
           <span className="text-muted-foreground select-none">$ </span>
           <span>~/.hubcode/config.json</span>
         </div>
         <p className="text-white/60 leading-relaxed">
-          You can change the home directory by setting <code className="font-mono">HUBCODE_HOME</code>{" "}
-          or passing <code className="font-mono">--home</code> to{" "}
+          You can change the home directory by setting{" "}
+          <code className="font-mono">HUBCODE_HOME</code> or passing{" "}
+          <code className="font-mono">--home</code> to{" "}
           <code className="font-mono">hubcode daemon start</code>.
         </p>
       </section>
@@ -130,8 +131,8 @@ function Configuration() {
 
         <h3 className="text-lg font-medium">Run Claude through Docker</h3>
         <p className="text-white/60 leading-relaxed">
-          Create a wrapper script that runs Claude in Docker, then tell Hubcode to replace the Claude
-          launch command with that script.
+          Create a wrapper script that runs Claude in Docker, then tell Hubcode to replace the
+          Claude launch command with that script.
         </p>
         <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
           {`{

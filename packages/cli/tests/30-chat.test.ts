@@ -11,7 +11,13 @@ const ctx = await createE2ETestContext({ timeout: 30000 });
 try {
   {
     console.log("Test 1: chat create/ls/inspect work");
-    const created = await ctx.hubcode(["chat", "create", "coord-room", "--purpose", "Coordination"]);
+    const created = await ctx.hubcode([
+      "chat",
+      "create",
+      "coord-room",
+      "--purpose",
+      "Coordination",
+    ]);
     assert.strictEqual(created.exitCode, 0, created.stderr);
     assert(created.stdout.includes("coord-room"), created.stdout);
 

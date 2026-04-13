@@ -1,5 +1,8 @@
 import type { ToolCallTimelineItem } from "../server/agent/agent-sdk-types.js";
-import { getHubcodeToolLeafName, isHubcodeToolName } from "../server/agent/tool-name-normalization.js";
+import {
+  getHubcodeToolLeafName,
+  isHubcodeToolName,
+} from "../server/agent/tool-name-normalization.js";
 import { stripCwdPrefix } from "./path-utils.js";
 
 export type ToolCallDisplayInput = Pick<

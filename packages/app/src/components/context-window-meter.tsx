@@ -85,7 +85,10 @@ export function ContextWindowMeter({ maxTokens, usedTokens }: ContextWindowMeter
             viewBox={`0 0 ${SVG_SIZE} ${SVG_SIZE}`}
             style={styles.svg}
             {...(isNative
-              ? { accessibilityElementsHidden: true, importantForAccessibility: "no-hide-descendants" as const }
+              ? {
+                  accessibilityElementsHidden: true,
+                  importantForAccessibility: "no-hide-descendants" as const,
+                }
               : { "aria-hidden": true })}
           >
             <Circle

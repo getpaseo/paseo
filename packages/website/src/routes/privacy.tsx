@@ -19,8 +19,8 @@ function Privacy() {
 
         <div className="space-y-6 text-white/70 leading-relaxed">
           <p>
-            Hubcode is a self-hosted tool for managing coding agents. Your code and data stay on your
-            machine.
+            Hubcode is a self-hosted tool for managing coding agents. Your code and data stay on
+            your machine.
           </p>
 
           <section className="space-y-3">

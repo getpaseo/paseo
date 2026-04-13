@@ -60,7 +60,9 @@ function buildModelDownloadHint(modelId: LocalSpeechModelId): string {
   return `Use 'hubcode speech download --model ${modelId}' to download this model.`;
 }
 
-function resolveConfiguredLocalModels(speechConfig: HubcodeSpeechConfig | null): ResolvedLocalModels {
+function resolveConfiguredLocalModels(
+  speechConfig: HubcodeSpeechConfig | null,
+): ResolvedLocalModels {
   return {
     dictationLocalSttModel: LocalSttModelIdSchema.parse(
       speechConfig?.local?.models.dictationStt ?? DEFAULT_LOCAL_STT_MODEL,

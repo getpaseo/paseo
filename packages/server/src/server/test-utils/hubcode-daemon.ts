@@ -79,7 +79,8 @@ export async function createTestHubcodeDaemon(
       options.hubcodeHomeRoot ?? (await mkdtemp(path.join(os.tmpdir(), "hubcode-home-")));
     const hubcodeHome = path.join(hubcodeHomeRoot, ".hubcode");
     await mkdir(hubcodeHome, { recursive: true });
-    const staticDir = options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "hubcode-static-")));
+    const staticDir =
+      options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "hubcode-static-")));
     const listenHost = options.listen ?? "127.0.0.1";
     const config: HubcodeDaemonConfig = {
       listen: `${listenHost}:0`,
@@ -117,7 +118,12 @@ export async function createTestHubcodeDaemon(
         await daemon.agentManager.flush().catch(() => undefined);
         if (options.cleanup ?? true) {
           await new Promise((r) => setTimeout(r, 50));
-          await rm(hubcodeHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          await rm(hubcodeHomeRoot, {
+            recursive: true,
+            force: true,
+            maxRetries: 3,
+            retryDelay: 100,
+          });
           await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
         }
       };

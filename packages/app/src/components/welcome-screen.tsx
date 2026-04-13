@@ -326,7 +326,10 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
             <Text style={styles.setupHint}>
               You need the Hubcode desktop app or server running on your computer first.
             </Text>
-            <Pressable style={styles.setupLink} onPress={() => openExternalUrl("https://hubcode.ai")}>
+            <Pressable
+              style={styles.setupLink}
+              onPress={() => openExternalUrl("https://hubcode.ai")}
+            >
               <Text style={styles.setupLinkText}>Get started at hubcode.ai</Text>
               <ExternalLink size={14} color={theme.colors.accent} />
             </Pressable>

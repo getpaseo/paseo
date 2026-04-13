@@ -80,10 +80,7 @@ import {
 } from "@/utils/diff-rendering";
 import { isWeb, isNative, getIsElectron } from "@/constants/platform";
 import { MonacoDiffEditor } from "@/components/monaco-diff-editor";
-import {
-  reconstructNewFile,
-  reconstructOldFile,
-} from "@/utils/diff-highlighter";
+import { reconstructNewFile, reconstructOldFile } from "@/utils/diff-highlighter";
 
 export type { GitActionId, GitAction, GitActions } from "@/components/git-actions-policy";
 
@@ -585,10 +582,7 @@ function DiffFileBody({
           const hunks = file.hunks as Parameters<typeof reconstructOldFile>[0];
           const oldText = mapToText(reconstructOldFile(hunks));
           const newText = mapToText(reconstructNewFile(hunks));
-          const totalLines = Math.max(
-            oldText.split("\n").length,
-            newText.split("\n").length,
-          );
+          const totalLines = Math.max(oldText.split("\n").length, newText.split("\n").length);
           // 19px line height + 16px top/bottom padding, min 120px, no max cap
           const editorHeight = totalLines * 19 + 16;
           return (

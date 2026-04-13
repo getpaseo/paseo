@@ -967,8 +967,8 @@ function ServerInstallButton() {
       command="npm install -g @hubtool/cli && hubcode"
       footnote={
         <>
-          Requires Node.js 18+. Run <span className="font-mono text-white/40">hubcode</span> to start
-          the daemon.
+          Requires Node.js 18+. Run <span className="font-mono text-white/40">hubcode</span> to
+          start the daemon.
         </>
       }
     />
@@ -1580,8 +1580,8 @@ function FAQ() {
           .
         </FAQItem>
         <FAQItem question="Do I need git or GitHub?">
-          No. Hubcode works in any directory. Worktrees are optional and only relevant if you use git.
-          You can run agents anywhere you'd normally work.
+          No. Hubcode works in any directory. Worktrees are optional and only relevant if you use
+          git. You can run agents anywhere you'd normally work.
         </FAQItem>
         <FAQItem question="Can I get banned for using Hubcode?">
           <p>We can't make promises on behalf of providers.</p>

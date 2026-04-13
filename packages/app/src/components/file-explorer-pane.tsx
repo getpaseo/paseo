@@ -6,6 +6,7 @@ import {
   ListRenderItemInfo,
   Pressable,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
@@ -34,6 +35,7 @@ import {
   MoreVertical,
   Pencil,
   RotateCw,
+  Search,
   Trash2,
   X,
 } from "lucide-react-native";
@@ -271,6 +273,10 @@ export function FileExplorerPane({
     enabled: showDesktopWebScrollbar,
   });
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchVisible, setIsSearchVisible] = useState(false);
+  const searchInputRef = useRef<TextInput>(null);
+
   const hasInitializedRef = useRef(false);
 
   useEffect(() => {
@@ -494,6 +500,17 @@ export function FileExplorerPane({
 
   const currentSortLabel = SORT_OPTIONS.find((opt) => opt.value === sortOption)?.label ?? "Name";
 
+  const handleToggleSearch = useCallback(() => {
+    setIsSearchVisible((prev) => {
+      if (prev) {
+        setSearchQuery("");
+        return false;
+      }
+      setTimeout(() => searchInputRef.current?.focus(), 50);
+      return true;
+    });
+  }, []);
+
   const treeRows = useMemo(() => {
     const rootDirectory = directories.get(".");
     if (!rootDirectory) {
@@ -507,6 +524,37 @@ export function FileExplorerPane({
       depth: 0,
     });
   }, [directories, expandedPaths, sortOption]);
+
+  const filteredTreeRows = useMemo(() => {
+    if (!searchQuery.trim()) return treeRows;
+    const query = searchQuery.trim().toLowerCase();
+    // When searching, show all matching files flattened (depth 0) regardless of expansion state
+    const matchingRows: TreeRow[] = [];
+    // Collect all entries recursively from all directories
+    const allEntries: ExplorerEntry[] = [];
+    for (const [, dir] of directories) {
+      for (const entry of dir.entries) {
+        allEntries.push(entry);
+      }
+    }
+    for (const entry of allEntries) {
+      const name = entry.name.toLowerCase();
+      const path = entry.path.toLowerCase();
+      if (name.includes(query) || path.includes(query)) {
+        matchingRows.push({ entry, depth: 0 });
+      }
+    }
+    // Sort by relevance: exact name match first, then starts-with, then includes
+    matchingRows.sort((a, b) => {
+      const aName = a.entry.name.toLowerCase();
+      const bName = b.entry.name.toLowerCase();
+      const aExact = aName === query ? 0 : aName.startsWith(query) ? 1 : 2;
+      const bExact = bName === query ? 0 : bName.startsWith(query) ? 1 : 2;
+      if (aExact !== bExact) return aExact - bExact;
+      return aName.localeCompare(bName);
+    });
+    return matchingRows;
+  }, [treeRows, searchQuery, directories]);
 
   const showInitialLoading =
     !directories.has(".") &&
@@ -802,50 +850,98 @@ export function FileExplorerPane({
         </View>
       ) : (
         <View style={[styles.treePane, styles.treePaneFill]}>
-          <View style={styles.paneHeader} testID="files-pane-header">
-            <Pressable
-              onPress={handleSortCycle}
-              style={({ hovered, pressed }) => [
-                styles.sortTrigger,
-                (hovered || pressed) && styles.sortTriggerHovered,
-              ]}
-            >
-              <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
-              <ChevronDown size={12} color={theme.colors.foregroundMuted} />
-            </Pressable>
-            <Pressable
-              onPress={handleRefresh}
-              disabled={isRefreshFetching}
-              hitSlop={8}
-              style={({ hovered, pressed }) => [
-                styles.iconButton,
-                (hovered || pressed) && styles.iconButtonHovered,
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Refresh files"
-            >
-              <Animated.View style={[styles.refreshIcon, refreshIconAnimatedStyle]}>
-                <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </Animated.View>
-            </Pressable>
+          <View style={styles.paneHeaderContainer} testID="files-pane-header">
+            <View style={styles.paneHeader}>
+              <Pressable
+                onPress={handleSortCycle}
+                style={({ hovered, pressed }) => [
+                  styles.sortTrigger,
+                  (hovered || pressed) && styles.sortTriggerHovered,
+                ]}
+              >
+                <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
+                <ChevronDown size={12} color={theme.colors.foregroundMuted} />
+              </Pressable>
+              <View style={styles.paneHeaderActions}>
+                <Pressable
+                  onPress={handleToggleSearch}
+                  hitSlop={8}
+                  style={({ hovered, pressed }) => [
+                    styles.iconButton,
+                    isSearchVisible && styles.iconButtonActive,
+                    (hovered || pressed) && styles.iconButtonHovered,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Search files"
+                >
+                  <Search size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                </Pressable>
+                <Pressable
+                  onPress={handleRefresh}
+                  disabled={isRefreshFetching}
+                  hitSlop={8}
+                  style={({ hovered, pressed }) => [
+                    styles.iconButton,
+                    (hovered || pressed) && styles.iconButtonHovered,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Refresh files"
+                >
+                  <Animated.View style={[styles.refreshIcon, refreshIconAnimatedStyle]}>
+                    <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                  </Animated.View>
+                </Pressable>
+              </View>
+            </View>
+            {isSearchVisible ? (
+              <View style={styles.searchRow}>
+                <Search size={14} color={theme.colors.foregroundMuted} style={styles.searchIcon} />
+                <TextInput
+                  ref={searchInputRef}
+                  style={styles.searchInput}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search files..."
+                  placeholderTextColor={theme.colors.foregroundMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                />
+                {searchQuery.length > 0 ? (
+                  <Pressable
+                    onPress={() => setSearchQuery("")}
+                    hitSlop={6}
+                    style={styles.searchClear}
+                  >
+                    <X size={12} color={theme.colors.foregroundMuted} />
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
           </View>
-          <FlatList
-            ref={treeListRef}
-            style={styles.treeList}
-            data={treeRows}
-            renderItem={renderTreeRow}
-            keyExtractor={(row) => row.entry.path}
-            testID="file-explorer-tree-scroll"
-            contentContainerStyle={styles.entriesContent}
-            onLayout={scrollbar.onLayout}
-            onScroll={scrollbar.onScroll}
-            onContentSizeChange={scrollbar.onContentSizeChange}
-            scrollEventThrottle={16}
-            showsVerticalScrollIndicator={!showDesktopWebScrollbar}
-            initialNumToRender={24}
-            maxToRenderPerBatch={40}
-            windowSize={12}
-          />
+          {filteredTreeRows.length === 0 && searchQuery.trim() ? (
+            <View style={styles.centerState}>
+              <Text style={styles.emptyText}>No matching files</Text>
+            </View>
+          ) : (
+            <FlatList
+              ref={treeListRef}
+              style={styles.treeList}
+              data={filteredTreeRows}
+              renderItem={renderTreeRow}
+              keyExtractor={(row) => row.entry.path}
+              testID="file-explorer-tree-scroll"
+              contentContainerStyle={styles.entriesContent}
+              onLayout={scrollbar.onLayout}
+              onScroll={scrollbar.onScroll}
+              onContentSizeChange={scrollbar.onContentSizeChange}
+              scrollEventThrottle={16}
+              showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+              initialNumToRender={24}
+              maxToRenderPerBatch={40}
+              windowSize={12}
+            />
+          )}
           {scrollbar.overlay}
         </View>
       )}
@@ -1020,14 +1116,52 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
+  paneHeaderContainer: {
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
   paneHeader: {
     height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingRight: theme.spacing[3],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+  },
+  paneHeaderActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
+    gap: theme.spacing[1],
+  },
+  searchIcon: {
+    flexShrink: 0,
+    marginLeft: theme.spacing[1],
+  },
+  searchInput: {
+    flex: 1,
+    height: 28,
+    backgroundColor: theme.colors.surface0,
+    borderRadius: theme.borderRadius.base,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 0,
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    outlineStyle: "none",
+  },
+  searchClear: {
+    width: 20,
+    height: 20,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
   },
   sortTrigger: {
     flexDirection: "row",
@@ -1204,6 +1338,9 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   iconButtonHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  iconButtonActive: {
     backgroundColor: theme.colors.surface2,
   },
   refreshIcon: {

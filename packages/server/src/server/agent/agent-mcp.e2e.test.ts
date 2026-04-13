@@ -224,7 +224,10 @@ describe("agent MCP end-to-end (offline)", () => {
       agentClients: createTestAgentClients(),
       agentStoragePath: path.join(disabledHubcodeHome, "agents"),
     };
-    const disabledDaemon = await createHubcodeDaemon(disabledDaemonConfig, pino({ level: "silent" }));
+    const disabledDaemon = await createHubcodeDaemon(
+      disabledDaemonConfig,
+      pino({ level: "silent" }),
+    );
     await disabledDaemon.start();
 
     const disabledTransport = new StreamableHTTPClientTransport(

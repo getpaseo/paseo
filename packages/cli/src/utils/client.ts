@@ -94,7 +94,10 @@ function readPidSocketTarget(hubcodeHome: string): string | null {
   }
 }
 
-function resolveConfiguredIpcDaemonHost(env: NodeJS.ProcessEnv, hubcodeHome: string): string | null {
+function resolveConfiguredIpcDaemonHost(
+  env: NodeJS.ProcessEnv,
+  hubcodeHome: string,
+): string | null {
   const directEnvHost = normalizeDaemonHost(env.HUBCODE_LISTEN ?? "");
   if (isIpcDaemonHost(directEnvHost)) {
     return directEnvHost;
@@ -110,7 +113,10 @@ function resolveConfiguredIpcDaemonHost(env: NodeJS.ProcessEnv, hubcodeHome: str
   return isIpcDaemonHost(configuredHost) ? configuredHost : null;
 }
 
-function resolveConfiguredTcpDaemonHost(env: NodeJS.ProcessEnv, hubcodeHome: string): string | null {
+function resolveConfiguredTcpDaemonHost(
+  env: NodeJS.ProcessEnv,
+  hubcodeHome: string,
+): string | null {
   const configuredHost = normalizeDaemonHost(loadConfig(hubcodeHome, { env }).listen);
   if (!isTcpDaemonHost(configuredHost)) {
     return null;

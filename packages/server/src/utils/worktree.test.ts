@@ -344,9 +344,12 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       },
     };
     writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
-    execSync('git add hubcode.json && git -c commit.gpgsign=false commit -m "add streaming setup"', {
-      cwd: repoDir,
-    });
+    execSync(
+      'git add hubcode.json && git -c commit.gpgsign=false commit -m "add streaming setup"',
+      {
+        cwd: repoDir,
+      },
+    );
 
     const progressEvents: WorktreeSetupCommandProgressEvent[] = [];
     const results = await runWorktreeSetupCommands({

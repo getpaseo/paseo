@@ -364,7 +364,11 @@ const x = 1;
     expect(status.isHubcodeOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(repoDir);
 
-    const diff = await getCheckoutDiff(result.worktreePath, { mode: "uncommitted" }, { hubcodeHome });
+    const diff = await getCheckoutDiff(
+      result.worktreePath,
+      { mode: "uncommitted" },
+      { hubcodeHome },
+    );
     expect(diff.diff).toContain("-hello");
     expect(diff.diff).toContain("+worktree change");
 
@@ -995,7 +999,11 @@ const x = 1;
     expect(status.baseRef).toBe("develop");
     expect(status.aheadBehind?.ahead).toBe(1);
 
-    const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { hubcodeHome });
+    const baseDiff = await getCheckoutDiff(
+      worktree.worktreePath,
+      { mode: "base" },
+      { hubcodeHome },
+    );
     expect(baseDiff.diff).toContain("feature.txt");
     expect(baseDiff.diff).not.toContain("file.txt");
   });
@@ -1066,7 +1074,9 @@ const x = 1;
     const metadataPath = getHubcodeWorktreeMetadataPath(worktree.worktreePath);
     rmSync(metadataPath, { force: true });
 
-    await expect(getCheckoutStatus(worktree.worktreePath, { hubcodeHome })).rejects.toThrow(/base/i);
+    await expect(getCheckoutStatus(worktree.worktreePath, { hubcodeHome })).rejects.toThrow(
+      /base/i,
+    );
     await expect(
       getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { hubcodeHome }),
     ).rejects.toThrow(/base/i);

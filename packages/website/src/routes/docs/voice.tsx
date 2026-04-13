@@ -61,8 +61,8 @@ function VoiceDocs() {
         </p>
         <p className="text-white/60 leading-relaxed">
           Missing models are downloaded at daemon startup into{" "}
-          <code className="font-mono">$HUBCODE_HOME/models/local-speech</code>. Downloads happen only
-          for missing files.
+          <code className="font-mono">$HUBCODE_HOME/models/local-speech</code>. Downloads happen
+          only for missing files.
         </p>
         <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
           {`{
@@ -123,8 +123,8 @@ function VoiceDocs() {
             directory
           </li>
           <li>
-            <code className="font-mono">HUBCODE_DICTATION_LOCAL_STT_MODEL</code> — local dictation STT
-            model ID
+            <code className="font-mono">HUBCODE_DICTATION_LOCAL_STT_MODEL</code> — local dictation
+            STT model ID
           </li>
           <li>
             <code className="font-mono">HUBCODE_VOICE_LOCAL_STT_MODEL</code>,{" "}

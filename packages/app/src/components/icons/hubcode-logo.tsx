@@ -16,11 +16,5 @@ export function HubcodeLogo({ size = 64 }: HubcodeLogoProps) {
   const height = size;
   const width = size * ASPECT_RATIO;
 
-  return (
-    <Image
-      source={logoSource}
-      style={{ width, height }}
-      resizeMode="contain"
-    />
-  );
+  return <Image source={logoSource} style={{ width, height }} resizeMode="contain" />;
 }

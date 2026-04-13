@@ -89,7 +89,11 @@ export async function determineAgentMetadataNeeds(
 
   const needsTitle = !hasExplicitTitle(options.explicitTitle);
   const getCheckoutStatusImpl = options.deps?.getCheckoutStatus ?? getCheckoutStatus;
-  const needsBranch = await canRenameBranch(options.cwd, options.hubcodeHome, getCheckoutStatusImpl);
+  const needsBranch = await canRenameBranch(
+    options.cwd,
+    options.hubcodeHome,
+    getCheckoutStatusImpl,
+  );
 
   return {
     prompt,

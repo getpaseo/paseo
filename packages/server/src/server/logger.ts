@@ -210,7 +210,10 @@ export function resolveLogConfig(
     persistedLog?.format ??
     DEFAULT_CONSOLE_FORMAT;
 
-  const filePath = resolveFilePath(hubcodeHome, env.HUBCODE_LOG_FILE_PATH ?? persistedLog?.file?.path);
+  const filePath = resolveFilePath(
+    hubcodeHome,
+    env.HUBCODE_LOG_FILE_PATH ?? persistedLog?.file?.path,
+  );
 
   const rotateMaxSize =
     env.HUBCODE_LOG_FILE_ROTATE_SIZE?.trim() ||

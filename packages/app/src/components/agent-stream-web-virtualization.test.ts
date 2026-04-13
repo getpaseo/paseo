@@ -159,7 +159,8 @@ describe("web virtualization test overrides", () => {
       __HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
       __HUBCODE_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS?: unknown;
     };
-    const previousThreshold = globalWithOverrides.__HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
+    const previousThreshold =
+      globalWithOverrides.__HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
     const previousMounted = globalWithOverrides.__HUBCODE_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS;
 
     try {

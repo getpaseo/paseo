@@ -34,13 +34,19 @@ try {
     onboard.stdout.includes("CLI quick reference"),
     "onboard output should include CLI quick reference",
   );
-  assert(onboard.stdout.includes("hubcode --help"), "onboard output should include --help shortcut");
+  assert(
+    onboard.stdout.includes("hubcode --help"),
+    "onboard output should include --help shortcut",
+  );
   assert(onboard.stdout.includes("hubcode ls"), "onboard output should include ls shortcut");
   assert(
     onboard.stdout.includes('hubcode run "your prompt"'),
     "onboard output should include run shortcut",
   );
-  assert(onboard.stdout.includes("hubcode status"), "onboard output should include status shortcut");
+  assert(
+    onboard.stdout.includes("hubcode status"),
+    "onboard output should include status shortcut",
+  );
   assert(
     onboard.stdout.includes(join(hubcodeHome, "daemon.log")),
     "onboard output should include daemon log path",

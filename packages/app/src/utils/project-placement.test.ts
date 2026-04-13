@@ -12,7 +12,9 @@ describe("project-placement", () => {
   });
 
   it("normalizes hubcode worktree paths into the parent repo key", () => {
-    const placement = deriveProjectPlacementFromCwd("/Users/test/repo/.hubcode/worktrees/feature-x");
+    const placement = deriveProjectPlacementFromCwd(
+      "/Users/test/repo/.hubcode/worktrees/feature-x",
+    );
 
     expect(placement.projectKey).toBe("/Users/test/repo");
     expect(placement.projectName).toBe("repo");

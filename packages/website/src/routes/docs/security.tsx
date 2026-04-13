@@ -30,8 +30,8 @@ function Security() {
           connect to the daemon to monitor and control those agents.
         </p>
         <p className="text-white/60 leading-relaxed mt-3">
-          Your code never leaves your machine. Hubcode is a local-first tool that connects directly to
-          your development environment.
+          Your code never leaves your machine. Hubcode is a local-first tool that connects directly
+          to your development environment.
         </p>
       </div>
 
@@ -212,8 +212,8 @@ function Security() {
           from resolving its domain to your local machine (DNS rebinding).
         </p>
         <p className="text-white/60 leading-relaxed">
-          Hubcode uses a host allowlist to validate the <code className="font-mono">Host</code> header
-          on incoming requests. Requests with unrecognized hosts are rejected.
+          Hubcode uses a host allowlist to validate the <code className="font-mono">Host</code>{" "}
+          header on incoming requests. Requests with unrecognized hosts are rejected.
         </p>
         <p className="text-white/60 leading-relaxed">
           Configure via <code className="font-mono">daemon.allowedHosts</code> in{" "}

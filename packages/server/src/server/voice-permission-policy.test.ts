@@ -18,7 +18,9 @@ describe("isVoicePermissionAllowed", () => {
     const result = isVoicePermissionAllowed(buildRequest({ name: "speak" }));
     expect(result).toBe(true);
     expect(isVoicePermissionAllowed(buildRequest({ name: "hubcode_voice.speak" }))).toBe(true);
-    expect(isVoicePermissionAllowed(buildRequest({ name: "mcp__hubcode_voice__speak" }))).toBe(true);
+    expect(isVoicePermissionAllowed(buildRequest({ name: "mcp__hubcode_voice__speak" }))).toBe(
+      true,
+    );
   });
 
   test("denies non-speak tool names", () => {
@@ -40,7 +42,9 @@ describe("isVoicePermissionAllowed", () => {
       buildRequest({
         name: "codextool",
         metadata: {
-          questions: [{ question: "Allow codextool to call hubcode_voice.speak for user feedback?" }],
+          questions: [
+            { question: "Allow codextool to call hubcode_voice.speak for user feedback?" },
+          ],
         },
       }),
     );

@@ -35,7 +35,8 @@ function restoreGlobals(): void {
   }
 
   if (typeof globalThis.window !== "undefined") {
-    (globalThis.window as { hubcodeDesktop?: unknown }).hubcodeDesktop = originalGlobals.hubcodeDesktop;
+    (globalThis.window as { hubcodeDesktop?: unknown }).hubcodeDesktop =
+      originalGlobals.hubcodeDesktop;
   }
 }
 

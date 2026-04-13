@@ -599,7 +599,9 @@ export async function getMainRepoRoot(cwd: string): Promise<string> {
   });
   const worktrees = parseWorktreeList(worktreeOut);
   const nonBareNonHubcode = worktrees.filter((wt) => !wt.isBare && !isHubcodeWorktreePath(wt.path));
-  const childrenOfBareRepo = nonBareNonHubcode.filter((wt) => isDescendantPath(wt.path, normalized));
+  const childrenOfBareRepo = nonBareNonHubcode.filter((wt) =>
+    isDescendantPath(wt.path, normalized),
+  );
   const mainChild = childrenOfBareRepo.find((wt) => basename(wt.path) === "main");
   return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonHubcode[0]?.path ?? normalized;
 }

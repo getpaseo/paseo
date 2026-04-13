@@ -17,8 +17,8 @@ function GettingStarted() {
       <div>
         <h1 className="text-3xl font-medium font-title mb-4">Getting Started</h1>
         <p className="text-white/60 leading-relaxed">
-          Hubcode has three main pieces: the daemon is the local server that manages your agents, the
-          app is the client you use from mobile, web, or desktop, and the CLI is the terminal
+          Hubcode has three main pieces: the daemon is the local server that manages your agents,
+          the app is the client you use from mobile, web, or desktop, and the CLI is the terminal
           interface that can also launch the daemon.
         </p>
       </div>
@@ -123,8 +123,8 @@ function GettingStarted() {
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Voice Setup</h2>
         <p className="text-white/60">
-          Hubcode includes first-class voice support with a local-first architecture and configurable
-          speech providers.
+          Hubcode includes first-class voice support with a local-first architecture and
+          configurable speech providers.
         </p>
         <p className="text-white/60">
           For architecture, local model behavior, and provider configuration, see the Voice docs

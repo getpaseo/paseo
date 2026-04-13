@@ -129,7 +129,9 @@ export function useBranchSwitcher({
           // Success — refresh and check for stashes on the target branch
           await invalidateStashAndCheckout();
           try {
-            const stashPayload = await client.stashList(normalizedWorkspaceId, { hubcodeOnly: true });
+            const stashPayload = await client.stashList(normalizedWorkspaceId, {
+              hubcodeOnly: true,
+            });
             const targetStash = stashPayload.entries.find((e) => e.branch === branchId);
             if (targetStash) {
               const shouldRestore = await confirmDialog({

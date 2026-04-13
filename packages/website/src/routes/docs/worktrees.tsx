@@ -49,8 +49,9 @@ function Worktrees() {
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Directory structure</h2>
         <p className="text-white/60 leading-relaxed">
-          Hubcode creates worktrees under <code className="font-mono">$HUBCODE_HOME/worktrees/</code>,
-          organized by a short hash of the source checkout path:
+          Hubcode creates worktrees under{" "}
+          <code className="font-mono">$HUBCODE_HOME/worktrees/</code>, organized by a short hash of
+          the source checkout path:
         </p>
         <Code>
           <pre className="text-white/80">{`~/.hubcode/worktrees/
@@ -172,8 +173,8 @@ function Worktrees() {
           checkout to the worktree.
         </p>
         <p className="text-white/60 leading-relaxed">
-          <code className="font-mono">$HUBCODE_WORKTREE_PORT</code> is available when the worktree was
-          bootstrapped with a port. That makes it useful for both starting services in setup and
+          <code className="font-mono">$HUBCODE_WORKTREE_PORT</code> is available when the worktree
+          was bootstrapped with a port. That makes it useful for both starting services in setup and
           stopping them again in teardown.
         </p>
       </section>

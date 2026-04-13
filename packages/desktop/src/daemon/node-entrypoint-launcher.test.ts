@@ -65,7 +65,11 @@ describe("node-entrypoint-launcher", () => {
     it("passes --open-project through as a normal CLI arg", () => {
       expect(
         parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Hubcode.app/Contents/MacOS/Hubcode", "--open-project", "/tmp/project"],
+          argv: [
+            "/Applications/Hubcode.app/Contents/MacOS/Hubcode",
+            "--open-project",
+            "/tmp/project",
+          ],
           isDefaultApp: false,
           forceCli: false,
         }),

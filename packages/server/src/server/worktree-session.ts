@@ -264,7 +264,10 @@ export function assertSafeGitRef(ref: string, label: string): void {
   }
 }
 
-export async function resolveGitCreateBaseBranch(cwd: string, hubcodeHome?: string): Promise<string> {
+export async function resolveGitCreateBaseBranch(
+  cwd: string,
+  hubcodeHome?: string,
+): Promise<string> {
   const checkout = await getCheckoutStatusLite(cwd, { hubcodeHome });
   if (!checkout.isGit) {
     throw new Error("Cannot create a worktree outside a git repository");

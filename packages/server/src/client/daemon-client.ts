@@ -2613,11 +2613,7 @@ export class DaemonClient {
     });
   }
 
-  async deleteFile(
-    cwd: string,
-    path: string,
-    requestId?: string,
-  ): Promise<FileDeletePayload> {
+  async deleteFile(cwd: string, path: string, requestId?: string): Promise<FileDeletePayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: { type: "file_delete_request", cwd, path },

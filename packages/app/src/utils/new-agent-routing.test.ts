@@ -31,9 +31,9 @@ describe("resolveNewAgentWorkingDir", () => {
   });
 
   it("supports windows-style hubcode worktree paths without checkout metadata", () => {
-    expect(resolveNewAgentWorkingDir("C:\\Users\\me\\repo\\.hubcode\\worktrees\\feature", null)).toBe(
-      "C:\\Users\\me\\repo",
-    );
+    expect(
+      resolveNewAgentWorkingDir("C:\\Users\\me\\repo\\.hubcode\\worktrees\\feature", null),
+    ).toBe("C:\\Users\\me\\repo");
   });
 
   it("returns the main repo root for hubcode-owned worktrees", () => {
