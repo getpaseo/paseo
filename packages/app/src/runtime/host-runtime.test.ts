@@ -986,7 +986,7 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
-  it("fetches all pages during bootstrap so older workspace agents are present", async () => {
+  it("only fetches the first non-archived page during bootstrap", async () => {
     const host = makeHost({
       serverId: "srv_paged",
       connections: [
@@ -1045,35 +1045,21 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([host]);
 
     const timeoutAt = Date.now() + 300;
-    while (fakeClient.fetchAgentsCalls.length < 2 && Date.now() < timeoutAt) {
+    while (fakeClient.fetchAgentsCalls.length < 1 && Date.now() < timeoutAt) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    expect(fakeClient.fetchAgentsCalls).toHaveLength(2);
+    expect(fakeClient.fetchAgentsCalls).toHaveLength(1);
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
       filter: { includeArchived: true },
       sort: [{ key: "updated_at", direction: "desc" }],
       subscribe: { subscriptionId: "app:srv_paged" },
       page: { limit: 200 },
     });
-    expect(fakeClient.fetchAgentsCalls[1]).toEqual({
-      filter: { includeArchived: true },
-      sort: [{ key: "updated_at", direction: "desc" }],
-      page: { limit: 200, cursor: "cursor-page-2" },
-    });
 
-    let staleAgent =
-      useSessionStore.getState().sessions[host.serverId]?.agents?.get("agent-stale-attention") ??
-      null;
-    const staleTimeoutAt = Date.now() + 300;
-    while (!staleAgent && Date.now() < staleTimeoutAt) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      staleAgent =
-        useSessionStore.getState().sessions[host.serverId]?.agents?.get("agent-stale-attention") ??
-        null;
-    }
-    expect(staleAgent?.requiresAttention).toBe(true);
-    expect(staleAgent?.attentionReason).toBe("error");
+    expect(
+      useSessionStore.getState().sessions[host.serverId]?.agents?.get("agent-stale-attention"),
+    ).toBeUndefined();
 
     const snapshot = store.getSnapshot(host.serverId);
     expect(snapshot?.agentDirectoryStatus).toBe("ready");
@@ -1146,6 +1132,150 @@ describe("HostRuntimeStore", () => {
 
     store.syncHosts([]);
     useSessionStore.getState().clearSession(host.serverId);
+  });
+
+  it("stops after the first page when loadAllPages is false", async () => {
+    const host = makeHost({
+      serverId: "srv_first_page_only",
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    store.syncHosts([host]);
+
+    const initialTimeoutAt = Date.now() + 200;
+    while (fakeClient.fetchAgentsCalls.length < 1 && Date.now() < initialTimeoutAt) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    fakeClient.fetchAgentsCalls = [];
+    fakeClient.fetchAgentsResponses = [
+      makeFetchAgentsPayload({
+        entries: [
+          makeFetchAgentsEntry({
+            id: "agent-page-1",
+            cwd: "/Users/moboudra/dev/paseo",
+            updatedAt: "2026-03-04T12:00:00.000Z",
+            title: "Page 1",
+          }),
+        ],
+        hasMore: true,
+        nextCursor: "cursor-page-2",
+      }),
+      makeFetchAgentsPayload({
+        entries: [
+          makeFetchAgentsEntry({
+            id: "agent-page-2",
+            cwd: "/Users/moboudra/dev/paseo-older",
+            updatedAt: "2026-02-20T08:00:00.000Z",
+            title: "Page 2",
+          }),
+        ],
+      }),
+    ];
+
+    const result = await store.refreshAgentDirectory({
+      serverId: host.serverId,
+      filter: { includeArchived: true },
+      loadAllPages: false,
+      page: { limit: 200 },
+    });
+
+    expect(fakeClient.fetchAgentsCalls).toHaveLength(1);
+    expect(result.agents.has("agent-page-1")).toBe(true);
+    expect(result.agents.has("agent-page-2")).toBe(false);
+
+    store.syncHosts([]);
+  });
+
+  it("fetches all pages when explicitly requested", async () => {
+    const host = makeHost({
+      serverId: "srv_full_refresh",
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    store.syncHosts([host]);
+
+    const initialTimeoutAt = Date.now() + 200;
+    while (fakeClient.fetchAgentsCalls.length < 1 && Date.now() < initialTimeoutAt) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    fakeClient.fetchAgentsCalls = [];
+    fakeClient.fetchAgentsResponses = [
+      makeFetchAgentsPayload({
+        entries: [
+          makeFetchAgentsEntry({
+            id: "agent-page-1",
+            cwd: "/Users/moboudra/dev/paseo",
+            updatedAt: "2026-03-04T12:00:00.000Z",
+            title: "Page 1",
+          }),
+        ],
+        hasMore: true,
+        nextCursor: "cursor-page-2",
+      }),
+      makeFetchAgentsPayload({
+        entries: [
+          makeFetchAgentsEntry({
+            id: "agent-page-2",
+            cwd: "/Users/moboudra/dev/paseo-older",
+            updatedAt: "2026-02-20T08:00:00.000Z",
+            title: "Page 2",
+          }),
+        ],
+      }),
+    ];
+
+    const result = await store.refreshAgentDirectory({
+      serverId: host.serverId,
+      filter: { includeArchived: true },
+      loadAllPages: true,
+      page: { limit: 200 },
+    });
+
+    expect(fakeClient.fetchAgentsCalls).toHaveLength(2);
+    expect(result.agents.has("agent-page-1")).toBe(true);
+    expect(result.agents.has("agent-page-2")).toBe(true);
+
+    store.syncHosts([]);
   });
 
   it("rehydrates archived agents over stale active session state after reconnect bootstrap", async () => {

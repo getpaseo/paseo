@@ -1735,6 +1735,7 @@ export class HostRuntimeStore {
     filter?: FetchAgentsOptions["filter"];
     subscribe?: FetchAgentsOptions["subscribe"];
     page?: FetchAgentsOptions["page"];
+    loadAllPages?: boolean;
   }): Promise<{
     agents: ReturnType<typeof applyFetchedAgentDirectory>["agents"];
     subscriptionId: string | null;
@@ -1752,6 +1753,7 @@ export class HostRuntimeStore {
     controller.markAgentDirectorySyncLoading();
     try {
       const pageLimit = input.page?.limit ?? DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT;
+      const loadAllPages = input.loadAllPages ?? false;
       let cursor = input.page?.cursor ?? null;
       let includeSubscribe = true;
       let subscriptionId: string | null = null;
@@ -1775,6 +1777,10 @@ export class HostRuntimeStore {
 
         subscriptionId = subscriptionId ?? payload.subscriptionId ?? null;
         includeSubscribe = false;
+
+        if (!loadAllPages) {
+          break;
+        }
 
         if (!readFetchAgentsHasMore(payload.pageInfo)) {
           break;
