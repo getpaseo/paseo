@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
 import { watch, type FSWatcher } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
 import type pino from "pino";
 import type { CheckoutContext } from "../utils/checkout-git.js";
 import {
@@ -13,9 +11,8 @@ import {
   resolveGhPath,
   resolveAbsoluteGitDir,
 } from "../utils/checkout-git.js";
+import { runGitCommand } from "../utils/run-git-command.js";
 import { normalizeWorkspaceId } from "./workspace-registry-model.js";
-
-const execFileAsync = promisify(execFile);
 
 const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 500;
 const BACKGROUND_GIT_FETCH_INTERVAL_MS = 180_000;
@@ -587,11 +584,12 @@ function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
 }
 
 async function runGitFetch(cwd: string): Promise<void> {
-  await execFileAsync("git", ["fetch", "origin", "--prune"], {
+  await runGitCommand(["fetch", "origin", "--prune"], {
     cwd,
     env: {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
     },
+    timeout: 120_000,
   });
 }

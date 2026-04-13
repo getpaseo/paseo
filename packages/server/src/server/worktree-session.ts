@@ -1,5 +1,3 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import type { Logger } from "pino";
 import { v4 as uuidv4 } from "uuid";
 
@@ -36,9 +34,8 @@ import {
   validateBranchSlug,
   type WorktreeConfig,
 } from "../utils/worktree.js";
+import { runGitCommand } from "../utils/run-git-command.js";
 import { READ_ONLY_GIT_ENV, toCheckoutError } from "./checkout-git-utils.js";
-
-const execAsync = promisify(exec);
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
 
 export type NormalizedGitOptions = {
@@ -154,7 +151,7 @@ export async function buildAgentSessionConfig(
     if (normalized.createNewBranch) {
       targetBranch = normalized.newBranchName!;
     } else {
-      const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
+      const { stdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], {
         cwd,
         env: READ_ONLY_GIT_ENV,
       });

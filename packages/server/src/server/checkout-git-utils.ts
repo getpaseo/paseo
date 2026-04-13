@@ -1,12 +1,9 @@
-import { exec } from "child_process";
-import { promisify } from "util";
 import {
   MergeConflictError,
   MergeFromBaseConflictError,
   NotGitRepoError,
 } from "../utils/checkout-git.js";
-
-const execAsync = promisify(exec);
+import { runGitCommand } from "../utils/run-git-command.js";
 
 export const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
@@ -22,7 +19,7 @@ export type CheckoutErrorPayload = {
 
 export async function resolveCheckoutGitDir(cwd: string): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("git rev-parse --absolute-git-dir", {
+    const { stdout } = await runGitCommand(["rev-parse", "--absolute-git-dir"], {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });

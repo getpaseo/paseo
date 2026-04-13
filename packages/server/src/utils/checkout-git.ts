@@ -1,5 +1,4 @@
-import { exec, execFile } from "child_process";
-import { spawnProcess } from "./spawn.js";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { resolve, dirname, basename } from "path";
 import { existsSync, realpathSync } from "fs";
@@ -8,17 +7,16 @@ import { TTLCache } from "@isaacs/ttlcache";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
 import { findExecutable } from "./executable.js";
+import { runGitCommand } from "./run-git-command.js";
 import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
 import { requirePaseoWorktreeBaseRefName } from "./worktree-metadata.js";
 
-const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_OPTIONAL_LOCKS: "0",
 };
 
-const SMALL_OUTPUT_MAX_BUFFER = 20 * 1024 * 1024; // 20MB
 const DEFAULT_PULL_REQUEST_STATUS_CACHE_TTL_MS = 30_000;
 const PULL_REQUEST_STATUS_CACHE_MAX = 1_000;
 
@@ -63,91 +61,6 @@ export function __setGhPathForTests(path: string | null): void {
   cachedGhPath = path;
 }
 
-async function execGit(
-  command: string,
-  options: { cwd: string; env?: NodeJS.ProcessEnv },
-): Promise<{ stdout: string; stderr: string }> {
-  return execAsync(command, { ...options, maxBuffer: SMALL_OUTPUT_MAX_BUFFER });
-}
-
-type LimitedTextResult = {
-  text: string;
-  truncated: boolean;
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-};
-
-async function spawnLimitedText(params: {
-  cmd: string;
-  args: string[];
-  cwd: string;
-  env?: NodeJS.ProcessEnv;
-  maxBytes: number;
-  acceptExitCodes?: number[];
-}): Promise<LimitedTextResult> {
-  const accept = new Set(params.acceptExitCodes ?? [0]);
-
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawnProcess(params.cmd, params.args, {
-      cwd: params.cwd,
-      env: params.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    let stdoutBytes = 0;
-    let truncated = false;
-
-    const stop = () => {
-      if (child.killed) return;
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // ignore
-      }
-    };
-
-    child.stdout!.on("data", (chunk: Buffer) => {
-      if (truncated) return;
-      stdoutBytes += chunk.length;
-      if (stdoutBytes > params.maxBytes) {
-        truncated = true;
-        stop();
-        return;
-      }
-      stdoutChunks.push(chunk);
-    });
-
-    // We don't buffer stderr (it can be large too). Keep it minimal for debugging.
-    let stderrPreview = "";
-    child.stderr!.on("data", (chunk: Buffer) => {
-      if (stderrPreview.length > 2048) return;
-      stderrPreview += chunk.toString("utf8");
-    });
-
-    child.on("error", (error) => {
-      rejectPromise(error);
-    });
-
-    child.on("close", (code, signal) => {
-      if (code !== null && !accept.has(code) && !truncated) {
-        rejectPromise(
-          new Error(
-            `Command failed: ${params.cmd} ${params.args.join(" ")} (code ${code})\n${stderrPreview}`,
-          ),
-        );
-        return;
-      }
-      resolvePromise({
-        text: Buffer.concat(stdoutChunks).toString("utf8"),
-        truncated,
-        exitCode: code,
-        signal,
-      });
-    });
-  });
-}
-
 type CheckoutFileChange = {
   path: string;
   oldPath?: string;
@@ -187,8 +100,13 @@ interface GitRef {
 }
 
 async function listGitRefs(cwd: string, refPrefix: string): Promise<GitRef[]> {
-  const { stdout } = await execGit(
-    `git for-each-ref --sort=-committerdate --format="%(refname)%09%(committerdate:unix)" ${refPrefix}`,
+  const { stdout } = await runGitCommand(
+    [
+      "for-each-ref",
+      "--sort=-committerdate",
+      "--format=%(refname)%09%(committerdate:unix)",
+      refPrefix,
+    ],
     { cwd, env: READ_ONLY_GIT_ENV },
   );
   return stdout
@@ -290,17 +208,12 @@ async function listCheckoutFileChanges(
 ): Promise<CheckoutFileChange[]> {
   const changes: CheckoutFileChange[] = [];
 
-  const { stdout: nameStatusOut } = await execFileAsync(
-    "git",
+  const { stdout: nameStatusOut } = await runGitCommand(
     buildGitDiffArgs({
       ignoreWhitespace,
       extra: ["--name-status", ref],
     }),
-    {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-      maxBuffer: SMALL_OUTPUT_MAX_BUFFER,
-    },
+    { cwd, env: READ_ONLY_GIT_ENV },
   );
   for (const line of nameStatusOut
     .split("\n")
@@ -337,10 +250,13 @@ async function listCheckoutFileChanges(
     });
   }
 
-  const { stdout: untrackedOut } = await execGit("git ls-files --others --exclude-standard", {
-    cwd,
-    env: READ_ONLY_GIT_ENV,
-  });
+  const { stdout: untrackedOut } = await runGitCommand(
+    ["ls-files", "--others", "--exclude-standard"],
+    {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    },
+  );
   for (const file of untrackedOut
     .split("\n")
     .map((l) => l.trim())
@@ -375,10 +291,9 @@ async function readGitFileContentAtRef(
   path: string,
 ): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("git", ["show", `${ref}:${path}`], {
+    const { stdout } = await runGitCommand(["show", `${ref}:${path}`], {
       cwd,
       env: READ_ONLY_GIT_ENV,
-      maxBuffer: SMALL_OUTPUT_MAX_BUFFER,
     });
     return stdout;
   } catch {
@@ -388,7 +303,7 @@ async function readGitFileContentAtRef(
 
 async function tryResolveMergeBase(cwd: string, baseRef: string): Promise<string | null> {
   try {
-    const { stdout } = await execGit(`git merge-base ${baseRef} HEAD`, {
+    const { stdout } = await runGitCommand(["merge-base", baseRef, "HEAD"], {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });
@@ -428,20 +343,21 @@ async function getTrackedNumstatByPath(
   ref: string,
   ignoreWhitespace = false,
 ): Promise<Map<string, FileStat>> {
-  const result = await spawnLimitedText({
-    cmd: "git",
-    args: buildGitDiffArgs({
+  const result = await runGitCommand(
+    buildGitDiffArgs({
       ignoreWhitespace,
       extra: ["--numstat", ref],
     }),
-    cwd,
-    env: READ_ONLY_GIT_ENV,
-    maxBytes: TRACKED_DIFF_NUMSTAT_MAX_BYTES,
-    acceptExitCodes: [0],
-  });
+    {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+      maxOutputBytes: TRACKED_DIFF_NUMSTAT_MAX_BYTES,
+      acceptExitCodes: [0],
+    },
+  );
 
   const stats = new Map<string, FileStat>();
-  const lines = result.text
+  const lines = result.stdout
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
@@ -637,14 +553,14 @@ function isGitError(error: unknown): boolean {
 
 async function requireGitRepo(cwd: string): Promise<void> {
   try {
-    await execAsync("git rev-parse --git-dir", { cwd, env: READ_ONLY_GIT_ENV });
+    await runGitCommand(["rev-parse", "--git-dir"], { cwd, env: READ_ONLY_GIT_ENV });
   } catch (error) {
     throw new NotGitRepoError(cwd);
   }
 }
 
 export async function getCurrentBranch(cwd: string): Promise<string | null> {
-  const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
+  const { stdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], {
     cwd,
     env: READ_ONLY_GIT_ENV,
   });
@@ -654,10 +570,13 @@ export async function getCurrentBranch(cwd: string): Promise<string | null> {
 
 async function getWorktreeRoot(cwd: string): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("git rev-parse --path-format=absolute --show-toplevel", {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
+    const { stdout } = await runGitCommand(
+      ["rev-parse", "--path-format=absolute", "--show-toplevel"],
+      {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      },
+    );
     const root = stdout.trim();
     return root.length > 0 ? root : null;
   } catch {
@@ -666,8 +585,8 @@ async function getWorktreeRoot(cwd: string): Promise<string | null> {
 }
 
 export async function getMainRepoRoot(cwd: string): Promise<string> {
-  const { stdout: commonDirOut } = await execAsync(
-    "git rev-parse --path-format=absolute --git-common-dir",
+  const { stdout: commonDirOut } = await runGitCommand(
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
     { cwd, env: READ_ONLY_GIT_ENV },
   );
   const commonDir = commonDirOut.trim();
@@ -677,7 +596,7 @@ export async function getMainRepoRoot(cwd: string): Promise<string> {
     return dirname(normalized);
   }
 
-  const { stdout: worktreeOut } = await execAsync("git worktree list --porcelain", {
+  const { stdout: worktreeOut } = await runGitCommand(["worktree", "list", "--porcelain"], {
     cwd,
     env: READ_ONLY_GIT_ENV,
   });
@@ -743,7 +662,7 @@ export function parseWorktreeList(output: string): GitWorktreeEntry[] {
 
 async function getWorktreePathForBranch(cwd: string, branchName: string): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("git worktree list --porcelain", {
+    const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });
@@ -766,8 +685,9 @@ export async function renameCurrentBranch(
     throw new Error("Cannot rename branch in detached HEAD state");
   }
 
-  await execAsync(`git branch -m "${newName}"`, {
+  await runGitCommand(["branch", "-m", newName], {
     cwd,
+    timeout: 120_000,
   });
 
   const currentBranch = await getCurrentBranch(cwd);
@@ -800,7 +720,7 @@ async function getConfiguredBaseRefForCwd(
 }
 
 async function isWorkingTreeDirty(cwd: string): Promise<boolean> {
-  const { stdout } = await execAsync("git status --porcelain", {
+  const { stdout } = await runGitCommand(["status", "--porcelain"], {
     cwd,
     env: READ_ONLY_GIT_ENV,
   });
@@ -809,7 +729,7 @@ async function isWorkingTreeDirty(cwd: string): Promise<boolean> {
 
 export async function getOriginRemoteUrl(cwd: string): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("git config --get remote.origin.url", {
+    const { stdout } = await runGitCommand(["config", "--get", "remote.origin.url"], {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });
@@ -827,7 +747,7 @@ export async function hasOriginRemote(cwd: string): Promise<boolean> {
 
 export async function resolveAbsoluteGitDir(cwd: string): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("git rev-parse --absolute-git-dir", {
+    const { stdout } = await runGitCommand(["rev-parse", "--absolute-git-dir"], {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });
@@ -850,7 +770,7 @@ async function abortGitPullConflictState(cwd: string): Promise<void> {
 
   if (existsSync(mergeHeadPath)) {
     try {
-      await execAsync("git merge --abort", { cwd });
+      await runGitCommand(["merge", "--abort"], { cwd, timeout: 120_000 });
     } catch {
       // ignore
     }
@@ -858,7 +778,7 @@ async function abortGitPullConflictState(cwd: string): Promise<void> {
 
   if (existsSync(rebaseMergePath) || existsSync(rebaseApplyPath)) {
     try {
-      await execAsync("git rebase --abort", { cwd });
+      await runGitCommand(["rebase", "--abort"], { cwd, timeout: 120_000 });
     } catch {
       // ignore
     }
@@ -867,10 +787,13 @@ async function abortGitPullConflictState(cwd: string): Promise<void> {
 
 export async function resolveRepositoryDefaultBranch(repoRoot: string): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("git symbolic-ref --quiet refs/remotes/origin/HEAD", {
-      cwd: repoRoot,
-      env: READ_ONLY_GIT_ENV,
-    });
+    const { stdout } = await runGitCommand(
+      ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+      {
+        cwd: repoRoot,
+        env: READ_ONLY_GIT_ENV,
+      },
+    );
     const ref = stdout.trim();
     if (ref) {
       // Prefer a local branch name (e.g. "main") over the remote-tracking ref (e.g. "origin/main")
@@ -880,7 +803,7 @@ export async function resolveRepositoryDefaultBranch(repoRoot: string): Promise<
         ? remoteShort.slice("origin/".length)
         : remoteShort;
       try {
-        await execAsync(`git show-ref --verify --quiet refs/heads/${localName}`, {
+        await runGitCommand(["show-ref", "--verify", "--quiet", `refs/heads/${localName}`], {
           cwd: repoRoot,
           env: READ_ONLY_GIT_ENV,
         });
@@ -893,7 +816,7 @@ export async function resolveRepositoryDefaultBranch(repoRoot: string): Promise<
     // ignore
   }
 
-  const { stdout } = await execAsync("git branch --format='%(refname:short)'", {
+  const { stdout } = await runGitCommand(["branch", "--format=%(refname:short)"], {
     cwd: repoRoot,
     env: READ_ONLY_GIT_ENV,
   });
@@ -922,7 +845,7 @@ function normalizeLocalBranchRefName(input: string): string {
 
 async function doesGitRefExist(cwd: string, fullRef: string): Promise<boolean> {
   try {
-    await execAsync(`git show-ref --verify --quiet ${fullRef}`, {
+    await runGitCommand(["show-ref", "--verify", "--quiet", fullRef], {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });
@@ -953,8 +876,8 @@ async function resolveBestComparisonBaseRef(
 
   // Both exist: choose the ref with more unique commits compared to the other.
   try {
-    const { stdout } = await execAsync(
-      `git rev-list --left-right --count ${normalizedBaseRef}...origin/${normalizedBaseRef}`,
+    const { stdout } = await runGitCommand(
+      ["rev-list", "--left-right", "--count", `${normalizedBaseRef}...origin/${normalizedBaseRef}`],
       { cwd, env: READ_ONLY_GIT_ENV },
     );
     const [localOnlyRaw, originOnlyRaw] = stdout.trim().split(/\s+/);
@@ -980,8 +903,8 @@ async function getAheadBehind(
     return null;
   }
   const comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, normalizedBaseRef);
-  const { stdout } = await execAsync(
-    `git rev-list --left-right --count ${comparisonBaseRef}...${currentBranch}`,
+  const { stdout } = await runGitCommand(
+    ["rev-list", "--left-right", "--count", `${comparisonBaseRef}...${currentBranch}`],
     { cwd, env: READ_ONLY_GIT_ENV },
   );
   const [behindRaw, aheadRaw] = stdout.trim().split(/\s+/);
@@ -998,15 +921,15 @@ async function getAheadOfOrigin(cwd: string, currentBranch: string): Promise<num
     return null;
   }
   try {
-    const { stdout } = await execAsync(
-      `git rev-list --count origin/${currentBranch}..${currentBranch}`,
+    const { stdout } = await runGitCommand(
+      ["rev-list", "--count", `origin/${currentBranch}..${currentBranch}`],
       { cwd, env: READ_ONLY_GIT_ENV },
     );
     const count = Number.parseInt(stdout.trim(), 10);
     return Number.isNaN(count) ? null : count;
   } catch {
     try {
-      const { stdout } = await execAsync(`git rev-list --count ${currentBranch}`, {
+      const { stdout } = await runGitCommand(["rev-list", "--count", currentBranch], {
         cwd,
         env: READ_ONLY_GIT_ENV,
       });
@@ -1023,8 +946,8 @@ async function getBehindOfOrigin(cwd: string, currentBranch: string): Promise<nu
     return null;
   }
   try {
-    const { stdout } = await execAsync(
-      `git rev-list --count ${currentBranch}..origin/${currentBranch}`,
+    const { stdout } = await runGitCommand(
+      ["rev-list", "--count", `${currentBranch}..origin/${currentBranch}`],
       { cwd, env: READ_ONLY_GIT_ENV },
     );
     const count = Number.parseInt(stdout.trim(), 10);
@@ -1162,19 +1085,20 @@ async function getUntrackedDiffText(
     // Fall through to git diff path if metadata probing fails.
   }
 
-  const result = await spawnLimitedText({
-    cmd: "git",
-    args: buildGitDiffArgs({
+  const result = await runGitCommand(
+    buildGitDiffArgs({
       ignoreWhitespace,
       extra: ["--no-index", "/dev/null", "--", change.path],
     }),
-    cwd,
-    env: READ_ONLY_GIT_ENV,
-    maxBytes: PER_FILE_DIFF_MAX_BYTES,
-    acceptExitCodes: [0, 1],
-  });
+    {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+      maxOutputBytes: PER_FILE_DIFF_MAX_BYTES,
+      acceptExitCodes: [0, 1],
+    },
+  );
   return {
-    text: result.text,
+    text: result.stdout,
     truncated: result.truncated,
     stat: { additions: 0, deletions: 0, isBinary: false },
   };
@@ -1301,7 +1225,7 @@ export async function getCheckoutShortstat(
     );
 
     try {
-      const { stdout } = await execAsync(`git merge-base HEAD ${comparisonBaseRef}`, {
+      const { stdout } = await runGitCommand(["merge-base", "HEAD", comparisonBaseRef], {
         cwd,
         env: READ_ONLY_GIT_ENV,
       });
@@ -1326,7 +1250,7 @@ export async function getCheckoutShortstat(
 
   try {
     // Omit HEAD so the diff includes uncommitted (staged + unstaged) changes
-    const { stdout } = await execAsync(`git diff --shortstat ${diffTarget}`, {
+    const { stdout } = await runGitCommand(["diff", "--shortstat", diffTarget], {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });
@@ -1438,17 +1362,18 @@ export async function getCheckoutDiff(
   let trackedDiffText = "";
   let trackedDiffTruncated = false;
   if (trackedDiffPaths.length > 0) {
-    const trackedDiffResult = await spawnLimitedText({
-      cmd: "git",
-      args: buildGitDiffArgs({
+    const trackedDiffResult = await runGitCommand(
+      buildGitDiffArgs({
         ignoreWhitespace,
         extra: [refForDiff, "--", ...trackedDiffPaths],
       }),
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-      maxBytes: TOTAL_DIFF_MAX_BYTES,
-    });
-    trackedDiffText = trackedDiffResult.text;
+      {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+        maxOutputBytes: TOTAL_DIFF_MAX_BYTES,
+      },
+    );
+    trackedDiffText = trackedDiffResult.stdout;
     trackedDiffTruncated = trackedDiffResult.truncated;
     appendDiff(trackedDiffText);
     if (trackedDiffTruncated) {
@@ -1598,10 +1523,11 @@ export async function commitChanges(
 ): Promise<void> {
   await requireGitRepo(cwd);
   if (options.addAll ?? true) {
-    await execFileAsync("git", ["add", "-A"], { cwd });
+    await runGitCommand(["add", "-A"], { cwd, timeout: 120_000 });
   }
-  await execFileAsync("git", ["-c", "commit.gpgsign=false", "commit", "-m", options.message], {
+  await runGitCommand(["-c", "commit.gpgsign=false", "commit", "-m", options.message], {
     cwd,
+    timeout: 120_000,
   });
 }
 
@@ -1640,16 +1566,23 @@ export async function mergeToBase(
   const originalBranch = await getCurrentBranch(operationCwd);
   const mode = options.mode ?? "merge";
   try {
-    await execAsync(`git checkout ${normalizedBaseRef}`, { cwd: operationCwd });
+    await runGitCommand(["checkout", normalizedBaseRef], {
+      cwd: operationCwd,
+      timeout: 120_000,
+    });
     if (mode === "squash") {
-      await execAsync(`git merge --squash ${currentBranch}`, { cwd: operationCwd });
+      await runGitCommand(["merge", "--squash", currentBranch], {
+        cwd: operationCwd,
+        timeout: 120_000,
+      });
       const message =
         options.commitMessage ?? `Squash merge ${currentBranch} into ${normalizedBaseRef}`;
-      await execFileAsync("git", ["-c", "commit.gpgsign=false", "commit", "-m", message], {
+      await runGitCommand(["-c", "commit.gpgsign=false", "commit", "-m", message], {
         cwd: operationCwd,
+        timeout: 120_000,
       });
     } else {
-      await execAsync(`git merge ${currentBranch}`, { cwd: operationCwd });
+      await runGitCommand(["merge", currentBranch], { cwd: operationCwd, timeout: 120_000 });
     }
   } catch (error) {
     const errorDetails =
@@ -1658,9 +1591,9 @@ export async function mergeToBase(
         : String(error);
     try {
       const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
-        execAsync("git diff --name-only --diff-filter=U", { cwd: operationCwd }),
-        execAsync("git ls-files -u", { cwd: operationCwd }),
-        execAsync("git status --porcelain", { cwd: operationCwd }),
+        runGitCommand(["diff", "--name-only", "--diff-filter=U"], { cwd: operationCwd }),
+        runGitCommand(["ls-files", "-u"], { cwd: operationCwd }),
+        runGitCommand(["status", "--porcelain"], { cwd: operationCwd }),
       ]);
       const statusConflicts = statusOutput.stdout
         .split("\n")
@@ -1684,7 +1617,7 @@ export async function mergeToBase(
         conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
       if (conflictDetected) {
         try {
-          await execAsync("git merge --abort", { cwd: operationCwd });
+          await runGitCommand(["merge", "--abort"], { cwd: operationCwd, timeout: 120_000 });
         } catch {
           // ignore
         }
@@ -1705,7 +1638,10 @@ export async function mergeToBase(
   } finally {
     if (isSameCheckout && originalBranch && originalBranch !== normalizedBaseRef) {
       try {
-        await execAsync(`git checkout ${originalBranch}`, { cwd: operationCwd });
+        await runGitCommand(["checkout", originalBranch], {
+          cwd: operationCwd,
+          timeout: 120_000,
+        });
       } catch {
         // ignore
       }
@@ -1735,7 +1671,7 @@ export async function mergeFromBase(
 
   const requireCleanTarget = options.requireCleanTarget ?? true;
   if (requireCleanTarget) {
-    const { stdout } = await execAsync("git status --porcelain", {
+    const { stdout } = await runGitCommand(["status", "--porcelain"], {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });
@@ -1751,7 +1687,7 @@ export async function mergeFromBase(
   }
 
   try {
-    await execAsync(`git merge ${bestBaseRef}`, { cwd });
+    await runGitCommand(["merge", bestBaseRef], { cwd, timeout: 120_000 });
   } catch (error) {
     const errorDetails =
       error instanceof Error
@@ -1759,9 +1695,9 @@ export async function mergeFromBase(
         : String(error);
     try {
       const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
-        execAsync("git diff --name-only --diff-filter=U", { cwd }),
-        execAsync("git ls-files -u", { cwd }),
-        execAsync("git status --porcelain", { cwd }),
+        runGitCommand(["diff", "--name-only", "--diff-filter=U"], { cwd }),
+        runGitCommand(["ls-files", "-u"], { cwd }),
+        runGitCommand(["status", "--porcelain"], { cwd }),
       ]);
       const statusConflicts = statusOutput.stdout
         .split("\n")
@@ -1785,7 +1721,7 @@ export async function mergeFromBase(
         conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
       if (conflictDetected) {
         try {
-          await execAsync("git merge --abort", { cwd });
+          await runGitCommand(["merge", "--abort"], { cwd, timeout: 120_000 });
         } catch {
           // ignore
         }
@@ -1817,7 +1753,7 @@ export async function pullCurrentBranch(cwd: string): Promise<void> {
     throw new Error("Remote 'origin' is not configured.");
   }
   try {
-    await execAsync("git pull", { cwd });
+    await runGitCommand(["pull"], { cwd, timeout: 120_000 });
   } catch (error) {
     await abortGitPullConflictState(cwd);
     throw error;
@@ -1834,7 +1770,7 @@ export async function pushCurrentBranch(cwd: string): Promise<void> {
   if (!hasRemote) {
     throw new Error("Remote 'origin' is not configured.");
   }
-  await execAsync(`git push -u origin ${currentBranch}`, { cwd });
+  await runGitCommand(["push", "-u", "origin", currentBranch], { cwd, timeout: 120_000 });
 }
 
 export interface CreatePullRequestOptions {
@@ -1892,7 +1828,7 @@ function isGhAuthError(error: unknown): boolean {
 
 async function resolveGitHubRepo(cwd: string): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("git config --get remote.origin.url", {
+    const { stdout } = await runGitCommand(["config", "--get", "remote.origin.url"], {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });
@@ -1954,7 +1890,7 @@ export async function createPullRequest(
     throw new Error(`Base ref mismatch: expected ${base}, got ${options.base}`);
   }
 
-  await execAsync(`git push -u origin ${head}`, { cwd });
+  await runGitCommand(["push", "-u", "origin", head], { cwd, timeout: 120_000 });
 
   const ghEnv: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
   const args = ["api", "-X", "POST", `repos/${repo}/pulls`, "-f", `title=${options.title}`];

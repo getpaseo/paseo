@@ -20,7 +20,9 @@ vi.mock("child_process", async () => {
           normalizedArgs[0] === "diff" &&
           normalizedArgs.includes("HEAD") &&
           !normalizedArgs.includes("--numstat") &&
-          !normalizedArgs.includes("--no-index");
+          !normalizedArgs.includes("--no-index") &&
+          !normalizedArgs.includes("--shortstat") &&
+          !normalizedArgs.includes("--name-status");
         if (isTrackedTextDiff) {
           spawnCounters.trackedTextDiffCalls += 1;
         }
