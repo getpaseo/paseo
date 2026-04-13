@@ -90,6 +90,48 @@ describe("findExecutable", () => {
     await expect(findExecutable("codex")).resolves.toBe("C:\\nvm4w\\nodejs\\codex.cmd");
   });
 
+  test("on Windows, prefers .exe over .cmd, .ps1, and extensionless candidates", async () => {
+    setPlatform("win32");
+    const { findExecutable } = await loadExecutableModule({
+      execFileImpl: (_command, _args, _options, callback) => {
+        callback(
+          null,
+          [
+            "C:\\nvm4w\\nodejs\\codex",
+            "C:\\nvm4w\\nodejs\\codex.ps1",
+            "C:\\nvm4w\\nodejs\\codex.cmd",
+            "C:\\nvm4w\\nodejs\\codex.exe",
+          ].join("\r\n"),
+          "",
+        );
+      },
+    });
+
+    await expect(findExecutable("codex")).resolves.toBe("C:\\nvm4w\\nodejs\\codex.exe");
+  });
+
+  test("on Windows, returns null when where.exe output is empty", async () => {
+    setPlatform("win32");
+    const { findExecutable } = await loadExecutableModule({
+      execFileImpl: (_command, _args, _options, callback) => {
+        callback(null, "\r\n", "");
+      },
+    });
+
+    await expect(findExecutable("codex")).resolves.toBeNull();
+  });
+
+  test("on Windows, falls back to the first extensionless candidate when needed", async () => {
+    setPlatform("win32");
+    const { findExecutable } = await loadExecutableModule({
+      execFileImpl: (_command, _args, _options, callback) => {
+        callback(null, "C:\\nvm4w\\nodejs\\codex\r\n", "");
+      },
+    });
+
+    await expect(findExecutable("codex")).resolves.toBe("C:\\nvm4w\\nodejs\\codex");
+  });
+
   test("on Unix, uses the last line from which output", async () => {
     const { execFileMock, findExecutable } = await loadExecutableModule({
       execFileImpl: (_command, _args, _options, callback) => {
