@@ -54,10 +54,14 @@ describe("CursorCliAgentClient", () => {
           role: "assistant",
           message: {
             content: [
-              { type: "text", text: "first reply" },
+              { type: "text", text: "first reply\n\n[REDACTED]" },
               { type: "tool_use", name: "Shell", input: { command: "pwd" } },
             ],
           },
+        }),
+        JSON.stringify({
+          role: "assistant",
+          message: { content: [{ type: "text", text: "[REDACTED]" }] },
         }),
         JSON.stringify({
           role: "assistant",
@@ -103,5 +107,22 @@ describe("CursorCliAgentClient", () => {
       replayedAgain.push(event);
     }
     expect(replayedAgain).toEqual([]);
+  });
+
+  test("streamHistory ignores unsafe session ids for transcript lookup", async () => {
+    const session = new CursorCliAgentSession(
+      { provider: "cursor", cwd: "/Users/test/workspace/paseo" },
+      {
+        logger: createTestLogger(),
+        resumeChatId: "../cursor-session-1",
+      },
+    );
+
+    const events = [];
+    for await (const event of session.streamHistory()) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([]);
   });
 });

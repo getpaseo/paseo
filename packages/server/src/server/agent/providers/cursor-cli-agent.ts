@@ -107,7 +107,12 @@ function extractAssistantText(message: unknown): string {
 }
 
 function unwrapCursorHistoryText(text: string): string {
-  const trimmed = text.trim();
+  const withoutRedacted = text
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && part !== "[REDACTED]")
+    .join("\n\n");
+  const trimmed = withoutRedacted.trim();
   const userQuery = /^<user_query>\s*\n?([\s\S]*?)\n?<\/user_query>$/u.exec(trimmed);
   if (userQuery?.[1]) {
     return userQuery[1].trim();
@@ -119,7 +124,14 @@ function extractCursorHistoryText(message: unknown): string {
   return unwrapCursorHistoryText(extractAssistantText(message));
 }
 
-function resolveCursorTranscriptPath(cwd: string, sessionId: string): string {
+function isSafeCursorSessionId(sessionId: string): boolean {
+  return /^[A-Za-z0-9-]+$/u.test(sessionId);
+}
+
+function resolveCursorTranscriptPath(cwd: string, sessionId: string): string | null {
+  if (!isSafeCursorSessionId(sessionId)) {
+    return null;
+  }
   const projectDir = cwd.replace(/[\\/:\.]+/g, "-").replace(/^-+|-+$/g, "");
   return path.join(
     os.homedir(),
@@ -158,7 +170,7 @@ function parseCursorTranscriptLine(line: string): AgentTimelineItem[] {
 
 function loadCursorTranscriptHistory(cwd: string, sessionId: string): AgentTimelineItem[] {
   const transcriptPath = resolveCursorTranscriptPath(cwd, sessionId);
-  if (!fs.existsSync(transcriptPath)) {
+  if (!transcriptPath || !fs.existsSync(transcriptPath)) {
     return [];
   }
 
