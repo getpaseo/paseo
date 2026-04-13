@@ -21,6 +21,13 @@ import {
   type MutableRefObject,
 } from "react";
 import { router, usePathname } from "expo-router";
+import Animated, {
+  cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from "react-native-reanimated";
 import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { type GestureType } from "react-native-gesture-handler";
@@ -112,6 +119,26 @@ function getWorkspacePrIconColor(
       return theme.colors.palette.green[500];
     case "closed":
       return theme.colors.palette.red[500];
+  }
+}
+
+function getProjectStatusRingColor(input: {
+  theme: ReturnType<typeof useUnistyles>["theme"];
+  statusBucket: SidebarWorkspaceEntry["statusBucket"];
+}): string {
+  const { theme, statusBucket } = input;
+  switch (statusBucket) {
+    case "running":
+      return theme.colors.palette.green[500];
+    case "attention":
+      return theme.colors.palette.amber[500];
+    case "needs_input":
+      return theme.colors.palette.blue[500];
+    case "failed":
+      return theme.colors.palette.red[500];
+    case "done":
+    default:
+      return theme.colors.foregroundMuted;
   }
 }
 
@@ -288,6 +315,7 @@ function ProjectLeadingVisual({
   displayName,
   iconDataUri,
   workspace,
+  statusBucket,
   chevron = null,
   showChevron = false,
   isArchiving = false,
@@ -295,6 +323,7 @@ function ProjectLeadingVisual({
   displayName: string;
   iconDataUri: string | null;
   workspace: SidebarWorkspaceEntry | null;
+  statusBucket?: SidebarWorkspaceEntry["statusBucket"] | null;
   chevron?: "expand" | "collapse" | null;
   showChevron?: boolean;
   isArchiving?: boolean;
@@ -302,12 +331,35 @@ function ProjectLeadingVisual({
   const { theme } = useUnistyles();
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(displayName);
   const placeholderInitial = placeholderLabel.charAt(0).toUpperCase();
-  const activeWorkspace = workspace;
-  const shouldShowWorkspaceStatus =
-    activeWorkspace !== null && (isArchiving || activeWorkspace.statusBucket !== "done");
-  const shouldShowSyncedLoader = activeWorkspace
-    ? shouldRenderSyncedStatusLoader({ bucket: activeWorkspace.statusBucket })
-    : false;
+  const resolvedStatusBucket = statusBucket ?? workspace?.statusBucket ?? "done";
+  const ringColor = getProjectStatusRingColor({ theme, statusBucket: resolvedStatusBucket });
+  const ringOpacity = useSharedValue(1);
+
+  useEffect(() => {
+    if (resolvedStatusBucket === "needs_input") {
+      ringOpacity.value = withRepeat(
+        withTiming(0.35, {
+          duration: 700,
+        }),
+        -1,
+        true,
+      );
+      return;
+    }
+    cancelAnimation(ringOpacity);
+    ringOpacity.value = withTiming(1, { duration: 150 });
+  }, [resolvedStatusBucket, ringOpacity]);
+
+  const ringAnimatedStyle = useAnimatedStyle(() => {
+    if (resolvedStatusBucket !== "needs_input") {
+      return {
+        opacity: 1,
+      };
+    }
+    return {
+      opacity: ringOpacity.value,
+    };
+  }, [resolvedStatusBucket]);
 
   if (showChevron && chevron !== null) {
     return (
@@ -325,10 +377,6 @@ function ProjectLeadingVisual({
     </View>
   );
 
-  if (!shouldShowWorkspaceStatus || !activeWorkspace) {
-    return <View style={styles.projectLeadingVisualSlot}>{projectIcon}</View>;
-  }
-
   if (isArchiving) {
     return (
       <View style={styles.projectLeadingVisualSlot}>
@@ -337,53 +385,21 @@ function ProjectLeadingVisual({
     );
   }
 
-  if (shouldShowSyncedLoader) {
-    return (
-      <View style={styles.projectLeadingVisualSlot}>
-        <SyncedLoader size={11} color={theme.colors.palette.amber[500]} />
-      </View>
-    );
-  }
-
-  if (activeWorkspace.statusBucket === "needs_input") {
-    return (
-      <View style={styles.projectLeadingVisualSlot}>
-        <CircleAlert size={14} color={theme.colors.palette.amber[500]} />
-      </View>
-    );
-  }
-
-  const dotColor = getStatusDotColor({
-    theme,
-    bucket: activeWorkspace.statusBucket,
-    showDoneAsInactive: false,
-  });
-  const statusDotSize = isEmphasizedStatusDotBucket(activeWorkspace.statusBucket)
-    ? EMPHASIZED_STATUS_DOT_SIZE
-    : DEFAULT_STATUS_DOT_SIZE;
-  const statusDotOffset =
-    statusDotSize === EMPHASIZED_STATUS_DOT_SIZE
-      ? EMPHASIZED_STATUS_DOT_OFFSET
-      : DEFAULT_STATUS_DOT_OFFSET;
-
   return (
     <View style={styles.projectLeadingVisualSlot}>
-      {projectIcon}
-      {dotColor ? (
-        <View
+      <View style={styles.projectIconContainer}>
+        <View style={styles.projectIconSurface}>{projectIcon}</View>
+        <Animated.View
+          pointerEvents="none"
           style={[
-            styles.statusDotOverlay,
+            styles.projectIconStatusRing,
             {
-              backgroundColor: dotColor,
-              borderColor: theme.colors.surface0,
-              width: statusDotSize,
-              height: statusDotSize,
-              right: statusDotOffset,
-              bottom: statusDotOffset,
+              borderColor: ringColor,
             },
+            ringAnimatedStyle,
           ]}
         />
-      ) : null}
+      </View>
     </View>
   );
 }
@@ -778,6 +794,7 @@ function ProjectHeaderRow({
           displayName={displayName}
           iconDataUri={iconDataUri}
           workspace={workspace}
+          statusBucket={project.statusBucket}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
@@ -1996,12 +2013,34 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  projectIconContainer: {
+    width: "100%",
+    height: "100%",
+    borderRadius: theme.borderRadius.sm,
+    position: "relative",
+  },
+  projectIconSurface: {
+    width: "100%",
+    height: "100%",
+    borderRadius: theme.borderRadius.sm,
+    overflow: "hidden",
+    backgroundColor: theme.colors.surface0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  projectIconStatusRing: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderWidth: 1.5,
+    borderRadius: theme.borderRadius.sm,
+  },
   projectIconFallback: {
     width: "100%",
     height: "100%",
     borderRadius: theme.borderRadius.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
     alignItems: "center",
     justifyContent: "center",
   },
