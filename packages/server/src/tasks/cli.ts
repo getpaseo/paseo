@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { FileTaskStore } from "./task-store.js";
 import { computeExecutionOrder, buildSortedChildrenMap } from "./execution-order.js";
 import { resolvePackageVersion } from "../server/package-version.js";
+import { spawnProcess } from "../utils/spawn.js";
 import type { AgentType, ModelName, Task } from "./types.js";
 
 const TASKS_DIR = resolve(process.cwd(), ".tasks");
@@ -638,11 +638,11 @@ function getAgentConfig(modelStr: string): AgentConfig {
   return { cli: "claude", model };
 }
 
-function runAgentWithModel(
+async function runAgentWithModel(
   prompt: string,
   modelStr: string,
   logFile: string,
-): { success: boolean; output: string } {
+): Promise<{ success: boolean; output: string }> {
   const config = getAgentConfig(modelStr);
   let args: string[];
 
@@ -667,20 +667,34 @@ function runAgentWithModel(
     args.push(prompt);
   }
 
-  const result = spawnSync(config.cli, args, {
-    stdio: ["inherit", "pipe", "pipe"],
-    cwd: process.cwd(),
-    maxBuffer: 50 * 1024 * 1024,
+  const { stdout, stderr, exitCode } = await new Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+  }>((resolve, reject) => {
+    const child = spawnProcess(config.cli, args, {
+      stdio: ["inherit", "pipe", "pipe"],
+      cwd: process.cwd(),
+    });
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8"),
+        exitCode: code,
+      });
+    });
   });
-
-  const stdout = result.stdout?.toString() ?? "";
-  const stderr = result.stderr?.toString() ?? "";
   const output = stdout + stderr;
 
   // Append to log file for history
   appendFileSync(logFile, output);
 
-  return { success: result.status === 0, output };
+  return { success: exitCode === 0, output };
 }
 
 async function buildTaskContext(task: Task, scopeId?: string): Promise<string> {
@@ -1102,7 +1116,7 @@ program
       log(logFile, `[PLANNER] Running ${plannerModel} (${reason})...`);
       const context = await buildTaskContext(task, scopeId);
       const plannerPrompt = makePlannerPrompt(task, context, reason);
-      runAgentWithModel(plannerPrompt, plannerModel, logFile);
+      await runAgentWithModel(plannerPrompt, plannerModel, logFile);
 
       // Check if planner created subtasks for this task
       const children = await store.getChildren(task.id);
@@ -1221,7 +1235,7 @@ program
 
           const freshContext = await buildTaskContext(freshTask, scopeId);
           const workerPrompt = makeWorkerPrompt(freshTask, freshContext, iteration);
-          runAgentWithModel(workerPrompt, workerModel, logFile);
+          await runAgentWithModel(workerPrompt, workerModel, logFile);
 
           // Step 3: Judge
           log(logFile, `[JUDGE] Verifying with ${judgeModel}...`);
@@ -1229,7 +1243,7 @@ program
           if (!judgeTask) break;
 
           const judgePrompt = makeJudgePrompt(judgeTask);
-          const judgeResult = runAgentWithModel(judgePrompt, judgeModel, logFile);
+          const judgeResult = await runAgentWithModel(judgePrompt, judgeModel, logFile);
 
           const verdict = parseJudgeVerdict(judgeResult.output);
           log(logFile, `[JUDGE] Verdict: ${verdict || "UNKNOWN"}`);

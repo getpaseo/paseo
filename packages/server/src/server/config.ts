@@ -87,7 +87,7 @@ export function loadConfig(
 
   const mcpEnabled = options?.cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true;
   const mcpInjectIntoAgents =
-    options?.cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? true;
+    options?.cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false;
 
   const relayEnabled =
     options?.cli?.relayEnabled ??

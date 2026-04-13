@@ -85,10 +85,21 @@ export function hasPendingTerminalModifiers(modifiers: PendingTerminalModifiers)
 export function shouldInterceptDomTerminalKey(args: {
   key: string;
   ctrlKey: boolean;
+  shiftKey: boolean;
   altKey: boolean;
+  metaKey: boolean;
   pendingModifiers: PendingTerminalModifiers;
 }): boolean {
-  return hasPendingTerminalModifiers(args.pendingModifiers);
+  if (hasPendingTerminalModifiers(args.pendingModifiers)) {
+    return true;
+  }
+  // xterm.js sends plain \r for Enter regardless of modifiers.
+  // Intercept modified Enter so it gets CSI u encoding (Kitty keyboard protocol),
+  // which Claude Code and other TUI apps use for Shift+Enter newlines.
+  if (args.key === "Enter" && (args.shiftKey || args.ctrlKey || args.altKey || args.metaKey)) {
+    return true;
+  }
+  return false;
 }
 
 export function mergeTerminalModifiers(args: {

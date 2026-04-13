@@ -37,8 +37,9 @@ import {
   shouldShowCustomComboboxOption,
 } from "./combobox-options";
 import type { ComboboxOptionModel } from "./combobox-options";
+import { isWeb } from "@/constants/platform";
 
-const IS_WEB = Platform.OS === "web";
+const IS_WEB = isWeb;
 
 export type ComboboxOption = ComboboxOptionModel;
 
@@ -107,6 +108,7 @@ export interface SearchInputProps {
   onChangeText: (text: string) => void;
   onSubmitEditing?: () => void;
   autoFocus?: boolean;
+  useBottomSheetInput?: boolean;
 }
 
 export function SearchInput({
@@ -115,10 +117,11 @@ export function SearchInput({
   onChangeText,
   onSubmitEditing,
   autoFocus = false,
+  useBottomSheetInput = false,
 }: SearchInputProps): ReactElement {
   const { theme } = useUnistyles();
   const inputRef = useRef<TextInput>(null);
-  const InputComponent = Platform.OS === "web" ? TextInput : BottomSheetTextInput;
+  const InputComponent = useBottomSheetInput ? BottomSheetTextInput : TextInput;
 
   useEffect(() => {
     if (autoFocus && IS_WEB && inputRef.current) {
@@ -264,8 +267,7 @@ export function Combobox({
 }: ComboboxProps): ReactElement {
   const isMobile = useIsCompactFormFactor();
   const effectiveOptionsPosition = isMobile ? "below-search" : optionsPosition;
-  const isDesktopAboveSearch =
-    !isMobile && Platform.OS === "web" && effectiveOptionsPosition === "above-search";
+  const isDesktopAboveSearch = !isMobile && isWeb && effectiveOptionsPosition === "above-search";
   const { height: windowHeight } = useWindowDimensions();
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const hasPresentedBottomSheetRef = useRef(false);
@@ -322,8 +324,8 @@ export function Combobox({
 
   const middleware = useMemo(
     () => [
-      floatingOffset(Platform.OS === "web" ? 0 : 4),
-      ...(Platform.OS === "web" ? [] : [flip({ padding: collisionPadding })]),
+      floatingOffset(isWeb ? 0 : 4),
+      ...(isWeb ? [] : [flip({ padding: collisionPadding })]),
       ...(isDesktopAboveSearch ? [] : [shift({ padding: collisionPadding })]),
       floatingSize({
         padding: collisionPadding,
@@ -346,7 +348,7 @@ export function Combobox({
   );
 
   const { refs, floatingStyles, update } = useFloating({
-    placement: Platform.OS === "web" ? desktopPlacement : "bottom-start",
+    placement: isWeb ? desktopPlacement : "bottom-start",
     middleware,
     sameScrollView: false,
     elements: {
@@ -626,6 +628,7 @@ export function Combobox({
       onChangeText={setSearchQueryWithCallback}
       onSubmitEditing={handleSubmitSearch}
       autoFocus={!isMobile}
+      useBottomSheetInput={isMobile}
     />
   );
 

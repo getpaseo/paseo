@@ -71,7 +71,6 @@ import type {
   AgentSessionConfig,
 } from "../server/agent/agent-sdk-types.js";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
-import { getAgentProviderDefinition } from "../server/agent/provider-manifest.js";
 import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
 import {
   asUint8Array,
@@ -3936,10 +3935,6 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
 
   if (!merged.provider || !merged.cwd) {
     throw new Error("createAgent requires provider and cwd");
-  }
-
-  if (!merged.modeId) {
-    merged.modeId = getAgentProviderDefinition(merged.provider).defaultModeId ?? undefined;
   }
 
   return {

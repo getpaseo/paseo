@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Platform } from "react-native";
 import {
   buildExplorerCheckoutKey,
   coerceExplorerTabForCheckout,
@@ -9,6 +8,7 @@ import {
   resolveExplorerTabForCheckout,
   type ExplorerTab,
 } from "./explorer-tab-memory";
+import { isWeb } from "@/constants/platform";
 export type { ExplorerTab } from "./explorer-tab-memory";
 
 /**
@@ -128,7 +128,7 @@ function resolveExplorerTabFromActiveCheckout(state: PanelState): ExplorerTab | 
   });
 }
 
-const DEFAULT_DESKTOP_OPEN = Platform.OS === "web";
+const DEFAULT_DESKTOP_OPEN = isWeb;
 
 export const usePanelStore = create<PanelState>()(
   persist(
@@ -318,11 +318,7 @@ export const usePanelStore = create<PanelState>()(
         const state = persistedState as Partial<PanelState> & Record<string, unknown>;
 
         if (version < 2) {
-          if (
-            Platform.OS === "web" &&
-            typeof state.explorerWidth === "number" &&
-            state.explorerWidth === 400
-          ) {
+          if (isWeb && typeof state.explorerWidth === "number" && state.explorerWidth === 400) {
             state.explorerWidth = DEFAULT_EXPLORER_SIDEBAR_WIDTH;
           }
 
@@ -337,7 +333,7 @@ export const usePanelStore = create<PanelState>()(
 
         if (version < 3) {
           if (
-            Platform.OS === "web" &&
+            isWeb &&
             typeof state.explorerWidth === "number" &&
             (state.explorerWidth === 400 || state.explorerWidth === 520)
           ) {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
-import { View, Text, Pressable, TextInput, ActivityIndicator, Platform } from "react-native";
+import { View, Text, Pressable, TextInput, ActivityIndicator } from "react-native";
 import type { StyleProp, ViewStyle, TextProps } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
@@ -32,6 +32,7 @@ import type { AgentProviderDefinition } from "@server/server/agent/provider-mani
 import { getModeVisuals, type AgentModeIcon } from "@server/server/agent/provider-manifest";
 import { Combobox, ComboboxItem, ComboboxEmpty } from "@/components/ui/combobox";
 import { baseColors } from "@/styles/theme";
+import { isNative } from "@/constants/platform";
 
 const MODE_ICON_MAP: Record<AgentModeIcon, typeof ShieldCheck> = {
   ShieldCheck,
@@ -168,7 +169,7 @@ export function SelectField({
 
   const handleKeyDown = useCallback(
     (event: unknown) => {
-      if (Platform.OS !== "web") return;
+      if (isNative) return;
       const key = getWebKey(event);
       if (key === "Enter" || key === " ") {
         preventWebDefault(event);
@@ -430,7 +431,7 @@ export function FormSelectTrigger({
 
   const handleKeyDown = useCallback(
     (event: unknown) => {
-      if (Platform.OS !== "web") return;
+      if (isNative) return;
       const key = getWebKey(event);
       if (key === "Enter" || key === " ") {
         preventWebDefault(event);

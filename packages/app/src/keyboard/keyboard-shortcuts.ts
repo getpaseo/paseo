@@ -712,6 +712,32 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
 
+  // --- Settings toggle ---
+  {
+    id: "settings-toggle-cmd-comma-mac",
+    action: "settings.toggle",
+    combo: "Cmd+,",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "toggle-settings",
+      section: "panels",
+      label: "Toggle settings",
+      keys: ["mod", ","],
+    },
+  },
+  {
+    id: "settings-toggle-ctrl-comma-non-mac",
+    action: "settings.toggle",
+    combo: "Ctrl+,",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "toggle-settings",
+      section: "panels",
+      label: "Toggle settings",
+      keys: ["mod", ","],
+    },
+  },
+
   // --- Focus mode ---
   {
     id: "view-toggle-focus-cmd-shift-f-mac",

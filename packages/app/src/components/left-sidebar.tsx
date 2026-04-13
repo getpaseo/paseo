@@ -14,7 +14,6 @@ import {
   View,
   Pressable,
   Text,
-  Platform,
   useWindowDimensions,
   StyleSheet as RNStyleSheet,
 } from "react-native";
@@ -59,6 +58,7 @@ import {
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
+import { isWeb } from "@/constants/platform";
 
 const MIN_CHAT_WIDTH = 400;
 
@@ -527,7 +527,7 @@ function MobileSidebar({
     pointerEvents: backdropOpacity.value > 0.01 ? "auto" : "none",
   }));
 
-  const overlayPointerEvents = Platform.OS === "web" ? (isOpen ? "auto" : "none") : "box-none";
+  const overlayPointerEvents = isWeb ? (isOpen ? "auto" : "none") : "box-none";
 
   return (
     <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
@@ -833,12 +833,7 @@ function DesktopSidebar({
 
         {/* Resize handle - absolutely positioned over right border */}
         <GestureDetector gesture={resizeGesture}>
-          <View
-            style={[
-              styles.resizeHandle,
-              Platform.OS === "web" && ({ cursor: "col-resize" } as any),
-            ]}
-          />
+          <View style={[styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as any)]} />
         </GestureDetector>
       </View>
     </Animated.View>

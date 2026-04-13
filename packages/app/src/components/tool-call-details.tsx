@@ -1,5 +1,5 @@
 import React, { useMemo, ReactNode } from "react";
-import { View, Text, Platform, ScrollView as RNScrollView } from "react-native";
+import { View, Text, ScrollView as RNScrollView } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
@@ -8,8 +8,9 @@ import { buildLineDiff, parseUnifiedDiff } from "@/utils/tool-call-parsers";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
+import { isWeb } from "@/constants/platform";
 
-const ScrollView = Platform.OS === "web" ? RNScrollView : GHScrollView;
+const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
 // ---- Content Component ----
 
@@ -511,7 +512,7 @@ const styles = StyleSheet.create((theme) => {
       fontSize: theme.fontSize.xs,
       color: theme.colors.foreground,
       lineHeight: 18,
-      ...(Platform.OS === "web"
+      ...(isWeb
         ? {
             whiteSpace: "pre",
             overflowWrap: "normal",

@@ -4,6 +4,7 @@ const CLAUDE_THINKING_OPTIONS = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },
+  { id: "max", label: "Max" },
 ] as const;
 
 const CLAUDE_MODELS: AgentModelDefinition[] = [

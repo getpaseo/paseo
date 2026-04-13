@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { Pressable, Text, View, Platform, ScrollView } from "react-native";
+import { Pressable, Text, View, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { QrCode, Link2, ClipboardPaste, ExternalLink } from "lucide-react-native";
@@ -18,6 +18,7 @@ import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { buildHostRootRoute } from "@/utils/host-routes";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { isWeb, isNative } from "@/constants/platform";
 
 type WelcomeAction = {
   key: "scan-qr" | "direct-connection" | "paste-pairing-link";
@@ -255,52 +256,51 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
     [router],
   );
 
-  const actions: WelcomeAction[] =
-    Platform.OS === "web"
-      ? [
-          {
-            key: "direct-connection",
-            label: "Direct connection",
-            testID: "welcome-direct-connection",
-            primary: true,
-            icon: Link2,
-            onPress: () => setIsDirectOpen(true),
-          },
-          {
-            key: "paste-pairing-link",
-            label: "Paste pairing link",
-            testID: "welcome-paste-pairing-link",
-            primary: false,
-            icon: ClipboardPaste,
-            onPress: () => setIsPasteLinkOpen(true),
-          },
-        ]
-      : [
-          {
-            key: "scan-qr",
-            label: "Scan QR code",
-            testID: "welcome-scan-qr",
-            primary: true,
-            icon: QrCode,
-            onPress: () => router.push("/pair-scan?source=onboarding"),
-          },
-          {
-            key: "direct-connection",
-            label: "Direct connection",
-            testID: "welcome-direct-connection",
-            primary: false,
-            icon: Link2,
-            onPress: () => setIsDirectOpen(true),
-          },
-          {
-            key: "paste-pairing-link",
-            label: "Paste pairing link",
-            testID: "welcome-paste-pairing-link",
-            primary: false,
-            icon: ClipboardPaste,
-            onPress: () => setIsPasteLinkOpen(true),
-          },
-        ];
+  const actions: WelcomeAction[] = isWeb
+    ? [
+        {
+          key: "direct-connection",
+          label: "Direct connection",
+          testID: "welcome-direct-connection",
+          primary: true,
+          icon: Link2,
+          onPress: () => setIsDirectOpen(true),
+        },
+        {
+          key: "paste-pairing-link",
+          label: "Paste pairing link",
+          testID: "welcome-paste-pairing-link",
+          primary: false,
+          icon: ClipboardPaste,
+          onPress: () => setIsPasteLinkOpen(true),
+        },
+      ]
+    : [
+        {
+          key: "scan-qr",
+          label: "Scan QR code",
+          testID: "welcome-scan-qr",
+          primary: true,
+          icon: QrCode,
+          onPress: () => router.push("/pair-scan?source=onboarding"),
+        },
+        {
+          key: "direct-connection",
+          label: "Direct connection",
+          testID: "welcome-direct-connection",
+          primary: false,
+          icon: Link2,
+          onPress: () => setIsDirectOpen(true),
+        },
+        {
+          key: "paste-pairing-link",
+          label: "Paste pairing link",
+          testID: "welcome-paste-pairing-link",
+          primary: false,
+          icon: ClipboardPaste,
+          onPress: () => setIsPasteLinkOpen(true),
+        },
+      ];
 
   const showHostList = hosts.length > 0 && !anyOnlineServerId;
 
@@ -321,7 +321,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           {showHostList ? "Connecting to your hosts…" : "Connect to your host to start"}
         </Text>
 
-        {!showHostList && Platform.OS !== "web" && (
+        {!showHostList && isNative && (
           <>
             <Text style={styles.setupHint}>
               You need the Paseo desktop app or server running on your computer first.

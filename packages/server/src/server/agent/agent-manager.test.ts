@@ -98,6 +98,22 @@ class TestAgentClient implements AgentClient {
     return new TestAgentSession(config);
   }
 
+  async listModels() {
+    return [
+      {
+        provider: "codex",
+        id: "gpt-5.4",
+        label: "GPT-5.4",
+        isDefault: true,
+      },
+      {
+        provider: "codex",
+        id: "gpt-5.4-mini",
+        label: "GPT-5.4 Mini",
+      },
+    ];
+  }
+
   async resumeSession(
     _handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
@@ -212,7 +228,7 @@ function createFeature(overrides: Partial<AgentFeature> = {}): AgentFeature {
 describe("AgentManager", () => {
   const logger = createTestLogger();
 
-  test("normalizeConfig does not inject default model when omitted", async () => {
+  test("normalizeConfig injects the provider default model when omitted", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
     const storage = new AgentStorage(storagePath, logger);
@@ -230,7 +246,8 @@ describe("AgentManager", () => {
       cwd: workdir,
     });
 
-    expect(snapshot.model).toBeUndefined();
+    expect(snapshot.config.model).toBe("gpt-5.4");
+    expect(snapshot.config.modeId).toBe("auto");
   });
 
   test("normalizeConfig strips legacy 'default' model id", async () => {
@@ -252,7 +269,8 @@ describe("AgentManager", () => {
       model: "default",
     });
 
-    expect(snapshot.model).toBeUndefined();
+    expect(snapshot.config.model).toBe("gpt-5.4");
+    expect(snapshot.config.modeId).toBe("auto");
   });
 
   test("createAgent passes daemon launch env through the provider launch context", async () => {
@@ -292,6 +310,8 @@ describe("AgentManager", () => {
     expect(client.lastConfig).toEqual({
       provider: "codex",
       cwd: workdir,
+      model: "gpt-5.4",
+      modeId: "auto",
     });
     expect(client.lastLaunchContext).toEqual({
       env: {
@@ -1432,7 +1452,7 @@ describe("AgentManager", () => {
       cwd: workdir,
     });
 
-    expect(snapshot.runtimeInfo?.model ?? null).toBeNull();
+    expect(snapshot.runtimeInfo?.model).toBe("gpt-5.4");
 
     await manager.runAgent(snapshot.id, "hello");
 

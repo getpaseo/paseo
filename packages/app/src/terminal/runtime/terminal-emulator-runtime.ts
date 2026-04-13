@@ -317,7 +317,9 @@ export class TerminalEmulatorRuntime {
         !shouldInterceptDomTerminalKey({
           key: normalizedKey,
           ctrlKey: event.ctrlKey,
+          shiftKey: event.shiftKey,
           altKey: event.altKey,
+          metaKey: event.metaKey,
           pendingModifiers: this.pendingModifiers,
         })
       ) {

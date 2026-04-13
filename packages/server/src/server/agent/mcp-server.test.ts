@@ -65,7 +65,7 @@ describe("create_agent MCP tool", () => {
 
     const missingTitle = await tool.inputSchema.safeParseAsync({
       cwd: existingCwd,
-      initialMode: "default",
+      mode: "default",
       initialPrompt: "test",
     });
     expect(missingTitle.success).toBe(false);
@@ -73,7 +73,7 @@ describe("create_agent MCP tool", () => {
 
     const tooLong = await tool.inputSchema.safeParseAsync({
       cwd: existingCwd,
-      initialMode: "default",
+      mode: "default",
       title: "x".repeat(61),
       initialPrompt: "test",
     });
@@ -82,7 +82,7 @@ describe("create_agent MCP tool", () => {
 
     const ok = await tool.inputSchema.safeParseAsync({
       cwd: existingCwd,
-      initialMode: "default",
+      mode: "default",
       title: "Short title",
       initialPrompt: "test",
     });
@@ -95,7 +95,7 @@ describe("create_agent MCP tool", () => {
     const tool = (server as any)._registeredTools["create_agent"];
     const parsed = await tool.inputSchema.safeParseAsync({
       cwd: existingCwd,
-      initialMode: "default",
+      mode: "default",
       title: "Short title",
     });
     expect(parsed.success).toBe(false);
@@ -194,7 +194,7 @@ describe("create_agent MCP tool", () => {
     await tool.callback({
       cwd: existingCwd,
       title: "Config test",
-      initialMode: "default",
+      mode: "default",
       initialPrompt: "Do work",
       model: "claude-sonnet-4-20250514",
       thinking: "think-hard",
@@ -248,7 +248,7 @@ describe("create_agent MCP tool", () => {
     await tool.callback({
       cwd: "subdir",
       title: "Child",
-      agentType: "codex",
+      provider: "codex",
       initialPrompt: "Do work",
     });
 
@@ -287,7 +287,7 @@ describe("create_agent MCP tool", () => {
     await tool.callback({
       cwd: existingCwd,
       title: "Injected config test",
-      initialMode: "default",
+      mode: "default",
       initialPrompt: "Do work",
     });
 

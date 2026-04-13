@@ -151,8 +151,8 @@ describe("agent MCP end-to-end (offline)", () => {
         args: {
           cwd: agentCwd,
           title: "MCP e2e smoke",
-          agentType: "claude",
-          initialMode: "bypassPermissions",
+          provider: "claude",
+          mode: "bypassPermissions",
           initialPrompt,
           background: false,
         },
@@ -242,8 +242,8 @@ describe("agent MCP end-to-end (offline)", () => {
         args: {
           cwd: agentCwd,
           title: "Injected MCP",
-          agentType: "claude",
-          initialMode: "bypassPermissions",
+          provider: "claude",
+          mode: "bypassPermissions",
           initialPrompt: "reply with done and stop",
           background: true,
         },
@@ -265,8 +265,8 @@ describe("agent MCP end-to-end (offline)", () => {
         args: {
           cwd: disabledAgentCwd,
           title: "No injected MCP",
-          agentType: "claude",
-          initialMode: "bypassPermissions",
+          provider: "claude",
+          mode: "bypassPermissions",
           initialPrompt: "reply with done and stop",
           background: true,
         },
@@ -362,8 +362,8 @@ describe("agent MCP end-to-end (offline)", () => {
           args: {
             cwd: repoRoot,
             title: "MCP worktree setup terminals",
-            agentType: "claude",
-            initialMode: "bypassPermissions",
+            provider: "claude",
+            mode: "bypassPermissions",
             initialPrompt: "say done and stop",
             worktreeName: "mcp-worktree-setup-test",
             baseBranch: "main",

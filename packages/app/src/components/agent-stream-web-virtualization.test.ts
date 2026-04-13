@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
 import {
+  clearAssistantImageMetadataCache,
+  setAssistantImageMetadata,
+} from "@/utils/assistant-image-metadata";
+import {
   DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS,
   DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD,
   estimateStreamItemHeight,
@@ -127,6 +131,25 @@ describe("estimateStreamItemHeight", () => {
     };
 
     expect(estimateStreamItemHeight(item)).toBe(220);
+  });
+
+  it("uses cached assistant image metadata when available", () => {
+    clearAssistantImageMetadataCache();
+    setAssistantImageMetadata(
+      {
+        source: "https://example.com/tall.png",
+      },
+      { width: 800, height: 1600 },
+    );
+
+    const item: StreamItem = {
+      kind: "assistant_message",
+      id: "a-image",
+      text: "Look at this\n\n![Screenshot](https://example.com/tall.png)",
+      timestamp: createTimestamp(2),
+    };
+
+    expect(estimateStreamItemHeight(item)).toBeGreaterThan(220);
   });
 });
 

@@ -33,7 +33,7 @@ import type {
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import type { AgentStorage } from "./agent-storage.js";
-import { AGENT_PROVIDER_IDS } from "./provider-manifest.js";
+import { AGENT_PROVIDER_IDS, getAgentProviderDefinition } from "./provider-manifest.js";
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 
@@ -2568,7 +2568,31 @@ export class AgentManager {
 
     if (typeof normalized.model === "string") {
       const trimmed = normalized.model.trim();
-      normalized.model = trimmed.length > 0 ? trimmed : undefined;
+      normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
+    }
+
+    if (!normalized.model) {
+      const client = this.clients.get(normalized.provider);
+      if (client) {
+        try {
+          const models = await client.listModels();
+          const defaultModel = models.find((model) => model.isDefault) ?? models[0];
+          if (defaultModel) {
+            normalized.model = defaultModel.id;
+          }
+        } catch {
+          // Provider may not support model listing — leave model undefined
+        }
+      }
+    }
+
+    if (!normalized.modeId) {
+      try {
+        normalized.modeId =
+          getAgentProviderDefinition(normalized.provider).defaultModeId ?? undefined;
+      } catch {
+        // Unknown provider
+      }
     }
 
     return normalized;

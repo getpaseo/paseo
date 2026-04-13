@@ -1,19 +1,10 @@
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { execMock, getCheckoutDiffMock, resolveCheckoutGitDirMock, readdirMock, watchCalls } =
-  vi.hoisted(() => {
+const { getCheckoutDiffMock, resolveCheckoutGitDirMock, readdirMock, watchCalls } = vi.hoisted(
+  () => {
     const hoistedWatchCalls: Array<{ path: string; close: ReturnType<typeof vi.fn> }> = [];
     return {
-      execMock: vi.fn(
-        (
-          _command: string,
-          _options: unknown,
-          callback: (error: null, result: { stdout: string; stderr: string }) => void,
-        ) => {
-          callback(null, { stdout: "/tmp/repo\n", stderr: "" });
-        },
-      ),
       getCheckoutDiffMock: vi.fn(async () => ({ diff: "", structured: [] })),
       resolveCheckoutGitDirMock: vi.fn(async () => "/tmp/repo/.git"),
       readdirMock: vi.fn(async (directory: string) => {
@@ -40,10 +31,17 @@ const { execMock, getCheckoutDiffMock, resolveCheckoutGitDirMock, readdirMock, w
       }),
       watchCalls: hoistedWatchCalls,
     };
-  });
+  },
+);
 
-vi.mock("child_process", () => ({
-  exec: execMock,
+vi.mock("../utils/run-git-command.js", () => ({
+  runGitCommand: vi.fn(async () => ({
+    stdout: "/tmp/repo\n",
+    stderr: "",
+    truncated: false,
+    exitCode: 0,
+    signal: null,
+  })),
 }));
 
 vi.mock("node:fs/promises", async () => {
@@ -88,7 +86,6 @@ describe("CheckoutDiffManager Linux watchers", () => {
 
   beforeEach(() => {
     watchCalls.length = 0;
-    execMock.mockClear();
     getCheckoutDiffMock.mockClear();
     resolveCheckoutGitDirMock.mockClear();
     readdirMock.mockClear();

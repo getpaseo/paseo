@@ -73,6 +73,7 @@ import {
   WORKING_INDICATOR_CYCLE_MS,
   WORKING_INDICATOR_OFFSETS,
 } from "@/utils/working-indicator";
+import { isWeb } from "@/constants/platform";
 
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
@@ -216,7 +217,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return buildAgentStreamRenderModel({
         tail: streamItems,
         head: streamHead ?? [],
-        platform: Platform.OS === "web" ? "web" : "native",
+        platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
       });
     }, [isMobile, streamHead, streamItems]);
@@ -331,6 +332,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 timestamp={item.timestamp.getTime()}
                 onInlinePathPress={handleInlinePathPress}
                 workspaceRoot={workspaceRoot}
+                serverId={serverId}
+                client={client}
               />
             );
           case "thought": {

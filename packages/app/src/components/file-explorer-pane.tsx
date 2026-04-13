@@ -7,7 +7,6 @@ import {
   Pressable,
   Text,
   View,
-  Platform,
 } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -52,6 +51,7 @@ import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
+import { isWeb } from "@/constants/platform";
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "name", label: "Name" },
@@ -91,7 +91,7 @@ export function FileExplorerPane({
 }: FileExplorerPaneProps) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
-  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
+  const showDesktopWebScrollbar = isWeb && !isMobile;
 
   const daemons = useHosts();
   const daemonProfile = useMemo(

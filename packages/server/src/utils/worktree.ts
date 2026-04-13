@@ -1,4 +1,4 @@
-import { exec, spawn } from "child_process";
+import { exec } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "fs";
 import { join, basename, dirname, resolve, sep } from "path";
@@ -12,6 +12,8 @@ import {
   writePaseoWorktreeMetadata,
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
+import { runGitCommand } from "./run-git-command.js";
+import { platformBash, spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 
 interface PaseoConfig {
@@ -203,7 +205,7 @@ async function execSetupCommand(
     const { stdout, stderr } = await execAsync(command, {
       cwd: options.cwd,
       env: options.env,
-      shell: "/bin/bash",
+      ...(process.platform === "win32" ? {} : { shell: "/bin/bash" }),
     });
     return {
       command,
@@ -274,7 +276,8 @@ async function execSetupCommandStreamed(options: {
       cwd: options.cwd,
     });
 
-    const child = spawn("/bin/bash", ["-lc", options.command], {
+    const shell = platformBash();
+    const child = spawnProcess(shell.command, [...shell.flag, options.command], {
       cwd: options.cwd,
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -377,10 +380,13 @@ async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<
   } catch {
     // Fallback: best-effort resolve toplevel (will be the worktree root in typical cases)
     try {
-      const { stdout } = await execAsync("git rev-parse --path-format=absolute --show-toplevel", {
-        cwd: worktreePath,
-        env: READ_ONLY_GIT_ENV,
-      });
+      const { stdout } = await runGitCommand(
+        ["rev-parse", "--path-format=absolute", "--show-toplevel"],
+        {
+          cwd: worktreePath,
+          env: READ_ONLY_GIT_ENV,
+        },
+      );
       const topLevel = stdout.trim();
       if (topLevel) {
         return normalizePathForOwnership(topLevel);
@@ -438,8 +444,9 @@ export async function runWorktreeSetupCommands(options: {
     if (result.exitCode !== 0) {
       if (options.cleanupOnFailure) {
         try {
-          await execAsync(`git worktree remove "${options.worktreePath}" --force`, {
+          await runGitCommand(["worktree", "remove", options.worktreePath, "--force"], {
             cwd: options.worktreePath,
+            timeout: 120_000,
           });
         } catch {
           rmSync(options.worktreePath, { recursive: true, force: true });
@@ -457,7 +464,7 @@ export async function runWorktreeSetupCommands(options: {
 
 async function resolveBranchNameForWorktreePath(worktreePath: string): Promise<string> {
   try {
-    const { stdout } = await execAsync("git branch --show-current", {
+    const { stdout } = await runGitCommand(["branch", "--show-current"], {
       cwd: worktreePath,
       env: READ_ONLY_GIT_ENV,
     });
@@ -560,10 +567,13 @@ export async function runWorktreeTeardownCommands(options: {
  * This is where refs, objects, etc. are stored.
  */
 export async function getGitCommonDir(cwd: string): Promise<string> {
-  const { stdout } = await execAsync("git rev-parse --path-format=absolute --git-common-dir", {
-    cwd,
-    env: READ_ONLY_GIT_ENV,
-  });
+  const { stdout } = await runGitCommand(
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    },
+  );
   const commonDir = stdout.trim();
   if (!commonDir) {
     throw new Error("Not in a git repository");
@@ -793,7 +803,7 @@ export async function listPaseoWorktrees({
   paseoHome?: string;
 }): Promise<PaseoWorktreeInfo[]> {
   const worktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome);
-  const { stdout } = await execAsync("git worktree list --porcelain", {
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
     cwd,
     env: READ_ONLY_GIT_ENV,
   });
@@ -824,10 +834,13 @@ export async function resolvePaseoWorktreeRootForCwd(
 
   let worktreeRoot: string | null = null;
   try {
-    const { stdout } = await execAsync("git rev-parse --path-format=absolute --show-toplevel", {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
+    const { stdout } = await runGitCommand(
+      ["rev-parse", "--path-format=absolute", "--show-toplevel"],
+      {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      },
+    );
     const trimmed = stdout.trim();
     worktreeRoot = trimmed.length > 0 ? trimmed : null;
   } catch {
@@ -890,8 +903,9 @@ export async function deletePaseoWorktree({
     worktreePath: resolvedWorktree,
   });
 
-  await execAsync(`git worktree remove "${resolvedWorktree}" --force`, {
+  await runGitCommand(["worktree", "remove", resolvedWorktree, "--force"], {
     cwd,
+    timeout: 120_000,
   });
 
   if (existsSync(resolvedWorktree)) {
@@ -927,11 +941,11 @@ export async function createWorktree({
   // Resolve the base branch - prefer origin/{branch}, then fall back to local
   let resolvedBaseBranch = normalizedBaseBranch;
   try {
-    await execAsync(`git rev-parse --verify origin/${normalizedBaseBranch}`, { cwd });
+    await runGitCommand(["rev-parse", "--verify", `origin/${normalizedBaseBranch}`], { cwd });
     resolvedBaseBranch = `origin/${normalizedBaseBranch}`;
   } catch {
     try {
-      await execAsync(`git rev-parse --verify ${normalizedBaseBranch}`, { cwd });
+      await runGitCommand(["rev-parse", "--verify", normalizedBaseBranch], { cwd });
     } catch {
       throw new Error(`Base branch not found: ${normalizedBaseBranch}`);
     }
@@ -946,7 +960,9 @@ export async function createWorktree({
   // Check if branch already exists
   let branchExists = false;
   try {
-    await execAsync(`git show-ref --verify --quiet refs/heads/${branchName}`, { cwd });
+    await runGitCommand(["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`], {
+      cwd,
+    });
     branchExists = true;
   } catch {
     branchExists = false;
@@ -963,7 +979,9 @@ export async function createWorktree({
   let suffix = 1;
   while (true) {
     try {
-      await execAsync(`git show-ref --verify --quiet refs/heads/${newBranchName}`, { cwd });
+      await runGitCommand(["show-ref", "--verify", "--quiet", `refs/heads/${newBranchName}`], {
+        cwd,
+      });
       // Branch exists, try with suffix
       newBranchName = `${candidateBranch}-${suffix}`;
       suffix++;
@@ -980,8 +998,10 @@ export async function createWorktree({
     pathSuffix++;
   }
 
-  const command = `git worktree add "${finalWorktreePath}" -b "${newBranchName}" "${base}"`;
-  await execAsync(command, { cwd });
+  await runGitCommand(["worktree", "add", finalWorktreePath, "-b", newBranchName, base], {
+    cwd,
+    timeout: 120_000,
+  });
   worktreePath = normalizePathForOwnership(finalWorktreePath);
 
   writePaseoWorktreeMetadata(worktreePath, { baseRefName: normalizedBaseBranch });

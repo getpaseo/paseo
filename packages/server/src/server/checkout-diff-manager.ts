@@ -1,15 +1,12 @@
 import { watch, type FSWatcher } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { exec } from "child_process";
-import { promisify } from "util";
 import type pino from "pino";
 import type { SubscribeCheckoutDiffRequest, SessionOutboundMessage } from "./messages.js";
 import { getCheckoutDiff } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
+import { runGitCommand } from "../utils/run-git-command.js";
 import { READ_ONLY_GIT_ENV, resolveCheckoutGitDir, toCheckoutError } from "./checkout-git-utils.js";
-
-const execAsync = promisify(exec);
 
 const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
 const CHECKOUT_DIFF_FALLBACK_REFRESH_MS = 5_000;
@@ -177,10 +174,13 @@ export class CheckoutDiffManager {
 
   private async resolveCheckoutWatchRoot(cwd: string): Promise<string | null> {
     try {
-      const { stdout } = await execAsync("git rev-parse --path-format=absolute --show-toplevel", {
-        cwd,
-        env: READ_ONLY_GIT_ENV,
-      });
+      const { stdout } = await runGitCommand(
+        ["rev-parse", "--path-format=absolute", "--show-toplevel"],
+        {
+          cwd,
+          env: READ_ONLY_GIT_ENV,
+        },
+      );
       const root = stdout.trim();
       return root.length > 0 ? root : null;
     } catch {

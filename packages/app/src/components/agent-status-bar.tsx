@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
-import { View, Text, Platform, Pressable, Keyboard } from "react-native";
+import { View, Text, Pressable, Keyboard } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
@@ -51,6 +51,7 @@ import {
   getStatusSelectorHint,
   resolveAgentModelSelection,
 } from "@/components/agent-status-bar.utils";
+import { isWeb as platformIsWeb } from "@/constants/platform";
 
 type StatusOption = {
   id: string;
@@ -222,7 +223,6 @@ function ControlledStatusBar({
   onModelSelectorOpen,
 }: ControlledAgentStatusBarProps) {
   const { theme } = useUnistyles();
-  const isWeb = Platform.OS === "web";
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [openSelector, setOpenSelector] = useState<StatusSelector | null>(null);
 
@@ -356,7 +356,7 @@ function ControlledStatusBar({
 
   return (
     <View style={styles.container}>
-      {isWeb ? (
+      {platformIsWeb ? (
         <>
           {providerOptions && providerOptions.length > 0 ? (
             <>
@@ -1077,7 +1077,6 @@ export function DraftAgentStatusBar({
   onModelSelectorOpen,
   disabled = false,
 }: DraftAgentStatusBarProps) {
-  const isWeb = Platform.OS === "web";
   const { preferences, updatePreferences } = useFormPreferences();
 
   const mappedModeOptions = useMemo<StatusOption[]>(() => {
@@ -1105,7 +1104,7 @@ export function DraftAgentStatusBar({
   const effectiveSelectedThinkingOption =
     selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
 
-  if (isWeb) {
+  if (platformIsWeb) {
     return (
       <View style={styles.container}>
         <CombinedModelSelector

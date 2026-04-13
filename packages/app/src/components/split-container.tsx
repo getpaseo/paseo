@@ -27,7 +27,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { Platform, View, Text } from "react-native";
+import { View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
 import { shouldFocusPaneFromEventTarget } from "@/components/split-container-pane-focus";
@@ -69,6 +69,7 @@ import {
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
 import { workspaceTabTargetsEqual } from "@/utils/workspace-tab-identity";
+import { isNative } from "@/constants/platform";
 
 interface SplitContainerProps {
   layout: WorkspaceLayout;
@@ -838,7 +839,7 @@ function SplitPaneView({
   );
 
   useEffect(() => {
-    if (Platform.OS !== "web") {
+    if (isNative) {
       return;
     }
 

@@ -1,4 +1,5 @@
 import type { StreamItem } from "@/types/stream";
+import { estimateAssistantMessageHeightFromCache } from "@/utils/assistant-image-metadata";
 
 export const DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 100;
 export const DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS = 50;
@@ -45,7 +46,7 @@ export function estimateStreamItemHeight(item: StreamItem): number {
     case "user_message":
       return item.images && item.images.length > 0 ? 220 : 96;
     case "assistant_message":
-      return 220;
+      return estimateAssistantMessageHeightFromCache(item.text) ?? 220;
     case "tool_call":
       return 136;
     case "thought":

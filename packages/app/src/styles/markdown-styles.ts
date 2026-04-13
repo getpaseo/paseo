@@ -1,8 +1,8 @@
-import { Platform } from "react-native";
 import type { Theme } from "./theme";
 import { Fonts } from "@/constants/theme";
+import { isWeb } from "@/constants/platform";
 
-const webSelectableTextStyle = Platform.OS === "web" ? { userSelect: "text" as const } : {};
+const webSelectableTextStyle = isWeb ? { userSelect: "text" as const } : {};
 
 /**
  * Creates comprehensive markdown styles for react-native-markdown-display.

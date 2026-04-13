@@ -57,7 +57,9 @@ describe("terminal key helpers", () => {
       shouldInterceptDomTerminalKey({
         key: "Escape",
         ctrlKey: false,
+        shiftKey: false,
         altKey: false,
+        metaKey: false,
         pendingModifiers: { ctrl: false, shift: false, alt: false },
       }),
     ).toBe(false);
@@ -65,7 +67,9 @@ describe("terminal key helpers", () => {
       shouldInterceptDomTerminalKey({
         key: "c",
         ctrlKey: true,
+        shiftKey: false,
         altKey: false,
+        metaKey: false,
         pendingModifiers: { ctrl: false, shift: false, alt: false },
       }),
     ).toBe(false);
@@ -73,7 +77,9 @@ describe("terminal key helpers", () => {
       shouldInterceptDomTerminalKey({
         key: "c",
         ctrlKey: false,
+        shiftKey: false,
         altKey: false,
+        metaKey: false,
         pendingModifiers: { ctrl: true, shift: false, alt: false },
       }),
     ).toBe(true);
@@ -81,10 +87,71 @@ describe("terminal key helpers", () => {
       shouldInterceptDomTerminalKey({
         key: "Escape",
         ctrlKey: false,
+        shiftKey: false,
         altKey: false,
+        metaKey: false,
         pendingModifiers: { ctrl: false, shift: false, alt: true },
       }),
     ).toBe(true);
+  });
+
+  it("intercepts Enter with DOM shift modifier for CSI u encoding", () => {
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "Enter",
+        ctrlKey: false,
+        shiftKey: true,
+        altKey: false,
+        metaKey: false,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+      }),
+    ).toBe(true);
+  });
+
+  it("intercepts Enter with any DOM modifier for CSI u encoding", () => {
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "Enter",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+      }),
+    ).toBe(true);
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "Enter",
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: true,
+        metaKey: false,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+      }),
+    ).toBe(true);
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "Enter",
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        metaKey: true,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+      }),
+    ).toBe(true);
+  });
+
+  it("does not intercept plain Enter without modifiers", () => {
+    expect(
+      shouldInterceptDomTerminalKey({
+        key: "Enter",
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+        pendingModifiers: { ctrl: false, shift: false, alt: false },
+      }),
+    ).toBe(false);
   });
 
   it("detects pending modifier state", () => {

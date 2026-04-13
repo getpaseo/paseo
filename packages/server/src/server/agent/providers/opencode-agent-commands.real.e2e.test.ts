@@ -1,13 +1,25 @@
-import { describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
 import type { AgentSlashCommand } from "../agent-sdk-types.js";
-import { isCommandAvailableSync } from "../../../utils/executable.js";
+import { isCommandAvailable } from "../../../utils/executable.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
 
 describe("opencode agent commands contract (real)", () => {
+  let canRun = false;
+
+  beforeAll(async () => {
+    canRun = await isCommandAvailable("opencode");
+  });
+
+  beforeEach((context) => {
+    if (!canRun) {
+      context.skip();
+    }
+  });
+
   test("lists slash commands with the expected contract", async () => {
-    expect(isCommandAvailableSync("opencode")).toBe(true);
+    expect(await isCommandAvailable("opencode")).toBe(true);
 
     const client = new OpenCodeAgentClient(pino({ level: "silent" }));
     const session = await client.createSession({
@@ -37,7 +49,7 @@ describe("opencode agent commands contract (real)", () => {
   }, 60_000);
 
   test("executes a slash command without arguments", async () => {
-    expect(isCommandAvailableSync("opencode")).toBe(true);
+    expect(await isCommandAvailable("opencode")).toBe(true);
 
     const client = new OpenCodeAgentClient(pino({ level: "silent" }));
     const session = await client.createSession({

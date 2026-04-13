@@ -1,8 +1,9 @@
 import { useCallback } from "react";
-import { Pressable, Text, View, Platform } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { QrCode, Link2, ClipboardPaste } from "lucide-react-native";
 import { AdaptiveModalSheet } from "./adaptive-modal-sheet";
+import { isNative } from "@/constants/platform";
 
 const styles = StyleSheet.create((theme) => ({
   option: {
@@ -78,7 +79,7 @@ export function AddHostMethodModal({
         </View>
       </Pressable>
 
-      {Platform.OS !== "web" ? (
+      {isNative ? (
         <Pressable style={styles.option} onPress={handleScan} accessibilityLabel="Scan QR code">
           <QrCode size={18} color={theme.colors.foreground} />
           <View style={styles.optionBody}>

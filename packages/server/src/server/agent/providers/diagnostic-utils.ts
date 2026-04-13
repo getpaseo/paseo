@@ -1,9 +1,5 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
-
-const execFileAsync = promisify(execFile);
+import { execCommand } from "../../../utils/spawn.js";
 
 type DiagnosticEntry = {
   label: string;
@@ -49,11 +45,7 @@ export function toDiagnosticErrorMessage(error: unknown): string {
 
 export async function resolveBinaryVersion(binaryPath: string): Promise<string> {
   try {
-    const { stdout } = await execFileAsync(binaryPath, ["--version"], {
-      encoding: "utf8",
-      timeout: 5_000,
-      windowsHide: true,
-    });
+    const { stdout } = await execCommand(binaryPath, ["--version"], { timeout: 5_000 });
     return stdout.trim() || "unknown";
   } catch {
     return "unknown";
