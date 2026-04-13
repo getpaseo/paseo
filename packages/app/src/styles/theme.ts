@@ -141,14 +141,14 @@ const lightSemanticColors = {
   borderAccent: "#ececf1", // Softer accent border for low-emphasis outlines
 
   // Brand
-  accent: "#20744A",
-  accentBright: "#239956",
+  accent: "#C4198B",
+  accentBright: "#D93BA5",
   accentForeground: "#ffffff",
 
   // Semantic
   destructive: "#dc2626",
   destructiveForeground: "#ffffff",
-  success: "#20744A",
+  success: "#22c55e",
   successForeground: "#ffffff",
 
   // Legacy aliases (for gradual migration)
@@ -296,22 +296,22 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
 // Dark tint definitions
 // ---------------------------------------------------------------------------
 
-// Hubcode — subtle teal-green tint (default)
+// Hubcode — subtle magenta tint (default)
 const hubcodeDarkColors = buildDarkSemanticColors({
-  surface0: "#181B1A",
-  surface1: "#1E2120",
-  surface2: "#272A29",
-  surface3: "#434645",
-  surface4: "#595B5B",
-  surfaceDiffEmpty: "#252827",
-  surfaceSidebar: "#141716",
-  surfaceSidebarHover: "#1c1f1e",
-  foregroundMuted: "#A1A5A4",
-  scrollbarHandle: "#717574",
-  border: "#252B2A",
-  borderAccent: "#2F3534",
-  accent: "#20744A",
-  accentBright: "#7ccba0",
+  surface0: "#1A181B",
+  surface1: "#201E21",
+  surface2: "#2A272B",
+  surface3: "#454346",
+  surface4: "#5B595C",
+  surfaceDiffEmpty: "#282527",
+  surfaceSidebar: "#161416",
+  surfaceSidebarHover: "#1E1C1F",
+  foregroundMuted: "#A5A1A6",
+  scrollbarHandle: "#757174",
+  border: "#2B252B",
+  borderAccent: "#352F35",
+  accent: "#C4198B",
+  accentBright: "#E86CB5",
 });
 
 // Zinc — neutral gray, no tint
@@ -328,8 +328,8 @@ const zincDarkColors = buildDarkSemanticColors({
   scrollbarHandle: "#71717a",
   border: "#27272a",
   borderAccent: "#303036",
-  accent: "#20744A",
-  accentBright: "#7ccba0",
+  accent: "#C4198B",
+  accentBright: "#E86CB5",
 });
 
 // Midnight — subtle blue tint
@@ -548,7 +548,7 @@ export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
 
 export const THEME_SWATCHES: Record<ThemeName, string> = {
   light: "#ffffff",
-  dark: "#2D8B62",
+  dark: "#C4198B",
   zinc: "#808080",
   midnight: "#4A6BA8",
   claude: "#D97757",

@@ -13,6 +13,7 @@ export interface PanelDescriptor {
   titleState: "ready" | "loading";
   icon: ComponentType<PanelIconProps>;
   statusBucket: SidebarStateBucket | null;
+  isDirty?: boolean;
 }
 
 export interface PanelDescriptorContext {

@@ -1,7 +1,8 @@
+import { exec } from "node:child_process";
 import { type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { app, ipcMain } from "electron";
+import { app, ipcMain, shell } from "electron";
 import log from "electron-log/main";
 import { resolveHubcodeHome, spawnProcess } from "@hubtool/server";
 import {
@@ -461,6 +462,20 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     get_cli_install_status: () => getCliInstallStatus(),
     install_skills: () => installSkills(),
     get_skills_install_status: () => getSkillsInstallStatus(),
+    reveal_in_finder: (args) => {
+      const { absolutePath } = args as { absolutePath: string };
+      shell.showItemInFolder(absolutePath);
+    },
+    open_in_terminal: (args) => {
+      const { directory } = args as { directory: string };
+      if (process.platform === "darwin") {
+        exec(`open -a Terminal ${JSON.stringify(directory)}`);
+      } else if (process.platform === "win32") {
+        exec(`start cmd.exe /K "cd /d ${directory}"`);
+      } else {
+        exec(`xterm -e "cd '${directory}'; bash" &`);
+      }
+    },
   };
 }
 

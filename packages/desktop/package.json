@@ -27,7 +27,7 @@
     "unzip-crx-3": "^0.2.0",
     "wait-on": "8.0.5"
   },
-  "homepage": "https://hubcode.sh",
+  "homepage": "https://hubcode.ai",
   "repository": {
     "type": "git",
     "url": "https://github.com/hubtool/hubcode.git"

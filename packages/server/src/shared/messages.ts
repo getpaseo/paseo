@@ -1291,6 +1291,29 @@ export const FileExplorerRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const FileWriteRequestSchema = z.object({
+  type: z.literal("file_write_request"),
+  cwd: z.string(),
+  path: z.string(),
+  content: z.string(),
+  requestId: z.string(),
+});
+
+export const FileRenameRequestSchema = z.object({
+  type: z.literal("file_rename_request"),
+  cwd: z.string(),
+  oldPath: z.string(),
+  newPath: z.string(),
+  requestId: z.string(),
+});
+
+export const FileDeleteRequestSchema = z.object({
+  type: z.literal("file_delete_request"),
+  cwd: z.string(),
+  path: z.string(),
+  requestId: z.string(),
+});
+
 export const ProjectIconRequestSchema = z.object({
   type: z.literal("project_icon_request"),
   cwd: z.string(),
@@ -1486,6 +1509,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   OpenProjectRequestSchema,
   ArchiveWorkspaceRequestSchema,
   FileExplorerRequestSchema,
+  FileWriteRequestSchema,
+  FileRenameRequestSchema,
+  FileDeleteRequestSchema,
   ProjectIconRequestSchema,
   FileDownloadTokenRequestSchema,
   ClearAgentAttentionMessageSchema,
@@ -2494,6 +2520,37 @@ export const FileExplorerResponseSchema = z.object({
   }),
 });
 
+export const FileWriteResponseSchema = z.object({
+  type: z.literal("file_write_response"),
+  payload: z.object({
+    cwd: z.string(),
+    path: z.string(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const FileRenameResponseSchema = z.object({
+  type: z.literal("file_rename_response"),
+  payload: z.object({
+    cwd: z.string(),
+    oldPath: z.string(),
+    newPath: z.string(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const FileDeleteResponseSchema = z.object({
+  type: z.literal("file_delete_response"),
+  payload: z.object({
+    cwd: z.string(),
+    path: z.string(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 const ProjectIconSchema = z.object({
   data: z.string(),
   mimeType: z.string(),
@@ -2807,6 +2864,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubcodeWorktreeArchiveResponseSchema,
   CreateHubcodeWorktreeResponseSchema,
   FileExplorerResponseSchema,
+  FileWriteResponseSchema,
+  FileRenameResponseSchema,
+  FileDeleteResponseSchema,
   ProjectIconResponseSchema,
   FileDownloadTokenResponseSchema,
   ListProviderModelsResponseMessageSchema,
@@ -3040,6 +3100,12 @@ export type OpenProjectRequest = z.infer<typeof OpenProjectRequestSchema>;
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type FileWriteRequest = z.infer<typeof FileWriteRequestSchema>;
+export type FileWriteResponse = z.infer<typeof FileWriteResponseSchema>;
+export type FileRenameRequest = z.infer<typeof FileRenameRequestSchema>;
+export type FileRenameResponse = z.infer<typeof FileRenameResponseSchema>;
+export type FileDeleteRequest = z.infer<typeof FileDeleteRequestSchema>;
+export type FileDeleteResponse = z.infer<typeof FileDeleteResponseSchema>;
 export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>;
 export type ProjectIconResponse = z.infer<typeof ProjectIconResponseSchema>;
 export type ProjectIcon = z.infer<typeof ProjectIconSchema>;

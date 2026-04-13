@@ -17,6 +17,7 @@ export interface WorkspaceTabPresentation {
   label: string;
   subtitle: string;
   titleState: "ready" | "loading";
+  isDirty?: boolean;
   icon: React.ComponentType<{ size: number; color: string }>;
   statusBucket: SidebarStateBucket | null;
 }
@@ -81,9 +82,11 @@ function WorkspaceTabPresentationResolverInner({
       titleState: descriptor.titleState,
       icon: descriptor.icon,
       statusBucket: descriptor.statusBucket,
+      isDirty: descriptor.isDirty,
     }),
     [
       descriptor.icon,
+      descriptor.isDirty,
       descriptor.label,
       descriptor.statusBucket,
       descriptor.subtitle,

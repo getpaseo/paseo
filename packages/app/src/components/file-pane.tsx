@@ -1,5 +1,5 @@
-import React, { useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import React, { useCallback, useMemo, useRef } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Image as RNImage,
@@ -20,7 +20,10 @@ import {
   type HighlightStyle,
 } from "@hubtool/highlight";
 import { lineNumberGutterWidth } from "@/components/code-insets";
-import { isWeb } from "@/constants/platform";
+import { getIsElectron, isWeb } from "@/constants/platform";
+import { MonacoFileEditor } from "@/components/monaco-file-editor";
+import { makeDirtyKey, useFileEditorStore } from "@/stores/file-editor-store";
+import { useToast } from "@/contexts/toast-context";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -36,6 +39,9 @@ interface FilePreviewBodyProps {
   showDesktopWebScrollbar: boolean;
   isMobile: boolean;
   filePath: string;
+  isElectron: boolean;
+  onSave: (content: string) => void;
+  onDirtyChange: (isDirty: boolean) => void;
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -112,6 +118,9 @@ function FilePreviewBody({
   showDesktopWebScrollbar,
   isMobile,
   filePath,
+  isElectron,
+  onSave,
+  onDirtyChange,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
   const isDark = theme.colorScheme === "dark";
@@ -149,6 +158,20 @@ function FilePreviewBody({
     return (
       <View style={styles.centerState}>
         <Text style={styles.emptyText}>No preview available</Text>
+      </View>
+    );
+  }
+
+  if (preview.kind === "text" && isElectron) {
+    return (
+      <View style={styles.previewScrollContainer}>
+        <MonacoFileEditor
+          value={preview.content ?? ""}
+          filePath={filePath}
+          isDark={isDark}
+          onSave={onSave}
+          onDirtyChange={onDirtyChange}
+        />
       </View>
     );
   }
@@ -244,10 +267,26 @@ export function FilePane({
 }) {
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
+  const isElectron = getIsElectron();
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const normalizedFilePath = useMemo(() => trimNonEmpty(filePath), [filePath]);
+  const queryClient = useQueryClient();
+  const setDirty = useFileEditorStore((s) => s.setDirty);
+  const dirtyKey = useMemo(
+    () =>
+      normalizedWorkspaceRoot && normalizedFilePath
+        ? makeDirtyKey(serverId, normalizedWorkspaceRoot, normalizedFilePath)
+        : null,
+    [serverId, normalizedWorkspaceRoot, normalizedFilePath],
+  );
+  const handleDirtyChange = useCallback(
+    (isDirty: boolean) => {
+      if (dirtyKey) setDirty(dirtyKey, isDirty);
+    },
+    [dirtyKey, setDirty],
+  );
 
   const query = useQuery({
     queryKey: ["workspaceFile", serverId, normalizedWorkspaceRoot, normalizedFilePath],
@@ -266,6 +305,27 @@ export function FilePane({
     staleTime: 5_000,
   });
 
+  const toast = useToast();
+
+  const writeMutation = useMutation({
+    mutationFn: async (content: string) => {
+      if (!client || !normalizedWorkspaceRoot || !normalizedFilePath) {
+        throw new Error("Not connected");
+      }
+      const result = await client.writeFile(normalizedWorkspaceRoot, normalizedFilePath, content);
+      if (result.error) throw new Error(result.error);
+    },
+    onSuccess: () => {
+      if (dirtyKey) setDirty(dirtyKey, false);
+      void queryClient.invalidateQueries({
+        queryKey: ["workspaceFile", serverId, normalizedWorkspaceRoot, normalizedFilePath],
+      });
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to save: ${error.message}`);
+    },
+  });
+
   return (
     <View style={styles.container} testID="workspace-file-pane">
       {query.data?.error ? (
@@ -280,6 +340,9 @@ export function FilePane({
         showDesktopWebScrollbar={showDesktopWebScrollbar}
         isMobile={isMobile}
         filePath={filePath}
+        isElectron={isElectron}
+        onSave={writeMutation.mutate}
+        onDirtyChange={handleDirtyChange}
       />
     </View>
   );

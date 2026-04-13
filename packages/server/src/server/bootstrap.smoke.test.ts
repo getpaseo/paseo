@@ -57,7 +57,7 @@ describe("hubcode daemon bootstrap", () => {
       agentClients: createTestAgentClients(),
       agentStoragePath: path.join(hubcodeHome, "agents"),
       relayEnabled: false,
-      appBaseUrl: "https://app.hubcode.sh",
+      appBaseUrl: "https://app.hubcode.ai",
       openai: undefined,
       speech: {
         providers: {
@@ -182,7 +182,7 @@ describe("hubcode daemon bootstrap", () => {
       relayEnabled: true,
       relayEndpoint: "127.0.0.1:9",
       relayPublicEndpoint: "127.0.0.1:9",
-      appBaseUrl: "https://app.hubcode.sh",
+      appBaseUrl: "https://app.hubcode.ai",
       openai: undefined,
       speech: undefined,
     };

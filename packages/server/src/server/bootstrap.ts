@@ -567,9 +567,9 @@ export async function createHubcodeDaemon(
               agentManager.setMcpBaseUrl(value ? mcpBaseUrl : null);
             });
             const relayEnabled = config.relayEnabled ?? true;
-            const relayEndpoint = config.relayEndpoint ?? "relay.hubcode.sh:443";
+            const relayEndpoint = config.relayEndpoint ?? "relay.hubcode.ai:443";
             const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
-            const appBaseUrl = config.appBaseUrl ?? "https://app.hubcode.sh";
+            const appBaseUrl = config.appBaseUrl ?? "https://app.hubcode.ai";
 
             if (boundListenTarget.type === "tcp") {
               logger.info(

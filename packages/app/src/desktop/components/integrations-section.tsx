@@ -15,8 +15,8 @@ import {
   type InstallStatus,
 } from "@/desktop/daemon/desktop-daemon";
 
-const CLI_DOCS_URL = "https://hubcode.sh/docs/cli";
-const SKILLS_DOCS_URL = "https://hubcode.sh/docs/skills";
+const CLI_DOCS_URL = "https://hubcode.ai/docs/cli";
+const SKILLS_DOCS_URL = "https://hubcode.ai/docs/skills";
 
 export function IntegrationsSection() {
   const { theme } = useUnistyles();

@@ -68,12 +68,12 @@ function GettingStarted() {
         <p className="text-white/60">
           Download the desktop app from{" "}
           <a
-            href="https://hubcode.sh/download"
+            href="https://hubcode.ai/download"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-white/80"
           >
-            hubcode.sh/download
+            hubcode.ai/download
           </a>{" "}
           or the{" "}
           <a

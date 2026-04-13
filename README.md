@@ -22,11 +22,11 @@
 <p align="center">One interface for all your Claude Code, Codex and OpenCode agents.</p>
 
 <p align="center">
-  <img src="https://hubcode.sh/hero-mockup.png" alt="Hubcode app screenshot" width="100%">
+  <img src="https://hubcode.ai/hero-mockup.png" alt="Hubcode app screenshot" width="100%">
 </p>
 
 <p align="center">
-  <img src="https://hubcode.sh/mobile-mockup.png" alt="Hubcode mobile app" width="100%">
+  <img src="https://hubcode.ai/mobile-mockup.png" alt="Hubcode mobile app" width="100%">
 </p>
 
 ---
@@ -53,7 +53,7 @@ You need at least one agent CLI installed and configured with your credentials:
 
 ### Desktop app (recommended)
 
-Download it from [hubcode.sh/download](https://hubcode.sh/download) or the [GitHub releases page](https://github.com/hubtool/hubcode/releases). Open the app and the daemon starts automatically. Nothing else to install.
+Download it from [hubcode.ai/download](https://hubcode.ai/download) or the [GitHub releases page](https://github.com/hubtool/hubcode/releases). Open the app and the daemon starts automatically. Nothing else to install.
 
 To connect from your phone, scan the QR code shown in Settings.
 
@@ -69,8 +69,8 @@ hubcode
 This shows a QR code in the terminal. Connect from any client. This path is useful for servers and remote machines.
 
 For full setup and configuration, see:
-- [Docs](https://hubcode.sh/docs)
-- [Configuration reference](https://hubcode.sh/docs/configuration)
+- [Docs](https://hubcode.ai/docs)
+- [Configuration reference](https://hubcode.ai/docs/configuration)
 
 ## CLI
 
@@ -88,7 +88,7 @@ hubcode send abc123 "also add tests" # follow-up task
 hubcode --host workstation.local:6767 run "run the full test suite"
 ```
 
-See the [full CLI reference](https://hubcode.sh/docs/cli) for more.
+See the [full CLI reference](https://hubcode.ai/docs/cli) for more.
 
 ## Orchestration skills (Unstable)
 
@@ -121,7 +121,7 @@ Quick monorepo package map:
 - `packages/cli`: `hubcode` CLI for daemon and agent workflows
 - `packages/desktop`: Electron desktop app
 - `packages/relay`: Relay package for remote connectivity
-- `packages/website`: Marketing site and documentation (`hubcode.sh`)
+- `packages/website`: Marketing site and documentation (`hubcode.ai`)
 
 Common commands:
 

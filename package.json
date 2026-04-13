@@ -36,6 +36,9 @@
     "ios": "npm run ios --workspace=@hubtool/app",
     "web": "npm run web --workspace=@hubtool/app",
     "dev:desktop": "npm run dev --workspace=@hubtool/desktop",
+    "build:fast": "npm run build:fast:server && npm run build:fast:desktop",
+    "build:fast:server": "cd packages/server && npx esbuild src/server/exports.ts --outdir=dist/server/server --platform=node --format=esm --bundle --external:ws --external:better-sqlite3 --external:pino --external:pino-pretty --external:electron-log --external:sherpa-onnx-node --external:onnxruntime-node --packages=external",
+    "build:fast:desktop": "cd packages/desktop && npx esbuild src/main.ts src/preload.ts --outdir=dist --platform=node --format=cjs --bundle --external:electron --external:electron-updater --external:electron-log --external:ws --external:@hubtool/server --external:@hubtool/cli",
     "build:desktop": "npm run version:sync-internal && npm run build:web --workspace=@hubtool/app && npm run build --workspace=@hubtool/desktop",
     "cli": "npx tsx packages/cli/src/index.js",
     "version": "npm run version:sync-internal && npm run release:prepare && git add -A",
@@ -73,7 +76,7 @@
     "typescript": "^5.9.3"
   },
   "description": "Hubcode: voice-controlled development environment with OpenAI Realtime API",
-  "homepage": "https://hubcode.sh",
+  "homepage": "https://hubcode.ai",
   "keywords": [
     "openai",
     "realtime",

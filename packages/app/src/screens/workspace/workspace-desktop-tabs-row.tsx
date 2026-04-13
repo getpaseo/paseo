@@ -295,6 +295,8 @@ function TabChip({
                             : theme.colors.foregroundMuted
                         }
                       />
+                    ) : presentation.isDirty && !hovered && !pressed ? (
+                      <View style={styles.dirtyDot} />
                     ) : (
                       <X
                         size={12}
@@ -307,6 +309,10 @@ function TabChip({
                     )
                   }
                 </Pressable>
+              ) : presentation.isDirty ? (
+                <View style={[styles.tabCloseButton, styles.tabCloseButtonShown]}>
+                  <View style={styles.dirtyDot} />
+                </View>
               ) : null}
             </ContextMenuTrigger>
           </TooltipTrigger>
@@ -863,6 +869,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabCloseButtonActive: {
     backgroundColor: theme.colors.surface3,
+  },
+  dirtyDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#C4198B",
   },
   newTabActionButton: {
     width: 22,

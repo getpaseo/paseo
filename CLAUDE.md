@@ -13,7 +13,7 @@ This is an npm workspace monorepo:
 - `packages/cli` — Docker-style CLI (`hubcode run/ls/logs/wait`)
 - `packages/relay` — E2E encrypted relay for remote access
 - `packages/desktop` — Electron desktop wrapper
-- `packages/website` — Marketing site (hubcode.sh)
+- `packages/website` — Marketing site (hubcode.ai)
 
 ## Documentation
 

@@ -64,7 +64,7 @@ function Configuration() {
         </p>
         <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
           {`{
-  "$schema": "https://hubcode.sh/schemas/hubcode.config.v1.json",
+  "$schema": "https://hubcode.ai/schemas/hubcode.config.v1.json",
   "version": 1,
   "providers": {
     "openai": { "apiKey": "..." }
@@ -299,7 +299,7 @@ docker run --rm -i \\
           For editor autocomplete/validation, set <code className="font-mono">$schema</code> to:
         </p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
-          <span>https://hubcode.sh/schemas/hubcode.config.v1.json</span>
+          <span>https://hubcode.ai/schemas/hubcode.config.v1.json</span>
         </div>
       </section>
     </div>

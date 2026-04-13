@@ -257,9 +257,9 @@ function printNextSteps(pairingUrl: string | null, hubcodeHome: string, richUi: 
     pairingUrl
       ? "1. Open Hubcode and scan the QR code above, or paste the pairing link."
       : "1. Open Hubcode and connect to your daemon.",
-    "2. Web app: https://app.hubcode.sh",
+    "2. Web app: https://app.hubcode.ai",
     "3. Desktop app: https://github.com/hubtool/hubcode/releases/latest",
-    "4. Docs: https://hubcode.sh/docs",
+    "4. Docs: https://hubcode.ai/docs",
     '5. Example: hubcode run --output-schema schema.json "extract fields"',
   ];
   const quickReferenceLines = [

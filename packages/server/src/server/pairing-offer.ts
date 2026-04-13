@@ -29,9 +29,9 @@ export async function generateLocalPairingOffer(args: {
     };
   }
 
-  const relayEndpoint = args.relayEndpoint ?? "relay.hubcode.sh:443";
+  const relayEndpoint = args.relayEndpoint ?? "relay.hubcode.ai:443";
   const relayPublicEndpoint = args.relayPublicEndpoint ?? relayEndpoint;
-  const appBaseUrl = args.appBaseUrl ?? "https://app.hubcode.sh";
+  const appBaseUrl = args.appBaseUrl ?? "https://app.hubcode.ai";
   const serverId = getOrCreateServerId(args.hubcodeHome, { logger: args.logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(args.hubcodeHome, args.logger);
   const offer = await createConnectionOfferV2({

@@ -78,7 +78,12 @@ import {
   formatDiffGutterText,
   hasVisibleDiffTokens,
 } from "@/utils/diff-rendering";
-import { isWeb, isNative } from "@/constants/platform";
+import { isWeb, isNative, getIsElectron } from "@/constants/platform";
+import { MonacoDiffEditor } from "@/components/monaco-diff-editor";
+import {
+  reconstructNewFile,
+  reconstructOldFile,
+} from "@/utils/diff-highlighter";
 
 export type { GitActionId, GitAction, GitActions } from "@/components/git-actions-policy";
 
@@ -413,6 +418,34 @@ function SplitDiffColumn({
   );
 }
 
+const STAT_BLOCKS = 5;
+
+function DiffStatBar({ additions, deletions }: { additions: number; deletions: number }) {
+  const { theme } = useUnistyles();
+  const total = additions + deletions;
+  if (total === 0) return null;
+
+  const addBlocks = Math.round((additions / total) * STAT_BLOCKS);
+  const delBlocks = STAT_BLOCKS - addBlocks;
+
+  return (
+    <View style={styles.statBar}>
+      {Array.from({ length: STAT_BLOCKS }, (_, i) => (
+        <View
+          key={i}
+          style={[
+            styles.statBlock,
+            {
+              backgroundColor:
+                i < addBlocks ? theme.colors.diffAddition : theme.colors.diffDeletion,
+            },
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
 const DiffFileHeader = memo(function DiffFileHeader({
   file,
   isExpanded,
@@ -490,11 +523,22 @@ const DiffFileHeader = memo(function DiffFileHeader({
         <View style={styles.fileHeaderRight}>
           <Text style={styles.additions}>+{file.additions}</Text>
           <Text style={styles.deletions}>-{file.deletions}</Text>
+          <DiffStatBar additions={file.additions} deletions={file.deletions} />
         </View>
       </Pressable>
     </View>
   );
 });
+
+function mapToText(lineMap: Map<number, string>): string {
+  if (lineMap.size === 0) return "";
+  const maxLine = Math.max(...lineMap.keys());
+  const lines: string[] = [];
+  for (let i = 1; i <= maxLine; i++) {
+    lines.push(lineMap.get(i) ?? "");
+  }
+  return lines.join("\n");
+}
 
 function DiffFileBody({
   file,
@@ -509,6 +553,9 @@ function DiffFileBody({
   onBodyHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }) {
+  const { theme } = useUnistyles();
+  const isDark = theme.colorScheme === "dark";
+  const isMobile = useIsCompactFormFactor();
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const [bodyWidth, setBodyWidth] = useState(0);
 
@@ -528,6 +575,31 @@ function DiffFileBody({
               <Text style={styles.statusMessageText}>
                 {file.status === "binary" ? "Binary file" : "Diff too large to display"}
               </Text>
+            </View>
+          );
+        }
+
+        // Use Monaco DiffEditor on web (desktop browser + Electron)
+        if (isWeb && !isMobile) {
+          // Cast hunks to match the diff-highlighter's DiffHunk type (structurally identical)
+          const hunks = file.hunks as Parameters<typeof reconstructOldFile>[0];
+          const oldText = mapToText(reconstructOldFile(hunks));
+          const newText = mapToText(reconstructNewFile(hunks));
+          const totalLines = Math.max(
+            oldText.split("\n").length,
+            newText.split("\n").length,
+          );
+          // 19px line height + 16px top/bottom padding, min 120px, no max cap
+          const editorHeight = totalLines * 19 + 16;
+          return (
+            <View style={{ height: Math.max(editorHeight, 120) }}>
+              <MonacoDiffEditor
+                originalValue={oldText}
+                modifiedValue={newText}
+                filePath={file.path}
+                isDark={isDark}
+                renderSideBySide={layout === "split"}
+              />
             </View>
           );
         }
@@ -1738,13 +1810,16 @@ const styles = StyleSheet.create((theme) => ({
   },
   fileSectionHeaderContainer: {
     overflow: "hidden",
+    backgroundColor: theme.colors.surface0,
   },
   fileSectionHeaderExpanded: {
     backgroundColor: theme.colors.surface1,
+    borderLeftWidth: 2,
+    borderLeftColor: theme.colors.accent,
   },
   fileSectionBodyContainer: {
     overflow: "hidden",
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surface1,
   },
   fileSectionBorder: {
     borderBottomWidth: 1,
@@ -1755,9 +1830,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     paddingLeft: theme.spacing[3],
-    paddingRight: theme.spacing[2],
+    paddingRight: theme.spacing[3],
     paddingVertical: theme.spacing[2],
-    gap: theme.spacing[1],
+    gap: theme.spacing[2],
     zIndex: 2,
     elevation: 2,
   },
@@ -1767,19 +1842,19 @@ const styles = StyleSheet.create((theme) => ({
   fileHeaderLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
+    gap: theme.spacing[2],
     flex: 1,
     minWidth: 0,
   },
   fileHeaderRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
+    gap: theme.spacing[2],
     flexShrink: 0,
   },
   fileName: {
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
+    fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
     flexShrink: 0,
   },
@@ -1815,12 +1890,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   additions: {
     fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
+    fontWeight: theme.fontWeight.medium,
+    fontFamily: Fonts.mono,
     color: theme.colors.diffAddition,
   },
   deletions: {
     fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
+    fontWeight: theme.fontWeight.medium,
+    fontFamily: Fonts.mono,
     color: theme.colors.diffDeletion,
   },
   diffContent: {
@@ -1955,5 +2032,16 @@ const styles = StyleSheet.create((theme) => ({
   tooltipText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
+  },
+  statBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 1,
+    marginLeft: theme.spacing[1],
+  },
+  statBlock: {
+    width: 6,
+    height: 6,
+    borderRadius: 1,
   },
 }));

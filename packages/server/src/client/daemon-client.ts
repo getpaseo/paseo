@@ -19,6 +19,9 @@ import type {
   CreateAgentRequestMessage,
   FileDownloadTokenResponse,
   FileExplorerResponse,
+  FileWriteResponse,
+  FileRenameResponse,
+  FileDeleteResponse,
   FetchAgentTimelineResponseMessage,
   GitSetupOptions,
   CheckoutStatusResponse,
@@ -237,6 +240,9 @@ type CreateHubcodeWorktreePayload = Extract<
   { type: "create_hubcode_worktree_response" }
 >["payload"];
 type FileExplorerPayload = FileExplorerResponse["payload"];
+type FileWritePayload = FileWriteResponse["payload"];
+type FileRenamePayload = FileRenameResponse["payload"];
+type FileDeletePayload = FileDeleteResponse["payload"];
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
 type ListProviderFeaturesPayload = ListProviderFeaturesResponseMessage["payload"];
 type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
@@ -2570,6 +2576,52 @@ export class DaemonClient {
         mode,
       },
       responseType: "file_explorer_response",
+      timeout: 10000,
+    });
+  }
+
+  async writeFile(
+    cwd: string,
+    path: string,
+    content: string,
+    requestId?: string,
+  ): Promise<FileWritePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "file_write_request",
+        cwd,
+        path,
+        content,
+      },
+      responseType: "file_write_response",
+      timeout: 10000,
+    });
+  }
+
+  async renameFile(
+    cwd: string,
+    oldPath: string,
+    newPath: string,
+    requestId?: string,
+  ): Promise<FileRenamePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "file_rename_request", cwd, oldPath, newPath },
+      responseType: "file_rename_response",
+      timeout: 10000,
+    });
+  }
+
+  async deleteFile(
+    cwd: string,
+    path: string,
+    requestId?: string,
+  ): Promise<FileDeletePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "file_delete_request", cwd, path },
+      responseType: "file_delete_response",
       timeout: 10000,
     });
   }

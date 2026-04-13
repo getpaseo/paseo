@@ -173,9 +173,9 @@ function makeHost(input?: Partial<HostProfile>): HostProfile {
     endpoint: "lan:6767",
   };
   const relay: HostConnection = {
-    id: "relay:relay.hubcode.sh:443",
+    id: "relay:relay.hubcode.ai:443",
     type: "relay",
-    relayEndpoint: "relay.hubcode.sh:443",
+    relayEndpoint: "relay.hubcode.ai:443",
     daemonPublicKeyB64: "pk_test",
   };
 
@@ -196,7 +196,7 @@ function makeOffer(input?: Partial<ConnectionOffer>): ConnectionOffer {
     serverId: input?.serverId ?? "srv_offer",
     daemonPublicKeyB64: input?.daemonPublicKeyB64 ?? "pk_test_offer",
     relay: {
-      endpoint: input?.relay?.endpoint ?? "relay.hubcode.sh:443",
+      endpoint: input?.relay?.endpoint ?? "relay.hubcode.ai:443",
     },
   };
 }
@@ -345,7 +345,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 82,
-      "relay:relay.hubcode.sh:443": 18,
+      "relay:relay.hubcode.ai:443": 18,
     };
     const controller = new HostRuntimeController({
       host,
@@ -376,7 +376,7 @@ describe("HostRuntimeController", () => {
         },
         connectToDaemon: async ({ host, connection }) => {
           const client = makeConnectedProbeClient(connection.id === "direct:lan:6767" ? 12 : 30);
-          if (connection.id === "relay:relay.hubcode.sh:443") {
+          if (connection.id === "relay:relay.hubcode.ai:443") {
             client.ping = async () => ({ rttMs: await slowPing.promise });
           }
           clients.push(client);
@@ -416,7 +416,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 15,
-      "relay:relay.hubcode.sh:443": 55,
+      "relay:relay.hubcode.ai:443": 55,
     };
     const controller = new HostRuntimeController({
       host,
@@ -429,12 +429,12 @@ describe("HostRuntimeController", () => {
     expect(initialClient).toBeTruthy();
 
     latencies["direct:lan:6767"] = new Error("direct unavailable");
-    latencies["relay:relay.hubcode.sh:443"] = 42;
+    latencies["relay:relay.hubcode.ai:443"] = 42;
     clearProbeBackoff(controller);
     await controller.runProbeCycleNow();
 
     const snapshot = controller.getSnapshot();
-    expect(snapshot.activeConnectionId).toBe("relay:relay.hubcode.sh:443");
+    expect(snapshot.activeConnectionId).toBe("relay:relay.hubcode.ai:443");
     expect(snapshot.connectionStatus).toBe("online");
     expect(snapshot.client).not.toBe(initialClient);
     expect((initialClient as unknown as FakeDaemonClient | null)?.closeCalls).toBe(1);
@@ -445,7 +445,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 15,
-      "relay:relay.hubcode.sh:443": 60,
+      "relay:relay.hubcode.ai:443": 60,
     };
     const controller = new HostRuntimeController({
       host,
@@ -456,7 +456,7 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
     latencies["direct:lan:6767"] = 95;
-    latencies["relay:relay.hubcode.sh:443"] = 30;
+    latencies["relay:relay.hubcode.ai:443"] = 30;
     clearProbeBackoff(controller);
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
@@ -465,11 +465,11 @@ describe("HostRuntimeController", () => {
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
-    let switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.sh:443";
+    let switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.ai:443";
     for (let index = 0; index < 6 && !switched; index += 1) {
       clearProbeBackoff(controller);
       await controller.runProbeCycleNow();
-      switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.sh:443";
+      switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.ai:443";
     }
     expect(switched).toBe(true);
     expect(controller.getSnapshot().client).not.toBeNull();
@@ -480,7 +480,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 15,
-      "relay:relay.hubcode.sh:443": 80,
+      "relay:relay.hubcode.ai:443": 80,
     };
     const controller = new HostRuntimeController({
       host,
@@ -491,19 +491,19 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
     latencies["direct:lan:6767"] = 100;
-    latencies["relay:relay.hubcode.sh:443"] = 20;
+    latencies["relay:relay.hubcode.ai:443"] = 20;
     clearProbeBackoff(controller);
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
     latencies["direct:lan:6767"] = 20;
-    latencies["relay:relay.hubcode.sh:443"] = 90;
+    latencies["relay:relay.hubcode.ai:443"] = 90;
     clearProbeBackoff(controller);
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
     latencies["direct:lan:6767"] = 100;
-    latencies["relay:relay.hubcode.sh:443"] = 20;
+    latencies["relay:relay.hubcode.ai:443"] = 20;
     clearProbeBackoff(controller);
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
@@ -512,11 +512,11 @@ describe("HostRuntimeController", () => {
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
-    let switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.sh:443";
+    let switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.ai:443";
     for (let index = 0; index < 6 && !switched; index += 1) {
       clearProbeBackoff(controller);
       await controller.runProbeCycleNow();
-      switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.sh:443";
+      switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.ai:443";
     }
     expect(switched).toBe(true);
   });
@@ -526,7 +526,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 12,
-      "relay:relay.hubcode.sh:443": 65,
+      "relay:relay.hubcode.ai:443": 65,
     };
     const controller = new HostRuntimeController({
       host,
@@ -597,7 +597,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 12,
-      "relay:relay.hubcode.sh:443": 65,
+      "relay:relay.hubcode.ai:443": 65,
     };
     const controller = new HostRuntimeController({
       host,
@@ -617,7 +617,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 12,
-      "relay:relay.hubcode.sh:443": 65,
+      "relay:relay.hubcode.ai:443": 65,
     };
     const controller = new HostRuntimeController({
       host,
@@ -646,7 +646,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 12,
-      "relay:relay.hubcode.sh:443": 65,
+      "relay:relay.hubcode.ai:443": 65,
     };
     const controller = new HostRuntimeController({
       host,
@@ -668,7 +668,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 12,
-      "relay:relay.hubcode.sh:443": 65,
+      "relay:relay.hubcode.ai:443": 65,
     };
     const controller = new HostRuntimeController({
       host,
@@ -701,9 +701,9 @@ describe("HostRuntimeController", () => {
           endpoint: "lan:6767",
         },
         {
-          id: "relay:relay.hubcode.sh:443",
+          id: "relay:relay.hubcode.ai:443",
           type: "relay",
-          relayEndpoint: "relay.hubcode.sh:443",
+          relayEndpoint: "relay.hubcode.ai:443",
           daemonPublicKeyB64: "pk_test",
         },
       ],
@@ -763,11 +763,11 @@ describe("HostRuntimeController", () => {
       controller as unknown as {
         switchToConnection: (input: { connectionId: string }) => Promise<void>;
       }
-    ).switchToConnection({ connectionId: "relay:relay.hubcode.sh:443" });
+    ).switchToConnection({ connectionId: "relay:relay.hubcode.ai:443" });
     await waitUntil(() => {
       const snapshot = controller.getSnapshot();
       return (
-        snapshot.activeConnectionId === "relay:relay.hubcode.sh:443" &&
+        snapshot.activeConnectionId === "relay:relay.hubcode.ai:443" &&
         snapshot.connectionStatus === "online"
       );
     });
@@ -776,7 +776,7 @@ describe("HostRuntimeController", () => {
     await Promise.allSettled([switchDirect, switchRelay]);
 
     const snapshot = controller.getSnapshot();
-    expect(snapshot.activeConnectionId).toBe("relay:relay.hubcode.sh:443");
+    expect(snapshot.activeConnectionId).toBe("relay:relay.hubcode.ai:443");
     expect(snapshot.connectionStatus).toBe("online");
     expect(snapshot.lastError).toBeNull();
     expect(createdClients).toHaveLength(2);
@@ -1339,7 +1339,7 @@ describe("HostRuntimeStore", () => {
 
     await store.upsertRelayConnection({
       serverId: "srv_offer",
-      relayEndpoint: "relay.hubcode.sh:443",
+      relayEndpoint: "relay.hubcode.ai:443",
       daemonPublicKeyB64: "pk_test_offer",
       label: "Custom name",
     });

@@ -5,8 +5,8 @@ compatibility_flags = ["nodejs_compat"]
 main = "@tanstack/react-start/server-entry"
 
 routes = [
-  { pattern = "hubcode.sh", custom_domain = true },
-  { pattern = "www.hubcode.sh", custom_domain = true }
+  { pattern = "hubcode.ai", custom_domain = true },
+  { pattern = "www.hubcode.ai", custom_domain = true }
 ]
 
 [observability]

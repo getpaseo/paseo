@@ -82,7 +82,7 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
 
     try {
       const offerUrl = parseOfferUrlFromLogs(lines);
-      expect(offerUrl.startsWith("https://app.hubcode.sh/#offer=")).toBe(true);
+      expect(offerUrl.startsWith("https://app.hubcode.ai/#offer=")).toBe(true);
 
       const offer = decodeOfferFromFragmentUrl(offerUrl) as {
         v: number;
@@ -95,7 +95,7 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
       expect(typeof offer.serverId).toBe("string");
       expect(offer.serverId.length).toBeGreaterThan(0);
       expect(offer.serverId.startsWith("srv_")).toBe(true);
-      expect(offer.relay.endpoint).toBe("relay.hubcode.sh:443");
+      expect(offer.relay.endpoint).toBe("relay.hubcode.ai:443");
       expect(typeof offer.daemonPublicKeyB64).toBe("string");
       expect(offer.daemonPublicKeyB64.length).toBeGreaterThan(0);
       expect(() => Buffer.from(offer.daemonPublicKeyB64, "base64")).not.toThrow();

@@ -47,12 +47,12 @@ function UpdatesDocs() {
         <h2 className="text-xl font-medium">Web app</h2>
         <p className="text-white/60">
           <a
-            href="https://app.hubcode.sh"
+            href="https://app.hubcode.ai"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-white/80"
           >
-            app.hubcode.sh
+            app.hubcode.ai
           </a>{" "}
           is always up to date. No manual update needed.
         </p>

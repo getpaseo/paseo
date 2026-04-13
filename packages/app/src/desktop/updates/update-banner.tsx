@@ -6,7 +6,7 @@ import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater"
 import { openExternalUrl } from "@/utils/open-external-url";
 
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
-const CHANGELOG_URL = "https://hubcode.sh/changelog";
+const CHANGELOG_URL = "https://hubcode.ai/changelog";
 
 export function UpdateBanner() {
   const { theme } = useUnistyles();

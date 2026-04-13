@@ -15,6 +15,12 @@ export interface ReadFileParams {
   relativePath: string;
 }
 
+export interface WriteFileParams {
+  root: string;
+  relativePath: string;
+  content: string;
+}
+
 export interface FileExplorerEntry {
   name: string;
   path: string;
@@ -161,6 +167,40 @@ export async function readExplorerFile({
     content: buffer.toString("utf-8"),
     mimeType: textMimeTypeForExtension(ext),
   };
+}
+
+export async function writeExplorerFile({
+  root,
+  relativePath,
+  content,
+}: WriteFileParams): Promise<void> {
+  const filePath = await resolveScopedPath({ root, relativePath });
+  await fs.writeFile(filePath, content, "utf-8");
+}
+
+export async function renameExplorerEntry({
+  root,
+  oldRelativePath,
+  newRelativePath,
+}: {
+  root: string;
+  oldRelativePath: string;
+  newRelativePath: string;
+}): Promise<void> {
+  const oldPath = await resolveScopedPath({ root, relativePath: oldRelativePath });
+  const newPath = await resolveScopedPath({ root, relativePath: newRelativePath });
+  await fs.rename(oldPath, newPath);
+}
+
+export async function deleteExplorerEntry({
+  root,
+  relativePath,
+}: {
+  root: string;
+  relativePath: string;
+}): Promise<void> {
+  const targetPath = await resolveScopedPath({ root, relativePath });
+  await fs.rm(targetPath, { recursive: true, force: true });
 }
 
 export async function getDownloadableFileInfo({ root, relativePath }: ReadFileParams): Promise<{

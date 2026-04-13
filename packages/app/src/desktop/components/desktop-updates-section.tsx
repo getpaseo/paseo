@@ -427,7 +427,7 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
   );
 }
 
-const ADVANCED_DAEMON_SETTINGS_URL = "https://hubcode.sh/docs/configuration";
+const ADVANCED_DAEMON_SETTINGS_URL = "https://hubcode.ai/docs/configuration";
 
 const styles = StyleSheet.create((theme) => ({
   actionGroup: {

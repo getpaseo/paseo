@@ -14,6 +14,9 @@ import {
   type SessionInboundMessage,
   type SessionOutboundMessage,
   type FileExplorerRequest,
+  type FileWriteRequest,
+  type FileRenameRequest,
+  type FileDeleteRequest,
   type FileDownloadTokenRequest,
   type GitSetupOptions,
   type ListTerminalsRequest,
@@ -141,6 +144,9 @@ import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
   listDirectoryEntries,
   readExplorerFile,
+  writeExplorerFile,
+  renameExplorerEntry,
+  deleteExplorerEntry,
   getDownloadableFileInfo,
 } from "./file-explorer/service.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
@@ -1857,6 +1863,18 @@ export class Session {
 
           case "file_explorer_request":
             await this.handleFileExplorerRequest(msg);
+            break;
+
+          case "file_write_request":
+            await this.handleFileWriteRequest(msg);
+            break;
+
+          case "file_rename_request":
+            await this.handleFileRenameRequest(msg);
+            break;
+
+          case "file_delete_request":
+            await this.handleFileDeleteRequest(msg);
             break;
 
           case "project_icon_request":
@@ -4817,6 +4835,98 @@ export class Session {
           directory: null,
           file: null,
           error: error.message,
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleFileWriteRequest(request: FileWriteRequest): Promise<void> {
+    const { cwd: workspaceCwd, path: requestedPath, content, requestId } = request;
+    const cwd = workspaceCwd.trim();
+    if (!cwd) {
+      this.emit({
+        type: "file_write_response",
+        payload: { cwd: workspaceCwd, path: requestedPath, error: "cwd is required", requestId },
+      });
+      return;
+    }
+    try {
+      await writeExplorerFile({ root: cwd, relativePath: requestedPath, content });
+      this.emit({
+        type: "file_write_response",
+        payload: { cwd, path: requestedPath, error: null, requestId },
+      });
+    } catch (error: unknown) {
+      this.sessionLogger.error(
+        { err: error, cwd, path: requestedPath },
+        `Failed to write file in workspace ${cwd}`,
+      );
+      this.emit({
+        type: "file_write_response",
+        payload: {
+          cwd,
+          path: requestedPath,
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleFileRenameRequest(request: FileRenameRequest): Promise<void> {
+    const { cwd: workspaceCwd, oldPath, newPath, requestId } = request;
+    const cwd = workspaceCwd.trim();
+    if (!cwd) {
+      this.emit({
+        type: "file_rename_response",
+        payload: { cwd: workspaceCwd, oldPath, newPath, error: "cwd is required", requestId },
+      });
+      return;
+    }
+    try {
+      await renameExplorerEntry({ root: cwd, oldRelativePath: oldPath, newRelativePath: newPath });
+      this.emit({
+        type: "file_rename_response",
+        payload: { cwd, oldPath, newPath, error: null, requestId },
+      });
+    } catch (error: unknown) {
+      this.emit({
+        type: "file_rename_response",
+        payload: {
+          cwd,
+          oldPath,
+          newPath,
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleFileDeleteRequest(request: FileDeleteRequest): Promise<void> {
+    const { cwd: workspaceCwd, path: requestedPath, requestId } = request;
+    const cwd = workspaceCwd.trim();
+    if (!cwd) {
+      this.emit({
+        type: "file_delete_response",
+        payload: { cwd: workspaceCwd, path: requestedPath, error: "cwd is required", requestId },
+      });
+      return;
+    }
+    try {
+      await deleteExplorerEntry({ root: cwd, relativePath: requestedPath });
+      this.emit({
+        type: "file_delete_response",
+        payload: { cwd, path: requestedPath, error: null, requestId },
+      });
+    } catch (error: unknown) {
+      this.emit({
+        type: "file_delete_response",
+        payload: {
+          cwd,
+          path: requestedPath,
+          error: error instanceof Error ? error.message : String(error),
           requestId,
         },
       });

@@ -20,7 +20,7 @@ type StartupSplashScreenProps = {
 };
 
 const GITHUB_ISSUE_URL = "https://github.com/hubtool/hubcode/issues/new";
-const DOCS_URL = "https://hubcode.sh/docs";
+const DOCS_URL = "https://hubcode.ai/docs";
 
 const styles = StyleSheet.create((theme) => ({
   container: {

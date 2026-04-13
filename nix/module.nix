@@ -77,7 +77,7 @@ in
       enable = lib.mkOption {
         type = lib.types.bool;
         default = true;
-        description = "Whether to enable the relay connection for remote access via app.hubcode.sh.";
+        description = "Whether to enable the relay connection for remote access via app.hubcode.ai.";
       };
     };
 
@@ -102,7 +102,7 @@ in
       default = { };
       example = lib.literalExpression ''
         {
-          HUBCODE_RELAY_ENDPOINT = "relay.hubcode.sh:443";
+          HUBCODE_RELAY_ENDPOINT = "relay.hubcode.ai:443";
         }
       '';
       description = "Extra environment variables for the Hubcode daemon.";

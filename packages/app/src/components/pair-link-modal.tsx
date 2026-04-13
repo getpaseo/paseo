@@ -187,7 +187,7 @@ export function PairLinkModal({
           accessibilityLabel="pair-link-input"
           value={offerUrl}
           onChangeText={setOfferUrl}
-          placeholder="https://app.hubcode.sh/#offer=..."
+          placeholder="https://app.hubcode.ai/#offer=..."
           placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
           autoFocus

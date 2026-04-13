@@ -294,14 +294,14 @@ const DEFAULT_PERSISTED_CONFIG = PersistedConfigSchema.parse({
   daemon: {
     listen: "127.0.0.1:6767",
     cors: {
-      allowedOrigins: ["https://app.hubcode.sh"],
+      allowedOrigins: ["https://app.hubcode.ai"],
     },
     relay: {
       enabled: true,
     },
   },
   app: {
-    baseUrl: "https://app.hubcode.sh",
+    baseUrl: "https://app.hubcode.ai",
   },
 }) as PersistedConfig;
 

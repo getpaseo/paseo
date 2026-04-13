@@ -149,7 +149,7 @@
 - Desktop Integrations settings — install the Hubcode CLI and orchestration skills directly from the app without touching the terminal.
 - Daemon status dialog in desktop settings for quick health checks.
 - Auto-restart daemon on version mismatch — the desktop app detects when the running daemon is outdated and restarts it automatically.
-- Setup hint and hubcode.sh link on the mobile welcome screen so new App Store users know what to do next.
+- Setup hint and hubcode.ai link on the mobile welcome screen so new App Store users know what to do next.
 
 ### Improved
 - Desktop startup is faster — existing daemon connections are raced against bootstrap so the app is usable sooner.

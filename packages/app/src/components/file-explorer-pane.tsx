@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   FlatList,
@@ -29,8 +29,12 @@ import {
   ChevronRight,
   Copy,
   Download,
+  ExternalLink,
+  FolderOpen,
   MoreVertical,
+  Pencil,
   RotateCw,
+  Trash2,
   X,
 } from "lucide-react-native";
 import { getFileIconSvg } from "@/components/material-file-icons";
@@ -45,13 +49,23 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
-import { isWeb } from "@/constants/platform";
+import { getIsElectron, isWeb } from "@/constants/platform";
+import { getDesktopHost } from "@/desktop/host";
+import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
+import { Button } from "@/components/ui/button";
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "name", label: "Name" },
@@ -124,6 +138,109 @@ export function FileExplorerPane({
       workspaceId,
       workspaceRoot: normalizedWorkspaceRoot,
     });
+
+  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const queryClient = useQueryClient();
+  const isElectron = getIsElectron();
+
+  const refreshExplorerDir = useCallback(
+    (dirPath: string) => {
+      void requestDirectoryListing(dirPath, { recordHistory: false, setCurrentPath: false });
+    },
+    [requestDirectoryListing],
+  );
+
+  const renameMutation = useMutation({
+    mutationFn: async ({ oldPath, newPath }: { oldPath: string; newPath: string }) => {
+      if (!client) throw new Error("Not connected");
+      const result = await client.renameFile(normalizedWorkspaceRoot, oldPath, newPath);
+      if (result.error) throw new Error(result.error);
+      return result;
+    },
+    onSuccess: (_data, { oldPath }) => {
+      const parentDir = oldPath.includes("/") ? oldPath.split("/").slice(0, -1).join("/") : ".";
+      refreshExplorerDir(parentDir);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async ({ path }: { path: string }) => {
+      if (!client) throw new Error("Not connected");
+      const result = await client.deleteFile(normalizedWorkspaceRoot, path);
+      if (result.error) throw new Error(result.error);
+      return result;
+    },
+    onSuccess: (_data, { path }) => {
+      const parentDir = path.includes("/") ? path.split("/").slice(0, -1).join("/") : ".";
+      refreshExplorerDir(parentDir);
+      void queryClient.invalidateQueries({ queryKey: ["workspaceFile", serverId] });
+    },
+  });
+
+  const [renamingEntry, setRenamingEntry] = useState<ExplorerEntry | null>(null);
+  const [renamingName, setRenamingName] = useState("");
+
+  const handleRename = useCallback((entry: ExplorerEntry) => {
+    setRenamingEntry(entry);
+    setRenamingName(entry.name);
+  }, []);
+
+  const handleRenameSubmit = useCallback(() => {
+    if (!renamingEntry) return;
+    const newName = renamingName.trim();
+    setRenamingEntry(null);
+    if (!newName || newName === renamingEntry.name) return;
+    const parentDir = renamingEntry.path.includes("/")
+      ? renamingEntry.path.split("/").slice(0, -1).join("/")
+      : null;
+    const newPath = parentDir ? `${parentDir}/${newName}` : newName;
+    renameMutation.mutate({ oldPath: renamingEntry.path, newPath });
+  }, [renameMutation, renamingEntry, renamingName]);
+
+  const handleRenameClose = useCallback(() => {
+    setRenamingEntry(null);
+  }, []);
+
+  const handleDelete = useCallback(
+    (entry: ExplorerEntry) => {
+      const confirmed = window.confirm(
+        `Delete "${entry.name}"?${entry.kind === "directory" ? "\nThis will delete the folder and all its contents." : ""}`,
+      );
+      if (!confirmed) return;
+      deleteMutation.mutate({ path: entry.path });
+    },
+    [deleteMutation],
+  );
+
+  const handleRevealInFinder = useCallback(
+    (entry: ExplorerEntry) => {
+      const absolutePath = buildAbsoluteExplorerPath({
+        workspaceRoot: normalizedWorkspaceRoot,
+        entryPath: entry.path,
+      });
+      void getDesktopHost()?.invoke?.("reveal_in_finder", { absolutePath });
+    },
+    [normalizedWorkspaceRoot],
+  );
+
+  const handleOpenInTerminal = useCallback(
+    (entry: ExplorerEntry) => {
+      const entryPath = buildAbsoluteExplorerPath({
+        workspaceRoot: normalizedWorkspaceRoot,
+        entryPath: entry.path,
+      });
+      const directory =
+        entry.kind === "directory"
+          ? entryPath
+          : entryPath.split("/").slice(0, -1).join("/") || normalizedWorkspaceRoot;
+      void getDesktopHost()?.invoke?.("open_in_terminal", { directory });
+    },
+    [normalizedWorkspaceRoot],
+  );
+
+  const handleCopyRelativePath = useCallback(async (entryPath: string) => {
+    await Clipboard.setStringAsync(entryPath);
+  }, []);
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
   const expandedPathsArray = usePanelStore((state) =>
@@ -406,103 +523,225 @@ export function FileExplorerPane({
       const isSelected = selectedEntryPath === entry.path;
       const loading = isDirectory && isDirectoryLoading(entry.path);
 
-      return (
-        <Pressable
-          onPress={() => handleEntryPress(entry)}
-          style={({ hovered, pressed }) => [
-            styles.entryRow,
-            { paddingLeft: theme.spacing[2] + depth * INDENT_PER_LEVEL },
-            (hovered || pressed || isSelected) && styles.entryRowActive,
-          ]}
-        >
-          {depth > 0 &&
-            Array.from({ length: depth }, (_, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.indentGuide,
-                  {
-                    left: theme.spacing[3] + i * INDENT_PER_LEVEL + 4,
-                  },
-                ]}
-              />
-            ))}
-          <View style={styles.entryInfo}>
-            <View style={styles.entryIcon}>
-              {isDirectory ? (
-                loading ? (
-                  <ActivityIndicator size="small" />
-                ) : (
-                  <View style={[styles.chevron, isExpanded && styles.chevronExpanded]}>
-                    <ChevronRight size={16} color={theme.colors.foregroundMuted} />
-                  </View>
-                )
-              ) : (
-                <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />
-              )}
-            </View>
-            <Text style={styles.entryName} numberOfLines={1}>
-              {entry.name}
-            </Text>
-          </View>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              hitSlop={8}
-              onPressIn={(event) => event.stopPropagation?.()}
-              style={({ hovered, pressed, open }) => [
-                styles.menuButton,
-                (hovered || pressed || open) && styles.menuButtonActive,
-              ]}
-            >
-              <MoreVertical size={16} color={theme.colors.foregroundMuted} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" width={220}>
-              <View style={styles.contextMetaBlock}>
-                <View style={styles.contextMetaRow}>
-                  <Text style={styles.contextMetaLabel} numberOfLines={1}>
-                    Size
-                  </Text>
-                  <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
-                    {formatFileSize({ size: entry.size })}
-                  </Text>
-                </View>
-                <View style={styles.contextMetaRow}>
-                  <Text style={styles.contextMetaLabel} numberOfLines={1}>
-                    Modified
-                  </Text>
-                  <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
-                    {formatTimeAgo(new Date(entry.modifiedAt))}
-                  </Text>
-                </View>
-              </View>
+      const dropdownMenuItems = (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            leading={<Pencil size={14} color={theme.colors.foregroundMuted} />}
+            onSelect={() => handleRename(entry)}
+          >
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            leading={<Trash2 size={14} color={theme.colors.destructive} />}
+            onSelect={() => handleDelete(entry)}
+            destructive
+          >
+            Delete
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
+            onSelect={() => {
+              void handleCopyPath(entry.path);
+            }}
+          >
+            Copy path
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
+            onSelect={() => {
+              void handleCopyRelativePath(entry.path);
+            }}
+          >
+            Copy relative path
+          </DropdownMenuItem>
+          {isElectron ? (
+            <>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
-                onSelect={() => {
-                  void handleCopyPath(entry.path);
-                }}
+                leading={<FolderOpen size={14} color={theme.colors.foregroundMuted} />}
+                onSelect={() => handleOpenInTerminal(entry)}
               >
-                Copy path
+                Open in Terminal
               </DropdownMenuItem>
-              {entry.kind === "file" ? (
-                <DropdownMenuItem
-                  leading={<Download size={14} color={theme.colors.foregroundMuted} />}
-                  onSelect={() => handleDownloadEntry(entry)}
-                >
-                  Download
-                </DropdownMenuItem>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </Pressable>
+              <DropdownMenuItem
+                leading={<ExternalLink size={14} color={theme.colors.foregroundMuted} />}
+                onSelect={() => handleRevealInFinder(entry)}
+              >
+                Reveal in Finder
+              </DropdownMenuItem>
+            </>
+          ) : null}
+          {entry.kind === "file" ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                leading={<Download size={14} color={theme.colors.foregroundMuted} />}
+                onSelect={() => handleDownloadEntry(entry)}
+              >
+                Download
+              </DropdownMenuItem>
+            </>
+          ) : null}
+        </>
+      );
+
+      const contextMenuItems = (
+        <>
+          <ContextMenuItem
+            leading={<Pencil size={14} color={theme.colors.foregroundMuted} />}
+            onSelect={() => handleRename(entry)}
+          >
+            Rename
+          </ContextMenuItem>
+          <ContextMenuItem
+            leading={<Trash2 size={14} color={theme.colors.destructive} />}
+            onSelect={() => handleDelete(entry)}
+            destructive
+          >
+            Delete
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
+            onSelect={() => {
+              void handleCopyPath(entry.path);
+            }}
+          >
+            Copy path
+          </ContextMenuItem>
+          <ContextMenuItem
+            leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
+            onSelect={() => {
+              void handleCopyRelativePath(entry.path);
+            }}
+          >
+            Copy relative path
+          </ContextMenuItem>
+          {isElectron ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                leading={<FolderOpen size={14} color={theme.colors.foregroundMuted} />}
+                onSelect={() => handleOpenInTerminal(entry)}
+              >
+                Open in Terminal
+              </ContextMenuItem>
+              <ContextMenuItem
+                leading={<ExternalLink size={14} color={theme.colors.foregroundMuted} />}
+                onSelect={() => handleRevealInFinder(entry)}
+              >
+                Reveal in Finder
+              </ContextMenuItem>
+            </>
+          ) : null}
+          {entry.kind === "file" ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                leading={<Download size={14} color={theme.colors.foregroundMuted} />}
+                onSelect={() => handleDownloadEntry(entry)}
+              >
+                Download
+              </ContextMenuItem>
+            </>
+          ) : null}
+        </>
+      );
+
+      return (
+        <ContextMenu key={entry.path}>
+          <ContextMenuTrigger
+            onPress={() => handleEntryPress(entry)}
+            style={({ hovered, pressed }) => [
+              styles.entryRow,
+              { paddingLeft: theme.spacing[2] + depth * INDENT_PER_LEVEL },
+              (hovered || pressed || isSelected) && styles.entryRowActive,
+            ]}
+          >
+            {depth > 0 &&
+              Array.from({ length: depth }, (_, i) => (
+                <View
+                  key={i}
+                  style={[
+                    styles.indentGuide,
+                    {
+                      left: theme.spacing[3] + i * INDENT_PER_LEVEL + 4,
+                    },
+                  ]}
+                />
+              ))}
+            <View style={styles.entryInfo}>
+              <View style={styles.entryIcon}>
+                {isDirectory ? (
+                  loading ? (
+                    <ActivityIndicator size="small" />
+                  ) : (
+                    <View style={[styles.chevron, isExpanded && styles.chevronExpanded]}>
+                      <ChevronRight size={16} color={theme.colors.foregroundMuted} />
+                    </View>
+                  )
+                ) : (
+                  <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />
+                )}
+              </View>
+              <Text style={styles.entryName} numberOfLines={1}>
+                {entry.name}
+              </Text>
+            </View>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                hitSlop={8}
+                onPressIn={(event) => event.stopPropagation?.()}
+                style={({ hovered, pressed, open }) => [
+                  styles.menuButton,
+                  (hovered || pressed || open) && styles.menuButtonActive,
+                ]}
+              >
+                <MoreVertical size={16} color={theme.colors.foregroundMuted} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" width={220}>
+                <View style={styles.contextMetaBlock}>
+                  <View style={styles.contextMetaRow}>
+                    <Text style={styles.contextMetaLabel} numberOfLines={1}>
+                      Size
+                    </Text>
+                    <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
+                      {formatFileSize({ size: entry.size })}
+                    </Text>
+                  </View>
+                  <View style={styles.contextMetaRow}>
+                    <Text style={styles.contextMetaLabel} numberOfLines={1}>
+                      Modified
+                    </Text>
+                    <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
+                      {formatTimeAgo(new Date(entry.modifiedAt))}
+                    </Text>
+                  </View>
+                </View>
+                {dropdownMenuItems}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </ContextMenuTrigger>
+          <ContextMenuContent side="bottom" align="start" width={220}>
+            {contextMenuItems}
+          </ContextMenuContent>
+        </ContextMenu>
       );
     },
     [
       expandedPaths,
       handleEntryPress,
       handleCopyPath,
+      handleCopyRelativePath,
       handleDownloadEntry,
+      handleRename,
+      handleDelete,
+      handleRevealInFinder,
+      handleOpenInTerminal,
       isDirectoryLoading,
+      isElectron,
       selectedEntryPath,
       theme.colors,
       theme.spacing,
@@ -610,6 +849,34 @@ export function FileExplorerPane({
           {scrollbar.overlay}
         </View>
       )}
+      <AdaptiveModalSheet
+        title="Rename"
+        visible={renamingEntry !== null}
+        onClose={handleRenameClose}
+        snapPoints={["30%"]}
+      >
+        <AdaptiveTextInput
+          autoFocus
+          value={renamingName}
+          onChangeText={setRenamingName}
+          onSubmitEditing={handleRenameSubmit}
+          selectTextOnFocus
+          style={styles.renameInput}
+        />
+        <View style={styles.renameActions}>
+          <Button variant="outline" size="sm" onPress={handleRenameClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onPress={handleRenameSubmit}
+            disabled={!renamingName.trim() || renamingName.trim() === renamingEntry?.name}
+          >
+            Rename
+          </Button>
+        </View>
+      </AdaptiveModalSheet>
     </View>
   );
 }
@@ -872,6 +1139,23 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
+  },
+  renameInput: {
+    color: theme.colors.foreground,
+    backgroundColor: theme.colors.surface0,
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
+    fontSize: theme.fontSize.sm,
+    fontFamily: Fonts.mono,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
+    outlineStyle: "none",
+  },
+  renameActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
   },
   menuButton: {
     width: 30,

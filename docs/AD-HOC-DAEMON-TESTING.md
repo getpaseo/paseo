@@ -30,8 +30,8 @@ const daemon = await createHubcodeDaemon(
     agentClients: {},
     agentStoragePath: path.join(hubcodeHome, "agents"),
     relayEnabled: false,
-    relayEndpoint: "relay.hubcode.sh:443",
-    appBaseUrl: "https://app.hubcode.sh",
+    relayEndpoint: "relay.hubcode.ai:443",
+    appBaseUrl: "https://app.hubcode.ai",
     // Add custom config here, e.g.:
     // providerOverrides: { ... },
   },

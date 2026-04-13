@@ -18,8 +18,8 @@ import {
 } from "./allowed-hosts.js";
 
 const DEFAULT_PORT = 6767;
-const DEFAULT_RELAY_ENDPOINT = "relay.hubcode.sh:443";
-const DEFAULT_APP_BASE_URL = "https://app.hubcode.sh";
+const DEFAULT_RELAY_ENDPOINT = "relay.hubcode.ai:443";
+const DEFAULT_APP_BASE_URL = "https://app.hubcode.ai";
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (value === undefined) {
