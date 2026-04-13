@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { findExecutableSync, quoteWindowsArgument, quoteWindowsCommand } from "./executable.js";
+import {
+  executableExists,
+  findExecutableSync,
+  quoteWindowsArgument,
+  quoteWindowsCommand,
+} from "./executable.js";
 
 type FindExecutableDependencies = NonNullable<Parameters<typeof findExecutableSync>[1]>;
 
@@ -36,14 +41,14 @@ describe("findExecutableSync", () => {
     expect(call?.[2]?.windowsHide).toBe(true);
   });
 
-  test("on Windows, preserves the first where.exe match", () => {
+  test("on Windows, prefers an executable match from where.exe output", () => {
     findExecutableDependencies.platform = vi.fn(() => "win32");
     findExecutableDependencies.execFileSync.mockReturnValue(
       "C:\\nvm4w\\nodejs\\codex\r\nC:\\nvm4w\\nodejs\\codex.cmd\r\n",
     );
 
     expect(findExecutableSync("codex", findExecutableDependencies)).toBe(
-      "C:\\nvm4w\\nodejs\\codex",
+      "C:\\nvm4w\\nodejs\\codex.cmd",
     );
   });
 
@@ -73,6 +78,37 @@ describe("findExecutableSync", () => {
       "/usr/local/bin/codex",
     );
     expect(findExecutableDependencies.existsSync).toHaveBeenCalledWith("/usr/local/bin/codex");
+  });
+});
+
+describe("executableExists", () => {
+  const originalPlatform = process.platform;
+
+  function setPlatform(value: string) {
+    Object.defineProperty(process, "platform", { value, writable: true });
+  }
+
+  afterEach(() => {
+    setPlatform(originalPlatform);
+  });
+
+  test("returns the path when it already exists", () => {
+    const exists = vi.fn((candidate: string) => candidate === "/usr/local/bin/codex");
+
+    expect(executableExists("/usr/local/bin/codex", exists)).toBe("/usr/local/bin/codex");
+  });
+
+  test("on Windows, falls back to .exe, .cmd, then .ps1 for extensionless paths", () => {
+    setPlatform("win32");
+    const exists = vi.fn((candidate: string) => candidate === "C:\\tools\\codex.cmd");
+
+    expect(executableExists("C:\\tools\\codex", exists)).toBe("C:\\tools\\codex.cmd");
+  });
+
+  test("returns null when no matching path exists", () => {
+    const exists = vi.fn(() => false);
+
+    expect(executableExists("/missing/codex", exists)).toBeNull();
   });
 });
 
