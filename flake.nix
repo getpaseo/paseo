@@ -51,6 +51,7 @@
             packages = [
               pkgs.nodejs_22
               pkgs.python3
+              pkgs.yq-go
             ];
           };
         }
