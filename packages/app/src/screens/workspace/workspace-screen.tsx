@@ -1291,7 +1291,8 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
           });
         }
 
-        void archiveAgent({ serverId: normalizedServerId, agentId });
+        // Errors (e.g. timeout) are handled by the mutation's onSettled callback
+        void archiveAgent({ serverId: normalizedServerId, agentId }).catch(() => {});
       });
     },
     [archiveAgent, closeTab, closeWorkspaceTabWithCleanup, normalizedServerId, persistenceKey],
