@@ -1,5 +1,3 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
 import { resolve, dirname, basename } from "path";
 import { existsSync, realpathSync } from "fs";
 import { open as openFile, stat as statFile } from "fs/promises";
@@ -8,10 +6,9 @@ import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
 import { findExecutable } from "./executable.js";
 import { runGitCommand } from "./run-git-command.js";
+import { execCommand } from "./spawn.js";
 import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
 import { requirePaseoWorktreeBaseRefName } from "./worktree-metadata.js";
-
-const execFileAsync = promisify(execFile);
 const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_OPTIONAL_LOCKS: "0",
@@ -1899,7 +1896,7 @@ export async function createPullRequest(
   if (options.body) {
     args.push("-f", `body=${options.body}`);
   }
-  const { stdout } = await execFileAsync(ghPath, args, { cwd, env: ghEnv });
+  const { stdout } = await execCommand(ghPath, args, { cwd, env: ghEnv });
   const parsed = JSON.parse(stdout.trim());
   if (!parsed?.url || !parsed?.number) {
     throw new Error("GitHub CLI did not return PR url/number");
@@ -1951,7 +1948,7 @@ async function getPullRequestStatusUncached(cwd: string): Promise<PullRequestSta
     };
   }
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await execCommand(
       ghPath,
       ["pr", "view", "--json", "url,title,state,baseRefName,headRefName,mergedAt"],
       { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },

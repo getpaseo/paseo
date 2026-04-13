@@ -1,4 +1,4 @@
-import { exec, spawn } from "child_process";
+import { exec } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "fs";
 import { join, basename, dirname, resolve, sep } from "path";
@@ -13,6 +13,7 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
+import { platformBash, spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 
 interface PaseoConfig {
@@ -204,7 +205,7 @@ async function execSetupCommand(
     const { stdout, stderr } = await execAsync(command, {
       cwd: options.cwd,
       env: options.env,
-      shell: "/bin/bash",
+      ...(process.platform === "win32" ? {} : { shell: "/bin/bash" }),
     });
     return {
       command,
@@ -275,7 +276,8 @@ async function execSetupCommandStreamed(options: {
       cwd: options.cwd,
     });
 
-    const child = spawn("/bin/bash", ["-lc", options.command], {
+    const shell = platformBash();
+    const child = spawnProcess(shell.command, [...shell.flag, options.command], {
       cwd: options.cwd,
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],

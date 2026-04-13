@@ -1,7 +1,7 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { stat } from "fs/promises";
-import { exec, execFile } from "node:child_process";
+import { exec } from "node:child_process";
 import { promisify } from "util";
 import { resolve, sep } from "path";
 import { homedir } from "node:os";
@@ -170,6 +170,7 @@ import { ChatServiceError, FileBackedChatService } from "./chat/chat-service.js"
 import { notifyChatMentions } from "./chat/chat-mentions.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
+import { execCommand } from "../utils/spawn.js";
 import {
   assertSafeGitRef as assertWorktreeSafeGitRef,
   buildAgentSessionConfig as buildWorktreeAgentSessionConfig,
@@ -182,7 +183,6 @@ import {
 } from "./worktree-session.js";
 
 const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
 const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
 const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
@@ -3531,7 +3531,7 @@ export class Session {
   private async checkoutExistingBranch(cwd: string, branch: string): Promise<void> {
     this.assertSafeGitRef(branch, "branch");
     try {
-      await execFileAsync("git", ["rev-parse", "--verify", branch], { cwd });
+      await execCommand("git", ["rev-parse", "--verify", branch], { cwd });
     } catch (error) {
       throw new Error(`Branch not found: ${branch}`);
     }
@@ -3545,7 +3545,7 @@ export class Session {
     }
 
     await this.ensureCleanWorkingTree(cwd);
-    await execFileAsync("git", ["checkout", branch], { cwd });
+    await execCommand("git", ["checkout", branch], { cwd });
   }
 
   private async createBranchFromBase(params: {
@@ -3558,7 +3558,7 @@ export class Session {
     this.assertSafeGitRef(newBranchName, "new branch");
 
     try {
-      await execFileAsync("git", ["rev-parse", "--verify", baseBranch], { cwd });
+      await execCommand("git", ["rev-parse", "--verify", baseBranch], { cwd });
     } catch (error) {
       throw new Error(`Base branch not found: ${baseBranch}`);
     }
@@ -3569,7 +3569,7 @@ export class Session {
     }
 
     await this.ensureCleanWorkingTree(cwd);
-    await execFileAsync("git", ["checkout", "-b", newBranchName, baseBranch], {
+    await execCommand("git", ["checkout", "-b", newBranchName, baseBranch], {
       cwd,
     });
   }
@@ -3577,7 +3577,7 @@ export class Session {
   private async doesLocalBranchExist(cwd: string, branch: string): Promise<boolean> {
     this.assertSafeGitRef(branch, "branch");
     try {
-      await execFileAsync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+      await execCommand("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
         cwd,
       });
       return true;
@@ -4030,7 +4030,7 @@ export class Session {
 
       // Try local branch first
       try {
-        await execFileAsync("git", ["rev-parse", "--verify", branchName], {
+        await execCommand("git", ["rev-parse", "--verify", branchName], {
           cwd: resolvedCwd,
           env: READ_ONLY_GIT_ENV,
         });
@@ -4051,7 +4051,7 @@ export class Session {
 
       // Try remote branch (origin/{branchName})
       try {
-        await execFileAsync("git", ["rev-parse", "--verify", `origin/${branchName}`], {
+        await execCommand("git", ["rev-parse", "--verify", `origin/${branchName}`], {
           cwd: resolvedCwd,
           env: READ_ONLY_GIT_ENV,
         });
@@ -4281,7 +4281,7 @@ export class Session {
       const message = branchLabel
         ? `${Session.PASEO_STASH_PREFIX} ${branchLabel}`
         : `${Session.PASEO_STASH_PREFIX} unnamed`;
-      await execFileAsync("git", ["stash", "push", "--include-untracked", "-m", message], { cwd });
+      await execCommand("git", ["stash", "push", "--include-untracked", "-m", message], { cwd });
       this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
       this.emit({
         type: "stash_save_response",
@@ -4300,7 +4300,7 @@ export class Session {
   ): Promise<void> {
     const { cwd, stashIndex, requestId } = msg;
     try {
-      await execFileAsync("git", ["stash", "pop", `stash@{${stashIndex}}`], { cwd });
+      await execCommand("git", ["stash", "pop", `stash@{${stashIndex}}`], { cwd });
       this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
       this.emit({
         type: "stash_pop_response",
