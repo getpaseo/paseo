@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 import type { Logger } from "pino";
 
 import type { AgentPersistenceHandle, AgentSessionConfig } from "./agent/agent-sdk-types.js";
@@ -134,6 +135,18 @@ function normalizePreferredTitle(value: string | null | undefined): string | nul
   }
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function isGeneratedTmuxFallbackTitle(input: {
+  title: string | null | undefined;
+  paneId: string;
+  cwd: string;
+}): boolean {
+  const normalizedTitle = normalizePreferredTitle(input.title);
+  if (!normalizedTitle) {
+    return false;
+  }
+  return normalizedTitle === `${basename(input.cwd)} [tmux:${input.paneId}]`;
 }
 
 export interface TmuxCodexBridgeServiceOptions {
@@ -437,7 +450,15 @@ export class TmuxCodexBridgeService {
     },
   ): Promise<ManagedAgent> {
     const agentId = options?.forcedAgentId ?? snapshot.agentId;
-    const effectiveTitle = normalizePreferredTitle(options?.preferredTitle) ?? snapshot.title;
+    const preferredTitle = normalizePreferredTitle(options?.preferredTitle);
+    const effectiveTitle =
+      preferredTitle && isGeneratedTmuxFallbackTitle({
+        title: preferredTitle,
+        paneId: snapshot.paneId,
+        cwd: snapshot.cwd,
+      })
+        ? snapshot.title
+        : preferredTitle ?? snapshot.title;
     const sessionConfig =
       effectiveTitle === snapshot.config.title
         ? snapshot.config
@@ -491,6 +512,24 @@ export class TmuxCodexBridgeService {
       session,
       missingScans: 0,
     });
+    if (
+      preferredTitle &&
+      effectiveTitle !== preferredTitle &&
+      isGeneratedTmuxFallbackTitle({
+        title: preferredTitle,
+        paneId: snapshot.paneId,
+        cwd: snapshot.cwd,
+      })
+    ) {
+      try {
+        await this.agentManager.setTitle(agentId, effectiveTitle);
+      } catch (error) {
+        this.logger.warn(
+          { err: error, agentId, paneId: snapshot.paneId, effectiveTitle },
+          "Failed to update stored tmux pane title",
+        );
+      }
+    }
     return managed;
   }
 

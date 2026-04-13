@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import type { AgentManager } from "./agent/agent-manager.js";
 import type {
   AgentPersistenceHandle,
@@ -17,6 +19,101 @@ const DEFAULT_AGENT_PROVIDER = "claude";
 
 function getLogger(logger: LoggerLike): LoggerLike {
   return logger.child({ module: "persistence" });
+}
+
+function normalizeStoredTitle(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function readTmuxRuntimeExtra(record: Pick<StoredAgentRecord, "runtimeInfo">): Record<string, unknown> {
+  const extra = record.runtimeInfo?.extra;
+  return extra && typeof extra === "object" ? (extra as Record<string, unknown>) : {};
+}
+
+function readTmuxConfigExtra(record: Pick<StoredAgentRecord, "config">): Record<string, unknown> {
+  const extra = record.config?.extra;
+  if (!extra || typeof extra !== "object") {
+    return {};
+  }
+  const codex = (extra as Record<string, unknown>).codex;
+  return codex && typeof codex === "object" ? (codex as Record<string, unknown>) : {};
+}
+
+function readTmuxPaneId(record: Pick<StoredAgentRecord, "config" | "runtimeInfo" | "persistence">): string | null {
+  const runtimeExtra = readTmuxRuntimeExtra(record);
+  const configExtra = readTmuxConfigExtra(record);
+  const candidates = [
+    record.persistence?.metadata?.paneId,
+    runtimeExtra.paneId,
+    configExtra.paneId,
+    record.persistence?.sessionId,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeStoredTitle(candidate);
+    if (normalized?.startsWith("%")) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
+function isTmuxCodexRecord(
+  record: Pick<StoredAgentRecord, "labels" | "config" | "runtimeInfo" | "persistence">,
+): boolean {
+  const runtimeExtra = readTmuxRuntimeExtra(record);
+  const configExtra = readTmuxConfigExtra(record);
+  const labels = record.labels ?? {};
+  const sourceCandidates = [
+    record.persistence?.metadata?.externalSessionSource,
+    runtimeExtra.externalSessionSource,
+    configExtra.externalSessionSource,
+  ];
+  return (
+    labels.source === "tmux" ||
+    sourceCandidates.some((value) => normalizeStoredTitle(value) === "tmux_codex")
+  );
+}
+
+function isGeneratedTmuxFallbackTitle(input: {
+  title: string | null | undefined;
+  paneId: string;
+  cwd: string;
+}): boolean {
+  const normalizedTitle = normalizeStoredTitle(input.title);
+  return normalizedTitle === `${basename(input.cwd)} [tmux:${input.paneId}]`;
+}
+
+export function resolveStoredAgentTitle(record: StoredAgentRecord): string | null {
+  const persistedTitle = normalizeStoredTitle(record.title);
+  if (!isTmuxCodexRecord(record)) {
+    return persistedTitle ?? normalizeStoredTitle(record.config?.title);
+  }
+
+  const paneId = readTmuxPaneId(record);
+  const hasCustomPersistedTitle =
+    persistedTitle &&
+    (!paneId ||
+      !isGeneratedTmuxFallbackTitle({
+        title: persistedTitle,
+        paneId,
+        cwd: record.cwd,
+      }));
+  if (hasCustomPersistedTitle) {
+    return persistedTitle;
+  }
+
+  const runtimeExtra = readTmuxRuntimeExtra(record);
+  return (
+    normalizeStoredTitle(record.config?.title) ??
+    normalizeStoredTitle(record.persistence?.metadata?.title) ??
+    normalizeStoredTitle(record.persistence?.metadata?.paneTitle) ??
+    normalizeStoredTitle(runtimeExtra.title) ??
+    persistedTitle
+  );
 }
 
 type AgentStoragePersistence = Pick<AgentStorage, "applySnapshot" | "list">;
@@ -107,7 +204,7 @@ export function buildExternalBridgeSessionConfig(record: StoredAgentRecord): Age
   const config = buildSessionConfig(record);
   return {
     ...config,
-    title: record.title ?? config.title,
+    title: resolveStoredAgentTitle(record) ?? config.title,
   };
 }
 

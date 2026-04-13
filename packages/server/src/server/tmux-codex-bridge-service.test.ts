@@ -97,11 +97,11 @@ function createRunnerMock(params: {
 }) {
   const paneId = params.paneId ?? "%42";
   const cwd = params.cwd ?? "/workspace/project";
-  const title = params.title ?? "project [revived]";
+  const title = params.title ?? "";
   const state = {
     listPanesOutput:
       params.listPanesOutput ??
-      `${paneId}\tworkspace-a\t@1\tbash\t1001\t/dev/pts/21\t${cwd}\n`,
+      `${paneId}\tworkspace-a\t@1\t${title}\t1001\t/dev/pts/21\t${cwd}\n`,
     psOutput:
       params.psOutput ??
       `1001 1 tmux: server\n1002 1001 ${params.processArgs ?? "/usr/local/bin/codex-root-wrapper resume 019d7f5b-1d2c-76c2-96e9-0a6496559b68"}\n1003 1002 /opt/codex/codex resume 019d7f5b-1d2c-76c2-96e9-0a6496559b68\n`,
@@ -154,6 +154,7 @@ function createService(params: {
   const adoptSession = vi.fn(async (_session, _config, agentId: string) => ({
     id: agentId,
   }));
+  const setTitle = vi.fn(async (_agentId: string, _title: string) => {});
   const upsert = vi.fn(async (_record: StoredAgentRecord) => {});
   const remove = vi.fn(async (_agentId: string) => {});
   const closeAgent = vi.fn(async (_agentId: string) => {});
@@ -164,6 +165,7 @@ function createService(params: {
     paseoHome: "/tmp/paseo-test",
     agentManager: {
       adoptSession,
+      setTitle,
       getAgent,
       closeAgent,
     } as any,
@@ -182,7 +184,7 @@ function createService(params: {
   });
   activeServices.push(service);
 
-  return { service, adoptSession, calls, state, remove, upsert, closeAgent, getAgent };
+  return { service, adoptSession, setTitle, calls, state, remove, upsert, closeAgent, getAgent };
 }
 
 afterEach(async () => {
@@ -248,6 +250,36 @@ describe("TmuxCodexBridgeService", () => {
       }),
     );
     expect(remove).toHaveBeenCalledWith("agent-tmux");
+  });
+
+  it("refreshes generated tmux fallback titles from the live pane title", async () => {
+    const { service, adoptSession, setTitle } = createService({
+      listPanesOutput:
+        "%42\tworkspace-a\t@1\tPASEO_RENAMED_20260413\t1001\t/dev/pts/21\t/workspace/project\n",
+      storedRecords: [
+        createStoredRecord({
+          id: "agent-tmux",
+          title: "project [tmux:%42]",
+          labels: { source: "tmux", bridge: "codex", pane: "%42" },
+        }),
+      ],
+    });
+
+    await service.syncNow();
+
+    expect(adoptSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        provider: "codex",
+        cwd: "/workspace/project",
+        title: "PASEO_RENAMED_20260413",
+      }),
+      "agent-tmux",
+      expect.objectContaining({
+        labels: { source: "tmux", bridge: "codex", pane: "%42" },
+      }),
+    );
+    expect(setTitle).toHaveBeenCalledWith("agent-tmux", "PASEO_RENAMED_20260413");
   });
 
   it("marks persisted tmux sessions closed when their pane is missing after restart", async () => {

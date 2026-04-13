@@ -457,4 +457,98 @@ describe("external bridged session recovery", () => {
     );
     expect(refreshed?.payload.agentId).toBe(storedRecord.id);
   });
+
+  test("fetch_agents_request resolves live tmux session titles from renamed pane metadata", async () => {
+    const storedRecord = {
+      id: "agent-live-tmux",
+      provider: "codex",
+      cwd: "/workspace/project",
+      createdAt: "2026-04-12T00:00:00.000Z",
+      updatedAt: "2026-04-12T00:10:00.000Z",
+      lastActivityAt: "2026-04-12T00:10:00.000Z",
+      lastUserMessageAt: null,
+      lastStatus: "idle",
+      lastModeId: "auto",
+      runtimeInfo: {
+        provider: "codex",
+        sessionId: "%42",
+        model: null,
+        modeId: "auto",
+        extra: {
+          externalSessionSource: "tmux_codex",
+          paneId: "%42",
+          title: "Renamed pane title",
+        },
+      },
+      config: {
+        provider: "codex",
+        cwd: "/workspace/project",
+        modeId: "auto",
+        title: "Renamed pane title",
+        extra: {
+          codex: {
+            externalSessionSource: "tmux_codex",
+            paneId: "%42",
+          },
+        },
+      },
+      persistence: {
+        provider: "codex",
+        sessionId: "%42",
+        metadata: {
+          externalSessionSource: "tmux_codex",
+          paneId: "%42",
+          paneTitle: "Renamed pane title",
+          title: "Renamed pane title",
+          cwd: "/workspace/project",
+        },
+      },
+      title: "project [tmux:%42]",
+      labels: { bridge: "codex", source: "tmux", pane: "%42" },
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+      archivedAt: null,
+    };
+    const liveAgent = {
+      ...createManagedAgent({
+        id: storedRecord.id,
+        cwd: storedRecord.cwd,
+        title: storedRecord.config.title,
+        persistence: storedRecord.persistence,
+      }),
+      labels: storedRecord.labels,
+      runtimeInfo: storedRecord.runtimeInfo,
+    };
+
+    const emitted: any[] = [];
+    const session = createSessionForExternalRecoveryTests({
+      onMessage: (message) => emitted.push(message),
+      agentStorage: {
+        get: async (agentId: string) => (agentId === storedRecord.id ? storedRecord : null),
+        list: async () => [storedRecord],
+      },
+      agentManager: {
+        listAgents: () => [liveAgent],
+        getAgent: (agentId: string) => (agentId === storedRecord.id ? liveAgent : null),
+      } as any,
+    });
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "fetch-live-tmux",
+    });
+
+    const response = emitted.find((message) => message.type === "fetch_agents_response");
+    expect(response?.payload.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agent: expect.objectContaining({
+            id: storedRecord.id,
+            title: "Renamed pane title",
+          }),
+        }),
+      ]),
+    );
+  });
 });
