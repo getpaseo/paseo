@@ -1,15 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useIsFocused } from "@react-navigation/native";
-import {
-  ActivityIndicator,
-  BackHandler,
-  Keyboard,
-  Platform,
-  Pressable,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, BackHandler, Keyboard, Pressable, Text, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
 import {
@@ -118,6 +110,7 @@ import {
 } from "@/screens/workspace/workspace-bulk-close";
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
+import { isWeb, isNative } from "@/constants/platform";
 
 const TERMINALS_QUERY_STALE_TIME = 5_000;
 const NEW_TAB_AGENT_OPTION_ID = "__new_tab_agent__";
@@ -252,7 +245,7 @@ function WorkspaceDocumentTitleEffect({
   titleState: "ready" | "loading";
 }) {
   useEffect(() => {
-    if (Platform.OS !== "web" || typeof document === "undefined") {
+    if (isNative || typeof document === "undefined") {
       return;
     }
     const resolvedLabel = label.trim();
@@ -810,7 +803,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   });
 
   useEffect(() => {
-    if (Platform.OS === "web" || !isExplorerOpen) {
+    if (isWeb || !isExplorerOpen) {
       return;
     }
 
@@ -1291,7 +1284,8 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
           });
         }
 
-        void archiveAgent({ serverId: normalizedServerId, agentId });
+        // Errors (e.g. timeout) are handled by the mutation's onSettled callback
+        void archiveAgent({ serverId: normalizedServerId, agentId }).catch(() => {});
       });
     },
     [archiveAgent, closeTab, closeWorkspaceTabWithCleanup, normalizedServerId, persistenceKey],
@@ -1708,7 +1702,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();
   const shouldRenderDesktopPaneFallback = !isMobile && !canRenderDesktopPaneSplits;
   useEffect(() => {
-    if (Platform.OS !== "web" || typeof document === "undefined" || activeTabDescriptor) {
+    if (isNative || typeof document === "undefined" || activeTabDescriptor) {
       return;
     }
     document.title = "Workspace";
@@ -1932,7 +1926,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
 
   return (
     <View style={[styles.container, { backgroundColor: mainBackgroundColor }]}>
-      {Platform.OS === "web" && activeTabDescriptor ? (
+      {isWeb && activeTabDescriptor ? (
         <WorkspaceTabPresentationResolver
           tab={activeTabDescriptor}
           serverId={normalizedServerId}

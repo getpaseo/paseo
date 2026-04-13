@@ -1,5 +1,4 @@
 import { useCallback } from "react";
-import { Platform } from "react-native";
 import { useSessionStore } from "@/stores/session-store";
 import type { DaemonClient } from "@server/client/daemon-client";
 import {
@@ -10,13 +9,14 @@ import {
   rejectInitDeferred,
 } from "@/utils/agent-initialization";
 import { deriveInitialTimelineRequest } from "@/contexts/session-timeline-bootstrap-policy";
+import { isWeb } from "@/constants/platform";
 
 const INIT_TIMEOUT_MS = 5 * 60_000;
 const NATIVE_INITIAL_TIMELINE_LIMIT = 200;
 const UNBOUNDED_TIMELINE_LIMIT = 0;
 
 function resolveInitialTimelineLimit(): number {
-  return Platform.OS === "web" ? UNBOUNDED_TIMELINE_LIMIT : NATIVE_INITIAL_TIMELINE_LIMIT;
+  return isWeb ? UNBOUNDED_TIMELINE_LIMIT : NATIVE_INITIAL_TIMELINE_LIMIT;
 }
 
 export const __private__ = {

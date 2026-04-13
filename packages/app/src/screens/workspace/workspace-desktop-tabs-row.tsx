@@ -9,7 +9,6 @@ import {
 } from "react";
 import {
   ActivityIndicator,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -30,6 +29,7 @@ import {
 } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { SortableInlineList } from "@/components/sortable-inline-list";
+import { isNative, isWeb } from "@/constants/platform";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -113,6 +113,7 @@ function useMiddleClickClose(onClose: () => void) {
   const ref = useRef<View>(null);
 
   useEffect(() => {
+    if (isNative) return;
     const node = ref.current as unknown as HTMLElement | null;
     if (!node) return;
 
@@ -174,17 +175,16 @@ function TabChip({
   );
   const [hovered, setHovered] = useState(false);
   const isHighlighted = isActive || hovered || isCloseHovered;
-  const closeButtonDragBlockers =
-    Platform.OS === "web"
-      ? ({
-          onPointerDown: (event: { stopPropagation?: () => void }) => {
-            event.stopPropagation?.();
-          },
-          onMouseDown: (event: { stopPropagation?: () => void }) => {
-            event.stopPropagation?.();
-          },
-        } as const)
-      : undefined;
+  const closeButtonDragBlockers = isWeb
+    ? ({
+        onPointerDown: (event: { stopPropagation?: () => void }) => {
+          event.stopPropagation?.();
+        },
+        onMouseDown: (event: { stopPropagation?: () => void }) => {
+          event.stopPropagation?.();
+        },
+      } as const)
+    : undefined;
 
   return (
     <View ref={middleClickRef}>
@@ -199,7 +199,7 @@ function TabChip({
               enabledOnMobile={false}
               style={({ hovered, pressed }) => [
                 styles.tab,
-                Platform.OS === "web" && isDragging && ({ cursor: "grabbing" } as const),
+                isWeb && isDragging && ({ cursor: "grabbing" } as const),
                 {
                   minWidth: resolvedTabWidth,
                   width: resolvedTabWidth,

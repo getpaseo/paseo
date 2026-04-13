@@ -1,10 +1,9 @@
 import { v4 as uuidv4 } from "uuid";
 import type { Logger } from "pino";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import { sep } from "node:path";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
+import { runGitCommand } from "../utils/run-git-command.js";
 import {
   createWorktree,
   getWorktreeTerminalSpecs,
@@ -50,7 +49,6 @@ const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_OPTIONAL_LOCKS: "0",
 };
-const execAsync = promisify(exec);
 const worktreeSetupEligibility = new WeakMap<WorktreeConfig, boolean>();
 
 type MiddleTruncationAccumulator = {
@@ -195,7 +193,7 @@ async function findExistingPaseoWorktreeBySlug(options: CreateAgentWorktreeOptio
 }
 
 async function resolveBranchNameForWorktreePath(worktreePath: string): Promise<string> {
-  const { stdout } = await execAsync("git branch --show-current", {
+  const { stdout } = await runGitCommand(["branch", "--show-current"], {
     cwd: worktreePath,
     env: READ_ONLY_GIT_ENV,
   });

@@ -15,13 +15,12 @@
  * This pattern is used in claude-agent.ts listModels().
  */
 
-import { describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { isCommandAvailableSync } from "../utils/executable.js";
+import { isCommandAvailable } from "../utils/executable.js";
 
 const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
-const canRunClaudeIntegration = isCommandAvailableSync("claude") && hasClaudeCredentials;
 
 // Pattern from claude-agent.ts listModels():
 // Use an empty async generator when you just need control methods
@@ -30,88 +29,92 @@ function createEmptyPrompt(): AsyncGenerator<SDKUserMessage, void, undefined> {
 }
 
 describe("Claude Agent SDK Commands POC", () => {
+  let canRunClaudeIntegration = false;
+
+  beforeAll(async () => {
+    canRunClaudeIntegration = (await isCommandAvailable("claude")) && hasClaudeCredentials;
+  });
+
+  beforeEach((context) => {
+    if (!canRunClaudeIntegration) {
+      context.skip();
+    }
+  });
+
   describe("supportedCommands() API", () => {
-    test.runIf(canRunClaudeIntegration)(
-      "should return an array of SlashCommand objects",
-      async () => {
-        // Use the pattern from claude-agent.ts:
-        // Create a query with empty prompt generator for control methods
-        const emptyPrompt = createEmptyPrompt();
+    test("should return an array of SlashCommand objects", async () => {
+      // Use the pattern from claude-agent.ts:
+      // Create a query with empty prompt generator for control methods
+      const emptyPrompt = createEmptyPrompt();
 
-        const claudeQuery = query({
-          prompt: emptyPrompt,
-          options: {
-            cwd: process.cwd(),
-            permissionMode: "plan",
-            includePartialMessages: false,
-            settingSources: ["user", "project"], // Required to load skills
-          },
-        });
+      const claudeQuery = query({
+        prompt: emptyPrompt,
+        options: {
+          cwd: process.cwd(),
+          permissionMode: "plan",
+          includePartialMessages: false,
+          settingSources: ["user", "project"], // Required to load skills
+        },
+      });
 
-        try {
-          // supportedCommands() is a control method - works without iterating
-          const commands = await claudeQuery.supportedCommands();
+      try {
+        // supportedCommands() is a control method - works without iterating
+        const commands = await claudeQuery.supportedCommands();
 
-          // Should be an array
-          expect(Array.isArray(commands)).toBe(true);
+        // Should be an array
+        expect(Array.isArray(commands)).toBe(true);
 
-          // Verify structure
-          if (commands.length > 0) {
-            const firstCommand = commands[0];
-            expect(typeof firstCommand.name).toBe("string");
-            expect(typeof firstCommand.description).toBe("string");
-            expect(typeof firstCommand.argumentHint).toBe("string");
-            expect(firstCommand.name.startsWith("/")).toBe(false);
-          }
-        } finally {
-          if (typeof claudeQuery.return === "function") {
-            try {
-              await claudeQuery.return();
-            } catch {
-              // ignore shutdown errors
-            }
+        // Verify structure
+        if (commands.length > 0) {
+          const firstCommand = commands[0];
+          expect(typeof firstCommand.name).toBe("string");
+          expect(typeof firstCommand.description).toBe("string");
+          expect(typeof firstCommand.argumentHint).toBe("string");
+          expect(firstCommand.name.startsWith("/")).toBe(false);
+        }
+      } finally {
+        if (typeof claudeQuery.return === "function") {
+          try {
+            await claudeQuery.return();
+          } catch {
+            // ignore shutdown errors
           }
         }
-      },
-      30000,
-    );
+      }
+    }, 30000);
 
-    test.runIf(canRunClaudeIntegration)(
-      "should have valid SlashCommand structure for all commands",
-      async () => {
-        const emptyPrompt = createEmptyPrompt();
+    test("should have valid SlashCommand structure for all commands", async () => {
+      const emptyPrompt = createEmptyPrompt();
 
-        const claudeQuery = query({
-          prompt: emptyPrompt,
-          options: {
-            cwd: process.cwd(),
-            permissionMode: "plan",
-            settingSources: ["user", "project"],
-          },
-        });
+      const claudeQuery = query({
+        prompt: emptyPrompt,
+        options: {
+          cwd: process.cwd(),
+          permissionMode: "plan",
+          settingSources: ["user", "project"],
+        },
+      });
 
-        try {
-          const commands = await claudeQuery.supportedCommands();
+      try {
+        const commands = await claudeQuery.supportedCommands();
 
-          expect(commands.length).toBeGreaterThan(0);
+        expect(commands.length).toBeGreaterThan(0);
 
-          // Verify all commands have valid structure
-          for (const cmd of commands) {
-            expect(cmd).toHaveProperty("name");
-            expect(cmd).toHaveProperty("description");
-            expect(cmd).toHaveProperty("argumentHint");
-            expect(typeof cmd.name).toBe("string");
-            expect(typeof cmd.description).toBe("string");
-            expect(typeof cmd.argumentHint).toBe("string");
-            expect(cmd.name.length).toBeGreaterThan(0);
-            expect(cmd.name.startsWith("/")).toBe(false);
-          }
-        } finally {
-          await claudeQuery.return?.();
+        // Verify all commands have valid structure
+        for (const cmd of commands) {
+          expect(cmd).toHaveProperty("name");
+          expect(cmd).toHaveProperty("description");
+          expect(cmd).toHaveProperty("argumentHint");
+          expect(typeof cmd.name).toBe("string");
+          expect(typeof cmd.description).toBe("string");
+          expect(typeof cmd.argumentHint).toBe("string");
+          expect(cmd.name.length).toBeGreaterThan(0);
+          expect(cmd.name.startsWith("/")).toBe(false);
         }
-      },
-      30000,
-    );
+      } finally {
+        await claudeQuery.return?.();
+      }
+    }, 30000);
   });
 
   describe("Command Execution", () => {

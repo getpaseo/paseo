@@ -187,8 +187,8 @@ Do the following steps in order:
    - If in worktree mode and any agent is NOT in the worktree, archive it and relaunch with the correct cwd.
 
 7. If ALL acceptance criteria are met:
-   - Delete this schedule.
    - Proceed to delivery.
+   - Do NOT delete this schedule yet — if the user requests a PR, the heartbeat transitions to CI monitoring mode. Only delete it once CI is fully green (or if the user declines a PR).
 ```
 
 ### Phase 7: Implement
@@ -233,13 +233,12 @@ Archive all QA agents when done.
 
 ### Phase 11: Deliver
 
-1. Delete the heartbeat schedule
-2. Archive any remaining agents
-3. **If in worktree mode:**
+1. Archive any remaining implementation/QA agents
+2. **If in worktree mode:**
    - Report the worktree path and branch name
    - Ask: "The work is in worktree `<worktree-path>` on branch `orchestrate/<task-slug>`. Should I merge it into your current branch, create a PR, or leave the worktree for you to review?"
    - Do NOT remove the worktree automatically — the user decides what to do with it
-4. **If NOT in worktree mode:**
+3. **If NOT in worktree mode:**
    - Report to the user:
      - What was done (high-level)
      - What files changed
@@ -247,6 +246,47 @@ Archive all QA agents when done.
      - Ask: "Should I commit this? Create a PR? Or leave it uncommitted for you to review?"
 
 Wait for the user's instruction.
+
+**When the user asks for a PR, the job is NOT done when the PR is created.** The objective is: PR created AND all CI checks passing. After creating the PR:
+
+1. Keep the heartbeat schedule running — do NOT delete it yet.
+2. Update the heartbeat prompt to include CI monitoring (see below).
+3. Monitor CI status via `gh pr checks <pr-number> --watch` or `gh pr checks <pr-number>`.
+4. If any check fails:
+   - Read the failure logs (`gh run view <run-id> --log-failed`).
+   - Launch a fix agent targeting the failure.
+   - Push the fix. CI will re-run automatically.
+   - Continue monitoring.
+5. Only when ALL checks are green:
+   - Delete the heartbeat schedule.
+   - Report to the user with the full PR URL (e.g. `https://github.com/owner/repo/pull/N`), not just a number.
+
+#### Post-PR heartbeat prompt
+
+After creating the PR, update the heartbeat schedule prompt to:
+
+```
+HEARTBEAT — CI monitoring for PR #<pr-number>.
+
+Do the following steps in order:
+
+1. Check CI status:
+   gh pr checks <pr-number>
+
+2. If all checks passed:
+   - Delete this schedule.
+   - Tell the user the PR is ready with the full PR URL (use `gh pr view <pr-number> --json url -q .url` to get it).
+
+3. If any check failed:
+   - Get the failed run logs: gh run view <run-id> --log-failed
+   - Diagnose the failure.
+   - Launch a fix agent to address it (background: true, notifyOnFinish: true).
+   - After the fix agent completes, push the fix.
+   - Continue monitoring on next heartbeat.
+
+4. If checks are still running:
+   - Do nothing. Wait for the next heartbeat.
+```
 
 ---
 

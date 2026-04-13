@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Platform, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { BookOpen, Check, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Fonts } from "@/constants/theme";
 import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { isWeb } from "@/constants/platform";
 
 type StartupSplashScreenProps = {
   bootstrapState?: {
@@ -42,7 +43,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorScrollView: {
     flex: 1,
-    ...(Platform.OS === "web"
+    ...(isWeb
       ? {
           overflowX: "auto",
           overflowY: "auto",
@@ -144,7 +145,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
     lineHeight: 18,
-    ...(Platform.OS === "web"
+    ...(isWeb
       ? {
           whiteSpace: "pre",
           overflowWrap: "normal",

@@ -7,7 +7,6 @@ import {
   type LayoutChangeEvent,
   StyleProp,
   ViewStyle,
-  Platform,
 } from "react-native";
 import * as React from "react";
 import {
@@ -86,6 +85,7 @@ import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import type { DaemonClient } from "@server/client/daemon-client";
+import { isWeb, isNative } from "@/constants/platform";
 
 interface UserMessageProps {
   message: string;
@@ -134,7 +134,7 @@ const SCROLL_EDGE_EPSILON = 0.5;
 type ScrollAxis = "x" | "y";
 
 function ensureWebToolCallShimmerKeyframes() {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return;
   }
   if (typeof document === "undefined") {
@@ -341,12 +341,13 @@ export const UserMessage = memo(function UserMessage({
   isLastInGroup = true,
   disableOuterSpacing,
 }: UserMessageProps) {
+  const isCompact = useIsCompactFormFactor();
   const [messageHovered, setMessageHovered] = useState(false);
   const [copyButtonHovered, setCopyButtonHovered] = useState(false);
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
-  const showCopyButton = hasText && (Platform.OS !== "web" || messageHovered || copyButtonHovered);
+  const showCopyButton = hasText && (isCompact || messageHovered || copyButtonHovered);
 
   return (
     <View
@@ -361,8 +362,8 @@ export const UserMessage = memo(function UserMessage({
     >
       <Pressable
         style={userMessageStylesheet.content}
-        onHoverIn={Platform.OS === "web" ? () => setMessageHovered(true) : undefined}
-        onHoverOut={Platform.OS === "web" ? () => setMessageHovered(false) : undefined}
+        onHoverIn={() => setMessageHovered(true)}
+        onHoverOut={() => setMessageHovered(false)}
       >
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
@@ -434,7 +435,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontFamily: Fonts.mono,
     fontSize: 13,
-    userSelect: Platform.OS === "web" ? "text" : "auto",
+    userSelect: isWeb ? "text" : "auto",
   },
   imageFrame: {
     width: "100%",
@@ -657,7 +658,7 @@ function MarkdownLink({
   children: ReactNode;
 }) {
   const [hovered, setHovered] = useState(false);
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return (
       <Text accessibilityRole="link" onPress={() => onPress(href)} style={style}>
         {children}
@@ -779,8 +780,8 @@ export const TurnCopyButton = memo(function TurnCopyButton({
   return (
     <Pressable
       onPress={handleCopy}
-      onHoverIn={Platform.OS === "web" ? () => onHoverChange?.(true) : undefined}
-      onHoverOut={Platform.OS === "web" ? () => onHoverChange?.(false) : undefined}
+      onHoverIn={() => onHoverChange?.(true)}
+      onHoverOut={() => onHoverChange?.(false)}
       style={[turnCopyButtonStylesheet.container, containerStyle]}
       accessibilityRole="button"
       accessibilityLabel={
@@ -1060,7 +1061,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             <Text
               key={node.key}
               onPress={() => parsed && onInlinePathPress?.(parsed)}
-              selectable={Platform.OS === "web" ? undefined : false}
+              selectable={isWeb ? undefined : false}
               style={[assistantMessageStylesheet.pathChip, assistantMessageStylesheet.pathChipText]}
             >
               {content}
@@ -1653,9 +1654,9 @@ const ExpandableBadge = memo(function ExpandableBadge({
     32,
     Math.min(120, labelRowWidth > 0 ? labelRowWidth * 0.28 : 0),
   );
-  const isWebShimmer = isLoading && Platform.OS === "web";
+  const isWebShimmer = isLoading && isWeb;
   const shouldMeasureWebShimmer = isWebShimmer;
-  const shouldMeasureNativeShimmer = isLoading && Platform.OS !== "web";
+  const shouldMeasureNativeShimmer = isLoading && isNative;
   const isNativeShimmer = shouldMeasureNativeShimmer && labelRowWidth > 0 && labelRowHeight > 0;
   const webShimmerSpanStartX = labelOffsetX;
   const webShimmerSpanEndX = secondaryLabel
@@ -1732,7 +1733,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
   }, [isNativeShimmer, labelRowWidth, nativeShimmerPeakWidth, shimmerDuration, shimmerTranslateX]);
 
   useEffect(() => {
-    if (Platform.OS !== "web" || !isExpanded || !hasDetailContent) {
+    if (isNative || !isExpanded || !hasDetailContent) {
       return;
     }
 

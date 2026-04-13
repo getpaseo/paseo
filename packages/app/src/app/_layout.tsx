@@ -81,6 +81,7 @@ import {
   parseWorkspaceOpenIntent,
 } from "@/utils/host-routes";
 import { syncNavigationActiveWorkspace } from "@/stores/navigation-active-workspace-store";
+import { isWeb, isNative } from "@/constants/platform";
 
 polyfillCrypto();
 
@@ -101,7 +102,7 @@ function PushNotificationRouter() {
   const lastHandledIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (Platform.OS === "web") {
+    if (isWeb) {
       let removeDesktopNotificationListener: (() => void) | null = null;
       let cancelled = false;
 
@@ -390,10 +391,10 @@ function AppContainer({
     const screenW = UnistylesRuntime.screen.width;
     const screenH = UnistylesRuntime.screen.height;
     const isElectron = getIsElectronRuntime();
-    const windowW = Platform.OS === "web" ? window.innerWidth : undefined;
-    const windowH = Platform.OS === "web" ? window.innerHeight : undefined;
-    const dpr = Platform.OS === "web" ? window.devicePixelRatio : undefined;
-    const ua = Platform.OS === "web" ? navigator.userAgent : undefined;
+    const windowW = isWeb ? window.innerWidth : undefined;
+    const windowH = isWeb ? window.innerHeight : undefined;
+    const dpr = isWeb ? window.devicePixelRatio : undefined;
+    const ua = isWeb ? navigator.userAgent : undefined;
 
     console.log(
       "[layout-debug]",
@@ -577,7 +578,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
   }, [settingsLoading, settings.theme]);
 
   useEffect(() => {
-    if (settingsLoading || Platform.OS !== "web") {
+    if (settingsLoading || isNative) {
       return;
     }
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
@@ -47,6 +47,7 @@ import {
   deriveRouteBottomAnchorIntent,
   deriveRouteBottomAnchorRequest,
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
+import { isNative } from "@/constants/platform";
 
 function formatProviderLabel(provider: Agent["provider"]): string {
   if (!provider) {
@@ -595,7 +596,7 @@ function AgentPanelBody({
     if (!isConnected || !hasSession) {
       return;
     }
-    const shouldSyncOnEntry = needsAuthoritativeSync || Platform.OS !== "web";
+    const shouldSyncOnEntry = needsAuthoritativeSync || isNative;
     if (!shouldSyncOnEntry) {
       return;
     }

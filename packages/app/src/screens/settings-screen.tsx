@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { MutableRefObject, ComponentType } from "react";
-import { View, Text, ScrollView, Alert, Platform, Pressable } from "react-native";
+import { View, Text, ScrollView, Alert, Pressable } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -72,6 +72,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { ProviderDiagnosticSheet } from "@/components/provider-diagnostic-sheet";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
+import { isWeb } from "@/constants/platform";
 
 // ---------------------------------------------------------------------------
 // Section definitions
@@ -1673,22 +1674,20 @@ function DaemonCard({ daemon, onOpenSettings }: DaemonCardProps) {
           <View style={styles.hostHeaderRight}>
             <View
               style={[
-                Platform.OS === "web" ? styles.statusPill : styles.statusPillMobile,
+                isWeb ? styles.statusPill : styles.statusPillMobile,
                 { backgroundColor: statusPillBg },
               ]}
             >
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-              {Platform.OS === "web" ? (
+              {isWeb ? (
                 <Text style={[styles.statusText, { color: statusColor }]}>{badgeText}</Text>
               ) : null}
             </View>
 
             {connectionBadge ? (
-              <View
-                style={Platform.OS === "web" ? styles.connectionPill : styles.connectionPillMobile}
-              >
+              <View style={isWeb ? styles.connectionPill : styles.connectionPillMobile}>
                 {connectionBadge.icon}
-                {Platform.OS === "web" ? (
+                {isWeb ? (
                   <Text style={styles.connectionText} numberOfLines={1}>
                     {connectionBadge.text}
                   </Text>

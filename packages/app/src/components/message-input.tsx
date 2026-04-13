@@ -9,7 +9,6 @@ import {
   TextInputKeyPressEventData,
   TextInputSelectionChangeEventData,
   Image,
-  Platform,
   BackHandler,
 } from "react-native";
 import {
@@ -48,6 +47,7 @@ import {
   markScrollInvestigationEvent,
   markScrollInvestigationRender,
 } from "@/utils/scroll-jank-investigation";
+import { isWeb } from "@/constants/platform";
 
 export type ImageAttachment = AttachmentMetadata;
 
@@ -115,7 +115,7 @@ export interface MessageInputRef {
 
 const MIN_INPUT_HEIGHT = 30;
 const MAX_INPUT_HEIGHT = 160;
-const IS_WEB = Platform.OS === "web";
+const IS_WEB = isWeb;
 
 type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {
@@ -1290,7 +1290,7 @@ const styles = StyleSheet.create(((theme: any) => ({
   rightButtonGroup: {
     flexDirection: "row",
     alignItems: "center",
-    gap: Platform.OS === "web" ? theme.spacing[2] : theme.spacing[1],
+    gap: isWeb ? theme.spacing[2] : theme.spacing[1],
   },
   attachButton: {
     width: 28,

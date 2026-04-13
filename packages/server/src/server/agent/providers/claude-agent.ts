@@ -1,5 +1,4 @@
-import { execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { promisify } from "node:util";
+import { type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
@@ -73,12 +72,11 @@ import type {
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
-import { findExecutable } from "../../../utils/executable.js";
-import { spawnProcess } from "../../../utils/spawn.js";
+import { executableExists, findExecutable } from "../../../utils/executable.js";
+import { execCommand, spawnProcess } from "../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;
-const execFileAsync = promisify(execFile);
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
 
 type TurnState = "idle" | "foreground" | "autonomous";
@@ -1130,7 +1128,7 @@ export class ClaudeAgentClient implements AgentClient {
   async isAvailable(): Promise<boolean> {
     const command = this.runtimeSettings?.command;
     if (command?.mode === "replace") {
-      return fs.existsSync(command.argv[0]);
+      return executableExists(command.argv[0]) !== null;
     }
     return true;
   }
@@ -1186,14 +1184,10 @@ async function resolveClaudeVersion(
 
   try {
     if (command?.mode === "replace") {
-      const { stdout } = await execFileAsync(
+      const { stdout } = await execCommand(
         command.argv[0]!,
         [...command.argv.slice(1), "--version"],
-        {
-          encoding: "utf8",
-          timeout: 5_000,
-          windowsHide: true,
-        },
+        { timeout: 5_000 },
       );
       return stdout.trim() || null;
     }
@@ -1203,11 +1197,7 @@ async function resolveClaudeVersion(
       return null;
     }
 
-    const { stdout } = await execFileAsync(executable, ["--version"], {
-      encoding: "utf8",
-      timeout: 5_000,
-      windowsHide: true,
-    });
+    const { stdout } = await execCommand(executable, ["--version"], { timeout: 5_000 });
     return stdout.trim() || null;
   } catch {
     return null;

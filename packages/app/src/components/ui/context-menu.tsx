@@ -32,6 +32,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, CheckCircle } from "lucide-react-native";
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { isWeb, isNative } from "@/constants/platform";
 
 // Keep parity with dropdown-menu action statuses.
 export type ActionStatus = "idle" | "pending" | "success";
@@ -254,8 +255,7 @@ export function ContextMenuTrigger({
 >): ReactElement {
   const ctx = useContextMenuContext("ContextMenuTrigger");
 
-  const shouldEnableOnThisPlatform =
-    enabled && (Platform.OS === "web" ? enabledOnWeb : enabledOnMobile);
+  const shouldEnableOnThisPlatform = enabled && (isWeb ? enabledOnWeb : enabledOnMobile);
 
   const openAtEvent = useCallback(
     (event: unknown) => {
@@ -294,7 +294,7 @@ export function ContextMenuTrigger({
       disabled={disabled}
       delayLongPress={longPressDelayMs}
       onLongPress={(event) => {
-        if (Platform.OS === "web") {
+        if (isWeb) {
           props.onLongPress?.(event);
           return;
         }
@@ -303,7 +303,7 @@ export function ContextMenuTrigger({
       }}
       // @ts-ignore - onContextMenu is web-only and not in RN types.
       onContextMenu={(event: unknown) => {
-        if (Platform.OS !== "web") {
+        if (isNative) {
           return;
         }
         const e: any = event;

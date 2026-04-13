@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Modal, Pressable, ScrollView, Text, TextInput, View, Platform } from "react-native";
+import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Folder } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQuery } from "@tanstack/react-query";
@@ -11,6 +11,7 @@ import { useHosts, useHostRuntimeClient, useHostRuntimeIsConnected } from "@/run
 import { useOpenProject } from "@/hooks/use-open-project";
 import { parseServerIdFromPathname } from "@/utils/host-routes";
 import { buildWorkingDirectorySuggestions } from "@/utils/working-directory-suggestions";
+import { isNative } from "@/constants/platform";
 
 export function ProjectPickerModal() {
   const { theme } = useUnistyles();
@@ -122,7 +123,7 @@ export function ProjectPickerModal() {
 
   // Keyboard navigation
   useEffect(() => {
-    if (!open || Platform.OS !== "web") return;
+    if (!open || isNative) return;
 
     function handler(event: KeyboardEvent) {
       const key = event.key;

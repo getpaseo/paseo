@@ -6,7 +6,6 @@ import {
   ScrollView as RNScrollView,
   Text,
   View,
-  Platform,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -21,6 +20,7 @@ import {
   type HighlightStyle,
 } from "@getpaseo/highlight";
 import { lineNumberGutterWidth } from "@/components/code-insets";
+import { isWeb } from "@/constants/platform";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -243,7 +243,7 @@ export function FilePane({
   filePath: string;
 }) {
   const isMobile = useIsCompactFormFactor();
-  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
+  const showDesktopWebScrollbar = isWeb && !isMobile;
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);

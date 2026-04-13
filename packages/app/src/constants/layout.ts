@@ -1,6 +1,5 @@
-import { Platform } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
-import { isElectronRuntime, isElectronRuntimeMac } from "@/desktop/host";
+import { isWeb } from "@/constants/platform";
 
 export const FOOTER_HEIGHT = 75;
 
@@ -24,43 +23,10 @@ export const DESKTOP_TRAFFIC_LIGHT_HEIGHT = 45;
 export const DESKTOP_WINDOW_CONTROLS_WIDTH = 140;
 export const DESKTOP_WINDOW_CONTROLS_HEIGHT = 48;
 
-// Check if running in the Electron desktop runtime (any OS)
-function isElectronDesktopRuntime(): boolean {
-  if (Platform.OS !== "web") return false;
-  return isElectronRuntime();
-}
-
-// Check if running in the Electron desktop runtime on macOS
-function isElectronDesktopRuntimeMac(): boolean {
-  if (Platform.OS !== "web") return false;
-  return isElectronRuntimeMac();
-}
-
-// Cached result - only cache true, keep checking if false (in case desktop globals load later)
-let _isElectronRuntimeMacCached: boolean | null = null;
-let _isElectronRuntimeCached: boolean | null = null;
-
-export function getIsElectronRuntimeMac(): boolean {
-  if (_isElectronRuntimeMacCached === true) {
-    return true;
-  }
-  const result = isElectronDesktopRuntimeMac();
-  if (result) {
-    _isElectronRuntimeMacCached = true;
-  }
-  return result;
-}
-
-export function getIsElectronRuntime(): boolean {
-  if (_isElectronRuntimeCached === true) {
-    return true;
-  }
-  const result = isElectronDesktopRuntime();
-  if (result) {
-    _isElectronRuntimeCached = true;
-  }
-  return result;
-}
+export {
+  getIsElectron as getIsElectronRuntime,
+  getIsElectronMac as getIsElectronRuntimeMac,
+} from "./platform";
 
 /**
  * Reactive hook — re-renders the component when the breakpoint changes.
@@ -75,5 +41,5 @@ export function useIsCompactFormFactor(): boolean {
 // Keep that capability distinct from desktop-width layout so touch tablets
 // can use the desktop shell without entering web-only code paths.
 export function supportsDesktopPaneSplits(): boolean {
-  return Platform.OS === "web";
+  return isWeb;
 }

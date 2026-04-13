@@ -1,12 +1,13 @@
 import React from "react";
-import { View, Text, Platform, ScrollView as RNScrollView } from "react-native";
+import { View, Text, ScrollView as RNScrollView } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import type { DiffLine, DiffSegment } from "@/utils/tool-call-parsers";
 import { getCodeInsets } from "./code-insets";
+import { isWeb } from "@/constants/platform";
 
-const ScrollView = Platform.OS === "web" ? RNScrollView : GHScrollView;
+const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
 interface DiffViewerProps {
   diffLines: DiffLine[];
@@ -130,7 +131,7 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: Fonts.mono,
       fontSize: theme.fontSize.xs,
       color: theme.colors.foreground,
-      ...(Platform.OS === "web"
+      ...(isWeb
         ? {
             whiteSpace: "pre",
             overflowWrap: "normal",
