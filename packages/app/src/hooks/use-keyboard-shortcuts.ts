@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
-import { usePathname } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import {
+  buildHostSettingsRoute,
   parseHostAgentRouteFromPathname,
   parseServerIdFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -47,6 +48,7 @@ export function useKeyboardShortcuts({
   cycleTheme?: () => void;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const hosts = useHosts();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
@@ -243,6 +245,16 @@ export function useKeyboardShortcuts({
           return navigateRelativeWorkspace(input.payload.delta);
         case "sidebar.toggle.left":
           toggleAgentList();
+          return true;
+        case "settings.toggle":
+          if (pathname.endsWith("/settings")) {
+            router.back();
+            return true;
+          }
+          if (!activeServerId) {
+            return false;
+          }
+          router.push(buildHostSettingsRoute(activeServerId));
           return true;
         case "sidebar.toggle.both":
           if (toggleBothSidebars) {
