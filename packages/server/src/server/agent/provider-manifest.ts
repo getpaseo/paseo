@@ -9,7 +9,7 @@ export interface AgentModeVisuals {
   colorTier: AgentModeColorTier;
 }
 
-export interface AgentProviderModeDefinition extends AgentMode, AgentModeVisuals {}
+export type AgentProviderModeDefinition = Omit<AgentMode, "icon" | "colorTier"> & AgentModeVisuals;
 
 // TODO: `modes` should not be static. Providers (especially ACP) report their
 // own modes at runtime via session/new. We should fetch modes from the provider
@@ -191,8 +191,12 @@ export function isValidAgentProvider(
   return Array.isArray(validIds) ? validIds.includes(value) : new Set(validIds).has(value);
 }
 
-export function getModeVisuals(provider: string, modeId: string): AgentModeVisuals | undefined {
-  const definition = AGENT_PROVIDER_DEFINITIONS.find((entry) => entry.id === provider);
+export function getModeVisuals(
+  provider: string,
+  modeId: string,
+  definitions: AgentProviderDefinition[],
+): AgentModeVisuals | undefined {
+  const definition = definitions.find((entry) => entry.id === provider);
   const mode = definition?.modes.find((m) => m.id === modeId);
   if (!mode) return undefined;
   return { icon: mode.icon, colorTier: mode.colorTier };

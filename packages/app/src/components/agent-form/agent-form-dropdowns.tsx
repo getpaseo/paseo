@@ -557,7 +557,11 @@ export function AgentConfigRow({
   const effectiveSelectedThinkingOption =
     selectedThinkingOptionId || thinkingSelectOptions[0]?.id || "";
 
-  const selectedModeVisuals = getModeVisuals(selectedProvider, effectiveSelectedMode);
+  const selectedModeVisuals = getModeVisuals(
+    selectedProvider,
+    effectiveSelectedMode,
+    providerDefinitions,
+  );
   const ModeIcon = MODE_ICON_MAP[selectedModeVisuals?.icon ?? "ShieldCheck"];
   const modeIconColor = MODE_COLOR_MAP[selectedModeVisuals?.colorTier ?? "safe"];
 

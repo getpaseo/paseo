@@ -953,6 +953,7 @@ export class AgentManager {
   async setAgentMode(agentId: string, modeId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     await agent.session.setMode(modeId);
+    agent.config.modeId = modeId;
     agent.currentModeId = modeId;
     // Update runtimeInfo to reflect the new mode
     if (agent.runtimeInfo) {

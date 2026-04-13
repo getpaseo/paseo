@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import type { AgentModelDefinition } from "../agent-sdk-types.js";
 import { isCommandAvailable } from "../../../utils/executable.js";
 import { ACPAgentClient } from "./acp-agent.js";
 
@@ -39,10 +38,6 @@ export class GenericACPAgentClient extends ACPAgentClient {
       command: this.command[0],
       args: this.command.slice(1),
     };
-  }
-
-  override async listModels(): Promise<AgentModelDefinition[]> {
-    return [];
   }
 
   override async isAvailable(): Promise<boolean> {

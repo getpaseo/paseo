@@ -457,7 +457,7 @@ describe("buildProviderRegistry", () => {
   });
 
   describe("model merging", () => {
-    test("profile models prepended to runtime models", async () => {
+    test("profile models replace runtime models", async () => {
       mockState.runtimeModels.set("claude", [
         {
           provider: "claude",
@@ -481,10 +481,10 @@ describe("buildProviderRegistry", () => {
 
       const models = await registry.claude.fetchModels();
 
-      expect(models.map((model) => model.id)).toEqual(["profile-fast", "runtime-pro"]);
+      expect(models.map((model) => model.id)).toEqual(["profile-fast"]);
     });
 
-    test("profile model wins on ID collision", async () => {
+    test("profile models exclude runtime models entirely", async () => {
       mockState.runtimeModels.set("claude", [
         {
           provider: "claude",
@@ -519,16 +519,10 @@ describe("buildProviderRegistry", () => {
           id: "shared-model",
           label: "Profile Label",
         },
-        {
-          provider: "claude",
-          id: "runtime-only",
-          label: "Runtime Only",
-          isDefault: undefined,
-        },
       ]);
     });
 
-    test("profile isDefault clears runtime isDefault", async () => {
+    test("profile isDefault preserved without runtime models", async () => {
       mockState.runtimeModels.set("claude", [
         {
           provider: "claude",
@@ -560,12 +554,6 @@ describe("buildProviderRegistry", () => {
           id: "profile-default",
           label: "Profile Default",
           isDefault: true,
-        },
-        {
-          provider: "claude",
-          id: "runtime-default",
-          label: "Runtime Default",
-          isDefault: false,
         },
       ]);
     });

@@ -43,6 +43,8 @@ export type AgentMode = {
   id: string;
   label: string;
   description?: string;
+  icon?: string;
+  colorTier?: string;
 };
 
 export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";

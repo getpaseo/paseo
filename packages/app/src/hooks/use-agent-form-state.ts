@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  AGENT_PROVIDER_DEFINITIONS,
-  type AgentProviderDefinition,
-} from "@server/server/agent/provider-manifest";
+import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import type {
   AgentMode,
   AgentModelDefinition,
@@ -100,13 +97,8 @@ type UseAgentFormStateResult = {
   persistFormPreferences: () => Promise<void>;
 };
 
-const staticProviderDefinitions = AGENT_PROVIDER_DEFINITIONS;
-const staticProviderDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
-  staticProviderDefinitions.map((definition) => [definition.id, definition]),
-);
-const fallbackDefinition = staticProviderDefinitions[0];
-const DEFAULT_PROVIDER: AgentProvider = fallbackDefinition?.id ?? "claude";
-const DEFAULT_MODE_FOR_DEFAULT_PROVIDER = fallbackDefinition?.defaultModeId ?? "";
+const DEFAULT_PROVIDER: AgentProvider = "claude";
+const DEFAULT_MODE_FOR_DEFAULT_PROVIDER = "default";
 
 function normalizeSelectedModelId(modelId: string | null | undefined): string {
   const normalized = typeof modelId === "string" ? modelId.trim() : "";
@@ -181,7 +173,7 @@ function resolveFormState(
   userModified: UserModifiedFields,
   currentState: FormState,
   validServerIds: Set<string>,
-  allowedProviderMap: Map<AgentProvider, AgentProviderDefinition> = staticProviderDefinitionMap,
+  allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>,
 ): FormState {
   // Start with current state - we only update non-user-modified fields
   const result = { ...currentState };

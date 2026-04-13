@@ -93,6 +93,8 @@ const AgentModeSchema: z.ZodType<AgentMode> = z.object({
   id: z.string(),
   label: z.string(),
   description: z.string().optional(),
+  icon: z.string().optional(),
+  colorTier: z.string().optional(),
 });
 
 const ProviderStatusSchema: z.ZodType<ProviderStatus> = z.enum([

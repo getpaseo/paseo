@@ -215,26 +215,10 @@ function mergeModels(
     return runtimeModels.map((model) => mapModel(provider, model));
   }
 
-  const hasProfileDefault = profileModels.some((model) => model.isDefault);
-  const merged: AgentModelDefinition[] = profileModels.map((model) => ({
+  return profileModels.map((model) => ({
     ...model,
     provider,
   }));
-  const seen = new Set(profileModels.map((model) => model.id));
-
-  for (const runtimeModel of runtimeModels) {
-    if (seen.has(runtimeModel.id)) {
-      continue;
-    }
-
-    merged.push({
-      ...runtimeModel,
-      provider,
-      isDefault: hasProfileDefault ? false : runtimeModel.isDefault,
-    });
-  }
-
-  return merged;
 }
 
 function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): AgentSession {

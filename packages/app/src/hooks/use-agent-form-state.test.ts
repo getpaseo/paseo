@@ -1,24 +1,54 @@
 import { describe, expect, it } from "vitest";
 import { __private__ } from "./use-agent-form-state";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
-import {
-  AGENT_PROVIDER_DEFINITIONS,
-  type AgentProviderDefinition,
-} from "@server/server/agent/provider-manifest";
+import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import type {
   AgentModelDefinition,
   AgentProvider,
   ProviderSnapshotEntry,
 } from "@server/server/agent/agent-sdk-types";
 
+const TEST_CODEX_DEFINITION: AgentProviderDefinition = {
+  id: "codex",
+  label: "Codex",
+  description: "Codex test provider",
+  defaultModeId: "auto",
+  modes: [
+    { id: "auto", label: "Auto", icon: "ShieldAlert", colorTier: "moderate" },
+    { id: "full-access", label: "Full Access", icon: "ShieldAlert", colorTier: "dangerous" },
+  ],
+};
+
+const TEST_CLAUDE_DEFINITION: AgentProviderDefinition = {
+  id: "claude",
+  label: "Claude",
+  description: "Claude test provider",
+  defaultModeId: "default",
+  modes: [
+    { id: "default", label: "Always Ask", icon: "ShieldCheck", colorTier: "safe" },
+    { id: "acceptEdits", label: "Accept File Edits", icon: "ShieldAlert", colorTier: "moderate" },
+    { id: "plan", label: "Plan Mode", icon: "ShieldCheck", colorTier: "planning" },
+    { id: "bypassPermissions", label: "Bypass", icon: "ShieldAlert", colorTier: "dangerous" },
+  ],
+};
+
+function makeProviderMap(
+  ...definitions: AgentProviderDefinition[]
+): Map<AgentProvider, AgentProviderDefinition> {
+  return new Map(definitions.map((d) => [d.id as AgentProvider, d]));
+}
+
+const codexProviderMap = makeProviderMap(TEST_CODEX_DEFINITION);
+const claudeProviderMap = makeProviderMap(TEST_CLAUDE_DEFINITION);
+
 describe("useAgentFormState", () => {
   describe("buildProviderDefinitions", () => {
-    it("returns static definitions when snapshot data is unavailable", () => {
-      expect(buildProviderDefinitions(undefined)).toBe(AGENT_PROVIDER_DEFINITIONS);
-      expect(buildProviderDefinitions([])).toBe(AGENT_PROVIDER_DEFINITIONS);
+    it("returns empty array when snapshot data is unavailable", () => {
+      expect(buildProviderDefinitions(undefined)).toEqual([]);
+      expect(buildProviderDefinitions([])).toEqual([]);
     });
 
-    it("builds custom provider definitions from snapshot metadata with built-in fallbacks", () => {
+    it("builds custom provider definitions from snapshot metadata", () => {
       const entries: ProviderSnapshotEntry[] = [
         {
           provider: "zai",
@@ -26,12 +56,23 @@ describe("useAgentFormState", () => {
           label: "ZAI",
           description: "Claude with ZAI config",
           defaultModeId: "default",
-          modes: [{ id: "default", label: "Default", description: "Safe mode" }],
+          modes: [
+            {
+              id: "default",
+              label: "Default",
+              description: "Safe mode",
+              icon: "ShieldCheck",
+              colorTier: "safe",
+            },
+          ],
         },
         {
           provider: "claude",
           status: "ready",
-          modes: [{ id: "default", label: "Always Ask" }],
+          label: "Claude",
+          description: "Anthropic Claude",
+          defaultModeId: "default",
+          modes: [{ id: "default", label: "Always Ask", icon: "ShieldCheck", colorTier: "safe" }],
         },
       ];
 
@@ -49,18 +90,24 @@ describe("useAgentFormState", () => {
               label: "Default",
               description: "Safe mode",
               icon: "ShieldCheck",
-              colorTier: "moderate",
+              colorTier: "safe",
             },
           ],
-          voice: undefined,
         },
-        expect.objectContaining({
+        {
           id: "claude",
           label: "Claude",
-          description: expect.any(String),
+          description: "Anthropic Claude",
           defaultModeId: "default",
-          voice: expect.any(Object),
-        }),
+          modes: [
+            {
+              id: "default",
+              label: "Always Ask",
+              icon: "ShieldCheck",
+              colorTier: "safe",
+            },
+          ],
+        },
       ]);
     });
   });
@@ -136,6 +183,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.model).toBe("gpt-5.3-codex");
@@ -164,6 +212,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.model).toBe("gpt-5.3-codex");
@@ -192,6 +241,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.thinkingOptionId).toBe("xhigh");
@@ -219,6 +269,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.model).toBe("gpt-5.3-codex");
@@ -246,6 +297,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.model).toBe("gpt-5.3-codex");
@@ -273,6 +325,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.model).toBe("gpt-5.3-codex");
@@ -314,6 +367,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        claudeProviderMap,
       );
 
       expect(resolved.model).toBe("default");
@@ -321,11 +375,6 @@ describe("useAgentFormState", () => {
     });
 
     it("resolves provider only from allowed provider map", () => {
-      const allowedProviderMap = new Map<AgentProvider, AgentProviderDefinition>(
-        AGENT_PROVIDER_DEFINITIONS.filter((definition) => definition.id === "claude").map(
-          (definition) => [definition.id as AgentProvider, definition],
-        ),
-      );
       const resolved = __private__.resolveFormState(
         undefined,
         { provider: "codex" },
@@ -347,7 +396,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
-        allowedProviderMap,
+        claudeProviderMap,
       );
 
       expect(resolved.provider).toBe("claude");

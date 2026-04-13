@@ -16,6 +16,8 @@ export const ProviderModeSchema = z.object({
   id: z.string(),
   label: z.string(),
   description: z.string().optional(),
+  icon: z.string().optional(),
+  colorTier: z.string().optional(),
 });
 
 export const ProviderSummarySchema = z.object({

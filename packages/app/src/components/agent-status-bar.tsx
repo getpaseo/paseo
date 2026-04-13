@@ -77,7 +77,7 @@ type ControlledAgentStatusBarProps = {
   onSelectThinkingOption?: (thinkingOptionId: string) => void;
   disabled?: boolean;
   isModelLoading?: boolean;
-  providerDefinitions?: AgentProviderDefinition[];
+  providerDefinitions: AgentProviderDefinition[];
   allProviderModels?: Map<string, AgentModelDefinition[]>;
   canSelectModelProvider?: (providerId: string) => boolean;
   favoriteKeys?: Set<string>;
@@ -248,7 +248,9 @@ function ControlledStatusBar({
     thinkingOptions?.[0]?.label ?? "Unknown",
   );
 
-  const modeVisuals = selectedModeId ? getModeVisuals(provider, selectedModeId) : undefined;
+  const modeVisuals = selectedModeId
+    ? getModeVisuals(provider, selectedModeId, providerDefinitions)
+    : undefined;
   const ModeIconComponent = modeVisuals?.icon ? MODE_ICONS[modeVisuals.icon] : null;
   const modeIconColor = getModeIconColor(modeVisuals?.colorTier, theme.colors.palette);
   const ProviderIcon = getProviderIcon(provider);
@@ -296,7 +298,7 @@ function ControlledStatusBar({
     );
     return map;
   }, [modelOptions, provider]);
-  const effectiveProviderDefinitions = providerDefinitions ?? [];
+  const effectiveProviderDefinitions = providerDefinitions;
   const effectiveAllProviderModels = allProviderModels ?? fallbackAllProviderModels;
   const canSelectProviderInModelMenu = canSelectModelProvider ?? (() => true);
   const comboboxThinkingOptions = useMemo<ComboboxOption[]>(
@@ -316,7 +318,7 @@ function ControlledStatusBar({
       active: boolean;
       onPress: () => void;
     }) => {
-      const visuals = getModeVisuals(provider, option.id);
+      const visuals = getModeVisuals(provider, option.id, providerDefinitions);
       const IconComponent = visuals?.icon ? MODE_ICONS[visuals.icon] : ShieldCheck;
       return (
         <ComboboxItem
@@ -328,7 +330,7 @@ function ControlledStatusBar({
         />
       );
     },
-    [provider, theme.colors.foreground],
+    [provider, providerDefinitions, theme.colors.foreground],
   );
 
   const handleOpenChange = useCallback(
@@ -739,7 +741,7 @@ function ControlledStatusBar({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent side="top" align="start">
                     {modeOptions.map((mode) => {
-                      const visuals = getModeVisuals(provider, mode.id);
+                      const visuals = getModeVisuals(provider, mode.id, providerDefinitions);
                       const Icon = visuals?.icon ? MODE_ICONS[visuals.icon] : ShieldCheck;
                       return (
                         <DropdownMenuItem
@@ -1124,6 +1126,7 @@ export function DraftAgentStatusBar({
         />
         <ControlledStatusBar
           provider={selectedProvider}
+          providerDefinitions={providerDefinitions}
           modeOptions={mappedModeOptions}
           selectedModeId={effectiveSelectedMode}
           onSelectMode={onSelectMode}
