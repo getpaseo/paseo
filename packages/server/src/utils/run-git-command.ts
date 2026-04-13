@@ -62,7 +62,7 @@ export function runGitCommand(
           settle(() => reject(error));
         }, timeout);
 
-        child.stdout.on("data", (chunk: Buffer | string) => {
+        child.stdout!.on("data", (chunk: Buffer | string) => {
           if (settled || truncated) return;
 
           const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -86,7 +86,7 @@ export function runGitCommand(
           stdoutBytes += buffer.length;
         });
 
-        child.stderr.on("data", (chunk: Buffer | string) => {
+        child.stderr!.on("data", (chunk: Buffer | string) => {
           if (settled || stderrBytes >= DEFAULT_STDERR_LIMIT) return;
 
           const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);

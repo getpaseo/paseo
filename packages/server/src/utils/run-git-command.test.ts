@@ -399,5 +399,4 @@ describe("runGitCommand", () => {
       expect.objectContaining({ exitCode: 0, stdout: "fourth", truncated: false }),
     ]);
   });
-
 });
