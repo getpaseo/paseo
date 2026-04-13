@@ -38,7 +38,7 @@ const OptionalBooleanFlagSchema = z
   });
 
 const RequestedSpeechProvidersSchema = z.object({
-  dictationStt: OptionalSpeechProviderSchema.default("funasr"),
+  dictationStt: OptionalSpeechProviderSchema.default("local"),
   voiceTurnDetection: OptionalSpeechProviderSchema.default("local"),
   voiceStt: OptionalSpeechProviderSchema.default("local"),
   voiceTts: OptionalSpeechProviderSchema.default("local"),
@@ -99,7 +99,7 @@ function resolveRequestedSpeechProviders(params: {
   >;
 
   const parsed = RequestedSpeechProvidersSchema.parse({
-    dictationStt: featureProviders.dictationStt.configuredValue ?? "funasr",
+    dictationStt: featureProviders.dictationStt.configuredValue ?? "local",
     voiceTurnDetection: featureProviders.voiceTurnDetection.configuredValue ?? "local",
     voiceStt: featureProviders.voiceStt.configuredValue ?? "local",
     voiceTts: featureProviders.voiceTts.configuredValue ?? "local",
@@ -157,8 +157,8 @@ export function resolveSpeechConfig(params: {
   });
 
   const needsFunASR =
-    providers.dictationStt.provider === "funasr" ||
-    providers.voiceStt.provider === "funasr";
+    providers.dictationStt.provider === "local" ||
+    providers.voiceStt.provider === "local";
   const funasr = needsFunASR
     ? resolveFunASRConfig({ env: params.env, persisted: params.persisted })
     : undefined;
