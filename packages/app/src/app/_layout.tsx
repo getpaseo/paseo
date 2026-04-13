@@ -91,6 +91,22 @@ export type HostRuntimeBootstrapState = {
   retry: () => void;
 };
 
+function getRouteParamValue(value: string | string[] | undefined): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (Array.isArray(value)) {
+    const firstValue = value[0];
+    if (typeof firstValue !== "string") {
+      return undefined;
+    }
+    const trimmed = firstValue.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  return undefined;
+}
+
 const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
   phase: "starting-daemon",
   error: null,
@@ -788,7 +804,14 @@ function RootStack() {
         <Stack.Screen name="settings" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
-      <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
+      <Stack.Screen
+        name="h/[serverId]/workspace/[workspaceId]"
+        getId={({ params }) => {
+          const serverId = getRouteParamValue(params?.serverId);
+          const workspaceId = getRouteParamValue(params?.workspaceId);
+          return serverId && workspaceId ? `${serverId}:${workspaceId}` : undefined;
+        }}
+      />
       <Stack.Screen name="h/[serverId]/agent/[agentId]" options={{ gestureEnabled: false }} />
       <Stack.Screen name="h/[serverId]/index" />
       <Stack.Screen name="h/[serverId]/sessions" />
