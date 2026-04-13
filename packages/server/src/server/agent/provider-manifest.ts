@@ -75,6 +75,8 @@ const CODEX_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const DROID_MODES: AgentProviderModeDefinition[] = [];
+
 const COPILOT_MODES: AgentProviderModeDefinition[] = [
   {
     id: "https://agentclientprotocol.com/protocol/session-modes#agent",
@@ -140,6 +142,14 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
       defaultModeId: "auto",
       defaultModel: "gpt-5.4-mini",
     },
+  },
+  {
+    id: "droid",
+    label: "Droid",
+    description:
+      "Factory's ACP coding agent with multi-model support, MCP tools, and tunable autonomy",
+    defaultModeId: null,
+    modes: DROID_MODES,
   },
   {
     id: "copilot",

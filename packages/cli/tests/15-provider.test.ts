@@ -128,6 +128,7 @@ try {
     assert.strictEqual(result.exitCode, 0, "provider ls should exit 0");
     assert(result.stdout.includes("claude"), "output should include claude");
     assert(result.stdout.includes("codex"), "output should include codex");
+    assert(result.stdout.includes("droid"), "output should include droid");
     assert(result.stdout.includes("opencode"), "output should include opencode");
     assert(
       result.stdout.includes("available") ||
@@ -145,7 +146,7 @@ try {
     assert.strictEqual(result.exitCode, 0, "should exit 0");
     const data = JSON.parse(result.stdout.trim());
     assert(Array.isArray(data), "output should be an array");
-    assert(data.length >= 3, `should have at least 3 providers, got ${data.length}`);
+    assert(data.length >= 4, `should have at least 4 providers, got ${data.length}`);
     assert(
       data.some((p: { provider: string }) => p.provider === "claude"),
       "should include claude",
@@ -153,6 +154,10 @@ try {
     assert(
       data.some((p: { provider: string }) => p.provider === "codex"),
       "should include codex",
+    );
+    assert(
+      data.some((p: { provider: string }) => p.provider === "droid"),
+      "should include droid",
     );
     assert(
       data.some((p: { provider: string }) => p.provider === "opencode"),
@@ -167,9 +172,10 @@ try {
     const result = await ctx.paseo(["provider", "ls", "--quiet"]);
     assert.strictEqual(result.exitCode, 0, "should exit 0");
     const lines = result.stdout.trim().split("\n");
-    assert(lines.length >= 3, `should have at least 3 lines, got ${lines.length}`);
+    assert(lines.length >= 4, `should have at least 4 lines, got ${lines.length}`);
     assert(lines.includes("claude"), "should include claude");
     assert(lines.includes("codex"), "should include codex");
+    assert(lines.includes("droid"), "should include droid");
     assert(lines.includes("opencode"), "should include opencode");
     console.log("✓ provider ls --quiet outputs provider names only\n");
   }

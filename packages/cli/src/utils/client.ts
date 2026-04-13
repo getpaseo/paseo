@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { loadConfig, resolvePaseoHome, DaemonClient } from "@getpaseo/server";
 import path from "node:path";
 import WebSocket from "ws";
@@ -12,6 +13,11 @@ export interface ConnectOptions {
 const DEFAULT_HOST = "localhost:6767";
 const DEFAULT_TIMEOUT = 15000;
 const PID_FILENAME = "paseo.pid";
+const require = createRequire(import.meta.url);
+
+type CliPackageJson = {
+  version?: unknown;
+};
 
 type DaemonTarget =
   | {
@@ -23,6 +29,16 @@ type DaemonTarget =
       url: string;
       socketPath: string;
     };
+
+function resolveCliAppVersion(): string | undefined {
+  try {
+    const packageJson = require("../../package.json") as CliPackageJson;
+    if (typeof packageJson.version === "string" && packageJson.version.trim().length > 0) {
+      return packageJson.version.trim();
+    }
+  } catch {}
+  return undefined;
+}
 
 /**
  * Get the daemon host from environment or options
@@ -199,6 +215,7 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
   const clientId = await getOrCreateCliClientId();
   const hosts = resolveDaemonHostCandidates(options);
   const nodeWebSocketFactory = createNodeWebSocketFactory();
+  const appVersion = resolveCliAppVersion();
   let lastError: unknown = null;
 
   for (const host of hosts) {
@@ -207,6 +224,7 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
       url: target.url,
       clientId,
       clientType: "cli",
+      ...(appVersion ? { appVersion } : {}),
       connectTimeoutMs: timeout,
       webSocketFactory: (url: string, config?: { headers?: Record<string, string> }) =>
         nodeWebSocketFactory(url, {

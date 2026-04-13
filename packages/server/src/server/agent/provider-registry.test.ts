@@ -12,6 +12,7 @@ const mockState = vi.hoisted(() => {
     constructorArgs: {
       claude: [] as ConstructorEntry[],
       codex: [] as ConstructorEntry[],
+      droid: [] as ConstructorEntry[],
       copilot: [] as ConstructorEntry[],
       opencode: [] as ConstructorEntry[],
       pi: [] as ConstructorEntry[],
@@ -149,6 +150,54 @@ vi.mock("./providers/copilot-acp-agent.js", () => ({
     constructor(options: { runtimeSettings?: unknown }) {
       this.runtimeSettings = options.runtimeSettings;
       mockState.constructorArgs.copilot.push({
+        runtimeSettings: options.runtimeSettings,
+      });
+    }
+
+    async createSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async resumeSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async listModels(): Promise<AgentModelDefinition[]> {
+      return mockState.runtimeModels.get(this.provider) ?? [];
+    }
+
+    async listModes(): Promise<[]> {
+      return [];
+    }
+
+    async isAvailable(): Promise<boolean> {
+      const command = (this.runtimeSettings as { command?: { mode?: string; argv?: string[] } })
+        ?.command;
+      if (command?.mode === "replace") {
+        const { isCommandAvailable } = await import("../../utils/executable.js");
+        return await isCommandAvailable(command.argv?.[0] ?? "");
+      }
+      return true;
+    }
+  },
+}));
+
+vi.mock("./providers/droid-acp-agent.js", () => ({
+  DroidACPAgentClient: class DroidACPAgentClient {
+    readonly capabilities = {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    };
+    readonly provider = "droid";
+    readonly runtimeSettings?: unknown;
+
+    constructor(options: { runtimeSettings?: unknown }) {
+      this.runtimeSettings = options.runtimeSettings;
+      mockState.constructorArgs.droid.push({
         runtimeSettings: options.runtimeSettings,
       });
     }
