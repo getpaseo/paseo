@@ -13,7 +13,15 @@ import {
 } from "./worktree";
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execSync } from "child_process";
-import { mkdtempSync, rmSync, existsSync, realpathSync, writeFileSync, readFileSync } from "fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  realpathSync,
+  writeFileSync,
+  readFileSync,
+} from "fs";
 import { dirname, join } from "path";
 import { tmpdir } from "os";
 import net from "node:net";
@@ -30,7 +38,7 @@ describe("createWorktree", () => {
     paseoHome = join(tempDir, "paseo-home");
 
     // Create a git repo with an initial commit
-    execSync(`mkdir -p ${repoDir}`);
+    mkdirSync(repoDir, { recursive: true });
     execSync("git init -b main", { cwd: repoDir });
     execSync("git config user.email 'test@test.com'", { cwd: repoDir });
     execSync("git config user.name 'Test'", { cwd: repoDir });
@@ -68,7 +76,7 @@ describe("createWorktree", () => {
     const privateTempDir = realpathSync(varTempDir);
     const varRepoDir = join(varTempDir, "test-repo");
     const varPaseoHome = join(varTempDir, "paseo-home");
-    execSync(`mkdir -p ${varRepoDir}`);
+    mkdirSync(varRepoDir, { recursive: true });
     execSync("git init -b main", { cwd: varRepoDir });
     execSync("git config user.email 'test@test.com'", { cwd: varRepoDir });
     execSync("git config user.name 'Test'", { cwd: varRepoDir });
@@ -118,7 +126,7 @@ describe("createWorktree", () => {
 
   it("treats non-git directories as non-worktrees without throwing", async () => {
     const nonGitDir = join(tempDir, "not-a-repo");
-    execSync(`mkdir -p ${nonGitDir}`);
+    mkdirSync(nonGitDir, { recursive: true });
 
     const ownership = await isPaseoOwnedWorktreeCwd(nonGitDir, { paseoHome });
 
@@ -494,7 +502,7 @@ describe("paseo worktree manager", () => {
     repoDir = join(tempDir, "test-repo");
     paseoHome = join(tempDir, "paseo-home");
 
-    execSync(`mkdir -p ${repoDir}`);
+    mkdirSync(repoDir, { recursive: true });
     execSync("git init -b main", { cwd: repoDir });
     execSync("git config user.email 'test@test.com'", { cwd: repoDir });
     execSync("git config user.name 'Test'", { cwd: repoDir });
@@ -512,7 +520,7 @@ describe("paseo worktree manager", () => {
     const repoB = join(tempDir, "team-b", "test-repo");
 
     for (const repo of [repoA, repoB]) {
-      execSync(`mkdir -p ${repo}`);
+      mkdirSync(repo, { recursive: true });
       execSync("git init -b main", { cwd: repo });
       execSync("git config user.email 'test@test.com'", { cwd: repo });
       execSync("git config user.name 'Test'", { cwd: repo });
@@ -584,7 +592,7 @@ describe("paseo worktree manager", () => {
     });
 
     const nestedDir = join(created.worktreePath, "nested", "dir");
-    execSync(`mkdir -p ${nestedDir}`);
+    mkdirSync(nestedDir, { recursive: true });
 
     await deletePaseoWorktree({ cwd: repoDir, worktreePath: nestedDir, paseoHome });
     expect(existsSync(created.worktreePath)).toBe(false);

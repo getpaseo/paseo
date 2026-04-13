@@ -241,6 +241,10 @@ function isClaudeThinkingEffort(value: string | null | undefined): value is Clau
   return value === "low" || value === "medium" || value === "high" || value === "max";
 }
 
+function sanitizeClaudeProjectPath(cwd: string): string {
+  return cwd.replace(/[\\/._:]/g, "-");
+}
+
 type ClaudeOptionsLogSummary = {
   cwd: string | null;
   permissionMode: string | null;
@@ -3260,8 +3264,7 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    // Match Claude CLI's path sanitization: replace slashes, dots, and underscores with dashes
-    const sanitized = cwd.replace(/[\\/\.]/g, "-").replace(/_/g, "-");
+    const sanitized = sanitizeClaudeProjectPath(cwd);
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     const dir = path.join(configDir, "projects", sanitized);
     return path.join(dir, `${sessionId}.jsonl`);

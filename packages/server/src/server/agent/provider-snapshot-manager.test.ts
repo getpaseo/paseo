@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -44,6 +45,10 @@ const TEST_CAPABILITIES = {
 } as const;
 
 describe("ProviderSnapshotManager", () => {
+  const projectCwd = resolve("/tmp/project");
+  const projectACwd = resolve("/tmp/project-a");
+  const projectBCwd = resolve("/tmp/project-b");
+
   test("getSnapshot returns all providers in loading state initially and triggers warmUp", async () => {
     const codexModels = deferred<AgentModelDefinition[]>();
     const claudeModels = deferred<AgentModelDefinition[]>();
@@ -59,7 +64,7 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    const snapshot = manager.getSnapshot("/tmp/project");
+    const snapshot = manager.getSnapshot(projectCwd);
 
     expect(snapshot.map((entry) => entry.provider)).toEqual(["codex", "claude"]);
     expect(getProviderEntry(snapshot, "claude")).toMatchObject({
@@ -102,14 +107,14 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "claude")?.status).toBe("ready");
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
     });
 
-    const snapshot = manager.getSnapshot("/tmp/project");
+    const snapshot = manager.getSnapshot(projectCwd);
     expect(getProviderEntry(snapshot, "codex")).toMatchObject({
       provider: "codex",
       status: "ready",
@@ -142,10 +147,10 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
-      expect(manager.getSnapshot("/tmp/project")).toEqual([
+      expect(manager.getSnapshot(projectCwd)).toEqual([
         {
           provider: "codex",
           status: "unavailable",
@@ -173,10 +178,10 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
-      expect(manager.getSnapshot("/tmp/project")).toEqual([
+      expect(manager.getSnapshot(projectCwd)).toEqual([
         {
           provider: "codex",
           status: "error",
@@ -215,7 +220,7 @@ describe("ProviderSnapshotManager", () => {
     };
     manager.on("change", listener);
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     claudeModels.resolve([createModel("claude", "sonnet")]);
     claudeModes.resolve([createMode("default")]);
@@ -224,7 +229,7 @@ describe("ProviderSnapshotManager", () => {
       expect(changes).toHaveLength(1);
     });
 
-    expect(changes[0]?.cwd).toBe("/tmp/project");
+    expect(changes[0]?.cwd).toBe(projectCwd);
     expect(getProviderEntry(changes[0]?.entries ?? [], "claude")?.status).toBe("ready");
     expect(getProviderEntry(changes[0]?.entries ?? [], "codex")?.status).toBe("loading");
 
@@ -256,16 +261,16 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")?.models?.[0]?.id).toBe(
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
         "gpt-5.1",
       );
     });
 
-    manager.refresh("/tmp/project");
-    expect(manager.getSnapshot("/tmp/project")).toEqual([
+    manager.refresh(projectCwd);
+    expect(manager.getSnapshot(projectCwd)).toEqual([
       {
         provider: "codex",
         status: "loading",
@@ -276,7 +281,7 @@ describe("ProviderSnapshotManager", () => {
     ]);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")?.models?.[0]?.id).toBe(
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
         "gpt-5.2",
       );
     });
@@ -300,9 +305,9 @@ describe("ProviderSnapshotManager", () => {
     const changes: ProviderSnapshotEntry[][] = [];
     manager.on("change", (entries) => changes.push(entries));
 
-    manager.refresh("/tmp/project");
+    manager.refresh(projectCwd);
 
-    expect(manager.getSnapshot("/tmp/project")).toEqual([
+    expect(manager.getSnapshot(projectCwd)).toEqual([
       {
         provider: "codex",
         status: "loading",
@@ -312,9 +317,9 @@ describe("ProviderSnapshotManager", () => {
       },
     ]);
 
-    manager.refresh("/tmp/project");
-    manager.refresh("/tmp/project");
-    manager.refresh("/tmp/project");
+    manager.refresh(projectCwd);
+    manager.refresh(projectCwd);
+    manager.refresh(projectCwd);
 
     expect(changes).toHaveLength(1);
     expect(handles.codex?.isAvailable).toHaveBeenCalledTimes(1);
@@ -323,7 +328,7 @@ describe("ProviderSnapshotManager", () => {
     fetchModes.resolve([createMode("auto")]);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")).toMatchObject({
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")).toMatchObject({
         provider: "codex",
         status: "ready",
         models: [createModel("codex", "gpt-5.2")],
@@ -351,9 +356,9 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
-    manager.getSnapshot("/tmp/project");
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
+    manager.getSnapshot(projectCwd);
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
       expect(handles.codex?.isAvailable).toHaveBeenCalledTimes(1);
@@ -365,7 +370,7 @@ describe("ProviderSnapshotManager", () => {
     codexModels.resolve([createModel("codex", "gpt-5.2")]);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
     });
 
     manager.destroy();
@@ -384,25 +389,21 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project-a");
-    manager.getSnapshot("/tmp/project-b");
+    manager.getSnapshot(projectACwd);
+    manager.getSnapshot(projectBCwd);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project-a"), "codex")?.status).toBe(
-        "ready",
-      );
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project-b"), "codex")?.status).toBe(
-        "ready",
-      );
+      expect(getProviderEntry(manager.getSnapshot(projectACwd), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectBCwd), "codex")?.status).toBe("ready");
     });
 
-    expect(getProviderEntry(manager.getSnapshot("/tmp/project-a"), "codex")?.models?.[0]?.id).toBe(
-      "model:/tmp/project-a",
+    expect(getProviderEntry(manager.getSnapshot(projectACwd), "codex")?.models?.[0]?.id).toBe(
+      `model:${projectACwd}`,
     );
-    expect(getProviderEntry(manager.getSnapshot("/tmp/project-b"), "codex")?.models?.[0]?.id).toBe(
-      "model:/tmp/project-b",
+    expect(getProviderEntry(manager.getSnapshot(projectBCwd), "codex")?.models?.[0]?.id).toBe(
+      `model:${projectBCwd}`,
     );
-    expect(seenCwds).toEqual(["/tmp/project-a", "/tmp/project-b"]);
+    expect(seenCwds).toEqual([projectACwd, projectBCwd]);
 
     manager.destroy();
   });
@@ -420,13 +421,13 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "zai")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "zai")?.status).toBe("ready");
     });
 
-    expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "zai")).toMatchObject({
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "zai")).toMatchObject({
       provider: "zai",
       status: "ready",
       label: "ZAI",
@@ -441,7 +442,7 @@ describe("ProviderSnapshotManager", () => {
     const { registry } = createRegistry([createMockProvider({ provider: "claude" })]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    const snapshot = manager.getSnapshot("/tmp/project");
+    const snapshot = manager.getSnapshot(projectCwd);
 
     expect(snapshot.map((entry) => entry.provider)).toEqual(["claude"]);
     expect(getProviderEntry(snapshot, "zai")).toBeUndefined();
@@ -464,7 +465,7 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    expect(manager.getSnapshot("/tmp/project")).toEqual([
+    expect(manager.getSnapshot(projectCwd)).toEqual([
       {
         provider: "zai",
         status: "loading",
@@ -478,7 +479,7 @@ describe("ProviderSnapshotManager", () => {
     modes.resolve([createMode("plan")]);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "zai")).toMatchObject({
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "zai")).toMatchObject({
         provider: "zai",
         status: "ready",
         label: "ZAI",

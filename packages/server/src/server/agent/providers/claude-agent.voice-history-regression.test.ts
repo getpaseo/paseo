@@ -21,6 +21,10 @@ const LIVE_REPLY_MARKER = "LIVE_ONLY_REPLY_MARKER";
 const HISTORY_USER_MARKER = "HISTORY_ONLY_USER_MARKER";
 const HISTORY_ASSISTANT_MARKER = "HISTORY_ONLY_ASSISTANT_MARKER";
 
+function sanitizeClaudeProjectPath(cwd: string): string {
+  return cwd.replace(/[\\/._:]/g, "-");
+}
+
 function buildSdkQueryMock() {
   const events = [
     {
@@ -106,7 +110,7 @@ describe("ClaudeAgentSession history replay regression", () => {
     configDir = path.join(tempRoot, "claude-config");
     mkdirSync(cwd, { recursive: true });
 
-    const sanitized = cwd.replace(/[\\/\.]/g, "-").replace(/_/g, "-");
+    const sanitized = sanitizeClaudeProjectPath(cwd);
     const historyDir = path.join(configDir, "projects", sanitized);
     mkdirSync(historyDir, { recursive: true });
     const historyPath = path.join(historyDir, "history-session.jsonl");
