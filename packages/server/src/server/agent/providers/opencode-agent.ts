@@ -46,7 +46,14 @@ import {
 } from "../provider-launch-config.js";
 import { findExecutable } from "../../../utils/executable.js";
 import { spawnProcess } from "../../../utils/spawn.js";
+import { resolvePaseoHome } from "../../paseo-home.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
+import {
+  buildOpenCodeServerConfig,
+  installIdentityPlugin,
+  PASEO_SESSION_MAP_ENV_VAR,
+} from "./opencode/paseo-identity-plugin.js";
+import { SessionAgentMap } from "./opencode/session-agent-map.js";
 import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
@@ -584,11 +591,35 @@ export class OpenCodeServerManager {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
+  private readonly sessionAgentMap: SessionAgentMap;
 
   private constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
     this.logger = logger;
     this.runtimeSettings = runtimeSettings;
     this.runtimeSettingsKey = JSON.stringify(runtimeSettings ?? {});
+    this.sessionAgentMap = new SessionAgentMap({ logger: this.logger });
+  }
+
+  registerSession(sessionId: string, agentId: string): void {
+    if (!sessionId || !agentId) {
+      return;
+    }
+    this.sessionAgentMap.set(sessionId, agentId);
+  }
+
+  unregisterSession(sessionId: string | undefined | null): void {
+    if (!sessionId) {
+      return;
+    }
+    this.sessionAgentMap.delete(sessionId);
+  }
+
+  getAgentIdForSession(sessionId: string): string | undefined {
+    return this.sessionAgentMap.get(sessionId);
+  }
+
+  get sessionMapPath(): string {
+    return this.sessionAgentMap.path;
   }
 
   static getInstance(
@@ -609,6 +640,13 @@ export class OpenCodeServerManager {
       );
     }
     return OpenCodeServerManager.instance;
+  }
+
+  static createForTesting(
+    logger: Logger,
+    runtimeSettings?: ProviderRuntimeSettings,
+  ): OpenCodeServerManager {
+    return new OpenCodeServerManager(logger, runtimeSettings);
   }
 
   private static registerExitHandler(): void {
@@ -655,13 +693,27 @@ export class OpenCodeServerManager {
       resolveOpenCodeBinary,
     );
 
+    // Clear any stale entries left behind by a previous daemon process — the
+    // OpenCode server is freshly spawned, so old sessionIDs are invalid.
+    this.sessionAgentMap.clear();
+
+    const paseoHome = resolvePaseoHome();
+    const installedPlugin = installIdentityPlugin(paseoHome);
+    const serverConfig = buildOpenCodeServerConfig(installedPlugin.fileUrl);
+    const baseEnv = applyProviderEnv(process.env, this.runtimeSettings);
+    const spawnEnv: Record<string, string | undefined> = {
+      ...baseEnv,
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(serverConfig),
+      [PASEO_SESSION_MAP_ENV_VAR]: this.sessionAgentMap.path,
+    };
+
     return new Promise((resolve, reject) => {
       this.server = spawnProcess(
         launchPrefix.command,
         [...launchPrefix.args, "serve", "--port", String(this.port)],
         {
           stdio: ["ignore", "pipe", "pipe"],
-          env: applyProviderEnv(process.env, this.runtimeSettings),
+          env: spawnEnv as NodeJS.ProcessEnv,
         },
       );
 
@@ -717,6 +769,7 @@ export class OpenCodeServerManager {
     }
     this.server = null;
     this.port = null;
+    this.sessionAgentMap.clear();
   }
 }
 
@@ -737,7 +790,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
   async createSession(
     config: AgentSessionConfig,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
     const { url } = await this.serverManager.ensureRunning();
@@ -767,19 +820,25 @@ export class OpenCodeAgentClient implements AgentClient {
 
     await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
 
+    const agentId = launchContext?.env?.PASEO_AGENT_ID;
+    if (agentId) {
+      this.serverManager.registerSession(session.id, agentId);
+    }
+
     return new OpenCodeAgentSession(
       openCodeConfig,
       client,
       session.id,
       this.logger,
       new Map(this.modelContextWindows),
+      this.serverManager,
     );
   }
 
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const cwd = overrides?.cwd ?? (handle.metadata?.cwd as string);
     if (!cwd) {
@@ -800,12 +859,18 @@ export class OpenCodeAgentClient implements AgentClient {
 
     await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
 
+    const agentId = launchContext?.env?.PASEO_AGENT_ID;
+    if (agentId) {
+      this.serverManager.registerSession(handle.sessionId, agentId);
+    }
+
     return new OpenCodeAgentSession(
       openCodeConfig,
       client,
       handle.sessionId,
       this.logger,
       new Map(this.modelContextWindows),
+      this.serverManager,
     );
   }
 
@@ -1347,12 +1412,14 @@ class OpenCodeAgentSession implements AgentSession {
   private activeForegroundTurnId: string | null = null;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private selectedModelContextWindowMaxTokens: number | undefined;
+  private readonly serverManager?: OpenCodeServerManager;
   constructor(
     config: OpenCodeAgentConfig,
     client: OpencodeClient,
     sessionId: string,
     logger: Logger,
     modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
+    serverManager?: OpenCodeServerManager,
   ) {
     this.config = config;
     this.client = client;
@@ -1363,6 +1430,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       config.model,
     );
+    this.serverManager = serverManager;
   }
 
   get id(): string | null {
@@ -1935,6 +2003,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.abortController?.abort();
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
+    this.serverManager?.unregisterSession(this.sessionId);
   }
 
   private parseSlashCommandInput(text: string): { commandName: string; args?: string } | null {
