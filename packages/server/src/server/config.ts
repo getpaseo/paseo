@@ -1,16 +1,15 @@
 import path from "node:path";
 import { z } from "zod";
-
-import type { PaseoDaemonConfig } from "./bootstrap.js";
-import { loadPersistedConfig } from "./persisted-config.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { AgentProviderSchema } from "./agent/provider-manifest.js";
-import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import {
+  type AllowedHostsConfig,
   mergeAllowedHosts,
   parseAllowedHostsEnv,
-  type AllowedHostsConfig,
 } from "./allowed-hosts.js";
+import type { PaseoDaemonConfig } from "./bootstrap.js";
+import { loadPersistedConfig } from "./persisted-config.js";
+import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
@@ -103,7 +102,7 @@ export function loadConfig(
 
   const appBaseUrl = env.PASEO_APP_BASE_URL ?? persisted.app?.baseUrl ?? DEFAULT_APP_BASE_URL;
 
-  const { openai, speech } = resolveSpeechConfig({
+  const { openai, minimax, speech } = resolveSpeechConfig({
     paseoHome,
     env,
     persisted,
@@ -136,6 +135,7 @@ export function loadConfig(
     relayPublicEndpoint,
     appBaseUrl,
     openai,
+    minimax,
     speech,
     voiceLlmProvider,
     voiceLlmProviderExplicit,

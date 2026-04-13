@@ -1,12 +1,12 @@
-import express from "express";
-import { createServer as createHTTPServer } from "http";
-import { createReadStream, unlinkSync, existsSync } from "fs";
-import { stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import express from "express";
+import { createReadStream, existsSync, unlinkSync } from "fs";
+import { stat } from "fs/promises";
+import { createServer as createHTTPServer } from "http";
 import type { Logger } from "pino";
 
 export type ListenTarget =
@@ -85,37 +85,38 @@ function formatListenTarget(listenTarget: ListenTarget | null): string | null {
   return listenTarget.path;
 }
 
-import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
-import { DownloadTokenStore } from "./file-download/token-store.js";
-import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
-import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
-import type { RequestedSpeechProviders } from "./speech/speech-types.js";
-import { createSpeechService } from "./speech/speech-runtime.js";
+import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
 import { AgentManager } from "./agent/agent-manager.js";
+import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
 import { AgentStorage } from "./agent/agent-storage.js";
-import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
+import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import {
   buildProviderRegistry,
   createAllClients,
   shutdownProviders,
 } from "./agent/provider-registry.js";
-import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
-import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
+import { type AllowedHostsConfig, isHostAllowed } from "./allowed-hosts.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import { LoopService } from "./loop-service.js";
-import { ScheduleService } from "./schedule/service.js";
-import { DaemonConfigStore } from "./daemon-config-store.js";
-import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
+import { DaemonConfigStore } from "./daemon-config-store.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
-import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
-import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
-import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
-import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
-import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
+import { DownloadTokenStore } from "./file-download/token-store.js";
+import { LoopService } from "./loop-service.js";
+import { attachAgentStoragePersistence } from "./persistence-hooks.js";
+import { type RelayTransportController, startRelayTransport } from "./relay-transport.js";
+import { ScheduleService } from "./schedule/service.js";
+import { getOrCreateServerId } from "./server-id.js";
+import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
+import type { MiniMaxSpeechProviderConfig } from "./speech/providers/minimax/config.js";
+import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
+import { createSpeechService } from "./speech/speech-runtime.js";
+import type { RequestedSpeechProviders } from "./speech/speech-types.js";
+import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
+import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
+import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -135,6 +136,7 @@ function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null
 
 export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
 export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
+export type PaseoMiniMaxConfig = MiniMaxSpeechProviderConfig;
 
 export type PaseoSpeechConfig = {
   providers: RequestedSpeechProviders;
@@ -170,6 +172,7 @@ export type PaseoDaemonConfig = {
   relayPublicEndpoint?: string;
   appBaseUrl?: string;
   openai?: PaseoOpenAIConfig;
+  minimax?: PaseoMiniMaxConfig;
   speech?: PaseoSpeechConfig;
   voiceLlmProvider?: AgentProvider | null;
   voiceLlmProviderExplicit?: boolean;
@@ -537,6 +540,7 @@ export async function createPaseoDaemon(
     const speechService = createSpeechService({
       logger,
       openaiConfig: config.openai,
+      minimaxConfig: config.minimax,
       speechConfig: config.speech,
     });
     logger.info({ elapsed: elapsed() }, "Speech service created");
