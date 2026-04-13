@@ -367,6 +367,7 @@ interface GeneralSectionProps {
   settings: AppSettings;
   handleThemeChange: (theme: AppSettings["theme"]) => void;
   handleSendBehaviorChange: (behavior: SendBehavior) => void;
+  handleNativeInitialTimelineLimitChange: (limit: number) => void;
 }
 
 function ThemeIcon({
@@ -415,11 +416,20 @@ const THEME_LABELS: Record<AppSettings["theme"], string> = {
   auto: "System",
 };
 
+const NATIVE_INITIAL_TIMELINE_LIMIT_LABELS: Record<number, string> = {
+  0: "All",
+  100: "100",
+  200: "200",
+  500: "500",
+  1000: "1000",
+};
+
 function GeneralSection({
   routeServerId,
   settings,
   handleThemeChange,
   handleSendBehaviorChange,
+  handleNativeInitialTimelineLimitChange,
 }: GeneralSectionProps) {
   const { theme } = useUnistyles();
   const isConnected = useHostRuntimeIsConnected(routeServerId);
@@ -484,6 +494,39 @@ function GeneralSection({
               { value: "queue", label: "Queue" },
             ]}
           />
+        </View>
+        <View style={[styles.audioRow, styles.audioRowBorder]}>
+          <View style={styles.audioRowContent}>
+            <Text style={styles.audioRowTitle}>Mobile history window</Text>
+            <Text style={styles.audioRowSubtitle}>
+              Maximum canonical messages fetched when a mobile session opens
+            </Text>
+          </View>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              style={({ pressed }) => [styles.themeTrigger, pressed && { opacity: 0.85 }]}
+            >
+              <Text style={styles.themeTriggerText}>
+                {
+                  NATIVE_INITIAL_TIMELINE_LIMIT_LABELS[
+                    settings.nativeInitialTimelineLimit as keyof typeof NATIVE_INITIAL_TIMELINE_LIMIT_LABELS
+                  ]
+                }
+              </Text>
+              <ChevronDown size={theme.iconSize.sm} color={iconColor} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="bottom" align="end" width={140}>
+              {([100, 200, 500, 1000, 0] as const).map((limit) => (
+                <DropdownMenuItem
+                  key={String(limit)}
+                  selected={settings.nativeInitialTimelineLimit === limit}
+                  onSelect={() => handleNativeInitialTimelineLimitChange(limit)}
+                >
+                  {NATIVE_INITIAL_TIMELINE_LIMIT_LABELS[limit]}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </View>
         {routeServerId.length > 0 && isConnected ? (
           <View style={[styles.audioRow, styles.audioRowBorder]}>
@@ -1079,6 +1122,13 @@ export default function SettingsScreen() {
     [updateSettings],
   );
 
+  const handleNativeInitialTimelineLimitChange = useCallback(
+    (limit: number) => {
+      void updateSettings({ nativeInitialTimelineLimit: limit });
+    },
+    [updateSettings],
+  );
+
   const handlePlaybackTest = useCallback(async () => {
     if (!voiceAudioEngine || isPlaybackTestRunning) {
       return;
@@ -1147,6 +1197,7 @@ export default function SettingsScreen() {
     settings,
     handleThemeChange,
     handleSendBehaviorChange,
+    handleNativeInitialTimelineLimitChange,
   };
 
   const diagnosticsProps: DiagnosticsSectionProps = {

@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 const APP_SETTINGS_QUERY_KEY = ["app-settings"];
+const SUPPORTED_NATIVE_INITIAL_TIMELINE_LIMITS = new Set<number>([0, 100, 200, 500, 1000]);
 
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 
@@ -16,12 +17,14 @@ export interface AppSettings {
   theme: ThemeName | "auto";
   manageBuiltInDaemon: boolean;
   sendBehavior: SendBehavior;
+  nativeInitialTimelineLimit: number;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   theme: "auto",
   manageBuiltInDaemon: true,
   sendBehavior: "interrupt",
+  nativeInitialTimelineLimit: 200,
 };
 
 export interface UseAppSettingsReturn {
@@ -85,6 +88,9 @@ export async function loadSettingsFromStorage(): Promise<AppSettings> {
       if (parsed.theme && !VALID_THEMES.has(parsed.theme)) {
         parsed.theme = DEFAULT_APP_SETTINGS.theme;
       }
+      parsed.nativeInitialTimelineLimit = normalizeNativeInitialTimelineLimit(
+        parsed.nativeInitialTimelineLimit,
+      );
       return { ...DEFAULT_APP_SETTINGS, ...parsed };
     }
 
@@ -119,3 +125,17 @@ function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<App
 }
 
 export const useSettings = useAppSettings;
+
+export function normalizeNativeInitialTimelineLimit(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    return DEFAULT_APP_SETTINGS.nativeInitialTimelineLimit;
+  }
+  if (!SUPPORTED_NATIVE_INITIAL_TIMELINE_LIMITS.has(value)) {
+    return DEFAULT_APP_SETTINGS.nativeInitialTimelineLimit;
+  }
+  return value;
+}
+
+export const __private__ = {
+  normalizeNativeInitialTimelineLimit,
+};

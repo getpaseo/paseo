@@ -65,6 +65,24 @@ describe("useAgentInitialization timeline request policy", () => {
     });
   });
 
+  it("uses the configured native message limit on mobile platforms", () => {
+    expect(
+      __private__.resolveInitialTimelineLimit({
+        platform: "ios",
+        nativeInitialTimelineLimit: 500,
+      }),
+    ).toBe(500);
+  });
+
+  it("keeps web bootstraps unbounded regardless of the native setting", () => {
+    expect(
+      __private__.resolveInitialTimelineLimit({
+        platform: "web",
+        nativeInitialTimelineLimit: 500,
+      }),
+    ).toBe(0);
+  });
+
   it("does not expose an RPC-success init fallback", () => {
     expect("shouldResolveInitFromRpcSuccess" in __private__).toBe(false);
   });
