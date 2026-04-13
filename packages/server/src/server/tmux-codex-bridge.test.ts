@@ -77,7 +77,7 @@ describe("tmux codex bridge discovery", () => {
       paneId: "%12",
       sessionName: "workspace-a",
       windowId: "@8",
-      paneTitle: "bash",
+      paneTitle: "Renamed Codex Session",
       panePid: 1827133,
       paneTty: "/dev/pts/2",
       cwd: "/workspace/project",
@@ -86,6 +86,8 @@ describe("tmux codex bridge discovery", () => {
       codexSessionId: "019d7f5b-1d2c-76c2-96e9-0a6496559b68",
     });
 
+    expect(snapshot.title).toBe("Renamed Codex Session");
+    expect(snapshot.config.title).toBe("Renamed Codex Session");
     expect(snapshot.agentId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );

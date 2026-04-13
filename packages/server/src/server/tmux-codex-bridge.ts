@@ -92,6 +92,11 @@ function extractCodexSessionId(args: string): string | null {
   return match ? match[1] : null;
 }
 
+function normalizeTmuxPaneTitle(value: string): string | null {
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function collectDescendantProcesses(input: {
   rootPid: number;
   childrenByParentPid: Map<number, UnixProcessRow[]>;
@@ -165,7 +170,8 @@ export function buildTmuxCodexPaneSnapshot(
   const paneKey = `${descriptor.sessionName}:${descriptor.windowId}:${descriptor.paneId}`;
   const agentId = uuidv5(paneKey, TMUX_CODEX_AGENT_NAMESPACE);
   const repoName = basename(descriptor.cwd);
-  const title = `${repoName} [tmux:${descriptor.paneId}]`;
+  const title =
+    normalizeTmuxPaneTitle(descriptor.paneTitle) ?? `${repoName} [tmux:${descriptor.paneId}]`;
   const metadata = buildTmuxCodexMetadata(descriptor);
 
   return {
