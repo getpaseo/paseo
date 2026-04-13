@@ -1,8 +1,11 @@
 import { execFile } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import readline from "node:readline";
+import { promisify } from "node:util";
 import type { Logger } from "pino";
 
 import type {
@@ -101,6 +104,74 @@ function extractAssistantText(message: unknown): string {
       return p.type === "text" && typeof p.text === "string" ? p.text : "";
     })
     .join("");
+}
+
+function unwrapCursorHistoryText(text: string): string {
+  const trimmed = text.trim();
+  const userQuery = /^<user_query>\s*\n?([\s\S]*?)\n?<\/user_query>$/u.exec(trimmed);
+  if (userQuery?.[1]) {
+    return userQuery[1].trim();
+  }
+  return trimmed;
+}
+
+function extractCursorHistoryText(message: unknown): string {
+  return unwrapCursorHistoryText(extractAssistantText(message));
+}
+
+function resolveCursorTranscriptPath(cwd: string, sessionId: string): string {
+  const projectDir = cwd.replace(/[\\/:\.]+/g, "-").replace(/^-+|-+$/g, "");
+  return path.join(
+    os.homedir(),
+    ".cursor",
+    "projects",
+    projectDir,
+    "agent-transcripts",
+    sessionId,
+    `${sessionId}.jsonl`,
+  );
+}
+
+function parseCursorTranscriptLine(line: string): AgentTimelineItem[] {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  let entry: { role?: unknown; message?: unknown };
+  try {
+    entry = JSON.parse(trimmed) as { role?: unknown; message?: unknown };
+  } catch {
+    return [];
+  }
+
+  if (entry.role === "user") {
+    const text = extractCursorHistoryText(entry.message);
+    return text ? [{ type: "user_message", text }] : [];
+  }
+  if (entry.role === "assistant") {
+    const text = extractCursorHistoryText(entry.message);
+    return text ? [{ type: "assistant_message", text }] : [];
+  }
+  return [];
+}
+
+function loadCursorTranscriptHistory(cwd: string, sessionId: string): AgentTimelineItem[] {
+  const transcriptPath = resolveCursorTranscriptPath(cwd, sessionId);
+  if (!fs.existsSync(transcriptPath)) {
+    return [];
+  }
+
+  try {
+    const content = fs.readFileSync(transcriptPath, "utf8");
+    const timeline: AgentTimelineItem[] = [];
+    for (const line of content.split(/\r?\n/)) {
+      timeline.push(...parseCursorTranscriptLine(line));
+    }
+    return timeline;
+  } catch {
+    return [];
+  }
 }
 
 function mapStreamJsonUsage(raw: unknown): AgentUsage | undefined {
@@ -463,6 +534,8 @@ export class CursorCliAgentSession implements AgentSession {
   private child: ChildProcessWithoutNullStreams | null = null;
   private closed = false;
   private bootstrapThreadEventPending = true;
+  private persistedHistory: AgentTimelineItem[] = [];
+  private historyPending = false;
 
   constructor(config: AgentSessionConfig, options: CursorCliAgentSessionOptions) {
     this.logger = options.logger.child({ module: "agent", provider: CURSOR_PROVIDER });
@@ -472,6 +545,10 @@ export class CursorCliAgentSession implements AgentSession {
     this.config = config;
     this.currentModel = config.model ?? null;
     this.currentMode = config.modeId ?? "agent";
+    if (this.resumeChatId) {
+      this.persistedHistory = loadCursorTranscriptHistory(this.config.cwd, this.resumeChatId);
+      this.historyPending = this.persistedHistory.length > 0;
+    }
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -489,7 +566,15 @@ export class CursorCliAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    /* Cursor headless CLI does not replay prior transcript here */
+    if (!this.historyPending || this.persistedHistory.length === 0) {
+      return;
+    }
+    const history = this.persistedHistory;
+    this.persistedHistory = [];
+    this.historyPending = false;
+    for (const item of history) {
+      yield { type: "timeline", provider: this.provider, item };
+    }
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
