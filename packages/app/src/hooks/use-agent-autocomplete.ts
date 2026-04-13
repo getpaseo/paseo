@@ -39,11 +39,7 @@ interface AgentAutocompleteResult {
   loadingText: string;
   emptyText: string;
   onSelectOption: (option: AutocompleteOption) => void;
-  onKeyPress: (event: {
-    key: string;
-    preventDefault: () => void;
-    isComposing?: boolean;
-  }) => boolean;
+  onKeyPress: (event: { key: string; preventDefault: () => void }) => boolean;
 }
 
 interface DirectorySuggestionEntry {
