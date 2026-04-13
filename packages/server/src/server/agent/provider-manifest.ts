@@ -116,6 +116,30 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const CURSOR_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "agent",
+    label: "Agent",
+    description: "Full tool access for edits, terminal, and search (Cursor Agent CLI)",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
+    id: "plan",
+    label: "Plan",
+    description: "Read-only planning and analysis without applying edits",
+    icon: "ShieldCheck",
+    colorTier: "planning",
+  },
+  {
+    id: "ask",
+    label: "Ask",
+    description: "Q&A-style explanations without modifying the workspace",
+    icon: "ShieldCheck",
+    colorTier: "safe",
+  },
+];
+
 export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   {
     id: "claude",
@@ -165,6 +189,14 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     description: "Minimal terminal-based coding agent with multi-provider LLM support",
     defaultModeId: null,
     modes: [],
+  },
+  {
+    id: "cursor",
+    label: "Cursor",
+    description:
+      "Cursor Agent via headless CLI (`agent -p --force`); install the `agent` binary and run `agent login`",
+    defaultModeId: "agent",
+    modes: CURSOR_MODES,
   },
 ];
 
