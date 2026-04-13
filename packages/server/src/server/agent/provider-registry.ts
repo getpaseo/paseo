@@ -125,21 +125,6 @@ function mergeRuntimeSettings(
   };
 }
 
-function mergeProfileModels(
-  primary: ProviderProfileModel[] | undefined,
-  fallback: ProviderProfileModel[] | undefined,
-): ProviderProfileModel[] {
-  const merged = [...(primary ?? []), ...(fallback ?? [])];
-  const seen = new Set<string>();
-  return merged.filter((model) => {
-    if (seen.has(model.id)) {
-      return false;
-    }
-    seen.add(model.id);
-    return true;
-  });
-}
-
 function applyOverrideToDefinition(
   definition: AgentProviderDefinition,
   override?: ProviderOverride,
@@ -347,10 +332,21 @@ function createRegistryEntry(
     },
     fetchModels: async (options?: ListModelsOptions) =>
       mergeModels(provider, resolved.profileModels, await modelClient.listModels(options)),
-    fetchModes: (options?: ListModesOptions) =>
-      modelClient.listModes
-        ? modelClient.listModes(options)
-        : Promise.resolve(resolved.definition.modes),
+    fetchModes: async (options?: ListModesOptions) => {
+      const modes = modelClient.listModes
+        ? await modelClient.listModes(options)
+        : resolved.definition.modes;
+      return modes.map((mode) => {
+        if (mode.icon && mode.colorTier) return mode;
+        const definitionMode = resolved.definition.modes.find((d) => d.id === mode.id);
+        if (!definitionMode) return mode;
+        return {
+          ...mode,
+          icon: mode.icon ?? definitionMode.icon,
+          colorTier: mode.colorTier ?? definitionMode.colorTier,
+        };
+      });
+    },
   };
 }
 
@@ -440,7 +436,7 @@ function addDerivedProviders(
     resolvedProviders.set(providerId, {
       definition: createDerivedDefinition(providerId, baseDefinition, override),
       runtimeSettings: mergedRuntimeSettings,
-      profileModels: mergeProfileModels(override.models, baseProvider.profileModels),
+      profileModels: override.models ?? [],
       enabled: override.enabled !== false,
       createBaseClient: (logger) => baseFactory(logger, mergedRuntimeSettings),
     });
