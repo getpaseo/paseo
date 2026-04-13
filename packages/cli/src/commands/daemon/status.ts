@@ -1,10 +1,11 @@
 import type { Command } from "commander";
-import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
-import { promisify } from "node:util";
-import { getOrCreateServerId, findExecutable, applyProviderEnv } from "@getpaseo/server";
-
-const execFileAsync = promisify(execFile);
+import {
+  getOrCreateServerId,
+  findExecutable,
+  applyProviderEnv,
+  execCommand,
+} from "@getpaseo/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
 import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";
@@ -178,11 +179,9 @@ async function checkProviderBinary(
   }
   const env = applyProviderEnv(process.env);
   try {
-    const { stdout } = await execFileAsync(binaryPath, ["--version"], {
-      encoding: "utf8",
+    const { stdout } = await execCommand(binaryPath, ["--version"], {
       timeout: 5000,
       env,
-      windowsHide: true,
     });
     return { path: binaryPath, version: stdout.trim() || null };
   } catch {
