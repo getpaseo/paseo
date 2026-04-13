@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -20,8 +20,11 @@ function compactText(value: string): string {
 describe("daemon E2E (real claude) - autonomous wake simple", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = await isProviderAvailable("claude");
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }

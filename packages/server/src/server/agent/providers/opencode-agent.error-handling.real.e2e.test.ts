@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
@@ -23,8 +23,11 @@ function isTerminalEvent(event: AgentStreamEvent): boolean {
 describe("opencode agent error handling (real)", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = await isCommandAvailable("opencode");
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }

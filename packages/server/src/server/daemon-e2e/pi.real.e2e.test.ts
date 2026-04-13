@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,8 +18,11 @@ function tmpCwd(): string {
 describe("daemon E2E (real pi)", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = await isProviderAvailable("pi");
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }

@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
 
@@ -59,14 +59,16 @@ const hasClaudeCredentials =
 describe("Claude SDK direct behavior", () => {
   let canRunClaudeIntegration = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRunClaudeIntegration = (await isCommandAvailable("claude")) && hasClaudeCredentials;
-    if (!canRunClaudeIntegration) {
-      context.skip();
-      return;
-    }
     if (canRunClaudeIntegration) {
       expect(await isCommandAvailable("claude")).toBe(true);
+    }
+  });
+
+  beforeEach((context) => {
+    if (!canRunClaudeIntegration) {
+      context.skip();
     }
   });
 

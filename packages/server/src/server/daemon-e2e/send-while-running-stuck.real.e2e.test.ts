@@ -1,4 +1,4 @@
-import { beforeAll, describe, test, expect } from "vitest";
+import { beforeAll, beforeEach, describe, test, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -17,8 +17,11 @@ function tmpCwd(): string {
 describe("daemon E2E (real codex) - send while running recovery", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = await isProviderAvailable("codex");
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }

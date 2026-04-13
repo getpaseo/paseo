@@ -10,7 +10,7 @@
  * CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment.
  * They are skipped automatically when credentials are unavailable.
  */
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -195,8 +195,11 @@ function assertInvariants(events: AgentStreamEvent[], foregroundTurnIds: string[
 describe("Agent event stream redesign — integration", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = (await isCommandAvailable("claude")) && hasClaudeCredentials;
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }

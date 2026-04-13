@@ -1,4 +1,4 @@
-import { beforeAll, describe, test, expect } from "vitest";
+import { beforeAll, beforeEach, describe, test, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -170,8 +170,11 @@ async function waitForRunningToolCall(
 describe("daemon E2E (real claude) - send message during tool call", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = await isProviderAvailable("claude");
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }

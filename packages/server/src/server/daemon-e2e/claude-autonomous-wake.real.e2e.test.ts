@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -355,8 +355,11 @@ function summarizeTimelineEntry(entry: {
 describe("daemon E2E (real claude) - autonomous wake from background task", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = await isProviderAvailable("claude");
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }

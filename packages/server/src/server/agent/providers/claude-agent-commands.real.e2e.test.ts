@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
 import type { AgentSlashCommand } from "../agent-sdk-types.js";
@@ -9,8 +9,11 @@ import { ClaudeAgentClient } from "./claude-agent.js";
 describe("claude agent commands contract (real)", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = await isCommandAvailable("claude");
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }

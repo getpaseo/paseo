@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -458,8 +458,11 @@ function createRealAgentClient(provider: AgentProvider, logger: pino.Logger): Ag
 describe.each(allProviders)("daemon E2E (real %s) - UI action stress", (provider) => {
   let shouldRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     shouldRun = await isProviderAvailable(provider);
+  });
+
+  beforeEach((context) => {
     if (!shouldRun) {
       context.skip();
     }

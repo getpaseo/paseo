@@ -15,7 +15,7 @@
  * This pattern is used in claude-agent.ts listModels().
  */
 
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { isCommandAvailable } from "../utils/executable.js";
 
@@ -31,8 +31,11 @@ function createEmptyPrompt(): AsyncGenerator<SDKUserMessage, void, undefined> {
 describe("Claude Agent SDK Commands POC", () => {
   let canRunClaudeIntegration = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRunClaudeIntegration = (await isCommandAvailable("claude")) && hasClaudeCredentials;
+  });
+
+  beforeEach((context) => {
     if (!canRunClaudeIntegration) {
       context.skip();
     }

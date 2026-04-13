@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeAll } from "vitest";
+import { describe, expect, test, beforeAll, beforeEach } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -176,14 +176,16 @@ async function cleanupSession(handle: { cwd: string; session: AgentSession }): P
 describe("ClaudeAgentSession integration", () => {
   let canRunClaudeIntegration = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRunClaudeIntegration = (await isCommandAvailable("claude")) && hasClaudeCredentials;
-    if (!canRunClaudeIntegration) {
-      context.skip();
-      return;
-    }
     if (canRunClaudeIntegration) {
       expect(await isCommandAvailable("claude")).toBe(true);
+    }
+  });
+
+  beforeEach((context) => {
+    if (!canRunClaudeIntegration) {
+      context.skip();
     }
   });
 

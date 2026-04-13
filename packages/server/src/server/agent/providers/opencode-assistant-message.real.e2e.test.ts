@@ -1,4 +1,4 @@
-import { beforeAll, describe, test, expect } from "vitest";
+import { beforeAll, beforeEach, describe, test, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,8 +11,11 @@ import type { AgentStreamEvent } from "../agent-sdk-types.js";
 describe("OpenCode assistant message", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = await isProviderAvailable("opencode");
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }

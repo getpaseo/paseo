@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -31,8 +31,11 @@ async function createHarness(): Promise<{
 describe("daemon E2E (real opencode) - initial prompt wait", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = await isProviderAvailable("opencode");
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }

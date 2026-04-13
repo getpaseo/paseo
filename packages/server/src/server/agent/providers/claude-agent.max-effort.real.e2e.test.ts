@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
 import type { AgentStreamEvent, AgentSession } from "../agent-sdk-types.js";
@@ -31,8 +31,11 @@ async function collectUntilTerminal(session: AgentSession): Promise<AgentStreamE
 describe("Claude max effort availability (real)", () => {
   let canRun = false;
 
-  beforeAll(async (context) => {
+  beforeAll(async () => {
     canRun = (await isCommandAvailable("claude")) && hasClaudeCredentials;
+  });
+
+  beforeEach((context) => {
     if (!canRun) {
       context.skip();
     }
