@@ -6,6 +6,8 @@ import type {
   BottomAnchorLocalRequest,
   BottomAnchorRouteRequest,
 } from "./use-bottom-anchor-controller";
+import { createNativeStreamStrategy } from "./stream-strategy-native";
+import { createWebStreamStrategy } from "./stream-strategy-web";
 
 type EdgeSlot = "header" | "footer";
 type NeighborRelation = "above" | "below";
@@ -21,36 +23,36 @@ export type BottomAnchorTransportBehavior = Readonly<{
   verificationRetryMode: "rescroll" | "recheck";
 }>;
 
-export interface StreamViewportMetrics {
+export type StreamViewportMetrics = {
   contentHeight: number;
   viewportHeight: number;
-}
+};
 
 export type StreamNearBottomInput = StreamViewportMetrics & {
   offsetY: number;
   threshold: number;
 };
 
-export interface StreamEdgeSlotProps {
-  ListHeaderComponent?: ReactElement | ComponentType<unknown> | null;
+export type StreamEdgeSlotProps = {
+  ListHeaderComponent?: ReactElement | ComponentType<any> | null;
   ListHeaderComponentStyle?: StyleProp<ViewStyle>;
-  ListFooterComponent?: ReactElement | ComponentType<unknown> | null;
+  ListFooterComponent?: ReactElement | ComponentType<any> | null;
   ListFooterComponentStyle?: StyleProp<ViewStyle>;
-}
+};
 
-export interface StreamViewportHandle {
+export type StreamViewportHandle = {
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
-}
+};
 
-export interface StreamSegmentRenderers {
+export type StreamSegmentRenderers = {
   renderHistoryVirtualizedRow: (item: StreamItem, index: number, items: StreamItem[]) => ReactNode;
   renderHistoryMountedRow: (item: StreamItem, index: number, items: StreamItem[]) => ReactNode;
   renderLiveHeadRow: (item: StreamItem, index: number, items: StreamItem[]) => ReactNode;
   renderLiveAuxiliary: () => ReactNode;
-}
+};
 
-export interface StreamRenderInput {
+export type StreamRenderInput = {
   agentId: string;
   segments: StreamRenderSegments;
   boundary: StreamHistoryBoundary;
@@ -64,12 +66,12 @@ export interface StreamRenderInput {
   listStyle: StyleProp<ViewStyle>;
   baseListContentContainerStyle: StyleProp<ViewStyle>;
   forwardListContentContainerStyle: StyleProp<ViewStyle>;
-}
+};
 
-export interface ResolveStreamRenderStrategyInput {
+export type ResolveStreamRenderStrategyInput = {
   platform: string;
   isMobileBreakpoint: boolean;
-}
+};
 
 export interface StreamStrategy {
   render: (input: StreamRenderInput) => ReactNode;
@@ -85,7 +87,7 @@ export interface StreamStrategy {
   isNearBottom: (input: StreamNearBottomInput) => boolean;
   getBottomOffset: (metrics: StreamViewportMetrics) => number;
   getEdgeSlotProps: (
-    component: ReactElement | ComponentType<unknown> | null,
+    component: ReactElement | ComponentType<any> | null,
     gapSize: number,
   ) => StreamEdgeSlotProps;
   getMaintainVisibleContentPosition: () => MaintainVisibleContentPositionConfig | undefined;
@@ -98,7 +100,7 @@ export interface StreamStrategy {
   shouldUseVirtualizedList: () => boolean;
 }
 
-interface StreamStrategyConfig {
+type StreamStrategyConfig = {
   render: StreamStrategy["render"];
   orderTailReverse: boolean;
   orderHeadReverse: boolean;
@@ -114,7 +116,7 @@ interface StreamStrategyConfig {
   useVirtualizedList: boolean;
   isNearBottom: (input: StreamNearBottomInput) => boolean;
   getBottomOffset: (metrics: StreamViewportMetrics) => number;
-}
+};
 
 const NATIVE_SETTLING_VERIFICATION_DELAY_FRAMES = 4;
 
@@ -122,9 +124,8 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
   return {
     render: config.render,
     orderTail: (streamItems) =>
-      config.orderTailReverse ? [...streamItems].toReversed() : streamItems,
-    orderHead: (streamHead) =>
-      config.orderHeadReverse ? [...streamHead].toReversed() : streamHead,
+      config.orderTailReverse ? [...streamItems].reverse() : streamItems,
+    orderHead: (streamHead) => (config.orderHeadReverse ? [...streamHead].reverse() : streamHead),
     getNeighborIndex: (index, relation) =>
       relation === "above"
         ? index + config.assistantTurnTraversalStep
@@ -154,7 +155,7 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
           messages.push(currentItem.text);
         }
       }
-      return messages.toReversed().join("\n\n");
+      return messages.reverse().join("\n\n");
     },
     isNearBottom: (input) => config.isNearBottom(input),
     getBottomOffset: (metrics) => config.getBottomOffset(metrics),
@@ -180,6 +181,17 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
     shouldAnimateManualScrollToBottom: () => config.animateManualScrollToBottom,
     shouldUseVirtualizedList: () => config.useVirtualizedList,
   };
+}
+
+export function resolveStreamRenderStrategy(
+  input: ResolveStreamRenderStrategyInput,
+): StreamStrategy {
+  if (input.platform === "web") {
+    return createWebStreamStrategy({
+      isMobileBreakpoint: input.isMobileBreakpoint,
+    });
+  }
+  return createNativeStreamStrategy();
 }
 
 export function resolveBottomAnchorTransportBehavior(input: {
@@ -262,7 +274,7 @@ export function getBottomOffsetForStreamRenderStrategy(
 
 export function getStreamEdgeSlotProps(params: {
   strategy: StreamStrategy;
-  component: ReactElement | ComponentType<unknown> | null;
+  component: ReactElement | ComponentType<any> | null;
   gapSize: number;
 }): StreamEdgeSlotProps {
   return params.strategy.getEdgeSlotProps(params.component, params.gapSize);

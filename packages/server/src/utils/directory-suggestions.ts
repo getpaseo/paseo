@@ -34,40 +34,40 @@ const DEFAULT_MAX_DIRECTORIES_SCANNED = 5000;
 const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
 const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
 
-interface QueryParts {
+type QueryParts = {
   isPathQuery: boolean;
   parentPart: string;
   searchTerm: string;
-}
+};
 
-interface RankedDirectory {
+type RankedDirectory = {
   absolutePath: string;
   matchTier: number;
   segmentIndex: number;
   matchOffset: number;
   depth: number;
-}
+};
 
-interface ChildDirectoryEntry {
+type ChildDirectoryEntry = {
   name: string;
   absolutePath: string;
-}
+};
 
-interface ChildWorkspaceEntry {
+type ChildWorkspaceEntry = {
   name: string;
   absolutePath: string;
   kind: WorkspaceSuggestionKind;
-}
+};
 
-interface DirectoryListCacheEntry {
+type DirectoryListCacheEntry = {
   expiresAt: number;
   entries: ChildDirectoryEntry[];
-}
+};
 
-interface WorkspaceEntryListCacheEntry {
+type WorkspaceEntryListCacheEntry = {
   expiresAt: number;
   entries: ChildWorkspaceEntry[];
-}
+};
 
 const directoryListCache = new Map<string, DirectoryListCacheEntry>();
 const workspaceEntryListCache = new Map<string, WorkspaceEntryListCacheEntry>();
@@ -112,14 +112,14 @@ export async function searchHomeDirectories(
   });
 }
 
-interface RankedWorkspaceEntry {
+type RankedWorkspaceEntry = {
   relativePath: string;
   kind: WorkspaceSuggestionKind;
   matchTier: number;
   segmentIndex: number;
   matchOffset: number;
   depth: number;
-}
+};
 
 export async function searchWorkspaceEntries(
   options: SearchWorkspaceEntriesOptions,
@@ -720,24 +720,28 @@ async function listChildDirectories(input: {
   const dirents = await readdir(input.directory, { withFileTypes: true }).catch(
     () => [] as Dirent[],
   );
-  const candidates = dirents.filter(
-    (dirent) =>
-      !isHiddenDirectoryName(dirent.name) && (dirent.isDirectory() || dirent.isSymbolicLink()),
-  );
-  const resolved = await Promise.all(
-    candidates.map(async (dirent) => {
-      const candidatePath = path.join(input.directory, dirent.name);
-      const absolutePath = await resolveDirectoryCandidate({
-        candidatePath,
-        dirent,
-        homeRoot: input.homeRoot,
-      });
-      return absolutePath ? { name: dirent.name, absolutePath } : null;
-    }),
-  );
-  const entries: ChildDirectoryEntry[] = resolved.filter(
-    (entry): entry is ChildDirectoryEntry => entry !== null,
-  );
+  const entries: ChildDirectoryEntry[] = [];
+  for (const dirent of dirents) {
+    if (isHiddenDirectoryName(dirent.name)) {
+      continue;
+    }
+    if (!dirent.isDirectory() && !dirent.isSymbolicLink()) {
+      continue;
+    }
+    const candidatePath = path.join(input.directory, dirent.name);
+    const absolutePath = await resolveDirectoryCandidate({
+      candidatePath,
+      dirent,
+      homeRoot: input.homeRoot,
+    });
+    if (!absolutePath) {
+      continue;
+    }
+    entries.push({
+      name: dirent.name,
+      absolutePath,
+    });
+  }
 
   setDirectoryListCache(input.directory, {
     expiresAt: now + DIRECTORY_LIST_CACHE_TTL_MS,
@@ -760,26 +764,30 @@ async function listWorkspaceChildEntries(input: {
   const dirents = await readdir(input.directory, { withFileTypes: true }).catch(
     () => [] as Dirent[],
   );
-  const candidates = dirents.filter(
-    (dirent) =>
-      !isHiddenDirectoryName(dirent.name) && !isIgnoredWorkspaceDirectoryName(dirent.name),
-  );
-  const resolved = await Promise.all(
-    candidates.map(async (dirent) => {
-      const candidatePath = path.join(input.directory, dirent.name);
-      const entry = await resolveWorkspaceCandidate({
-        candidatePath,
-        dirent,
-        workspaceRoot: input.workspaceRoot,
-      });
-      return entry
-        ? { name: dirent.name, absolutePath: entry.absolutePath, kind: entry.kind }
-        : null;
-    }),
-  );
-  const entries: ChildWorkspaceEntry[] = resolved.filter(
-    (entry): entry is ChildWorkspaceEntry => entry !== null,
-  );
+  const entries: ChildWorkspaceEntry[] = [];
+  for (const dirent of dirents) {
+    if (isHiddenDirectoryName(dirent.name)) {
+      continue;
+    }
+    if (isIgnoredWorkspaceDirectoryName(dirent.name)) {
+      continue;
+    }
+
+    const candidatePath = path.join(input.directory, dirent.name);
+    const entry = await resolveWorkspaceCandidate({
+      candidatePath,
+      dirent,
+      workspaceRoot: input.workspaceRoot,
+    });
+    if (!entry) {
+      continue;
+    }
+    entries.push({
+      name: dirent.name,
+      absolutePath: entry.absolutePath,
+      kind: entry.kind,
+    });
+  }
 
   setWorkspaceEntryListCache(input.directory, {
     expiresAt: now + DIRECTORY_LIST_CACHE_TTL_MS,

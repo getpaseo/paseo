@@ -1,8 +1,8 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolveHubcodeHome, spawnProcess } from "@gethubcode/server";
+import { loadConfig, resolveHubcodeHome } from "@hubtool/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
 export interface DaemonStartOptions {
@@ -13,7 +13,7 @@ export interface DaemonStartOptions {
   relay?: boolean;
   mcp?: boolean;
   injectMcp?: boolean;
-  hostnames?: string;
+  allowedHosts?: string;
 }
 
 export interface LocalDaemonPidInfo {
@@ -43,7 +43,6 @@ export interface DetachedStartResult {
 export interface StopLocalDaemonOptions {
   home?: string;
   timeoutMs?: number;
-  killTimeoutMs?: number;
   force?: boolean;
 }
 
@@ -55,21 +54,21 @@ export interface StopLocalDaemonResult {
   message: string;
 }
 
-interface ProcessExitDetails {
+type ProcessExitDetails = {
   code: number | null;
   signal: NodeJS.Signals | null;
   error?: Error;
-}
+};
 
 type DetachedStartupResult = { exitedEarly: false } | ({ exitedEarly: true } & ProcessExitDetails);
 
 const DETACHED_STARTUP_GRACE_MS = 1200;
 const PID_POLL_INTERVAL_MS = 100;
+const KILL_TIMEOUT_MS = 3000;
 const DAEMON_LOG_FILENAME = "daemon.log";
 const DAEMON_PID_FILENAME = "hubcode.pid";
 
 export const DEFAULT_STOP_TIMEOUT_MS = 15_000;
-export const DEFAULT_KILL_TIMEOUT_MS = 3_000;
 
 const require = createRequire(import.meta.url);
 
@@ -114,36 +113,31 @@ function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   } else if (options.port) {
     childEnv.HUBCODE_LISTEN = `127.0.0.1:${options.port}`;
   }
-  if (options.hostnames) {
-    childEnv.HUBCODE_HOSTNAMES = options.hostnames;
+  if (options.allowedHosts) {
+    childEnv.HUBCODE_ALLOWED_HOSTS = options.allowedHosts;
   }
   return childEnv;
 }
 
-function resolveServerRunnerFromDir(currentDir: string): string | null {
-  const packageJsonPath = path.join(currentDir, "package.json");
-  if (!existsSync(packageJsonPath)) return null;
-  try {
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: string };
-    if (packageJson.name !== "@gethubcode/server") return null;
-    const distRunner = path.join(currentDir, "dist", "scripts", "supervisor-entrypoint.js");
-    if (existsSync(distRunner)) {
-      return distRunner;
-    }
-    return path.join(currentDir, "scripts", "supervisor-entrypoint.ts");
-  } catch {
-    return null;
-  }
-}
-
 function resolveDaemonRunnerEntry(): string {
-  const serverExportPath = require.resolve("@gethubcode/server");
+  const serverExportPath = require.resolve("@hubtool/server");
   let currentDir = path.dirname(serverExportPath);
 
   while (true) {
-    const entry = resolveServerRunnerFromDir(currentDir);
-    if (entry) {
-      return entry;
+    const packageJsonPath = path.join(currentDir, "package.json");
+    if (existsSync(packageJsonPath)) {
+      try {
+        const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: string };
+        if (packageJson.name === "@hubtool/server") {
+          const distRunner = path.join(currentDir, "dist", "scripts", "supervisor-entrypoint.js");
+          if (existsSync(distRunner)) {
+            return distRunner;
+          }
+          return path.join(currentDir, "scripts", "supervisor-entrypoint.ts");
+        }
+      } catch {
+        // Continue searching up if package.json exists but is invalid.
+      }
     }
 
     const parentDir = path.dirname(currentDir);
@@ -153,27 +147,11 @@ function resolveDaemonRunnerEntry(): string {
     currentDir = parentDir;
   }
 
-  throw new Error("Unable to resolve @gethubcode/server package root for daemon runner");
+  throw new Error("Unable to resolve @hubtool/server package root for daemon runner");
 }
 
 function pidFilePath(hubcodeHome: string): string {
   return path.join(hubcodeHome, DAEMON_PID_FILENAME);
-}
-
-function resolveListenField(listen: unknown, sockPath: unknown): string | undefined {
-  if (typeof listen === "string") return listen;
-  if (typeof sockPath === "string") return sockPath;
-  return undefined;
-}
-
-function resolveStopMessage(
-  forced: boolean,
-  lifecycleRequested: boolean,
-  fallbackMessage: string | null | undefined,
-): string {
-  if (forced) return "Daemon owner process was force-stopped";
-  if (lifecycleRequested) return "Daemon stopped gracefully";
-  return fallbackMessage ?? "Daemon stopped via owner PID signal";
 }
 
 function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
@@ -189,7 +167,12 @@ function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
       startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : undefined,
       hostname: typeof parsed.hostname === "string" ? parsed.hostname : undefined,
       uid: typeof parsed.uid === "number" ? parsed.uid : undefined,
-      listen: resolveListenField(parsed.listen, parsed.sockPath),
+      listen:
+        typeof parsed.listen === "string"
+          ? parsed.listen
+          : typeof parsed.sockPath === "string"
+            ? parsed.sockPath
+            : undefined,
       desktopManaged: parsed.desktopManaged === true ? true : undefined,
     };
   } catch {
@@ -288,13 +271,13 @@ function signalProcessGroupSafely(pid: number, signal: NodeJS.Signals): boolean 
 
 async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  async function poll(): Promise<boolean> {
-    if (!isProcessRunning(pid)) return true;
-    if (Date.now() >= deadline) return !isProcessRunning(pid);
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(pid)) {
+      return true;
+    }
     await sleep(PID_POLL_INTERVAL_MS);
-    return poll();
   }
-  return poll();
+  return !isProcessRunning(pid);
 }
 
 type LifecycleShutdownAttempt = { requested: true } | { requested: false; reason: string };
@@ -339,7 +322,6 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
     ...envWithHome(options.home),
     // Status should reflect local persisted config + pid file, not inherited daemon env overrides.
     HUBCODE_LISTEN: undefined,
-    HUBCODE_HOSTNAMES: undefined,
     HUBCODE_ALLOWED_HOSTS: undefined,
   };
   const home = resolveHubcodeHome(env);
@@ -373,17 +355,16 @@ export async function startLocalDaemonDetached(
     throw new Error("Cannot use --listen and --port together");
   }
 
-  const daemonRunnerEntry = resolveDaemonRunnerEntry();
   const childEnv = buildChildEnv(options);
 
   const hubcodeHome = resolveHubcodeHome(childEnv);
   const logPath = path.join(hubcodeHome, DAEMON_LOG_FILENAME);
-  const child = spawnProcess(
+  const daemonRunnerEntry = resolveDaemonRunnerEntry();
+  const child = spawn(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
     {
       detached: true,
-      envMode: "internal",
       env: childEnv,
       stdio: ["ignore", "ignore", "ignore"],
     },
@@ -439,8 +420,8 @@ export function startLocalDaemonForeground(options: DaemonStartOptions): number 
     throw new Error("Cannot use --listen and --port together");
   }
 
-  const daemonRunnerEntry = resolveDaemonRunnerEntry();
   const childEnv = buildChildEnv(options);
+  const daemonRunnerEntry = resolveDaemonRunnerEntry();
   const result = spawnSync(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
@@ -496,7 +477,6 @@ export async function stopLocalDaemon(
   options: StopLocalDaemonOptions = {},
 ): Promise<StopLocalDaemonResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
-  const killTimeoutMs = options.killTimeoutMs ?? DEFAULT_KILL_TIMEOUT_MS;
   const state = resolveLocalDaemonState({ home: options.home });
 
   if (!state.pidInfo || !state.running) {
@@ -533,7 +513,7 @@ export async function stopLocalDaemon(
   if (!stopped && options.force) {
     forced = true;
     signalProcessGroupSafely(pid, "SIGKILL");
-    stopped = await waitForPidExit(pid, killTimeoutMs);
+    stopped = await waitForPidExit(pid, KILL_TIMEOUT_MS);
   }
 
   if (!stopped) {
@@ -547,6 +527,10 @@ export async function stopLocalDaemon(
     home: state.home,
     pid,
     forced,
-    message: resolveStopMessage(forced, lifecycleRequested, fallbackMessage),
+    message: forced
+      ? "Daemon owner process was force-stopped"
+      : lifecycleRequested
+        ? "Daemon stopped gracefully"
+        : (fallbackMessage ?? "Daemon stopped via owner PID signal"),
   };
 }

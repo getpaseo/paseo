@@ -2,37 +2,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 type MockPlatform = "web" | "ios" | "android";
 
-interface GlobalSnapshot {
+type GlobalSnapshot = {
   Notification: unknown;
   navigatorDescriptor?: PropertyDescriptor;
-  windowDescriptor?: PropertyDescriptor;
   hubcodeDesktop: unknown;
-}
+};
 
 const originalGlobals: GlobalSnapshot = {
   Notification: (globalThis as { Notification?: unknown }).Notification,
   navigatorDescriptor: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
-  windowDescriptor: Object.getOwnPropertyDescriptor(globalThis, "window"),
   hubcodeDesktop:
     typeof globalThis.window === "undefined"
       ? undefined
       : (globalThis.window as { hubcodeDesktop?: unknown }).hubcodeDesktop,
 };
-
-function ensureWindow(): { hubcodeDesktop?: unknown } {
-  const existingWindow = (globalThis as { window?: { hubcodeDesktop?: unknown } }).window;
-  if (existingWindow) {
-    return existingWindow;
-  }
-
-  const nextWindow: { hubcodeDesktop?: unknown } = {};
-  Object.defineProperty(globalThis, "window", {
-    configurable: true,
-    writable: true,
-    value: nextWindow,
-  });
-  return nextWindow;
-}
 
 function setNavigator(value: unknown): void {
   Object.defineProperty(globalThis, "navigator", {
@@ -49,12 +32,6 @@ function restoreGlobals(): void {
     Object.defineProperty(globalThis, "navigator", originalGlobals.navigatorDescriptor);
   } else {
     delete (globalThis as { navigator?: unknown }).navigator;
-  }
-
-  if (originalGlobals.windowDescriptor) {
-    Object.defineProperty(globalThis, "window", originalGlobals.windowDescriptor);
-  } else {
-    delete (globalThis as { window?: unknown }).window;
   }
 
   if (typeof globalThis.window !== "undefined") {
@@ -81,12 +58,14 @@ describe("desktop-permissions", () => {
 
     expect(shouldShowDesktopPermissionSection()).toBe(false);
 
-    ensureWindow().hubcodeDesktop = {};
+    globalThis.window = { hubcodeDesktop: {} } as unknown as Window & typeof globalThis;
     expect(shouldShowDesktopPermissionSection()).toBe(true);
   });
 
   it("reads notification and microphone status", async () => {
-    const MockNotification = { permission: "default" };
+    class MockNotification {
+      static permission = "default";
+    }
     (globalThis as { Notification?: unknown }).Notification = MockNotification;
     setNavigator({
       permissions: {
@@ -150,10 +129,10 @@ describe("desktop-permissions", () => {
   });
 
   it("requests notification permission via the browser Notification API", async () => {
-    const MockNotification = {
-      permission: "default",
-      requestPermission: vi.fn(async () => "granted"),
-    };
+    class MockNotification {
+      static permission = "default";
+      static requestPermission = vi.fn(async () => "granted");
+    }
     (globalThis as { Notification?: unknown }).Notification = MockNotification;
 
     const { requestDesktopPermission } = await loadModuleForPlatform("web");
@@ -164,7 +143,9 @@ describe("desktop-permissions", () => {
   });
 
   it("reads browser Notification permission when available", async () => {
-    const MockNotification = { permission: "denied" };
+    class MockNotification {
+      static permission = "denied";
+    }
     (globalThis as { Notification?: unknown }).Notification = MockNotification;
     setNavigator({});
 

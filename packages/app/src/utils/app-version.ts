@@ -25,9 +25,7 @@ export function resolveAppVersion(): string | null {
     return expoVersion;
   }
 
-  const manifestVersion = toVersionOrNull(
-    (Constants as unknown as { manifest?: { version?: unknown } }).manifest?.version,
-  );
+  const manifestVersion = toVersionOrNull((Constants as any).manifest?.version);
   if (manifestVersion) {
     return manifestVersion;
   }

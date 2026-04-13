@@ -14,22 +14,22 @@ import {
   type LocalTtsModelId,
 } from "./models.js";
 
-export interface LocalSpeechModelConfig {
+export type LocalSpeechModelConfig = {
   dictationStt: LocalSttModelId;
   voiceStt: LocalSttModelId;
   voiceTts: LocalTtsModelId;
   voiceTtsSpeakerId?: number;
   voiceTtsSpeed?: number;
-}
+};
 
-export interface LocalSpeechProviderConfig {
+export type LocalSpeechProviderConfig = {
   modelsDir: string;
   models: LocalSpeechModelConfig;
-}
+};
 
-export interface ResolvedLocalSpeechConfig {
+export type ResolvedLocalSpeechConfig = {
   local: LocalSpeechProviderConfig | undefined;
-}
+};
 
 export type { LocalSpeechModelId, LocalSttModelId, LocalTtsModelId };
 
@@ -81,68 +81,6 @@ function shouldIncludeLocalProviderConfig(params: {
   );
 }
 
-function firstDefinedValue<T>(values: Array<T | null | undefined>): T | undefined {
-  for (const value of values) {
-    if (value !== undefined && value !== null) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function buildLocalSpeechResolutionInput(params: {
-  hubcodeHome: string;
-  env: NodeJS.ProcessEnv;
-  persisted: PersistedConfig;
-  providers: RequestedSpeechProviders;
-  includeProviderConfig: boolean;
-}): Record<string, unknown> {
-  const { hubcodeHome, env, persisted, providers, includeProviderConfig } = params;
-  return {
-    includeProviderConfig,
-    modelsDir: firstDefinedValue<string>([
-      env.HUBCODE_LOCAL_MODELS_DIR,
-      persisted.providers?.local?.modelsDir,
-      path.join(hubcodeHome, DEFAULT_LOCAL_MODELS_SUBDIR),
-    ]),
-    dictationLocalSttModel: firstDefinedValue<string>([
-      env.HUBCODE_DICTATION_LOCAL_STT_MODEL,
-      persistedLocalFeatureModel(
-        providers.dictationStt.provider,
-        providers.dictationStt.enabled,
-        persisted.features?.dictation?.stt?.model,
-      ),
-      DEFAULT_LOCAL_STT_MODEL,
-    ]),
-    voiceLocalSttModel: firstDefinedValue<string>([
-      env.HUBCODE_VOICE_LOCAL_STT_MODEL,
-      persistedLocalFeatureModel(
-        providers.voiceStt.provider,
-        providers.voiceStt.enabled,
-        persisted.features?.voiceMode?.stt?.model,
-      ),
-      DEFAULT_LOCAL_STT_MODEL,
-    ]),
-    voiceLocalTtsModel: firstDefinedValue<string>([
-      env.HUBCODE_VOICE_LOCAL_TTS_MODEL,
-      persistedLocalFeatureModel(
-        providers.voiceTts.provider,
-        providers.voiceTts.enabled,
-        persisted.features?.voiceMode?.tts?.model,
-      ),
-      DEFAULT_LOCAL_TTS_MODEL,
-    ]),
-    voiceLocalTtsSpeakerId: firstDefinedValue<string | number>([
-      env.HUBCODE_VOICE_LOCAL_TTS_SPEAKER_ID,
-      persisted.features?.voiceMode?.tts?.speakerId,
-    ]),
-    voiceLocalTtsSpeed: firstDefinedValue<string | number>([
-      env.HUBCODE_VOICE_LOCAL_TTS_SPEED,
-      persisted.features?.voiceMode?.tts?.speed,
-    ]),
-  };
-}
-
 export function resolveLocalSpeechConfig(params: {
   hubcodeHome: string;
   env: NodeJS.ProcessEnv;
@@ -150,9 +88,43 @@ export function resolveLocalSpeechConfig(params: {
   providers: RequestedSpeechProviders;
 }): ResolvedLocalSpeechConfig {
   const includeProviderConfig = shouldIncludeLocalProviderConfig(params);
-  const parsed = LocalSpeechResolutionSchema.parse(
-    buildLocalSpeechResolutionInput({ ...params, includeProviderConfig }),
-  );
+
+  const parsed = LocalSpeechResolutionSchema.parse({
+    includeProviderConfig,
+    modelsDir:
+      params.env.HUBCODE_LOCAL_MODELS_DIR ??
+      params.persisted.providers?.local?.modelsDir ??
+      path.join(params.hubcodeHome, DEFAULT_LOCAL_MODELS_SUBDIR),
+    dictationLocalSttModel:
+      params.env.HUBCODE_DICTATION_LOCAL_STT_MODEL ??
+      persistedLocalFeatureModel(
+        params.providers.dictationStt.provider,
+        params.providers.dictationStt.enabled,
+        params.persisted.features?.dictation?.stt?.model,
+      ) ??
+      DEFAULT_LOCAL_STT_MODEL,
+    voiceLocalSttModel:
+      params.env.HUBCODE_VOICE_LOCAL_STT_MODEL ??
+      persistedLocalFeatureModel(
+        params.providers.voiceStt.provider,
+        params.providers.voiceStt.enabled,
+        params.persisted.features?.voiceMode?.stt?.model,
+      ) ??
+      DEFAULT_LOCAL_STT_MODEL,
+    voiceLocalTtsModel:
+      params.env.HUBCODE_VOICE_LOCAL_TTS_MODEL ??
+      persistedLocalFeatureModel(
+        params.providers.voiceTts.provider,
+        params.providers.voiceTts.enabled,
+        params.persisted.features?.voiceMode?.tts?.model,
+      ) ??
+      DEFAULT_LOCAL_TTS_MODEL,
+    voiceLocalTtsSpeakerId:
+      params.env.HUBCODE_VOICE_LOCAL_TTS_SPEAKER_ID ??
+      params.persisted.features?.voiceMode?.tts?.speakerId,
+    voiceLocalTtsSpeed:
+      params.env.HUBCODE_VOICE_LOCAL_TTS_SPEED ?? params.persisted.features?.voiceMode?.tts?.speed,
+  });
 
   const resolvedVoiceTtsSpeakerId =
     parsed.voiceLocalTtsSpeakerId ??

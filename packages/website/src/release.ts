@@ -28,7 +28,7 @@ function versionFromTag(tag: string): string {
   return tag.replace(/^v/, "");
 }
 
-const GITHUB_RELEASES_URL = "https://api.github.com/repos/gethubcode/hubcode/releases?per_page=10";
+const GITHUB_RELEASES_URL = "https://api.github.com/repos/hubtool/hubcode/releases?per_page=10";
 
 async function fetchLatestReadyRelease(): Promise<string> {
   const fallback = websitePackage.version.replace(/-.*$/, "");

@@ -5,40 +5,7 @@ import path from "path";
 import { execSync } from "child_process";
 
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
-import {
-  createWorktree as createWorktreePrimitive,
-  type CreateWorktreeOptions,
-  type WorktreeConfig,
-} from "../../utils/worktree.js";
-
-interface LegacyCreateWorktreeTestOptions {
-  branchName: string;
-  cwd: string;
-  baseBranch: string;
-  worktreeSlug: string;
-  runSetup?: boolean;
-  hubcodeHome?: string;
-}
-
-function createLegacyWorktreeForTest(
-  options: CreateWorktreeOptions | LegacyCreateWorktreeTestOptions,
-): Promise<WorktreeConfig> {
-  if ("source" in options) {
-    return createWorktreePrimitive(options);
-  }
-
-  return createWorktreePrimitive({
-    cwd: options.cwd,
-    worktreeSlug: options.worktreeSlug,
-    source: {
-      kind: "branch-off",
-      baseBranch: options.baseBranch,
-      newBranchName: options.branchName,
-    },
-    runSetup: options.runSetup ?? true,
-    hubcodeHome: options.hubcodeHome,
-  });
-}
+import { createWorktree } from "../../utils/worktree.js";
 
 const CODEX_TEST_MODEL = "gpt-5.4-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
@@ -142,7 +109,7 @@ describe("daemon checkout ship loop", () => {
         );
         execSync("git push -u origin main", { cwd: repoDir, stdio: "pipe" });
 
-        const worktree = await createLegacyWorktreeForTest({
+        const worktree = await createWorktree({
           branchName: "ship-loop",
           cwd: repoDir,
           baseBranch: "main",
@@ -289,7 +256,7 @@ describe("daemon checkout ship loop", () => {
       execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir, stdio: "pipe" });
       execSync("git push -u origin main", { cwd: repoDir, stdio: "pipe" });
 
-      const worktree = await createLegacyWorktreeForTest({
+      const worktree = await createWorktree({
         branchName: "merge-from-base",
         cwd: repoDir,
         baseBranch: "main",

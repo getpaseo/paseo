@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { WebSocket } from "ws";
+import WebSocket from "ws";
 import pino from "pino";
 import { Writable } from "node:stream";
 import net from "node:net";
@@ -7,9 +7,8 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
 
-import { generateLocalPairingOffer } from "../pairing-offer.js";
 import { createTestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
-import { createClientChannel, type Transport } from "@gethubcode/relay/e2ee";
+import { createClientChannel, type Transport } from "@hubtool/relay/e2ee";
 import { buildRelayWebSocketUrl } from "../../shared/daemon-endpoints.js";
 
 const nodeMajor = Number((process.versions.node ?? "0").split(".")[0] ?? "0");
@@ -27,25 +26,19 @@ function createCapturingLogger() {
   return { logger, lines };
 }
 
-async function getPairingOfferUrl(args: {
-  hubcodeHome: string;
-  relayEnabled?: boolean;
-  relayEndpoint?: string;
-  relayPublicEndpoint?: string;
-  appBaseUrl?: string;
-}): Promise<string> {
-  const pairing = await generateLocalPairingOffer({
-    hubcodeHome: args.hubcodeHome,
-    relayEnabled: args.relayEnabled,
-    relayEndpoint: args.relayEndpoint,
-    relayPublicEndpoint: args.relayPublicEndpoint,
-    appBaseUrl: args.appBaseUrl,
-    includeQr: false,
-  });
-  if (!pairing.url) {
-    throw new Error("Expected relay pairing URL to be available");
+function parseOfferUrlFromLogs(lines: string[]): string {
+  for (const line of lines) {
+    if (!line.includes("pairing_offer")) continue;
+    try {
+      const obj = JSON.parse(line) as { msg?: string; url?: string };
+      if (obj.msg === "pairing_offer" && typeof obj.url === "string") {
+        return obj.url;
+      }
+    } catch {
+      // ignore
+    }
   }
-  return pairing.url;
+  throw new Error(`pairing_offer log not found. saw ${lines.length} lines`);
 }
 
 function decodeOfferFromFragmentUrl(url: string): {
@@ -110,25 +103,19 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       role: "server",
     });
     const opened = await new Promise<boolean>((resolve) => {
-      let pendingResolve: ((value: boolean) => void) | null = resolve;
-      const settle = (value: boolean) => {
-        if (!pendingResolve) return;
-        const fn = pendingResolve;
-        pendingResolve = null;
-        clearTimeout(timer);
-        fn(value);
-      };
       const ws = new WebSocket(url);
       const timer = setTimeout(() => {
         ws.terminate();
-        settle(false);
+        resolve(false);
       }, 5000);
       ws.once("open", () => {
+        clearTimeout(timer);
         ws.close(1000, "probe");
-        settle(true);
+        resolve(true);
       });
       ws.once("error", () => {
-        settle(false);
+        clearTimeout(timer);
+        resolve(false);
       });
     });
     if (opened) {
@@ -212,13 +199,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
     });
 
     try {
-      const offerUrl = await getPairingOfferUrl({
-        hubcodeHome: daemon.hubcodeHome,
-        relayEnabled: daemon.config.relayEnabled,
-        relayEndpoint: daemon.config.relayEndpoint,
-        relayPublicEndpoint: daemon.config.relayPublicEndpoint,
-        appBaseUrl: daemon.config.appBaseUrl,
-      });
+      const offerUrl = parseOfferUrlFromLogs(lines);
       const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
 
       const stableClientId = `cid_test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
@@ -231,27 +212,9 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       );
 
       const received = await new Promise<unknown>((resolve, reject) => {
-        let pendingResolve: ((value: unknown) => void) | null = resolve;
-        let pendingReject: ((reason: unknown) => void) | null = reject;
-        const settleResolve = (value: unknown) => {
-          if (!pendingResolve) return;
-          const fn = pendingResolve;
-          pendingResolve = null;
-          pendingReject = null;
-          clearTimeout(timeout);
-          fn(value);
-        };
-        const settleReject = (reason: unknown) => {
-          if (!pendingReject) return;
-          const fn = pendingReject;
-          pendingResolve = null;
-          pendingReject = null;
-          clearTimeout(timeout);
-          fn(reason);
-        };
         const timeout = setTimeout(() => {
           ws.close();
-          settleReject(new Error("timed out waiting for pong"));
+          reject(new Error("timed out waiting for pong"));
         }, 20000);
 
         const transport: Transport = {
@@ -283,24 +246,9 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                   if (
                     payload &&
                     typeof payload === "object" &&
-                    (
-                      payload as {
-                        type?: string;
-                        message?: { type?: string; payload?: { status?: string } };
-                      }
-                    ).type === "session" &&
-                    (
-                      payload as {
-                        type?: string;
-                        message?: { type?: string; payload?: { status?: string } };
-                      }
-                    ).message?.type === "status" &&
-                    (
-                      payload as {
-                        type?: string;
-                        message?: { type?: string; payload?: { status?: string } };
-                      }
-                    ).message?.payload?.status === "server_info"
+                    (payload as any).type === "session" &&
+                    (payload as any).message?.type === "status" &&
+                    (payload as any).message?.payload?.status === "server_info"
                   ) {
                     if (!pingSent && channelRef) {
                       pingSent = true;
@@ -308,25 +256,19 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                     }
                     return;
                   }
-                  if (
-                    payload &&
-                    typeof payload === "object" &&
-                    (
-                      payload as {
-                        type?: string;
-                        message?: { type?: string; payload?: { status?: string } };
-                      }
-                    ).type === "pong"
-                  ) {
-                    settleResolve(payload);
+                  if (payload && typeof payload === "object" && (payload as any).type === "pong") {
+                    clearTimeout(timeout);
+                    resolve(payload);
                     ws.close();
                   }
                 } catch (err) {
-                  settleReject(err);
+                  clearTimeout(timeout);
+                  reject(err);
                 }
               },
               onerror: (err) => {
-                settleReject(err);
+                clearTimeout(timeout);
+                reject(err);
               },
             });
             channelRef = channel;
@@ -339,7 +281,8 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
               }),
             );
           } catch (err) {
-            settleReject(err);
+            clearTimeout(timeout);
+            reject(err);
           }
         });
       });
@@ -371,13 +314,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
     });
 
     try {
-      const offerUrl = await getPairingOfferUrl({
-        hubcodeHome: daemon.hubcodeHome,
-        relayEnabled: daemon.config.relayEnabled,
-        relayEndpoint: daemon.config.relayEndpoint,
-        relayPublicEndpoint: daemon.config.relayPublicEndpoint,
-        appBaseUrl: daemon.config.appBaseUrl,
-      });
+      const offerUrl = parseOfferUrlFromLogs(lines);
       const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
 
       // Previously, the daemon would time out waiting for `hello` and reconnect every ~10s.
@@ -432,24 +369,9 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                 if (
                   payload &&
                   typeof payload === "object" &&
-                  (
-                    payload as {
-                      type?: string;
-                      message?: { type?: string; payload?: { status?: string } };
-                    }
-                  ).type === "session" &&
-                  (
-                    payload as {
-                      type?: string;
-                      message?: { type?: string; payload?: { status?: string } };
-                    }
-                  ).message?.type === "status" &&
-                  (
-                    payload as {
-                      type?: string;
-                      message?: { type?: string; payload?: { status?: string } };
-                    }
-                  ).message?.payload?.status === "server_info"
+                  (payload as any).type === "session" &&
+                  (payload as any).message?.type === "status" &&
+                  (payload as any).message?.payload?.status === "server_info"
                 ) {
                   if (!pingSent && channelRef) {
                     pingSent = true;
@@ -457,16 +379,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                   }
                   return;
                 }
-                if (
-                  payload &&
-                  typeof payload === "object" &&
-                  (
-                    payload as {
-                      type?: string;
-                      message?: { type?: string; payload?: { status?: string } };
-                    }
-                  ).type === "pong"
-                ) {
+                if (payload && typeof payload === "object" && (payload as any).type === "pong") {
                   clearTimeout(timeout);
                   resolve(payload);
                   ws.close();

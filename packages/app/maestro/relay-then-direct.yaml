@@ -1,4 +1,4 @@
-appId: ai.hubcode
+appId: sh.hubcode
 ---
 - launchApp:
     clearState: true
@@ -8,7 +8,7 @@ appId: ai.hubcode
 - eraseText
 - inputText: ${PAIRING_OFFER_URL}
 - tapOn:
-    id: "pair-link-submit"
+    point: "75%,36%"
 
 - extendedWaitUntil:
     visible: "New agent"

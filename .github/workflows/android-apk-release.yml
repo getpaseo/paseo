@@ -51,7 +51,7 @@ jobs:
             release create "$RELEASE_TAG"
             --repo "${{ github.repository }}"
             --title "Hubcode $RELEASE_TAG"
-            --notes ""
+            --generate-notes
           )
 
           if [[ "$IS_PRERELEASE" == "true" ]]; then

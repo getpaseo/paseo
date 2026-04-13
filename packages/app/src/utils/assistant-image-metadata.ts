@@ -1,6 +1,5 @@
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
-import { createImageSourceCacheKey } from "@/attachments/utils";
 
 export interface AssistantImageMetadata {
   width: number;
@@ -49,25 +48,8 @@ function normalizeAssistantImageSourceToken(value: string): string | null {
   return source || null;
 }
 
-function parseAssistantImageMarkdown(markdown: string): {
-  sources: string[];
-  hasNonImageText: boolean;
-} {
-  const sources: string[] = [];
-  for (const match of markdown.matchAll(MARKDOWN_IMAGE_PATTERN)) {
-    const normalized = normalizeAssistantImageSourceToken(match[1] ?? "");
-    if (normalized) {
-      sources.push(normalized);
-    }
-  }
-  return {
-    sources,
-    hasNonImageText: markdown.replace(MARKDOWN_IMAGE_PATTERN, "").trim().length > 0,
-  };
-}
-
 function createSourceAliasKey(source: string): string {
-  return `source:${createImageSourceCacheKey(source)}`;
+  return `source:${source}`;
 }
 
 function createResolutionKey(input: {
@@ -83,7 +65,7 @@ function createResolutionKey(input: {
     return null;
   }
   if (resolution.kind === "direct") {
-    return `direct:${createImageSourceCacheKey(resolution.uri)}`;
+    return `direct:${resolution.uri}`;
   }
   return `file:${input.serverId ?? "unknown-server"}:${resolution.cwd}:${resolution.path}`;
 }
@@ -158,8 +140,7 @@ export function setAssistantImageMetadata(
 }
 
 export function extractAssistantImageSources(markdown: string): string[] {
-  const shouldCacheParse = !/data:image\//i.test(markdown);
-  const cachedParse = shouldCacheParse ? assistantImageParseCache.get(markdown) : undefined;
+  const cachedParse = assistantImageParseCache.get(markdown);
   if (cachedParse) {
     touchCacheEntry(
       assistantImageParseCache,
@@ -170,15 +151,32 @@ export function extractAssistantImageSources(markdown: string): string[] {
     return cachedParse.sources;
   }
 
-  const parsed = parseAssistantImageMarkdown(markdown);
-  if (shouldCacheParse) {
-    touchCacheEntry(assistantImageParseCache, markdown, parsed, ASSISTANT_IMAGE_PARSE_CACHE_LIMIT);
+  const sources: string[] = [];
+  for (const match of markdown.matchAll(MARKDOWN_IMAGE_PATTERN)) {
+    const normalized = normalizeAssistantImageSourceToken(match[1] ?? "");
+    if (normalized) {
+      sources.push(normalized);
+    }
   }
-  return parsed.sources;
+  const hasNonImageText = markdown.replace(MARKDOWN_IMAGE_PATTERN, "").trim().length > 0;
+  touchCacheEntry(
+    assistantImageParseCache,
+    markdown,
+    { sources, hasNonImageText },
+    ASSISTANT_IMAGE_PARSE_CACHE_LIMIT,
+  );
+  return sources;
 }
 
 export function estimateAssistantMessageHeightFromCache(markdown: string): number | null {
-  const parsed = assistantImageParseCache.get(markdown) ?? parseAssistantImageMarkdown(markdown);
+  const cachedParse = assistantImageParseCache.get(markdown);
+  const parsed =
+    cachedParse ??
+    (() => {
+      const sources = extractAssistantImageSources(markdown);
+      const nextParsed = assistantImageParseCache.get(markdown);
+      return nextParsed ?? { sources, hasNonImageText: true };
+    })();
   if (parsed.sources.length === 0) {
     return null;
   }

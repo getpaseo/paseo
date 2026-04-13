@@ -18,8 +18,8 @@ export function downloadUrls(version: string) {
 }
 
 export const appStoreUrl = "https://apps.apple.com/app/hubcode-pocket-engineer/id6758887924";
-export const playStoreUrl = "https://play.google.com/store/apps/details?id=ai.hubcode";
-export const webAppUrl = "https://app.hubcode.ai";
+export const playStoreUrl = "https://play.google.com/store/apps/details?id=sh.hubcode";
+export const webAppUrl = "https://app.hubcode.sh";
 
 type Platform = "mac-silicon" | "mac-intel" | "windows" | "linux";
 

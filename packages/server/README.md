@@ -49,18 +49,15 @@ npm start
 ## Project Status
 
 **✅ Completed** (Phases 1-2):
-
 - Package setup and configuration
 - Express server with WebSocket
 - React UI with Vite
 - WebSocket client with ping/pong testing
 
 **⏳ In Progress** (Phase 3):
-
 - Terminal control (tmux integration)
 
 **📋 Planned** (Phases 4-9):
-
 - LLM integration (OpenAI GPT-4)
 - Agent orchestrator
 - Speech-to-Text (Deepgram)
@@ -98,7 +95,6 @@ HUBCODE_HOME=~/.hubcode-blue HUBCODE_LISTEN=127.0.0.1:7777 npm run dev
 ## Testing
 
 Currently manual testing via:
-
 1. Start servers: `npm run dev`
 2. Open http://localhost:5173
 3. Test WebSocket connection (green status indicator)

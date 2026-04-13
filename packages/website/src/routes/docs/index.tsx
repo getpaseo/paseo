@@ -68,12 +68,12 @@ function GettingStarted() {
         <p className="text-white/60">
           Download the desktop app from{" "}
           <a
-            href="https://hubcode.ai/download"
+            href="https://hubcode.sh/download"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-white/80"
           >
-            hubcode.ai/download
+            hubcode.sh/download
           </a>{" "}
           or the{" "}
           <a
@@ -84,7 +84,7 @@ function GettingStarted() {
           >
             GitHub releases page
           </a>
-          . Open it and you&apos;re done.
+          . Open it and you're done.
         </p>
         <p className="text-white/60">
           The desktop app bundles and manages its own daemon automatically, so you do not need a
@@ -105,7 +105,7 @@ function GettingStarted() {
         </p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
           <span className="text-muted-foreground select-none">$ </span>
-          <span>npm install -g @gethubcode/cli</span>
+          <span>npm install -g @hubtool/cli</span>
         </div>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
           <span className="text-muted-foreground select-none">$ </span>
@@ -146,11 +146,6 @@ function GettingStarted() {
           <li>
             <a href="/docs/voice" className="underline hover:text-white/80">
               Voice
-            </a>
-          </li>
-          <li>
-            <a href="/docs/providers" className="underline hover:text-white/80">
-              Providers
             </a>
           </li>
           <li>

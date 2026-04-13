@@ -1,4 +1,4 @@
-appId: ai.hubcode
+appId: sh.hubcode
 ---
 - launchApp:
     clearState: false

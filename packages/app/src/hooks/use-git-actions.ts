@@ -1,18 +1,9 @@
 import { useState, useCallback, useEffect, useMemo, type ReactElement } from "react";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import {
-  type CheckoutGitActionStatus,
-  useCheckoutGitActionsStore,
-} from "@/stores/checkout-git-actions-store";
-import {
-  type CheckoutStatusPayload,
-  useCheckoutStatusQuery,
-} from "@/hooks/use-checkout-status-query";
-import {
-  type CheckoutPrStatusPayload,
-  useCheckoutPrStatusQuery,
-} from "@/hooks/use-checkout-pr-status-query";
+import { useCheckoutGitActionsStore } from "@/stores/checkout-git-actions-store";
+import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
+import { useCheckoutPrStatusQuery } from "@/hooks/use-checkout-pr-status-query";
 import { buildGitActions, type GitActions } from "@/components/git-actions-policy";
 import { buildNewAgentRoute, resolveNewAgentWorkingDir } from "@/utils/new-agent-routing";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -22,177 +13,6 @@ export type { GitActionId, GitAction, GitActions } from "@/components/git-action
 
 function openURLInNewTab(url: string): void {
   void openExternalUrl(url);
-}
-
-function isActionDisabled(actionsDisabled: boolean, status: CheckoutGitActionStatus): boolean {
-  return actionsDisabled || status === "pending";
-}
-
-function resolveBranchLabel(input: {
-  currentBranch: string | null | undefined;
-  notGit: boolean;
-}): string {
-  if (input.currentBranch && input.currentBranch !== "HEAD") {
-    return input.currentBranch;
-  }
-  if (input.notGit) {
-    return "Not a git repository";
-  }
-  return "Unknown";
-}
-
-function formatBaseRefLabel(baseRef: string | undefined): string {
-  if (!baseRef) return "base";
-  const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
-  return trimmed.startsWith("origin/") ? trimmed.slice("origin/".length) : trimmed;
-}
-
-function useGitActionStatuses(
-  serverId: string,
-  cwd: string,
-): {
-  commitStatus: CheckoutGitActionStatus;
-  pullStatus: CheckoutGitActionStatus;
-  pushStatus: CheckoutGitActionStatus;
-  prCreateStatus: CheckoutGitActionStatus;
-  mergeStatus: CheckoutGitActionStatus;
-  mergeFromBaseStatus: CheckoutGitActionStatus;
-  archiveStatus: CheckoutGitActionStatus;
-} {
-  const commitStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "commit" }),
-  );
-  const pullStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "pull" }),
-  );
-  const pushStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "push" }),
-  );
-  const prCreateStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "create-pr" }),
-  );
-  const mergeStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "merge-branch" }),
-  );
-  const mergeFromBaseStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "merge-from-base" }),
-  );
-  const archiveStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({ serverId, cwd, actionId: "archive-worktree" }),
-  );
-  return {
-    commitStatus,
-    pullStatus,
-    pushStatus,
-    prCreateStatus,
-    mergeStatus,
-    mergeFromBaseStatus,
-    archiveStatus,
-  };
-}
-
-type PrStatusValue = NonNullable<CheckoutPrStatusPayload["status"]> | null;
-
-interface DeriveGitActionsStateArgs {
-  isGit: boolean;
-  status: CheckoutStatusPayload | null;
-  gitStatus: CheckoutStatusPayload | null;
-  prStatus: PrStatusValue;
-  hasUncommittedChanges: boolean;
-  postShipArchiveSuggested: boolean;
-  isStatusLoading: boolean;
-  baseRefLabel: string;
-}
-
-interface DerivedGitActionsState {
-  actionsDisabled: boolean;
-  aheadCount: number;
-  behindBaseCount: number;
-  aheadOfOrigin: number;
-  behindOfOrigin: number;
-  hasPullRequest: boolean;
-  hasRemote: boolean;
-  isHubcodeOwnedWorktree: boolean;
-  isOnBaseBranch: boolean;
-  shouldPromoteArchive: boolean;
-}
-
-interface GitCommitCounts {
-  aheadCount: number;
-  behindBaseCount: number;
-  aheadOfOrigin: number;
-  behindOfOrigin: number;
-}
-
-function extractGitCommitCounts(gitStatus: CheckoutStatusPayload | null): GitCommitCounts {
-  return {
-    aheadCount: gitStatus?.aheadBehind?.ahead ?? 0,
-    behindBaseCount: gitStatus?.aheadBehind?.behind ?? 0,
-    aheadOfOrigin: gitStatus?.aheadOfOrigin ?? 0,
-    behindOfOrigin: gitStatus?.behindOfOrigin ?? 0,
-  };
-}
-
-function computeShouldPromoteArchive(input: {
-  isHubcodeOwnedWorktree: boolean;
-  hasUncommittedChanges: boolean;
-  postShipArchiveSuggested: boolean;
-  isMergedPullRequest: boolean;
-}): boolean {
-  return (
-    input.isHubcodeOwnedWorktree &&
-    !input.hasUncommittedChanges &&
-    (input.postShipArchiveSuggested || input.isMergedPullRequest)
-  );
-}
-
-function deriveGitActionsState(args: DeriveGitActionsStateArgs): DerivedGitActionsState {
-  const {
-    isGit,
-    status,
-    gitStatus,
-    prStatus,
-    hasUncommittedChanges,
-    postShipArchiveSuggested,
-    isStatusLoading,
-    baseRefLabel,
-  } = args;
-  const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
-  const isHubcodeOwnedWorktree = gitStatus?.isHubcodeOwnedWorktree ?? false;
-  const isMergedPullRequest = Boolean(prStatus?.isMerged);
-  return {
-    actionsDisabled,
-    ...extractGitCommitCounts(gitStatus),
-    hasPullRequest: Boolean(prStatus?.url),
-    hasRemote: gitStatus?.hasRemote ?? false,
-    isHubcodeOwnedWorktree,
-    isOnBaseBranch: gitStatus?.currentBranch === baseRefLabel,
-    shouldPromoteArchive: computeShouldPromoteArchive({
-      isHubcodeOwnedWorktree,
-      hasUncommittedChanges,
-      postShipArchiveSuggested,
-      isMergedPullRequest,
-    }),
-  };
-}
-
-function useGitActionRunners() {
-  const runCommit = useCheckoutGitActionsStore((state) => state.commit);
-  const runPull = useCheckoutGitActionsStore((state) => state.pull);
-  const runPush = useCheckoutGitActionsStore((state) => state.push);
-  const runCreatePr = useCheckoutGitActionsStore((state) => state.createPr);
-  const runMergeBranch = useCheckoutGitActionsStore((state) => state.mergeBranch);
-  const runMergeFromBase = useCheckoutGitActionsStore((state) => state.mergeFromBase);
-  const runArchiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
-  return {
-    runCommit,
-    runPull,
-    runPush,
-    runCreatePr,
-    runMergeBranch,
-    runMergeFromBase,
-    runArchiveWorktree,
-  };
 }
 
 interface UseGitActionsInput {
@@ -255,7 +75,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
         if (value === "pr" || value === "merge") {
           setShipDefault(value);
         }
-        return;
       })
       .catch(() => undefined);
     return () => {
@@ -280,25 +99,36 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     setPostShipArchiveSuggested(false);
   }, [cwd]);
 
-  const {
-    commitStatus,
-    pullStatus,
-    pushStatus,
-    prCreateStatus,
-    mergeStatus,
-    mergeFromBaseStatus,
-    archiveStatus,
-  } = useGitActionStatuses(serverId, cwd);
+  // Store selectors
+  const commitStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "commit" }),
+  );
+  const pullStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "pull" }),
+  );
+  const pushStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "push" }),
+  );
+  const prCreateStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "create-pr" }),
+  );
+  const mergeStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "merge-branch" }),
+  );
+  const mergeFromBaseStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "merge-from-base" }),
+  );
+  const archiveStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "archive-worktree" }),
+  );
 
-  const {
-    runCommit,
-    runPull,
-    runPush,
-    runCreatePr,
-    runMergeBranch,
-    runMergeFromBase,
-    runArchiveWorktree,
-  } = useGitActionRunners();
+  const runCommit = useCheckoutGitActionsStore((state) => state.commit);
+  const runPull = useCheckoutGitActionsStore((state) => state.pull);
+  const runPush = useCheckoutGitActionsStore((state) => state.push);
+  const runCreatePr = useCheckoutGitActionsStore((state) => state.createPr);
+  const runMergeBranch = useCheckoutGitActionsStore((state) => state.mergeBranch);
+  const runMergeFromBase = useCheckoutGitActionsStore((state) => state.mergeFromBase);
+  const runArchiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
 
   const toastActionError = useCallback(
     (error: unknown, fallback: string) => {
@@ -320,7 +150,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runCommit({ serverId, cwd })
       .then(() => {
         toastActionSuccess("Committed");
-        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to commit");
@@ -331,7 +160,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runPull({ serverId, cwd })
       .then(() => {
         toastActionSuccess("Pulled");
-        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to pull");
@@ -342,7 +170,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runPush({ serverId, cwd })
       .then(() => {
         toastActionSuccess("Pushed");
-        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to push");
@@ -354,7 +181,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runCreatePr({ serverId, cwd })
       .then(() => {
         toastActionSuccess("PR created");
-        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to create PR");
@@ -371,7 +197,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       .then(() => {
         setPostShipArchiveSuggested(true);
         toastActionSuccess("Merged");
-        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to merge");
@@ -395,7 +220,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runMergeFromBase({ serverId, cwd, baseRef })
       .then(() => {
         toastActionSuccess("Updated");
-        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to merge from base");
@@ -412,57 +236,48 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runArchiveWorktree({ serverId, cwd, worktreePath })
       .then(() => {
         router.replace(buildNewAgentRoute(serverId, targetWorkingDir));
-        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to archive worktree");
       });
   }, [cwd, router, runArchiveWorktree, serverId, status, toast, toastActionError]);
 
-  const baseRefLabel = useMemo(() => formatBaseRefLabel(baseRef), [baseRef]);
-  const derived = deriveGitActionsState({
-    isGit,
-    status,
-    gitStatus,
-    prStatus,
-    hasUncommittedChanges,
-    postShipArchiveSuggested,
-    isStatusLoading,
-    baseRefLabel,
-  });
-  const {
-    actionsDisabled,
-    aheadCount,
-    behindBaseCount,
-    aheadOfOrigin,
-    behindOfOrigin,
-    hasPullRequest,
-    hasRemote,
-    isHubcodeOwnedWorktree,
-    isOnBaseBranch,
-    shouldPromoteArchive,
-  } = derived;
+  // Derived state
+  const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
+  const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
+  const behindBaseCount = gitStatus?.aheadBehind?.behind ?? 0;
+  const aheadOfOrigin = gitStatus?.aheadOfOrigin ?? 0;
+  const behindOfOrigin = gitStatus?.behindOfOrigin ?? 0;
+  const baseRefLabel = useMemo(() => {
+    if (!baseRef) return "base";
+    const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
+    return trimmed.startsWith("origin/") ? trimmed.slice("origin/".length) : trimmed;
+  }, [baseRef]);
+  const hasPullRequest = Boolean(prStatus?.url);
+  const hasRemote = gitStatus?.hasRemote ?? false;
+  const isHubcodeOwnedWorktree = gitStatus?.isHubcodeOwnedWorktree ?? false;
+  const isMergedPullRequest = Boolean(prStatus?.isMerged);
+  const currentBranch = gitStatus?.currentBranch;
+  const isOnBaseBranch = currentBranch === baseRefLabel;
+  const shouldPromoteArchive =
+    isHubcodeOwnedWorktree &&
+    !hasUncommittedChanges &&
+    (postShipArchiveSuggested || isMergedPullRequest);
 
-  const commitDisabled = isActionDisabled(actionsDisabled, commitStatus);
-  const pullDisabled = isActionDisabled(actionsDisabled, pullStatus);
-  const prDisabled = isActionDisabled(actionsDisabled, prCreateStatus);
-  const mergeDisabled = isActionDisabled(actionsDisabled, mergeStatus);
-  const mergeFromBaseDisabled = isActionDisabled(actionsDisabled, mergeFromBaseStatus);
-  const pushDisabled = isActionDisabled(actionsDisabled, pushStatus);
-  const archiveDisabled = isActionDisabled(actionsDisabled, archiveStatus);
+  const commitDisabled = actionsDisabled || commitStatus === "pending";
+  const pullDisabled = actionsDisabled || pullStatus === "pending";
+  const prDisabled = actionsDisabled || prCreateStatus === "pending";
+  const mergeDisabled = actionsDisabled || mergeStatus === "pending";
+  const mergeFromBaseDisabled = actionsDisabled || mergeFromBaseStatus === "pending";
+  const pushDisabled = actionsDisabled || pushStatus === "pending";
+  const archiveDisabled = actionsDisabled || archiveStatus === "pending";
 
-  const branchLabel = resolveBranchLabel({
-    currentBranch: gitStatus?.currentBranch,
-    notGit,
-  });
-
-  const handlePrAction = useCallback(() => {
-    if (prStatus?.url) {
-      openURLInNewTab(prStatus.url);
-      return;
-    }
-    handleCreatePr();
-  }, [prStatus?.url, handleCreatePr]);
+  const branchLabel =
+    gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD"
+      ? gitStatus.currentBranch
+      : notGit
+        ? "Not a git repository"
+        : "Unknown";
 
   // Build actions
   const gitActions: GitActions = useMemo(() => {
@@ -506,7 +321,13 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
           disabled: prDisabled,
           status: hasPullRequest ? "idle" : prCreateStatus,
           icon: hasPullRequest ? icons.viewPr : icons.createPr,
-          handler: handlePrAction,
+          handler: () => {
+            if (prStatus?.url) {
+              openURLInNewTab(prStatus.url);
+              return;
+            }
+            handleCreatePr();
+          },
         },
         "merge-branch": {
           disabled: mergeDisabled,
@@ -561,7 +382,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     handleCommit,
     handlePull,
     handlePush,
-    handlePrAction,
+    handleCreatePr,
     handleMergeBranch,
     handleMergeFromBase,
     handleArchiveWorktree,

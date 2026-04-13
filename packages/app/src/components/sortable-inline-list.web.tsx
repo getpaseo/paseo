@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useState, type ReactElement } from "react";
 import {
   DndContext,
   closestCenter,
@@ -24,13 +24,6 @@ const restrictToHorizontalAxis: Modifier = ({ transform }) => ({
   ...transform,
   y: 0,
 });
-
-const DND_MODIFIERS: Modifier[] = [restrictToHorizontalAxis];
-
-function computeDragOpacity(hasExternalContext: boolean, isDragging: boolean): number {
-  if (!isDragging) return 1;
-  return hasExternalContext ? 0.3 : 0.9;
-}
 
 function SortableItem<T>({
   id,
@@ -78,15 +71,12 @@ function SortableItem<T>({
   const scaleTransform = !externalDndContext && isDragging ? "scale(1.01)" : "";
   const combinedTransform = [baseTransform, scaleTransform].filter(Boolean).join(" ");
 
-  const style = useMemo(
-    () => ({
-      transform: combinedTransform || undefined,
-      transition,
-      opacity: computeDragOpacity(Boolean(externalDndContext), isDragging),
-      zIndex: isDragging ? 1000 : 1,
-    }),
-    [combinedTransform, transition, externalDndContext, isDragging],
-  );
+  const style = {
+    transform: combinedTransform || undefined,
+    transition,
+    opacity: externalDndContext && isDragging ? 0.3 : isDragging ? 0.9 : 1,
+    zIndex: isDragging ? 1000 : 1,
+  };
 
   const info: DraggableRenderItemInfo<T> = {
     item,
@@ -165,16 +155,12 @@ export function SortableInlineList<T>({
     [data, disabled, onDragBegin],
   );
 
-  const clearDragState = useCallback(() => {
-    setActiveId(null);
-    setDragItems(null);
-  }, []);
-
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
 
-      clearDragState();
+      setActiveId(null);
+      setDragItems(null);
 
       if (disabled) {
         return;
@@ -190,13 +176,10 @@ export function SortableInlineList<T>({
         }
       }
     },
-    [clearDragState, disabled, items, keyExtractor, onDragEnd],
+    [disabled, items, keyExtractor, onDragEnd],
   );
 
-  const ids = useMemo(
-    () => items.map((item, index) => keyExtractor(item, index)),
-    [items, keyExtractor],
-  );
+  const ids = items.map((item, index) => keyExtractor(item, index));
 
   const renderedItems = (
     <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
@@ -228,9 +211,8 @@ export function SortableInlineList<T>({
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
-      modifiers={DND_MODIFIERS}
+      modifiers={[restrictToHorizontalAxis]}
       onDragStart={handleDragStart}
-      onDragCancel={clearDragState}
       onDragEnd={handleDragEnd}
     >
       {renderedItems}

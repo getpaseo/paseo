@@ -12,7 +12,6 @@ import {
   HostRuntimeController,
   HostRuntimeStore,
   type HostRuntimeControllerDeps,
-  type HostRuntimeSnapshot,
 } from "./host-runtime";
 
 class FakeDaemonClient {
@@ -174,9 +173,9 @@ function makeHost(input?: Partial<HostProfile>): HostProfile {
     endpoint: "lan:6767",
   };
   const relay: HostConnection = {
-    id: "relay:relay.hubcode.ai:443",
+    id: "relay:relay.hubcode.sh:443",
     type: "relay",
-    relayEndpoint: "relay.hubcode.ai:443",
+    relayEndpoint: "relay.hubcode.sh:443",
     daemonPublicKeyB64: "pk_test",
   };
 
@@ -197,7 +196,7 @@ function makeOffer(input?: Partial<ConnectionOffer>): ConnectionOffer {
     serverId: input?.serverId ?? "srv_offer",
     daemonPublicKeyB64: input?.daemonPublicKeyB64 ?? "pk_test_offer",
     relay: {
-      endpoint: input?.relay?.endpoint ?? "relay.hubcode.ai:443",
+      endpoint: input?.relay?.endpoint ?? "relay.hubcode.sh:443",
     },
   };
 }
@@ -213,21 +212,17 @@ function makeDeps(
       return client as unknown as DaemonClient;
     },
     connectToDaemon: async ({ host, connection }) => {
-      const readLatency = (): number => {
-        const value = latencyByConnectionId[connection.id];
-        if (value instanceof Error) {
-          throw value;
-        }
-        if (typeof value !== "number") {
-          throw new Error(`missing latency for ${connection.id}`);
-        }
-        return value;
-      };
-      readLatency();
+      const value = latencyByConnectionId[connection.id];
+      if (value instanceof Error) {
+        throw value;
+      }
+      if (typeof value !== "number") {
+        throw new Error(`missing latency for ${connection.id}`);
+      }
       const client = new FakeDaemonClient();
       client.connectCalls = 1;
       client.setConnectionState({ status: "connected" });
-      client.ping = async () => ({ rttMs: readLatency() });
+      client.ping = async () => ({ rttMs: value });
       createdClients.push(client);
       return {
         client: client as unknown as DaemonClient,
@@ -267,27 +262,6 @@ function clearProbeBackoff(controller: HostRuntimeController): void {
       connectionLastProbedAt: Map<string, number>;
     }
   ).connectionLastProbedAt.clear();
-}
-
-type HostRuntimeSnapshotPatch = Partial<Omit<HostRuntimeSnapshot, "serverId" | "clientGeneration">>;
-
-function updateControllerSnapshot(
-  controller: HostRuntimeController,
-  patch: HostRuntimeSnapshotPatch,
-): void {
-  (
-    controller as unknown as {
-      updateSnapshot: (patch: HostRuntimeSnapshotPatch) => void;
-    }
-  ).updateSnapshot(patch);
-}
-
-function makeProbeMap(
-  entries: Array<
-    [string, HostRuntimeSnapshot["probeByConnectionId"] extends Map<string, infer T> ? T : never]
-  >,
-): HostRuntimeSnapshot["probeByConnectionId"] {
-  return new Map(entries);
 }
 
 describe("HostRuntimeController", () => {
@@ -371,7 +345,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 82,
-      "relay:relay.hubcode.ai:443": 18,
+      "relay:relay.hubcode.sh:443": 18,
     };
     const controller = new HostRuntimeController({
       host,
@@ -400,16 +374,16 @@ describe("HostRuntimeController", () => {
         createClient: () => {
           throw new Error("should adopt the probe client");
         },
-        connectToDaemon: async ({ host: hostProfile, connection }) => {
+        connectToDaemon: async ({ host, connection }) => {
           const client = makeConnectedProbeClient(connection.id === "direct:lan:6767" ? 12 : 30);
-          if (connection.id === "relay:relay.hubcode.ai:443") {
+          if (connection.id === "relay:relay.hubcode.sh:443") {
             client.ping = async () => ({ rttMs: await slowPing.promise });
           }
           clients.push(client);
           return {
             client: client as unknown as DaemonClient,
-            serverId: hostProfile.serverId,
-            hostname: hostProfile.label ?? null,
+            serverId: host.serverId,
+            hostname: host.label ?? null,
           };
         },
         getClientId: async () => "cid_test_runtime",
@@ -437,100 +411,12 @@ describe("HostRuntimeController", () => {
     await probeCycle;
   });
 
-  it("probes the active online connection through the existing client", async () => {
-    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
-    const probeAttempts: string[] = [];
-    const latencies: Record<string, number | Error> = {
-      "direct:lan:6767": 12,
-      "relay:relay.hubcode.ai:443": 65,
-    };
-    const controller = new HostRuntimeController({
-      host,
-      deps: {
-        createClient: () => {
-          throw new Error("should adopt probe clients");
-        },
-        connectToDaemon: async ({ host: hostProfile, connection }) => {
-          probeAttempts.push(connection.id);
-          const value = latencies[connection.id];
-          if (value instanceof Error) {
-            throw value;
-          }
-          if (typeof value !== "number") {
-            throw new Error(`missing latency for ${connection.id}`);
-          }
-          return {
-            client: makeConnectedProbeClient(value) as unknown as DaemonClient,
-            serverId: hostProfile.serverId,
-            hostname: hostProfile.label ?? null,
-          };
-        },
-        getClientId: async () => "cid_test_runtime",
-      },
-    });
-
-    await controller.start({ autoProbe: false });
-    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
-
-    probeAttempts.length = 0;
-    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
-    activeClient.ping = async () => ({ rttMs: 9 });
-    clearProbeBackoff(controller);
-    await controller.runProbeCycleNow();
-
-    expect(probeAttempts).toEqual(["relay:relay.hubcode.ai:443"]);
-    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
-    expect(controller.getSnapshot().connectionStatus).toBe("online");
-    expect(controller.getSnapshot().probeByConnectionId.get("direct:lan:6767")).toEqual({
-      status: "available",
-      latencyMs: 9,
-    });
-  });
-
-  it("rejects probes that resolve to a different server id", async () => {
-    const host = makeHost({
-      serverId: "srv_old",
-      connections: [
-        {
-          id: "direct:localhost:6767",
-          type: "directTcp",
-          endpoint: "localhost:6767",
-        },
-      ],
-    });
-    const mismatchedClient = makeConnectedProbeClient(8);
-    const controller = new HostRuntimeController({
-      host,
-      deps: {
-        createClient: () => {
-          throw new Error("should not create active client");
-        },
-        connectToDaemon: async () => ({
-          client: mismatchedClient as unknown as DaemonClient,
-          serverId: "srv_current",
-          hostname: "current host",
-        }),
-        getClientId: async () => "cid_test_runtime",
-      },
-    });
-
-    await controller.start({ autoProbe: false });
-
-    expect(controller.getSnapshot().connectionStatus).toBe("connecting");
-    expect(controller.getSnapshot().activeConnectionId).toBeNull();
-    expect(controller.getSnapshot().probeByConnectionId.get("direct:localhost:6767")).toEqual({
-      status: "unavailable",
-      latencyMs: null,
-    });
-    expect(mismatchedClient.closeCalls).toBe(1);
-  });
-
-  it("fails over when the active client ping fails", async () => {
+  it("fails over when active connection becomes unavailable", async () => {
     const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 15,
-      "relay:relay.hubcode.ai:443": 55,
+      "relay:relay.hubcode.sh:443": 55,
     };
     const controller = new HostRuntimeController({
       host,
@@ -542,16 +428,13 @@ describe("HostRuntimeController", () => {
     const initialClient = controller.getSnapshot().client;
     expect(initialClient).toBeTruthy();
 
-    (initialClient as unknown as FakeDaemonClient).ping = async () => {
-      throw new Error("active ping failed");
-    };
     latencies["direct:lan:6767"] = new Error("direct unavailable");
-    latencies["relay:relay.hubcode.ai:443"] = 42;
+    latencies["relay:relay.hubcode.sh:443"] = 42;
     clearProbeBackoff(controller);
     await controller.runProbeCycleNow();
 
     const snapshot = controller.getSnapshot();
-    expect(snapshot.activeConnectionId).toBe("relay:relay.hubcode.ai:443");
+    expect(snapshot.activeConnectionId).toBe("relay:relay.hubcode.sh:443");
     expect(snapshot.connectionStatus).toBe("online");
     expect(snapshot.client).not.toBe(initialClient);
     expect((initialClient as unknown as FakeDaemonClient | null)?.closeCalls).toBe(1);
@@ -562,7 +445,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 15,
-      "relay:relay.hubcode.ai:443": 60,
+      "relay:relay.hubcode.sh:443": 60,
     };
     const controller = new HostRuntimeController({
       host,
@@ -573,7 +456,7 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
     latencies["direct:lan:6767"] = 95;
-    latencies["relay:relay.hubcode.ai:443"] = 30;
+    latencies["relay:relay.hubcode.sh:443"] = 30;
     clearProbeBackoff(controller);
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
@@ -582,11 +465,11 @@ describe("HostRuntimeController", () => {
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
-    let switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.ai:443";
+    let switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.sh:443";
     for (let index = 0; index < 6 && !switched; index += 1) {
       clearProbeBackoff(controller);
       await controller.runProbeCycleNow();
-      switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.ai:443";
+      switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.sh:443";
     }
     expect(switched).toBe(true);
     expect(controller.getSnapshot().client).not.toBeNull();
@@ -597,7 +480,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 15,
-      "relay:relay.hubcode.ai:443": 80,
+      "relay:relay.hubcode.sh:443": 80,
     };
     const controller = new HostRuntimeController({
       host,
@@ -608,19 +491,19 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
     latencies["direct:lan:6767"] = 100;
-    latencies["relay:relay.hubcode.ai:443"] = 20;
+    latencies["relay:relay.hubcode.sh:443"] = 20;
     clearProbeBackoff(controller);
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
     latencies["direct:lan:6767"] = 20;
-    latencies["relay:relay.hubcode.ai:443"] = 90;
+    latencies["relay:relay.hubcode.sh:443"] = 90;
     clearProbeBackoff(controller);
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
     latencies["direct:lan:6767"] = 100;
-    latencies["relay:relay.hubcode.ai:443"] = 20;
+    latencies["relay:relay.hubcode.sh:443"] = 20;
     clearProbeBackoff(controller);
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
@@ -629,11 +512,11 @@ describe("HostRuntimeController", () => {
     await controller.runProbeCycleNow();
     expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
 
-    let switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.ai:443";
+    let switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.sh:443";
     for (let index = 0; index < 6 && !switched; index += 1) {
       clearProbeBackoff(controller);
       await controller.runProbeCycleNow();
-      switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.ai:443";
+      switched = controller.getSnapshot().activeConnectionId === "relay:relay.hubcode.sh:443";
     }
     expect(switched).toBe(true);
   });
@@ -643,7 +526,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 12,
-      "relay:relay.hubcode.ai:443": 65,
+      "relay:relay.hubcode.sh:443": 65,
     };
     const controller = new HostRuntimeController({
       host,
@@ -667,39 +550,6 @@ describe("HostRuntimeController", () => {
     expect(latest?.connectionStatus).toBe("error");
     expect(latest?.lastError).toBe("transport closed");
     unsubscribe();
-  });
-
-  it("preserves transport disconnect reasons on the runtime snapshot", async () => {
-    const host = makeHost({
-      connections: [
-        {
-          id: "direct:lan:6767",
-          type: "directTcp",
-          endpoint: "lan:6767",
-        },
-      ],
-    });
-    const clients: FakeDaemonClient[] = [];
-    const controller = new HostRuntimeController({
-      host,
-      deps: makeDeps(
-        {
-          "direct:lan:6767": 12,
-        },
-        clients,
-      ),
-    });
-
-    await controller.start({ autoProbe: false });
-    clients[0]?.setConnectionState({
-      status: "disconnected",
-      reason: "transport closed",
-    });
-
-    expect(controller.getSnapshot()).toMatchObject({
-      connectionStatus: "error",
-      lastError: "transport closed",
-    });
   });
 
   it("does not emit legacy typed reason-code transition logs", async () => {
@@ -747,7 +597,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 12,
-      "relay:relay.hubcode.ai:443": 65,
+      "relay:relay.hubcode.sh:443": 65,
     };
     const controller = new HostRuntimeController({
       host,
@@ -767,7 +617,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 12,
-      "relay:relay.hubcode.ai:443": 65,
+      "relay:relay.hubcode.sh:443": 65,
     };
     const controller = new HostRuntimeController({
       host,
@@ -796,7 +646,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 12,
-      "relay:relay.hubcode.ai:443": 65,
+      "relay:relay.hubcode.sh:443": 65,
     };
     const controller = new HostRuntimeController({
       host,
@@ -818,7 +668,7 @@ describe("HostRuntimeController", () => {
     const clients: FakeDaemonClient[] = [];
     const latencies: Record<string, number | Error> = {
       "direct:lan:6767": 12,
-      "relay:relay.hubcode.ai:443": 65,
+      "relay:relay.hubcode.sh:443": 65,
     };
     const controller = new HostRuntimeController({
       host,
@@ -851,9 +701,9 @@ describe("HostRuntimeController", () => {
           endpoint: "lan:6767",
         },
         {
-          id: "relay:relay.hubcode.ai:443",
+          id: "relay:relay.hubcode.sh:443",
           type: "relay",
-          relayEndpoint: "relay.hubcode.ai:443",
+          relayEndpoint: "relay.hubcode.sh:443",
           daemonPublicKeyB64: "pk_test",
         },
       ],
@@ -873,10 +723,10 @@ describe("HostRuntimeController", () => {
         createdClients.push(client);
         return client as unknown as DaemonClient;
       },
-      connectToDaemon: async ({ host: hostProfile }) => ({
+      connectToDaemon: async ({ host }) => ({
         client: makeConnectedProbeClient(10) as unknown as DaemonClient,
-        serverId: hostProfile.serverId,
-        hostname: hostProfile.label ?? null,
+        serverId: host.serverId,
+        hostname: host.label ?? null,
       }),
       getClientId: async () => "cid_test_runtime",
     };
@@ -913,11 +763,11 @@ describe("HostRuntimeController", () => {
       controller as unknown as {
         switchToConnection: (input: { connectionId: string }) => Promise<void>;
       }
-    ).switchToConnection({ connectionId: "relay:relay.hubcode.ai:443" });
+    ).switchToConnection({ connectionId: "relay:relay.hubcode.sh:443" });
     await waitUntil(() => {
       const snapshot = controller.getSnapshot();
       return (
-        snapshot.activeConnectionId === "relay:relay.hubcode.ai:443" &&
+        snapshot.activeConnectionId === "relay:relay.hubcode.sh:443" &&
         snapshot.connectionStatus === "online"
       );
     });
@@ -926,14 +776,14 @@ describe("HostRuntimeController", () => {
     await Promise.allSettled([switchDirect, switchRelay]);
 
     const snapshot = controller.getSnapshot();
-    expect(snapshot.activeConnectionId).toBe("relay:relay.hubcode.ai:443");
+    expect(snapshot.activeConnectionId).toBe("relay:relay.hubcode.sh:443");
     expect(snapshot.connectionStatus).toBe("online");
     expect(snapshot.lastError).toBeNull();
     expect(createdClients).toHaveLength(2);
     expect(createdClients[0]?.closeCalls).toBe(1);
   });
 
-  it("coalesces overlapping probe cycles instead of invalidating the in-flight result", async () => {
+  it("ignores stale probe results when overlapping probe cycles finish out of order", async () => {
     const host = makeHost({
       connections: [
         {
@@ -944,13 +794,14 @@ describe("HostRuntimeController", () => {
       ],
     });
     const slowProbe = createDeferred<number>();
+    const fastProbe = createDeferred<number>();
     let probeCalls = 0;
 
     const controller = new HostRuntimeController({
       host,
       deps: {
         createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
-        connectToDaemon: async ({ host: hostProfile }) => {
+        connectToDaemon: async ({ host }) => {
           probeCalls += 1;
           const client = new FakeDaemonClient();
           client.connectCalls = 1;
@@ -959,12 +810,15 @@ describe("HostRuntimeController", () => {
             if (probeCalls === 1) {
               return { rttMs: await slowProbe.promise };
             }
+            if (probeCalls === 2) {
+              return { rttMs: await fastProbe.promise };
+            }
             throw new Error("unexpected probe call");
           };
           return {
             client: client as unknown as DaemonClient,
-            serverId: hostProfile.serverId,
-            hostname: hostProfile.label ?? null,
+            serverId: host.serverId,
+            hostname: host.label ?? null,
           };
         },
         getClientId: async () => "cid_test_runtime",
@@ -974,14 +828,23 @@ describe("HostRuntimeController", () => {
     const first = controller.runProbeCycleNow();
     clearProbeBackoff(controller);
     const second = controller.runProbeCycleNow();
-    expect(probeCalls).toBe(1);
+
+    fastProbe.resolve(12);
+    await second;
+    const probeAfterSecond = controller.getSnapshot().probeByConnectionId.get("direct:lan:6767");
+    expect(probeAfterSecond).toEqual({
+      status: "available",
+      latencyMs: 12,
+    });
 
     slowProbe.resolve(900);
-    await Promise.all([first, second]);
-    const probeAfterCycle = controller.getSnapshot().probeByConnectionId.get("direct:lan:6767");
-    expect(probeAfterCycle).toEqual({
+    await first;
+    const probeAfterFirstSettles = controller
+      .getSnapshot()
+      .probeByConnectionId.get("direct:lan:6767");
+    expect(probeAfterFirstSettles).toEqual({
       status: "available",
-      latencyMs: 900,
+      latencyMs: 12,
     });
   });
 
@@ -1005,12 +868,12 @@ describe("HostRuntimeController", () => {
           createdClients.push(client);
           return client as unknown as DaemonClient;
         },
-        connectToDaemon: async ({ host: hostProfile }) => {
+        connectToDaemon: async ({ host }) => {
           const client = makeConnectedProbeClient(10);
           return {
             client: client as unknown as DaemonClient,
-            serverId: hostProfile.serverId,
-            hostname: hostProfile.label ?? null,
+            serverId: host.serverId,
+            hostname: host.label ?? null,
           };
         },
         getClientId: async () => "cid_test_runtime",
@@ -1026,134 +889,6 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().client).toBe(activeClientBeforeProbes);
     expect(controller.getSnapshot().clientGeneration).toBe(generationBeforeProbes);
     expect(createdClients).toHaveLength(0);
-  });
-
-  it("does not notify or replace the snapshot for equal probe maps", () => {
-    const controller = new HostRuntimeController({ host: makeHost() });
-    const firstProbeMap = makeProbeMap([
-      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
-    ]);
-    const equalProbeMap = makeProbeMap([
-      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
-    ]);
-
-    updateControllerSnapshot(controller, { probeByConnectionId: firstProbeMap });
-    const snapshotAfterFirstProbe = controller.getSnapshot();
-    let notifyCount = 0;
-    const unsubscribe = controller.subscribe(() => {
-      notifyCount += 1;
-    });
-
-    updateControllerSnapshot(controller, { probeByConnectionId: equalProbeMap });
-
-    expect(notifyCount).toBe(0);
-    expect(controller.getSnapshot()).toBe(snapshotAfterFirstProbe);
-    expect(controller.getSnapshot().probeByConnectionId).toBe(firstProbeMap);
-    unsubscribe();
-  });
-
-  it("does not notify or replace the snapshot when connection status is already equal", () => {
-    const controller = new HostRuntimeController({ host: makeHost() });
-
-    updateControllerSnapshot(controller, { connectionStatus: "online" });
-    const snapshotAfterOnline = controller.getSnapshot();
-    let notifyCount = 0;
-    const unsubscribe = controller.subscribe(() => {
-      notifyCount += 1;
-    });
-
-    updateControllerSnapshot(controller, { connectionStatus: "online" });
-
-    expect(notifyCount).toBe(0);
-    expect(controller.getSnapshot()).toBe(snapshotAfterOnline);
-    unsubscribe();
-  });
-
-  it("does not notify or replace the snapshot when every patched field is equal", () => {
-    const controller = new HostRuntimeController({ host: makeHost() });
-    const firstProbeMap = makeProbeMap([
-      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
-    ]);
-    const equalProbeMap = makeProbeMap([
-      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
-    ]);
-
-    updateControllerSnapshot(controller, {
-      connectionStatus: "online",
-      probeByConnectionId: firstProbeMap,
-    });
-    const snapshotAfterSetup = controller.getSnapshot();
-    let notifyCount = 0;
-    const unsubscribe = controller.subscribe(() => {
-      notifyCount += 1;
-    });
-
-    updateControllerSnapshot(controller, {
-      connectionStatus: "online",
-      probeByConnectionId: equalProbeMap,
-    });
-
-    expect(notifyCount).toBe(0);
-    expect(controller.getSnapshot()).toBe(snapshotAfterSetup);
-    expect(controller.getSnapshot().probeByConnectionId).toBe(firstProbeMap);
-    unsubscribe();
-  });
-
-  it("notifies once for a changed field while preserving equal field identity", () => {
-    const controller = new HostRuntimeController({ host: makeHost() });
-    const firstProbeMap = makeProbeMap([
-      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
-    ]);
-    const equalProbeMap = makeProbeMap([
-      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
-    ]);
-
-    updateControllerSnapshot(controller, {
-      connectionStatus: "online",
-      probeByConnectionId: firstProbeMap,
-    });
-    const snapshotBeforeChange = controller.getSnapshot();
-    let notifyCount = 0;
-    const unsubscribe = controller.subscribe(() => {
-      notifyCount += 1;
-    });
-
-    updateControllerSnapshot(controller, {
-      connectionStatus: "offline",
-      probeByConnectionId: equalProbeMap,
-    });
-
-    expect(notifyCount).toBe(1);
-    expect(controller.getSnapshot()).not.toBe(snapshotBeforeChange);
-    expect(controller.getSnapshot().connectionStatus).toBe("offline");
-    expect(controller.getSnapshot().probeByConnectionId).toBe(firstProbeMap);
-    unsubscribe();
-  });
-
-  it("notifies once and replaces the probe map when probe contents change", () => {
-    const controller = new HostRuntimeController({ host: makeHost() });
-    const firstProbeMap = makeProbeMap([
-      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
-    ]);
-    const changedProbeMap = makeProbeMap([
-      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
-      ["relay:relay.hubcode.ai:443", { status: "unavailable", latencyMs: null }],
-    ]);
-
-    updateControllerSnapshot(controller, { probeByConnectionId: firstProbeMap });
-    const snapshotBeforeChange = controller.getSnapshot();
-    let notifyCount = 0;
-    const unsubscribe = controller.subscribe(() => {
-      notifyCount += 1;
-    });
-
-    updateControllerSnapshot(controller, { probeByConnectionId: changedProbeMap });
-
-    expect(notifyCount).toBe(1);
-    expect(controller.getSnapshot()).not.toBe(snapshotBeforeChange);
-    expect(controller.getSnapshot().probeByConnectionId).toBe(changedProbeMap);
-    expect(controller.getSnapshot().probeByConnectionId).not.toBe(firstProbeMap);
-    unsubscribe();
   });
 });
 
@@ -1173,10 +908,10 @@ describe("HostRuntimeStore", () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host: hostProfile }) => ({
+        connectToDaemon: async ({ host }) => ({
           client: fakeClient as unknown as DaemonClient,
-          serverId: hostProfile.serverId,
-          hostname: hostProfile.label ?? null,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
         }),
         getClientId: async () => "cid_test_runtime",
       },
@@ -1194,7 +929,7 @@ describe("HostRuntimeStore", () => {
 
     expect(fakeClient.fetchAgentsCalls).toHaveLength(1);
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
-      scope: "active",
+      filter: { includeArchived: true },
       sort: [{ key: "updated_at", direction: "desc" }],
       subscribe: { subscriptionId: "app:srv_test" },
       page: { limit: 200 },
@@ -1224,10 +959,10 @@ describe("HostRuntimeStore", () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host: hostProfile }) => ({
+        connectToDaemon: async ({ host }) => ({
           client: fakeClient as unknown as DaemonClient,
-          serverId: hostProfile.serverId,
-          hostname: hostProfile.label ?? null,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
         }),
         getClientId: async () => "cid_test_runtime",
       },
@@ -1242,7 +977,7 @@ describe("HostRuntimeStore", () => {
 
     expect(fakeClient.fetchAgentsCalls).toHaveLength(1);
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
-      scope: "active",
+      filter: { includeArchived: true },
       sort: [{ key: "updated_at", direction: "desc" }],
       subscribe: { subscriptionId: "app:srv_no_session" },
       page: { limit: 200 },
@@ -1251,7 +986,7 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
-  it("fetches all pages during bootstrap within the active agent scope", async () => {
+  it("fetches all pages during bootstrap so older workspace agents are present", async () => {
     const host = makeHost({
       serverId: "srv_paged",
       connections: [
@@ -1295,10 +1030,10 @@ describe("HostRuntimeStore", () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host: hostProfile }) => ({
+        connectToDaemon: async ({ host }) => ({
           client: fakeClient as unknown as DaemonClient,
-          serverId: hostProfile.serverId,
-          hostname: hostProfile.label ?? null,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
         }),
         getClientId: async () => "cid_test_runtime",
       },
@@ -1316,13 +1051,13 @@ describe("HostRuntimeStore", () => {
 
     expect(fakeClient.fetchAgentsCalls).toHaveLength(2);
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
-      scope: "active",
+      filter: { includeArchived: true },
       sort: [{ key: "updated_at", direction: "desc" }],
       subscribe: { subscriptionId: "app:srv_paged" },
       page: { limit: 200 },
     });
     expect(fakeClient.fetchAgentsCalls[1]).toEqual({
-      scope: "active",
+      filter: { includeArchived: true },
       sort: [{ key: "updated_at", direction: "desc" }],
       page: { limit: 200, cursor: "cursor-page-2" },
     });
@@ -1364,10 +1099,10 @@ describe("HostRuntimeStore", () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host: hostProfile }) => ({
+        connectToDaemon: async ({ host }) => ({
           client: fakeClient as unknown as DaemonClient,
-          serverId: hostProfile.serverId,
-          hostname: hostProfile.label ?? null,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
         }),
         getClientId: async () => "cid_test_runtime",
       },
@@ -1396,13 +1131,13 @@ describe("HostRuntimeStore", () => {
 
     expect(fakeClient.fetchAgentsCalls).toEqual([
       {
-        scope: "active",
+        filter: { includeArchived: true },
         sort: [{ key: "updated_at", direction: "desc" }],
         subscribe: { subscriptionId: "app:srv_resubscribe" },
         page: { limit: 200 },
       },
       {
-        scope: "active",
+        filter: { includeArchived: true },
         sort: [{ key: "updated_at", direction: "desc" }],
         subscribe: { subscriptionId: "app:srv_resubscribe" },
         page: { limit: 200 },
@@ -1413,7 +1148,7 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
-  it("replaces stale active session state when active bootstrap omits an agent", async () => {
+  it("rehydrates archived agents over stale active session state after reconnect bootstrap", async () => {
     const host = makeHost({
       serverId: "srv_archived_rehydrate",
       connections: [
@@ -1428,17 +1163,25 @@ describe("HostRuntimeStore", () => {
     fakeClient.setConnectionState({ status: "connected" });
     fakeClient.fetchAgentsResponses.push(
       makeFetchAgentsPayload({
-        entries: [],
+        entries: [
+          makeFetchAgentsEntry({
+            id: "agent-archived",
+            cwd: "/Users/moboudra/dev/hubcode",
+            updatedAt: "2026-03-30T15:30:00.000Z",
+            archivedAt: "2026-03-30T15:31:00.000Z",
+            title: "Archived remotely",
+          }),
+        ],
         subscriptionId: "app:srv_archived_rehydrate",
       }),
     );
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host: hostProfile }) => ({
+        connectToDaemon: async ({ host }) => ({
           client: fakeClient as unknown as DaemonClient,
-          serverId: hostProfile.serverId,
-          hostname: hostProfile.label ?? null,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
         }),
         getClientId: async () => "cid_test_runtime",
       },
@@ -1471,16 +1214,17 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([host]);
 
     const timeoutAt = Date.now() + 300;
-    while (
-      useSessionStore.getState().sessions[host.serverId]?.agents.has("agent-archived") &&
-      Date.now() < timeoutAt
-    ) {
+    let archivedAt =
+      useSessionStore.getState().sessions[host.serverId]?.agents.get("agent-archived")
+        ?.archivedAt ?? null;
+    while (!archivedAt && Date.now() < timeoutAt) {
       await new Promise((resolve) => setTimeout(resolve, 0));
+      archivedAt =
+        useSessionStore.getState().sessions[host.serverId]?.agents.get("agent-archived")
+          ?.archivedAt ?? null;
     }
 
-    expect(useSessionStore.getState().sessions[host.serverId]?.agents.has("agent-archived")).toBe(
-      false,
-    );
+    expect(archivedAt?.toISOString()).toBe("2026-03-30T15:31:00.000Z");
 
     store.syncHosts([]);
     useSessionStore.getState().clearSession(host.serverId);
@@ -1595,7 +1339,7 @@ describe("HostRuntimeStore", () => {
 
     await store.upsertRelayConnection({
       serverId: "srv_offer",
-      relayEndpoint: "relay.hubcode.ai:443",
+      relayEndpoint: "relay.hubcode.sh:443",
       daemonPublicKeyB64: "pk_test_offer",
       label: "Custom name",
     });

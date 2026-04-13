@@ -1,16 +1,14 @@
 npmRebuild: false
-appId: ai.hubcode.desktop
+appId: sh.hubcode.desktop
 productName: Hubcode
 executableName: Hubcode
 afterPack: ./scripts/after-pack.js
-afterSign: ./scripts/after-sign.js
 directories:
   output: release
 files:
   - dist/**/*
 asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
-  - node_modules/@gethubcode/server/dist/server/terminal/shell-integration/**/*
 extraResources:
   - from: ../app/dist
     to: app-dist
@@ -18,7 +16,7 @@ extraResources:
     to: skills
 publish:
   provider: github
-  owner: gethubcode
+  owner: hubtool
   repo: hubcode
 mac:
   artifactName: "Hubcode-${version}-${arch}.${ext}"

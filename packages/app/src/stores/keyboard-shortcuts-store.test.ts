@@ -10,6 +10,7 @@ beforeEach(() => {
     altDown: false,
     cmdOrCtrlDown: false,
     sidebarShortcutWorkspaceTargets: [],
+    visibleWorkspaceTargets: [],
   });
 });
 

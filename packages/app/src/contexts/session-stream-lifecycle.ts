@@ -10,13 +10,10 @@ export function deriveOptimisticLifecycleStatus(
   }
   switch (event.type) {
     case "turn_completed":
+    case "turn_canceled":
       return "idle";
     case "turn_failed":
       return "error";
-    case "turn_canceled":
-      // A canceled turn can be either a final user cancel or an interrupt before
-      // a replacement turn starts. The daemon snapshot is authoritative here.
-      return null;
     default:
       return null;
   }

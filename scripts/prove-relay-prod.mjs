@@ -23,8 +23,8 @@ const args = parseArgs(process.argv);
 const serverId = args["server-id"] ?? process.env.HUBCODE_SERVER_ID;
 const daemonPublicKeyB64 = args["daemon-public-key-b64"] ?? process.env.HUBCODE_DAEMON_PUBLIC_KEY_B64;
 const relayEndpoint =
-  args["relay-endpoint"] ?? process.env.HUBCODE_RELAY_ENDPOINT ?? "relay.hubcode.ai:443";
-const baseUrl = args["base-url"] ?? process.env.HUBCODE_APP_URL ?? "https://app.hubcode.ai";
+  args["relay-endpoint"] ?? process.env.HUBCODE_RELAY_ENDPOINT ?? "relay.hubcode.sh:443";
+const baseUrl = args["base-url"] ?? process.env.HUBCODE_APP_URL ?? "https://app.hubcode.sh";
 const timeoutMs = Number(args["timeout-ms"] ?? process.env.HUBCODE_PROVE_TIMEOUT_MS ?? 60_000);
 const stabilityMs = Number(args["stability-ms"] ?? process.env.HUBCODE_PROVE_STABILITY_MS ?? 30_000);
 

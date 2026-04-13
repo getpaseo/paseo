@@ -58,7 +58,6 @@ const STORED_AGENT_SCHEMA = z.object({
     .optional(),
   features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
-  lastError: z.string().nullable().optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -79,9 +78,6 @@ export type SerializableAgentConfig = Pick<
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
-export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
-  return STORED_AGENT_SCHEMA.parse(value);
-}
 
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
@@ -140,7 +136,6 @@ export class AgentStorage {
 
       this.cache.set(agentId, record);
       this.pathById.set(agentId, nextPath);
-      return;
     });
 
     this.pendingWrites.set(
@@ -164,21 +159,16 @@ export class AgentStorage {
     this.beginDelete(agentId);
     await (this.pendingWrites.get(agentId) ?? Promise.resolve());
     const paths = Array.from(this.pathsById.get(agentId) ?? []);
-    await Promise.all(
-      paths.map(async (filePath) => {
-        try {
-          await fs.unlink(filePath);
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code && code !== "ENOENT") {
-            this.logger.warn(
-              { err: error, agentId, filePath },
-              "Failed to remove agent record file",
-            );
-          }
+    for (const filePath of paths) {
+      try {
+        await fs.unlink(filePath);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code && code !== "ENOENT") {
+          this.logger.warn({ err: error, agentId, filePath }, "Failed to remove agent record file");
         }
-      }),
-    );
+      }
+    }
 
     this.cache.delete(agentId);
     this.pathById.delete(agentId);
@@ -187,23 +177,19 @@ export class AgentStorage {
 
   async applySnapshot(
     agent: ManagedAgent,
-    workspaceIdOrOptions?: string | { title?: string | null; internal?: boolean },
     options?: { title?: string | null; internal?: boolean },
   ): Promise<void> {
-    const nextOptions = typeof workspaceIdOrOptions === "string" ? options : workspaceIdOrOptions;
     await this.load();
     await this.waitForPendingWrite(agent.id);
     const existing = (await this.get(agent.id)) ?? null;
     const hasTitleOverride =
-      nextOptions !== undefined && Object.prototype.hasOwnProperty.call(nextOptions, "title");
+      options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
-      nextOptions !== undefined && Object.prototype.hasOwnProperty.call(nextOptions, "internal");
+      options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
     const record = toStoredAgentRecord(agent, {
-      title: hasTitleOverride ? (nextOptions?.title ?? null) : (existing?.title ?? null),
+      title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
       createdAt: existing?.createdAt,
-      internal: hasInternalOverride
-        ? nextOptions?.internal
-        : (agent.internal ?? existing?.internal),
+      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
     });
 
     // Preserve soft-delete/archive status across snapshot flushes.
@@ -275,42 +261,45 @@ export class AgentStorage {
       throw error;
     }
 
-    const rootRecordPaths = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => path.join(this.baseDir, entry.name));
-
-    const projectDirs = entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => path.join(this.baseDir, entry.name));
-
-    const projectFileLists = await Promise.all(
-      projectDirs.map(async (projectDir) => {
-        try {
-          const files = await fs.readdir(projectDir, { withFileTypes: true });
-          return files
-            .filter((file) => file.isFile() && file.name.endsWith(".json"))
-            .map((file) => path.join(projectDir, file.name));
-        } catch {
-          return [];
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith(".json")) {
+        const rootPath = path.join(this.baseDir, entry.name);
+        const rootRecord = await this.readRecordFile(rootPath);
+        if (!rootRecord) {
+          continue;
         }
-      }),
-    );
+        records.push(rootRecord);
+        this.cache.set(rootRecord.id, rootRecord);
+        this.pathById.set(rootRecord.id, rootPath);
+        this.addIndexedPath(rootRecord.id, rootPath);
+        continue;
+      }
 
-    const allFilePaths = [...rootRecordPaths, ...projectFileLists.flat()];
-    const loaded = await Promise.all(
-      allFilePaths.map(async (filePath) => {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const projectDir = path.join(this.baseDir, entry.name);
+      let files: Array<import("node:fs").Dirent> = [];
+      try {
+        files = await fs.readdir(projectDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const file of files) {
+        if (!file.isFile() || !file.name.endsWith(".json")) {
+          continue;
+        }
+        const filePath = path.join(projectDir, file.name);
         const record = await this.readRecordFile(filePath);
-        return record ? { record, filePath } : null;
-      }),
-    );
-
-    for (const item of loaded) {
-      if (!item) continue;
-      const { record, filePath } = item;
-      records.push(record);
-      this.cache.set(record.id, record);
-      this.pathById.set(record.id, filePath);
-      this.addIndexedPath(record.id, filePath);
+        if (!record) {
+          continue;
+        }
+        records.push(record);
+        this.cache.set(record.id, record);
+        this.pathById.set(record.id, filePath);
+        this.addIndexedPath(record.id, filePath);
+      }
     }
 
     return records;
@@ -320,7 +309,7 @@ export class AgentStorage {
     try {
       const content = await fs.readFile(filePath, "utf8");
       const parsed = JSON.parse(content);
-      return parseStoredAgentRecord(parsed);
+      return STORED_AGENT_SCHEMA.parse(parsed);
     } catch (error) {
       this.logger.error({ err: error, filePath }, "Skipping invalid agent record");
       return null;

@@ -216,10 +216,11 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
           updated.delete(id);
         }
       }
-      let newActiveId: string | null;
-      if (!state.activeDownloadId) newActiveId = null;
-      else if (updated.has(state.activeDownloadId)) newActiveId = state.activeDownloadId;
-      else newActiveId = findMostRecentDownloadId(updated);
+      const newActiveId = state.activeDownloadId
+        ? updated.has(state.activeDownloadId)
+          ? state.activeDownloadId
+          : findMostRecentDownloadId(updated)
+        : null;
       return { downloads: updated, activeDownloadId: newActiveId };
     });
   },
@@ -235,11 +236,11 @@ function findMostRecentDownloadId(downloads: Map<string, Download>): string | nu
   return mostRecent?.id ?? null;
 }
 
-interface DownloadTarget {
+type DownloadTarget = {
   baseUrl: string | null;
   authHeader: string | null;
   authCredentials: { username: string; password: string } | null;
-}
+};
 
 function resolveDaemonDownloadTarget(daemon?: HostProfile): DownloadTarget {
   const endpoint = daemon?.connections.find((conn) => conn.type === "directTcp")?.endpoint ?? null;

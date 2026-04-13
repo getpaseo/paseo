@@ -1,22 +1,19 @@
 import { useCallback, useMemo, useReducer } from "react";
-import type { ComposerAttachment } from "@/attachments/types";
-import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import {
   generateMessageId,
   type StreamItem,
   type UserMessageImageAttachment,
 } from "@/types/stream";
-import type { AgentAttachment } from "@server/shared/messages";
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
-interface CreateAttempt {
+type CreateAttempt = {
   clientMessageId: string;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
-}
+};
 
 type DraftAgentMachineState =
   | { tag: "draft"; errorMessage: string }
@@ -56,29 +53,25 @@ function reducer(
   }
 }
 
-interface CreateRequestResult<TCreateResult> {
+type CreateRequestResult<TCreateResult> = {
   agentId: string | null;
   result: TCreateResult;
-}
+};
 
-interface SubmitContext {
+type SubmitContext = {
   text: string;
-  attachments: ComposerAttachment[];
-  cwd: string;
-}
+  images?: UserMessageImageAttachment[];
+};
 
-interface CreateRequestContext {
+type CreateRequestContext = {
   attempt: CreateAttempt;
   text: string;
   images?: UserMessageImageAttachment[];
-  attachments?: AgentAttachment[];
-  cwd: string;
-}
+};
 
 interface UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult> {
   draftId: string;
   getPendingServerId: () => string | null;
-  allowEmptyText?: boolean;
   validateBeforeSubmit?: (ctx: SubmitContext) => string | null;
   onBeforeSubmit?: (ctx: CreateRequestContext) => void;
   onCreateStart?: () => void;
@@ -91,7 +84,6 @@ interface UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult> {
 export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   draftId,
   getPendingServerId,
-  allowEmptyText = false,
   validateBeforeSubmit,
   onBeforeSubmit,
   onCreateStart,
@@ -118,10 +110,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       return EMPTY_STREAM_ITEMS;
     }
 
-    if (!machine.attempt.text && (!machine.attempt.images || machine.attempt.images.length === 0)) {
-      return EMPTY_STREAM_ITEMS;
-    }
-
     return [
       {
         kind: "user_message",
@@ -143,27 +131,21 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   }, [buildDraftAgent, machine]);
 
   const handleCreateFromInput = useCallback(
-    async ({ text, attachments, cwd }: SubmitContext) => {
+    async ({ text, images }: SubmitContext) => {
       if (isSubmitting) {
         throw new Error("Already loading");
       }
 
       dispatch({ type: "DRAFT_SET_ERROR", message: "" });
-      const wirePayload = splitComposerAttachmentsForSubmit(attachments);
-      const images = wirePayload.images;
 
       const trimmedPrompt = text.trim();
-      if (!trimmedPrompt && !allowEmptyText) {
+      if (!trimmedPrompt) {
         const error = new Error("Initial prompt is required");
         dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
         throw error;
       }
 
-      const validationError = validateBeforeSubmit?.({
-        text: trimmedPrompt,
-        attachments,
-        cwd,
-      });
+      const validationError = validateBeforeSubmit?.({ text: trimmedPrompt, images });
       if (validationError) {
         const error = new Error(validationError);
         dispatch({ type: "DRAFT_SET_ERROR", message: validationError });
@@ -194,13 +176,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
       });
 
-      onBeforeSubmit?.({
-        attempt,
-        text: trimmedPrompt,
-        images,
-        attachments: wirePayload.attachments,
-        cwd,
-      });
+      onBeforeSubmit?.({ attempt, text: trimmedPrompt, images });
       dispatch({ type: "SUBMIT", attempt });
       onCreateStart?.();
 
@@ -209,8 +185,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
           attempt,
           text: trimmedPrompt,
           images,
-          attachments: wirePayload.attachments,
-          cwd,
         });
 
         if (createResult.agentId) {
@@ -241,7 +215,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       setPendingCreateAttempt,
       updatePendingAgentId,
       validateBeforeSubmit,
-      allowEmptyText,
     ],
   );
 

@@ -34,7 +34,7 @@ function UpdatesDocs() {
         <p className="text-white/60">Install the latest CLI/daemon package globally:</p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
           <span className="text-muted-foreground select-none">$ </span>
-          <span>npm install -g @gethubcode/cli@latest</span>
+          <span>npm install -g @hubtool/cli@latest</span>
         </div>
         <p className="text-white/60">Then restart the daemon:</p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
@@ -47,12 +47,12 @@ function UpdatesDocs() {
         <h2 className="text-xl font-medium">Web app</h2>
         <p className="text-white/60">
           <a
-            href="https://app.hubcode.ai"
+            href="https://app.hubcode.sh"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-white/80"
           >
-            app.hubcode.ai
+            app.hubcode.sh
           </a>{" "}
           is always up to date. No manual update needed.
         </p>

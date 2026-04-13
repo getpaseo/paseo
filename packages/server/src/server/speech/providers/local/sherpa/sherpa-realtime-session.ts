@@ -3,17 +3,14 @@ import { v4 as uuidv4 } from "uuid";
 
 import type { StreamingTranscriptionSession } from "../../../speech-provider.js";
 import { pcm16lePeakAbs, pcm16leToFloat32 } from "../../../audio.js";
-import {
-  SherpaOnlineRecognizerEngine,
-  type SherpaOnlineStreamNative,
-} from "./sherpa-online-recognizer.js";
+import { SherpaOnlineRecognizerEngine } from "./sherpa-online-recognizer.js";
 
 export class SherpaRealtimeTranscriptionSession
   extends EventEmitter
   implements StreamingTranscriptionSession
 {
   private readonly engine: SherpaOnlineRecognizerEngine;
-  private stream: SherpaOnlineStreamNative | null = null;
+  private stream: any | null = null;
   private connected = false;
 
   public readonly requiredSampleRate: number;
@@ -58,12 +55,7 @@ export class SherpaRealtimeTranscriptionSession
         this.engine.recognizer.decode(this.stream);
       }
 
-      const rawResult = this.engine.recognizer.getResult(this.stream);
-      const text = String(
-        (typeof rawResult === "object" && rawResult && "text" in rawResult
-          ? rawResult.text
-          : undefined) ?? "",
-      ).trim();
+      const text = String(this.engine.recognizer.getResult(this.stream)?.text ?? "").trim();
       if (text !== this.lastPartialText) {
         this.lastPartialText = text;
         this.emit("transcript", {
@@ -96,12 +88,7 @@ export class SherpaRealtimeTranscriptionSession
         this.engine.recognizer.decode(this.stream);
       }
 
-      const rawFinal = this.engine.recognizer.getResult(this.stream);
-      const finalText = String(
-        (typeof rawFinal === "object" && rawFinal && "text" in rawFinal
-          ? rawFinal.text
-          : undefined) ?? "",
-      ).trim();
+      const finalText = String(this.engine.recognizer.getResult(this.stream)?.text ?? "").trim();
       const segmentId = this.currentSegmentId;
       const previousSegmentId = this.previousSegmentId;
 
@@ -111,7 +98,7 @@ export class SherpaRealtimeTranscriptionSession
       this.previousSegmentId = segmentId;
       this.currentSegmentId = uuidv4();
       this.lastPartialText = "";
-      this.engine.recognizer.reset?.(this.stream);
+      this.engine.recognizer.reset(this.stream);
     } catch (err) {
       this.emit("error", err instanceof Error ? err : new Error(String(err)));
     }
@@ -122,7 +109,7 @@ export class SherpaRealtimeTranscriptionSession
       return;
     }
     try {
-      this.engine.recognizer.reset?.(this.stream);
+      this.engine.recognizer.reset(this.stream);
       this.currentSegmentId = uuidv4();
       this.lastPartialText = "";
     } catch (err) {

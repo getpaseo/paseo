@@ -6,10 +6,10 @@
 
 <p align="center">
   <a href="https://github.com/hubtool/hubcode/stargazers">
-    <img src="https://img.shields.io/github/stars/gethubcode/hubcode?style=flat&logo=github" alt="GitHub stars">
+    <img src="https://img.shields.io/github/stars/hubtool/hubcode?style=flat&logo=github" alt="GitHub stars">
   </a>
   <a href="https://github.com/hubtool/hubcode/releases">
-    <img src="https://img.shields.io/github/v/release/gethubcode/hubcode?style=flat&logo=github" alt="GitHub release">
+    <img src="https://img.shields.io/github/v/release/hubtool/hubcode?style=flat&logo=github" alt="GitHub release">
   </a>
   <a href="https://x.com/moboudra">
     <img src="https://img.shields.io/badge/%40moboudra-555?logo=x" alt="X">
@@ -22,11 +22,11 @@
 <p align="center">One interface for all your Claude Code, Codex and OpenCode agents.</p>
 
 <p align="center">
-  <img src="https://hubcode.ai/hero-mockup.png" alt="Hubcode app screenshot" width="100%">
+  <img src="https://hubcode.sh/hero-mockup.png" alt="Hubcode app screenshot" width="100%">
 </p>
 
 <p align="center">
-  <img src="https://hubcode.ai/mobile-mockup.png" alt="Hubcode mobile app" width="100%">
+  <img src="https://hubcode.sh/mobile-mockup.png" alt="Hubcode mobile app" width="100%">
 </p>
 
 ---
@@ -53,7 +53,7 @@ You need at least one agent CLI installed and configured with your credentials:
 
 ### Desktop app (recommended)
 
-Download it from [hubcode.ai/download](https://hubcode.ai/download) or the [GitHub releases page](https://github.com/hubtool/hubcode/releases). Open the app and the daemon starts automatically. Nothing else to install.
+Download it from [hubcode.sh/download](https://hubcode.sh/download) or the [GitHub releases page](https://github.com/hubtool/hubcode/releases). Open the app and the daemon starts automatically. Nothing else to install.
 
 To connect from your phone, scan the QR code shown in Settings.
 
@@ -62,16 +62,15 @@ To connect from your phone, scan the QR code shown in Settings.
 Install the CLI and start Hubcode:
 
 ```bash
-npm install -g @gethubcode/cli
+npm install -g @hubtool/cli
 hubcode
 ```
 
 This shows a QR code in the terminal. Connect from any client. This path is useful for servers and remote machines.
 
 For full setup and configuration, see:
-
-- [Docs](https://hubcode.ai/docs)
-- [Configuration reference](https://hubcode.ai/docs/configuration)
+- [Docs](https://hubcode.sh/docs)
+- [Configuration reference](https://hubcode.sh/docs/configuration)
 
 ## CLI
 
@@ -89,14 +88,14 @@ hubcode send abc123 "also add tests" # follow-up task
 hubcode --host workstation.local:6767 run "run the full test suite"
 ```
 
-See the [full CLI reference](https://hubcode.ai/docs/cli) for more.
+See the [full CLI reference](https://hubcode.sh/docs/cli) for more.
 
 ## Orchestration skills (Unstable)
 
 Experimental skills that teach agents how to use the Hubcode CLI to orchestrate other agents. I am updating these very frequently as I learn new things, expect changes without notice, might be coupled to my own setup, use at your own risk.
 
 ```bash
-npx skills add gethubcode/hubcode
+npx skills add hubtool/hubcode
 ```
 
 Then use them in any agent conversation:
@@ -117,13 +116,12 @@ Then use them in any agent conversation:
 ## Development
 
 Quick monorepo package map:
-
 - `packages/server`: Hubcode daemon (agent process orchestration, WebSocket API, MCP server)
 - `packages/app`: Expo client (iOS, Android, web)
 - `packages/cli`: `hubcode` CLI for daemon and agent workflows
 - `packages/desktop`: Electron desktop app
 - `packages/relay`: Relay package for remote connectivity
-- `packages/website`: Marketing site and documentation (`hubcode.ai`)
+- `packages/website`: Marketing site and documentation (`hubcode.sh`)
 
 Common commands:
 

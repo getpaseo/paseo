@@ -114,15 +114,11 @@ describe("daemon E2E - persistence", () => {
       const timeline = await ctx.client.fetchAgentTimeline(agentId, {
         direction: "tail",
         limit: 0,
+        projection: "canonical",
       });
       const timelineItems = timeline.entries.map((entry) => entry.item);
       expect(timelineItems.length).toBeGreaterThan(0);
-      const assistantMessages = timelineItems.filter(
-        (item): item is Extract<(typeof timelineItems)[number], { type: "assistant_message" }> =>
-          item.type === "assistant_message",
-      );
-      expect(assistantMessages.length).toBeGreaterThan(0);
-      expect(assistantMessages.map((item) => item.text).join("")).toBe("timeline test");
+      expect(timelineItems.some((item) => item.type === "assistant_message")).toBe(true);
     } finally {
       await ctx.cleanup();
       cleaned = true;

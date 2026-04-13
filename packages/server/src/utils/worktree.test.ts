@@ -1,22 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  BranchAlreadyCheckedOutError,
-  createWorktree as createWorktreePrimitive,
+  createWorktree,
   deriveWorktreeProjectHash,
   deleteHubcodeWorktree,
-  getScriptConfigs,
-  getWorktreeSetupCommands,
   getWorktreeTerminalSpecs,
-  getWorktreeTeardownCommands,
-  isServiceScript,
   isHubcodeOwnedWorktreeCwd,
   listHubcodeWorktrees,
   resolveWorktreeRuntimeEnv,
   type WorktreeSetupCommandProgressEvent,
   runWorktreeSetupCommands,
   slugify,
-  type CreateWorktreeOptions,
-  type WorktreeConfig,
 } from "./worktree";
 import { getHubcodeWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execSync } from "child_process";
@@ -32,35 +25,6 @@ import {
 import { dirname, join } from "path";
 import { tmpdir } from "os";
 import net from "node:net";
-
-interface LegacyCreateWorktreeTestOptions {
-  branchName: string;
-  cwd: string;
-  baseBranch: string;
-  worktreeSlug: string;
-  runSetup?: boolean;
-  hubcodeHome?: string;
-}
-
-function createLegacyWorktreeForTest(
-  options: CreateWorktreeOptions | LegacyCreateWorktreeTestOptions,
-): Promise<WorktreeConfig> {
-  if ("source" in options) {
-    return createWorktreePrimitive(options);
-  }
-
-  return createWorktreePrimitive({
-    cwd: options.cwd,
-    worktreeSlug: options.worktreeSlug,
-    source: {
-      kind: "branch-off",
-      baseBranch: options.baseBranch,
-      newBranchName: options.branchName,
-    },
-    runSetup: options.runSetup ?? true,
-    hubcodeHome: options.hubcodeHome,
-  });
-}
 
 describe.skipIf(process.platform === "win32")("createWorktree", () => {
   let tempDir: string;
@@ -89,7 +53,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
 
   it("creates a worktree for the current branch (main)", async () => {
     const projectHash = await deriveWorktreeProjectHash(repoDir);
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -120,7 +84,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     execSync("git add .", { cwd: varRepoDir });
     execSync('git -c commit.gpgsign=false commit -m "initial"', { cwd: varRepoDir });
 
-    await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "main",
       cwd: varRepoDir,
       baseBranch: "main",
@@ -147,7 +111,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
   });
 
   it("reports repoRoot as the repository root for hubcode-owned worktrees", async () => {
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -172,118 +136,23 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
 
   it("creates a worktree with a new branch", async () => {
     const projectHash = await deriveWorktreeProjectHash(repoDir);
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
+      branchName: "feature-branch",
       cwd: repoDir,
+      baseBranch: "main",
       worktreeSlug: "my-feature",
-      source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/x" },
-      runSetup: true,
       hubcodeHome,
     });
 
     expect(result.worktreePath).toBe(join(hubcodeHome, "worktrees", projectHash, "my-feature"));
     expect(existsSync(result.worktreePath)).toBe(true);
 
-    const currentBranch = execSync("git branch --show-current", {
-      cwd: result.worktreePath,
-    })
-      .toString()
-      .trim();
-    expect(currentBranch).toBe("feature/x");
-    execSync("git merge-base --is-ancestor main HEAD", { cwd: result.worktreePath });
-
+    // Verify branch was created
+    const branches = execSync("git branch", { cwd: repoDir }).toString();
+    expect(branches).toContain("feature-branch");
     const metadataPath = getHubcodeWorktreeMetadataPath(result.worktreePath);
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
     expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
-  });
-
-  it("checks out an existing local branch that is not checked out elsewhere", async () => {
-    execSync("git branch dev", { cwd: repoDir });
-
-    const result = await createLegacyWorktreeForTest({
-      cwd: repoDir,
-      worktreeSlug: "dev-worktree",
-      source: { kind: "checkout-branch", branchName: "dev" },
-      runSetup: true,
-      hubcodeHome,
-    });
-
-    expect(existsSync(result.worktreePath)).toBe(true);
-    const currentBranch = execSync("git branch --show-current", {
-      cwd: result.worktreePath,
-    })
-      .toString()
-      .trim();
-    expect(currentBranch).toBe("dev");
-
-    const metadataPath = getHubcodeWorktreeMetadataPath(result.worktreePath);
-    const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
-    expect(metadata).toMatchObject({ version: 1, baseRefName: "dev" });
-  });
-
-  it("throws a typed error when checking out a branch already checked out in the main repo", async () => {
-    let caughtError: unknown;
-    try {
-      await createLegacyWorktreeForTest({
-        cwd: repoDir,
-        worktreeSlug: "dev-worktree",
-        source: { kind: "checkout-branch", branchName: "main" },
-        runSetup: true,
-        hubcodeHome,
-      });
-    } catch (error) {
-      caughtError = error;
-    }
-
-    expect(caughtError).toBeInstanceOf(BranchAlreadyCheckedOutError);
-    expect((caughtError as BranchAlreadyCheckedOutError).branchName).toBe("main");
-  });
-
-  it("fetches a GitHub PR branch, checks it out, writes metadata, and runs setup", async () => {
-    const remoteDir = join(tempDir, "remote.git");
-    const remoteCloneDir = join(tempDir, "remote-clone");
-    execSync(`git clone --bare ${repoDir} ${remoteDir}`);
-    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
-
-    execSync(`git clone ${remoteDir} ${remoteCloneDir}`);
-    execSync('git config user.email "test@test.com"', { cwd: remoteCloneDir });
-    execSync('git config user.name "Test"', { cwd: remoteCloneDir });
-    execSync("git checkout -b contributor/feature", { cwd: remoteCloneDir });
-    writeFileSync(join(remoteCloneDir, "file.txt"), "from-pr\n");
-    writeFileSync(
-      join(remoteCloneDir, "hubcode.json"),
-      JSON.stringify({ worktree: { setup: ['echo "setup ran" > setup.log'] } }),
-    );
-    execSync("git add .", { cwd: remoteCloneDir });
-    execSync('git -c commit.gpgsign=false commit -m "pr branch"', { cwd: remoteCloneDir });
-    const prHead = execSync("git rev-parse HEAD", { cwd: remoteCloneDir }).toString().trim();
-    execSync("git push origin contributor/feature", { cwd: remoteCloneDir });
-    execSync(`git --git-dir=${remoteDir} update-ref refs/pull/42/head ${prHead}`);
-
-    const result = await createLegacyWorktreeForTest({
-      cwd: repoDir,
-      worktreeSlug: "pr-42",
-      source: {
-        kind: "checkout-github-pr",
-        githubPrNumber: 42,
-        headRef: "user/feature",
-        baseRefName: "main",
-      },
-      runSetup: true,
-      hubcodeHome,
-    });
-
-    expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-pr\n");
-    expect(readFileSync(join(result.worktreePath, "setup.log"), "utf8")).toBe("setup ran\n");
-    const currentBranch = execSync("git branch --show-current", {
-      cwd: result.worktreePath,
-    })
-      .toString()
-      .trim();
-    expect(currentBranch).toBe("user/feature");
-
-    const metadataPath = getHubcodeWorktreeMetadataPath(result.worktreePath);
-    const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
-    expect(metadata).toMatchObject({ baseRefName: "main" });
   });
 
   it("prefers origin/{branch} over local {branch} when both exist", async () => {
@@ -310,7 +179,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
 
     execSync("git fetch origin", { cwd: repoDir });
 
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "prefer-origin-feature",
       cwd: repoDir,
       baseBranch: "main",
@@ -327,7 +196,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     execSync("git add file.txt", { cwd: repoDir });
     execSync('git -c commit.gpgsign=false commit -m "advance local main only"', { cwd: repoDir });
 
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "prefer-local-fallback-feature",
       cwd: repoDir,
       baseBranch: "main",
@@ -341,7 +210,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
 
   it("throws when neither origin/{branch} nor local {branch} exists", async () => {
     await expect(
-      createLegacyWorktreeForTest({
+      createWorktree({
         branchName: "missing-base-feature",
         cwd: repoDir,
         baseBranch: "does-not-exist",
@@ -354,7 +223,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
 
   it("fails with invalid branch name", async () => {
     await expect(
-      createLegacyWorktreeForTest({
+      createWorktree({
         branchName: "INVALID_UPPERCASE",
         cwd: repoDir,
         baseBranch: "main",
@@ -368,7 +237,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     // Create a branch named "hello" first
     execSync("git branch hello", { cwd: repoDir });
 
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -389,7 +258,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     execSync("git branch hello", { cwd: repoDir });
     execSync("git branch hello-1", { cwd: repoDir });
 
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -421,7 +290,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       cwd: repoDir,
     });
 
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -444,79 +313,6 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     expect(portValue).toBeGreaterThan(0);
   });
 
-  it("runs string setup scripts from hubcode.json as a single shell command", async () => {
-    const hubcodeConfig = {
-      worktree: {
-        setup: 'greeting="hello from string setup"\necho "$greeting" > setup.log',
-      },
-    };
-    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
-    execSync('git add hubcode.json && git -c commit.gpgsign=false commit -m "add string setup"', {
-      cwd: repoDir,
-    });
-
-    const result = await createLegacyWorktreeForTest({
-      branchName: "main",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "string-setup-test",
-      hubcodeHome,
-    });
-
-    expect(getWorktreeSetupCommands(result.worktreePath)).toEqual([
-      'greeting="hello from string setup"\necho "$greeting" > setup.log',
-    ]);
-    expect(readFileSync(join(result.worktreePath, "setup.log"), "utf8").trim()).toBe(
-      "hello from string setup",
-    );
-  });
-
-  it("treats blank lifecycle strings as empty", () => {
-    writeFileSync(
-      join(repoDir, "hubcode.json"),
-      JSON.stringify({
-        worktree: {
-          setup: " \n\t ",
-          teardown: " \n ",
-        },
-      }),
-    );
-
-    expect(getWorktreeSetupCommands(repoDir)).toEqual([]);
-    expect(getWorktreeTeardownCommands(repoDir)).toEqual([]);
-  });
-
-  it("filters non-string and blank entries from lifecycle arrays", () => {
-    writeFileSync(
-      join(repoDir, "hubcode.json"),
-      JSON.stringify({
-        worktree: {
-          setup: [
-            'echo "first" > setup-array.log',
-            null,
-            "   ",
-            'echo "second" >> setup-array.log',
-          ],
-          teardown: [
-            'echo "first" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown-array.log"',
-            null,
-            "",
-            'echo "second" >> "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown-array.log"',
-          ],
-        },
-      }),
-    );
-
-    expect(getWorktreeSetupCommands(repoDir)).toEqual([
-      'echo "first" > setup-array.log',
-      'echo "second" >> setup-array.log',
-    ]);
-    expect(getWorktreeTeardownCommands(repoDir)).toEqual([
-      'echo "first" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown-array.log"',
-      'echo "second" >> "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown-array.log"',
-    ]);
-  });
-
   it("does not run setup commands when runSetup=false", async () => {
     const hubcodeConfig = {
       worktree: {
@@ -528,7 +324,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       cwd: repoDir,
     });
 
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -569,7 +365,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
   });
 
   it("reuses persisted worktree runtime port across resolutions", async () => {
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -591,7 +387,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
   });
 
   it("fails runtime env resolution when persisted port is in use", async () => {
-    const result = await createLegacyWorktreeForTest({
+    const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -645,7 +441,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     const expectedWorktreePath = join(hubcodeHome, "worktrees", "test-repo", "fail-test");
 
     await expect(
-      createLegacyWorktreeForTest({
+      createWorktree({
         branchName: "main",
         cwd: repoDir,
         baseBranch: "main",
@@ -694,151 +490,6 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       { command: "npm run test" },
     ]);
   });
-
-  it("parses omitted script type as a plain script", async () => {
-    writeFileSync(
-      join(repoDir, "hubcode.json"),
-      JSON.stringify({
-        scripts: {
-          typecheck: {
-            command: " npm run typecheck ",
-          },
-        },
-      }),
-    );
-
-    const scriptConfigs = getScriptConfigs(repoDir);
-    const typecheck = scriptConfigs.get("typecheck");
-
-    expect(typecheck).toEqual({
-      command: "npm run typecheck",
-    });
-    expect(typecheck).toBeDefined();
-    expect(isServiceScript(typecheck!)).toBe(false);
-  });
-
-  it("parses service scripts and preserves optional port", async () => {
-    writeFileSync(
-      join(repoDir, "hubcode.json"),
-      JSON.stringify({
-        scripts: {
-          server: {
-            type: "service",
-            command: "npm run dev",
-            port: 4321,
-          },
-        },
-      }),
-    );
-
-    const scriptConfigs = getScriptConfigs(repoDir);
-    const server = scriptConfigs.get("server");
-
-    expect(server).toEqual({
-      type: "service",
-      command: "npm run dev",
-      port: 4321,
-    });
-    expect(server).toBeDefined();
-    expect(isServiceScript(server!)).toBe(true);
-  });
-
-  it("ignores invalid script entries gracefully", async () => {
-    writeFileSync(
-      join(repoDir, "hubcode.json"),
-      JSON.stringify({
-        scripts: {
-          valid: {
-            command: "npm run valid",
-          },
-          invalidType: {
-            type: "worker",
-            command: "npm run worker",
-          },
-          missingCommand: {
-            type: "service",
-          },
-          blankCommand: {
-            command: "   ",
-          },
-          nonObject: "npm run nope",
-          invalidPort: {
-            type: "service",
-            command: "npm run dev",
-            port: "3000",
-          },
-        },
-      }),
-    );
-
-    expect(getScriptConfigs(repoDir)).toEqual(
-      new Map([
-        ["valid", { command: "npm run valid" }],
-        ["invalidType", { command: "npm run worker" }],
-        ["invalidPort", { type: "service", command: "npm run dev" }],
-      ]),
-    );
-  });
-
-  it("seeds an uncommitted hubcode.json from the main repo into a new worktree", async () => {
-    writeFileSync(
-      join(repoDir, "hubcode.json"),
-      JSON.stringify({ scripts: { dev: { command: "echo hi" } } }),
-    );
-
-    const result = await createLegacyWorktreeForTest({
-      cwd: repoDir,
-      worktreeSlug: "seed-uncommitted",
-      source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/seed" },
-      runSetup: false,
-      hubcodeHome,
-    });
-
-    const worktreeConfigPath = join(result.worktreePath, "hubcode.json");
-    expect(existsSync(worktreeConfigPath)).toBe(true);
-    expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
-      scripts: { dev: { command: "echo hi" } },
-    });
-  });
-
-  it("does not overwrite a committed hubcode.json with uncommitted edits in the main repo", async () => {
-    writeFileSync(
-      join(repoDir, "hubcode.json"),
-      JSON.stringify({ scripts: { dev: { command: "committed" } } }),
-    );
-    execSync("git add hubcode.json", { cwd: repoDir });
-    execSync('git -c commit.gpgsign=false commit -m "add hubcode.json"', { cwd: repoDir });
-
-    writeFileSync(
-      join(repoDir, "hubcode.json"),
-      JSON.stringify({ scripts: { dev: { command: "uncommitted" } } }),
-    );
-
-    const result = await createLegacyWorktreeForTest({
-      cwd: repoDir,
-      worktreeSlug: "preserve-committed",
-      source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/preserve" },
-      runSetup: false,
-      hubcodeHome,
-    });
-
-    const worktreeConfigPath = join(result.worktreePath, "hubcode.json");
-    expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
-      scripts: { dev: { command: "committed" } },
-    });
-  });
-
-  it("creates a worktree without error when no hubcode.json exists in the main repo", async () => {
-    const result = await createLegacyWorktreeForTest({
-      cwd: repoDir,
-      worktreeSlug: "no-config",
-      source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/no-config" },
-      runSetup: false,
-      hubcodeHome,
-    });
-
-    expect(existsSync(join(result.worktreePath, "hubcode.json"))).toBe(false);
-  });
 });
 
 describe("hubcode worktree manager", () => {
@@ -878,14 +529,14 @@ describe("hubcode worktree manager", () => {
       execSync('git -c commit.gpgsign=false commit -m "initial"', { cwd: repo });
     }
 
-    const fromRepoA = await createLegacyWorktreeForTest({
+    const fromRepoA = await createWorktree({
       branchName: "main",
       cwd: repoA,
       baseBranch: "main",
       worktreeSlug: "alpha",
       hubcodeHome,
     });
-    const fromRepoB = await createLegacyWorktreeForTest({
+    const fromRepoB = await createWorktree({
       branchName: "main",
       cwd: repoB,
       baseBranch: "main",
@@ -905,14 +556,14 @@ describe("hubcode worktree manager", () => {
   });
 
   it("lists and deletes hubcode worktrees under ~/.hubcode/worktrees/{hash}", async () => {
-    const first = await createLegacyWorktreeForTest({
+    const first = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "alpha",
       hubcodeHome,
     });
-    const second = await createLegacyWorktreeForTest({
+    const second = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -932,7 +583,7 @@ describe("hubcode worktree manager", () => {
   });
 
   it("deletes a hubcode worktree even when given a subdirectory path", async () => {
-    const created = await createLegacyWorktreeForTest({
+    const created = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -970,7 +621,7 @@ describe("hubcode worktree manager", () => {
       },
     );
 
-    const created = await createLegacyWorktreeForTest({
+    const created = await createWorktree({
       branchName: "teardown-branch",
       cwd: repoDir,
       baseBranch: "main",
@@ -993,34 +644,6 @@ describe("hubcode worktree manager", () => {
     expect(teardownLog).toContain(`port=${runtimeEnv.HUBCODE_WORKTREE_PORT}`);
   });
 
-  it("runs string teardown scripts from hubcode.json as a single shell command", async () => {
-    const hubcodeConfig = {
-      worktree: {
-        teardown:
-          'cleanup_message="teardown string"\necho "$cleanup_message" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown.log"',
-      },
-    };
-    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
-    execSync('git add hubcode.json && git -c commit.gpgsign=false commit -m "add string teardown"', {
-      cwd: repoDir,
-    });
-
-    const created = await createLegacyWorktreeForTest({
-      branchName: "teardown-string-branch",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "teardown-string-test",
-      hubcodeHome,
-    });
-
-    await deleteHubcodeWorktree({ cwd: repoDir, worktreePath: created.worktreePath, hubcodeHome });
-
-    expect(getWorktreeTeardownCommands(repoDir)).toEqual([
-      'cleanup_message="teardown string"\necho "$cleanup_message" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown.log"',
-    ]);
-    expect(readFileSync(join(repoDir, "teardown.log"), "utf8").trim()).toBe("teardown string");
-  });
-
   it("omits HUBCODE_WORKTREE_PORT from teardown env when runtime metadata is missing", async () => {
     const hubcodeConfig = {
       worktree: {
@@ -1035,7 +658,7 @@ describe("hubcode worktree manager", () => {
       { cwd: repoDir },
     );
 
-    const created = await createLegacyWorktreeForTest({
+    const created = await createWorktree({
       branchName: "teardown-port-missing-branch",
       cwd: repoDir,
       baseBranch: "main",
@@ -1064,7 +687,7 @@ describe("hubcode worktree manager", () => {
       { cwd: repoDir },
     );
 
-    const created = await createLegacyWorktreeForTest({
+    const created = await createWorktree({
       branchName: "teardown-failure-branch",
       cwd: repoDir,
       baseBranch: "main",
@@ -1079,159 +702,12 @@ describe("hubcode worktree manager", () => {
     expect(existsSync(created.worktreePath)).toBe(true);
     expect(existsSync(join(repoDir, "teardown-start.log"))).toBe(true);
   });
-
-  it("treats a worktree as hubcode-owned even when its .git admin is missing", async () => {
-    const created = await createLegacyWorktreeForTest({
-      branchName: "orphan-admin-branch",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "orphan-admin",
-      hubcodeHome,
-    });
-
-    // Simulate a previous archive attempt that removed git's admin dir but left
-    // the working tree on disk (e.g. because file churn prevented full cleanup).
-    rmSync(join(repoDir, ".git", "worktrees", "orphan-admin"), {
-      recursive: true,
-      force: true,
-    });
-    expect(existsSync(created.worktreePath)).toBe(true);
-
-    const ownership = await isHubcodeOwnedWorktreeCwd(created.worktreePath, { hubcodeHome });
-    expect(ownership.allowed).toBe(true);
-  });
-
-  it("rejects paths that are not under the hubcode worktrees root", async () => {
-    const outsidePath = join(tempDir, "outside-hubcode-home");
-    mkdirSync(outsidePath, { recursive: true });
-
-    const ownership = await isHubcodeOwnedWorktreeCwd(outsidePath, { hubcodeHome });
-
-    expect(ownership.allowed).toBe(false);
-  });
-
-  it("rejects the worktrees root itself and the per-repo hash dir", async () => {
-    const projectHash = await deriveWorktreeProjectHash(repoDir);
-    const worktreesRoot = join(hubcodeHome, "worktrees");
-    const projectHashDir = join(worktreesRoot, projectHash);
-    mkdirSync(projectHashDir, { recursive: true });
-
-    await expect(isHubcodeOwnedWorktreeCwd(worktreesRoot, { hubcodeHome })).resolves.toMatchObject({
-      allowed: false,
-    });
-    await expect(isHubcodeOwnedWorktreeCwd(projectHashDir, { hubcodeHome })).resolves.toMatchObject({
-      allowed: false,
-    });
-  });
-
-  it("deletes a worktree whose .git admin dir has already been removed", async () => {
-    const created = await createLegacyWorktreeForTest({
-      branchName: "orphan-delete-branch",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "orphan-delete",
-      hubcodeHome,
-    });
-
-    rmSync(join(repoDir, ".git", "worktrees", "orphan-delete"), {
-      recursive: true,
-      force: true,
-    });
-    expect(existsSync(created.worktreePath)).toBe(true);
-
-    await deleteHubcodeWorktree({
-      cwd: repoDir,
-      worktreePath: created.worktreePath,
-      hubcodeHome,
-    });
-
-    expect(existsSync(created.worktreePath)).toBe(false);
-  });
-
-  it("is idempotent: deleting an already-absent worktree succeeds", async () => {
-    const created = await createLegacyWorktreeForTest({
-      branchName: "idempotent-delete-branch",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "idempotent-delete",
-      hubcodeHome,
-    });
-
-    await deleteHubcodeWorktree({
-      cwd: repoDir,
-      worktreePath: created.worktreePath,
-      hubcodeHome,
-    });
-    expect(existsSync(created.worktreePath)).toBe(false);
-
-    // Second call — nothing left on disk and no admin entry — must not throw.
-    await expect(
-      deleteHubcodeWorktree({ cwd: repoDir, worktreePath: created.worktreePath, hubcodeHome }),
-    ).resolves.toBeUndefined();
-  });
-
-  it("deletes a worktree when the parent repo root is not available", async () => {
-    const created = await createLegacyWorktreeForTest({
-      branchName: "no-cwd-branch",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "no-cwd",
-      hubcodeHome,
-    });
-
-    const ownership = await isHubcodeOwnedWorktreeCwd(created.worktreePath, { hubcodeHome });
-    expect(ownership.allowed).toBe(true);
-    expect(ownership.worktreeRoot).toBeTruthy();
-
-    // Simulate the handler path when git has forgotten about the worktree:
-    // caller forwards the path-derived worktreesRoot from the ownership check.
-    await deleteHubcodeWorktree({
-      cwd: null,
-      worktreePath: created.worktreePath,
-      worktreesRoot: ownership.worktreeRoot,
-      hubcodeHome,
-    });
-
-    expect(existsSync(created.worktreePath)).toBe(false);
-  });
 });
 
 describe("slugify", () => {
-  function expectValidHostnameLabel(label: string): void {
-    expect(label.length).toBeGreaterThan(0);
-    expect(label.length).toBeLessThanOrEqual(63);
-    expect(label).toMatch(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
-  }
-
   it("converts to lowercase kebab-case", () => {
     expect(slugify("Hello World")).toBe("hello-world");
     expect(slugify("FOO_BAR")).toBe("foo-bar");
-    expect(slugify("My GREAT App")).toBe("my-great-app");
-  });
-
-  it("replaces dots with hyphens", () => {
-    expect(slugify("my.app")).toBe("my-app");
-    expect(slugify("v1.2.3")).toBe("v1-2-3");
-  });
-
-  it("collapses multiple consecutive spaces to one hyphen", () => {
-    expect(slugify("feature   cool    stuff")).toBe("feature-cool-stuff");
-  });
-
-  it("replaces slashes with hyphens", () => {
-    expect(slugify("feature/cool stuff")).toBe("feature-cool-stuff");
-    expect(slugify("owner/repo")).toBe("owner-repo");
-  });
-
-  it("strips unsupported unicode characters", () => {
-    expect(slugify("café")).toBe("caf");
-    expect(slugify("日本語")).toBe("");
-  });
-
-  it("removes leading and trailing punctuation", () => {
-    expect(slugify("-foo-")).toBe("foo");
-    expect(slugify("__bar__")).toBe("bar");
-    expect(slugify(".baz.")).toBe("baz");
   });
 
   it("truncates long strings at word boundary", () => {
@@ -1239,7 +715,6 @@ describe("slugify", () => {
       "https-stackoverflow-com-questions-68349031-only-run-actions-on-non-draft-pull-request";
     const result = slugify(longInput);
     expect(result.length).toBeLessThanOrEqual(50);
-    expectValidHostnameLabel(result);
     expect(result).toBe("https-stackoverflow-com-questions-68349031-only");
   });
 
@@ -1248,35 +723,5 @@ describe("slugify", () => {
     const result = slugify(longInput);
     expect(result.length).toBe(50);
     expect(result.endsWith("-")).toBe(false);
-    expectValidHostnameLabel(result);
-  });
-
-  it("keeps very long names within the hostname label length limit", () => {
-    const result = slugify("Beta Build ".repeat(12));
-
-    expect(result.length).toBeLessThanOrEqual(63);
-    expectValidHostnameLabel(result);
-  });
-
-  it("returns empty when names collapse to empty", () => {
-    expect(slugify("---")).toBe("");
-    expect(slugify("***")).toBe("");
-    expect(slugify("日本語")).toBe("");
-  });
-
-  it("is idempotent for representative inputs", () => {
-    const inputs = [
-      "my.app",
-      "feature/cool stuff",
-      "  Café Launch  ",
-      "__bar__",
-      "Beta Build ".repeat(12),
-      "release***candidate",
-    ];
-
-    for (const input of inputs) {
-      const slug = slugify(input);
-      expect(slugify(slug)).toBe(slug);
-    }
   });
 });

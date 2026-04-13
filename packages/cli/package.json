@@ -1,22 +1,22 @@
 {
-  "name": "@gethubcode/cli",
-  "version": "0.1.63-beta.4",
+  "name": "@hubtool/cli",
+  "version": "0.1.55-rc.1",
   "description": "Hubcode CLI - control your AI coding agents from the command line",
-  "bin": {
-    "hubcode": "bin/hubcode"
-  },
+  "type": "module",
   "files": [
     "bin",
     "dist"
   ],
-  "type": "module",
   "publishConfig": {
     "access": "public"
+  },
+  "bin": {
+    "hubcode": "bin/hubcode"
   },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{ recursive: true, force: true })\" && tsc -p tsconfig.json --incremental false",
     "prepack": "npm run build",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "npm run test:local",
     "test:local": "tsx tests/run-all.ts",
     "test:e2e": "npm run test:local",
@@ -24,7 +24,8 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.0",
-    "@gethubcode/server": "0.1.63-beta.4",
+    "@hubtool/relay": "0.1.55-rc.1",
+    "@hubtool/server": "0.1.55-rc.1",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
     "mime-types": "^2.1.35",
@@ -36,7 +37,6 @@
     "@types/ws": "^8.5.8",
     "tsx": "^4.6.0",
     "typescript": "^5.2.2",
-    "vitest": "^3.2.4",
     "zx": "^8.8.5"
   }
 }

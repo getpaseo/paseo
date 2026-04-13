@@ -42,7 +42,7 @@ buildNpmPackage rec {
 
   # To update: run `nix build` with lib.fakeHash, copy the `got:` hash.
   # CI auto-updates this when package-lock.json changes (see .github/workflows/).
-  npmDepsHash = "sha256-03T7uVLkODsY9mT70HAochH30iZpc4TnVVrjGmR5INw=";
+  npmDepsHash = "sha256-sVWb8lj3cgxgVcRvBmS5f0AyPT6uS46KfBEWgG6s8ww=";
 
   # Prevent onnxruntime-node's install script from running during automatic
   # npm rebuild (it tries to download from api.nuget.org, which fails in the sandbox).
@@ -87,9 +87,9 @@ buildNpmPackage rec {
     # Copy node_modules (preserving workspace symlinks)
     cp -a node_modules $out/lib/hubcode/
 
-    # Auto-detect which @gethubcode/* packages were built by build:daemon
+    # Auto-detect which @hubtool/* packages were built by build:daemon
     # (they'll have a dist/ directory). Copy those and remove the rest.
-    for link in $out/lib/hubcode/node_modules/@gethubcode/*; do
+    for link in $out/lib/hubcode/node_modules/@hubtool/*; do
       name=$(basename "$link")
       if [ -d "packages/$name/dist" ]; then
         mkdir -p "$out/lib/hubcode/packages/$name"

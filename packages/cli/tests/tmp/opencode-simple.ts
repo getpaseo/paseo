@@ -1,4 +1,4 @@
-import { createE2ETestContext } from "../helpers/test-daemon.js";
+import { createE2ETestContext } from "/Users/moboudra/.hubcode/worktrees/1luy0po7/beefy-parrot/packages/cli/tests/helpers/test-daemon.ts";
 
 async function main() {
   const ctx = await createE2ETestContext({ timeout: 180000 });

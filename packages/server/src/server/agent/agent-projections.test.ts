@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus } from "./agent-manager.js";
 import { toAgentPayload, toStoredAgentRecord, type ManagedAgent } from "./agent-projections.js";
-import type { AgentSession } from "./agent-sdk-types.js";
 import type {
   AgentFeature,
   AgentPermissionRequest,
@@ -41,8 +40,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     ...restOverrides
   } = overrides;
 
-  const sessionValue =
-    lifecycle === "closed" ? null : (restOverrides.session ?? ({} as AgentSession));
+  const sessionValue = lifecycle === "closed" ? null : (restOverrides.session ?? ({} as any));
   const activeForegroundTurnIdValue =
     restOverrides.activeForegroundTurnId ?? (lifecycle === "running" ? "test-turn-id" : null);
   const lastErrorValue =
@@ -252,7 +250,7 @@ describe("toAgentPayload", () => {
     expect(payload.lastUsage).toEqual(agent.lastUsage);
     expect(payload.lastUsage).not.toBe(agent.lastUsage);
     expect(payload.lastError).toBe("boom");
-    expect((payload as unknown as { session?: unknown }).session).toBeUndefined();
+    expect((payload as any).session).toBeUndefined();
 
     payload.availableModes[0].label = "Changed";
     expect(agent.availableModes[0].label).toBe("Planning");
@@ -312,7 +310,7 @@ describe("toAgentPayload", () => {
       persistence: {
         provider: "codex",
         sessionId: "persist-99",
-        nativeHandle: { id: "native" } as unknown,
+        nativeHandle: { id: "native" } as any,
         metadata: { restored: new Date("2025-03-01T00:00:00.000Z"), empty: {} },
       },
     });

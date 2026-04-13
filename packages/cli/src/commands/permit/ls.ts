@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import type { AgentPermissionRequest, AgentSnapshotPayload } from "@gethubcode/server";
+import type { AgentPermissionRequest, AgentSnapshotPayload } from "@hubtool/server";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 

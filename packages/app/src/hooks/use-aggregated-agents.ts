@@ -45,8 +45,6 @@ export function useAggregatedAgents(options?: {
   }, [runtime]);
 
   const result = useMemo(() => {
-    // runtimeVersion is referenced so the memo recomputes when runtime state changes.
-    void runtimeVersion;
     const allAgents: AggregatedAgent[] = [];
     const serverLabelById = new Map(
       daemons.map((daemon) => [daemon.serverId, daemon.label] as const),

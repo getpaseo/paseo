@@ -1,11 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createTestHubcodeDaemon, type TestHubcodeDaemon } from "./test-utils/hubcode-daemon.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import type { AgentStreamEventPayload } from "../shared/messages.js";
 import type { AgentSnapshotPayload } from "./messages.js";
-import { PushService } from "./push/push-service.js";
-import { PushTokenStore } from "./push/token-store.js";
-import { PRESENCE_THRESHOLD_MS } from "./agent-attention-policy.js";
 
 /**
  * Tests for client activity tracking and smart notifications.
@@ -14,9 +11,11 @@ import { PRESENCE_THRESHOLD_MS } from "./agent-attention-policy.js";
  * We want to notify them where they'll see it.
  *
  * Rules:
- * 1. If a present client is focused on the agent → no notification
- * 2. Otherwise, notify the most recently active present client
- * 3. If no client is present → send push for non-error attention
+ * 1. If user is actively looking at the agent (focused + visible + recent activity) → no notification
+ * 2. If user is on a device but looking elsewhere → notify on that device
+ * 3. If web is stale (>2min no activity) but mobile is connected → notify mobile, not web
+ * 4. Mobile is the fallback - always notify if connected and web is stale
+ * 5. Switching tabs (appVisible=false) with recent activity → NO notification (user is still at computer)
  *
  * Heartbeat contains:
  * - deviceType: "web" | "mobile"
@@ -31,14 +30,8 @@ describe("client activity tracking", () => {
   let daemon: TestHubcodeDaemon;
   let client1: DaemonClient;
   let client2: DaemonClient;
-  let sendPushSpy: ReturnType<typeof vi.spyOn>;
-  let getAllTokensSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    sendPushSpy = vi.spyOn(PushService.prototype, "sendPush").mockResolvedValue(undefined);
-    getAllTokensSpy = vi
-      .spyOn(PushTokenStore.prototype, "getAllTokens")
-      .mockReturnValue(["ExponentPushToken[activity-test]"]);
     daemon = await createTestHubcodeDaemon();
   });
 
@@ -46,8 +39,6 @@ describe("client activity tracking", () => {
     if (client1) await client1.close().catch(() => {});
     if (client2) await client2.close().catch(() => {});
     await daemon.close();
-    sendPushSpy.mockRestore();
-    getAllTokensSpy.mockRestore();
   }, 30000);
 
   async function createClient(): Promise<DaemonClient> {
@@ -152,7 +143,7 @@ describe("client activity tracking", () => {
       expect(attention.shouldNotify).toBe(true);
     }, 120000);
 
-    test("notification when app is not visible but activity is recent", async () => {
+    test("no notification when app is not visible but activity is recent (user just switched tabs)", async () => {
       client1 = await createClient();
 
       const agent = await createAgent({
@@ -160,7 +151,7 @@ describe("client activity tracking", () => {
         title: "App Hidden Test",
       });
 
-      // User switched away from the app but was active recently.
+      // User switched away from the app but was active recently - they're still at the computer
       client1.sendHeartbeat({
         deviceType: "web",
         focusedAgentId: null, // null because app not visible
@@ -176,10 +167,10 @@ describe("client activity tracking", () => {
       const attention = await attentionPromise;
 
       expect(attention.reason).toBe("finished");
-      expect(attention.shouldNotify).toBe(true);
+      expect(attention.shouldNotify).toBe(false);
     }, 120000);
 
-    test("push fallback when activity is stale beyond the presence threshold", async () => {
+    test("notification when activity is stale (user walked away for 2+ minutes)", async () => {
       client1 = await createClient();
 
       const agent = await createAgent({
@@ -187,8 +178,8 @@ describe("client activity tracking", () => {
         title: "Stale Activity Test",
       });
 
-      // User had agent focused but no activity beyond the presence threshold.
-      const staleTime = new Date(Date.now() - PRESENCE_THRESHOLD_MS - 5_000).toISOString();
+      // User had agent focused but no activity for 2+ minutes (stale threshold)
+      const staleTime = new Date(Date.now() - 125_000).toISOString(); // 2min 5sec ago
       client1.sendHeartbeat({
         deviceType: "web",
         focusedAgentId: agent.id,
@@ -204,8 +195,7 @@ describe("client activity tracking", () => {
       const attention = await attentionPromise;
 
       expect(attention.reason).toBe("finished");
-      expect(attention.shouldNotify).toBe(false);
-      expect(sendPushSpy).toHaveBeenCalledTimes(1);
+      expect(attention.shouldNotify).toBe(true);
     }, 120000);
 
     test("notification when no heartbeat received (legacy/new client)", async () => {
@@ -224,8 +214,7 @@ describe("client activity tracking", () => {
       const attention = await attentionPromise;
 
       expect(attention.reason).toBe("finished");
-      expect(attention.shouldNotify).toBe(false);
-      expect(sendPushSpy).toHaveBeenCalledTimes(1);
+      expect(attention.shouldNotify).toBe(true);
     }, 120000);
   });
 
@@ -272,7 +261,7 @@ describe("client activity tracking", () => {
       expect(attention2.shouldNotify).toBe(false);
     }, 120000);
 
-    test("pushes when both web clients are inactive", async () => {
+    test("both notify when both web clients are inactive", async () => {
       client1 = await createClient();
       client2 = await createClient();
 
@@ -281,7 +270,7 @@ describe("client activity tracking", () => {
         title: "Both Inactive Test",
       });
 
-      const staleTime = new Date(Date.now() - PRESENCE_THRESHOLD_MS - 5_000).toISOString();
+      const staleTime = new Date(Date.now() - 120_000).toISOString();
 
       // Both clients stale
       client1.sendHeartbeat({
@@ -306,46 +295,9 @@ describe("client activity tracking", () => {
 
       const [attention1, attention2] = await Promise.all([attention1Promise, attention2Promise]);
 
-      // No stale client is selected for in-app; push handles the fallback.
-      expect(attention1.shouldNotify).toBe(false);
-      expect(attention2.shouldNotify).toBe(false);
-      expect(sendPushSpy).toHaveBeenCalledTimes(1);
-    }, 120000);
-
-    test("notifies only the present Electron-style web client when Firefox is stale", async () => {
-      client1 = await createClient();
-      client2 = await createClient();
-
-      const agent = await createAgent({
-        client: client1,
-        title: "Stale Firefox Present Electron Test",
-      });
-
-      client1.sendHeartbeat({
-        deviceType: "web",
-        focusedAgentId: agent.id,
-        lastActivityAt: new Date(Date.now() - PRESENCE_THRESHOLD_MS - 60_000).toISOString(),
-        appVisible: false,
-      });
-
-      client2.sendHeartbeat({
-        deviceType: "web",
-        focusedAgentId: null,
-        lastActivityAt: new Date(Date.now() - 1_000).toISOString(),
-        appVisible: false,
-      });
-
-      await new Promise((r) => setTimeout(r, 100));
-
-      const attention1Promise = waitForAttentionRequired(client1, agent.id);
-      const attention2Promise = waitForAttentionRequired(client2, agent.id);
-      await client1.sendMessage(agent.id, "Say 'hello' and nothing else");
-
-      const [attention1, attention2] = await Promise.all([attention1Promise, attention2Promise]);
-
-      expect(attention1.shouldNotify).toBe(false);
+      // Both should notify - no one is watching
+      expect(attention1.shouldNotify).toBe(true);
       expect(attention2.shouldNotify).toBe(true);
-      expect(sendPushSpy).not.toHaveBeenCalled();
     }, 120000);
   });
 
@@ -375,7 +327,7 @@ describe("client activity tracking", () => {
       client2.sendHeartbeat({
         deviceType: "mobile",
         focusedAgentId: null,
-        lastActivityAt: new Date(Date.now() - PRESENCE_THRESHOLD_MS - 60_000).toISOString(),
+        lastActivityAt: new Date(Date.now() - 300_000).toISOString(), // 5 min ago
         appVisible: false,
       });
 
@@ -405,7 +357,7 @@ describe("client activity tracking", () => {
       client1.sendHeartbeat({
         deviceType: "web",
         focusedAgentId: null,
-        lastActivityAt: new Date(Date.now() - PRESENCE_THRESHOLD_MS - 5_000).toISOString(),
+        lastActivityAt: new Date(Date.now() - 120_000).toISOString(),
         appVisible: false,
       });
 
@@ -430,7 +382,7 @@ describe("client activity tracking", () => {
       expect(attention2.shouldNotify).toBe(false);
     }, 120000);
 
-    test("notify mobile only when web is stale and mobile is present", async () => {
+    test("notify mobile only when web is stale", async () => {
       client1 = await createClient(); // web
       client2 = await createClient(); // mobile
 
@@ -443,15 +395,15 @@ describe("client activity tracking", () => {
       client1.sendHeartbeat({
         deviceType: "web",
         focusedAgentId: agent.id, // was looking at agent
-        lastActivityAt: new Date(Date.now() - PRESENCE_THRESHOLD_MS - 5_000).toISOString(),
+        lastActivityAt: new Date(Date.now() - 120_000).toISOString(), // but 2 min ago
         appVisible: true,
       });
 
-      // Mobile: present but not focused on the agent
+      // Mobile: connected but not active (phone in pocket)
       client2.sendHeartbeat({
         deviceType: "mobile",
         focusedAgentId: null,
-        lastActivityAt: new Date().toISOString(),
+        lastActivityAt: new Date(Date.now() - 300_000).toISOString(), // 5 min ago
         appVisible: false,
       });
 
@@ -463,9 +415,9 @@ describe("client activity tracking", () => {
 
       const [attention1, attention2] = await Promise.all([attention1Promise, attention2Promise]);
 
+      // Web stale → don't notify web, notify mobile instead
       expect(attention1.shouldNotify).toBe(false);
       expect(attention2.shouldNotify).toBe(true);
-      expect(sendPushSpy).not.toHaveBeenCalled();
     }, 120000);
 
     test("notify web when user active on web but looking at different agent", async () => {
@@ -488,7 +440,7 @@ describe("client activity tracking", () => {
       client2.sendHeartbeat({
         deviceType: "mobile",
         focusedAgentId: null,
-        lastActivityAt: new Date(Date.now() - PRESENCE_THRESHOLD_MS - 60_000).toISOString(),
+        lastActivityAt: new Date(Date.now() - 300_000).toISOString(),
         appVisible: false,
       });
 
@@ -506,7 +458,7 @@ describe("client activity tracking", () => {
       expect(attention2.shouldNotify).toBe(false);
     }, 120000);
 
-    test("pushes when both devices are inactive and no one is watching agent", async () => {
+    test("notify both when both devices inactive and no one watching agent", async () => {
       client1 = await createClient(); // web
       client2 = await createClient(); // mobile
 
@@ -515,7 +467,7 @@ describe("client activity tracking", () => {
         title: "Both Inactive Test",
       });
 
-      const staleTime = new Date(Date.now() - PRESENCE_THRESHOLD_MS - 5_000).toISOString();
+      const staleTime = new Date(Date.now() - 120_000).toISOString();
 
       // Web: stale
       client1.sendHeartbeat({
@@ -541,9 +493,10 @@ describe("client activity tracking", () => {
 
       const [attention1, attention2] = await Promise.all([attention1Promise, attention2Promise]);
 
-      expect(attention1.shouldNotify).toBe(false);
-      expect(attention2.shouldNotify).toBe(false);
-      expect(sendPushSpy).toHaveBeenCalledTimes(1);
+      // Mobile always notifies when no one is watching
+      // Web is stale so don't bother notifying there
+      expect(attention1.shouldNotify).toBe(false); // web stale
+      expect(attention2.shouldNotify).toBe(true); // mobile fallback
     }, 120000);
   });
 
@@ -552,7 +505,7 @@ describe("client activity tracking", () => {
   // ===========================================================================
 
   describe("edge cases", () => {
-    test("pushes when web is stale and mobile has no heartbeat", async () => {
+    test("mobile notifies even with no heartbeat when web is stale", async () => {
       client1 = await createClient(); // web
       client2 = await createClient(); // mobile - no heartbeat
 
@@ -565,11 +518,12 @@ describe("client activity tracking", () => {
       client1.sendHeartbeat({
         deviceType: "web",
         focusedAgentId: agent.id,
-        lastActivityAt: new Date(Date.now() - PRESENCE_THRESHOLD_MS - 5_000).toISOString(),
+        lastActivityAt: new Date(Date.now() - 120_000).toISOString(),
         appVisible: true,
       });
 
       // Mobile: never sent heartbeat (new connection)
+      // Should still receive notification as fallback
 
       await new Promise((r) => setTimeout(r, 100));
 
@@ -579,12 +533,13 @@ describe("client activity tracking", () => {
 
       const [attention1, attention2] = await Promise.all([attention1Promise, attention2Promise]);
 
+      // Web stale → no notification
+      // Mobile has no heartbeat → treat as should notify (we don't know device type)
       expect(attention1.shouldNotify).toBe(false);
-      expect(attention2.shouldNotify).toBe(false);
-      expect(sendPushSpy).toHaveBeenCalledTimes(1);
+      expect(attention2.shouldNotify).toBe(true);
     }, 120000);
 
-    test("notification when app not visible but activity is recent", async () => {
+    test("no notification when app not visible but activity recent (switched tabs recently)", async () => {
       client1 = await createClient();
 
       const agent = await createAgent({
@@ -592,7 +547,7 @@ describe("client activity tracking", () => {
         title: "Tab Switch Test",
       });
 
-      // User just switched tabs but was active 10 seconds ago.
+      // User just switched tabs but was active 10 seconds ago - still at computer
       client1.sendHeartbeat({
         deviceType: "web",
         focusedAgentId: null, // not focused - tab hidden
@@ -607,10 +562,11 @@ describe("client activity tracking", () => {
 
       const attention = await attentionPromise;
 
-      expect(attention.shouldNotify).toBe(true);
+      // User is at the computer (recent activity) - no notification needed
+      expect(attention.shouldNotify).toBe(false);
     }, 120000);
 
-    test("notifies only the lower-index client when both have identical recent activity", async () => {
+    test("no notification to either when both have recent activity (user is present)", async () => {
       client1 = await createClient(); // web
       client2 = await createClient(); // mobile
 
@@ -619,13 +575,11 @@ describe("client activity tracking", () => {
         title: "Both Recent Activity Test",
       });
 
-      const recentTime = new Date(Date.now() - 30_000).toISOString();
-
-      // Web: tab hidden but recent activity
+      // Web: tab hidden but recent activity (user at computer, switched tabs)
       client1.sendHeartbeat({
         deviceType: "web",
         focusedAgentId: null,
-        lastActivityAt: recentTime,
+        lastActivityAt: new Date(Date.now() - 30_000).toISOString(), // 30s ago
         appVisible: false,
       });
 
@@ -633,7 +587,7 @@ describe("client activity tracking", () => {
       client2.sendHeartbeat({
         deviceType: "mobile",
         focusedAgentId: null,
-        lastActivityAt: recentTime,
+        lastActivityAt: new Date(Date.now() - 30_000).toISOString(),
         appVisible: false,
       });
 
@@ -645,9 +599,9 @@ describe("client activity tracking", () => {
 
       const [attention1, attention2] = await Promise.all([attention1Promise, attention2Promise]);
 
-      expect(attention1.shouldNotify).toBe(true);
+      // Both have recent activity - user is present, no notification needed
+      expect(attention1.shouldNotify).toBe(false);
       expect(attention2.shouldNotify).toBe(false);
-      expect(sendPushSpy).not.toHaveBeenCalled();
     }, 120000);
   });
 });

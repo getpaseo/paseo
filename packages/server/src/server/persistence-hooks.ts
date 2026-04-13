@@ -1,17 +1,12 @@
 import type { AgentManager } from "./agent/agent-manager.js";
-import type {
-  AgentPersistenceHandle,
-  AgentProvider,
-  AgentSessionConfig,
-} from "./agent/agent-sdk-types.js";
+import type { AgentProvider, AgentSessionConfig } from "./agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
-import { buildProviderRegistry } from "./agent/provider-registry.js";
 
-interface LoggerLike {
+type LoggerLike = {
   child(bindings: Record<string, unknown>): LoggerLike;
-  error(...args: unknown[]): void;
-  warn(...args: unknown[]): void;
-}
+  error(...args: any[]): void;
+  warn(...args: any[]): void;
+};
 
 function getLogger(logger: LoggerLike): LoggerLike {
   return logger.child({ module: "persistence" });
@@ -20,21 +15,10 @@ function getLogger(logger: LoggerLike): LoggerLike {
 type AgentStoragePersistence = Pick<AgentStorage, "applySnapshot" | "list">;
 type AgentManagerStateSource = Pick<AgentManager, "subscribe">;
 
-interface BuildSessionConfigOptions {
+type BuildSessionConfigOptions = {
   validProviders?: Iterable<AgentProvider>;
-}
-
-type RegisteredProviders = ReturnType<typeof buildProviderRegistry> | Iterable<AgentProvider>;
-
-function isProviderRegistry(
-  registeredProviders: RegisteredProviders,
-): registeredProviders is ReturnType<typeof buildProviderRegistry> {
-  return (
-    typeof registeredProviders === "object" &&
-    registeredProviders !== null &&
-    !(Symbol.iterator in registeredProviders)
-  );
-}
+  logger?: LoggerLike;
+};
 
 /**
  * Attach AgentStorage persistence to an AgentManager instance so every
@@ -48,9 +32,6 @@ export function attachAgentStoragePersistence(
   const log = getLogger(logger);
   const unsubscribe = agentManager.subscribe((event) => {
     if (event.type !== "agent_state") {
-      return;
-    }
-    if (event.agent.lifecycle === "closed") {
       return;
     }
     void storage.applySnapshot(event.agent).catch((error) => {
@@ -82,6 +63,10 @@ export function buildSessionConfig(
   const validProviders = options?.validProviders;
   const isValidProvider = validProviders ? new Set(validProviders).has(record.provider) : true;
   if (!isValidProvider) {
+    options?.logger?.warn(
+      { agentId: record.id, provider: record.provider },
+      `Skipping persisted agent with unknown provider '${record.provider}'`,
+    );
     return null;
   }
   const overrides = buildConfigOverrides(record);
@@ -99,13 +84,6 @@ export function buildSessionConfig(
   };
 }
 
-export function isStoredAgentProviderAvailable(
-  record: StoredAgentRecord,
-  validProviders?: Iterable<AgentProvider>,
-): boolean {
-  return buildSessionConfig(record, { validProviders }) !== null;
-}
-
 export function extractTimestamps(record: StoredAgentRecord): {
   createdAt: Date;
   updatedAt: Date;
@@ -118,40 +96,4 @@ export function extractTimestamps(record: StoredAgentRecord): {
     lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
     labels: record.labels,
   };
-}
-
-function hasRegisteredProvider(registeredProviders: RegisteredProviders, value: string): boolean {
-  if (isProviderRegistry(registeredProviders)) {
-    return Object.prototype.hasOwnProperty.call(registeredProviders, value);
-  }
-  return new Set(registeredProviders).has(value as AgentProvider);
-}
-
-export function isRegisteredProvider(
-  providerRegistry: ReturnType<typeof buildProviderRegistry>,
-  value: string,
-): boolean {
-  return hasRegisteredProvider(providerRegistry, value);
-}
-
-export function toAgentPersistenceHandle(
-  registeredProviders: RegisteredProviders,
-  handle: StoredAgentRecord["persistence"],
-): AgentPersistenceHandle | null {
-  if (!handle) {
-    return null;
-  }
-  const provider = handle.provider;
-  if (!hasRegisteredProvider(registeredProviders, provider)) {
-    return null;
-  }
-  if (!handle.sessionId) {
-    return null;
-  }
-  return {
-    provider,
-    sessionId: handle.sessionId,
-    ...(handle.nativeHandle !== undefined ? { nativeHandle: handle.nativeHandle } : {}),
-    ...(handle.metadata !== undefined ? { metadata: handle.metadata } : {}),
-  } satisfies AgentPersistenceHandle;
 }

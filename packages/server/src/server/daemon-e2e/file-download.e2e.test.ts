@@ -1,8 +1,18 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  existsSync,
+  rmSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+} from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
+import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
+import type { AgentSnapshotPayload, SessionOutboundMessage } from "../messages.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
@@ -77,7 +87,7 @@ describe("daemon E2E", () => {
       const filePath = path.join(cwd, "expired.txt");
       writeFileSync(filePath, "expired", "utf-8");
 
-      await ctx.client.createAgent({
+      const agent = await ctx.client.createAgent({
         provider: "codex",
         model: CODEX_TEST_MODEL,
         thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
@@ -103,7 +113,7 @@ describe("daemon E2E", () => {
 
     test("rejects paths outside the workspace cwd", async () => {
       const cwd = tmpCwd();
-      await ctx.client.createAgent({
+      const agent = await ctx.client.createAgent({
         provider: "codex",
         model: CODEX_TEST_MODEL,
         thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,

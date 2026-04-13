@@ -25,7 +25,7 @@ function Privacy() {
 
           <section className="space-y-3">
             <h2 className="text-xl font-medium text-white">What we collect</h2>
-            <p>Nothing. Hubcode runs on your machine and doesn&apos;t send us any data.</p>
+            <p>Nothing. Hubcode runs on your machine and doesn't send us any data.</p>
           </section>
 
           <section className="space-y-3">
@@ -48,8 +48,7 @@ function Privacy() {
           <section className="space-y-3">
             <h2 className="text-xl font-medium text-white">Analytics and tracking</h2>
             <p>
-              We don&apos;t use analytics, tracking pixels, cookies, or ads. The app doesn&apos;t
-              phone home.
+              We don't use analytics, tracking pixels, cookies, or ads. The app doesn't phone home.
             </p>
           </section>
 
@@ -58,7 +57,7 @@ function Privacy() {
             <p>
               Hubcode wraps agent providers like Claude Code, Codex, and OpenCode. Those tools
               communicate with their own APIs (Anthropic, OpenAI, etc.) using your credentials.
-              Hubcode doesn&apos;t manage or intercept those API calls.
+              Hubcode doesn't manage or intercept those API calls.
             </p>
             <p>
               If you use voice features with cloud providers (OpenAI speech), your voice data is
@@ -67,8 +66,8 @@ function Privacy() {
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-xl font-medium text-white">We don&apos;t sell your data</h2>
-            <p>We don&apos;t have your data to sell. Hubcode is self-hosted and local-first.</p>
+            <h2 className="text-xl font-medium text-white">We don't sell your data</h2>
+            <p>We don't have your data to sell. Hubcode is self-hosted and local-first.</p>
           </section>
 
           <section className="space-y-3">

@@ -95,25 +95,16 @@ export async function runStopCommand(
     }
 
     // Interrupt each running agent. Idle agents are a no-op.
-    const stopResults = await Promise.all(
-      agents.map(async (agent) => {
-        if (agent.status !== "running") return { ok: true as const, id: agent.id, stopped: false };
-        try {
+    for (const agent of agents) {
+      try {
+        if (agent.status === "running") {
           await client.cancelAgent(agent.id);
-          return { ok: true as const, id: agent.id, stopped: true };
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          return { ok: false as const, id: agent.id, message };
+          stoppedIds.push(agent.id);
         }
-      }),
-    );
-    for (const result of stopResults) {
-      if (!result.ok) {
-        console.error(`Warning: Failed to stop agent ${result.id.slice(0, 7)}: ${result.message}`);
-        continue;
-      }
-      if (result.stopped) {
-        stoppedIds.push(result.id);
+      } catch (err) {
+        // Continue interrupting other agents even if one fails
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Warning: Failed to stop agent ${agent.id.slice(0, 7)}: ${message}`);
       }
     }
 

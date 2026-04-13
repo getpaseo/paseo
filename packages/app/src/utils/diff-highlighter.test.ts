@@ -6,6 +6,7 @@ import {
   highlightDiffFile,
   parseAndHighlightDiff,
   type ParsedDiffFile,
+  type DiffHunk,
 } from "./diff-highlighter";
 
 const SIMPLE_DIFF = `diff --git a/example.ts b/example.ts

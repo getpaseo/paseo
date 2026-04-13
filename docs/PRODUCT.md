@@ -30,7 +30,6 @@ Each project opens as a workspace. For git projects, the default workspace is th
 ### Inside a workspace
 
 A workspace is a flexible canvas:
-
 - Launch multiple agents side by side in split panes
 - Open terminals alongside agents
 - Mix and match providers within the same workspace
@@ -40,7 +39,6 @@ A workspace is a flexible canvas:
 Hubcode is a client-server system. The daemon (Node.js) runs on your machine, manages agent processes, and streams output in real time over WebSocket. Clients connect to the daemon — locally or remotely.
 
 This architecture means:
-
 - The daemon can run on any machine: laptop, VM, remote server
 - Multiple clients can connect simultaneously
 - Agents keep running when you close the app

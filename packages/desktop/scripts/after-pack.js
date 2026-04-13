@@ -1,8 +1,6 @@
 const fs = require("fs");
 const path = require("path");
 
-const { smokePackagedDesktopApp } = require("./smoke-packaged-desktop-app.js");
-
 const EXECUTABLE_NAME = "Hubcode";
 const WRAPPER_MODE = 0o755;
 const WRAPPER_SCRIPT = `#!/bin/bash
@@ -131,24 +129,16 @@ exports.default = async function afterPack(context) {
 
   pruneNativeModules(context.appOutDir, platform, arch);
 
-  if (platform === "linux") {
-    prepareLinuxApp(context.appOutDir);
-  }
+  if (platform !== "linux") return;
 
-  if (platform === "linux" || platform === "win32") {
-    await smokeUnpackedAppIfRequested(context.appOutDir);
-  }
-};
-
-function prepareLinuxApp(appOutDir) {
-  const chromeSandbox = path.join(appOutDir, "chrome-sandbox");
+  const chromeSandbox = path.join(context.appOutDir, "chrome-sandbox");
   if (fs.existsSync(chromeSandbox)) {
     fs.unlinkSync(chromeSandbox);
     console.log("Removed chrome-sandbox from Linux build");
   }
 
-  const executablePath = path.join(appOutDir, EXECUTABLE_NAME);
-  const wrappedBinaryPath = path.join(appOutDir, `${EXECUTABLE_NAME}.bin`);
+  const executablePath = path.join(context.appOutDir, EXECUTABLE_NAME);
+  const wrappedBinaryPath = path.join(context.appOutDir, `${EXECUTABLE_NAME}.bin`);
 
   if (!fs.existsSync(wrappedBinaryPath)) {
     if (!fs.existsSync(executablePath)) {
@@ -162,14 +152,4 @@ function prepareLinuxApp(appOutDir) {
   fs.writeFileSync(executablePath, WRAPPER_SCRIPT, { mode: WRAPPER_MODE });
   fs.chmodSync(executablePath, WRAPPER_MODE);
   console.log(`Created Linux wrapper for ${EXECUTABLE_NAME} with --no-sandbox`);
-}
-
-async function smokeUnpackedAppIfRequested(appOutDir) {
-  if (process.env.HUBCODE_DESKTOP_SMOKE !== "1") {
-    return;
-  }
-
-  await smokePackagedDesktopApp({
-    appPath: appOutDir,
-  });
-}
+};

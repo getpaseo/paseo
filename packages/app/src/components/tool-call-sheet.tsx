@@ -3,29 +3,26 @@ import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated from "react-native-reanimated";
 import {
+  BottomSheetModal,
   BottomSheetScrollView,
   BottomSheetBackdrop,
   BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import { X } from "lucide-react-native";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
-import {
-  IsolatedBottomSheetModal,
-  type IsolatedBottomSheetModalRef,
-} from "@/components/ui/isolated-bottom-sheet-modal";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { ToolCallDetailsContent } from "./tool-call-details";
 
 // ----- Types -----
 
-export interface ToolCallSheetData {
+export type ToolCallSheetData = {
   toolName: string;
   displayName: string;
   summary?: string;
   detail?: ToolCallDetail;
   errorText?: string;
   showLoadingSkeleton?: boolean;
-}
+};
 
 interface ToolCallSheetContextValue {
   openToolCall: (data: ToolCallSheetData) => void;
@@ -62,26 +59,18 @@ interface ToolCallSheetProviderProps {
 }
 
 export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) {
-  const { theme } = useUnistyles();
-  const bottomSheetRef = useRef<IsolatedBottomSheetModalRef>(null);
-  const hasPresentedRef = useRef(false);
+  const bottomSheetRef = useRef<BottomSheetModal>(null);
   const [sheetData, setSheetData] = React.useState<ToolCallSheetData | null>(null);
 
   const snapPoints = useMemo(() => ["60%", "95%"], []);
 
   const openToolCall = useCallback((data: ToolCallSheetData) => {
     setSheetData(data);
-    if (hasPresentedRef.current) {
-      requestAnimationFrame(() => bottomSheetRef.current?.snapToIndex(0));
-      return;
-    }
-
-    hasPresentedRef.current = true;
     bottomSheetRef.current?.present();
   }, []);
 
   const closeToolCall = useCallback(() => {
-    bottomSheetRef.current?.close();
+    bottomSheetRef.current?.dismiss();
   }, []);
 
   const handleSheetChange = useCallback((index: number) => {
@@ -102,27 +91,23 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
     [openToolCall, closeToolCall],
   );
 
-  const handleIndicatorStyle = useMemo(
-    () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
-    [theme.colors.palette.zinc],
-  );
-
   return (
     <ToolCallSheetContext.Provider value={contextValue}>
       {children}
-      <IsolatedBottomSheetModal
+      <BottomSheetModal
         ref={bottomSheetRef}
         snapPoints={snapPoints}
         index={0}
+        stackBehavior="replace"
         enableDynamicSizing={false}
         onChange={handleSheetChange}
         backdropComponent={renderBackdrop}
         enablePanDownToClose
-        backgroundComponent={CustomSheetBackground}
-        handleIndicatorStyle={handleIndicatorStyle}
+        backgroundStyle={styles.sheetBackground}
+        handleIndicatorStyle={styles.handleIndicator}
       >
         {sheetData && <ToolCallSheetContent data={sheetData} onClose={closeToolCall} />}
-      </IsolatedBottomSheetModal>
+      </BottomSheetModal>
     </ToolCallSheetContext.Provider>
   );
 }
@@ -135,7 +120,6 @@ interface ToolCallSheetContentProps {
 }
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
-  const { theme } = useUnistyles();
   const { toolName, displayName, detail, errorText, showLoadingSkeleton } = data;
 
   const IconComponent = resolveToolCallIcon(toolName, detail);
@@ -145,13 +129,13 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <IconComponent size={20} color={theme.colors.foreground} />
+          <IconComponent size={20} color={styles.headerIcon.color} />
           <Text style={styles.headerTitle} numberOfLines={1}>
             {displayName}
           </Text>
         </View>
         <Pressable onPress={onClose} style={styles.closeButton}>
-          <X size={20} color={theme.colors.foregroundMuted} />
+          <X size={20} color={styles.closeIcon.color} />
         </Pressable>
       </View>
 
@@ -171,6 +155,12 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
 // ----- Styles -----
 
 const styles = StyleSheet.create((theme) => ({
+  sheetBackground: {
+    backgroundColor: theme.colors.surface2,
+  },
+  handleIndicator: {
+    backgroundColor: theme.colors.palette.zinc[600],
+  },
   container: {
     flex: 1,
     backgroundColor: theme.colors.surface2,
@@ -190,6 +180,9 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     flex: 1,
   },
+  headerIcon: {
+    color: theme.colors.foreground,
+  },
   headerTitle: {
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
@@ -198,6 +191,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   closeButton: {
     padding: theme.spacing[2],
+  },
+  closeIcon: {
+    color: theme.colors.foregroundMuted,
   },
   content: {
     flex: 1,

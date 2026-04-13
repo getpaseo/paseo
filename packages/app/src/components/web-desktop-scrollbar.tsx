@@ -27,15 +27,7 @@ const HANDLE_WIDTH_TRANSITION_DURATION_MS = 240;
 const HANDLE_SCROLL_VISIBILITY_MS = 1200;
 const HANDLE_SCROLL_ACTIVE_MS = 110;
 
-interface PointerLikeEvent {
-  clientY?: number;
-  pageY?: number;
-  nativeEvent?: { clientY?: number; pageY?: number; preventDefault?: () => void };
-  preventDefault?: () => void;
-  stopPropagation?: () => void;
-}
-
-function readClientY(event: PointerLikeEvent): number | null {
+function readClientY(event: any): number | null {
   const value =
     event?.nativeEvent?.clientY ?? event?.clientY ?? event?.nativeEvent?.pageY ?? event?.pageY;
   return typeof value === "number" ? value : null;
@@ -45,11 +37,11 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-export interface ScrollbarMetrics {
+export type ScrollbarMetrics = {
   offset: number;
   viewportSize: number;
   contentSize: number;
-}
+};
 
 function areMetricsEqual(a: ScrollbarMetrics, b: ScrollbarMetrics): boolean {
   return (
@@ -115,12 +107,12 @@ export function useWebDesktopScrollbarMetrics() {
   };
 }
 
-interface WebDesktopScrollbarOverlayProps {
+type WebDesktopScrollbarOverlayProps = {
   enabled: boolean;
   metrics: ScrollbarMetrics;
   onScrollToOffset: (offset: number) => void;
   inverted?: boolean;
-}
+};
 
 export function WebDesktopScrollbarOverlay({
   enabled,
@@ -287,23 +279,26 @@ export function WebDesktopScrollbarOverlay({
         setIsDragging(false);
       },
     });
-  }, [applyDragDelta]);
+  }, [applyDragDelta, platformIsWeb]);
 
-  const startWebDrag = useCallback((event: PointerLikeEvent) => {
-    if (!platformIsWeb) {
-      return;
-    }
-    const clientY = readClientY(event);
-    if (clientY === null) {
-      return;
-    }
-    event?.preventDefault?.();
-    event?.stopPropagation?.();
-    event?.nativeEvent?.preventDefault?.();
-    dragStartOffsetRef.current = normalizedOffsetRef.current;
-    dragStartClientYRef.current = clientY;
-    setIsDragging(true);
-  }, []);
+  const startWebDrag = useCallback(
+    (event: any) => {
+      if (!platformIsWeb) {
+        return;
+      }
+      const clientY = readClientY(event);
+      if (clientY === null) {
+        return;
+      }
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+      event?.nativeEvent?.preventDefault?.();
+      dragStartOffsetRef.current = normalizedOffsetRef.current;
+      dragStartClientYRef.current = clientY;
+      setIsDragging(true);
+    },
+    [platformIsWeb],
+  );
 
   const handleGrabHoverIn = useCallback(() => {
     if (!isScrollVisible && !isDragging) {
@@ -339,14 +334,20 @@ export function WebDesktopScrollbarOverlay({
       window.removeEventListener("pointerup", stopDragging);
       window.removeEventListener("pointercancel", stopDragging);
     };
-  }, [applyDragDelta, isDragging]);
+  }, [applyDragDelta, isDragging, platformIsWeb]);
+
+  if (!enabled || !geometry.isVisible) {
+    return null;
+  }
 
   const handleVisible = isDragging || isScrollVisible || isHandleHovered;
-  let handleOpacity: number;
-  if (isDragging) handleOpacity = HANDLE_OPACITY_DRAGGING;
-  else if (isHandleHovered) handleOpacity = HANDLE_OPACITY_HOVERED;
-  else if (isScrollVisible) handleOpacity = HANDLE_OPACITY_VISIBLE;
-  else handleOpacity = 0;
+  const handleOpacity = isDragging
+    ? HANDLE_OPACITY_DRAGGING
+    : isHandleHovered
+      ? HANDLE_OPACITY_HOVERED
+      : isScrollVisible
+        ? HANDLE_OPACITY_VISIBLE
+        : 0;
   const handleWidth = isDragging || isHandleHovered ? HANDLE_WIDTH_ACTIVE : HANDLE_WIDTH_IDLE;
   const handleColor = theme.colors.scrollbarHandle;
   const handleCursor = isDragging ? "grabbing" : "grab";
@@ -359,55 +360,26 @@ export function WebDesktopScrollbarOverlay({
   );
   const handleInsetTop = Math.max(0, (thumbRegionHeight - geometry.handleSize) / 2);
 
-  const thumbRegionStyle = useMemo(
-    () => [
-      styles.thumbRegion,
-      {
-        top: 0,
-        height: thumbRegionHeight,
-        transform: [{ translateY: thumbRegionOffset }],
-      },
-      platformIsWeb &&
-        ({
-          cursor: handleCursor,
-          touchAction: "none",
-          userSelect: "none",
-          transitionProperty: "transform",
-          transitionDuration: `${handleTravelDurationMs}ms`,
-          transitionTimingFunction: "linear",
-        } as object),
-    ],
-    [thumbRegionHeight, thumbRegionOffset, handleCursor, handleTravelDurationMs],
-  );
-
-  const handleStyle = useMemo(
-    () => [
-      styles.handle,
-      {
-        marginTop: handleInsetTop,
-        height: geometry.handleSize,
-        width: handleWidth,
-        backgroundColor: handleColor,
-        opacity: handleOpacity,
-      },
-      platformIsWeb &&
-        ({
-          transitionProperty: "opacity, width, background-color",
-          transitionDuration: `${HANDLE_FADE_DURATION_MS}ms, ${HANDLE_WIDTH_TRANSITION_DURATION_MS}ms, ${HANDLE_FADE_DURATION_MS}ms`,
-          transitionTimingFunction: "ease-out, cubic-bezier(0.22, 0.75, 0.2, 1), ease-out",
-        } as object),
-    ],
-    [handleInsetTop, geometry.handleSize, handleWidth, handleColor, handleOpacity],
-  );
-
-  if (!enabled || !geometry.isVisible) {
-    return null;
-  }
-
   return (
     <View style={styles.overlay} pointerEvents="box-none">
       <View
-        style={thumbRegionStyle}
+        style={[
+          styles.thumbRegion,
+          {
+            top: 0,
+            height: thumbRegionHeight,
+            transform: [{ translateY: thumbRegionOffset }],
+          },
+          platformIsWeb &&
+            ({
+              cursor: handleCursor,
+              touchAction: "none",
+              userSelect: "none",
+              transitionProperty: "transform",
+              transitionDuration: `${handleTravelDurationMs}ms`,
+              transitionTimingFunction: "linear",
+            } as any),
+        ]}
         pointerEvents={handleVisible ? "auto" : "none"}
         {...(panResponder?.panHandlers ?? {})}
         {...(platformIsWeb
@@ -417,10 +389,28 @@ export function WebDesktopScrollbarOverlay({
               onPointerLeave: handleGrabHoverOut,
               onMouseEnter: handleGrabHoverIn,
               onMouseLeave: handleGrabHoverOut,
-            } as object)
+            } as any)
           : null)}
       >
-        <View style={handleStyle} pointerEvents="none" />
+        <View
+          style={[
+            styles.handle,
+            {
+              marginTop: handleInsetTop,
+              height: geometry.handleSize,
+              width: handleWidth,
+              backgroundColor: handleColor,
+              opacity: handleOpacity,
+            },
+            platformIsWeb &&
+              ({
+                transitionProperty: "opacity, width, background-color",
+                transitionDuration: `${HANDLE_FADE_DURATION_MS}ms, ${HANDLE_WIDTH_TRANSITION_DURATION_MS}ms, ${HANDLE_FADE_DURATION_MS}ms`,
+                transitionTimingFunction: "ease-out, cubic-bezier(0.22, 0.75, 0.2, 1), ease-out",
+              } as any),
+          ]}
+          pointerEvents="none"
+        />
       </View>
     </View>
   );

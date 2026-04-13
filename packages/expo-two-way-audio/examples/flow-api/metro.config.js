@@ -34,3 +34,4 @@ config.transformer.getTransformOptions = async () => ({
 });
 
 module.exports = wrapWithReanimatedMetroConfig(config);
+config;

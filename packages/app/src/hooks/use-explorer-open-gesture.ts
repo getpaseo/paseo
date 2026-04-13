@@ -2,7 +2,6 @@ import { useCallback, useMemo } from "react";
 import { Gesture } from "react-native-gesture-handler";
 import { Extrapolation, interpolate, runOnJS, useSharedValue } from "react-native-reanimated";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
-import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 
 interface UseExplorerOpenGestureParams {
   enabled: boolean;
@@ -20,7 +19,6 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
     gestureAnimatingRef,
     openGestureRef,
   } = useExplorerSidebarAnimation();
-  const { openGestureRef: leftOpenGestureRef } = useSidebarAnimation();
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
 
@@ -33,7 +31,6 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
     () =>
       Gesture.Pan()
         .withRef(openGestureRef)
-        .simultaneousWithExternalGesture(leftOpenGestureRef)
         .enabled(enabled)
         .manualActivation(true)
         .onTouchesDown((event) => {
@@ -112,7 +109,6 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
       animateToClose,
       isGesturing,
       openGestureRef,
-      leftOpenGestureRef,
       handleGestureOpen,
       touchStartX,
       touchStartY,

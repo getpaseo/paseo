@@ -147,11 +147,7 @@ export class SherpaParakeetRealtimeTranscriptionSession
       this.engine.acceptWaveform(stream, this.engine.sampleRate, floatSamples);
       this.engine.recognizer.decode(stream);
       const result = this.engine.recognizer.getResult(stream);
-      return String(
-        (typeof result === "object" && result && "text" in result ? result.text : undefined) ??
-          result ??
-          "",
-      ).trim();
+      return String(result?.text ?? result ?? "").trim();
     } finally {
       try {
         stream.free?.();

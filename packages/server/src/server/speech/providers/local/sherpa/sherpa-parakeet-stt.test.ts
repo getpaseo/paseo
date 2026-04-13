@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import pino from "pino";
 
 import { SherpaOnnxParakeetSTT } from "./sherpa-parakeet-stt.js";
-import type { SherpaParakeetSttConfig } from "./sherpa-parakeet-stt.js";
 import type { TranscriptionResult } from "../../../speech-provider.js";
 
 function createDeferred<T>() {
@@ -20,10 +19,7 @@ class TestSherpaOnnxParakeetStt extends SherpaOnnxParakeetSTT {
   public readonly pending: Array<ReturnType<typeof createDeferred<TranscriptionResult>>> = [];
 
   constructor() {
-    super(
-      { engine: { sampleRate: 16000 } } as unknown as SherpaParakeetSttConfig,
-      pino({ level: "silent" }),
-    );
+    super({ engine: { sampleRate: 16000 } as any }, pino({ level: "silent" }));
   }
 
   override async transcribeAudio(

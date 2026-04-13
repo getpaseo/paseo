@@ -3,7 +3,7 @@ import type { UserMessageImageAttachment } from "@/types/stream";
 
 export type CreateFlowLifecycleState = "active" | "abandoned" | "sent";
 
-interface PendingCreateAttempt {
+type PendingCreateAttempt = {
   draftId: string;
   serverId: string;
   agentId: string | null;
@@ -12,9 +12,9 @@ interface PendingCreateAttempt {
   timestamp: number;
   lifecycle: CreateFlowLifecycleState;
   images?: UserMessageImageAttachment[];
-}
+};
 
-interface CreateFlowState {
+type CreateFlowState = {
   pendingByDraftId: Record<string, PendingCreateAttempt>;
   setPending: (pending: Omit<PendingCreateAttempt, "lifecycle">) => void;
   updateAgentId: (input: { draftId: string; agentId: string }) => void;
@@ -22,7 +22,7 @@ interface CreateFlowState {
   rekeyDraft: (input: { fromDraftId: string; toDraftId: string }) => void;
   clear: (input: { draftId: string }) => void;
   clearAll: () => void;
-}
+};
 
 export const useCreateFlowStore = create<CreateFlowState>((set) => ({
   pendingByDraftId: {},

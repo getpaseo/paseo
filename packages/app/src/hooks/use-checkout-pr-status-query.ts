@@ -1,9 +1,11 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { CheckoutPrStatusResponse } from "@server/shared/messages";
 
-export function checkoutPrStatusQueryKey(serverId: string, cwd: string) {
+const CHECKOUT_PR_STATUS_STALE_TIME = 20_000;
+const WORKSPACE_PR_HINT_REFETCH_INTERVAL = 60_000;
+
+function checkoutPrStatusQueryKey(serverId: string, cwd: string) {
   return ["checkoutPrStatus", serverId, cwd] as const;
 }
 
@@ -14,14 +16,10 @@ interface UseCheckoutPrStatusQueryOptions {
 }
 
 export type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
-
 export interface PrHint {
   url: string;
   number: number;
   state: "open" | "merged" | "closed";
-  checks?: Array<{ name: string; status: string; url: string | null }>;
-  checksStatus?: "none" | "pending" | "success" | "failure";
-  reviewDecision?: "approved" | "changes_requested" | "pending" | null;
 }
 
 function parsePullRequestNumber(url: string): number | null {
@@ -50,18 +48,15 @@ function selectWorkspacePrHint(payload: CheckoutPrStatusPayload): PrHint | null 
     return null;
   }
 
-  let state: "merged" | "open" | "closed";
-  if (status.isMerged || status.state === "merged") state = "merged";
-  else if (status.state === "open") state = "open";
-  else state = "closed";
-
   return {
     url: status.url,
     number,
-    state,
-    checks: status.checks,
-    checksStatus: status.checksStatus as PrHint["checksStatus"],
-    reviewDecision: status.reviewDecision as PrHint["reviewDecision"],
+    state:
+      status.isMerged || status.state === "merged"
+        ? "merged"
+        : status.state === "open"
+          ? "open"
+          : "closed",
   };
 }
 
@@ -70,23 +65,8 @@ export function useCheckoutPrStatusQuery({
   cwd,
   enabled = true,
 }: UseCheckoutPrStatusQueryOptions) {
-  const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-
-  useEffect(() => {
-    if (!client || !isConnected || !cwd) {
-      return;
-    }
-
-    return client.on("checkout_status_update", (message) => {
-      const prStatus = message.payload.prStatus;
-      if (!prStatus || prStatus.cwd !== cwd) {
-        return;
-      }
-      queryClient.setQueryData(checkoutPrStatusQueryKey(serverId, cwd), prStatus);
-    });
-  }, [client, isConnected, cwd, queryClient, serverId]);
 
   const query = useQuery({
     queryKey: checkoutPrStatusQueryKey(serverId, cwd),
@@ -97,10 +77,8 @@ export function useCheckoutPrStatusQuery({
       return await client.checkoutPrStatus(cwd);
     },
     enabled: !!client && isConnected && !!cwd && enabled,
-    staleTime: Infinity,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
+    staleTime: CHECKOUT_PR_STATUS_STALE_TIME,
+    refetchInterval: 15_000,
   });
 
   return {
@@ -111,6 +89,7 @@ export function useCheckoutPrStatusQuery({
     isFetching: query.isFetching,
     isError: query.isError,
     error: query.error,
+    refresh: query.refetch,
   };
 }
 
@@ -119,23 +98,8 @@ export function useWorkspacePrHint({
   cwd,
   enabled = true,
 }: UseCheckoutPrStatusQueryOptions): PrHint | null {
-  const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-
-  useEffect(() => {
-    if (!client || !isConnected || !cwd) {
-      return;
-    }
-
-    return client.on("checkout_status_update", (message) => {
-      const prStatus = message.payload.prStatus;
-      if (!prStatus || prStatus.cwd !== cwd) {
-        return;
-      }
-      queryClient.setQueryData(checkoutPrStatusQueryKey(serverId, cwd), prStatus);
-    });
-  }, [client, isConnected, cwd, queryClient, serverId]);
 
   const query = useQuery<CheckoutPrStatusPayload, Error, PrHint | null>({
     queryKey: checkoutPrStatusQueryKey(serverId, cwd),
@@ -146,10 +110,8 @@ export function useWorkspacePrHint({
       return await client.checkoutPrStatus(cwd);
     },
     enabled: !!client && isConnected && !!cwd && enabled,
-    staleTime: Infinity,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
+    staleTime: CHECKOUT_PR_STATUS_STALE_TIME,
+    refetchInterval: WORKSPACE_PR_HINT_REFETCH_INTERVAL,
     select: selectWorkspacePrHint,
   });
 

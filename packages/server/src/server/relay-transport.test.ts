@@ -13,7 +13,7 @@ const wsMock = vi.hoisted(() => {
     readyState = MockWebSocket.CONNECTING;
     sent: string[] = [];
     terminateCalls = 0;
-    private listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+    private listeners = new Map<string, Array<(...args: any[]) => void>>();
 
     constructor(url: string, options?: unknown) {
       this.url = url;
@@ -25,15 +25,15 @@ const wsMock = vi.hoisted(() => {
       MockWebSocket.instances = [];
     }
 
-    on(event: string, listener: (...args: unknown[]) => void) {
+    on(event: string, listener: (...args: any[]) => void) {
       const handlers = this.listeners.get(event) ?? [];
       handlers.push(listener);
       this.listeners.set(event, handlers);
       return this;
     }
 
-    once(event: string, listener: (...args: unknown[]) => void) {
-      const wrapped = (...args: unknown[]) => {
+    once(event: string, listener: (...args: any[]) => void) {
+      const wrapped = (...args: any[]) => {
         this.off(event, wrapped);
         listener(...args);
       };
@@ -71,7 +71,7 @@ const wsMock = vi.hoisted(() => {
       this.emit("error", err);
     }
 
-    private off(event: string, listener: (...args: unknown[]) => void) {
+    private off(event: string, listener: (...args: any[]) => void) {
       const handlers = this.listeners.get(event) ?? [];
       this.listeners.set(
         event,
@@ -79,9 +79,9 @@ const wsMock = vi.hoisted(() => {
       );
     }
 
-    private emit(event: string, ...args: unknown[]) {
+    private emit(event: string, ...args: any[]) {
       const handlers = this.listeners.get(event) ?? [];
-      for (const handler of handlers.slice()) {
+      for (const handler of [...handlers]) {
         handler(...args);
       }
     }
@@ -90,12 +90,8 @@ const wsMock = vi.hoisted(() => {
   return { MockWebSocket };
 });
 
-vi.mock("ws", () => ({
-  default: wsMock.MockWebSocket,
-  WebSocket: wsMock.MockWebSocket,
-}));
+vi.mock("ws", () => ({ default: wsMock.MockWebSocket }));
 
-import type pino from "pino";
 import { startRelayTransport } from "./relay-transport";
 
 function createMockLogger() {
@@ -122,7 +118,9 @@ describe("relay-transport control lifecycle", () => {
   });
 
   afterEach(async () => {
-    await Promise.all(controllers.map((controller) => controller.stop()));
+    for (const controller of controllers) {
+      await controller.stop();
+    }
     controllers.length = 0;
     vi.useRealTimers();
   });
@@ -130,9 +128,9 @@ describe("relay-transport control lifecycle", () => {
   test("logs relay_control_connected only after first valid control message", () => {
     const logger = createMockLogger();
     const controller = startRelayTransport({
-      logger: logger as unknown as pino.Logger,
+      logger: logger as any,
       attachSocket: async () => {},
-      relayEndpoint: "relay.hubcode.ai:443",
+      relayEndpoint: "relay.hubcode.sh:443",
       serverId: "srv_test",
     });
     controllers.push(controller);
@@ -152,9 +150,9 @@ describe("relay-transport control lifecycle", () => {
     vi.useFakeTimers();
     const logger = createMockLogger();
     const controller = startRelayTransport({
-      logger: logger as unknown as pino.Logger,
+      logger: logger as any,
       attachSocket: async () => {},
-      relayEndpoint: "relay.hubcode.ai:443",
+      relayEndpoint: "relay.hubcode.sh:443",
       serverId: "srv_test",
     });
     controllers.push(controller);
@@ -174,9 +172,9 @@ describe("relay-transport control lifecycle", () => {
     vi.useFakeTimers();
     const logger = createMockLogger();
     const controller = startRelayTransport({
-      logger: logger as unknown as pino.Logger,
+      logger: logger as any,
       attachSocket: async () => {},
-      relayEndpoint: "relay.hubcode.ai:443",
+      relayEndpoint: "relay.hubcode.sh:443",
       serverId: "srv_test",
     });
     controllers.push(controller);
@@ -195,9 +193,9 @@ describe("relay-transport control lifecycle", () => {
     const logger = createMockLogger();
     const attachSocket = vi.fn(async () => {});
     const controller = startRelayTransport({
-      logger: logger as unknown as pino.Logger,
+      logger: logger as any,
       attachSocket,
-      relayEndpoint: "relay.hubcode.ai:443",
+      relayEndpoint: "relay.hubcode.sh:443",
       serverId: "srv_test",
     });
     controllers.push(controller);

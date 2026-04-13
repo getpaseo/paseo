@@ -1,22 +1,21 @@
 const IGNORED_ARG_PREFIXES = ["-psn_", "--no-sandbox"];
 
 export const DESKTOP_CLI_ENV = "HUBCODE_DESKTOP_CLI";
-const HUBCODE_NODE_ENV = "HUBCODE_NODE_ENV";
 
-export interface NodeEntrypointSpec {
+export type NodeEntrypointSpec = {
   entryPath: string;
   execArgv: string[];
-}
+};
 
-export interface NodeEntrypointInvocation {
+export type NodeEntrypointInvocation = {
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv;
-}
+};
 
 export type NodeEntrypointArgvMode = "bare" | "node-script";
 
-interface CreateNodeEntrypointInvocationInput {
+type CreateNodeEntrypointInvocationInput = {
   execPath: string;
   isPackaged: boolean;
   packagedRunnerPath: string | null;
@@ -24,22 +23,18 @@ interface CreateNodeEntrypointInvocationInput {
   argvMode: NodeEntrypointArgvMode;
   args: string[];
   baseEnv: NodeJS.ProcessEnv;
-}
+};
 
-interface ParseCliPassthroughArgsFromArgvInput {
+type ParseCliPassthroughArgsFromArgvInput = {
   argv: string[];
   isDefaultApp: boolean;
   forceCli: boolean;
-}
+};
 
-export function createElectronNodeEnv(
-  baseEnv: NodeJS.ProcessEnv,
-  options?: { isPackaged?: boolean },
-): NodeJS.ProcessEnv {
+export function createElectronNodeEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...baseEnv,
     ELECTRON_RUN_AS_NODE: "1",
-    ...(options?.isPackaged === true ? { [HUBCODE_NODE_ENV]: "production" } : {}),
   };
 }
 
@@ -66,7 +61,7 @@ export function parseCliPassthroughArgsFromArgv(
 export function createNodeEntrypointInvocation(
   input: CreateNodeEntrypointInvocationInput,
 ): NodeEntrypointInvocation {
-  const env = createElectronNodeEnv(input.baseEnv, { isPackaged: input.isPackaged });
+  const env = createElectronNodeEnv(input.baseEnv);
 
   if (input.isPackaged) {
     if (!input.packagedRunnerPath) {

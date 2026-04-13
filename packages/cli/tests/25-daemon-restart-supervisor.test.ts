@@ -69,10 +69,10 @@ function readWorkerPid(supervisorPid: number): number | null {
   return null;
 }
 
-interface DaemonStatus {
+type DaemonStatus = {
   localDaemon: string | null;
   pid: number | null;
-}
+};
 
 async function readDaemonStatus(hubcodeHome: string): Promise<DaemonStatus> {
   const result =
@@ -101,14 +101,14 @@ async function waitFor(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
-  async function poll(): Promise<void> {
-    if (await check()) return;
-    if (Date.now() >= deadline) throw new Error(message);
+  while (Date.now() < deadline) {
+    if (await check()) {
+      return;
+    }
     await sleep(pollIntervalMs);
-    return poll();
   }
 
-  return poll();
+  throw new Error(message);
 }
 
 console.log("=== Daemon Restart (supervisor regression) ===\n");

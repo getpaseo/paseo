@@ -51,8 +51,7 @@ export async function* streamSession(
       }
     }
 
-    for (;;) {
-      if (closed) break;
+    while (!closed) {
       if (queue.length === 0) {
         await new Promise<void>((resolve) => {
           waiters.push(resolve);

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useRef, useState, type ReactElement } from "react";
 import { ScrollView, View } from "react-native";
 import {
   DndContext,
@@ -28,8 +28,6 @@ const restrictToVerticalAxis: Modifier = ({ transform }) => ({
   ...transform,
   x: 0,
 });
-
-const DND_MODIFIERS = [restrictToVerticalAxis];
 
 interface SortableItemProps<T> {
   id: string;
@@ -80,15 +78,12 @@ function SortableItem<T>({
   const scaleTransform = isDragging ? "scale(1.02)" : "";
   const combinedTransform = [baseTransform, scaleTransform].filter(Boolean).join(" ");
 
-  const style = useMemo(
-    () => ({
-      transform: combinedTransform || undefined,
-      transition,
-      opacity: isDragging ? 0.9 : 1,
-      zIndex: isDragging ? 1000 : 1,
-    }),
-    [combinedTransform, transition, isDragging],
-  );
+  const style = {
+    transform: combinedTransform || undefined,
+    transition,
+    opacity: isDragging ? 0.9 : 1,
+    zIndex: isDragging ? 1000 : 1,
+  };
 
   const info: DraggableRenderItemInfo<T> = {
     item,
@@ -147,7 +142,7 @@ export function DraggableList<T>({
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 6,
+        distance: 8,
       },
     }),
     useSensor(KeyboardSensor, {
@@ -164,16 +159,12 @@ export function DraggableList<T>({
     [data, onDragBegin],
   );
 
-  const clearDragState = useCallback(() => {
-    setActiveId(null);
-    setDragItems(null);
-  }, []);
-
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
 
-      clearDragState();
+      setActiveId(null);
+      setDragItems(null);
 
       if (over && active.id !== over.id) {
         const oldIndex = items.findIndex((item, i) => keyExtractor(item, i) === active.id);
@@ -185,21 +176,15 @@ export function DraggableList<T>({
         }
       }
     },
-    [clearDragState, items, keyExtractor, onDragEnd],
+    [items, keyExtractor, onDragEnd],
   );
 
-  const ids = useMemo(
-    () => items.map((item, index) => keyExtractor(item, index)),
-    [items, keyExtractor],
-  );
-  const wrapperStyle = useMemo(
-    () => [
-      { position: "relative" as const },
-      scrollEnabled ? { flex: 1, minHeight: 0 } : null,
-      containerStyle,
-    ],
-    [scrollEnabled, containerStyle],
-  );
+  const ids = items.map((item, index) => keyExtractor(item, index));
+  const wrapperStyle = [
+    { position: "relative" as const },
+    scrollEnabled ? { flex: 1, minHeight: 0 } : null,
+    containerStyle,
+  ];
 
   return (
     <View style={wrapperStyle}>
@@ -220,9 +205,8 @@ export function DraggableList<T>({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            modifiers={DND_MODIFIERS}
+            modifiers={[restrictToVerticalAxis]}
             onDragStart={handleDragStart}
-            onDragCancel={clearDragState}
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>
@@ -251,9 +235,8 @@ export function DraggableList<T>({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            modifiers={DND_MODIFIERS}
+            modifiers={[restrictToVerticalAxis]}
             onDragStart={handleDragStart}
-            onDragCancel={clearDragState}
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>

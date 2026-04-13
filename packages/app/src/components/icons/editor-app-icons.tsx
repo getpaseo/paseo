@@ -1,5 +1,4 @@
 import { SquareTerminal } from "lucide-react-native";
-import { useMemo } from "react";
 import { Image, type ImageSourcePropType } from "react-native";
 import {
   isKnownEditorTargetId,
@@ -30,10 +29,15 @@ export function hasBundledEditorAppIcon(editorId: EditorTargetId): editorId is K
 }
 
 export function EditorAppIcon({ editorId, size = 16, color }: EditorAppIconProps) {
-  const imageStyle = useMemo(() => ({ width: size, height: size }), [size]);
   if (!hasBundledEditorAppIcon(editorId)) {
     return <SquareTerminal size={size} color={color} />;
   }
 
-  return <Image source={EDITOR_APP_IMAGES[editorId]} style={imageStyle} resizeMode="contain" />;
+  return (
+    <Image
+      source={EDITOR_APP_IMAGES[editorId]}
+      style={{ width: size, height: size }}
+      resizeMode="contain"
+    />
+  );
 }

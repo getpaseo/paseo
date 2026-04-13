@@ -1,11 +1,11 @@
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { Writable } from "node:stream";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createHubcodeDaemon, parseListenString, type HubcodeDaemonConfig } from "./bootstrap.js";
-import { generateLocalPairingOffer } from "./pairing-offer.js";
 import { createTestHubcodeDaemon } from "./test-utils/hubcode-daemon.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 
@@ -50,14 +50,14 @@ describe("hubcode daemon bootstrap", () => {
       listen: "127.0.0.1:0",
       hubcodeHome,
       corsAllowedOrigins: [],
-      hostnames: true,
+      allowedHosts: true,
       mcpEnabled: false,
       staticDir,
       mcpDebug: false,
       agentClients: createTestAgentClients(),
       agentStoragePath: path.join(hubcodeHome, "agents"),
       relayEnabled: false,
-      appBaseUrl: "https://app.hubcode.ai",
+      appBaseUrl: "https://app.hubcode.sh",
       openai: undefined,
       speech: {
         providers: {
@@ -150,20 +150,30 @@ describe("hubcode daemon bootstrap", () => {
     });
   });
 
-  test("generates a relay pairing offer for unix socket listeners", async () => {
+  test("emits a relay pairing offer for unix socket listeners", async () => {
     const hubcodeHomeRoot = await mkdtemp(path.join(os.tmpdir(), "hubcode-socket-relay-"));
     const hubcodeHome = path.join(hubcodeHomeRoot, ".hubcode");
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "hubcode-static-"));
     const socketPath = path.join(hubcodeHomeRoot, "run", "hubcode.sock");
     await mkdir(path.dirname(socketPath), { recursive: true });
     await mkdir(hubcodeHome, { recursive: true });
-    const logger = pino({ level: "silent" });
+
+    const lines: string[] = [];
+    const logger = pino(
+      { level: "info" },
+      new Writable({
+        write(chunk, _encoding, callback) {
+          lines.push(chunk.toString("utf8"));
+          callback();
+        },
+      }),
+    );
 
     const config: HubcodeDaemonConfig = {
       listen: socketPath,
       hubcodeHome,
       corsAllowedOrigins: [],
-      hostnames: true,
+      allowedHosts: true,
       mcpEnabled: false,
       staticDir,
       mcpDebug: false,
@@ -172,7 +182,7 @@ describe("hubcode daemon bootstrap", () => {
       relayEnabled: true,
       relayEndpoint: "127.0.0.1:9",
       relayPublicEndpoint: "127.0.0.1:9",
-      appBaseUrl: "https://app.hubcode.ai",
+      appBaseUrl: "https://app.hubcode.sh",
       openai: undefined,
       speech: undefined,
     };
@@ -181,16 +191,7 @@ describe("hubcode daemon bootstrap", () => {
 
     try {
       await daemon.start();
-      const pairing = await generateLocalPairingOffer({
-        hubcodeHome,
-        relayEnabled: true,
-        relayEndpoint: "127.0.0.1:9",
-        relayPublicEndpoint: "127.0.0.1:9",
-        appBaseUrl: "https://app.hubcode.ai",
-        includeQr: false,
-      });
-      expect(pairing.relayEnabled).toBe(true);
-      expect(pairing.url?.startsWith("https://app.hubcode.ai/#offer=")).toBe(true);
+      expect(lines.some((line) => line.includes('"msg":"pairing_offer"'))).toBe(true);
     } finally {
       await daemon.stop().catch(() => undefined);
       await daemon.agentManager.flush().catch(() => undefined);

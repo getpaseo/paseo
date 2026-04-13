@@ -192,9 +192,9 @@ export function createAudioEngine(
         fn();
       };
 
-      source.addEventListener("ended", () => {
+      source.onended = () => {
         settle(() => resolve(durationSec));
-      });
+      };
 
       try {
         source.start();
@@ -384,6 +384,7 @@ export function createAudioEngine(
         const active = refs.activePlayback;
         refs.activePlayback = null;
         try {
+          active.source.onended = null;
           active.source.stop();
         } catch {
           // Ignore best-effort stop errors.

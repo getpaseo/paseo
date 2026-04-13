@@ -12,7 +12,7 @@ import type {
   AgentStreamMessage,
   AgentStreamEventPayload,
   AgentTimelineItem,
-} from "@gethubcode/server";
+} from "@hubtool/server";
 
 export interface AgentAttachOptions {
   host?: string;

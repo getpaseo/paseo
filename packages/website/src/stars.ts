@@ -10,7 +10,7 @@ function formatStars(count: number): string {
   return `${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
 }
 
-const GITHUB_REPO_URL = "https://api.github.com/repos/gethubcode/hubcode";
+const GITHUB_REPO_URL = "https://api.github.com/repos/hubtool/hubcode";
 
 async function fetchStarCount(): Promise<string> {
   try {

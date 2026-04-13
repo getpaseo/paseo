@@ -9,41 +9,7 @@ import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { createAllClients, shutdownProviders } from "./provider-registry.js";
 import { generateAndApplyAgentMetadata } from "./agent-metadata-generator.js";
-import {
-  createWorktree as createWorktreePrimitive,
-  validateBranchSlug,
-  type CreateWorktreeOptions,
-  type WorktreeConfig,
-} from "../../utils/worktree.js";
-
-interface LegacyCreateWorktreeTestOptions {
-  branchName: string;
-  cwd: string;
-  baseBranch: string;
-  worktreeSlug: string;
-  runSetup?: boolean;
-  hubcodeHome?: string;
-}
-
-function createLegacyWorktreeForTest(
-  options: CreateWorktreeOptions | LegacyCreateWorktreeTestOptions,
-): Promise<WorktreeConfig> {
-  if ("source" in options) {
-    return createWorktreePrimitive(options);
-  }
-
-  return createWorktreePrimitive({
-    cwd: options.cwd,
-    worktreeSlug: options.worktreeSlug,
-    source: {
-      kind: "branch-off",
-      baseBranch: options.baseBranch,
-      newBranchName: options.branchName,
-    },
-    runSetup: options.runSetup ?? true,
-    hubcodeHome: options.hubcodeHome,
-  });
-}
+import { createWorktree, validateBranchSlug } from "../../utils/worktree.js";
 
 const CODEX_TEST_MODEL = "gpt-5.4-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
@@ -138,7 +104,7 @@ function initGitRepo(repoDir: string): void {
 
   test("renames the worktree branch using a real Codex agent", async () => {
     const worktreeSlug = "metadata-worktree";
-    const worktree = await createLegacyWorktreeForTest({
+    const worktree = await createWorktree({
       branchName: worktreeSlug,
       cwd: repoDir,
       baseBranch: "main",

@@ -3,16 +3,16 @@ import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { spawn } from "node:child_process";
 import type pino from "pino";
 
 import { getSherpaOnnxModelSpec, type SherpaOnnxModelId } from "./model-catalog.js";
-import { spawnProcess } from "../../../../../utils/spawn.js";
 
-export interface EnsureSherpaOnnxModelOptions {
+export type EnsureSherpaOnnxModelOptions = {
   modelsDir: string;
   modelId: SherpaOnnxModelId;
   logger: pino.Logger;
-}
+};
 
 export function getSherpaOnnxModelDir(modelsDir: string, modelId: SherpaOnnxModelId): string {
   const spec = getSherpaOnnxModelSpec(modelId);
@@ -20,27 +20,28 @@ export function getSherpaOnnxModelDir(modelsDir: string, modelId: SherpaOnnxMode
 }
 
 async function hasRequiredFiles(modelDir: string, requiredFiles: string[]): Promise<boolean> {
-  const results = await Promise.all(
-    requiredFiles.map(async (rel) => {
-      const abs = path.join(modelDir, rel);
-      try {
-        const s = await stat(abs);
-        if (s.isDirectory()) {
-          return true;
-        }
-        return s.isFile() && s.size > 0;
-      } catch {
-        return false;
+  for (const rel of requiredFiles) {
+    const abs = path.join(modelDir, rel);
+    try {
+      const s = await stat(abs);
+      if (s.isDirectory()) {
+        continue;
       }
-    }),
-  );
-  return results.every((present) => present);
+      if (s.isFile() && s.size > 0) {
+        continue;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
-interface DownloadToFileOptions {
+type DownloadToFileOptions = {
   url: string;
   outputPath: string;
-}
+};
 
 async function downloadToFile(options: DownloadToFileOptions): Promise<void> {
   const { url, outputPath } = options;
@@ -55,7 +56,7 @@ async function downloadToFile(options: DownloadToFileOptions): Promise<void> {
   const tmpPath = `${outputPath}.tmp-${Date.now()}`;
   await mkdir(path.dirname(outputPath), { recursive: true });
 
-  const nodeStream = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
+  const nodeStream = Readable.fromWeb(res.body as any);
 
   try {
     await pipeline(nodeStream, createWriteStream(tmpPath));
@@ -70,9 +71,7 @@ async function extractTarArchive(archivePath: string, destDir: string): Promise<
   await mkdir(destDir, { recursive: true });
 
   await new Promise<void>((resolve, reject) => {
-    const child = spawnProcess("tar", ["xf", archivePath, "-C", destDir], {
-      stdio: "inherit",
-    });
+    const child = spawn("tar", ["xf", archivePath, "-C", destDir], { stdio: "inherit" });
     child.on("error", reject);
     child.on("exit", (code) => {
       if (code === 0) resolve();
@@ -164,18 +163,16 @@ export async function ensureSherpaOnnxModel(
     if (spec.downloadFiles && spec.downloadFiles.length > 0) {
       await mkdir(modelDir, { recursive: true });
 
-      await Promise.all(
-        spec.downloadFiles.map(async (file) => {
-          const dst = path.join(modelDir, file.relPath);
-          if (await isNonEmptyFile(dst)) {
-            return;
-          }
-          await downloadToFile({
-            url: file.url,
-            outputPath: dst,
-          });
-        }),
-      );
+      for (const file of spec.downloadFiles) {
+        const dst = path.join(modelDir, file.relPath);
+        if (await isNonEmptyFile(dst)) {
+          continue;
+        }
+        await downloadToFile({
+          url: file.url,
+          outputPath: dst,
+        });
+      }
 
       logger.info(
         {
@@ -208,17 +205,12 @@ export async function ensureSherpaOnnxModels(options: {
 }): Promise<Record<SherpaOnnxModelId, string>> {
   const uniq = Array.from(new Set(options.modelIds));
   const out: Partial<Record<SherpaOnnxModelId, string>> = {};
-  const paths = await Promise.all(
-    uniq.map((id) =>
-      ensureSherpaOnnxModel({
-        modelsDir: options.modelsDir,
-        modelId: id,
-        logger: options.logger,
-      }),
-    ),
-  );
-  for (let i = 0; i < uniq.length; i += 1) {
-    out[uniq[i]!] = paths[i]!;
+  for (const id of uniq) {
+    out[id] = await ensureSherpaOnnxModel({
+      modelsDir: options.modelsDir,
+      modelId: id,
+      logger: options.logger,
+    });
   }
   return out as Record<SherpaOnnxModelId, string>;
 }

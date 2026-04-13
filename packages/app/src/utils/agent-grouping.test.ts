@@ -7,12 +7,12 @@ function makeAgent(overrides: Partial<AggregatedAgent> = {}): AggregatedAgent {
   return {
     id: overrides.id ?? "a1",
     serverId: overrides.serverId ?? "s1",
-    serverLabel: (overrides as { serverLabel?: string }).serverLabel ?? "server",
+    serverLabel: (overrides as any).serverLabel ?? "server",
     title: overrides.title ?? null,
     status: overrides.status ?? ("running" as AggregatedAgent["status"]),
     lastActivityAt: overrides.lastActivityAt ?? now,
     cwd: overrides.cwd ?? "/tmp/repo",
-    provider: overrides.provider ?? ("openai" as AggregatedAgent["provider"]),
+    provider: overrides.provider ?? ("openai" as any),
     requiresAttention: overrides.requiresAttention ?? false,
     attentionReason: overrides.attentionReason ?? null,
     attentionTimestamp: overrides.attentionTimestamp ?? null,
@@ -40,7 +40,7 @@ describe("deriveProjectDisplayName", () => {
         projectKey: "remote:github.com/hubtool/hubcode",
         projectName: "hubcode",
       }),
-    ).toBe("gethubcode/hubcode");
+    ).toBe("hubtool/hubcode");
   });
 
   it("shows remote path for non-GitHub remote keys", () => {
@@ -70,7 +70,7 @@ describe("groupAgents", () => {
     ];
 
     const { activeGroups } = groupAgents(agents, {
-      getRemoteUrl: () => "git@github.com:gethubcode/hubcode.git",
+      getRemoteUrl: () => "git@github.com:hubtool/hubcode.git",
     });
 
     expect(activeGroups).toHaveLength(1);

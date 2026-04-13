@@ -14,7 +14,6 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
-import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -26,12 +25,10 @@ import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
-import { PiDirectAgentClient } from "./providers/pi-direct-agent.js";
-import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
+import { PiACPAgentClient } from "./providers/pi-acp-agent.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
-  DEV_AGENT_PROVIDER_DEFINITIONS,
   getAgentProviderDefinition,
   type AgentProviderDefinition,
 } from "./provider-manifest.js";
@@ -41,33 +38,28 @@ export type { AgentProviderDefinition };
 export { AGENT_PROVIDER_DEFINITIONS, getAgentProviderDefinition };
 
 export interface ProviderDefinition extends AgentProviderDefinition {
-  enabled: boolean;
   createClient: (logger: Logger) => AgentClient;
-  fetchModels: (options: ListModelsOptions) => Promise<AgentModelDefinition[]>;
-  fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
+  fetchModels: (options?: ListModelsOptions) => Promise<AgentModelDefinition[]>;
+  fetchModes: (options?: ListModesOptions) => Promise<AgentMode[]>;
 }
 
-export interface BuildProviderRegistryOptions {
+export type BuildProviderRegistryOptions = {
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
-  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
-  isDev?: boolean;
-}
+};
 
 type ProviderClientFactory = (
   logger: Logger,
   runtimeSettings?: ProviderRuntimeSettings,
-  options?: Pick<BuildProviderRegistryOptions, "workspaceGitService">,
 ) => AgentClient;
 
-interface ResolvedProvider {
+type ResolvedProvider = {
   definition: AgentProviderDefinition;
   runtimeSettings?: ProviderRuntimeSettings;
   profileModels: ProviderProfileModel[];
-  additionalModels: ProviderProfileModel[];
   enabled: boolean;
   createBaseClient: (logger: Logger) => AgentClient;
-}
+};
 
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
   claude: (logger, runtimeSettings) =>
@@ -75,10 +67,7 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       logger,
       runtimeSettings,
     }),
-  codex: (logger, runtimeSettings, options) =>
-    new CodexAppServerAgentClient(logger, runtimeSettings, {
-      workspaceGitService: options?.workspaceGitService,
-    }),
+  codex: (logger, runtimeSettings) => new CodexAppServerAgentClient(logger, runtimeSettings),
   copilot: (logger, runtimeSettings) =>
     new CopilotACPAgentClient({
       logger,
@@ -86,11 +75,10 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
     }),
   opencode: (logger, runtimeSettings) => new OpenCodeAgentClient(logger, runtimeSettings),
   pi: (logger, runtimeSettings) =>
-    new PiDirectAgentClient({
+    new PiACPAgentClient({
       logger,
       runtimeSettings,
     }),
-  mock: (logger) => new MockLoadTestAgentClient(logger),
 };
 
 function getProviderClientFactory(provider: string): ProviderClientFactory {
@@ -102,7 +90,7 @@ function getProviderClientFactory(provider: string): ProviderClientFactory {
 }
 
 function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings | undefined {
-  if (!override?.command && !override?.env && !override?.disallowedTools) {
+  if (!override?.command && !override?.env) {
     return undefined;
   }
 
@@ -114,7 +102,6 @@ function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings
         }
       : undefined,
     env: override.env,
-    disallowedTools: override.disallowedTools,
   };
 }
 
@@ -131,13 +118,9 @@ function mergeRuntimeSettings(
     env:
       base?.env || override?.env
         ? {
-            ...base?.env,
-            ...override?.env,
+            ...(base?.env ?? {}),
+            ...(override?.env ?? {}),
           }
-        : undefined,
-    disallowedTools:
-      base?.disallowedTools || override?.disallowedTools
-        ? [...(base?.disallowedTools ?? []), ...(override?.disallowedTools ?? [])]
         : undefined,
   };
 }
@@ -226,54 +209,16 @@ function mapModel(provider: AgentProvider, model: AgentModelDefinition): AgentMo
 function mergeModels(
   provider: AgentProvider,
   profileModels: ProviderProfileModel[],
-  additionalModels: ProviderProfileModel[],
   runtimeModels: AgentModelDefinition[],
 ): AgentModelDefinition[] {
-  const baseModels =
-    profileModels.length === 0
-      ? runtimeModels.map((model) => mapModel(provider, model))
-      : profileModels.map((model) => ({
-          ...model,
-          provider,
-        }));
-
-  if (additionalModels.length === 0) {
-    return baseModels;
+  if (profileModels.length === 0) {
+    return runtimeModels.map((model) => mapModel(provider, model));
   }
 
-  const mergedModels = [...baseModels];
-  let hasAdditionalDefault = false;
-
-  for (const model of additionalModels) {
-    const additionalModel = {
-      ...model,
-      provider,
-    };
-    hasAdditionalDefault ||= additionalModel.isDefault === true;
-
-    const existingIndex = mergedModels.findIndex((candidate) => candidate.id === model.id);
-    if (existingIndex === -1) {
-      mergedModels.push(additionalModel);
-      continue;
-    }
-
-    mergedModels[existingIndex] = {
-      ...mergedModels[existingIndex],
-      ...additionalModel,
-    };
-  }
-
-  if (!hasAdditionalDefault) {
-    return mergedModels;
-  }
-
-  const additionalDefaultIds = new Set(
-    additionalModels.filter((model) => model.isDefault === true).map((model) => model.id),
-  );
-
-  return mergedModels.map((model) =>
-    additionalDefaultIds.has(model.id) ? model : Object.assign({}, model, { isDefault: false }),
-  );
+  return profileModels.map((model) => ({
+    ...model,
+    provider,
+  }));
 }
 
 function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): AgentSession {
@@ -365,17 +310,13 @@ function createRegistryEntry(
 
   return {
     ...resolved.definition,
-    enabled: resolved.enabled,
-    createClient: (providerLogger: Logger) =>
-      createResolvedProviderClient(providerLogger, provider, resolved),
-    fetchModels: async (options: ListModelsOptions) =>
-      mergeModels(
-        provider,
-        resolved.profileModels,
-        resolved.additionalModels,
-        await modelClient.listModels(options),
-      ),
-    fetchModes: async (options: ListModesOptions) => {
+    createClient: (providerLogger: Logger) => {
+      const inner = resolved.createBaseClient(providerLogger);
+      return inner.provider === provider ? inner : wrapClientProvider(provider, inner);
+    },
+    fetchModels: async (options?: ListModelsOptions) =>
+      mergeModels(provider, resolved.profileModels, await modelClient.listModels(options)),
+    fetchModes: async (options?: ListModesOptions) => {
       const modes = modelClient.listModes
         ? await modelClient.listModes(options)
         : resolved.definition.modes;
@@ -383,37 +324,23 @@ function createRegistryEntry(
         if (mode.icon && mode.colorTier) return mode;
         const definitionMode = resolved.definition.modes.find((d) => d.id === mode.id);
         if (!definitionMode) return mode;
-        return Object.assign({}, mode, {
+        return {
+          ...mode,
           icon: mode.icon ?? definitionMode.icon,
           colorTier: mode.colorTier ?? definitionMode.colorTier,
-        });
+        };
       });
     },
   };
 }
 
-function createResolvedProviderClient(
-  logger: Logger,
-  provider: AgentProvider,
-  resolved: ResolvedProvider,
-): AgentClient {
-  const inner = resolved.createBaseClient(logger);
-  return inner.provider === provider ? inner : wrapClientProvider(provider, inner);
-}
-
 function buildResolvedBuiltinProviders(
   providerOverrides: Record<string, ProviderOverride>,
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
-  options: Pick<BuildProviderRegistryOptions, "workspaceGitService">,
-  isDev: boolean,
 ): Map<string, ResolvedProvider> {
   const resolvedProviders = new Map<string, ResolvedProvider>();
 
-  const definitions = isDev
-    ? [...AGENT_PROVIDER_DEFINITIONS, ...DEV_AGENT_PROVIDER_DEFINITIONS]
-    : AGENT_PROVIDER_DEFINITIONS;
-
-  for (const definition of definitions) {
+  for (const definition of AGENT_PROVIDER_DEFINITIONS) {
     const override = providerOverrides[definition.id];
     const factory = getProviderClientFactory(definition.id);
     const mergedRuntimeSettings = mergeRuntimeSettings(
@@ -425,12 +352,8 @@ function buildResolvedBuiltinProviders(
       definition: applyOverrideToDefinition(definition, override),
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override?.models ?? [],
-      additionalModels: override?.additionalModels ?? [],
       enabled: override?.enabled !== false,
-      createBaseClient: (logger) =>
-        factory(logger, mergedRuntimeSettings, {
-          workspaceGitService: options.workspaceGitService,
-        }),
+      createBaseClient: (logger) => factory(logger, mergedRuntimeSettings),
     });
   }
 
@@ -442,7 +365,7 @@ function addDerivedProviders(
   providerOverrides: Record<string, ProviderOverride>,
 ): void {
   for (const [providerId, override] of Object.entries(providerOverrides)) {
-    if (resolvedProviders.has(providerId) || BUILTIN_PROVIDER_IDS.includes(providerId)) {
+    if (BUILTIN_PROVIDER_IDS.includes(providerId)) {
       continue;
     }
 
@@ -469,7 +392,6 @@ function addDerivedProviders(
         ),
         runtimeSettings: toRuntimeSettings(override),
         profileModels: override.models ?? [],
-        additionalModels: override.additionalModels ?? [],
         enabled: override.enabled !== false,
         createBaseClient: (logger) =>
           new GenericACPAgentClient({
@@ -499,7 +421,6 @@ function addDerivedProviders(
       definition: createDerivedDefinition(providerId, baseDefinition, override),
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override.models ?? [],
-      additionalModels: override.additionalModels ?? [],
       enabled: override.enabled !== false,
       createBaseClient: (logger) => baseFactory(logger, mergedRuntimeSettings),
     });
@@ -512,21 +433,13 @@ export function buildProviderRegistry(
 ): Record<AgentProvider, ProviderDefinition> {
   const runtimeSettings = options?.runtimeSettings;
   const providerOverrides = options?.providerOverrides ?? {};
-  const resolvedProviders = buildResolvedBuiltinProviders(
-    providerOverrides,
-    runtimeSettings,
-    {
-      workspaceGitService: options?.workspaceGitService,
-    },
-    options?.isDev === true,
-  );
+  const resolvedProviders = buildResolvedBuiltinProviders(providerOverrides, runtimeSettings);
   addDerivedProviders(resolvedProviders, providerOverrides);
 
   return Object.fromEntries(
-    [...resolvedProviders.entries()].map(([provider, resolved]) => [
-      provider,
-      createRegistryEntry(logger, provider, resolved),
-    ]),
+    [...resolvedProviders.entries()]
+      .filter(([, resolved]) => resolved.enabled)
+      .map(([provider, resolved]) => [provider, createRegistryEntry(logger, provider, resolved)]),
   ) as Record<AgentProvider, ProviderDefinition>;
 }
 
@@ -537,20 +450,13 @@ export function getProviderIds(
 }
 
 // Deprecated: Use buildProviderRegistry instead
-export const PROVIDER_REGISTRY: Record<AgentProvider, ProviderDefinition> =
-  null as unknown as Record<AgentProvider, ProviderDefinition>;
+export const PROVIDER_REGISTRY: Record<AgentProvider, ProviderDefinition> = null as any;
 
 export function createAllClients(
   logger: Logger,
   options?: BuildProviderRegistryOptions,
 ): Record<AgentProvider, AgentClient> {
-  return createClientsFromRegistry(buildProviderRegistry(logger, options), logger);
-}
-
-export function createClientsFromRegistry(
-  registry: Record<AgentProvider, ProviderDefinition>,
-  logger: Logger,
-): Record<AgentProvider, AgentClient> {
+  const registry = buildProviderRegistry(logger, options);
   return Object.fromEntries(
     Object.entries(registry).map(([provider, definition]) => [
       provider,

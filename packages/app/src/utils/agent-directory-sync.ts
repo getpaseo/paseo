@@ -1,19 +1,17 @@
-import type { FetchAgentHistoryEntry, FetchAgentsEntry } from "@server/client/daemon-client";
-import { type Agent, useSessionStore } from "@/stores/session-store";
+import type { FetchAgentsEntry } from "@server/client/daemon-client";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
 
-type AgentDirectoryFetchEntry = FetchAgentsEntry | FetchAgentHistoryEntry;
-
-interface PendingPermissionEntry {
+type PendingPermissionEntry = {
   key: string;
   agentId: string;
   request: Agent["pendingPermissions"][number];
-}
+};
 
 export function buildAgentDirectoryState(input: {
   serverId: string;
-  entries: AgentDirectoryFetchEntry[];
+  entries: FetchAgentsEntry[];
 }): {
   agents: Map<string, Agent>;
   pendingPermissions: Map<string, PendingPermissionEntry>;
@@ -42,24 +40,20 @@ export function buildAgentDirectoryState(input: {
   return { agents, pendingPermissions };
 }
 
-export function replaceFetchedAgentDirectory(input: {
+export function applyFetchedAgentDirectory(input: {
   serverId: string;
   entries: FetchAgentsEntry[];
 }): { agents: Map<string, Agent> } {
   const { agents: fetchedAgents, pendingPermissions } = buildAgentDirectoryState(input);
+
   const store = useSessionStore.getState();
 
-  store.setAgents(input.serverId, fetchedAgents);
-  store.setAgentDetails(input.serverId, (prev) => {
-    let next: Map<string, Agent> | null = null;
-    for (const agentId of fetchedAgents.keys()) {
-      if (!prev.has(agentId)) {
-        continue;
-      }
-      next ??= new Map(prev);
-      next.delete(agentId);
+  store.setAgents(input.serverId, (prev) => {
+    const merged = new Map(prev);
+    for (const [id, agent] of fetchedAgents) {
+      merged.set(id, agent);
     }
-    return next ?? prev;
+    return merged;
   });
 
   const lastActivityByAgentId = new Map<string, Date>();
@@ -68,7 +62,13 @@ export function replaceFetchedAgentDirectory(input: {
   }
   store.setAgentLastActivityBatch(lastActivityByAgentId);
 
-  store.setPendingPermissions(input.serverId, new Map(pendingPermissions));
+  store.setPendingPermissions(input.serverId, (prev) => {
+    const merged = new Map(prev);
+    for (const [key, entry] of pendingPermissions) {
+      merged.set(key, entry);
+    }
+    return merged;
+  });
   store.setInitializingAgents(input.serverId, new Map());
   store.setHasHydratedAgents(input.serverId, true);
   return { agents: fetchedAgents };

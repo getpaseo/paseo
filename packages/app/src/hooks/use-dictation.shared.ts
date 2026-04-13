@@ -1,6 +1,6 @@
 export type DictationStatus = "idle" | "recording" | "uploading" | "failed";
 
-export interface UseDictationOptions {
+export type UseDictationOptions = {
   client: import("@server/client/daemon-client").DaemonClient | null;
   onTranscript: (text: string, meta: { requestId: string }) => void;
   onPartialTranscript?: (text: string, meta: { requestId: string }) => void;
@@ -10,9 +10,9 @@ export interface UseDictationOptions {
   canConfirm?: () => boolean;
   autoStopWhenHidden?: { isVisible: boolean };
   enableDuration?: boolean;
-}
+};
 
-export interface UseDictationResult {
+export type UseDictationResult = {
   isRecording: boolean;
   isProcessing: boolean;
   partialTranscript: string;
@@ -26,7 +26,7 @@ export interface UseDictationResult {
   retryFailedDictation: () => Promise<void>;
   discardFailedDictation: () => void;
   reset: () => void;
-}
+};
 
 export const DURATION_TICK_MS = 1000;
 export const PCM_DICTATION_FORMAT = "audio/pcm;rate=16000;bits=16";

@@ -31,6 +31,7 @@ import { View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
 import { shouldFocusPaneFromEventTarget } from "@/components/split-container-pane-focus";
+import { usePanelStore } from "@/stores/panel-store";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import {
@@ -75,7 +76,6 @@ interface SplitContainerProps {
   workspaceKey: string;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
-  isWorkspaceFocused: boolean;
   uiTabs: WorkspaceTab[];
   hoveredCloseTabKey: string | null;
   setHoveredTabKey: Dispatch<SetStateAction<string | null>>;
@@ -89,10 +89,15 @@ interface SplitContainerProps {
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
-  onCreateDraftTab: (input: { paneId?: string }) => void;
-  onCreateTerminalTab: (input: { paneId?: string }) => void;
+  onSelectNewTabOption: (selection: {
+    optionId: "__new_tab_agent__" | "__new_tab_terminal__";
+    paneId?: string;
+  }) => void;
+  onNewTerminalTab: (input: { paneId?: string }) => void;
+  newTabAgentOptionId?: "__new_tab_agent__" | "__new_tab_terminal__";
   buildPaneContentModel: (input: {
     paneId: string;
+    isPaneFocused: boolean;
     tab: WorkspaceTabDescriptor;
   }) => WorkspacePaneContentModel;
   onFocusPane: (paneId: string) => void;
@@ -123,7 +128,7 @@ interface SplitPaneDropData {
   paneId: string;
 }
 
-interface SplitNodeViewProps extends Omit<SplitContainerProps, "layout" | "onMoveTabToPane"> {
+interface SplitNodeViewProps extends Omit<SplitContainerProps, "layout"> {
   node: SplitNode;
   uiTabs: WorkspaceTab[];
   focusedPaneId: string;
@@ -133,16 +138,18 @@ interface SplitNodeViewProps extends Omit<SplitContainerProps, "layout" | "onMov
   tabDropPreview: TabDropPreview | null;
 }
 
-interface SplitPaneViewProps extends Omit<
-  SplitNodeViewProps,
-  | "node"
-  | "workspaceKey"
-  | "focusedPaneId"
-  | "activeDragTabId"
-  | "showDropZones"
-  | "dropPreview"
-  | "onResizeSplit"
-> {
+interface SplitPaneViewProps
+  extends Omit<
+    SplitNodeViewProps,
+    | "node"
+    | "workspaceKey"
+    | "focusedPaneId"
+    | "activeDragTabId"
+    | "showDropZones"
+    | "dropPreview"
+    | "onMoveTabToPane"
+    | "onResizeSplit"
+  > {
   pane: SplitPane;
   uiTabs: WorkspaceTab[];
   isFocused: boolean;
@@ -155,11 +162,11 @@ interface SplitPaneViewProps extends Omit<
 interface MountedTabSlotProps {
   tabDescriptor: WorkspaceTabDescriptor;
   isVisible: boolean;
-  isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
   paneId: string;
   buildPaneContentModel: (input: {
     paneId: string;
+    isPaneFocused: boolean;
     tab: WorkspaceTabDescriptor;
   }) => WorkspacePaneContentModel;
 }
@@ -167,7 +174,6 @@ interface MountedTabSlotProps {
 const MountedTabSlot = memo(function MountedTabSlot({
   tabDescriptor,
   isVisible,
-  isWorkspaceFocused,
   isPaneFocused,
   paneId,
   buildPaneContentModel,
@@ -176,23 +182,15 @@ const MountedTabSlot = memo(function MountedTabSlot({
     () =>
       buildPaneContentModel({
         paneId,
+        isPaneFocused,
         tab: tabDescriptor,
       }),
-    [buildPaneContentModel, paneId, tabDescriptor],
-  );
-
-  const wrapperStyle = useMemo(
-    () => ({ display: (isVisible ? "flex" : "none") as "flex" | "none", flex: 1 }),
-    [isVisible],
+    [buildPaneContentModel, isPaneFocused, paneId, tabDescriptor],
   );
 
   return (
-    <View style={wrapperStyle}>
-      <WorkspacePaneContent
-        content={content}
-        isWorkspaceFocused={isWorkspaceFocused}
-        isPaneFocused={isPaneFocused}
-      />
+    <View style={{ display: isVisible ? "flex" : "none", flex: 1 }}>
+      <WorkspacePaneContent content={content} />
     </View>
   );
 });
@@ -223,82 +221,6 @@ function useStableTabDescriptorMap(tabDescriptors: WorkspaceTabDescriptor[]) {
   return tabDescriptorMap;
 }
 
-interface DragMoveRects {
-  translatedRect: { left: number; top: number; width: number; height: number };
-  overRect: { left: number; top: number; width: number; height: number };
-}
-
-function resolveDragMoveRects(
-  event: Pick<DragMoveEvent, "active" | "over"> | Pick<DragOverEvent, "active" | "over">,
-): DragMoveRects | null {
-  const translatedRect = event.active.rect.current.translated;
-  const overRect = event.over?.rect;
-  if (!translatedRect || !overRect || overRect.width <= 0 || overRect.height <= 0) {
-    return null;
-  }
-  return { translatedRect, overRect };
-}
-
-function computeTabOverDropPreview(input: {
-  activeData: WorkspaceTabDragData;
-  overData: WorkspaceTabDragData;
-  rects: DragMoveRects;
-  panesById: Map<string, SplitPane>;
-  uiTabs: WorkspaceTab[];
-}): TabDropPreview | null {
-  const { activeData, overData, rects, panesById, uiTabs } = input;
-  const targetPane = panesById.get(overData.paneId) ?? null;
-  if (!targetPane) {
-    return null;
-  }
-  const targetTabs = getWorkspacePaneDescriptors({ pane: targetPane, tabs: uiTabs });
-  return computeTabDropPreview({
-    activePaneId: activeData.paneId,
-    activeTabId: activeData.tabId,
-    overPaneId: overData.paneId,
-    overTabId: overData.tabId,
-    targetTabs,
-    activeRect: {
-      left: rects.translatedRect.left,
-      width: rects.translatedRect.width,
-    },
-    overRect: {
-      left: rects.overRect.left,
-      width: rects.overRect.width,
-    },
-  });
-}
-
-function computePaneOverDropPreview(input: {
-  overData: SplitPaneDropData;
-  rects: DragMoveRects;
-}): SplitDropZoneHover | null {
-  const { overData, rects } = input;
-  const centerX = rects.translatedRect.left + rects.translatedRect.width / 2;
-  const centerY = rects.translatedRect.top + rects.translatedRect.height / 2;
-  const relativeX = centerX - rects.overRect.left;
-  const relativeY = centerY - rects.overRect.top;
-  if (
-    Number.isNaN(relativeX) ||
-    Number.isNaN(relativeY) ||
-    relativeX < 0 ||
-    relativeX > rects.overRect.width ||
-    relativeY < 0 ||
-    relativeY > rects.overRect.height
-  ) {
-    return null;
-  }
-  return {
-    paneId: overData.paneId,
-    position: resolveSplitDropPosition({
-      width: rects.overRect.width,
-      height: rects.overRect.height,
-      x: relativeX,
-      y: relativeY,
-    }),
-  };
-}
-
 const dropCollisionDetection: CollisionDetection = (args) => {
   const pointerHits = pointerWithin(args);
   const tabHits = pointerHits.filter(
@@ -323,7 +245,6 @@ export function SplitContainer({
   workspaceKey,
   normalizedServerId,
   normalizedWorkspaceId,
-  isWorkspaceFocused,
   uiTabs,
   hoveredCloseTabKey,
   setHoveredTabKey,
@@ -337,8 +258,9 @@ export function SplitContainer({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onCreateDraftTab,
-  onCreateTerminalTab,
+  onSelectNewTabOption,
+  onNewTerminalTab,
+  newTabAgentOptionId = "__new_tab_agent__",
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -408,23 +330,44 @@ export function SplitContainer({
         return;
       }
 
-      const rects = resolveDragMoveRects(event);
-      if (!rects) {
+      const translatedRect = event.active.rect.current.translated;
+      const overRect = event.over?.rect;
+      if (!translatedRect || !overRect || overRect.width <= 0 || overRect.height <= 0) {
         setDropPreview(null);
         setTabDropPreview(null);
         return;
       }
 
       if (overData?.kind === "workspace-tab") {
-        const preview = computeTabOverDropPreview({
-          activeData,
-          overData,
-          rects,
-          panesById,
-          uiTabs,
+        const targetPane = panesById.get(overData.paneId) ?? null;
+        if (!targetPane) {
+          setDropPreview(null);
+          setTabDropPreview(null);
+          return;
+        }
+
+        const targetTabs = getWorkspacePaneDescriptors({
+          pane: targetPane,
+          tabs: uiTabs,
         });
         setDropPreview(null);
-        setTabDropPreview(preview);
+        setTabDropPreview(
+          computeTabDropPreview({
+            activePaneId: activeData.paneId,
+            activeTabId: activeData.tabId,
+            overPaneId: overData.paneId,
+            overTabId: overData.tabId,
+            targetTabs,
+            activeRect: {
+              left: translatedRect.left,
+              width: translatedRect.width,
+            },
+            overRect: {
+              left: overRect.left,
+              width: overRect.width,
+            },
+          }),
+        );
         return;
       }
 
@@ -434,71 +377,33 @@ export function SplitContainer({
         return;
       }
 
-      setDropPreview(computePaneOverDropPreview({ overData, rects }));
-    },
-    [panesById, uiTabs],
-  );
-
-  const applyTabDropEnd = useCallback(
-    (input: { activeData: WorkspaceTabDragData; overData: WorkspaceTabDragData }): void => {
-      const { activeData, overData } = input;
-      const sourcePane = panesById.get(activeData.paneId) ?? null;
-      const targetPane = panesById.get(overData.paneId) ?? null;
-      if (!sourcePane || !targetPane) {
+      const centerX = translatedRect.left + translatedRect.width / 2;
+      const centerY = translatedRect.top + translatedRect.height / 2;
+      const relativeX = centerX - overRect.left;
+      const relativeY = centerY - overRect.top;
+      if (
+        Number.isNaN(relativeX) ||
+        Number.isNaN(relativeY) ||
+        relativeX < 0 ||
+        relativeX > overRect.width ||
+        relativeY < 0 ||
+        relativeY > overRect.height
+      ) {
+        setDropPreview(null);
         return;
       }
 
-      const sourceTabs = getWorkspacePaneDescriptors({ pane: sourcePane, tabs: uiTabs });
-      const targetTabs = getWorkspacePaneDescriptors({ pane: targetPane, tabs: uiTabs });
-      const sourceIndex = sourceTabs.findIndex((tab) => tab.tabId === activeData.tabId);
-      const resolvedTabDropPreview =
-        tabDropPreview?.paneId === overData.paneId ? tabDropPreview : null;
-      if (sourceIndex < 0 || !resolvedTabDropPreview) {
-        return;
-      }
-
-      if (activeData.paneId === overData.paneId) {
-        if (sourceIndex !== resolvedTabDropPreview.insertionIndex) {
-          const nextTabs = arrayMove(
-            sourceTabs,
-            sourceIndex,
-            resolvedTabDropPreview.insertionIndex,
-          );
-          onReorderTabsInPane(
-            activeData.paneId,
-            nextTabs.map((tab) => tab.tabId),
-          );
-        }
-        return;
-      }
-
-      const nextTargetTabIds = targetTabs.map((tab) => tab.tabId);
-      nextTargetTabIds.splice(resolvedTabDropPreview.insertionIndex, 0, activeData.tabId);
-      onMoveTabToPane(activeData.tabId, overData.paneId);
-      onReorderTabsInPane(overData.paneId, nextTargetTabIds);
-    },
-    [onMoveTabToPane, onReorderTabsInPane, panesById, tabDropPreview, uiTabs],
-  );
-
-  const applyPaneDropEnd = useCallback(
-    (input: { activeData: WorkspaceTabDragData; overData: SplitPaneDropData }): void => {
-      const { activeData, overData } = input;
-      if (dropPreview?.paneId !== overData.paneId) {
-        return;
-      }
-      if (dropPreview.position === "center") {
-        if (activeData.paneId !== overData.paneId) {
-          onMoveTabToPane(activeData.tabId, overData.paneId);
-        }
-        return;
-      }
-      onSplitPane({
-        tabId: activeData.tabId,
-        targetPaneId: overData.paneId,
-        position: dropPreview.position,
+      setDropPreview({
+        paneId: overData.paneId,
+        position: resolveSplitDropPosition({
+          width: overRect.width,
+          height: overRect.height,
+          x: relativeX,
+          y: relativeY,
+        }),
       });
     },
-    [dropPreview, onMoveTabToPane, onSplitPane],
+    [panesById, uiTabs],
   );
 
   const handleDragEnd = useCallback(
@@ -511,18 +416,87 @@ export function SplitContainer({
 
       setActiveDragTabId(null);
 
-      if (activeData?.kind === "workspace-tab" && event.over) {
-        if (overData?.kind === "workspace-tab") {
-          applyTabDropEnd({ activeData, overData });
-        } else if (overData?.kind === "split-pane-drop") {
-          applyPaneDropEnd({ activeData, overData });
+      if (activeData?.kind !== "workspace-tab" || !event.over) {
+        setDropPreview(null);
+        setTabDropPreview(null);
+        return;
+      }
+
+      if (overData?.kind === "workspace-tab") {
+        const sourcePane = panesById.get(activeData.paneId) ?? null;
+        const targetPane = panesById.get(overData.paneId) ?? null;
+        if (!sourcePane || !targetPane) {
+          setDropPreview(null);
+          setTabDropPreview(null);
+          return;
         }
+
+        const sourceTabs = getWorkspacePaneDescriptors({ pane: sourcePane, tabs: uiTabs });
+        const targetTabs = getWorkspacePaneDescriptors({ pane: targetPane, tabs: uiTabs });
+        const sourceIndex = sourceTabs.findIndex((tab) => tab.tabId === activeData.tabId);
+        const resolvedTabDropPreview =
+          tabDropPreview?.paneId === overData.paneId ? tabDropPreview : null;
+        if (sourceIndex < 0 || !resolvedTabDropPreview) {
+          setDropPreview(null);
+          setTabDropPreview(null);
+          return;
+        }
+
+        if (activeData.paneId === overData.paneId) {
+          if (sourceIndex !== resolvedTabDropPreview.insertionIndex) {
+            const nextTabs = arrayMove(
+              sourceTabs,
+              sourceIndex,
+              resolvedTabDropPreview.insertionIndex,
+            );
+            onReorderTabsInPane(
+              activeData.paneId,
+              nextTabs.map((tab) => tab.tabId),
+            );
+          }
+          setDropPreview(null);
+          setTabDropPreview(null);
+          return;
+        }
+
+        const nextTargetTabIds = targetTabs.map((tab) => tab.tabId);
+        nextTargetTabIds.splice(resolvedTabDropPreview.insertionIndex, 0, activeData.tabId);
+        onMoveTabToPane(activeData.tabId, overData.paneId);
+        onReorderTabsInPane(overData.paneId, nextTargetTabIds);
+        setDropPreview(null);
+        setTabDropPreview(null);
+        return;
+      }
+
+      if (overData?.kind === "split-pane-drop" && dropPreview?.paneId === overData.paneId) {
+        if (dropPreview.position === "center") {
+          if (activeData.paneId !== overData.paneId) {
+            onMoveTabToPane(activeData.tabId, overData.paneId);
+          }
+          setDropPreview(null);
+          setTabDropPreview(null);
+          return;
+        }
+
+        onSplitPane({
+          tabId: activeData.tabId,
+          targetPaneId: overData.paneId,
+          position: dropPreview.position,
+        });
       }
 
       setDropPreview(null);
       setTabDropPreview(null);
     },
-    [applyTabDropEnd, applyPaneDropEnd],
+    [
+      dropPreview,
+      onMoveTabToPane,
+      onReorderTabsInPane,
+      onSplitPane,
+      panesById,
+      tabDropPreview,
+      uiTabs,
+    ],
   );
 
   return (
@@ -542,7 +516,6 @@ export function SplitContainer({
         focusedPaneId={layout.focusedPaneId}
         normalizedServerId={normalizedServerId}
         normalizedWorkspaceId={normalizedWorkspaceId}
-        isWorkspaceFocused={isWorkspaceFocused}
         hoveredCloseTabKey={hoveredCloseTabKey}
         setHoveredTabKey={setHoveredTabKey}
         setHoveredCloseTabKey={setHoveredCloseTabKey}
@@ -555,12 +528,14 @@ export function SplitContainer({
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
         onCloseOtherTabs={onCloseOtherTabs}
-        onCreateDraftTab={onCreateDraftTab}
-        onCreateTerminalTab={onCreateTerminalTab}
+        onSelectNewTabOption={onSelectNewTabOption}
+        onNewTerminalTab={onNewTerminalTab}
+        newTabAgentOptionId={newTabAgentOptionId}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
         onSplitPane={onSplitPane}
         onSplitPaneEmpty={onSplitPaneEmpty}
+        onMoveTabToPane={onMoveTabToPane}
         onResizeSplit={onResizeSplit}
         onReorderTabsInPane={onReorderTabsInPane}
         renderPaneEmptyState={renderPaneEmptyState}
@@ -595,21 +570,15 @@ function DragOverlayTabChip({
   normalizedWorkspaceId: string;
 }) {
   const tab = uiTabs.find((t) => t.tabId === tabId);
-  const descriptor = useMemo<WorkspaceTabDescriptor | null>(
-    () =>
-      tab
-        ? {
-            key: tab.tabId,
-            tabId: tab.tabId,
-            kind: tab.target.kind,
-            target: tab.target,
-          }
-        : null,
-    [tab],
-  );
-  if (!descriptor) {
+  if (!tab) {
     return null;
   }
+  const descriptor: WorkspaceTabDescriptor = {
+    key: tab.tabId,
+    tabId: tab.tabId,
+    kind: tab.target.kind,
+    target: tab.target,
+  };
   return (
     <DragOverlayTabChipInner
       tab={descriptor}
@@ -630,21 +599,6 @@ function DragOverlayTabChipInner({
 }) {
   const { theme } = useUnistyles();
 
-  const chipStyle = useMemo(
-    () => [
-      styles.dragOverlayChip,
-      {
-        backgroundColor: theme.colors.surface1,
-        borderColor: theme.colors.borderAccent,
-      },
-    ],
-    [theme.colors.surface1, theme.colors.borderAccent],
-  );
-  const chipLabelStyle = useMemo(
-    () => [styles.dragOverlayLabel, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
-  );
-
   return (
     <WorkspaceTabPresentationResolver
       tab={tab}
@@ -655,9 +609,20 @@ function DragOverlayTabChipInner({
         const label = presentation.titleState === "loading" ? "Loading..." : presentation.label;
 
         return (
-          <View style={chipStyle}>
+          <View
+            style={[
+              styles.dragOverlayChip,
+              {
+                backgroundColor: theme.colors.surface1,
+                borderColor: theme.colors.borderAccent,
+              },
+            ]}
+          >
             <WorkspaceTabIcon presentation={presentation} active size={14} />
-            <Text numberOfLines={1} style={chipLabelStyle}>
+            <Text
+              numberOfLines={1}
+              style={[styles.dragOverlayLabel, { color: theme.colors.foreground }]}
+            >
               {label}
             </Text>
           </View>
@@ -667,11 +632,6 @@ function DragOverlayTabChipInner({
   );
 }
 
-function SplitGroupChild({ flex, children }: { flex: number; children: ReactNode }) {
-  const childStyle = useMemo(() => [styles.groupChild, { flex }], [flex]);
-  return <View style={childStyle}>{children}</View>;
-}
-
 function SplitNodeView({
   node,
   workspaceKey,
@@ -679,7 +639,6 @@ function SplitNodeView({
   focusedPaneId,
   normalizedServerId,
   normalizedWorkspaceId,
-  isWorkspaceFocused,
   hoveredCloseTabKey,
   setHoveredTabKey,
   setHoveredCloseTabKey,
@@ -692,12 +651,14 @@ function SplitNodeView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onCreateDraftTab,
-  onCreateTerminalTab,
+  onSelectNewTabOption,
+  onNewTerminalTab,
+  newTabAgentOptionId,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
   onSplitPaneEmpty,
+  onMoveTabToPane,
   onResizeSplit,
   onReorderTabsInPane,
   renderPaneEmptyState,
@@ -706,21 +667,6 @@ function SplitNodeView({
   dropPreview,
   tabDropPreview,
 }: SplitNodeViewProps) {
-  const groupId = node.kind === "group" ? node.group.id : null;
-  const groupDirection = node.kind === "group" ? node.group.direction : null;
-
-  const storedGroupSizes = useWorkspaceLayoutStore((state) =>
-    groupId ? state.splitSizesByWorkspace[workspaceKey]?.[groupId] : undefined,
-  );
-
-  const groupStyle = useMemo(
-    () => [
-      styles.group,
-      groupDirection === "horizontal" ? styles.groupHorizontal : styles.groupVertical,
-    ],
-    [groupDirection],
-  );
-
   if (node.kind === "pane") {
     return (
       <SplitPaneView
@@ -729,7 +675,6 @@ function SplitNodeView({
         isFocused={node.pane.id === focusedPaneId}
         normalizedServerId={normalizedServerId}
         normalizedWorkspaceId={normalizedWorkspaceId}
-        isWorkspaceFocused={isWorkspaceFocused}
         hoveredCloseTabKey={hoveredCloseTabKey}
         setHoveredTabKey={setHoveredTabKey}
         setHoveredCloseTabKey={setHoveredCloseTabKey}
@@ -742,8 +687,9 @@ function SplitNodeView({
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
         onCloseOtherTabs={onCloseOtherTabs}
-        onCreateDraftTab={onCreateDraftTab}
-        onCreateTerminalTab={onCreateTerminalTab}
+        onSelectNewTabOption={onSelectNewTabOption}
+        onNewTerminalTab={onNewTerminalTab}
+        newTabAgentOptionId={newTabAgentOptionId}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
         onSplitPane={onSplitPane}
@@ -758,13 +704,21 @@ function SplitNodeView({
     );
   }
 
-  const groupSizes = storedGroupSizes ?? node.group.sizes;
+  const groupSizes =
+    useWorkspaceLayoutStore(
+      (state) => state.splitSizesByWorkspace[workspaceKey]?.[node.group.id],
+    ) ?? node.group.sizes;
 
   return (
-    <View style={groupStyle}>
+    <View
+      style={[
+        styles.group,
+        node.group.direction === "horizontal" ? styles.groupHorizontal : styles.groupVertical,
+      ]}
+    >
       {node.group.children.map((child, index) => (
         <Fragment key={getNodeKey(child)}>
-          <SplitGroupChild flex={groupSizes[index] ?? 1}>
+          <View style={[styles.groupChild, { flex: groupSizes[index] ?? 1 }]}>
             <SplitNodeView
               node={child}
               workspaceKey={workspaceKey}
@@ -772,7 +726,6 @@ function SplitNodeView({
               focusedPaneId={focusedPaneId}
               normalizedServerId={normalizedServerId}
               normalizedWorkspaceId={normalizedWorkspaceId}
-              isWorkspaceFocused={isWorkspaceFocused}
               hoveredCloseTabKey={hoveredCloseTabKey}
               setHoveredTabKey={setHoveredTabKey}
               setHoveredCloseTabKey={setHoveredCloseTabKey}
@@ -785,12 +738,14 @@ function SplitNodeView({
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
               onCloseOtherTabs={onCloseOtherTabs}
-              onCreateDraftTab={onCreateDraftTab}
-              onCreateTerminalTab={onCreateTerminalTab}
+              onSelectNewTabOption={onSelectNewTabOption}
+              onNewTerminalTab={onNewTerminalTab}
+              newTabAgentOptionId={newTabAgentOptionId}
               buildPaneContentModel={buildPaneContentModel}
               onFocusPane={onFocusPane}
               onSplitPane={onSplitPane}
               onSplitPaneEmpty={onSplitPaneEmpty}
+              onMoveTabToPane={onMoveTabToPane}
               onResizeSplit={onResizeSplit}
               onReorderTabsInPane={onReorderTabsInPane}
               renderPaneEmptyState={renderPaneEmptyState}
@@ -799,7 +754,7 @@ function SplitNodeView({
               dropPreview={dropPreview}
               tabDropPreview={tabDropPreview}
             />
-          </SplitGroupChild>
+          </View>
           {index < node.group.children.length - 1 ? (
             <ResizeHandle
               direction={node.group.direction}
@@ -821,7 +776,6 @@ function SplitPaneView({
   isFocused,
   normalizedServerId,
   normalizedWorkspaceId,
-  isWorkspaceFocused,
   hoveredCloseTabKey,
   setHoveredTabKey,
   setHoveredCloseTabKey,
@@ -834,11 +788,12 @@ function SplitPaneView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onCreateDraftTab,
-  onCreateTerminalTab,
+  onSelectNewTabOption,
+  onNewTerminalTab,
+  newTabAgentOptionId,
   buildPaneContentModel,
   onFocusPane,
-  onSplitPane: _onSplitPane,
+  onSplitPane,
   onSplitPaneEmpty,
   onReorderTabsInPane,
   renderPaneEmptyState,
@@ -847,7 +802,7 @@ function SplitPaneView({
   dropPreview,
   tabDropPreview,
 }: SplitPaneViewProps) {
-  const { theme: _theme } = useUnistyles();
+  const { theme } = useUnistyles();
   const paneRef = useRef<View | null>(null);
   const stableOnFocusPane = useStableEvent(onFocusPane);
   const padding = useWindowControlsPadding("tabRow");
@@ -920,44 +875,9 @@ function SplitPaneView({
     };
   }, [stableOnFocusPane, pane.id]);
 
-  const paneId = pane.id;
-  const handleCloseTabsToLeft = useCallback(
-    (tabId: string) => onCloseTabsToLeft(tabId, paneTabs),
-    [onCloseTabsToLeft, paneTabs],
-  );
-  const handleCloseTabsToRight = useCallback(
-    (tabId: string) => onCloseTabsToRight(tabId, paneTabs),
-    [onCloseTabsToRight, paneTabs],
-  );
-  const handleCloseOtherTabs = useCallback(
-    (tabId: string) => onCloseOtherTabs(tabId, paneTabs),
-    [onCloseOtherTabs, paneTabs],
-  );
-  const handleReorderTabs = useCallback(
-    (nextTabs: WorkspaceTabDescriptor[]) => {
-      onReorderTabsInPane(
-        paneId,
-        nextTabs.map((tab) => tab.tabId),
-      );
-    },
-    [onReorderTabsInPane, paneId],
-  );
-  const handleSplitRight = useCallback(
-    () => onSplitPaneEmpty({ targetPaneId: paneId, position: "right" }),
-    [onSplitPaneEmpty, paneId],
-  );
-  const handleSplitDown = useCallback(
-    () => onSplitPaneEmpty({ targetPaneId: paneId, position: "bottom" }),
-    [onSplitPaneEmpty, paneId],
-  );
-  const paneTabsStyle = useMemo(
-    () => [styles.paneTabs, { paddingLeft: padding.left, paddingRight: padding.right }],
-    [padding.left, padding.right],
-  );
-
   return (
     <View ref={paneRef} collapsable={false} style={styles.pane}>
-      <View style={paneTabsStyle}>
+      <View style={[styles.paneTabs, { paddingLeft: padding.left, paddingRight: padding.right }]}>
         <TitlebarDragRegion />
         <WorkspaceDesktopTabsRow
           paneId={pane.id}
@@ -972,14 +892,20 @@ function SplitPaneView({
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onReloadAgent={onReloadAgent}
-          onCloseTabsToLeft={handleCloseTabsToLeft}
-          onCloseTabsToRight={handleCloseTabsToRight}
-          onCloseOtherTabs={handleCloseOtherTabs}
-          onCreateDraftTab={onCreateDraftTab}
-          onCreateTerminalTab={onCreateTerminalTab}
-          onReorderTabs={handleReorderTabs}
-          onSplitRight={handleSplitRight}
-          onSplitDown={handleSplitDown}
+          onCloseTabsToLeft={(tabId) => onCloseTabsToLeft(tabId, paneTabs)}
+          onCloseTabsToRight={(tabId) => onCloseTabsToRight(tabId, paneTabs)}
+          onCloseOtherTabs={(tabId) => onCloseOtherTabs(tabId, paneTabs)}
+          onSelectNewTabOption={onSelectNewTabOption}
+          onNewTerminalTab={onNewTerminalTab}
+          newTabAgentOptionId={newTabAgentOptionId ?? "__new_tab_agent__"}
+          onReorderTabs={(nextTabs) => {
+            onReorderTabsInPane(
+              pane.id,
+              nextTabs.map((tab) => tab.tabId),
+            );
+          }}
+          onSplitRight={() => onSplitPaneEmpty({ targetPaneId: pane.id, position: "right" })}
+          onSplitDown={() => onSplitPaneEmpty({ targetPaneId: pane.id, position: "bottom" })}
           externalDndContext
           activeDragTabId={activeDragTabId}
           tabDropPreviewIndex={
@@ -1001,7 +927,6 @@ function SplitPaneView({
                   key={tabId}
                   tabDescriptor={tabDescriptor}
                   isVisible={tabId === activeTabDescriptor?.tabId}
-                  isWorkspaceFocused={isWorkspaceFocused}
                   isPaneFocused={isFocused && tabId === activeTabDescriptor?.tabId}
                   paneId={pane.id}
                   buildPaneContentModel={buildPaneContentModel}

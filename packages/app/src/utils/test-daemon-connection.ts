@@ -8,7 +8,6 @@ import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
-import { isDev } from "@/constants/platform";
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -58,10 +57,10 @@ export async function buildClientConfig(
     appVersion: resolveAppVersion() ?? undefined,
     suppressSendErrors: true,
     reconnect: { enabled: false },
-    ...(isDev ? { runtimeMetricsIntervalMs: 10_000 } : {}),
-    ...((connection.type === "directSocket" || connection.type === "directPipe") &&
-    localTransportFactory
-      ? { transportFactory: localTransportFactory }
+    ...(connection.type === "directSocket" || connection.type === "directPipe"
+      ? localTransportFactory
+        ? { transportFactory: localTransportFactory }
+        : {}
       : {}),
   };
 
@@ -134,7 +133,6 @@ export function connectAndProbe(
             serverId: serverInfo.serverId,
             hostname: serverInfo.hostname,
           });
-          return;
         })
         .catch((error) => {
           clearTimeout(timer);

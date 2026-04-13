@@ -50,10 +50,10 @@ const TEST_OUTPUT_CAPTURE_LIMIT = Number.parseInt(
   10,
 );
 
-interface OutputCapture {
+type OutputCapture = {
   value: string;
   truncated: boolean;
-}
+};
 
 function createOutputCapture(): OutputCapture {
   return { value: "", truncated: false };
@@ -126,17 +126,24 @@ async function terminateProcessTree(processRef: ChildProcess, timeoutMs: number)
   signalProcessTree(pid, "SIGTERM");
 
   await new Promise<void>((resolve) => {
-    const done = () => resolve();
-    const onExit = () => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       clearTimeout(timeoutId);
-      done();
+      resolve();
     };
+
     const timeoutId = setTimeout(() => {
       signalProcessTree(pid, "SIGKILL");
-      processRef.removeListener("exit", onExit);
-      done();
+      finish();
     }, timeoutMs);
-    processRef.once("exit", onExit);
+
+    processRef.once("exit", () => {
+      finish();
+    });
   });
 }
 
@@ -167,39 +174,33 @@ export async function createTempDirs(): Promise<{ hubcodeHome: string; workDir: 
  * Wait for daemon to be ready by running `hubcode agent ls`
  * This connects via WebSocket and ensures the daemon is responsive
  */
-async function probeDaemonReady(port: number): Promise<boolean> {
-  try {
-    const { exitCode } = await runHubcodeCli(
-      {
-        port,
-        wsUrl: `ws://${TEST_DAEMON_HOST}:${port}`,
-        hubcodeHome: "",
-        workDir: "",
-        process: null,
-        isReady: false,
-        stop: async () => {},
-      },
-      ["agent", "ls"],
-    );
-    return exitCode === 0;
-  } catch {
-    return false;
-  }
-}
-
 async function waitForDaemonReady(port: number, timeout = 30000): Promise<void> {
-  const deadline = Date.now() + timeout;
+  const start = Date.now();
 
-  async function poll(): Promise<void> {
-    if (await probeDaemonReady(port)) return;
-    if (Date.now() >= deadline) {
-      throw new Error(`Daemon failed to become ready on port ${port} within ${timeout}ms`);
+  while (Date.now() - start < timeout) {
+    try {
+      const { exitCode } = await runHubcodeCli(
+        {
+          port,
+          wsUrl: `ws://${TEST_DAEMON_HOST}:${port}`,
+          hubcodeHome: "",
+          workDir: "",
+          process: null,
+          isReady: false,
+          stop: async () => {},
+        },
+        ["agent", "ls"],
+      );
+
+      if (exitCode === 0) {
+        return; // Daemon is ready
+      }
+    } catch {
+      // Connection failed, keep trying
     }
     await sleep(100);
-    return poll();
   }
-
-  return poll();
+  throw new Error(`Daemon failed to become ready on port ${port} within ${timeout}ms`);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -314,7 +315,6 @@ export async function startTestDaemon(options?: {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(
       `Failed to start test daemon: ${message}\nStdout: ${formatOutputCapture(stdout)}\nStderr: ${formatOutputCapture(stderr)}`,
-      { cause: err },
     );
   }
 

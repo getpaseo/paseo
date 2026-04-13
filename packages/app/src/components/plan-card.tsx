@@ -1,167 +1,78 @@
-import { useMemo, type ReactNode } from "react";
-import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
-import Markdown, { type ASTNode } from "react-native-markdown-display";
+import type { ReactNode } from "react";
+import { Text, View } from "react-native";
+import Markdown from "react-native-markdown-display";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 
-type MarkdownRuleStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
-
-function MarkdownInlineText({
-  textKey,
-  inheritedStyle,
-  ruleStyle,
-  children,
-}: {
-  textKey: string;
-  inheritedStyle: StyleProp<TextStyle>;
-  ruleStyle: StyleProp<TextStyle>;
-  children: ReactNode;
-}) {
-  const style = useMemo(() => [inheritedStyle, ruleStyle], [inheritedStyle, ruleStyle]);
-  return (
-    <Text key={textKey} style={style}>
-      {children}
-    </Text>
-  );
-}
-
-function MarkdownListItemContent({
-  contentStyle,
-  children,
-}: {
-  contentStyle: StyleProp<ViewStyle>;
-  children: ReactNode;
-}) {
-  const style = useMemo(() => [contentStyle, LIST_ITEM_CONTENT_INNER], [contentStyle]);
-  return <View style={style}>{children}</View>;
-}
-
-function MarkdownParagraph({
-  textKey,
-  paragraphStyle,
-  isLastChild,
-  children,
-}: {
-  textKey: string;
-  paragraphStyle: StyleProp<ViewStyle>;
-  isLastChild: boolean;
-  children: ReactNode;
-}) {
-  const style = useMemo<StyleProp<ViewStyle>>(
-    () => [paragraphStyle, isLastChild ? PARAGRAPH_LAST_CHILD : null],
-    [paragraphStyle, isLastChild],
-  );
-  return (
-    <View key={textKey} style={style}>
-      {children}
-    </View>
-  );
-}
-
 function createPlanMarkdownRules() {
   return {
     text: (
-      node: ASTNode,
+      node: any,
       _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownRuleStyles,
-      inheritedStyles: TextStyle = {},
+      _parent: any,
+      styles: any,
+      inheritedStyles: any = {},
     ) => (
-      <MarkdownInlineText
-        textKey={node.key}
-        inheritedStyle={inheritedStyles}
-        ruleStyle={styles.text}
-      >
+      <Text key={node.key} style={[inheritedStyles, styles.text]}>
         {node.content}
-      </MarkdownInlineText>
+      </Text>
     ),
     textgroup: (
-      node: ASTNode,
+      node: any,
       children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownRuleStyles,
-      inheritedStyles: TextStyle = {},
+      _parent: any,
+      styles: any,
+      inheritedStyles: any = {},
     ) => (
-      <MarkdownInlineText
-        textKey={node.key}
-        inheritedStyle={inheritedStyles}
-        ruleStyle={styles.textgroup}
-      >
+      <Text key={node.key} style={[inheritedStyles, styles.textgroup]}>
         {children}
-      </MarkdownInlineText>
+      </Text>
     ),
     code_block: (
-      node: ASTNode,
+      node: any,
       _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownRuleStyles,
-      inheritedStyles: TextStyle = {},
+      _parent: any,
+      styles: any,
+      inheritedStyles: any = {},
     ) => (
-      <MarkdownInlineText
-        textKey={node.key}
-        inheritedStyle={inheritedStyles}
-        ruleStyle={styles.code_block}
-      >
+      <Text key={node.key} style={[inheritedStyles, styles.code_block]}>
         {node.content}
-      </MarkdownInlineText>
+      </Text>
     ),
     fence: (
-      node: ASTNode,
+      node: any,
       _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownRuleStyles,
-      inheritedStyles: TextStyle = {},
+      _parent: any,
+      styles: any,
+      inheritedStyles: any = {},
     ) => (
-      <MarkdownInlineText
-        textKey={node.key}
-        inheritedStyle={inheritedStyles}
-        ruleStyle={styles.fence}
-      >
+      <Text key={node.key} style={[inheritedStyles, styles.fence]}>
         {node.content}
-      </MarkdownInlineText>
+      </Text>
     ),
     code_inline: (
-      node: ASTNode,
+      node: any,
       _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownRuleStyles,
-      inheritedStyles: TextStyle = {},
+      _parent: any,
+      styles: any,
+      inheritedStyles: any = {},
     ) => (
-      <MarkdownInlineText
-        textKey={node.key}
-        inheritedStyle={inheritedStyles}
-        ruleStyle={styles.code_inline}
-      >
+      <Text key={node.key} style={[inheritedStyles, styles.code_inline]}>
         {node.content}
-      </MarkdownInlineText>
+      </Text>
     ),
-    bullet_list: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownRuleStyles,
-    ) => (
+    bullet_list: (node: any, children: ReactNode[], _parent: any, styles: any) => (
       <View key={node.key} style={styles.bullet_list}>
         {children}
       </View>
     ),
-    ordered_list: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownRuleStyles,
-    ) => (
+    ordered_list: (node: any, children: ReactNode[], _parent: any, styles: any) => (
       <View key={node.key} style={styles.ordered_list}>
         {children}
       </View>
     ),
-    list_item: (
-      node: ASTNode,
-      children: ReactNode[],
-      parent: ASTNode[],
-      styles: MarkdownRuleStyles,
-    ) => {
+    list_item: (node: any, children: ReactNode[], parent: any, styles: any) => {
       const { isOrdered, marker } = getMarkdownListMarker(node, parent);
       const iconStyle = isOrdered ? styles.ordered_list_icon : styles.bullet_list_icon;
       const contentStyle = isOrdered ? styles.ordered_list_content : styles.bullet_list_content;
@@ -169,25 +80,16 @@ function createPlanMarkdownRules() {
       return (
         <View key={node.key} style={styles.list_item}>
           <Text style={iconStyle}>{marker}</Text>
-          <MarkdownListItemContent contentStyle={contentStyle}>{children}</MarkdownListItemContent>
+          <View style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}>{children}</View>
         </View>
       );
     },
-    paragraph: (
-      node: ASTNode,
-      children: ReactNode[],
-      parent: ASTNode[],
-      styles: MarkdownRuleStyles,
-    ) => {
+    paragraph: (node: any, children: ReactNode[], parent: any, styles: any) => {
       const isLastChild = parent[0]?.children?.at(-1)?.key === node.key;
       return (
-        <MarkdownParagraph
-          textKey={node.key}
-          paragraphStyle={styles.paragraph}
-          isLastChild={isLastChild}
-        >
+        <View key={node.key} style={[styles.paragraph, isLastChild && { marginBottom: 0 }]}>
           {children}
-        </MarkdownParagraph>
+        </View>
       );
     },
   };
@@ -210,30 +112,23 @@ export function PlanCard({
   const markdownStyles = createMarkdownStyles(theme);
   const markdownRules = createPlanMarkdownRules();
 
-  const containerStyle = useMemo(
-    () => [
-      styles.container,
-      disableOuterSpacing && styles.containerCompact,
-      {
-        backgroundColor: theme.colors.surface1,
-        borderColor: theme.colors.border,
-      },
-    ],
-    [disableOuterSpacing, theme.colors.surface1, theme.colors.border],
-  );
-  const titleStyle = useMemo(
-    () => [styles.title, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
-  );
-  const descriptionStyle = useMemo(
-    () => [styles.description, { color: theme.colors.foregroundMuted }],
-    [theme.colors.foregroundMuted],
-  );
-
   return (
-    <View style={containerStyle}>
-      <Text style={titleStyle}>{title}</Text>
-      {description ? <Text style={descriptionStyle}>{description}</Text> : null}
+    <View
+      style={[
+        styles.container,
+        disableOuterSpacing && styles.containerCompact,
+        {
+          backgroundColor: theme.colors.surface1,
+          borderColor: theme.colors.border,
+        },
+      ]}
+    >
+      <Text style={[styles.title, { color: theme.colors.foreground }]}>{title}</Text>
+      {description ? (
+        <Text style={[styles.description, { color: theme.colors.foregroundMuted }]}>
+          {description}
+        </Text>
+      ) : null}
       <Markdown style={markdownStyles} rules={markdownRules}>
         {text}
       </Markdown>
@@ -265,6 +160,3 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
 }));
-
-const LIST_ITEM_CONTENT_INNER = { flex: 1, flexShrink: 1, minWidth: 0 };
-const PARAGRAPH_LAST_CHILD = { marginBottom: 0 };

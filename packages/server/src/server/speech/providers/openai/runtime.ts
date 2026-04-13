@@ -12,24 +12,24 @@ import { OpenAIRealtimeTranscriptionSession } from "./realtime-transcription-ses
 import { OpenAISTT } from "./stt.js";
 import { OpenAITTS } from "./tts.js";
 
-interface OpenAiCredentialState {
+type OpenAiCredentialState = {
   openaiSttApiKey: string | undefined;
   openaiTtsApiKey: string | undefined;
   openaiDictationApiKey: string | undefined;
-}
+};
 
-export interface OpenAiSpeechAvailability {
+export type OpenAiSpeechAvailability = {
   stt: boolean;
   tts: boolean;
   dictationStt: boolean;
-}
+};
 
-export interface SpeechServices {
+export type SpeechServices = {
   turnDetectionService: TurnDetectionProvider | null;
   sttService: SpeechToTextProvider | null;
   ttsService: TextToSpeechProvider | null;
   dictationSttService: SpeechToTextProvider | null;
-}
+};
 
 function resolveOpenAiCredentials(
   openaiConfig: OpenAiSpeechProviderConfig | undefined,
@@ -102,52 +102,6 @@ export function validateOpenAiCredentialRequirements(params: {
   }
 }
 
-function createOpenAiStt(
-  apiKey: string,
-  openaiConfig: OpenAiSpeechProviderConfig | undefined,
-  logger: Logger,
-): SpeechToTextProvider {
-  const { apiKey: _sttApiKey, ...sttConfig } = openaiConfig?.stt ?? {};
-  return new OpenAISTT({ apiKey, ...sttConfig }, logger);
-}
-
-function createOpenAiTts(
-  apiKey: string,
-  openaiConfig: OpenAiSpeechProviderConfig | undefined,
-  logger: Logger,
-): TextToSpeechProvider {
-  const { apiKey: _ttsApiKey, ...ttsConfig } = openaiConfig?.tts ?? {};
-  return new OpenAITTS(
-    {
-      apiKey,
-      voice: "alloy",
-      model: DEFAULT_OPENAI_TTS_MODEL,
-      responseFormat: "pcm",
-      ...ttsConfig,
-    },
-    logger,
-  );
-}
-
-function createOpenAiDictationService(
-  apiKey: string,
-  openaiConfig: OpenAiSpeechProviderConfig | undefined,
-): SpeechToTextProvider {
-  return {
-    id: "openai",
-    createSession: ({ logger: sessionLogger, language, prompt }) =>
-      new OpenAIRealtimeTranscriptionSession({
-        apiKey,
-        logger: sessionLogger,
-        transcriptionModel:
-          openaiConfig?.realtimeTranscriptionModel ?? DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-        ...(language ? { language } : {}),
-        ...(prompt ? { prompt } : {}),
-        turnDetection: null,
-      }),
-  };
-}
-
 export function initializeOpenAiSpeechServices(params: {
   providers: RequestedSpeechProviders;
   openaiConfig: OpenAiSpeechProviderConfig | undefined;
@@ -171,30 +125,57 @@ export function initializeOpenAiSpeechServices(params: {
     providers.dictationStt.enabled !== false &&
     providers.dictationStt.provider === "openai";
 
-  const needsAnyOpenAi = needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation;
-  const hasAnyOpenAiCredential =
-    Boolean(openAiCredentials.openaiSttApiKey) ||
-    Boolean(openAiCredentials.openaiTtsApiKey) ||
-    Boolean(openAiCredentials.openaiDictationApiKey);
-
-  if (needsAnyOpenAi && hasAnyOpenAiCredential) {
+  if (
+    (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation) &&
+    (openAiCredentials.openaiSttApiKey ||
+      openAiCredentials.openaiTtsApiKey ||
+      openAiCredentials.openaiDictationApiKey)
+  ) {
     logger.info("OpenAI speech provider initialized");
 
     if (needsOpenAiStt && openAiCredentials.openaiSttApiKey) {
-      sttService = createOpenAiStt(openAiCredentials.openaiSttApiKey, openaiConfig, logger);
+      const { apiKey: _sttApiKey, ...sttConfig } = openaiConfig?.stt ?? {};
+      sttService = new OpenAISTT(
+        {
+          apiKey: openAiCredentials.openaiSttApiKey,
+          ...sttConfig,
+        },
+        logger,
+      );
     }
 
     if (needsOpenAiTts && openAiCredentials.openaiTtsApiKey) {
-      ttsService = createOpenAiTts(openAiCredentials.openaiTtsApiKey, openaiConfig, logger);
-    }
-
-    if (needsOpenAiDictation && openAiCredentials.openaiDictationApiKey) {
-      dictationSttService = createOpenAiDictationService(
-        openAiCredentials.openaiDictationApiKey,
-        openaiConfig,
+      const { apiKey: _ttsApiKey, ...ttsConfig } = openaiConfig?.tts ?? {};
+      ttsService = new OpenAITTS(
+        {
+          apiKey: openAiCredentials.openaiTtsApiKey,
+          voice: "alloy",
+          model: DEFAULT_OPENAI_TTS_MODEL,
+          responseFormat: "pcm",
+          ...ttsConfig,
+        },
+        logger,
       );
     }
-  } else if (needsAnyOpenAi) {
+
+    const dictationApiKey = openAiCredentials.openaiDictationApiKey;
+    if (needsOpenAiDictation && dictationApiKey) {
+      dictationSttService = {
+        id: "openai",
+        createSession: ({ logger: sessionLogger, language, prompt }) =>
+          new OpenAIRealtimeTranscriptionSession({
+            apiKey: dictationApiKey,
+            logger: sessionLogger,
+            transcriptionModel:
+              openaiConfig?.realtimeTranscriptionModel ??
+              DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
+            ...(language ? { language } : {}),
+            ...(prompt ? { prompt } : {}),
+            turnDetection: null,
+          }),
+      };
+    }
+  } else if (needsOpenAiStt || needsOpenAiTts || needsOpenAiDictation) {
     logger.warn("OpenAI speech providers are configured but credentials are missing");
   }
 

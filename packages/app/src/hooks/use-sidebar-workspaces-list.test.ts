@@ -1,26 +1,10 @@
-/**
- * @vitest-environment jsdom
- */
-import { act } from "@testing-library/react";
-import type { DaemonClient } from "@server/client/daemon-client";
-import { createRoot, type Root } from "react-dom/client";
-import React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-vi.hoisted(() => {
-  (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
-});
-
+import { describe, expect, it } from "vitest";
 import {
   appendMissingOrderKeys,
   applyStoredOrdering,
-  buildSidebarProjectsFromStructure,
-  useSidebarWorkspacesList,
+  buildSidebarProjectsFromWorkspaces,
 } from "./use-sidebar-workspaces-list";
-import type { WorkspaceStructureProject } from "@/stores/session-store-hooks";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
-import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
 
 interface OrderedItem {
   key: string;
@@ -30,70 +14,26 @@ function item(key: string): OrderedItem {
   return { key };
 }
 
-function project(input: {
-  projectKey: string;
-  projectName?: string;
-  projectKind?: WorkspaceStructureProject["projectKind"];
-  iconWorkingDir?: string;
-  workspaceKeys: string[];
-}): WorkspaceStructureProject {
+function workspace(
+  input: Pick<WorkspaceDescriptor, "id" | "projectId" | "name" | "status"> &
+    Partial<
+      Pick<
+        WorkspaceDescriptor,
+        "projectDisplayName" | "projectRootPath" | "projectKind" | "workspaceKind"
+      >
+    >,
+): WorkspaceDescriptor {
   return {
-    projectKey: input.projectKey,
-    projectName: input.projectName ?? input.projectKey,
+    id: input.id,
+    projectId: input.projectId,
+    projectDisplayName: input.projectDisplayName ?? input.projectId,
+    projectRootPath: input.projectRootPath ?? input.id,
     projectKind: input.projectKind ?? "git",
-    iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
-    workspaceKeys: input.workspaceKeys,
-  };
-}
-
-function workspaceDescriptor(id: string): WorkspaceDescriptor {
-  return {
-    id,
-    projectId: "project-1",
-    projectDisplayName: "Project 1",
-    projectRootPath: "/repo/main",
-    workspaceDirectory: `/repo/main/${id}`,
-    projectKind: "git",
-    workspaceKind: "worktree",
-    name: id,
-    status: "done",
+    workspaceKind: input.workspaceKind ?? "local_checkout",
+    name: input.name,
+    status: input.status,
     diffStat: null,
-    scripts: [],
   };
-}
-
-function DisabledHookProbe({ serverId }: { serverId: string }): null {
-  const result = useSidebarWorkspacesList({ serverId, enabled: false });
-
-  expect(result.projects).toEqual([]);
-  expect(result.isLoading).toBe(false);
-  expect(result.isInitialLoad).toBe(false);
-  expect(result.isRevalidating).toBe(false);
-
-  return null;
-}
-
-function DisabledRenderCountProbe({
-  onRender,
-  serverId,
-}: {
-  onRender: () => void;
-  serverId: string;
-}): null {
-  useSidebarWorkspacesList({ serverId, enabled: false });
-  onRender();
-  return null;
-}
-
-function HookResultProbe({
-  onResult,
-  serverId,
-}: {
-  onResult: (result: ReturnType<typeof useSidebarWorkspacesList>) => void;
-  serverId: string;
-}): null {
-  onResult(useSidebarWorkspacesList({ serverId }));
-  return null;
 }
 
 describe("applyStoredOrdering", () => {
@@ -151,147 +91,167 @@ describe("appendMissingOrderKeys", () => {
   });
 });
 
-describe("buildSidebarProjectsFromStructure", () => {
-  it("creates structural workspace rows from ordered workspace keys", () => {
-    const projects = buildSidebarProjectsFromStructure({
+describe("buildSidebarProjectsFromWorkspaces", () => {
+  it("uses workspace descriptor name and status directly", () => {
+    const workspaces: WorkspaceDescriptor[] = [
+      workspace({
+        id: "/repo/main",
+        projectId: "project-1",
+        name: "feat/hard-cut",
+        status: "failed",
+      }),
+    ];
+
+    const projects = buildSidebarProjectsFromWorkspaces({
       serverId: "srv",
-      projects: [
-        project({
-          projectKey: "project-1",
-          projectName: "Project 1",
-          iconWorkingDir: "/repo/main",
-          workspaceKeys: ["ws-main"],
-        }),
-      ],
+      workspaces,
+      projectOrder: [],
+      workspaceOrderByScope: {},
     });
 
     expect(projects).toHaveLength(1);
-    expect(projects[0]?.projectName).toBe("Project 1");
-    expect(projects[0]?.workspaces[0]).toMatchObject({
-      workspaceKey: "srv:ws-main",
-      serverId: "srv",
-      workspaceId: "ws-main",
-      projectRootPath: "/repo/main",
-      projectKind: "git",
-    });
+    expect(projects[0]?.statusBucket).toBe("failed");
+    expect(projects[0]?.workspaces[0]?.name).toBe("feat/hard-cut");
+    expect(projects[0]?.workspaces[0]?.statusBucket).toBe("failed");
   });
 
-  it("preserves the structure hook project order", () => {
-    const projects = buildSidebarProjectsFromStructure({
+  it("preserves stored project order even when input order differs", () => {
+    const initialWorkspaces: WorkspaceDescriptor[] = [
+      workspace({
+        id: "/repo/b",
+        projectId: "project-b",
+        name: "feat/b",
+        status: "running",
+      }),
+      workspace({
+        id: "/repo/a",
+        projectId: "project-a",
+        name: "feat/a",
+        status: "running",
+      }),
+    ];
+
+    const seededOrder = appendMissingOrderKeys({
+      currentOrder: [],
+      visibleKeys: buildSidebarProjectsFromWorkspaces({
+        serverId: "srv",
+        workspaces: initialWorkspaces,
+        projectOrder: [],
+        workspaceOrderByScope: {},
+      }).map((project) => project.projectKey),
+    });
+
+    const updatedProjects = buildSidebarProjectsFromWorkspaces({
       serverId: "srv",
-      projects: [
-        project({ projectKey: "project-b", workspaceKeys: ["ws-b"] }),
-        project({ projectKey: "project-a", workspaceKeys: ["ws-a"] }),
+      workspaces: [
+        workspace({
+          id: "/repo/a",
+          projectId: "project-a",
+          name: "feat/a",
+          status: "running",
+        }),
+        workspace({
+          id: "/repo/b",
+          projectId: "project-b",
+          name: "feat/b",
+          status: "running",
+        }),
       ],
+      projectOrder: seededOrder,
+      workspaceOrderByScope: {},
     });
 
-    expect(projects.map((entry) => entry.projectKey)).toEqual(["project-b", "project-a"]);
+    expect(updatedProjects.map((project) => project.projectKey)).toEqual([
+      "project-a",
+      "project-b",
+    ]);
   });
 
-  it("preserves the structure hook workspace order", () => {
-    const projects = buildSidebarProjectsFromStructure({
+  it("appends new projects after the stored project order", () => {
+    const projects = buildSidebarProjectsFromWorkspaces({
       serverId: "srv",
-      projects: [project({ projectKey: "project-1", workspaceKeys: ["feature", "main"] })],
+      workspaces: [
+        workspace({
+          id: "/repo/c",
+          projectId: "project-c",
+          name: "feat/c",
+          status: "running",
+        }),
+        workspace({
+          id: "/repo/b",
+          projectId: "project-b",
+          name: "feat/b",
+          status: "running",
+        }),
+        workspace({
+          id: "/repo/a",
+          projectId: "project-a",
+          name: "feat/a",
+          status: "running",
+        }),
+      ],
+      projectOrder: ["project-b", "project-a", "project-c"],
+      workspaceOrderByScope: {},
+    });
+
+    expect(projects.map((project) => project.projectKey)).toEqual([
+      "project-b",
+      "project-a",
+      "project-c",
+    ]);
+  });
+
+  it("preserves stored workspace order when workspace activity changes", () => {
+    const initialProjects = buildSidebarProjectsFromWorkspaces({
+      serverId: "srv",
+      workspaces: [
+        workspace({
+          id: "/repo/main",
+          projectId: "project-1",
+          name: "main",
+          status: "running",
+        }),
+        workspace({
+          id: "/repo/feature",
+          projectId: "project-1",
+          name: "feature",
+          status: "running",
+        }),
+      ],
+      projectOrder: ["project-1"],
+      workspaceOrderByScope: {},
+    });
+
+    const seededWorkspaceOrder = appendMissingOrderKeys({
+      currentOrder: [],
+      visibleKeys: initialProjects[0]?.workspaces.map((workspace) => workspace.workspaceKey) ?? [],
+    });
+
+    const projects = buildSidebarProjectsFromWorkspaces({
+      serverId: "srv",
+      workspaces: [
+        workspace({
+          id: "/repo/main",
+          projectId: "project-1",
+          name: "main",
+          status: "running",
+        }),
+        workspace({
+          id: "/repo/feature",
+          projectId: "project-1",
+          name: "feature",
+          status: "running",
+        }),
+      ],
+      projectOrder: ["project-1"],
+      workspaceOrderByScope: {
+        "srv::project-1": seededWorkspaceOrder,
+      },
     });
 
     expect(projects[0]?.workspaces.map((workspace) => workspace.workspaceId)).toEqual([
-      "feature",
-      "main",
+      "/repo/feature",
+      "/repo/main",
     ]);
-  });
-});
-
-describe("useSidebarWorkspacesList", () => {
-  let root: Root | null = null;
-  let container: HTMLElement | null = null;
-
-  afterEach(() => {
-    if (root) {
-      act(() => {
-        root?.unmount();
-      });
-    }
-    root = null;
-    container?.remove();
-    container = null;
-    act(() => {
-      getHostRuntimeStore().syncHosts([]);
-      useSessionStore.getState().clearSession("srv-disabled");
-      useSessionStore.getState().clearSession("srv-loading");
-      useSidebarOrderStore.setState({
-        projectOrderByServerId: {},
-        workspaceOrderByServerAndProject: {},
-      });
-    });
-  });
-
-  it("honors enabled false without appending persisted order keys", async () => {
-    act(() => {
-      useSessionStore.getState().initializeSession("srv-disabled", null as unknown as DaemonClient);
-      useSessionStore
-        .getState()
-        .setWorkspaces("srv-disabled", new Map([["ws-main", workspaceDescriptor("ws-main")]]));
-      useSessionStore.getState().setHasHydratedWorkspaces("srv-disabled", true);
-    });
-
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    await act(async () => {
-      root?.render(React.createElement(DisabledHookProbe, { serverId: "srv-disabled" }));
-    });
-
-    expect(useSidebarOrderStore.getState().projectOrderByServerId).toEqual({});
-    expect(useSidebarOrderStore.getState().workspaceOrderByServerAndProject).toEqual({});
-  });
-
-  it("keeps the sidebar in initial load until workspace hydration succeeds", async () => {
-    const onResult = vi.fn();
-
-    act(() => {
-      useSessionStore.getState().initializeSession("srv-loading", null as unknown as DaemonClient);
-    });
-
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    await act(async () => {
-      root?.render(React.createElement(HookResultProbe, { serverId: "srv-loading", onResult }));
-    });
-
-    expect(onResult).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        projects: [],
-        isLoading: true,
-        isInitialLoad: true,
-      }),
-    );
-  });
-
-  it("does not subscribe to order updates while disabled", async () => {
-    const onRender = vi.fn();
-
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    await act(async () => {
-      root?.render(
-        React.createElement(DisabledRenderCountProbe, {
-          serverId: "srv-disabled",
-          onRender,
-        }),
-      );
-    });
-
-    expect(onRender).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      useSidebarOrderStore.getState().setProjectOrder("srv-disabled", ["project-a"]);
-    });
-
-    expect(onRender).toHaveBeenCalledTimes(1);
   });
 });

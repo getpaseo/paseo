@@ -1,5 +1,6 @@
-appId: ai.hubcode
+appId: sh.hubcode
 ---
 - launchApp:
     clearState: true
 - runFlow: flows/dev-client.yaml
+

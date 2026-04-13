@@ -15,33 +15,7 @@ export default defineConfig({
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],
-    projects: [
-      {
-        extends: true,
-        test: {
-          name: "unit",
-          environment: "node",
-          include: ["src/**/*.{test,spec}.{ts,tsx}"],
-          setupFiles: [path.resolve(__dirname, "vitest.setup.ts")],
-          exclude: [...configDefaults.exclude, "e2e/**", "src/**/*.browser.{test,spec}.{ts,tsx}"],
-        },
-      },
-      {
-        extends: true,
-        test: {
-          name: "browser",
-          include: ["src/**/*.browser.{test,spec}.{ts,tsx}"],
-          browser: {
-            enabled: true,
-            provider: "playwright",
-            headless: true,
-            connectTimeout: 180_000,
-            instances: [{ browser: "chromium" }],
-            screenshotDirectory: ".vitest-screenshots",
-          },
-        },
-      },
-    ],
+    setupFiles: [path.resolve(__dirname, "vitest.setup.ts")],
     /**
      * Expo pulls in native tooling (xcode, etc.) that executes files relying on `process.send`.
      * Vitest's default worker pool uses worker_threads, which intentionally stub that API and
@@ -62,28 +36,13 @@ export default defineConfig({
     },
   },
   resolve: {
-    extensions: [
-      ".web.mjs",
-      ".web.js",
-      ".web.mts",
-      ".web.ts",
-      ".web.jsx",
-      ".web.tsx",
-      ".mjs",
-      ".js",
-      ".mts",
-      ".ts",
-      ".jsx",
-      ".tsx",
-      ".json",
-    ],
     alias: [
       {
-        find: /^@gethubcode\/relay\/e2ee$/,
+        find: /^@hubtool\/relay\/e2ee$/,
         replacement: path.resolve(__dirname, "../relay/src/e2ee.ts"),
       },
       {
-        find: /^@gethubcode\/relay$/,
+        find: /^@hubtool\/relay$/,
         replacement: path.resolve(__dirname, "../relay/src/index.ts"),
       },
       { find: "@", replacement: path.resolve(__dirname, "src") },
@@ -101,11 +60,7 @@ export default defineConfig({
         replacement: resolvePackageEntry("react-dom"),
       },
       {
-        find: /^@xterm\/addon-ligatures\/lib\/addon-ligatures\.mjs$/,
-        replacement: path.resolve(__dirname, "test-stubs/xterm-addon-ligatures.ts"),
-      },
-      {
-        find: /^@xterm\/addon-ligatures$/,
+        find: "@xterm/addon-ligatures",
         replacement: path.resolve(__dirname, "test-stubs/xterm-addon-ligatures.ts"),
       },
     ],

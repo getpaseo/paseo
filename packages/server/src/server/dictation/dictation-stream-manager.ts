@@ -67,7 +67,7 @@ function convertPCMToWavBuffer(
   return wavBuffer;
 }
 
-interface DictationStreamState {
+type DictationStreamState = {
   dictationId: string;
   sessionId: string;
   inputFormat: string;
@@ -92,7 +92,7 @@ interface DictationStreamState {
   finishSealed: boolean;
   finalSeq: number | null;
   finalTimeout: ReturnType<typeof setTimeout> | null;
-}
+};
 
 export type DictationStreamOutboundMessage =
   | { type: "dictation_stream_ack"; payload: { dictationId: string; ackSeq: number } }

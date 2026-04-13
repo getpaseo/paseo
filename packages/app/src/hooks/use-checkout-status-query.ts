@@ -1,7 +1,13 @@
-import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef } from "react";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { usePanelStore } from "@/stores/panel-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { CheckoutStatusResponse } from "@server/shared/messages";
+import {
+  checkoutStatusRevalidationKey,
+  nextCheckoutStatusRefetchDecision,
+} from "./checkout-status-revalidation";
 
 export const CHECKOUT_STATUS_STALE_TIME = 15_000;
 
@@ -16,56 +22,22 @@ interface UseCheckoutStatusQueryOptions {
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 
-interface CheckoutStatusClient {
-  getCheckoutStatus: (cwd: string) => Promise<CheckoutStatusPayload>;
-}
-
 function fetchCheckoutStatus(
-  client: CheckoutStatusClient,
+  client: { getCheckoutStatus: (cwd: string) => Promise<CheckoutStatusPayload> },
   cwd: string,
 ): Promise<CheckoutStatusPayload> {
   return client.getCheckoutStatus(cwd);
 }
 
-async function peekOrFetchSnapshot({
-  queryClient,
-  client,
-  serverId,
-  cwd,
-}: {
-  queryClient: QueryClient;
-  client: CheckoutStatusClient;
-  serverId: string;
-  cwd: string;
-}): Promise<CheckoutStatusPayload> {
-  const queryKey = checkoutStatusQueryKey(serverId, cwd);
-  const cached = queryClient.getQueryData<CheckoutStatusPayload>(queryKey);
-  if (cached) {
-    return cached;
-  }
-
-  const snapshot = await fetchCheckoutStatus(client, cwd);
-  queryClient.setQueryData(queryKey, snapshot);
-  return snapshot;
-}
-
 export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQueryOptions) {
-  const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-
-  useEffect(() => {
-    if (!client || !isConnected || !cwd) {
-      return;
-    }
-
-    return client.on("checkout_status_update", (message) => {
-      if (message.payload.cwd !== cwd) {
-        return;
-      }
-      queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), message.payload);
-    });
-  }, [client, isConnected, cwd, queryClient, serverId]);
+  const isMobile = useIsCompactFormFactor();
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
+  const explorerTab = usePanelStore((state) => state.explorerTab);
+  const isOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
+  const shouldPoll = isOpen && explorerTab === "changes";
 
   const query = useQuery({
     queryKey: checkoutStatusQueryKey(serverId, cwd),
@@ -73,14 +45,34 @@ export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQuery
       if (!client) {
         throw new Error("Daemon client not available");
       }
-      return await peekOrFetchSnapshot({ queryClient, client, serverId, cwd });
+      return await fetchCheckoutStatus(client, cwd);
     },
     enabled: !!client && isConnected && !!cwd,
-    staleTime: Infinity,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
+    staleTime: CHECKOUT_STATUS_STALE_TIME,
+    refetchInterval: (query) => {
+      if (!shouldPoll) return false;
+      const data = query.state.data as CheckoutStatusPayload | undefined;
+      return data?.isGit ? 10_000 : false;
+    },
+    refetchIntervalInBackground: shouldPoll,
+    refetchOnMount: "always",
   });
+
+  // Revalidate when sidebar is open with "changes" tab active.
+  const revalidationKey = useMemo(
+    () => checkoutStatusRevalidationKey({ serverId, cwd, isOpen, explorerTab }),
+    [serverId, cwd, isOpen, explorerTab],
+  );
+  const lastRevalidationKey = useRef<string | null>(null);
+  useEffect(() => {
+    const decision = nextCheckoutStatusRefetchDecision(
+      lastRevalidationKey.current,
+      revalidationKey,
+    );
+    lastRevalidationKey.current = decision.nextSeenKey;
+    if (!decision.shouldRefetch) return;
+    void query.refetch();
+  }, [revalidationKey, query.refetch]);
 
   return {
     status: query.data ?? null,
@@ -88,6 +80,7 @@ export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQuery
     isFetching: query.isFetching,
     isError: query.isError,
     error: query.error,
+    refresh: query.refetch,
   };
 }
 

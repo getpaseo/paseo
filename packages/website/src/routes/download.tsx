@@ -26,12 +26,6 @@ export const Route = createFileRoute("/download")({
   component: Download,
 });
 
-const homebrewTrigger = (
-  <span className="inline-flex items-center justify-center rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:bg-foreground/85 transition-colors">
-    Homebrew
-  </span>
-);
-
 function Download() {
   const { version } = useRelease();
   const urls = downloadUrls(version);
@@ -116,7 +110,11 @@ function Download() {
                 <DownloadPill href={urls.macAppleSilicon} label="Apple Silicon" />
                 <DownloadPill href={urls.macIntel} label="Intel" />
                 <CommandDialog
-                  trigger={homebrewTrigger}
+                  trigger={
+                    <span className="inline-flex items-center justify-center rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:bg-foreground/85 transition-colors">
+                      Homebrew
+                    </span>
+                  }
                   title="Install via Homebrew"
                   command="brew install --cask hubcode"
                 />
@@ -207,7 +205,7 @@ function Download() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <code className="text-sm text-muted-foreground font-mono bg-muted px-3 py-1.5 rounded-lg">
-                  npm install -g @gethubcode/cli
+                  npm install -g @hubtool/cli
                 </code>
               </div>
             </div>

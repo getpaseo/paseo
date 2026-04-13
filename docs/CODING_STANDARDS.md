@@ -40,10 +40,7 @@ No complex inline types in public function signatures.
 function enqueueJob(input: { userId: string; priority: "low" | "normal" | "high" }) {}
 
 // Good
-interface EnqueueJobInput {
-  userId: string;
-  priority: "low" | "normal" | "high";
-}
+interface EnqueueJobInput { userId: string; priority: "low" | "normal" | "high" }
 function enqueueJob(input: EnqueueJobInput) {}
 ```
 
@@ -56,11 +53,7 @@ If a function needs more than one argument, use a single object parameter.
 function createToolCall(provider: string, toolName: string, payload: unknown) {}
 
 // Good: object param
-interface CreateToolCallInput {
-  provider: string;
-  toolName: string;
-  payload: unknown;
-}
+interface CreateToolCallInput { provider: string; toolName: string; payload: unknown }
 function createToolCall(input: CreateToolCallInput) {}
 ```
 
@@ -85,11 +78,7 @@ Use discriminated unions instead of bags of booleans and optionals.
 
 ```typescript
 // Bad
-interface FetchState {
-  isLoading: boolean;
-  error?: Error;
-  data?: Data;
-}
+interface FetchState { isLoading: boolean; error?: Error; data?: Data }
 
 // Good
 type FetchState =
@@ -147,10 +136,7 @@ Avoid packing branching, lookup, and transformation into single dense expression
 // Bad: nested ternaries + inline lookups
 const billing = shouldUseLegacy(account)
   ? getLegacy(account)
-  : buildBilling(
-      account,
-      rates.find((r) => r.region === account.region),
-    );
+  : buildBilling(account, rates.find((r) => r.region === account.region));
 
 // Good: named steps, then assemble
 const rate = rates.find((r) => r.region === account.region);

@@ -7,7 +7,6 @@ import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentSession, AgentStreamEvent, ToolCallTimelineItem } from "../agent-sdk-types.js";
 import { isCommandAvailable } from "../../../utils/executable.js";
-import { withTimeout } from "../../../utils/promise-timeout.js";
 import { ClaudeAgentClient } from "./claude-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 
@@ -41,7 +40,21 @@ async function nextStreamEvent(
   timeoutMs: number,
   label: string,
 ): Promise<IteratorResult<AgentStreamEvent>> {
-  return await withTimeout(stream.next(), timeoutMs, `Timed out waiting for ${label}`);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      stream.next(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`Timed out waiting for ${label}`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 async function collectUntilTerminal(
@@ -131,7 +144,7 @@ function getToolCalls(events: AgentStreamEvent[]): ToolCallTimelineItem[] {
 
 function getLatestCompletedBashCall(events: AgentStreamEvent[]): ToolCallTimelineItem | undefined {
   return [...getToolCalls(events)]
-    .toReversed()
+    .reverse()
     .find((item) => item.status === "completed" && item.name.toLowerCase() === "bash");
 }
 

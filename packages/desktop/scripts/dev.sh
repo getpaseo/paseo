@@ -9,15 +9,9 @@ ROOT_DIR="$(cd "$DESKTOP_DIR/../.." && pwd)"
 # Build the Electron main process
 npm run build:main
 
-# Prefer Metro's stable default port so dev browser storage keeps the same
-# localhost origin across restarts. Fall back only when earlier ports are busy.
-EXPO_PORT=$("$ROOT_DIR/node_modules/.bin/get-port" 8081 8082 8083 8084 8085)
+# Get a random available port for Metro
+EXPO_PORT=$("$ROOT_DIR/node_modules/.bin/get-port")
 export EXPO_PORT
-
-# Allow any origin in dev so Electron on random localhost ports can reach
-# the daemon websocket. Safe here because this script is development-only
-# and the daemon still binds to localhost.
-export HUBCODE_CORS_ORIGINS="*"
 
 echo "══════════════════════════════════════════════════════"
 echo "  Hubcode Desktop Dev"
@@ -26,7 +20,7 @@ echo "  Metro:     http://localhost:${EXPO_PORT}"
 echo "══════════════════════════════════════════════════════"
 
 # Launch Metro + Electron together, kill both on exit
-exec "$ROOT_DIR/node_modules/.bin/concurrently" \
+"$ROOT_DIR/node_modules/.bin/concurrently" \
   --kill-others \
   --names "metro,electron" \
   --prefix-colors "magenta,cyan" \

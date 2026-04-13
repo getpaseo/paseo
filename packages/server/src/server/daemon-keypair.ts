@@ -10,7 +10,7 @@ import {
   importPublicKey,
   importSecretKey,
   type KeyPair,
-} from "@gethubcode/relay/e2ee";
+} from "@hubtool/relay/e2ee";
 
 const KeyPairSchema = z.object({
   v: z.literal(2),
@@ -22,10 +22,10 @@ type StoredKeyPair = z.infer<typeof KeyPairSchema>;
 
 const KEYPAIR_FILENAME = "daemon-keypair.json";
 
-export interface DaemonKeyPairBundle {
+export type DaemonKeyPairBundle = {
   keyPair: KeyPair;
   publicKeyB64: string;
-}
+};
 
 export async function loadOrCreateDaemonKeyPair(
   hubcodeHome: string,

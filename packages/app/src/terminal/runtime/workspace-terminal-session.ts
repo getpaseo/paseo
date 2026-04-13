@@ -1,21 +1,21 @@
 import type { TerminalState } from "@server/shared/messages";
 
-export interface WorkspaceTerminalSnapshots {
+export type WorkspaceTerminalSnapshots = {
   get: (input: { terminalId: string }) => TerminalState | null;
   set: (input: { terminalId: string; state: TerminalState }) => void;
   clear: (input: { terminalId: string }) => void;
   prune: (input: { terminalIds: string[] }) => void;
-}
+};
 
-export interface WorkspaceTerminalSession {
+export type WorkspaceTerminalSession = {
   scopeKey: string;
   snapshots: WorkspaceTerminalSnapshots;
-}
+};
 
-interface WorkspaceTerminalSessionRecord {
+type WorkspaceTerminalSessionRecord = {
   snapshotByTerminalId: Map<string, TerminalState>;
   session: WorkspaceTerminalSession;
-}
+};
 
 const sessionsByScopeKey = new Map<string, WorkspaceTerminalSessionRecord>();
 const refCountByScopeKey = new Map<string, number>();

@@ -54,16 +54,11 @@ function resolveShellEnv(): Record<string, string> | undefined {
     }
   }
 
-  const shellEnv = { ...process.env };
-  delete shellEnv.HUBCODE_NODE_ENV;
-  delete shellEnv.HUBCODE_DESKTOP_MANAGED;
-  delete shellEnv.HUBCODE_SUPERVISED;
-
   const result = spawnSync(shell, [...shellArgs, command], {
     encoding: "utf8",
     timeout: RESOLVE_TIMEOUT_MS,
     env: {
-      ...shellEnv,
+      ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
       ELECTRON_NO_ATTACH_CONSOLE: "1",
     },

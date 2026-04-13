@@ -1,27 +1,13 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { extname } from "node:path";
 import { promisify } from "node:util";
 
-import { createExternalCommandProcessEnv, type ProcessEnvRecord } from "../server/hubcode-env.js";
-import {
-  isWindowsCommandScript,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "./windows-command.js";
+import { quoteWindowsArgument, quoteWindowsCommand } from "./executable.js";
 
 const execFileAsync = promisify(execFile);
 
-interface ExternalEnvOptions {
-  baseEnv?: ProcessEnvRecord;
-  envMode?: "external" | "internal";
-  env?: ProcessEnvRecord;
-  envOverlay?: ProcessEnvRecord;
-}
-
-export type SpawnProcessOptions = Omit<SpawnOptions, "env"> & ExternalEnvOptions;
-
-interface ExecCommandOptions extends ExternalEnvOptions {
+interface ExecCommandOptions {
   cwd?: string;
+  env?: NodeJS.ProcessEnv;
   encoding?: BufferEncoding;
   timeout?: number;
   maxBuffer?: number;
@@ -32,49 +18,19 @@ interface ExecCommandResult {
   stderr: string;
 }
 
-function hasPathSeparator(value: string): boolean {
-  return value.includes("/") || value.includes("\\");
-}
-
-function shouldUseWindowsShell(
-  command: string,
-  requestedShell?: boolean | string,
-): boolean | string {
-  if (isWindowsCommandScript(command)) {
-    return true;
-  }
-  if (requestedShell !== undefined) {
-    return requestedShell;
-  }
-  return process.platform === "win32" && !hasPathSeparator(command) && !extname(command);
-}
-
 export function spawnProcess(
   command: string,
   args: string[],
-  options?: SpawnProcessOptions,
+  options?: SpawnOptions,
 ): ChildProcess {
-  const { baseEnv, env, envOverlay, ...spawnOptions } = options ?? {};
-  const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command, spawnOptions.shell);
 
-  const shouldQuoteForShell = isWindows && shell !== false;
-  const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
-  const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
-  const childEnv =
-    options?.envMode === "internal"
-      ? ({ ...resolvedBaseEnv, ...envOverlay } as NodeJS.ProcessEnv)
-      : createExternalCommandProcessEnv(
-          command,
-          resolvedBaseEnv,
-          ...(envOverlay ? [envOverlay] : []),
-        );
+  const resolvedCommand = isWindows ? quoteWindowsCommand(command) : command;
+  const resolvedArgs = isWindows ? args.map(quoteWindowsArgument) : args;
 
   return spawn(resolvedCommand, resolvedArgs, {
-    ...spawnOptions,
-    env: childEnv,
-    shell,
+    ...options,
+    shell: options?.shell ?? isWindows,
     windowsHide: true,
   });
 }
@@ -84,29 +40,17 @@ export async function execCommand(
   args: string[],
   options?: ExecCommandOptions,
 ): Promise<ExecCommandResult> {
-  const { baseEnv, env, envOverlay } = options ?? {};
-  const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command);
-  const shouldQuoteForShell = isWindows && shell !== false;
-  const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
-  const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
-  const childEnv =
-    options?.envMode === "internal"
-      ? ({ ...resolvedBaseEnv, ...envOverlay } as NodeJS.ProcessEnv)
-      : createExternalCommandProcessEnv(
-          command,
-          resolvedBaseEnv,
-          ...(envOverlay ? [envOverlay] : []),
-        );
+  const resolvedCommand = isWindows ? quoteWindowsCommand(command) : command;
+  const resolvedArgs = isWindows ? args.map(quoteWindowsArgument) : args;
 
   return execFileAsync(resolvedCommand, resolvedArgs, {
     cwd: options?.cwd,
-    env: childEnv,
+    env: options?.env,
     encoding: options?.encoding ?? "utf8",
     timeout: options?.timeout,
     maxBuffer: options?.maxBuffer,
-    shell,
+    shell: isWindows,
     windowsHide: true,
   }) as Promise<ExecCommandResult>;
 }

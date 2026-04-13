@@ -1,10 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { spawnProcess } from "@gethubcode/server";
+import { spawnProcess } from "@hubtool/server";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { app } from "electron";
-import log from "electron-log/main";
 import {
   DESKTOP_CLI_ENV,
   createNodeEntrypointInvocation as createSharedNodeEntrypointInvocation,
@@ -14,13 +13,13 @@ import {
   type NodeEntrypointSpec,
 } from "./node-entrypoint-launcher.js";
 
-const CLI_PACKAGE_NAME = "@gethubcode/cli";
-const SERVER_PACKAGE_NAME = "@gethubcode/server";
+const CLI_PACKAGE_NAME = "@hubtool/cli";
+const SERVER_PACKAGE_NAME = "@hubtool/server";
 const CLI_BIN_ENTRY = `${CLI_PACKAGE_NAME}/bin/hubcode`;
 
-interface PackageInfo {
+type PackageInfo = {
   root: string;
-}
+};
 
 const esmRequire = createRequire(__filename);
 
@@ -111,7 +110,7 @@ export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
         filePath: path.join(
           resolvePackagedAsarPath(),
           "node_modules",
-          "@gethubcode",
+          "@hubtool",
           "server",
           "dist",
           "scripts",
@@ -148,7 +147,7 @@ export function resolveCliEntrypoint(): NodeEntrypointSpec {
         filePath: path.join(
           resolvePackagedAsarPath(),
           "node_modules",
-          "@gethubcode",
+          "@hubtool",
           "cli",
           "dist",
           "index.js",
@@ -257,7 +256,6 @@ function spawnAsync(
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
     const child = spawnProcess(command, args, {
-      envMode: "internal",
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -287,17 +285,8 @@ export async function runCliTextCommand(args: string[]): Promise<string> {
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
-    const stdout = result.stdout.trim();
-    log.warn("[desktop cli]", `CLI text command failed`, {
-      args,
-      exitCode: result.exitCode,
-      stdout: stdout.slice(0, 500),
-      stderr: stderr.slice(0, 500),
-    });
     throw new Error(
-      stderr.length > 0
-        ? stderr
-        : `CLI command failed with exit code ${result.exitCode}${stdout.length > 0 ? `\nstdout: ${stdout.slice(0, 200)}` : ""}`,
+      stderr.length > 0 ? stderr : `CLI command failed with exit code ${result.exitCode}`,
     );
   }
 
@@ -312,24 +301,13 @@ export async function runCliJsonCommand(args: string[]): Promise<unknown> {
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
-    const stdout = result.stdout.trim();
-    log.warn("[desktop cli]", `CLI command failed`, {
-      args,
-      exitCode: result.exitCode,
-      stdout: stdout.slice(0, 500),
-      stderr: stderr.slice(0, 500),
-      command: invocation.command,
-    });
     throw new Error(
-      stderr.length > 0
-        ? stderr
-        : `CLI command failed with exit code ${result.exitCode}${stdout.length > 0 ? `\nstdout: ${stdout.slice(0, 200)}` : ""}`,
+      stderr.length > 0 ? stderr : `CLI command failed with exit code ${result.exitCode}`,
     );
   }
 
   const stdout = result.stdout.trim();
   if (stdout.length === 0) {
-    log.warn("[desktop cli]", `CLI command produced no output`, { args });
     throw new Error("CLI command did not produce JSON output.");
   }
 
@@ -337,11 +315,7 @@ export async function runCliJsonCommand(args: string[]): Promise<unknown> {
   // Extract the first valid JSON object or array from the output.
   const jsonStart = stdout.search(/[{[]/);
   if (jsonStart < 0) {
-    log.warn("[desktop cli]", `CLI command output contained no JSON`, {
-      args,
-      stdout: stdout.slice(0, 500),
-    });
-    throw new Error(`CLI command output contained no JSON. Output: ${stdout.slice(0, 200)}`);
+    throw new Error("CLI command output contained no JSON.");
   }
   const jsonText = stdout.slice(jsonStart);
 
@@ -350,7 +324,6 @@ export async function runCliJsonCommand(args: string[]): Promise<unknown> {
   } catch (error) {
     throw new Error(
       `CLI command returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
     );
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 
 import {
-  createProviderEnv,
+  applyProviderEnv,
   migrateProviderSettings,
   ProviderOverrideSchema,
   resolveProviderCommandPrefix,
@@ -55,7 +55,7 @@ describe("resolveProviderCommandPrefix", () => {
   });
 });
 
-describe("createProviderEnv", () => {
+describe("applyProviderEnv", () => {
   test("merges provider env overrides", () => {
     const base = {
       PATH: "/usr/bin",
@@ -68,7 +68,7 @@ describe("createProviderEnv", () => {
       },
     };
 
-    const env = createProviderEnv({ baseEnv: base, runtimeSettings: runtime });
+    const env = applyProviderEnv(base, runtime);
 
     expect(env.PATH).toBe("/usr/bin");
     expect(env.HOME).toBe("/custom/home");
@@ -80,7 +80,7 @@ describe("createProviderEnv", () => {
     const base = { PATH: "/usr/bin" };
     const runtime: ProviderRuntimeSettings = { env: { PATH: "/custom/path" } };
 
-    const env = createProviderEnv({ baseEnv: base, runtimeSettings: runtime });
+    const env = applyProviderEnv(base, runtime);
 
     expect(env.PATH).toBe("/custom/path");
   });
@@ -95,7 +95,7 @@ describe("createProviderEnv", () => {
       CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: "true",
     };
 
-    const env = createProviderEnv({ baseEnv: base });
+    const env = applyProviderEnv(base);
 
     expect(env.PATH).toBe("/usr/bin");
     expect(env.CLAUDECODE).toBeUndefined();

@@ -12,15 +12,10 @@ const navigation = [
   { name: "Git worktrees", href: "/docs/worktrees" },
   { name: "CLI", href: "/docs/cli" },
   { name: "Skills", href: "/docs/skills" },
-  { name: "Providers", href: "/docs/providers" },
   { name: "Configuration", href: "/docs/configuration" },
   { name: "Security", href: "/docs/security" },
   { name: "Best practices", href: "/docs/best-practices" },
 ];
-
-const ACTIVE_OPTIONS_EXACT = { exact: true };
-const MOBILE_ACTIVE_PROPS = { className: "text-foreground" };
-const DESKTOP_ACTIVE_PROPS = { className: "bg-muted text-foreground" };
 
 function DocsLayout() {
   return (
@@ -36,9 +31,9 @@ function DocsLayout() {
             <Link
               key={item.href}
               to={item.href}
-              activeOptions={ACTIVE_OPTIONS_EXACT}
+              activeOptions={{ exact: true }}
               className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-              activeProps={MOBILE_ACTIVE_PROPS}
+              activeProps={{ className: "text-foreground" }}
             >
               {item.name}
             </Link>
@@ -58,9 +53,9 @@ function DocsLayout() {
               <Link
                 key={item.href}
                 to={item.href}
-                activeOptions={ACTIVE_OPTIONS_EXACT}
+                activeOptions={{ exact: true }}
                 className="block px-3 py-2 text-sm rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                activeProps={DESKTOP_ACTIVE_PROPS}
+                activeProps={{ className: "bg-muted text-foreground" }}
               >
                 {item.name}
               </Link>

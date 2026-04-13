@@ -1,9 +1,8 @@
 import type { StreamItem } from "@/types/stream";
-import { estimateAssistantMessageHeightFromCache } from "@/utils/assistant-message-height-estimate";
+import { estimateAssistantMessageHeightFromCache } from "@/utils/assistant-image-metadata";
 
 export const DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 100;
 export const DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS = 50;
-const COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE = 40;
 
 type BottomAnchorE2ETestGlobals = typeof globalThis & {
   __HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
@@ -32,15 +31,15 @@ export function getWebMountedRecentStreamItems(): number {
   return override ?? DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS;
 }
 
-export interface IndexedStreamItem {
+export type IndexedStreamItem = {
   item: StreamItem;
   index: number;
-}
+};
 
-export interface WebVirtualizedHistoryWindow {
+export type WebVirtualizedHistoryWindow = {
   virtualizedEntries: IndexedStreamItem[];
   mountedEntries: IndexedStreamItem[];
-}
+};
 
 export function estimateStreamItemHeight(item: StreamItem): number {
   switch (item.kind) {
@@ -49,9 +48,9 @@ export function estimateStreamItemHeight(item: StreamItem): number {
     case "assistant_message":
       return estimateAssistantMessageHeightFromCache(item.text) ?? 220;
     case "tool_call":
-      return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
+      return 136;
     case "thought":
-      return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
+      return 112;
     case "todo_list":
       return 144;
     case "activity_log":

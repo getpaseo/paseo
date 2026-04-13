@@ -1,15 +1,15 @@
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { resolveHubcodeHome } from "@gethubcode/server";
+import { resolveHubcodeHome } from "@hubtool/server";
 
 const ATTACHMENTS_DIRNAME = "desktop-attachments";
 const ATTACHMENT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const EXTENSION_PATTERN = /^\.[A-Za-z0-9]{1,16}$/;
 
-interface AttachmentFileResult {
+type AttachmentFileResult = {
   path: string;
   byteSize: number;
-}
+};
 
 function attachmentsDirPath(): string {
   return path.join(resolveHubcodeHome(process.env), ATTACHMENTS_DIRNAME);
@@ -142,11 +142,19 @@ export async function garbageCollectManagedAttachmentFiles(input: {
     : new Set<string>();
 
   const entries = await readdir(dirPath, { withFileTypes: true });
-  const toDelete = entries.filter(
-    (entry) => entry.isFile() && !referencedIds.has(path.parse(entry.name).name),
-  );
+  let deletedCount = 0;
 
-  await Promise.all(toDelete.map((entry) => rm(path.join(dirPath, entry.name), { force: true })));
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const attachmentId = path.parse(entry.name).name;
+    if (referencedIds.has(attachmentId)) {
+      continue;
+    }
+    await rm(path.join(dirPath, entry.name), { force: true });
+    deletedCount += 1;
+  }
 
-  return toDelete.length;
+  return deletedCount;
 }

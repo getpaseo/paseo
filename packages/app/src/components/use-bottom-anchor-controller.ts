@@ -3,16 +3,16 @@ import type { BottomAnchorTransportBehavior } from "./agent-stream-render-strate
 
 export type BottomAnchorMode = "sticky-bottom" | "detached";
 
-export interface BottomAnchorRouteRequest {
+export type BottomAnchorRouteRequest = {
   reason: "initial-entry" | "resume";
   agentId: string;
   requestKey: string;
-}
+};
 
-export interface BottomAnchorLocalRequest {
+export type BottomAnchorLocalRequest = {
   reason: "jump-to-bottom" | "message-sent";
   agentId: string;
-}
+};
 
 export type BottomAnchorBlockedReason =
   | "waiting_for_history_readiness"
@@ -24,14 +24,14 @@ type BottomAnchorRequestReason =
   | BottomAnchorRouteRequest["reason"]
   | BottomAnchorLocalRequest["reason"];
 
-interface BottomAnchorRequest {
+type BottomAnchorRequest = {
   id: number;
   agentId: string;
   reason: BottomAnchorRequestReason;
   requestKey: string;
-}
+};
 
-interface ControllerMeasurementState {
+type ControllerMeasurementState = {
   containerKey: string;
   viewportWidth: number;
   viewportHeight: number;
@@ -39,25 +39,37 @@ interface ControllerMeasurementState {
   offsetY: number;
   viewportMeasuredForKey: string | null;
   contentMeasuredForKey: string | null;
-}
+};
 
-interface AttemptContext {
+type AttemptContext = {
   requestId: number | null;
   retries: number;
   confirmationPasses?: number;
   startedContentHeight?: number;
   startedOffsetY?: number;
   startedViewportHeight?: number;
-}
+};
 
-interface ScheduledFrameHandle {
+type ScheduledFrameHandle = {
   cancelled: boolean;
   rafId: number | null;
   remainingFrames: number;
   callback: () => void;
-}
+};
 
-interface BottomAnchorControllerDriver {
+type BottomAnchorEvent =
+  | "request_created"
+  | "evaluate_called"
+  | "attempt_started"
+  | "attempt_verified"
+  | "attempt_failed"
+  | "request_fulfilled"
+  | "request_cancelled"
+  | "detached_by_user"
+  | "verification_scheduled"
+  | "blocked_reason_changed";
+
+type BottomAnchorControllerDriver = {
   destroy: () => void;
   getSnapshot: () => {
     mode: BottomAnchorMode;
@@ -87,9 +99,9 @@ interface BottomAnchorControllerDriver {
   }) => void;
   notifyAuthoritativeHistoryMaybeChanged: () => void;
   reevaluate: (animated?: boolean) => void;
-}
+};
 
-interface CreateBottomAnchorControllerDriverInput {
+type CreateBottomAnchorControllerDriverInput = {
   getAgentId: () => string;
   getIsAuthoritativeHistoryReady: () => boolean;
   getRenderStrategy: () => string;
@@ -104,7 +116,7 @@ interface CreateBottomAnchorControllerDriverInput {
     delayFrames?: number;
   }) => unknown;
   cancelFrame: (handle: unknown) => void;
-}
+};
 
 const MAX_VERIFICATION_RETRIES = 3;
 const WEB_PARTIAL_VIRTUALIZED_CONFIRMATION_DELAY_FRAMES = 1;
@@ -230,6 +242,25 @@ function shouldRequireRouteRequestConfirmation(input: {
   return input.confirmationPasses < 1;
 }
 
+function getDetailedMeasurementState(
+  measurementState: ControllerMeasurementState,
+): Record<string, unknown> {
+  const distanceFromBottom = Math.max(
+    0,
+    measurementState.contentHeight - (measurementState.offsetY + measurementState.viewportHeight),
+  );
+  return {
+    containerKey: measurementState.containerKey,
+    viewportWidth: measurementState.viewportWidth,
+    viewportHeight: measurementState.viewportHeight,
+    contentHeight: measurementState.contentHeight,
+    offsetY: measurementState.offsetY,
+    distanceFromBottom,
+    viewportMeasuredForKey: measurementState.viewportMeasuredForKey,
+    contentMeasuredForKey: measurementState.contentMeasuredForKey,
+  };
+}
+
 function createBottomAnchorControllerDriver(
   input: CreateBottomAnchorControllerDriverInput,
 ): BottomAnchorControllerDriver {
@@ -244,7 +275,7 @@ function createBottomAnchorControllerDriver(
   let stickyMeasurementRevision = 0;
   let lastVerifiedStickyMeasurementRevision = 0;
 
-  const _getLogContext = (extra?: Record<string, unknown>) => {
+  const getLogContext = (extra?: Record<string, unknown>) => {
     const measurementState = input.getMeasurementState();
     const distanceFromBottom = Math.max(
       0,
@@ -305,7 +336,7 @@ function createBottomAnchorControllerDriver(
     pendingVerification = null;
   };
 
-  const cancelPendingRequest = (_reason: string) => {
+  const cancelPendingRequest = (reason: string) => {
     const currentRequest = pendingRequest;
     if (!currentRequest) {
       cancelPendingAttempt();
@@ -327,7 +358,7 @@ function createBottomAnchorControllerDriver(
     });
 
   const scheduleVerification = (attemptContext: AttemptContext, delayFramesOverride?: number) => {
-    const _scheduledMeasurementState = input.getMeasurementState();
+    const scheduledMeasurementState = input.getMeasurementState();
     if (verificationHandle) {
       input.cancelFrame(verificationHandle);
     }
@@ -430,7 +461,7 @@ function createBottomAnchorControllerDriver(
 
   const evaluate = (
     animated: boolean,
-    _reason:
+    reason:
       | "request_created"
       | "viewport_change"
       | "content_size_change"
@@ -629,7 +660,7 @@ export const __private__ = {
   deriveBottomAnchorBlockedReason,
   deriveVerificationBlockedReason,
   deriveRetryDisposition,
-  deriveModeForLocalRequest(_input: {
+  deriveModeForLocalRequest(input: {
     reason: BottomAnchorLocalRequest["reason"];
   }): BottomAnchorMode {
     return "sticky-bottom";

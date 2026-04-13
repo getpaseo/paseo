@@ -1,20 +1,19 @@
-import { spawn, type ChildProcess, execFileSync, execSync } from "node:child_process";
+import { spawn, type ChildProcess, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { Buffer } from "node:buffer";
 import dotenv from "dotenv";
-import { forkHubcodeHomeMetadata, resolveHubcodeHomePath } from "./helpers/hubcode-home-fork";
 
-interface WaitForServerOptions {
+type WaitForServerOptions = {
   host?: string;
   timeoutMs?: number;
   label: string;
   childProcess?: ChildProcess | null;
   getRecentOutput?: () => string;
-}
+};
 
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -125,21 +124,16 @@ async function stopProcess(child: ChildProcess | null): Promise<void> {
   }
   child.kill("SIGTERM");
   await new Promise<void>((resolve) => {
-    let pendingResolve: (() => void) | null = resolve;
-    const settle = () => {
-      if (!pendingResolve) return;
-      const fn = pendingResolve;
-      pendingResolve = null;
-      clearTimeout(timeout);
-      fn();
-    };
     const timeout = setTimeout(() => {
       if (child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }
-      settle();
+      resolve();
     }, 5000);
-    child.once("exit", settle);
+    child.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
   });
 }
 
@@ -188,77 +182,17 @@ async function isOpenAiApiKeyUsable(apiKey: string | undefined): Promise<boolean
 let daemonProcess: ChildProcess | null = null;
 let metroProcess: ChildProcess | null = null;
 let hubcodeHome: string | null = null;
-let fakeGhBinDir: string | null = null;
 let relayProcess: ChildProcess | null = null;
 
-function resolveOptionalHubcodeHomeEnv(value: string | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  if (trimmed === "current") {
-    return resolveHubcodeHomePath("~/.hubcode");
-  }
-  return resolveHubcodeHomePath(trimmed);
-}
-
-interface OfferPayload {
+type OfferPayload = {
   v: 2;
   serverId: string;
   daemonPublicKeyB64: string;
   relay: { endpoint: string };
-}
-
-async function createFakeGhBin(): Promise<string> {
-  const binDir = await mkdtemp(path.join(tmpdir(), "hubcode-e2e-gh-bin-"));
-  const ghPath = path.join(binDir, "gh");
-  await writeFile(
-    ghPath,
-    `#!/usr/bin/env node
-const args = process.argv.slice(2);
-
-if (args[0] === "auth" && args[1] === "status") {
-  process.exit(0);
-}
-
-if (args[0] === "pr" && args[1] === "list") {
-  console.log(JSON.stringify([
-    {
-      number: 515,
-      title: "Review selected start ref",
-      url: "https://github.com/hubtool/hubcode/pull/515",
-      state: "OPEN",
-      body: "Fixture pull request for app e2e.",
-      labels: [],
-      baseRefName: "main",
-      headRefName: "feature/start-from-pr"
-    }
-  ]));
-  process.exit(0);
-}
-
-if (args[0] === "pr" && args[1] === "view" && args[2] === "--json" && args[3]) {
-  console.error("no pull requests found for branch");
-  process.exit(1);
-}
-
-if (args[0] === "issue" && args[1] === "list") {
-  console.log("[]");
-  process.exit(0);
-}
-
-console.error("Unsupported fake gh invocation: " + args.join(" "));
-process.exit(1);
-`,
-  );
-  await chmod(ghPath, 0o755);
-  return binDir;
-}
-
-const ANSI_PATTERN = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "g");
+};
 
 function stripAnsi(input: string): string {
-  return input.replace(ANSI_PATTERN, "");
+  return input.replace(/\u001b\[[0-9;]*m/g, "");
 }
 
 function ensureRelayBuildArtifact(repoRoot: string): void {
@@ -267,8 +201,8 @@ function ensureRelayBuildArtifact(repoRoot: string): void {
     return;
   }
 
-  console.log("[e2e] Building @gethubcode/relay for daemon startup");
-  execSync("npm run build --workspace=@gethubcode/relay", {
+  console.log("[e2e] Building @hubtool/relay for daemon startup");
+  execSync("npm run build --workspace=@hubtool/relay", {
     cwd: repoRoot,
     stdio: "inherit",
   });
@@ -290,89 +224,37 @@ function decodeOfferFromFragmentUrl(url: string): OfferPayload {
   return offer as OfferPayload;
 }
 
-function loadPairingOfferFromCli(repoRoot: string, hubcodeHomePath: string): OfferPayload {
-  const stdout = execFileSync(
-    process.execPath,
-    ["--import", "tsx", "packages/cli/src/index.ts", "daemon", "pair", "--json"],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        HUBCODE_HOME: hubcodeHomePath,
-      },
-      encoding: "utf8",
-    },
-  );
-  const payload = JSON.parse(stdout) as { relayEnabled?: boolean; url?: string | null };
-  if (payload.relayEnabled !== true || typeof payload.url !== "string") {
-    throw new Error(`Unexpected daemon pair response: ${stdout}`);
-  }
-  return decodeOfferFromFragmentUrl(payload.url);
-}
-
-async function waitForPairingOfferFromCli(args: {
-  repoRoot: string;
-  hubcodeHome: string;
-  timeoutMs?: number;
-}): Promise<OfferPayload> {
-  const timeoutMs = args.timeoutMs ?? 15000;
-  const start = Date.now();
-  let lastError: unknown = null;
-
-  while (Date.now() - start < timeoutMs) {
-    try {
-      return loadPairingOfferFromCli(args.repoRoot, args.hubcodeHome);
-    } catch (error) {
-      lastError = error;
-      await sleep(100);
-    }
-  }
-
-  throw new Error(
-    `Timed out waiting for \`hubcode daemon pair --json\` to produce a pairing offer: ${
-      lastError instanceof Error ? lastError.message : String(lastError)
-    }`,
-  );
-}
-
-interface DictationConfig {
-  openAiUsable: boolean;
-  localModelsDir: string | null;
-}
-
-async function loadEnvTestFile(repoRoot: string): Promise<void> {
+export default async function globalSetup() {
+  const repoRoot = path.resolve(__dirname, "../../..");
+  ensureRelayBuildArtifact(repoRoot);
   const envTestPath = path.join(repoRoot, ".env.test");
   if (existsSync(envTestPath)) {
     dotenv.config({ path: envTestPath });
   }
-}
 
-async function applyHubcodeHomeFork(targetHome: string): Promise<void> {
-  const forkSourceHome = resolveOptionalHubcodeHomeEnv(process.env.E2E_FORK_HUBCODE_HOME_FROM);
-  if (!forkSourceHome) {
-    return;
-  }
-  const forkResult = await forkHubcodeHomeMetadata({
-    sourceHome: forkSourceHome,
-    targetHome,
-  });
-  process.env.E2E_FORK_SOURCE_HUBCODE_HOME = forkResult.sourceHome;
-  process.env.E2E_FORK_TARGET_HUBCODE_HOME = forkResult.targetHome;
-  process.env.E2E_FORK_COPIED_FILES = String(forkResult.copiedFiles);
-  process.env.E2E_FORK_COPIED_BYTES = String(forkResult.copiedBytes);
-  console.log(
-    `[e2e] Forked Hubcode metadata from ${forkResult.sourceHome} to ${forkResult.targetHome} ` +
-      `(${forkResult.agentFiles} agent files, ${forkResult.projectFiles} project registry files, ` +
-      `${forkResult.copiedBytes} bytes)`,
-  );
-  if (forkResult.skippedMissing.length > 0) {
-    console.warn(
-      `[e2e] Hubcode metadata fork skipped missing paths: ${forkResult.skippedMissing.join(", ")}`,
-    );
-  }
-}
+  const port = await getAvailablePort();
+  let relayPort = 0;
+  const metroPort = await getAvailablePort();
+  hubcodeHome = await mkdtemp(path.join(tmpdir(), "hubcode-e2e-home-"));
+  let relayLineBuffer = createLineBuffer();
+  const metroLineBuffer = createLineBuffer();
+  const daemonLineBuffer = createLineBuffer();
 
-async function resolveDictationConfig(): Promise<DictationConfig> {
+  const cleanup = async () => {
+    await Promise.all([
+      stopProcess(daemonProcess),
+      stopProcess(metroProcess),
+      stopProcess(relayProcess),
+    ]);
+    daemonProcess = null;
+    metroProcess = null;
+    relayProcess = null;
+    if (hubcodeHome) {
+      await rm(hubcodeHome, { recursive: true, force: true });
+      hubcodeHome = null;
+    }
+  };
+
   const openAiUsable = await isOpenAiApiKeyUsable(process.env.OPENAI_API_KEY);
   const defaultLocalModelsDir = path.join(
     process.env.HOME ?? "",
@@ -395,291 +277,238 @@ async function resolveDictationConfig(): Promise<DictationConfig> {
   console.log(
     `[e2e] Dictation STT provider: ${dictationProvider}${openAiUsable ? "" : " (OpenAI probe failed)"}`,
   );
-  return { openAiUsable, localModelsDir };
-}
-
-interface RelayStreamState {
-  failureLine: string | null;
-  readyForSelectedPort: boolean;
-}
-
-function attachRelayStreamHandlers(
-  child: ChildProcess,
-  relayPort: number,
-  buffer: ReturnType<typeof createLineBuffer>,
-  state: RelayStreamState,
-): void {
-  function handleChunk(data: Buffer, streamTag: "stdout" | "stderr") {
-    const lines = data
-      .toString()
-      .split("\n")
-      .filter((line) => line.trim());
-    for (const line of lines) {
-      buffer.add(`[${streamTag}] ${line}`);
-      const failure = parseRelayStartupFailure(line);
-      if (failure) {
-        state.failureLine = failure;
-      }
-      const clean = stripAnsi(line);
-      const readyMatch = clean.match(/Ready on .*:(\d+)\b/i);
-      if (readyMatch && Number(readyMatch[1]) === relayPort) {
-        state.readyForSelectedPort = true;
-      }
-      if (streamTag === "stdout") {
-        console.log(`[relay] ${line}`);
-      } else {
-        console.error(`[relay] ${line}`);
-      }
-    }
-  }
-
-  child.stdout?.on("data", (data: Buffer) => handleChunk(data, "stdout"));
-  child.stderr?.on("data", (data: Buffer) => handleChunk(data, "stderr"));
-}
-
-async function awaitRelayReady(
-  child: ChildProcess,
-  relayPort: number,
-  state: RelayStreamState,
-  buffer: ReturnType<typeof createLineBuffer>,
-): Promise<void> {
-  await waitForServer(relayPort, {
-    label: "Relay dev server",
-    timeoutMs: 30000,
-    childProcess: child,
-    getRecentOutput: buffer.dump,
-  });
-
-  const readyDeadline = Date.now() + 5000;
-  function isRelayReadyCheckPending(): boolean {
-    if (state.readyForSelectedPort) return false;
-    if (state.failureLine !== null) return false;
-    if (child.exitCode !== null) return false;
-    if (child.signalCode !== null) return false;
-    if (Date.now() >= readyDeadline) return false;
-    return true;
-  }
-  while (isRelayReadyCheckPending()) await sleep(100);
-
-  if (state.failureLine) {
-    throw new Error(`Relay startup failed: ${state.failureLine}`);
-  }
-  if (!state.readyForSelectedPort) {
-    throw new Error(
-      `Relay process did not report ready for selected port ${relayPort}.${formatRecentOutput(
-        buffer.dump,
-      )}`,
-    );
-  }
-  if (child.exitCode !== null || child.signalCode !== null) {
-    throw new Error(
-      `Relay process exited before startup completed (exit code ${child.exitCode}, signal ${child.signalCode}).${formatRecentOutput(
-        buffer.dump,
-      )}`,
-    );
-  }
-}
-
-async function startRelay(): Promise<number> {
-  const relayDir = path.resolve(__dirname, "..", "..", "relay");
-  const maxRelayStartupAttempts = 5;
-  let lastRelayStartupError: unknown = null;
-
-  for (let attempt = 1; attempt <= maxRelayStartupAttempts; attempt += 1) {
-    const relayPort = await getAvailablePort();
-    const buffer = createLineBuffer();
-    const state: RelayStreamState = { failureLine: null, readyForSelectedPort: false };
-
-    relayProcess = spawn(
-      "npx",
-      ["wrangler", "dev", "--local", "--ip", "127.0.0.1", "--port", String(relayPort)],
-      {
-        cwd: relayDir,
-        env: { ...process.env },
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: false,
-      },
-    );
-    attachRelayStreamHandlers(relayProcess, relayPort, buffer, state);
-
-    try {
-      await awaitRelayReady(relayProcess, relayPort, state, buffer);
-      return relayPort;
-    } catch (error) {
-      lastRelayStartupError = error;
-      await stopProcess(relayProcess);
-      relayProcess = null;
-    }
-  }
-
-  const message =
-    lastRelayStartupError instanceof Error
-      ? lastRelayStartupError.message
-      : String(lastRelayStartupError);
-  throw new Error(
-    `Failed to start relay dev server after ${maxRelayStartupAttempts} attempts. ${message}`,
-  );
-}
-
-function startMetro(metroPort: number, buffer: ReturnType<typeof createLineBuffer>): ChildProcess {
-  const appDir = path.resolve(__dirname, "..");
-  const child = spawn("npx", ["expo", "start", "--web", "--port", String(metroPort)], {
-    cwd: appDir,
-    env: {
-      ...process.env,
-      BROWSER: "none",
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: false,
-  });
-
-  child.stdout?.on("data", (data: Buffer) => {
-    const lines = data
-      .toString()
-      .split("\n")
-      .filter((line) => line.trim());
-    for (const line of lines) {
-      buffer.add(`[stdout] ${line}`);
-      console.log(`[metro] ${line}`);
-    }
-  });
-
-  child.stderr?.on("data", (data: Buffer) => {
-    const lines = data
-      .toString()
-      .split("\n")
-      .filter((line) => line.trim());
-    for (const line of lines) {
-      buffer.add(`[stderr] ${line}`);
-      console.error(`[metro] ${line}`);
-    }
-  });
-
-  return child;
-}
-
-interface DaemonSpawnArgs {
-  port: number;
-  relayPort: number;
-  metroPort: number;
-  hubcodeHome: string;
-  fakeGhBinDir: string;
-  dictation: DictationConfig;
-  buffer: ReturnType<typeof createLineBuffer>;
-}
-
-function startDaemon(args: DaemonSpawnArgs): ChildProcess {
-  const serverDir = path.resolve(__dirname, "../../..", "packages/server");
-  const tsxBin = execSync("which tsx").toString().trim();
-  const { openAiUsable, localModelsDir } = args.dictation;
-
-  const child = spawn(tsxBin, ["src/server/index.ts"], {
-    cwd: serverDir,
-    env: {
-      ...process.env,
-      PATH: `${args.fakeGhBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
-      HUBCODE_HOME: args.hubcodeHome,
-      HUBCODE_SERVER_ID: "srv_e2e_test_daemon",
-      HUBCODE_LISTEN: `0.0.0.0:${args.port}`,
-      HUBCODE_RELAY_ENDPOINT: `127.0.0.1:${args.relayPort}`,
-      HUBCODE_CORS_ORIGINS: `http://localhost:${args.metroPort}`,
-      HUBCODE_DICTATION_ENABLED: openAiUsable ? "1" : "0",
-      HUBCODE_VOICE_MODE_ENABLED: openAiUsable ? "1" : "0",
-      ...(openAiUsable
-        ? {
-            HUBCODE_DICTATION_STT_PROVIDER: "openai",
-            HUBCODE_VOICE_STT_PROVIDER: "openai",
-            HUBCODE_VOICE_TTS_PROVIDER: "openai",
-          }
-        : {}),
-      ...(localModelsDir ? { HUBCODE_LOCAL_MODELS_DIR: localModelsDir } : {}),
-      NODE_ENV: "development",
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: false,
-  });
-
-  let stdoutBuffer = "";
-  child.stdout?.on("data", (data: Buffer) => {
-    stdoutBuffer += data.toString("utf8");
-    const lines = stdoutBuffer.split("\n");
-    stdoutBuffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      args.buffer.add(`[stdout] ${trimmed}`);
-      console.log(`[daemon] ${trimmed}`);
-    }
-  });
-
-  child.stderr?.on("data", (data: Buffer) => {
-    const lines = data
-      .toString()
-      .split("\n")
-      .filter((line) => line.trim());
-    for (const line of lines) {
-      args.buffer.add(`[stderr] ${line}`);
-      console.error(`[daemon] ${line}`);
-    }
-  });
-
-  return child;
-}
-
-async function performCleanup(shouldRemoveHubcodeHome: boolean): Promise<void> {
-  await Promise.all([
-    stopProcess(daemonProcess),
-    stopProcess(metroProcess),
-    stopProcess(relayProcess),
-  ]);
-  daemonProcess = null;
-  metroProcess = null;
-  relayProcess = null;
-  if (hubcodeHome && shouldRemoveHubcodeHome) {
-    await rm(hubcodeHome, { recursive: true, force: true });
-    hubcodeHome = null;
-  } else if (hubcodeHome) {
-    console.log(`[e2e] Preserving HUBCODE_HOME: ${hubcodeHome}`);
-  }
-  if (fakeGhBinDir) {
-    await rm(fakeGhBinDir, { recursive: true, force: true });
-    fakeGhBinDir = null;
-  }
-}
-
-export default async function globalSetup() {
-  const repoRoot = path.resolve(__dirname, "../../..");
-  ensureRelayBuildArtifact(repoRoot);
-  await loadEnvTestFile(repoRoot);
-
-  const port = await getAvailablePort();
-  const metroPort = await getAvailablePort();
-  const requestedHubcodeHome = resolveOptionalHubcodeHomeEnv(process.env.E2E_HUBCODE_HOME);
-  const shouldRemoveHubcodeHome = !requestedHubcodeHome && process.env.E2E_KEEP_HUBCODE_HOME !== "1";
-  hubcodeHome = requestedHubcodeHome ?? (await mkdtemp(path.join(tmpdir(), "hubcode-e2e-home-")));
-  fakeGhBinDir = await createFakeGhBin();
-  const metroLineBuffer = createLineBuffer();
-  const daemonLineBuffer = createLineBuffer();
-
-  await applyHubcodeHomeFork(hubcodeHome);
-
-  const cleanup = () => performCleanup(shouldRemoveHubcodeHome);
-
-  const dictation = await resolveDictationConfig();
 
   try {
-    const relayPort = await startRelay();
-    metroProcess = startMetro(metroPort, metroLineBuffer);
-    daemonProcess = startDaemon({
-      port,
-      relayPort,
-      metroPort,
-      hubcodeHome,
-      fakeGhBinDir,
-      dictation,
-      buffer: daemonLineBuffer,
+    const relayDir = path.resolve(__dirname, "..", "..", "relay");
+    const maxRelayStartupAttempts = 5;
+    let relayStarted = false;
+    let lastRelayStartupError: unknown = null;
+
+    for (let attempt = 1; attempt <= maxRelayStartupAttempts; attempt += 1) {
+      relayPort = await getAvailablePort();
+      relayLineBuffer = createLineBuffer();
+      let relayStartupFailureLine: string | null = null;
+      let relayReadyForSelectedPort = false;
+
+      relayProcess = spawn(
+        "npx",
+        ["wrangler", "dev", "--local", "--ip", "127.0.0.1", "--port", String(relayPort)],
+        {
+          cwd: relayDir,
+          env: { ...process.env },
+          stdio: ["ignore", "pipe", "pipe"],
+          detached: false,
+        },
+      );
+
+      relayProcess.stdout?.on("data", (data: Buffer) => {
+        const lines = data
+          .toString()
+          .split("\n")
+          .filter((line) => line.trim());
+        for (const line of lines) {
+          relayLineBuffer.add(`[stdout] ${line}`);
+          const failure = parseRelayStartupFailure(line);
+          if (failure) {
+            relayStartupFailureLine = failure;
+          }
+          const clean = stripAnsi(line);
+          const readyMatch = clean.match(/Ready on .*:(\d+)\b/i);
+          if (readyMatch && Number(readyMatch[1]) === relayPort) {
+            relayReadyForSelectedPort = true;
+          }
+          console.log(`[relay] ${line}`);
+        }
+      });
+      relayProcess.stderr?.on("data", (data: Buffer) => {
+        const lines = data
+          .toString()
+          .split("\n")
+          .filter((line) => line.trim());
+        for (const line of lines) {
+          relayLineBuffer.add(`[stderr] ${line}`);
+          const failure = parseRelayStartupFailure(line);
+          if (failure) {
+            relayStartupFailureLine = failure;
+          }
+          const clean = stripAnsi(line);
+          const readyMatch = clean.match(/Ready on .*:(\d+)\b/i);
+          if (readyMatch && Number(readyMatch[1]) === relayPort) {
+            relayReadyForSelectedPort = true;
+          }
+          console.error(`[relay] ${line}`);
+        }
+      });
+
+      try {
+        await waitForServer(relayPort, {
+          label: "Relay dev server",
+          timeoutMs: 30000,
+          childProcess: relayProcess,
+          getRecentOutput: relayLineBuffer.dump,
+        });
+
+        const readyDeadline = Date.now() + 5000;
+        while (
+          !relayReadyForSelectedPort &&
+          relayStartupFailureLine === null &&
+          relayProcess?.exitCode === null &&
+          relayProcess?.signalCode === null &&
+          Date.now() < readyDeadline
+        ) {
+          await sleep(100);
+        }
+
+        if (relayStartupFailureLine) {
+          throw new Error(`Relay startup failed: ${relayStartupFailureLine}`);
+        }
+        if (!relayReadyForSelectedPort) {
+          throw new Error(
+            `Relay process did not report ready for selected port ${relayPort}.${formatRecentOutput(
+              relayLineBuffer.dump,
+            )}`,
+          );
+        }
+        if (relayProcess.exitCode !== null || relayProcess.signalCode !== null) {
+          throw new Error(
+            `Relay process exited before startup completed (exit code ${relayProcess.exitCode}, signal ${relayProcess.signalCode}).${formatRecentOutput(
+              relayLineBuffer.dump,
+            )}`,
+          );
+        }
+
+        relayStarted = true;
+        break;
+      } catch (error) {
+        lastRelayStartupError = error;
+        await stopProcess(relayProcess);
+        relayProcess = null;
+      }
+    }
+
+    if (!relayStarted) {
+      const message =
+        lastRelayStartupError instanceof Error
+          ? lastRelayStartupError.message
+          : String(lastRelayStartupError);
+      throw new Error(
+        `Failed to start relay dev server after ${maxRelayStartupAttempts} attempts. ${message}`,
+      );
+    }
+
+    // Start Metro bundler on dynamic port
+    const appDir = path.resolve(__dirname, "..");
+    metroProcess = spawn("npx", ["expo", "start", "--web", "--port", String(metroPort)], {
+      cwd: appDir,
+      env: {
+        ...process.env,
+        BROWSER: "none", // Don't auto-open browser
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: false,
     });
 
+    metroProcess.stdout?.on("data", (data: Buffer) => {
+      const lines = data
+        .toString()
+        .split("\n")
+        .filter((line) => line.trim());
+      for (const line of lines) {
+        metroLineBuffer.add(`[stdout] ${line}`);
+        console.log(`[metro] ${line}`);
+      }
+    });
+
+    metroProcess.stderr?.on("data", (data: Buffer) => {
+      const lines = data
+        .toString()
+        .split("\n")
+        .filter((line) => line.trim());
+      for (const line of lines) {
+        metroLineBuffer.add(`[stderr] ${line}`);
+        console.error(`[metro] ${line}`);
+      }
+    });
+
+    const serverDir = path.resolve(__dirname, "../../..", "packages/server");
+    const tsxBin = execSync("which tsx").toString().trim();
+
+    let offerPayload: OfferPayload | null = null;
+    let offerResolve: (() => void) | null = null;
+    const offerPromise = new Promise<void>((resolve) => {
+      offerResolve = resolve;
+    });
+
+    daemonProcess = spawn(tsxBin, ["src/server/index.ts"], {
+      cwd: serverDir,
+      env: {
+        ...process.env,
+        HUBCODE_HOME: hubcodeHome,
+        HUBCODE_SERVER_ID: "srv_e2e_test_daemon",
+        HUBCODE_LISTEN: `0.0.0.0:${port}`,
+        HUBCODE_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
+        HUBCODE_CORS_ORIGINS: `http://localhost:${metroPort}`,
+        HUBCODE_DICTATION_ENABLED: openAiUsable ? "1" : "0",
+        HUBCODE_VOICE_MODE_ENABLED: openAiUsable ? "1" : "0",
+        ...(openAiUsable
+          ? {
+              HUBCODE_DICTATION_STT_PROVIDER: "openai",
+              HUBCODE_VOICE_STT_PROVIDER: "openai",
+              HUBCODE_VOICE_TTS_PROVIDER: "openai",
+            }
+          : {}),
+        ...(localModelsDir ? { HUBCODE_LOCAL_MODELS_DIR: localModelsDir } : {}),
+        NODE_ENV: "development",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: false,
+    });
+
+    let stdoutBuffer = "";
+    daemonProcess.stdout?.on("data", (data: Buffer) => {
+      stdoutBuffer += data.toString("utf8");
+      const lines = stdoutBuffer.split("\n");
+      stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        daemonLineBuffer.add(`[stdout] ${trimmed}`);
+        if (!offerPayload) {
+          const clean = stripAnsi(trimmed);
+          try {
+            const obj = JSON.parse(clean) as { msg?: string; url?: string };
+            if (obj.msg === "pairing_offer" && typeof obj.url === "string") {
+              offerPayload = decodeOfferFromFragmentUrl(obj.url);
+              offerResolve?.();
+            }
+          } catch {
+            const match = clean.match(/https?:\/\/[^\s"]+#offer=[A-Za-z0-9_-]+/);
+            if (match && clean.includes("pairing_offer")) {
+              try {
+                offerPayload = decodeOfferFromFragmentUrl(match[0]);
+                offerResolve?.();
+              } catch {
+                // ignore parsing failures
+              }
+            }
+          }
+        }
+        console.log(`[daemon] ${trimmed}`);
+      }
+    });
+
+    daemonProcess.stderr?.on("data", (data: Buffer) => {
+      const lines = data
+        .toString()
+        .split("\n")
+        .filter((line) => line.trim());
+      for (const line of lines) {
+        daemonLineBuffer.add(`[stderr] ${line}`);
+        console.error(`[daemon] ${line}`);
+      }
+    });
+
+    // Wait for both daemon and Metro to be ready
     await Promise.all([
       waitForServer(port, {
         label: "Hubcode daemon",
@@ -688,16 +517,23 @@ export default async function globalSetup() {
       }),
       waitForServer(metroPort, {
         label: "Metro web server",
-        timeoutMs: 120000,
+        timeoutMs: 120000, // Metro can take longer to start
         childProcess: metroProcess,
         getRecentOutput: metroLineBuffer.dump,
       }),
     ]);
 
-    const offer = await waitForPairingOfferFromCli({
-      repoRoot,
-      hubcodeHome,
-    });
+    // Wait for daemon to emit a pairing offer (includes relay session ID).
+    await Promise.race([
+      offerPromise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Timed out waiting for pairing_offer log")), 15000),
+      ),
+    ]);
+    if (!offerPayload) {
+      throw new Error("pairing_offer was not parsed from daemon logs");
+    }
+    const offer = offerPayload as OfferPayload;
 
     process.env.E2E_DAEMON_PORT = String(port);
     process.env.E2E_RELAY_PORT = String(relayPort);

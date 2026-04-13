@@ -46,9 +46,9 @@ type DesktopDragDropPayload =
       type: "leave";
     };
 
-interface DesktopDragDropEvent {
+type DesktopDragDropEvent = {
   payload: DesktopDragDropPayload;
-}
+};
 
 function isImageFile(file: File): boolean {
   return file.type.startsWith("image/");
@@ -167,7 +167,6 @@ export function useFileDropZone({
                 return;
               }
               onFilesDroppedRef.current(attachments);
-              return;
             })
             .catch((error) => {
               console.error("[useFileDropZone] Failed to persist dropped files:", error);

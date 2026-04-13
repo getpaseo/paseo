@@ -1,13 +1,13 @@
 {
-  "name": "@gethubcode/website",
-  "version": "0.1.63-beta.4",
+  "name": "@hubtool/website",
+  "version": "0.1.55-rc.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
@@ -28,6 +28,7 @@
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.5.1",
+    "tailwindcss": "^4.1.8",
     "typescript": "^5.9.3",
     "vite": "^7.0.0",
     "vite-tsconfig-paths": "^5.1.4"

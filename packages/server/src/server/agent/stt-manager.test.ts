@@ -9,16 +9,15 @@ import type {
   TranscriptionResult,
 } from "../speech/speech-provider.js";
 
-type SessionParams = Parameters<SpeechToTextProvider["createSession"]>[0];
-type StreamingOn = StreamingTranscriptionSession["on"];
-type StreamingOnEvent = Parameters<StreamingOn>[0];
-type StreamingOnHandler = Parameters<StreamingOn>[1];
-
 class FakeStt implements SpeechToTextProvider {
   public readonly id = "fake";
   constructor(private readonly result: TranscriptionResult) {}
 
-  createSession(_params: SessionParams): StreamingTranscriptionSession {
+  createSession(_params: {
+    logger: any;
+    language?: string;
+    prompt?: string;
+  }): StreamingTranscriptionSession {
     const emitter = new EventEmitter();
     const result = this.result;
     let segmentId = "seg-1";
@@ -29,8 +28,8 @@ class FakeStt implements SpeechToTextProvider {
       async connect() {},
       appendPcm16() {},
       commit() {
-        emitter.emit("committed", { segmentId, previousSegmentId });
-        emitter.emit("transcript", {
+        (emitter as any).emit("committed", { segmentId, previousSegmentId });
+        (emitter as any).emit("transcript", {
           segmentId,
           transcript: result.text,
           isFinal: true,
@@ -44,8 +43,8 @@ class FakeStt implements SpeechToTextProvider {
       },
       clear() {},
       close() {},
-      on(event: StreamingOnEvent, handler: StreamingOnHandler) {
-        emitter.on(event, handler as (...args: unknown[]) => void);
+      on(event: any, handler: any) {
+        emitter.on(event, handler);
         return undefined;
       },
     };
@@ -56,7 +55,11 @@ class SequencedFakeStt implements SpeechToTextProvider {
   public readonly id = "fake-sequenced";
   constructor(private readonly transcripts: string[]) {}
 
-  createSession(_params: SessionParams): StreamingTranscriptionSession {
+  createSession(_params: {
+    logger: any;
+    language?: string;
+    prompt?: string;
+  }): StreamingTranscriptionSession {
     const emitter = new EventEmitter();
     const transcripts = this.transcripts;
     let segmentId = "seg-1";
@@ -70,8 +73,8 @@ class SequencedFakeStt implements SpeechToTextProvider {
       commit() {
         const transcript = transcripts[idx] ?? "";
         idx += 1;
-        emitter.emit("committed", { segmentId, previousSegmentId });
-        emitter.emit("transcript", {
+        (emitter as any).emit("committed", { segmentId, previousSegmentId });
+        (emitter as any).emit("transcript", {
           segmentId,
           transcript,
           isFinal: true,
@@ -83,8 +86,8 @@ class SequencedFakeStt implements SpeechToTextProvider {
       },
       clear() {},
       close() {},
-      on(event: StreamingOnEvent, handler: StreamingOnHandler) {
-        emitter.on(event, handler as (...args: unknown[]) => void);
+      on(event: any, handler: any) {
+        emitter.on(event, handler);
         return undefined;
       },
     };

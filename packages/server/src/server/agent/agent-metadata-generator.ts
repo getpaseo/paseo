@@ -10,17 +10,20 @@ import {
   generateStructuredAgentResponseWithFallback,
 } from "./agent-response-loop.js";
 import { validateBranchSlug } from "../../utils/worktree.js";
-import { renameCurrentBranch } from "../../utils/checkout-git.js";
+import {
+  getCheckoutStatus,
+  renameCurrentBranch,
+  type CheckoutStatusResult,
+} from "../../utils/checkout-git.js";
 import { MAX_AUTO_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
-import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "../workspace-git-service.js";
 
-export interface AgentMetadataGeneratorDeps {
+export type AgentMetadataGeneratorDeps = {
   generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
+  getCheckoutStatus?: typeof getCheckoutStatus;
   renameCurrentBranch?: typeof renameCurrentBranch;
-  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot">;
-}
+};
 
-export interface AgentMetadataGenerationOptions {
+export type AgentMetadataGenerationOptions = {
   agentManager: AgentManager;
   agentId: string;
   cwd: string;
@@ -29,13 +32,13 @@ export interface AgentMetadataGenerationOptions {
   hubcodeHome?: string;
   logger: Logger;
   deps?: AgentMetadataGeneratorDeps;
-}
+};
 
-interface AgentMetadataNeeds {
+type AgentMetadataNeeds = {
   prompt: string | null;
   needsTitle: boolean;
   needsBranch: boolean;
-}
+};
 
 function hasExplicitTitle(title?: string | null): boolean {
   return Boolean(title && title.trim().length > 0);
@@ -51,29 +54,26 @@ function normalizeAutoTitle(title: string): string | null {
 
 async function canRenameBranch(
   cwd: string,
-  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot"> | undefined,
+  hubcodeHome: string | undefined,
+  getCheckoutStatusImpl: typeof getCheckoutStatus,
 ): Promise<boolean> {
-  if (!workspaceGitService) {
-    return false;
-  }
-
-  let snapshot: WorkspaceGitRuntimeSnapshot;
+  let status: CheckoutStatusResult;
   try {
-    snapshot = await workspaceGitService.getSnapshot(cwd);
+    status = await getCheckoutStatusImpl(cwd, { hubcodeHome });
   } catch {
     return false;
   }
 
-  if (!snapshot.git.isGit || !snapshot.git.isHubcodeOwnedWorktree) {
+  if (!status.isGit || !status.isHubcodeOwnedWorktree) {
     return false;
   }
 
-  if (!snapshot.git.currentBranch || !snapshot.git.repoRoot) {
+  if (!status.currentBranch) {
     return false;
   }
 
-  const worktreeDirName = basename(snapshot.git.repoRoot);
-  return snapshot.git.currentBranch === worktreeDirName;
+  const worktreeDirName = basename(status.repoRoot);
+  return status.currentBranch === worktreeDirName;
 }
 
 export async function determineAgentMetadataNeeds(
@@ -88,7 +88,8 @@ export async function determineAgentMetadataNeeds(
   }
 
   const needsTitle = !hasExplicitTitle(options.explicitTitle);
-  const needsBranch = await canRenameBranch(options.cwd, options.deps?.workspaceGitService);
+  const getCheckoutStatusImpl = options.deps?.getCheckoutStatus ?? getCheckoutStatus;
+  const needsBranch = await canRenameBranch(options.cwd, options.hubcodeHome, getCheckoutStatusImpl);
 
   return {
     prompt,
@@ -97,9 +98,7 @@ export async function determineAgentMetadataNeeds(
   };
 }
 
-function buildMetadataSchema(
-  needs: AgentMetadataNeeds,
-): z.ZodObject<Record<string, z.ZodTypeAny>> | null {
+function buildMetadataSchema(needs: AgentMetadataNeeds): z.ZodObject<any> | null {
   if (!needs.needsTitle && !needs.needsBranch) {
     return null;
   }
@@ -156,6 +155,7 @@ export async function generateAndApplyAgentMetadata(
   const generator =
     options.deps?.generateStructuredAgentResponseWithFallback ??
     generateStructuredAgentResponseWithFallback;
+  const getCheckoutStatusImpl = options.deps?.getCheckoutStatus ?? getCheckoutStatus;
   const renameCurrentBranchImpl = options.deps?.renameCurrentBranch ?? renameCurrentBranch;
 
   let result: { title?: string; branch?: string };
@@ -200,75 +200,45 @@ export async function generateAndApplyAgentMetadata(
   }
 
   if (needs.needsBranch && typeof result.branch === "string") {
-    await applyGeneratedBranchRename({
-      options,
-      branch: result.branch,
-      renameCurrentBranchImpl,
-    });
-  }
-}
+    const normalizedBranch = result.branch.trim();
+    const validation = validateBranchSlug(normalizedBranch);
+    if (!validation.valid) {
+      options.logger.warn(
+        { agentId: options.agentId, branch: normalizedBranch, error: validation.error },
+        "Generated branch name is invalid",
+      );
+      return;
+    }
 
-async function applyGeneratedBranchRename(params: {
-  options: AgentMetadataGenerationOptions;
-  branch: string;
-  renameCurrentBranchImpl: typeof renameCurrentBranch;
-}): Promise<void> {
-  const { options, branch, renameCurrentBranchImpl } = params;
-  const normalizedBranch = branch.trim();
-  const validation = validateBranchSlug(normalizedBranch);
-  if (!validation.valid) {
-    options.logger.warn(
-      { agentId: options.agentId, branch: normalizedBranch, error: validation.error },
-      "Generated branch name is invalid",
-    );
-    return;
-  }
-
-  const workspaceGitService = options.deps?.workspaceGitService;
-  if (!workspaceGitService) {
-    return;
-  }
-
-  let snapshot: WorkspaceGitRuntimeSnapshot;
-  try {
-    snapshot = await workspaceGitService.getSnapshot(options.cwd);
-  } catch (error) {
-    options.logger.warn(
-      { err: error, agentId: options.agentId },
-      "Failed to re-check branch eligibility",
-    );
-    return;
-  }
-
-  if (!snapshot.git.isGit || !snapshot.git.isHubcodeOwnedWorktree || !snapshot.git.currentBranch) {
-    return;
-  }
-
-  const worktreeDirName = snapshot.git.repoRoot ? basename(snapshot.git.repoRoot) : null;
-  if (snapshot.git.currentBranch !== worktreeDirName) {
-    return;
-  }
-
-  try {
-    await renameCurrentBranchImpl(options.cwd, normalizedBranch);
+    let status: CheckoutStatusResult;
     try {
-      await workspaceGitService.getSnapshot(options.cwd, {
-        force: true,
-        reason: "rename-branch",
-      });
+      status = await getCheckoutStatusImpl(options.cwd, { hubcodeHome: options.hubcodeHome });
     } catch (error) {
       options.logger.warn(
-        { err: error, agentId: options.agentId, cwd: options.cwd },
-        "Failed to force-refresh workspace git snapshot after branch rename",
+        { err: error, agentId: options.agentId },
+        "Failed to re-check branch eligibility",
+      );
+      return;
+    }
+
+    if (!status.isGit || !status.isHubcodeOwnedWorktree || !status.currentBranch) {
+      return;
+    }
+
+    const worktreeDirName = basename(status.repoRoot);
+    if (status.currentBranch !== worktreeDirName) {
+      return;
+    }
+
+    try {
+      await renameCurrentBranchImpl(options.cwd, normalizedBranch);
+      options.agentManager.notifyAgentState(options.agentId);
+    } catch (error) {
+      options.logger.warn(
+        { err: error, agentId: options.agentId, branch: normalizedBranch },
+        "Failed to rename branch",
       );
     }
-    options.agentManager.notifyAgentState(options.agentId);
-    await options.agentManager.flush();
-  } catch (error) {
-    options.logger.warn(
-      { err: error, agentId: options.agentId, branch: normalizedBranch },
-      "Failed to rename branch",
-    );
   }
 }
 

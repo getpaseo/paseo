@@ -47,47 +47,9 @@ import {
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
 } from "../server/loop/rpc-schemas.js";
-import {
-  HubcodeConfigRawSchema,
-  HubcodeLifecycleCommandRawSchema,
-  HubcodeScriptEntryRawSchema,
-  HubcodeWorktreeConfigRawSchema,
-  HubcodeConfigRevisionSchema,
-  ProjectConfigRpcErrorSchema,
-  type HubcodeConfigRaw,
-  type HubcodeConfigRevision,
-  type HubcodeScriptEntryRaw,
-  type ProjectConfigRpcError,
-} from "../utils/hubcode-config-schema.js";
-export {
-  HubcodeConfigRawSchema,
-  HubcodeLifecycleCommandRawSchema,
-  HubcodeScriptEntryRawSchema,
-  HubcodeWorktreeConfigRawSchema,
-  type HubcodeConfigRaw,
-  type HubcodeConfigRevision,
-  type HubcodeScriptEntryRaw,
-  type ProjectConfigRpcError,
-};
 // ---------------------------------------------------------------------------
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
-
-const MutableDaemonProviderModelSchema = z
-  .object({
-    id: z.string().min(1),
-    label: z.string().min(1),
-    description: z.string().optional(),
-    isDefault: z.boolean().optional(),
-  })
-  .passthrough();
-
-const MutableDaemonProviderConfigSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
-  })
-  .passthrough();
 
 export const MutableDaemonConfigSchema = z
   .object({
@@ -96,16 +58,12 @@ export const MutableDaemonConfigSchema = z
         injectIntoAgents: z.boolean(),
       })
       .passthrough(),
-    providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
   })
   .passthrough();
 
 export const MutableDaemonConfigPatchSchema = z
   .object({
     mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
-    providers: z
-      .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
-      .optional(),
   })
   .partial()
   .passthrough();
@@ -120,6 +78,7 @@ import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
+  ProviderSnapshotEntry,
   ProviderStatus,
   AgentRuntimeInfo,
   AgentTimelineItem,
@@ -190,10 +149,9 @@ const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
   defaultThinkingOptionId: z.string().optional(),
 });
 
-export const ProviderSnapshotEntrySchema = z.object({
+const ProviderSnapshotEntrySchema: z.ZodType<ProviderSnapshotEntry> = z.object({
   provider: AgentProviderSchema,
   status: ProviderStatusSchema,
-  enabled: z.boolean().optional().default(true),
   error: z.string().optional(),
   models: z.array(AgentModelDefinitionSchema).optional(),
   modes: z.array(AgentModeSchema).optional(),
@@ -293,11 +251,7 @@ export const AgentPermissionResponseSchema: z.ZodType<AgentPermissionResponse> =
   }),
 ]);
 
-export const AgentPermissionRequestPayloadSchema: z.ZodType<
-  AgentPermissionRequest,
-  z.ZodTypeDef,
-  unknown
-> = z.object({
+export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionRequest> = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
   name: z.string(),
@@ -305,7 +259,6 @@ export const AgentPermissionRequestPayloadSchema: z.ZodType<
   title: z.string().optional(),
   description: z.string().optional(),
   input: z.record(z.unknown()).optional(),
-  detail: z.lazy(() => ToolCallDetailPayloadSchema).optional(),
   suggestions: z.array(AgentPermissionUpdateSchema).optional(),
   actions: z.array(AgentPermissionActionSchema).optional(),
   metadata: z.record(z.unknown()).optional(),
@@ -328,115 +281,111 @@ const NonNullUnknownSchema = z.union([
   z.object({}).passthrough(),
 ]);
 
-const WorktreeSetupCommandSnapshotSchema = z.object({
-  index: z.number().int().positive(),
-  command: z.string(),
-  cwd: z.string(),
-  log: z.string().optional().default(""),
-  status: z.enum(["running", "completed", "failed"]),
-  exitCode: z.number().nullable(),
-  durationMs: z.number().nonnegative().optional(),
-});
-
-const WorktreeSetupDetailPayloadSchema = z.object({
-  type: z.literal("worktree_setup"),
-  worktreePath: z.string(),
-  branchName: z.string(),
-  log: z.string(),
-  commands: z.array(WorktreeSetupCommandSnapshotSchema),
-  truncated: z.boolean().optional(),
-});
-
-const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, z.ZodTypeDef, unknown> =
-  z.discriminatedUnion("type", [
-    WorktreeSetupDetailPayloadSchema,
-    z.object({
-      type: z.literal("shell"),
-      command: z.string(),
-      cwd: z.string().optional(),
-      output: z.string().optional(),
-      exitCode: z.number().nullable().optional(),
-    }),
-    z.object({
-      type: z.literal("read"),
-      filePath: z.string(),
-      content: z.string().optional(),
-      offset: z.number().optional(),
-      limit: z.number().optional(),
-    }),
-    z.object({
-      type: z.literal("edit"),
-      filePath: z.string(),
-      oldString: z.string().optional(),
-      newString: z.string().optional(),
-      unifiedDiff: z.string().optional(),
-    }),
-    z.object({
-      type: z.literal("write"),
-      filePath: z.string(),
-      content: z.string().optional(),
-    }),
-    z.object({
-      type: z.literal("search"),
-      query: z.string(),
-      toolName: z.enum(["search", "grep", "glob", "web_search"]).optional(),
-      content: z.string().optional(),
-      filePaths: z.array(z.string()).optional(),
-      webResults: z
-        .array(
-          z.object({
-            title: z.string(),
-            url: z.string(),
-          }),
-        )
-        .optional(),
-      annotations: z.array(z.string()).optional(),
-      numFiles: z.number().optional(),
-      numMatches: z.number().optional(),
-      durationMs: z.number().optional(),
-      durationSeconds: z.number().optional(),
-      truncated: z.boolean().optional(),
-      mode: z.enum(["content", "files_with_matches", "count"]).optional(),
-    }),
-    z.object({
-      type: z.literal("fetch"),
-      url: z.string(),
-      prompt: z.string().optional(),
-      result: z.string().optional(),
-      code: z.number().optional(),
-      codeText: z.string().optional(),
-      bytes: z.number().optional(),
-      durationMs: z.number().optional(),
-    }),
-    z.object({
-      type: z.literal("sub_agent"),
-      subAgentType: z.string().optional(),
-      description: z.string().optional(),
-      log: z.string(),
-      actions: z.array(
+const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail> = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("shell"),
+    command: z.string(),
+    cwd: z.string().optional(),
+    output: z.string().optional(),
+    exitCode: z.number().nullable().optional(),
+  }),
+  z.object({
+    type: z.literal("read"),
+    filePath: z.string(),
+    content: z.string().optional(),
+    offset: z.number().optional(),
+    limit: z.number().optional(),
+  }),
+  z.object({
+    type: z.literal("edit"),
+    filePath: z.string(),
+    oldString: z.string().optional(),
+    newString: z.string().optional(),
+    unifiedDiff: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("write"),
+    filePath: z.string(),
+    content: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("search"),
+    query: z.string(),
+    toolName: z.enum(["search", "grep", "glob", "web_search"]).optional(),
+    content: z.string().optional(),
+    filePaths: z.array(z.string()).optional(),
+    webResults: z
+      .array(
         z.object({
-          index: z.number().int().positive(),
-          toolName: z.string(),
-          summary: z.string().optional(),
+          title: z.string(),
+          url: z.string(),
         }),
-      ),
-    }),
-    z.object({
-      type: z.literal("plain_text"),
-      label: z.string().optional(),
-      text: z.string().optional(),
-      icon: z.enum(TOOL_CALL_ICON_NAMES).optional(),
-    }),
-    z.object({
-      type: z.literal("plan"),
-      text: z.string(),
-    }),
-    z.object({
-      type: z.literal("unknown"),
-      input: UnknownValueSchema,
-      output: UnknownValueSchema,
-    }),
-  ]);
+      )
+      .optional(),
+    annotations: z.array(z.string()).optional(),
+    numFiles: z.number().optional(),
+    numMatches: z.number().optional(),
+    durationMs: z.number().optional(),
+    durationSeconds: z.number().optional(),
+    truncated: z.boolean().optional(),
+    mode: z.enum(["content", "files_with_matches", "count"]).optional(),
+  }),
+  z.object({
+    type: z.literal("fetch"),
+    url: z.string(),
+    prompt: z.string().optional(),
+    result: z.string().optional(),
+    code: z.number().optional(),
+    codeText: z.string().optional(),
+    bytes: z.number().optional(),
+    durationMs: z.number().optional(),
+  }),
+  z.object({
+    type: z.literal("worktree_setup"),
+    worktreePath: z.string(),
+    branchName: z.string(),
+    log: z.string(),
+    commands: z.array(
+      z.object({
+        index: z.number().int().positive(),
+        command: z.string(),
+        cwd: z.string(),
+        status: z.enum(["running", "completed", "failed"]),
+        exitCode: z.number().nullable(),
+        durationMs: z.number().nonnegative().optional(),
+      }),
+    ),
+    truncated: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("sub_agent"),
+    subAgentType: z.string().optional(),
+    description: z.string().optional(),
+    log: z.string(),
+    actions: z.array(
+      z.object({
+        index: z.number().int().positive(),
+        toolName: z.string(),
+        summary: z.string().optional(),
+      }),
+    ),
+  }),
+  z.object({
+    type: z.literal("plain_text"),
+    label: z.string().optional(),
+    text: z.string().optional(),
+    icon: z.enum(TOOL_CALL_ICON_NAMES).optional(),
+  }),
+  z.object({
+    type: z.literal("plan"),
+    text: z.string(),
+  }),
+  z.object({
+    type: z.literal("unknown"),
+    input: UnknownValueSchema,
+    output: UnknownValueSchema,
+  }),
+]);
 
 const ToolCallBasePayloadSchema = z
   .object({
@@ -444,7 +393,7 @@ const ToolCallBasePayloadSchema = z
     callId: z.string(),
     name: z.string(),
     detail: ToolCallDetailPayloadSchema,
-    metadata: z.record(z.string(), z.unknown()).optional(),
+    metadata: z.record(z.unknown()).optional(),
   })
   .strict();
 
@@ -581,7 +530,7 @@ const AgentPersistenceHandleSchema: z.ZodType<AgentPersistenceHandle | null> = z
     provider: AgentProviderSchema,
     sessionId: z.string(),
     nativeHandle: z.string().optional(),
-    metadata: z.record(z.string(), z.unknown()).optional(),
+    metadata: z.record(z.unknown()).optional(),
   })
   .nullable();
 
@@ -591,7 +540,7 @@ const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
   model: z.string().nullable().optional(),
   thinkingOptionId: z.string().nullable().optional(),
   modeId: z.string().nullable().optional(),
-  extra: z.record(z.string(), z.unknown()).optional(),
+  extra: z.record(z.unknown()).optional(),
 });
 
 export const AgentSnapshotPayloadSchema = z.object({
@@ -615,38 +564,14 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
-  labels: z.record(z.string(), z.string()).default({}),
+  labels: z.record(z.string()).default({}),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
   archivedAt: z.string().nullable().optional(),
-  providerUnavailable: z.boolean().optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
-
-export const AgentListItemPayloadSchema = z.object({
-  id: z.string(),
-  shortId: z.string(),
-  title: z.string().nullable(),
-  provider: AgentProviderSchema,
-  model: z.string().nullable(),
-  thinkingOptionId: z.string().nullable().optional(),
-  effectiveThinkingOptionId: z.string().nullable().optional(),
-  status: AgentStatusSchema,
-  cwd: z.string(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  lastUserMessageAt: z.string().nullable(),
-  archivedAt: z.string().nullable().optional(),
-  requiresAttention: z.boolean().optional(),
-  attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
-  attentionTimestamp: z.string().nullable().optional(),
-  labels: z.record(z.string(), z.string()).default({}),
-  providerUnavailable: z.boolean().optional(),
-});
-
-export type AgentListItemPayload = z.infer<typeof AgentListItemPayloadSchema>;
 
 export type AgentStreamEventPayload = z.infer<typeof AgentStreamEventPayloadSchema>;
 
@@ -713,59 +638,19 @@ export const SetVoiceModeMessageSchema = z.object({
   requestId: z.string().optional(),
 });
 
-export const GitHubPrAttachmentSchema = z.object({
-  type: z.literal("github_pr"),
-  mimeType: z.literal("application/github-pr"),
-  number: z.number().int().positive(),
-  title: z.string(),
-  url: z.string(),
-  body: z.string().nullable().optional(),
-  baseRefName: z.string().nullable().optional(),
-  headRefName: z.string().nullable().optional(),
-});
-
-export const GitHubIssueAttachmentSchema = z.object({
-  type: z.literal("github_issue"),
-  mimeType: z.literal("application/github-issue"),
-  number: z.number().int().positive(),
-  title: z.string(),
-  url: z.string(),
-  body: z.string().nullable().optional(),
-});
-
-export const AgentAttachmentSchema = z.discriminatedUnion("type", [
-  GitHubPrAttachmentSchema,
-  GitHubIssueAttachmentSchema,
-]);
-
-function normalizeAgentAttachments(input: unknown): AgentAttachment[] {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-  const normalized: AgentAttachment[] = [];
-  for (const item of input) {
-    const parsed = AgentAttachmentSchema.safeParse(item);
-    if (parsed.success) {
-      normalized.push(parsed.data);
-    }
-  }
-  return normalized;
-}
-
-const AgentAttachmentsSchema = z.unknown().transform(normalizeAgentAttachments).optional();
-
-const ImageAttachmentSchema = z.object({
-  data: z.string(), // base64 encoded image
-  mimeType: z.string(), // e.g., "image/jpeg", "image/png"
-});
-
 export const SendAgentMessageSchema = z.object({
   type: z.literal("send_agent_message"),
   agentId: z.string(),
   text: z.string(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
-  images: z.array(ImageAttachmentSchema).optional(),
-  attachments: AgentAttachmentsSchema,
+  images: z
+    .array(
+      z.object({
+        data: z.string(), // base64 encoded image
+        mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+      }),
+    )
+    .optional(),
 });
 
 // ============================================================================
@@ -775,7 +660,6 @@ export const SendAgentMessageSchema = z.object({
 export const FetchAgentsRequestMessageSchema = z.object({
   type: z.literal("fetch_agents_request"),
   requestId: z.string(),
-  scope: z.enum(["active"]).optional(),
   filter: AgentDirectoryFilterSchema.optional(),
   sort: z
     .array(
@@ -837,26 +721,6 @@ export const FetchWorkspacesRequestMessageSchema = z.object({
     .optional(),
 });
 
-export const FetchAgentHistoryRequestMessageSchema = z.object({
-  type: z.literal("fetch_agent_history_request"),
-  requestId: z.string(),
-  filter: AgentDirectoryFilterSchema.optional(),
-  sort: z
-    .array(
-      z.object({
-        key: z.enum(["status_priority", "created_at", "updated_at", "title"]),
-        direction: z.enum(["asc", "desc"]),
-      }),
-    )
-    .optional(),
-  page: z
-    .object({
-      limit: z.number().int().positive().max(200),
-      cursor: z.string().min(1).optional(),
-    })
-    .optional(),
-});
-
 export const FetchAgentRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_request"),
   requestId: z.string(),
@@ -871,8 +735,14 @@ export const SendAgentMessageRequestSchema = z.object({
   agentId: z.string(),
   text: z.string(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
-  images: z.array(ImageAttachmentSchema).optional(),
-  attachments: AgentAttachmentsSchema,
+  images: z
+    .array(
+      z.object({
+        data: z.string(), // base64 encoded image
+        mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+      }),
+    )
+    .optional(),
 });
 
 export const WaitForFinishRequestSchema = z.object({
@@ -892,20 +762,6 @@ export const SetDaemonConfigRequestMessageSchema = z.object({
   type: z.literal("set_daemon_config_request"),
   requestId: z.string(),
   config: MutableDaemonConfigPatchSchema,
-});
-
-export const ReadProjectConfigRequestMessageSchema = z.object({
-  type: z.literal("read_project_config_request"),
-  requestId: z.string(),
-  repoRoot: z.string(),
-});
-
-export const WriteProjectConfigRequestMessageSchema = z.object({
-  type: z.literal("write_project_config_request"),
-  requestId: z.string(),
-  repoRoot: z.string(),
-  config: HubcodeConfigRawSchema,
-  expectedRevision: HubcodeConfigRevisionSchema.nullable(),
 });
 
 // ============================================================================
@@ -943,9 +799,6 @@ const GitSetupOptionsSchema = z.object({
   newBranchName: z.string().optional(),
   createWorktree: z.boolean().optional(),
   worktreeSlug: z.string().optional(),
-  refName: z.string().min(1).optional(),
-  action: z.enum(["branch-off", "checkout"]).optional(),
-  githubPrNumber: z.number().int().positive().optional(),
 });
 
 export type GitSetupOptions = z.infer<typeof GitSetupOptionsSchema>;
@@ -953,13 +806,18 @@ export type GitSetupOptions = z.infer<typeof GitSetupOptionsSchema>;
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
   config: AgentSessionConfigSchema,
-  workspaceId: z.string().optional(),
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
   clientMessageId: z.string().optional(),
   outputSchema: z.record(z.unknown()).optional(),
-  images: z.array(ImageAttachmentSchema).optional(),
-  attachments: AgentAttachmentsSchema,
+  images: z
+    .array(
+      z.object({
+        data: z.string(), // base64 encoded image
+        mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+      }),
+    )
+    .optional(),
   git: GitSetupOptionsSchema.optional(),
   labels: z.record(z.string()).default({}),
   requestId: z.string(),
@@ -993,7 +851,6 @@ export const GetProvidersSnapshotRequestMessageSchema = z.object({
 export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
   type: z.literal("refresh_providers_snapshot_request"),
   cwd: z.string().optional(),
-  providers: z.array(AgentProviderSchema).optional(),
   requestId: z.string(),
 });
 
@@ -1019,7 +876,6 @@ export const RefreshAgentRequestMessageSchema = z.object({
 export const CancelAgentRequestMessageSchema = z.object({
   type: z.literal("cancel_agent_request"),
   agentId: z.string(),
-  requestId: z.string().optional(),
 });
 
 export const RestartServerRequestMessageSchema = z.object({
@@ -1239,15 +1095,6 @@ export const CheckoutPrStatusRequestSchema = z.object({
   requestId: z.string(),
 });
 
-export const PullRequestTimelineRequestSchema = z.object({
-  type: z.literal("pull_request_timeline_request"),
-  cwd: z.string(),
-  prNumber: z.number(),
-  repoOwner: z.string(),
-  repoName: z.string(),
-  requestId: z.string(),
-});
-
 export const ValidateBranchRequestSchema = z.object({
   type: z.literal("validate_branch_request"),
   cwd: z.string(),
@@ -1294,30 +1141,6 @@ export const BranchSuggestionsRequestSchema = z.object({
   requestId: z.string(),
 });
 
-export const GitHubSearchItemSchema = z.object({
-  kind: z.enum(["issue", "pr"]),
-  number: z.number(),
-  title: z.string(),
-  url: z.string(),
-  state: z.string(),
-  body: z.string().nullable(),
-  labels: z.array(z.string()),
-  baseRefName: z.string().nullable().optional(),
-  headRefName: z.string().nullable().optional(),
-  updatedAt: z.string().optional(),
-});
-
-export const GitHubSearchKindSchema = z.enum(["github-issue", "github-pr"]);
-
-export const GitHubSearchRequestSchema = z.object({
-  type: z.literal("github_search_request"),
-  cwd: z.string(),
-  query: z.string(),
-  limit: z.number().int().min(1).max(50).optional(),
-  kinds: z.array(GitHubSearchKindSchema).optional(),
-  requestId: z.string(),
-});
-
 export const DirectorySuggestionsRequestSchema = z.object({
   type: z.literal("directory_suggestions_request"),
   query: z.string(),
@@ -1347,16 +1170,6 @@ export const CreateHubcodeWorktreeRequestSchema = z.object({
   type: z.literal("create_hubcode_worktree_request"),
   cwd: z.string(),
   worktreeSlug: z.string().optional(),
-  attachments: AgentAttachmentsSchema,
-  refName: z.string().min(1).optional(),
-  action: z.enum(["branch-off", "checkout"]).optional(),
-  githubPrNumber: z.number().int().positive().optional(),
-  requestId: z.string(),
-});
-
-export const WorkspaceSetupStatusRequestSchema = z.object({
-  type: z.literal("workspace_setup_status_request"),
-  workspaceId: z.string(),
   requestId: z.string(),
 });
 
@@ -1494,7 +1307,6 @@ export const FileDownloadTokenRequestSchema = z.object({
 export const ClearAgentAttentionMessageSchema = z.object({
   type: z.literal("clear_agent_attention"),
   agentId: z.union([z.string(), z.array(z.string())]),
-  requestId: z.string().optional(),
 });
 
 export const ClientHeartbeatMessageSchema = z.object({
@@ -1563,16 +1375,6 @@ export const CreateTerminalRequestSchema = z.object({
   type: z.literal("create_terminal_request"),
   cwd: z.string(),
   name: z.string().optional(),
-  agentId: z.string().optional(),
-  command: z.string().optional(),
-  args: z.array(z.string()).optional(),
-  requestId: z.string(),
-});
-
-export const StartWorkspaceScriptRequestSchema = z.object({
-  type: z.literal("start_workspace_script_request"),
-  workspaceId: z.string(),
-  scriptName: z.string(),
   requestId: z.string(),
 });
 
@@ -1625,7 +1427,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
-  FetchAgentHistoryRequestMessageSchema,
   FetchWorkspacesRequestMessageSchema,
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
@@ -1637,8 +1438,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WaitForFinishRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
-  ReadProjectConfigRequestMessageSchema,
-  WriteProjectConfigRequestMessageSchema,
   DictationStreamStartMessageSchema,
   DictationStreamChunkMessageSchema,
   DictationStreamFinishMessageSchema,
@@ -1672,19 +1471,16 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPushRequestSchema,
   CheckoutPrCreateRequestSchema,
   CheckoutPrStatusRequestSchema,
-  PullRequestTimelineRequestSchema,
   CheckoutSwitchBranchRequestSchema,
   StashSaveRequestSchema,
   StashPopRequestSchema,
   StashListRequestSchema,
   ValidateBranchRequestSchema,
   BranchSuggestionsRequestSchema,
-  GitHubSearchRequestSchema,
   DirectorySuggestionsRequestSchema,
   HubcodeWorktreeListRequestSchema,
   HubcodeWorktreeArchiveRequestSchema,
   CreateHubcodeWorktreeRequestSchema,
-  WorkspaceSetupStatusRequestSchema,
   ListAvailableEditorsRequestSchema,
   OpenInEditorRequestSchema,
   OpenProjectRequestSchema,
@@ -1701,7 +1497,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SubscribeTerminalsRequestSchema,
   UnsubscribeTerminalsRequestSchema,
   CreateTerminalRequestSchema,
-  StartWorkspaceScriptRequestSchema,
   SubscribeTerminalRequestSchema,
   UnsubscribeTerminalRequestSchema,
   TerminalInputSchema,
@@ -1950,7 +1745,6 @@ export const AgentCreateFailedStatusPayloadSchema = z.object({
   status: z.literal("agent_create_failed"),
   requestId: z.string(),
   error: z.string(),
-  errorCode: z.string().optional(),
 });
 
 export const AgentResumedStatusPayloadSchema = z
@@ -2032,7 +1826,7 @@ export const ProjectCheckoutLiteGitNonHubcodePayloadSchema = z
     remoteUrl: z.string().nullable(),
     worktreeRoot: z.string().optional(),
     isHubcodeOwnedWorktree: z.literal(false),
-    mainRepoRoot: z.string().nullable().optional().default(null),
+    mainRepoRoot: z.null(),
   })
   .transform((value) => ({
     ...value,
@@ -2064,21 +1858,6 @@ export const ProjectPlacementPayloadSchema = z.object({
   projectKey: z.string(),
   projectName: z.string(),
   checkout: ProjectCheckoutLitePayloadSchema,
-});
-
-export const WorkspaceScriptLifecycleSchema = z.enum(["running", "stopped"]);
-export const WorkspaceScriptHealthSchema = z.enum(["healthy", "unhealthy"]);
-
-export const WorkspaceScriptPayloadSchema = z.object({
-  scriptName: z.string(),
-  type: z.enum(["script", "service"]).optional().default("service"),
-  hostname: z.string(),
-  port: z.number().int().positive().nullable(),
-  proxyUrl: z.string().nullable().optional().default(null),
-  lifecycle: WorkspaceScriptLifecycleSchema,
-  health: WorkspaceScriptHealthSchema.nullable(),
-  exitCode: z.number().nullable().optional().default(null),
-  terminalId: z.string().nullable().optional().default(null),
 });
 
 const WorkspaceGitRuntimePayloadSchema = z
@@ -2125,35 +1904,26 @@ const WorkspaceGitHubRuntimePayloadSchema = z
   .optional()
   .nullable();
 
-export const WorkspaceDescriptorPayloadSchema = z
-  .object({
-    id: z.string(),
-    projectId: z.string(),
-    projectDisplayName: z.string(),
-    projectRootPath: z.string(),
-    workspaceDirectory: z.string().optional(),
-    projectKind: z.enum(["git", "non_git", "directory"]),
-    // COMPAT(workspaces): keep legacy directory workspace kind parseable.
-    workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
-    name: z.string(),
-    status: WorkspaceStateBucketSchema,
-    activityAt: z.string().nullable(),
-    diffStat: z
-      .object({
-        additions: z.number(),
-        deletions: z.number(),
-      })
-      .nullable()
-      .optional(),
-    scripts: z.array(WorkspaceScriptPayloadSchema).default([]),
-    gitRuntime: WorkspaceGitRuntimePayloadSchema,
-    githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
-    project: ProjectPlacementPayloadSchema.optional(),
-  })
-  .transform((workspace) => ({
-    ...workspace,
-    workspaceDirectory: workspace.workspaceDirectory ?? workspace.projectRootPath,
-  }));
+export const WorkspaceDescriptorPayloadSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  projectDisplayName: z.string(),
+  projectRootPath: z.string(),
+  projectKind: z.enum(["git", "non_git"]),
+  workspaceKind: z.enum(["local_checkout", "worktree", "directory"]),
+  name: z.string(),
+  status: WorkspaceStateBucketSchema,
+  activityAt: z.string().nullable(),
+  diffStat: z
+    .object({
+      additions: z.number(),
+      deletions: z.number(),
+    })
+    .nullable()
+    .optional(),
+  gitRuntime: WorkspaceGitRuntimePayloadSchema,
+  githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
+});
 
 export const AgentUpdateMessageSchema = z.object({
   type: z.literal("agent_update"),
@@ -2161,7 +1931,7 @@ export const AgentUpdateMessageSchema = z.object({
     z.object({
       kind: z.literal("upsert"),
       agent: AgentSnapshotPayloadSchema,
-      project: ProjectPlacementPayloadSchema.nullable().optional(),
+      project: ProjectPlacementPayloadSchema,
     }),
     z.object({
       kind: z.literal("remove"),
@@ -2198,33 +1968,22 @@ export const AgentListMessageSchema = z.object({
   }),
 });
 
-const AgentDirectoryResponseEntrySchema = z.object({
-  agent: AgentSnapshotPayloadSchema,
-  project: ProjectPlacementPayloadSchema,
-});
-
-const AgentDirectoryPageInfoSchema = z.object({
-  nextCursor: z.string().nullable(),
-  prevCursor: z.string().nullable(),
-  hasMore: z.boolean(),
-});
-
 export const FetchAgentsResponseMessageSchema = z.object({
   type: z.literal("fetch_agents_response"),
   payload: z.object({
     requestId: z.string(),
     subscriptionId: z.string().nullable().optional(),
-    entries: z.array(AgentDirectoryResponseEntrySchema),
-    pageInfo: AgentDirectoryPageInfoSchema,
-  }),
-});
-
-export const FetchAgentHistoryResponseMessageSchema = z.object({
-  type: z.literal("fetch_agent_history_response"),
-  payload: z.object({
-    requestId: z.string(),
-    entries: z.array(AgentDirectoryResponseEntrySchema),
-    pageInfo: AgentDirectoryPageInfoSchema,
+    entries: z.array(
+      z.object({
+        agent: AgentSnapshotPayloadSchema,
+        project: ProjectPlacementPayloadSchema,
+      }),
+    ),
+    pageInfo: z.object({
+      nextCursor: z.string().nullable(),
+      prevCursor: z.string().nullable(),
+      hasMore: z.boolean(),
+    }),
   }),
 });
 
@@ -2256,55 +2015,11 @@ export const WorkspaceUpdateMessageSchema = z.object({
   ]),
 });
 
-export const ScriptStatusUpdateMessageSchema = z.object({
-  type: z.literal("script_status_update"),
-  payload: z.object({
-    workspaceId: z.string(),
-    scripts: z.array(WorkspaceScriptPayloadSchema),
-  }),
-});
-
-export const WorkspaceSetupProgressMessageSchema = z.object({
-  type: z.literal("workspace_setup_progress"),
-  payload: z.object({
-    workspaceId: z.string(),
-    status: z.enum(["running", "completed", "failed"]),
-    detail: WorktreeSetupDetailPayloadSchema,
-    error: z.string().nullable(),
-  }),
-});
-
-export const WorkspaceSetupSnapshotSchema = z.object({
-  status: z.enum(["running", "completed", "failed"]),
-  detail: WorktreeSetupDetailPayloadSchema,
-  error: z.string().nullable(),
-});
-
-export const WorkspaceSetupStatusResponseMessageSchema = z.object({
-  type: z.literal("workspace_setup_status_response"),
-  payload: z.object({
-    requestId: z.string(),
-    workspaceId: z.string(),
-    snapshot: WorkspaceSetupSnapshotSchema.nullable(),
-  }),
-});
-
 export const OpenProjectResponseMessageSchema = z.object({
   type: z.literal("open_project_response"),
   payload: z.object({
     requestId: z.string(),
     workspace: WorkspaceDescriptorPayloadSchema.nullable(),
-    error: z.string().nullable(),
-  }),
-});
-
-export const StartWorkspaceScriptResponseMessageSchema = z.object({
-  type: z.literal("start_workspace_script_response"),
-  payload: z.object({
-    requestId: z.string(),
-    workspaceId: z.string(),
-    scriptName: z.string(),
-    terminalId: z.string().nullable(),
     error: z.string().nullable(),
   }),
 });
@@ -2387,24 +2102,6 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
   }),
 });
 
-export const CancelAgentResponseMessageSchema = z.object({
-  type: z.literal("cancel_agent_response"),
-  payload: z.object({
-    requestId: z.string(),
-    agentId: z.string(),
-    agent: AgentSnapshotPayloadSchema.nullable(),
-  }),
-});
-
-export const ClearAgentAttentionResponseMessageSchema = z.object({
-  type: z.literal("clear_agent_attention_response"),
-  payload: z.object({
-    requestId: z.string(),
-    agentId: z.string().or(z.array(z.string())),
-    agents: z.array(AgentSnapshotPayloadSchema),
-  }),
-});
-
 export const SendAgentMessageResponseMessageSchema = z.object({
   type: z.literal("send_agent_message_response"),
   payload: z.object({
@@ -2444,44 +2141,6 @@ export const SetDaemonConfigResponseMessageSchema = z.object({
       config: MutableDaemonConfigSchema,
     })
     .passthrough(),
-});
-
-export const ReadProjectConfigResponseMessageSchema = z.object({
-  type: z.literal("read_project_config_response"),
-  payload: z.discriminatedUnion("ok", [
-    z.object({
-      requestId: z.string(),
-      repoRoot: z.string(),
-      ok: z.literal(true),
-      config: HubcodeConfigRawSchema.nullable(),
-      revision: HubcodeConfigRevisionSchema.nullable(),
-    }),
-    z.object({
-      requestId: z.string(),
-      repoRoot: z.string(),
-      ok: z.literal(false),
-      error: ProjectConfigRpcErrorSchema,
-    }),
-  ]),
-});
-
-export const WriteProjectConfigResponseMessageSchema = z.object({
-  type: z.literal("write_project_config_response"),
-  payload: z.discriminatedUnion("ok", [
-    z.object({
-      requestId: z.string(),
-      repoRoot: z.string(),
-      ok: z.literal(true),
-      config: HubcodeConfigRawSchema,
-      revision: HubcodeConfigRevisionSchema,
-    }),
-    z.object({
-      requestId: z.string(),
-      repoRoot: z.string(),
-      ok: z.literal(false),
-      error: ProjectConfigRpcErrorSchema,
-    }),
-  ]),
 });
 
 export const AgentPermissionRequestMessageSchema = z.object({
@@ -2566,7 +2225,6 @@ const CheckoutStatusGitNonHubcodeSchema = CheckoutStatusCommonSchema.extend({
   isGit: z.literal(true),
   isHubcodeOwnedWorktree: z.literal(false),
   repoRoot: z.string(),
-  mainRepoRoot: z.string().nullable().optional().default(null),
   currentBranch: z.string().nullable(),
   isDirty: z.boolean(),
   baseRef: z.string().nullable(),
@@ -2599,56 +2257,6 @@ export const CheckoutStatusResponseSchema = z.object({
     CheckoutStatusGitNonHubcodeSchema,
     CheckoutStatusGitHubcodeSchema,
   ]),
-});
-
-export const CheckoutPrStatusSchema = z.object({
-  number: z.number().optional(),
-  url: z.string(),
-  title: z.string(),
-  state: z.string(),
-  baseRefName: z.string(),
-  headRefName: z.string(),
-  isMerged: z.boolean(),
-  isDraft: z.boolean().optional().default(false),
-  checks: z
-    .array(
-      z.object({
-        name: z.string(),
-        status: z.string(),
-        url: z.string().nullable(),
-        workflow: z.string().optional(),
-        duration: z.string().optional(),
-      }),
-    )
-    .optional()
-    .default([]),
-  checksStatus: z.string().optional(),
-  reviewDecision: z.string().nullable().optional(),
-  repoOwner: z.string().optional(),
-  repoName: z.string().optional(),
-});
-
-const CheckoutPrStatusPayloadSchema = z.object({
-  cwd: z.string(),
-  status: CheckoutPrStatusSchema.nullable(),
-  githubFeaturesEnabled: z.boolean(),
-  error: CheckoutErrorSchema.nullable(),
-  requestId: z.string(),
-});
-
-const CheckoutStatusUpdateMetadataSchema = z.object({
-  prStatus: CheckoutPrStatusPayloadSchema.optional(),
-});
-
-export const CheckoutStatusUpdateSchema = z.object({
-  type: z.literal("checkout_status_update"),
-  payload: z
-    .union([
-      CheckoutStatusNotGitSchema,
-      CheckoutStatusGitNonHubcodeSchema,
-      CheckoutStatusGitHubcodeSchema,
-    ])
-    .and(CheckoutStatusUpdateMetadataSchema),
 });
 
 const CheckoutDiffSubscriptionPayloadSchema = z.object({
@@ -2731,90 +2339,24 @@ export const CheckoutPrCreateResponseSchema = z.object({
   }),
 });
 
+const CheckoutPrStatusSchema = z.object({
+  url: z.string(),
+  title: z.string(),
+  state: z.string(),
+  baseRefName: z.string(),
+  headRefName: z.string(),
+  isMerged: z.boolean(),
+});
+
 export const CheckoutPrStatusResponseSchema = z.object({
   type: z.literal("checkout_pr_status_response"),
-  payload: CheckoutPrStatusPayloadSchema,
-});
-
-const PullRequestTimelineKnownErrorSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("not_found"),
-    message: z.string().optional().default(""),
+  payload: z.object({
+    cwd: z.string(),
+    status: CheckoutPrStatusSchema.nullable(),
+    githubFeaturesEnabled: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
   }),
-  z.object({
-    kind: z.literal("forbidden"),
-    message: z.string().optional().default(""),
-  }),
-  z.object({
-    kind: z.literal("unknown"),
-    message: z.string().optional().default(""),
-  }),
-]);
-
-const PullRequestTimelineErrorSchema = z.preprocess((value) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { kind: "unknown", message: "" };
-  }
-  const error = value as Record<string, unknown>;
-  if (error.kind === "not_found" || error.kind === "forbidden" || error.kind === "unknown") {
-    return error;
-  }
-  return { ...error, kind: "unknown" };
-}, PullRequestTimelineKnownErrorSchema);
-
-const PullRequestTimelineReviewItemSchema = z.object({
-  id: z.string().optional().default(""),
-  kind: z.literal("review"),
-  author: z.string().optional().default("unknown"),
-  body: z.string().optional().default(""),
-  createdAt: z.number().optional().default(0),
-  url: z.string().optional().default(""),
-  reviewState: z
-    .enum(["approved", "changes_requested", "commented"])
-    .optional()
-    .default("commented"),
-});
-
-const PullRequestTimelineCommentItemSchema = z.object({
-  id: z.string().optional().default(""),
-  kind: z.literal("comment"),
-  author: z.string().optional().default("unknown"),
-  body: z.string().optional().default(""),
-  createdAt: z.number().optional().default(0),
-  url: z.string().optional().default(""),
-});
-
-export const PullRequestTimelineItemSchema = z.preprocess(
-  (value) => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return value;
-    }
-    const item = value as Record<string, unknown>;
-    if (item.kind === "review" || item.kind === "comment") {
-      return item;
-    }
-    return { ...item, kind: "comment" };
-  },
-  z.discriminatedUnion("kind", [
-    PullRequestTimelineReviewItemSchema,
-    PullRequestTimelineCommentItemSchema,
-  ]),
-);
-
-export const PullRequestTimelineResponseSchema = z.object({
-  type: z.literal("pull_request_timeline_response"),
-  payload: z
-    .object({
-      cwd: z.string().optional().default(""),
-      prNumber: z.number().nullable().optional().default(null),
-      items: z.array(PullRequestTimelineItemSchema).optional().default([]),
-      truncated: z.boolean().optional().default(false),
-      error: PullRequestTimelineErrorSchema.nullable().optional().default(null),
-      requestId: z.string().optional().default(""),
-      githubFeaturesEnabled: z.boolean().optional().default(true),
-    })
-    .optional()
-    .default({}),
 });
 
 export const CheckoutSwitchBranchResponseSchema = z.object({
@@ -2823,7 +2365,6 @@ export const CheckoutSwitchBranchResponseSchema = z.object({
     cwd: z.string(),
     success: z.boolean(),
     branch: z.string(),
-    source: z.enum(["local", "remote"]).optional(),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),
@@ -2881,26 +2422,6 @@ export const BranchSuggestionsResponseSchema = z.object({
   type: z.literal("branch_suggestions_response"),
   payload: z.object({
     branches: z.array(z.string()),
-    branchDetails: z
-      .array(
-        z.object({
-          name: z.string(),
-          committerDate: z.number(),
-          hasLocal: z.boolean().optional(),
-          hasRemote: z.boolean().optional(),
-        }),
-      )
-      .optional(),
-    error: z.string().nullable(),
-    requestId: z.string(),
-  }),
-});
-
-export const GitHubSearchResponseSchema = z.object({
-  type: z.literal("github_search_response"),
-  payload: z.object({
-    items: z.array(GitHubSearchItemSchema),
-    githubFeaturesEnabled: z.boolean(),
     error: z.string().nullable(),
     requestId: z.string(),
   }),
@@ -2955,7 +2476,6 @@ export const CreateHubcodeWorktreeResponseSchema = z.object({
   payload: z.object({
     workspace: WorkspaceDescriptorPayloadSchema.nullable(),
     error: z.string().nullable(),
-    errorCode: z.string().optional(),
     setupTerminalId: z.string().nullable(),
     requestId: z.string(),
   }),
@@ -3115,7 +2635,6 @@ const TerminalInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
   cwd: z.string(),
-  title: z.string().optional(),
 });
 
 export const TerminalCellSchema = z
@@ -3153,7 +2672,6 @@ export const TerminalStateSchema = z
     grid: z.array(z.array(TerminalCellSchema)),
     scrollback: z.array(z.array(TerminalCellSchema)),
     cursor: TerminalCursorSchema,
-    title: z.string().optional(),
   })
   .strict();
 
@@ -3243,29 +2761,20 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArtifactMessageSchema,
   AgentUpdateMessageSchema,
   WorkspaceUpdateMessageSchema,
-  ScriptStatusUpdateMessageSchema,
-  WorkspaceSetupProgressMessageSchema,
-  WorkspaceSetupStatusResponseMessageSchema,
   AgentStreamMessageSchema,
   AgentStatusMessageSchema,
   FetchAgentsResponseMessageSchema,
-  FetchAgentHistoryResponseMessageSchema,
   FetchWorkspacesResponseMessageSchema,
   OpenProjectResponseMessageSchema,
-  StartWorkspaceScriptResponseMessageSchema,
   ListAvailableEditorsResponseMessageSchema,
   OpenInEditorResponseMessageSchema,
   ArchiveWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
-  CancelAgentResponseMessageSchema,
-  ClearAgentAttentionResponseMessageSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
-  ReadProjectConfigResponseMessageSchema,
-  WriteProjectConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
@@ -3278,7 +2787,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentArchivedMessageSchema,
   CloseItemsResponseSchema,
   CheckoutStatusResponseSchema,
-  CheckoutStatusUpdateSchema,
   SubscribeCheckoutDiffResponseSchema,
   CheckoutDiffUpdateSchema,
   CheckoutCommitResponseSchema,
@@ -3288,14 +2796,12 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPushResponseSchema,
   CheckoutPrCreateResponseSchema,
   CheckoutPrStatusResponseSchema,
-  PullRequestTimelineResponseSchema,
   CheckoutSwitchBranchResponseSchema,
   StashSaveResponseSchema,
   StashPopResponseSchema,
   StashListResponseSchema,
   ValidateBranchResponseSchema,
   BranchSuggestionsResponseSchema,
-  GitHubSearchResponseSchema,
   DirectorySuggestionsResponseSchema,
   HubcodeWorktreeListResponseSchema,
   HubcodeWorktreeArchiveResponseSchema,
@@ -3355,34 +2861,19 @@ export type ServerInfoStatusPayload = z.infer<typeof ServerInfoStatusPayloadSche
 export type RpcErrorMessage = z.infer<typeof RpcErrorMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
 export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
-export type WorkspaceSetupProgressMessage = z.infer<typeof WorkspaceSetupProgressMessageSchema>;
-export type WorkspaceSetupSnapshot = z.infer<typeof WorkspaceSetupSnapshotSchema>;
-export type WorkspaceSetupStatusResponseMessage = z.infer<
-  typeof WorkspaceSetupStatusResponseMessageSchema
->;
 export type AgentStreamMessage = z.infer<typeof AgentStreamMessageSchema>;
 export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
 export type ProjectCheckoutLitePayload = z.infer<typeof ProjectCheckoutLitePayloadSchema>;
 export type ProjectPlacementPayload = z.infer<typeof ProjectPlacementPayloadSchema>;
 export type WorkspaceStateBucket = z.infer<typeof WorkspaceStateBucketSchema>;
 export type WorkspaceDescriptorPayload = z.infer<typeof WorkspaceDescriptorPayloadSchema>;
-export type WorkspaceScriptLifecycle = z.infer<typeof WorkspaceScriptLifecycleSchema>;
-export type WorkspaceScriptHealth = z.infer<typeof WorkspaceScriptHealthSchema>;
-export type WorkspaceScriptPayload = z.infer<typeof WorkspaceScriptPayloadSchema>;
 export type KnownEditorTargetId = z.infer<typeof KnownEditorTargetIdSchema>;
 export type LegacyEditorTargetId = z.infer<typeof LegacyEditorTargetIdSchema>;
 export type EditorTargetId = LiteralUnion<KnownEditorTargetId, string>;
 export type EditorTargetDescriptorPayload = z.infer<typeof EditorTargetDescriptorPayloadSchema>;
 export type FetchAgentsResponseMessage = z.infer<typeof FetchAgentsResponseMessageSchema>;
-export type FetchAgentHistoryResponseMessage = z.infer<
-  typeof FetchAgentHistoryResponseMessageSchema
->;
 export type FetchWorkspacesResponseMessage = z.infer<typeof FetchWorkspacesResponseMessageSchema>;
-export type ScriptStatusUpdateMessage = z.infer<typeof ScriptStatusUpdateMessageSchema>;
 export type OpenProjectResponseMessage = z.infer<typeof OpenProjectResponseMessageSchema>;
-export type StartWorkspaceScriptResponseMessage = z.infer<
-  typeof StartWorkspaceScriptResponseMessageSchema
->;
 export type ListAvailableEditorsResponseMessage = z.infer<
   typeof ListAvailableEditorsResponseMessageSchema
 >;
@@ -3392,7 +2883,6 @@ export type FetchAgentResponseMessage = z.infer<typeof FetchAgentResponseMessage
 export type FetchAgentTimelineResponseMessage = z.infer<
   typeof FetchAgentTimelineResponseMessageSchema
 >;
-export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>;
 export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMessageSchema>;
@@ -3450,7 +2940,6 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 // Type exports for inbound message types
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
-export type FetchAgentHistoryRequestMessage = z.infer<typeof FetchAgentHistoryRequestMessageSchema>;
 export type FetchWorkspacesRequestMessage = z.infer<typeof FetchWorkspacesRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
@@ -3460,7 +2949,6 @@ export type DictationStreamChunkMessage = z.infer<typeof DictationStreamChunkMes
 export type DictationStreamFinishMessage = z.infer<typeof DictationStreamFinishMessageSchema>;
 export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelMessageSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
-export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
 export type ListProviderModelsRequestMessage = z.infer<
   typeof ListProviderModelsRequestMessageSchema
 >;
@@ -3509,7 +2997,6 @@ export type SetAgentFeatureRequestMessage = z.infer<typeof SetAgentFeatureReques
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
 export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;
-export type CheckoutStatusUpdate = z.infer<typeof CheckoutStatusUpdateSchema>;
 export type SubscribeCheckoutDiffRequest = z.infer<typeof SubscribeCheckoutDiffRequestSchema>;
 export type UnsubscribeCheckoutDiffRequest = z.infer<typeof UnsubscribeCheckoutDiffRequestSchema>;
 export type SubscribeCheckoutDiffResponse = z.infer<typeof SubscribeCheckoutDiffResponseSchema>;
@@ -3528,9 +3015,6 @@ export type CheckoutPrCreateRequest = z.infer<typeof CheckoutPrCreateRequestSche
 export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSchema>;
 export type CheckoutPrStatusRequest = z.infer<typeof CheckoutPrStatusRequestSchema>;
 export type CheckoutPrStatusResponse = z.infer<typeof CheckoutPrStatusResponseSchema>;
-export type PullRequestTimelineRequest = z.infer<typeof PullRequestTimelineRequestSchema>;
-export type PullRequestTimelineItem = z.infer<typeof PullRequestTimelineItemSchema>;
-export type PullRequestTimelineResponse = z.infer<typeof PullRequestTimelineResponseSchema>;
 export type CheckoutSwitchBranchRequest = z.infer<typeof CheckoutSwitchBranchRequestSchema>;
 export type CheckoutSwitchBranchResponse = z.infer<typeof CheckoutSwitchBranchResponseSchema>;
 export type StashSaveRequest = z.infer<typeof StashSaveRequestSchema>;
@@ -3544,18 +3028,12 @@ export type ValidateBranchRequest = z.infer<typeof ValidateBranchRequestSchema>;
 export type ValidateBranchResponse = z.infer<typeof ValidateBranchResponseSchema>;
 export type BranchSuggestionsRequest = z.infer<typeof BranchSuggestionsRequestSchema>;
 export type BranchSuggestionsResponse = z.infer<typeof BranchSuggestionsResponseSchema>;
-export type GitHubSearchItem = z.infer<typeof GitHubSearchItemSchema>;
-export type GitHubSearchKind = z.infer<typeof GitHubSearchKindSchema>;
-export type GitHubSearchRequest = z.infer<typeof GitHubSearchRequestSchema>;
-export type GitHubSearchResponse = z.infer<typeof GitHubSearchResponseSchema>;
-export type CreateHubcodeWorktreeRequest = z.infer<typeof CreateHubcodeWorktreeRequestSchema>;
 export type DirectorySuggestionsRequest = z.infer<typeof DirectorySuggestionsRequestSchema>;
 export type DirectorySuggestionsResponse = z.infer<typeof DirectorySuggestionsResponseSchema>;
 export type HubcodeWorktreeListRequest = z.infer<typeof HubcodeWorktreeListRequestSchema>;
 export type HubcodeWorktreeListResponse = z.infer<typeof HubcodeWorktreeListResponseSchema>;
 export type HubcodeWorktreeArchiveRequest = z.infer<typeof HubcodeWorktreeArchiveRequestSchema>;
 export type HubcodeWorktreeArchiveResponse = z.infer<typeof HubcodeWorktreeArchiveResponseSchema>;
-export type WorkspaceSetupStatusRequest = z.infer<typeof WorkspaceSetupStatusRequestSchema>;
 export type ListAvailableEditorsRequest = z.infer<typeof ListAvailableEditorsRequestSchema>;
 export type OpenInEditorRequest = z.infer<typeof OpenInEditorRequestSchema>;
 export type OpenProjectRequest = z.infer<typeof OpenProjectRequestSchema>;
@@ -3570,9 +3048,6 @@ export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponse
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
 export type ShutdownServerRequestMessage = z.infer<typeof ShutdownServerRequestMessageSchema>;
 export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessageSchema>;
-export type ClearAgentAttentionResponseMessage = z.infer<
-  typeof ClearAgentAttentionResponseMessageSchema
->;
 export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema>;
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>;
 export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>;
@@ -3586,10 +3061,6 @@ export type UnsubscribeTerminalsRequest = z.infer<typeof UnsubscribeTerminalsReq
 export type TerminalsChanged = z.infer<typeof TerminalsChangedSchema>;
 export type CreateTerminalRequest = z.infer<typeof CreateTerminalRequestSchema>;
 export type CreateTerminalResponse = z.infer<typeof CreateTerminalResponseSchema>;
-export type StartWorkspaceScriptRequest = z.infer<typeof StartWorkspaceScriptRequestSchema>;
-export type StartWorkspaceScriptResponse = z.infer<
-  typeof StartWorkspaceScriptResponseMessageSchema
->;
 export type SubscribeTerminalRequest = z.infer<typeof SubscribeTerminalRequestSchema>;
 export type SubscribeTerminalResponse = z.infer<typeof SubscribeTerminalResponseSchema>;
 export type UnsubscribeTerminalRequest = z.infer<typeof UnsubscribeTerminalRequestSchema>;

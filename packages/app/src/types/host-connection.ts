@@ -1,29 +1,29 @@
 import { normalizeHostPort, normalizeLoopbackToLocalhost } from "@server/shared/daemon-endpoints";
 
-export interface DirectTcpHostConnection {
+export type DirectTcpHostConnection = {
   id: string;
   type: "directTcp";
   endpoint: string;
-}
+};
 
-export interface DirectSocketHostConnection {
+export type DirectSocketHostConnection = {
   id: string;
   type: "directSocket";
   path: string;
-}
+};
 
-export interface DirectPipeHostConnection {
+export type DirectPipeHostConnection = {
   id: string;
   type: "directPipe";
   path: string;
-}
+};
 
-export interface RelayHostConnection {
+export type RelayHostConnection = {
   id: string;
   type: "relay";
   relayEndpoint: string;
   daemonPublicKeyB64: string;
-}
+};
 
 export type HostConnection =
   | DirectTcpHostConnection
@@ -33,7 +33,7 @@ export type HostConnection =
 
 export type HostLifecycle = Record<string, never>;
 
-export interface HostProfile {
+export type HostProfile = {
   serverId: string;
   label: string;
   lifecycle: HostLifecycle;
@@ -41,7 +41,7 @@ export interface HostProfile {
   preferredConnectionId: string | null;
   createdAt: string;
   updatedAt: string;
-}
+};
 
 export function defaultLifecycle(): HostLifecycle {
   return {};
@@ -310,10 +310,24 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
   };
 }
 
-export function hostHasConnection(host: HostProfile, connection: HostConnection): boolean {
-  return host.connections.some((existing) => hostConnectionEquals(existing, connection));
+export function normalizeEndpointOrNull(endpoint: string): string | null {
+  try {
+    return normalizeHostPort(endpoint);
+  } catch {
+    return null;
+  }
 }
 
-export function registryHasConnection(hosts: HostProfile[], connection: HostConnection): boolean {
-  return hosts.some((host) => hostHasConnection(host, connection));
+export function hostHasDirectEndpoint(host: HostProfile, endpoint: string): boolean {
+  const normalized = normalizeEndpointOrNull(endpoint);
+  if (!normalized) {
+    return false;
+  }
+  return host.connections.some(
+    (connection) => connection.type === "directTcp" && connection.endpoint === normalized,
+  );
+}
+
+export function registryHasDirectEndpoint(hosts: HostProfile[], endpoint: string): boolean {
+  return hosts.some((host) => hostHasDirectEndpoint(host, endpoint));
 }

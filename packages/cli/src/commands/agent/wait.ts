@@ -53,80 +53,6 @@ async function getRecentActivityTranscript(
   }
 }
 
-function parseWaitTimeout(timeout: string | undefined): {
-  timeoutMs: number;
-  timeoutLabel: string | null;
-} {
-  if (!timeout) return { timeoutMs: 0, timeoutLabel: null };
-  try {
-    const ms = parseDuration(timeout);
-    if (ms <= 0) {
-      throw new Error("Timeout must be positive");
-    }
-    const timeoutSeconds = Math.floor(ms / 1000);
-    return {
-      timeoutMs: ms,
-      timeoutLabel: `${timeoutSeconds} second${timeoutSeconds === 1 ? "" : "s"}`,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw {
-      code: "INVALID_TIMEOUT",
-      message: "Invalid timeout value",
-      details: message,
-    } satisfies CommandError;
-  }
-}
-
-type WaitFinishState = Awaited<
-  ReturnType<Awaited<ReturnType<typeof connectToDaemon>>["waitForFinish"]>
->;
-
-function buildWaitResult(args: {
-  state: WaitFinishState;
-  resolvedAgentId: string;
-  recentActivity: string | null;
-  timeoutLabel: string | null;
-}): AgentWaitResult {
-  const { state, resolvedAgentId, recentActivity, timeoutLabel } = args;
-
-  if (state.status === "timeout") {
-    const timeoutMessage = timeoutLabel
-      ? `Agent did not finish within ${timeoutLabel}. Run \`hubcode wait ${resolvedAgentId}\` again to keep waiting.`
-      : `Agent wait timed out. Run \`hubcode wait ${resolvedAgentId}\` again to keep waiting.`;
-    return {
-      agentId: resolvedAgentId,
-      status: "timeout",
-      message: appendRecentActivity(timeoutMessage, recentActivity),
-    };
-  }
-
-  if (state.status === "permission") {
-    const permission = state.final?.pendingPermissions?.[0];
-    return {
-      agentId: resolvedAgentId,
-      status: "permission",
-      message: permission
-        ? `Agent is waiting for permission: ${permission.kind}`
-        : "Agent is waiting for permission",
-    };
-  }
-
-  if (state.status === "error") {
-    return {
-      agentId: resolvedAgentId,
-      status: "error",
-      message: state.error ?? "Agent finished with error",
-    };
-  }
-
-  return {
-    agentId: resolvedAgentId,
-    status: "idle",
-    message: appendRecentActivity("Agent is idle.", recentActivity),
-  };
-}
-
 export function addWaitOptions(cmd: Command): Command {
   return cmd
     .description("Wait for an agent to become idle")
@@ -141,15 +67,37 @@ export async function runWaitCommand(
 ): Promise<SingleResult<AgentWaitResult>> {
   const host = getDaemonHost({ host: options.host as string | undefined });
 
+  // Validate arguments
   if (!agentIdArg || agentIdArg.trim().length === 0) {
-    throw {
+    const error: CommandError = {
       code: "MISSING_AGENT_ID",
       message: "Agent ID is required",
       details: "Usage: hubcode agent wait <id>",
-    } satisfies CommandError;
+    };
+    throw error;
   }
 
-  const { timeoutMs, timeoutLabel } = parseWaitTimeout(options.timeout);
+  // Parse timeout (no limit unless explicitly provided)
+  let timeoutMs = 0;
+  let timeoutLabel: string | null = null;
+  if (options.timeout) {
+    try {
+      timeoutMs = parseDuration(options.timeout);
+      if (timeoutMs <= 0) {
+        throw new Error("Timeout must be positive");
+      }
+      const timeoutSeconds = Math.floor(timeoutMs / 1000);
+      timeoutLabel = `${timeoutSeconds} second${timeoutSeconds === 1 ? "" : "s"}`;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const error: CommandError = {
+        code: "INVALID_TIMEOUT",
+        message: "Invalid timeout value",
+        details: message,
+      };
+      throw error;
+    }
+  }
 
   let client;
   try {
@@ -175,9 +123,56 @@ export async function runWaitCommand(
 
       await client.close();
 
+      if (state.status === "timeout") {
+        const timeoutMessage = timeoutLabel
+          ? `Agent did not finish within ${timeoutLabel}. Run \`hubcode wait ${resolvedAgentId}\` again to keep waiting.`
+          : `Agent wait timed out. Run \`hubcode wait ${resolvedAgentId}\` again to keep waiting.`;
+        return {
+          type: "single",
+          data: {
+            agentId: resolvedAgentId,
+            status: "timeout",
+            message: appendRecentActivity(timeoutMessage, recentActivity),
+          },
+          schema: agentWaitSchema,
+        };
+      }
+
+      if (state.status === "permission") {
+        const permission = state.final?.pendingPermissions?.[0];
+        return {
+          type: "single",
+          data: {
+            agentId: resolvedAgentId,
+            status: "permission",
+            message: permission
+              ? `Agent is waiting for permission: ${permission.kind}`
+              : "Agent is waiting for permission",
+          },
+          schema: agentWaitSchema,
+        };
+      }
+
+      if (state.status === "error") {
+        return {
+          type: "single",
+          data: {
+            agentId: resolvedAgentId,
+            status: "error",
+            message: state.error ?? "Agent finished with error",
+          },
+          schema: agentWaitSchema,
+        };
+      }
+
+      // Agent is idle
       return {
         type: "single",
-        data: buildWaitResult({ state, resolvedAgentId, recentActivity, timeoutLabel }),
+        data: {
+          agentId: resolvedAgentId,
+          status: "idle",
+          message: appendRecentActivity("Agent is idle.", recentActivity),
+        },
         schema: agentWaitSchema,
       };
     } catch (waitErr) {

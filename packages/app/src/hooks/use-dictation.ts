@@ -155,8 +155,8 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       if (!isRecordingRef.current) {
         return;
       }
-      void startNewStream("reconnect").catch((err) => {
-        reportError(err, "Failed to restart dictation stream after reconnect");
+      void startNewStream("reconnect").catch((error) => {
+        reportError(error, "Failed to restart dictation stream after reconnect");
       });
     });
   }, [client, reportError, startNewStream]);
@@ -286,6 +286,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     clearStreamingState,
     client,
     enableDuration,
+    isProcessing,
     reportError,
     startDurationTracking,
     startNewStream,
@@ -323,7 +324,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       clearStreamingState();
       actionGateRef.current.cancelling = false;
     }
-  }, [audio, clearStreamingState, reportError, stopDurationTracking]);
+  }, [audio, clearStreamingState, client, reportError, stopDurationTracking]);
 
   const confirmDictation = useCallback(async () => {
     if (actionGateRef.current.confirming) {
@@ -373,6 +374,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   }, [
     audio,
     canConfirm,
+    isProcessing,
     handleDictationFailure,
     handleStreamingTranscriptionSuccess,
     stopDurationTracking,
@@ -466,12 +468,10 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   }, [autoStopWhenHidden?.isVisible, clearStreamingState, stopDurationTracking]);
 
   useEffect(() => {
-    const attemptGuard = attemptGuardRef.current;
-    const audioStop = audioStopRef;
     return () => {
-      attemptGuard.cancel();
+      attemptGuardRef.current.cancel();
       stopDurationTracking();
-      void audioStop.current().catch(() => undefined);
+      void audioStopRef.current().catch(() => undefined);
     };
   }, [stopDurationTracking]);
 

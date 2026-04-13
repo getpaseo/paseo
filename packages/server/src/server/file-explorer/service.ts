@@ -1,6 +1,5 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { resolvePathFromBase } from "../path-utils.js";
 
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
@@ -208,7 +207,7 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
 
 async function resolveScopedPath({ root, relativePath = "." }: ScopedPathParams): Promise<string> {
   const normalizedRoot = path.resolve(root);
-  const requestedPath = resolvePathFromBase(normalizedRoot, relativePath);
+  const requestedPath = path.resolve(normalizedRoot, relativePath);
   const relative = path.relative(normalizedRoot, requestedPath);
 
   if (relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative))) {

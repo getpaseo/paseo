@@ -1,26 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-interface MockNotificationOptions {
+type MockNotificationOptions = {
   body?: string;
   data?: Record<string, unknown>;
   icon?: string;
-}
+};
 
-interface MockNotificationInstance {
+type MockNotificationInstance = {
   title: string;
   options?: MockNotificationOptions;
-  clickListeners: Array<(event: Event) => void>;
-  addEventListener: (event: string, listener: (event: Event) => void) => void;
+  onclick: ((event: Event) => void) | null;
   close: ReturnType<typeof vi.fn>;
-}
+};
 
-interface GlobalSnapshot {
+type GlobalSnapshot = {
   Notification: unknown;
   CustomEvent: unknown;
   dispatchEvent: unknown;
   focus: unknown;
   location: unknown;
-}
+};
 
 const originalGlobals: GlobalSnapshot = {
   Notification: (globalThis as { Notification?: unknown }).Notification,
@@ -105,7 +104,7 @@ describe("sendOsNotification", () => {
     class MockNotification implements MockNotificationInstance {
       static permission = "granted";
       static requestPermission = vi.fn(async () => "granted");
-      clickListeners: Array<(event: Event) => void> = [];
+      onclick: ((event: Event) => void) | null = null;
       close = vi.fn();
 
       constructor(
@@ -113,12 +112,6 @@ describe("sendOsNotification", () => {
         public options?: MockNotificationOptions,
       ) {
         created.push(this);
-      }
-
-      addEventListener(event: string, listener: (event: Event) => void): void {
-        if (event === "click") {
-          this.clickListeners.push(listener);
-        }
       }
     }
 
@@ -144,8 +137,8 @@ describe("sendOsNotification", () => {
     expect(created).toHaveLength(1);
 
     const clicked = created[0];
-    expect(clicked.clickListeners).toHaveLength(1);
-    clicked.clickListeners[0]?.({} as Event);
+    expect(clicked.onclick).toBeTypeOf("function");
+    clicked.onclick?.({} as Event);
 
     expect(dispatchEvent).toHaveBeenCalledTimes(1);
     const event = dispatchEvent.mock.calls[0]?.[0] as unknown as {
@@ -165,7 +158,7 @@ describe("sendOsNotification", () => {
     class MockNotification implements MockNotificationInstance {
       static permission = "granted";
       static requestPermission = vi.fn(async () => "granted");
-      clickListeners: Array<(event: Event) => void> = [];
+      onclick: ((event: Event) => void) | null = null;
       close = vi.fn();
 
       constructor(
@@ -173,12 +166,6 @@ describe("sendOsNotification", () => {
         public options?: MockNotificationOptions,
       ) {
         created.push(this);
-      }
-
-      addEventListener(event: string, listener: (event: Event) => void): void {
-        if (event === "click") {
-          this.clickListeners.push(listener);
-        }
       }
     }
 
@@ -200,8 +187,8 @@ describe("sendOsNotification", () => {
     });
 
     const clicked = created[0];
-    expect(clicked.clickListeners).toHaveLength(1);
-    clicked.clickListeners[0]?.({} as Event);
+    expect(clicked.onclick).toBeTypeOf("function");
+    clicked.onclick?.({} as Event);
 
     expect(assign).toHaveBeenCalledWith("/h/srv%20with%20space/agent/agent%2F1");
   });
@@ -224,7 +211,7 @@ describe("sendOsNotification", () => {
     class MockNotification implements MockNotificationInstance {
       static permission = "granted";
       static requestPermission = vi.fn(async () => "granted");
-      clickListeners: Array<(event: Event) => void> = [];
+      onclick: ((event: Event) => void) | null = null;
       close = vi.fn();
 
       constructor(
@@ -232,12 +219,6 @@ describe("sendOsNotification", () => {
         public options?: MockNotificationOptions,
       ) {
         created.push(this);
-      }
-
-      addEventListener(event: string, listener: (event: Event) => void): void {
-        if (event === "click") {
-          this.clickListeners.push(listener);
-        }
       }
     }
 
@@ -254,7 +235,7 @@ describe("sendOsNotification", () => {
 
     expect(sent).toBe(true);
     expect(created).toHaveLength(1);
-    expect(created[0]?.clickListeners).toHaveLength(0);
+    expect(created[0]?.onclick).toBeNull();
   });
 
   it("uses the desktop notification bridge when available", async () => {

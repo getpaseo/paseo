@@ -11,8 +11,6 @@ export const Route = createFileRoute("/docs/configuration")({
   component: Configuration,
 });
 
-const CUSTOM_PROVIDERS_URL = "https://github.com/hubtool/hubcode/blob/main/docs/CUSTOM-PROVIDERS.md";
-
 function Configuration() {
   return (
     <div className="space-y-8">
@@ -53,7 +51,8 @@ function Configuration() {
           <li>CLI flags</li>
         </ol>
         <p className="text-white/60 leading-relaxed">
-          Lists append across sources (for example, <code className="font-mono">hostnames</code> and
+          Lists append across sources (for example, <code className="font-mono">allowedHosts</code>{" "}
+          and
           <code className="font-mono">cors.allowedOrigins</code>).
         </p>
       </section>
@@ -61,52 +60,103 @@ function Configuration() {
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Example</h2>
         <p className="text-white/60 leading-relaxed">
-          Minimal example that configures listening address, hostnames, and MCP:
+          Minimal example that configures listening address, host allowlist, provider keys, and MCP:
         </p>
         <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
           {`{
-  "$schema": "https://hubcode.ai/schemas/hubcode.config.v1.json",
+  "$schema": "https://hubcode.sh/schemas/hubcode.config.v1.json",
   "version": 1,
+  "providers": {
+    "openai": { "apiKey": "..." }
+  },
   "daemon": {
     "listen": "127.0.0.1:6767",
-    "hostnames": ["localhost", ".localhost"],
+    "allowedHosts": ["localhost", ".localhost"],
     "mcp": { "enabled": true }
   }
 }`}
         </pre>
-        <p className="text-white/60 leading-relaxed">
-          <code className="font-mono">daemon.hostnames</code> is the primary field. The old{" "}
-          <code className="font-mono">daemon.allowedHosts</code> name still works as a deprecated
-          alias for backward compatibility.
-        </p>
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-medium">Agent providers</h2>
+        <h2 className="text-xl font-medium">Agent provider runtime settings</h2>
         <p className="text-white/60 leading-relaxed">
-          Agent providers — both the first-class ones Hubcode ships with and custom entries you add
-          under <code className="font-mono">agents.providers</code> — are documented on their own
-          page.
+          Use <code className="font-mono">agents.providers</code> to customize how Hubcode launches
+          agent provider CLIs. This works for <code className="font-mono">claude</code>,{" "}
+          <code className="font-mono">codex</code>, and
+          <code className="font-mono"> opencode</code>.
         </p>
         <p className="text-white/60 leading-relaxed">
-          See{" "}
-          <a href="/docs/providers" className="underline hover:text-white/80">
-            Providers
-          </a>{" "}
-          for first-class providers, how to point Claude at Anthropic-compatible endpoints (Z.AI,
-          Alibaba/Qwen), multiple profiles, custom binaries, ACP agents, and the{" "}
-          <code className="font-mono">additionalModels</code> merge behavior. The full field
-          reference lives on GitHub at{" "}
-          <a
-            href={CUSTOM_PROVIDERS_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="underline hover:text-white/80"
-          >
-            docs/CUSTOM-PROVIDERS.md
-          </a>
-          .
+          <code className="font-mono">command.mode</code> can be{" "}
+          <code className="font-mono">default</code>, <code className="font-mono">append</code>, or{" "}
+          <code className="font-mono">replace</code>. Use <code className="font-mono">env</code> to
+          inject provider-specific environment variables.
         </p>
+
+        <h3 className="text-lg font-medium">Enable Claude Code Chrome MCP</h3>
+        <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
+          {`{
+  "agents": {
+    "providers": {
+      "claude": {
+        "command": {
+          "mode": "append",
+          "args": ["--chrome"]
+        }
+      }
+    }
+  }
+}`}
+        </pre>
+
+        <h3 className="text-lg font-medium">
+          Point Claude to Anthropic-compatible endpoints (z.ai example)
+        </h3>
+        <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
+          {`{
+  "agents": {
+    "providers": {
+      "claude": {
+        "env": {
+          "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+          "ANTHROPIC_AUTH_TOKEN": "auth token",
+          "ANTHROPIC_API_KEY": ""
+        }
+      }
+    }
+  }
+}`}
+        </pre>
+
+        <h3 className="text-lg font-medium">Run Claude through Docker</h3>
+        <p className="text-white/60 leading-relaxed">
+          Create a wrapper script that runs Claude in Docker, then tell Hubcode to replace the Claude
+          launch command with that script.
+        </p>
+        <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
+          {`{
+  "agents": {
+    "providers": {
+      "claude": {
+        "command": {
+          "mode": "replace",
+          "argv": ["/Users/you/bin/claude-docker"]
+        }
+      }
+    }
+  }
+}`}
+        </pre>
+        <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
+          {`#!/usr/bin/env bash
+set -euo pipefail
+docker run --rm -i \\
+  -v "$PWD":"$PWD" \\
+  -w "$PWD" \\
+  -v "$HOME/.claude":"$HOME/.claude" \\
+  ghcr.io/anthropics/claude-code:latest \\
+  claude "$@"`}
+        </pre>
       </section>
 
       <section className="space-y-4">
@@ -179,12 +229,8 @@ function Configuration() {
             <code className="font-mono">daemon.listen</code>
           </li>
           <li>
-            <code className="font-mono">HUBCODE_HOSTNAMES</code> — override/extend{" "}
-            <code className="font-mono">daemon.hostnames</code>
-          </li>
-          <li>
-            <code className="font-mono">HUBCODE_ALLOWED_HOSTS</code> — deprecated alias for{" "}
-            <code className="font-mono">HUBCODE_HOSTNAMES</code>
+            <code className="font-mono">HUBCODE_ALLOWED_HOSTS</code> — override/extend{" "}
+            <code className="font-mono">daemon.allowedHosts</code>
           </li>
           <li>
             <code className="font-mono">HUBCODE_LOG_CONSOLE_LEVEL</code> — override{" "}
@@ -253,7 +299,7 @@ function Configuration() {
           For editor autocomplete/validation, set <code className="font-mono">$schema</code> to:
         </p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
-          <span>https://hubcode.ai/schemas/hubcode.config.v1.json</span>
+          <span>https://hubcode.sh/schemas/hubcode.config.v1.json</span>
         </div>
       </section>
     </div>

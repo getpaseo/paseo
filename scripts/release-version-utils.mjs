@@ -14,7 +14,7 @@ export function parseReleaseVersion(version) {
   const match = trimmed.match(versionPattern);
   if (!match?.groups) {
     throw new Error(
-      `Unsupported release version "${version}". Expected semver like 0.1.41 or 0.1.41-beta.1.`,
+      `Unsupported release version "${version}". Expected semver like 0.1.41 or 0.1.41-rc.1.`,
     );
   }
 
@@ -22,20 +22,14 @@ export function parseReleaseVersion(version) {
   const minor = Number.parseInt(match.groups.minor, 10);
   const patch = Number.parseInt(match.groups.patch, 10);
   const prerelease = match.groups.prerelease ?? null;
-  const betaMatch = prerelease?.match(/^beta\.(?<beta>\d+)$/) ?? null;
-  const betaNumber = betaMatch?.groups?.beta ? Number.parseInt(betaMatch.groups.beta, 10) : null;
-
-  if (prerelease !== null && betaNumber === null) {
-    throw new Error(
-      `Unsupported release version "${version}". Expected beta prerelease versions like 0.1.41-beta.1.`,
-    );
-  }
+  const rcMatch = prerelease?.match(/^rc\.(?<rc>\d+)$/) ?? null;
+  const rcNumber = rcMatch?.groups?.rc ? Number.parseInt(rcMatch.groups.rc, 10) : null;
 
   assertInteger(major, "major version");
   assertInteger(minor, "minor version");
   assertInteger(patch, "patch version");
-  if (betaNumber !== null) {
-    assertInteger(betaNumber, "beta number");
+  if (rcNumber !== null) {
+    assertInteger(rcNumber, "release candidate number");
   }
 
   return {
@@ -46,8 +40,8 @@ export function parseReleaseVersion(version) {
     prerelease,
     baseVersion: `${major}.${minor}.${patch}`,
     isPrerelease: prerelease !== null,
-    isBeta: betaNumber !== null,
-    betaNumber,
+    isReleaseCandidate: rcNumber !== null,
+    rcNumber,
   };
 }
 
@@ -63,7 +57,7 @@ export function normalizeReleaseTag(rawTag) {
   const match = trimmed.match(sourceTagPattern);
   if (!match?.groups?.version) {
     throw new Error(
-      `Unsupported release tag "${rawTag}". Expected vX.Y.Z, vX.Y.Z-beta.N, desktop-v..., or android-v...`,
+      `Unsupported release tag "${rawTag}". Expected vX.Y.Z, vX.Y.Z-rc.N, desktop-v..., or android-v...`,
     );
   }
   return `v${match.groups.version}`;
@@ -79,10 +73,9 @@ export function getReleaseInfoFromSourceTag(sourceTag) {
     baseVersion: parsed.baseVersion,
     prerelease: parsed.prerelease,
     isPrerelease: parsed.isPrerelease,
-    isBeta: parsed.isBeta,
-    betaNumber: parsed.betaNumber,
+    isReleaseCandidate: parsed.isReleaseCandidate,
+    rcNumber: parsed.rcNumber,
     releaseType: parsed.isPrerelease ? "prerelease" : "release",
-    releaseChannel: parsed.isBeta ? "beta" : "latest",
     isSmokeTag: sourceTag.includes("gha-smoke"),
   };
 }
@@ -117,54 +110,54 @@ export function computeNextReleaseVersion(currentVersion, mode) {
     });
   }
 
-  if (mode === "beta-patch" || mode === "beta-minor" || mode === "beta-major") {
+  if (mode === "rc-patch" || mode === "rc-minor" || mode === "rc-major") {
     if (parsed.isPrerelease) {
       throw new Error(
-        `Cannot start a new beta line from prerelease version ${currentVersion}. Use beta-next or promote.`,
+        `Cannot start a new RC line from prerelease version ${currentVersion}. Use rc-next or promote.`,
       );
     }
-    if (mode === "beta-patch") {
+    if (mode === "rc-patch") {
       return formatReleaseVersion({
         major: parsed.major,
         minor: parsed.minor,
         patch: parsed.patch + 1,
-        prerelease: "beta.1",
+        prerelease: "rc.1",
       });
     }
-    if (mode === "beta-minor") {
+    if (mode === "rc-minor") {
       return formatReleaseVersion({
         major: parsed.major,
         minor: parsed.minor + 1,
         patch: 0,
-        prerelease: "beta.1",
+        prerelease: "rc.1",
       });
     }
     return formatReleaseVersion({
       major: parsed.major + 1,
       minor: 0,
       patch: 0,
-      prerelease: "beta.1",
+      prerelease: "rc.1",
     });
   }
 
-  if (mode === "beta-next") {
-    if (!parsed.isBeta || parsed.betaNumber === null) {
+  if (mode === "rc-next") {
+    if (!parsed.isReleaseCandidate || parsed.rcNumber === null) {
       throw new Error(
-        `Cannot advance beta number from ${currentVersion}. Expected a version like 0.1.41-beta.1.`,
+        `Cannot advance RC number from ${currentVersion}. Expected a version like 0.1.41-rc.1.`,
       );
     }
     return formatReleaseVersion({
       major: parsed.major,
       minor: parsed.minor,
       patch: parsed.patch,
-      prerelease: `beta.${parsed.betaNumber + 1}`,
+      prerelease: `rc.${parsed.rcNumber + 1}`,
     });
   }
 
   if (mode === "promote") {
-    if (!parsed.isBeta) {
+    if (!parsed.isReleaseCandidate) {
       throw new Error(
-        `Cannot promote ${currentVersion}. Expected a beta version like 0.1.41-beta.1.`,
+        `Cannot promote ${currentVersion}. Expected a release candidate version like 0.1.41-rc.1.`,
       );
     }
     return parsed.baseVersion;

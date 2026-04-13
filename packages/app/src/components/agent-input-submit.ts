@@ -1,37 +1,28 @@
 export type AgentInputSubmitResult = "noop" | "queued" | "submitted" | "failed";
 
-export interface AgentInputSubmitActionInput<TAttachment> {
+export interface AgentInputSubmitActionInput<TImage> {
   message: string;
-  attachments: TAttachment[];
-  hasExternalContent?: boolean;
-  allowEmptySubmit?: boolean;
-  submitBehavior?: "clear" | "preserve-and-lock";
+  imageAttachments?: TImage[];
   forceSend?: boolean;
   isAgentRunning: boolean;
   canSubmit: boolean;
-  queueMessage: (input: { message: string; attachments: TAttachment[] }) => void;
-  submitMessage: (input: { message: string; attachments: TAttachment[] }) => Promise<void>;
+  queueMessage: (input: { message: string; imageAttachments?: TImage[] }) => void;
+  submitMessage: (input: { message: string; imageAttachments?: TImage[] }) => Promise<void>;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   setUserInput: (text: string) => void;
-  setAttachments: (attachments: TAttachment[]) => void;
+  setSelectedImages: (images: TImage[]) => void;
   setSendError: (message: string | null) => void;
   setIsProcessing: (isProcessing: boolean) => void;
   onSubmitError?: (error: unknown) => void;
 }
 
-export async function submitAgentInput<TAttachment>(
-  input: AgentInputSubmitActionInput<TAttachment>,
+export async function submitAgentInput<TImage>(
+  input: AgentInputSubmitActionInput<TImage>,
 ): Promise<AgentInputSubmitResult> {
   const trimmedMessage = input.message.trim();
-  const attachments = input.attachments;
-  const shouldClearOnSubmit = input.submitBehavior !== "preserve-and-lock";
+  const imageAttachments = input.imageAttachments;
 
-  if (
-    !trimmedMessage &&
-    attachments.length === 0 &&
-    !input.hasExternalContent &&
-    !input.allowEmptySubmit
-  ) {
+  if (!trimmedMessage && !imageAttachments?.length) {
     return "noop";
   }
 
@@ -40,33 +31,27 @@ export async function submitAgentInput<TAttachment>(
   }
 
   if (input.isAgentRunning && !input.forceSend) {
-    input.queueMessage({ message: trimmedMessage, attachments });
-    if (shouldClearOnSubmit) {
-      input.setUserInput("");
-      input.setAttachments([]);
-    }
+    input.queueMessage({ message: trimmedMessage, imageAttachments });
+    input.setUserInput("");
+    input.setSelectedImages([]);
     return "queued";
   }
 
   // Clear immediately so optimistic stream updates and composer state stay in sync.
-  if (shouldClearOnSubmit) {
-    input.setUserInput("");
-    input.setAttachments([]);
-  }
+  input.setUserInput("");
+  input.setSelectedImages([]);
   input.setSendError(null);
   input.setIsProcessing(true);
 
   try {
-    await input.submitMessage({ message: trimmedMessage, attachments });
+    await input.submitMessage({ message: trimmedMessage, imageAttachments });
     input.clearDraft("sent");
     input.setIsProcessing(false);
     return "submitted";
   } catch (error) {
     input.onSubmitError?.(error);
-    if (shouldClearOnSubmit) {
-      input.setUserInput(trimmedMessage);
-      input.setAttachments(attachments);
-    }
+    input.setUserInput(trimmedMessage);
+    input.setSelectedImages(imageAttachments ?? []);
     input.setSendError(error instanceof Error ? error.message : "Failed to send message");
     input.setIsProcessing(false);
     return "failed";

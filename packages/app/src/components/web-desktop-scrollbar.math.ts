@@ -4,20 +4,20 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-export interface VerticalScrollbarGeometryInput {
+export type VerticalScrollbarGeometryInput = {
   viewportSize: number;
   contentSize: number;
   offset: number;
   minHandleSize?: number;
-}
+};
 
-export interface VerticalScrollbarGeometry {
+export type VerticalScrollbarGeometry = {
   isVisible: boolean;
   maxScrollOffset: number;
   handleSize: number;
   handleOffset: number;
   maxHandleOffset: number;
-}
+};
 
 export function computeVerticalScrollbarGeometry(
   input: VerticalScrollbarGeometryInput,
@@ -55,12 +55,12 @@ export function computeVerticalScrollbarGeometry(
   };
 }
 
-export interface ScrollOffsetFromDragDeltaInput {
+export type ScrollOffsetFromDragDeltaInput = {
   startOffset: number;
   dragDelta: number;
   maxScrollOffset: number;
   maxHandleOffset: number;
-}
+};
 
 export function computeScrollOffsetFromDragDelta(input: ScrollOffsetFromDragDeltaInput): number {
   if (input.maxScrollOffset <= 0 || input.maxHandleOffset <= 0) {

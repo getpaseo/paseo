@@ -15,7 +15,8 @@ async function loadDesktopDaemonServerId(): Promise<DesktopDaemonServerIdResult>
   };
 }
 
-export function useLocalDaemonServerId(): string | null {
+export function useIsLocalDaemon(serverId: string): boolean {
+  const normalizedServerId = serverId.trim();
   const isDesktopApp = shouldUseDesktopDaemon();
 
   const query = useQuery({
@@ -24,27 +25,16 @@ export function useLocalDaemonServerId(): string | null {
     enabled: isDesktopApp,
     staleTime: Infinity,
     gcTime: Infinity,
-    refetchInterval: (activeQuery) => (activeQuery.state.data?.serverId ? false : 1000),
+    refetchInterval: (query) => (query.state.data?.serverId ? false : 1000),
     refetchOnMount: false,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     retry: false,
   });
 
-  if (!isDesktopApp) {
-    return null;
-  }
-
-  return query.data?.serverId ?? null;
-}
-
-export function useIsLocalDaemon(serverId: string): boolean {
-  const normalizedServerId = serverId.trim();
-  const localServerId = useLocalDaemonServerId();
-
-  if (localServerId === null || normalizedServerId.length === 0) {
+  if (!isDesktopApp || normalizedServerId.length === 0) {
     return false;
   }
 
-  return localServerId === normalizedServerId;
+  return query.data?.serverId === normalizedServerId;
 }

@@ -57,7 +57,9 @@ export class PushService {
       batches.push(messages.slice(i, i + MAX_BATCH_SIZE));
     }
 
-    await Promise.all(batches.map((batch) => this.sendBatch(batch)));
+    for (const batch of batches) {
+      await this.sendBatch(batch);
+    }
   }
 
   private async sendBatch(messages: ExpoPushMessage[]): Promise<void> {

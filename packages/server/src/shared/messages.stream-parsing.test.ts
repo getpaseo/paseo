@@ -46,69 +46,6 @@ describe("shared messages stream parsing", () => {
     expect(parsed.payload.entries[0]?.item.type).toBe("assistant_message");
   });
 
-  it("parses legacy worktree setup timeline entries without per-command log", () => {
-    const parsed = FetchAgentTimelineResponseMessageSchema.parse({
-      type: "fetch_agent_timeline_response",
-      payload: {
-        requestId: "req-legacy-setup",
-        agentId: "agent_legacy_setup",
-        agent: null,
-        direction: "tail",
-        projection: "canonical",
-        epoch: "epoch-setup",
-        reset: false,
-        staleCursor: false,
-        gap: false,
-        window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
-        startCursor: { epoch: "epoch-setup", seq: 1 },
-        endCursor: { epoch: "epoch-setup", seq: 1 },
-        hasOlder: false,
-        hasNewer: false,
-        entries: [
-          {
-            provider: "codex",
-            item: {
-              type: "tool_call",
-              callId: "setup-1",
-              name: "hubcode_worktree_setup",
-              status: "completed",
-              detail: {
-                type: "worktree_setup",
-                worktreePath: "/repo/.hubcode/worktrees/feature",
-                branchName: "feature",
-                log: "setup complete",
-                commands: [
-                  {
-                    index: 1,
-                    command: "npm install",
-                    cwd: "/repo/.hubcode/worktrees/feature",
-                    status: "completed",
-                    exitCode: 0,
-                    durationMs: 100,
-                  },
-                ],
-              },
-              error: null,
-            },
-            timestamp: "2026-04-22T00:00:00.000Z",
-            seqStart: 1,
-            seqEnd: 1,
-            sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
-            collapsed: [],
-          },
-        ],
-        error: null,
-      },
-    });
-
-    const item = parsed.payload.entries[0]?.item;
-    expect(item?.type).toBe("tool_call");
-    if (item?.type !== "tool_call" || item.detail.type !== "worktree_setup") {
-      throw new Error("Expected worktree setup tool call");
-    }
-    expect(item.detail.commands[0]?.log).toBe("");
-  });
-
   it("parses explicit shutdown and restart lifecycle request payloads as distinct message types", () => {
     const shutdownParsed = SessionInboundMessageSchema.safeParse({
       type: "shutdown_server_request",
@@ -266,44 +203,6 @@ describe("shared messages stream parsing", () => {
       expect(resolutionParsed.payload.event.resolution).toEqual({
         behavior: "allow",
         selectedActionId: "implement_resume",
-      });
-    }
-  });
-
-  it("parses permission request detail compatibly", () => {
-    const parsed = AgentStreamMessageSchema.parse({
-      type: "agent_stream",
-      payload: {
-        agentId: "agent_live",
-        timestamp: "2026-02-08T20:10:00.000Z",
-        event: {
-          type: "permission_requested",
-          provider: "opencode",
-          request: {
-            id: "perm-shell-1",
-            provider: "opencode",
-            name: "external_directory",
-            kind: "tool",
-            title: "Access external directory",
-            input: {
-              command: "ls /tmp/outside",
-            },
-            detail: {
-              type: "shell",
-              command: "ls /tmp/outside",
-              cwd: "/home/dev/project",
-            },
-          },
-        },
-      },
-    });
-
-    expect(parsed.payload.event.type).toBe("permission_requested");
-    if (parsed.payload.event.type === "permission_requested") {
-      expect(parsed.payload.event.request.detail).toEqual({
-        type: "shell",
-        command: "ls /tmp/outside",
-        cwd: "/home/dev/project",
       });
     }
   });

@@ -23,15 +23,15 @@ const daemon = await createHubcodeDaemon(
     listen: "127.0.0.1:0", // OS picks a free port
     hubcodeHome,
     corsAllowedOrigins: [],
-    hostnames: true,
+    allowedHosts: true,
     mcpEnabled: false,
     staticDir,
     mcpDebug: false,
     agentClients: {},
     agentStoragePath: path.join(hubcodeHome, "agents"),
     relayEnabled: false,
-    relayEndpoint: "relay.hubcode.ai:443",
-    appBaseUrl: "https://app.hubcode.ai",
+    relayEndpoint: "relay.hubcode.sh:443",
+    appBaseUrl: "https://app.hubcode.sh",
     // Add custom config here, e.g.:
     // providerOverrides: { ... },
   },
@@ -58,7 +58,6 @@ await rm(staticDir, { recursive: true, force: true });
 ```
 
 Run with:
-
 ```bash
 npx tsx packages/server/src/server/your-script.ts
 ```
@@ -108,7 +107,6 @@ const updated = await client.waitForAgentUpsert(agent.id, (s) => s.status === "i
 The daemon hides non-legacy providers (anything other than claude, codex, opencode) from clients that don't send an `appVersion >= 0.1.45`. The `DaemonClient` sends no version by default, so custom providers like ACP-based ones will be invisible in snapshot responses.
 
 Always pass `appVersion`:
-
 ```typescript
 const client = new DaemonClient({
   url: `ws://127.0.0.1:${port}/ws`,

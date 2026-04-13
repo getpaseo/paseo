@@ -9,79 +9,48 @@ import type { AgentProvider } from "./agent-sdk-types.js";
 import type { AgentManager, WaitForAgentResult } from "./agent-manager.js";
 import {
   AgentPermissionRequestPayloadSchema,
-  AgentListItemPayloadSchema,
   AgentPermissionResponseSchema,
   AgentSnapshotPayloadSchema,
 } from "../messages.js";
-import type { AgentListItemPayload } from "../messages.js";
-import {
-  buildStoredAgentPayload,
-  toAgentListItemPayload,
-  toAgentPayload,
-} from "./agent-projections.js";
+import { toAgentPayload } from "./agent-projections.js";
 import { curateAgentActivity } from "./activity-curator.js";
-import type { AgentStorage } from "./agent-storage.js";
-import { ensureAgentLoaded } from "./agent-loading.js";
-import { isStoredAgentProviderAvailable } from "../persistence-hooks.js";
+import { AgentStorage } from "./agent-storage.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
 } from "./timeline-append.js";
-import { getHubcodeWorktreesRoot, type WorktreeConfig } from "../../utils/worktree.js";
-import {
-  archiveHubcodeWorktree,
-  killTerminalsUnderPath,
-  type ArchiveHubcodeWorktreeDependencies,
-} from "../hubcode-worktree-archive-service.js";
+import { type WorktreeConfig } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
-import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../path-utils.js";
+import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { captureTerminalLines } from "../../terminal/terminal.js";
-import { runAsyncWorktreeBootstrap } from "../worktree-bootstrap.js";
+import { createAgentWorktree, runAsyncWorktreeBootstrap } from "../worktree-bootstrap.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { ScheduleSummarySchema, StoredScheduleSchema } from "../schedule/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
-import { resolveSnapshotCwd } from "./provider-snapshot-manager.js";
+import { deleteHubcodeWorktree, listHubcodeWorktrees } from "../../utils/worktree.js";
 import {
   AgentModelSchema,
   AgentProviderEnum,
   AgentStatusEnum,
   ProviderSummarySchema,
   parseDurationString,
-  resolveRequiredProviderModel,
   sanitizePermissionRequest,
-  sendPromptToAgent,
   setupFinishNotification,
   serializeSnapshotWithMetadata,
   startAgentRun,
   toScheduleSummary,
   waitForAgentWithTimeout,
 } from "./mcp-shared.js";
-import type { GitHubService } from "../../services/github-service.js";
-import type { WorkspaceGitService } from "../workspace-git-service.js";
-import type {
-  CreateHubcodeWorktreeFn,
-  CreateHubcodeWorktreeInput,
-  CreateHubcodeWorktreeResult,
-} from "../hubcode-worktree-service.js";
-import { toWorktreeRequestError } from "../worktree-errors.js";
-import { join } from "node:path";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager?: TerminalManager | null;
-  getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
-  github?: GitHubService;
-  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
-  archiveWorkspaceRecord?: ArchiveHubcodeWorktreeDependencies["archiveWorkspaceRecord"];
-  emitWorkspaceUpdatesForCwds?: ArchiveHubcodeWorktreeDependencies["emitWorkspaceUpdatesForCwds"];
-  emitSessionMessage?: ArchiveHubcodeWorktreeDependencies["emit"];
-  createHubcodeWorktree?: CreateHubcodeWorktreeFn;
   hubcodeHome?: string;
   /**
    * ID of the agent that is connecting to this MCP server.
@@ -141,114 +110,6 @@ function mapModeAcrossProviders(
 }
 
 type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
-
-function parseTimestamp(value: string | null | undefined): number {
-  if (!value) {
-    return 0;
-  }
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function resolveAgentListActivityTime(agent: AgentListItemPayload): number {
-  return Math.max(
-    parseTimestamp(agent.updatedAt),
-    parseTimestamp(agent.lastUserMessageAt),
-    parseTimestamp(agent.attentionTimestamp),
-    parseTimestamp(agent.archivedAt),
-    parseTimestamp(agent.createdAt),
-  );
-}
-
-function resolveRegisteredProviderIds(
-  agentManager: AgentManager,
-  providerRegistry: Record<AgentProvider, ProviderDefinition> | null | undefined,
-): AgentProvider[] {
-  return providerRegistry
-    ? (Object.keys(providerRegistry) as AgentProvider[])
-    : agentManager.getRegisteredProviderIds();
-}
-
-interface ProviderSummary {
-  id: AgentProvider;
-  label: string;
-  description: string;
-  enabled: boolean;
-  modes: ProviderDefinition["modes"];
-  status: string;
-  error?: string;
-}
-
-async function resolveProviderSummary(
-  provider: ProviderDefinition,
-  logger: Logger,
-): Promise<ProviderSummary> {
-  const base = {
-    id: provider.id,
-    label: provider.label,
-    description: provider.description,
-    modes: provider.modes,
-  };
-  if (!provider.enabled) {
-    return { ...base, enabled: false, status: "unavailable" };
-  }
-  try {
-    const available = await provider.createClient(logger).isAvailable();
-    return { ...base, enabled: true, status: available ? "available" : "unavailable" };
-  } catch (availabilityError) {
-    return {
-      ...base,
-      enabled: true,
-      status: "unavailable",
-      error:
-        availabilityError instanceof Error ? availabilityError.message : String(availabilityError),
-    };
-  }
-}
-
-function compareAgentListItems(a: AgentListItemPayload, b: AgentListItemPayload): number {
-  const attentionDelta =
-    Number(b.requiresAttention ?? false) - Number(a.requiresAttention ?? false);
-  if (attentionDelta !== 0) {
-    return attentionDelta;
-  }
-
-  const statusOrder = {
-    running: 0,
-    initializing: 1,
-    idle: 2,
-    error: 3,
-    closed: 4,
-  } as Record<string, number>;
-  const statusDelta = (statusOrder[a.status] ?? 999) - (statusOrder[b.status] ?? 999);
-  if (statusDelta !== 0) {
-    return statusDelta;
-  }
-
-  return resolveAgentListActivityTime(b) - resolveAgentListActivityTime(a);
-}
-
-function resolveScheduleProviderAndModel(params: {
-  provider?: string;
-  defaultProvider: AgentProvider;
-}): { provider: AgentProvider; model?: string } {
-  const providerInput = params.provider?.trim() || params.defaultProvider;
-  const slashIndex = providerInput.indexOf("/");
-  if (slashIndex === -1) {
-    return { provider: providerInput as AgentProvider };
-  }
-
-  const provider = providerInput.slice(0, slashIndex).trim();
-  const model = providerInput.slice(slashIndex + 1).trim();
-  if (!provider || !model) {
-    throw new Error("provider must be <provider> or <provider>/<model>");
-  }
-
-  return {
-    provider: provider as AgentProvider,
-    model,
-  };
-}
 
 function resolveChildAgentCwd(params: {
   parentCwd: string;
@@ -347,7 +208,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return parentAgent;
   };
 
-  const resolveScopedCwd = (requestedCwd?: string, opts?: { required?: boolean }): string => {
+  const resolveScopedCwd = (requestedCwd?: string, options?: { required?: boolean }): string => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
       return resolveChildAgentCwd({
@@ -360,7 +221,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
     const trimmedCwd = requestedCwd?.trim();
     if (!trimmedCwd) {
-      if (opts?.required) {
+      if (options?.required) {
         throw new Error("cwd is required");
       }
       throw new Error("cwd is required when no caller agent is available");
@@ -369,106 +230,49 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return expandUserPath(trimmedCwd);
   };
 
-  const buildCallerAgentScheduleConfigExtras = (
-    callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
-  ): Record<string, unknown> => {
-    return {
-      ...(callerAgent.config.thinkingOptionId
-        ? { thinkingOptionId: callerAgent.config.thinkingOptionId }
-        : {}),
-      ...(callerAgent.config.approvalPolicy
-        ? { approvalPolicy: callerAgent.config.approvalPolicy }
-        : {}),
-      ...(callerAgent.config.sandboxMode ? { sandboxMode: callerAgent.config.sandboxMode } : {}),
-      ...(typeof callerAgent.config.networkAccess === "boolean"
-        ? { networkAccess: callerAgent.config.networkAccess }
-        : {}),
-      ...(typeof callerAgent.config.webSearch === "boolean"
-        ? { webSearch: callerAgent.config.webSearch }
-        : {}),
-      ...(callerAgent.config.title ? { title: callerAgent.config.title } : {}),
-      ...(callerAgent.config.extra ? { extra: callerAgent.config.extra } : {}),
-      ...(callerAgent.config.systemPrompt ? { systemPrompt: callerAgent.config.systemPrompt } : {}),
-      ...(callerAgent.config.mcpServers ? { mcpServers: callerAgent.config.mcpServers } : {}),
-    };
-  };
-
-  const buildCallerAgentScheduleConfig = (
-    callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
-    params?: { provider?: string; cwd?: string },
-  ) => {
-    const hasProviderOverride = params?.provider !== undefined;
-    const resolvedProviderModel = hasProviderOverride
-      ? resolveScheduleProviderAndModel({
-          provider: params?.provider,
-          defaultProvider: callerAgent.provider,
-        })
-      : null;
-    const resolvedProvider = resolvedProviderModel?.provider ?? callerAgent.provider;
-    let resolvedModel: string | undefined;
-    if (resolvedProviderModel?.model) {
-      resolvedModel = resolvedProviderModel.model;
-    } else if (!hasProviderOverride && callerAgent.config.model) {
-      resolvedModel = callerAgent.config.model;
-    }
-    return {
-      provider: resolvedProvider,
-      cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : callerAgent.cwd,
-      ...(callerAgent.currentModeId
-        ? {
-            modeId: mapModeAcrossProviders(
-              callerAgent.currentModeId,
-              callerAgent.provider,
-              resolvedProvider,
-            ),
-          }
-        : {}),
-      ...(resolvedModel ? { model: resolvedModel } : {}),
-      ...buildCallerAgentScheduleConfigExtras(callerAgent),
-    };
-  };
-
-  const resolveNewAgentScheduleTarget = (params?: { provider?: string; cwd?: string }) => {
-    if (!params?.provider?.trim()) {
-      throw new Error("provider is required when target is new-agent");
-    }
-
+  const resolveNewAgentScheduleTarget = () => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
       return {
         type: "new-agent" as const,
-        config: buildCallerAgentScheduleConfig(callerAgent, params),
+        config: {
+          provider: callerAgent.provider,
+          cwd: callerAgent.cwd,
+          ...(callerAgent.currentModeId ? { modeId: callerAgent.currentModeId } : {}),
+          ...(callerAgent.config.model ? { model: callerAgent.config.model } : {}),
+          ...(callerAgent.config.thinkingOptionId
+            ? { thinkingOptionId: callerAgent.config.thinkingOptionId }
+            : {}),
+          ...(callerAgent.config.approvalPolicy
+            ? { approvalPolicy: callerAgent.config.approvalPolicy }
+            : {}),
+          ...(callerAgent.config.sandboxMode
+            ? { sandboxMode: callerAgent.config.sandboxMode }
+            : {}),
+          ...(typeof callerAgent.config.networkAccess === "boolean"
+            ? { networkAccess: callerAgent.config.networkAccess }
+            : {}),
+          ...(typeof callerAgent.config.webSearch === "boolean"
+            ? { webSearch: callerAgent.config.webSearch }
+            : {}),
+          ...(callerAgent.config.title ? { title: callerAgent.config.title } : {}),
+          ...(callerAgent.config.extra ? { extra: callerAgent.config.extra } : {}),
+          ...(callerAgent.config.systemPrompt
+            ? { systemPrompt: callerAgent.config.systemPrompt }
+            : {}),
+          ...(callerAgent.config.mcpServers ? { mcpServers: callerAgent.config.mcpServers } : {}),
+        },
       };
     }
 
-    const resolvedProviderModel = resolveScheduleProviderAndModel({
-      provider: params?.provider,
-      defaultProvider: params.provider as AgentProvider,
-    });
     return {
       type: "new-agent" as const,
       config: {
-        provider: resolvedProviderModel.provider,
-        cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
-        ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
+        provider: "claude" as AgentProvider,
+        cwd: process.cwd(),
       },
     };
   };
-  const ProviderModelInputSchema = AgentProviderEnum.trim()
-    .refine((value) => value.includes("/"), {
-      message: "provider must be provider/model, for example codex/gpt-5.4",
-    })
-    .refine(
-      (value) => {
-        try {
-          resolveRequiredProviderModel(value);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      { message: "provider must be provider/model, for example codex/gpt-5.4" },
-    );
   const agentToAgentInputSchema = {
     cwd: z
       .string()
@@ -480,9 +284,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .min(1, "Title is required")
       .max(60, "Title must be 60 characters or fewer")
       .describe("Short descriptive title (<= 60 chars) summarizing the agent's focus."),
-    provider: ProviderModelInputSchema.describe(
-      "Required provider/model pair, for example codex/gpt-5.4.",
+    provider: AgentProviderEnum.optional().describe(
+      "Optional agent implementation to spawn. Defaults to 'claude'.",
     ),
+    model: z.string().optional().describe("Model to use (e.g. claude-sonnet-4-20250514)"),
     thinking: z.string().optional().describe("Thinking option ID"),
     labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
     initialPrompt: z
@@ -516,9 +321,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .min(1, "Title is required")
       .max(60, "Title must be 60 characters or fewer")
       .describe("Short descriptive title (<= 60 chars) summarizing the agent's focus."),
-    provider: ProviderModelInputSchema.describe(
-      "Required provider/model pair, for example codex/gpt-5.4.",
+    provider: AgentProviderEnum.optional().describe(
+      "Optional agent implementation to spawn. Defaults to 'claude'.",
     ),
+    model: z.string().optional().describe("Model to use (e.g. claude-sonnet-4-20250514)"),
     thinking: z.string().optional().describe("Thinking option ID"),
     labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
     initialPrompt: z
@@ -538,17 +344,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .string()
       .optional()
       .describe("Required when worktreeName is set: the base branch to diff/merge against."),
-    refName: z.string().min(1).optional().describe("Optional source ref for worktree creation."),
-    action: z
-      .enum(["branch-off", "checkout"])
-      .optional()
-      .describe("Optional worktree creation action."),
-    githubPrNumber: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("Optional GitHub pull request number to checkout."),
     background: z
       .boolean()
       .optional()
@@ -566,8 +361,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
   };
 
   const createAgentInputSchema = callerAgentId ? agentToAgentInputSchema : topLevelInputSchema;
-  const agentToAgentCreateAgentArgsSchema = z.object(agentToAgentInputSchema).strict();
-  const topLevelCreateAgentArgsSchema = z.object(topLevelInputSchema).strict();
+  const agentToAgentCreateAgentArgsSchema = z.object(agentToAgentInputSchema);
+  const topLevelCreateAgentArgsSchema = z.object(topLevelInputSchema);
 
   if (options.voiceOnly || options.enableVoiceTools || callerContext?.enableVoiceTools) {
     server.registerTool(
@@ -612,114 +407,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return server;
   }
 
-  interface ResolvedCreateAgentArgs {
-    provider: AgentProvider;
-    initialPrompt: string;
-    background: boolean;
-    normalizedTitle: string | null;
-    model: string | undefined;
-    thinking: string | undefined;
-    labels: Record<string, string> | undefined;
-    notifyOnFinish: boolean;
-    resolvedCwd: string;
-    resolvedMode: string | undefined;
-    worktreeConfig: WorktreeConfig | undefined;
-    shouldBootstrapWorktree: boolean | undefined;
-  }
-
-  const resolveCallerCreateAgentArgs = (
-    args: unknown,
-    parentAgentId: string,
-  ): ResolvedCreateAgentArgs => {
-    const callerArgs = agentToAgentCreateAgentArgsSchema.parse(args);
-    const resolvedProviderModel = resolveRequiredProviderModel(callerArgs.provider);
-    const parentAgent = agentManager.getAgent(parentAgentId);
-    if (!parentAgent) {
-      throw new Error(`Parent agent ${parentAgentId} not found`);
-    }
-    const provider = resolvedProviderModel.provider;
-    const resolvedCwd = resolveChildAgentCwd({
-      parentCwd: parentAgent.cwd,
-      requestedCwd: callerArgs.cwd,
-      lockedCwd: callerContext?.lockedCwd,
-      allowCustomCwd: callerContext?.allowCustomCwd ?? true,
-    });
-    const parentMode = parentAgent.currentModeId;
-    const resolvedMode = parentMode
-      ? mapModeAcrossProviders(parentMode, parentAgent.provider, provider)
-      : undefined;
-    return {
-      provider,
-      initialPrompt: callerArgs.initialPrompt,
-      background: callerArgs.background ?? false,
-      normalizedTitle: callerArgs.title.trim(),
-      model: resolvedProviderModel.model,
-      thinking: callerArgs.thinking,
-      labels: callerArgs.labels,
-      notifyOnFinish: callerArgs.notifyOnFinish ?? false,
-      resolvedCwd,
-      resolvedMode,
-      worktreeConfig: undefined,
-      shouldBootstrapWorktree: undefined,
-    };
-  };
-
-  const resolveTopLevelCreateAgentArgs = async (
-    args: unknown,
-  ): Promise<ResolvedCreateAgentArgs> => {
-    const topLevelArgs = topLevelCreateAgentArgsSchema.parse(args);
-    const resolvedProviderModel = resolveRequiredProviderModel(topLevelArgs.provider);
-    const { cwd, mode, worktreeName, baseBranch, refName, action, githubPrNumber } = topLevelArgs;
-    let resolvedCwd = expandUserPath(cwd);
-    let worktreeConfig: WorktreeConfig | undefined;
-    let shouldBootstrapWorktree: boolean | undefined;
-
-    if (worktreeName) {
-      if (!baseBranch && !refName && !action && githubPrNumber === undefined) {
-        throw new Error("baseBranch is required when creating a worktree");
-      }
-      const createdWorktree = await createMcpWorktree({
-        input: {
-          cwd: resolvedCwd,
-          worktreeSlug: worktreeName,
-          refName,
-          action,
-          githubPrNumber,
-          runSetup: false,
-          hubcodeHome: options.hubcodeHome,
-        },
-        createHubcodeWorktree: options.createHubcodeWorktree,
-        resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
-        workspaceGitService: options.workspaceGitService,
-        logger: options.logger,
-      });
-      resolvedCwd = createdWorktree.worktree.worktreePath;
-      worktreeConfig = createdWorktree.worktree;
-      shouldBootstrapWorktree = createdWorktree.created;
-    }
-
-    return {
-      provider: resolvedProviderModel.provider,
-      initialPrompt: topLevelArgs.initialPrompt,
-      background: topLevelArgs.background ?? false,
-      normalizedTitle: topLevelArgs.title.trim(),
-      model: resolvedProviderModel.model,
-      thinking: topLevelArgs.thinking,
-      labels: topLevelArgs.labels,
-      notifyOnFinish: topLevelArgs.notifyOnFinish ?? false,
-      resolvedCwd,
-      resolvedMode: mode,
-      worktreeConfig,
-      shouldBootstrapWorktree,
-    };
-  };
-
   server.registerTool(
     "create_agent",
     {
       title: "Create agent",
       description:
-        "Create an agent tied to a working directory. Requires provider/model, for example codex/gpt-5.4. Do not guess; call list_providers and list_models first if uncertain. Optionally run an initial prompt immediately or create a git worktree for the agent.",
+        "Create a new Claude or Codex agent tied to a working directory. Optionally run an initial prompt immediately or create a git worktree for the agent.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -739,29 +432,81 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async (args: unknown) => {
-      const resolved = callerAgentId
-        ? resolveCallerCreateAgentArgs(args, callerAgentId)
-        : await resolveTopLevelCreateAgentArgs(args);
-      const {
-        provider,
-        initialPrompt,
-        background,
-        normalizedTitle,
-        model,
-        thinking,
-        labels,
-        notifyOnFinish,
-        resolvedCwd,
-        resolvedMode,
-        worktreeConfig,
-        shouldBootstrapWorktree,
-      } = resolved;
+      let provider: AgentProvider;
+      let initialPrompt: string;
+      let background = false;
+      let normalizedTitle: string | null;
+      let model: string | undefined;
+      let thinking: string | undefined;
+      let labels: Record<string, string> | undefined;
+      let notifyOnFinish = false;
+
+      let resolvedCwd: string;
+      let resolvedMode: string | undefined;
+      let worktreeConfig: WorktreeConfig | undefined;
+
+      if (callerAgentId) {
+        const callerArgs = agentToAgentCreateAgentArgsSchema.parse(args);
+        provider = callerArgs.provider ?? "claude";
+        initialPrompt = callerArgs.initialPrompt;
+        background = callerArgs.background ?? false;
+        normalizedTitle = callerArgs.title.trim();
+        model = callerArgs.model;
+        thinking = callerArgs.thinking;
+        labels = callerArgs.labels;
+        notifyOnFinish = callerArgs.notifyOnFinish ?? false;
+
+        const parentAgent = agentManager.getAgent(callerAgentId);
+        if (!parentAgent) {
+          throw new Error(`Parent agent ${callerAgentId} not found`);
+        }
+        resolvedCwd = resolveChildAgentCwd({
+          parentCwd: parentAgent.cwd,
+          requestedCwd: callerArgs.cwd,
+          lockedCwd: callerContext?.lockedCwd,
+          allowCustomCwd: callerContext?.allowCustomCwd ?? true,
+        });
+        const parentMode = parentAgent.currentModeId;
+        if (parentMode) {
+          resolvedMode = mapModeAcrossProviders(parentMode, parentAgent.provider, provider);
+        }
+      } else {
+        const topLevelArgs = topLevelCreateAgentArgsSchema.parse(args);
+        provider = topLevelArgs.provider ?? "claude";
+        initialPrompt = topLevelArgs.initialPrompt;
+        background = topLevelArgs.background ?? false;
+        normalizedTitle = topLevelArgs.title.trim();
+        model = topLevelArgs.model;
+        thinking = topLevelArgs.thinking;
+        labels = topLevelArgs.labels;
+        notifyOnFinish = topLevelArgs.notifyOnFinish ?? false;
+        const { cwd, mode, worktreeName, baseBranch } = topLevelArgs;
+
+        resolvedCwd = expandUserPath(cwd);
+
+        if (worktreeName) {
+          if (!baseBranch) {
+            throw new Error("baseBranch is required when creating a worktree");
+          }
+          const worktree = await createAgentWorktree({
+            branchName: worktreeName,
+            cwd: resolvedCwd,
+            baseBranch,
+            worktreeSlug: worktreeName,
+            hubcodeHome: options.hubcodeHome,
+          });
+          resolvedCwd = worktree.worktreePath;
+          worktreeConfig = worktree;
+        }
+
+        resolvedMode = mode;
+      }
 
       const childAgentDefaultLabels = callerContext?.childAgentDefaultLabels;
       const mergedLabels = {
         ...(callerAgentId ? { "hubcode.parent-agent-id": callerAgentId } : {}),
-        ...childAgentDefaultLabels,
-        ...labels,
+        ...(childAgentDefaultLabels ?? {}),
+        ...(labels ?? {}),
       };
       const snapshot = await agentManager.createAgent(
         {
@@ -780,7 +525,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         void runAsyncWorktreeBootstrap({
           agentId: snapshot.id,
           worktree: worktreeConfig,
-          shouldBootstrap: shouldBootstrapWorktree,
           terminalManager: terminalManager ?? null,
           appendTimelineItem: (item) =>
             appendTimelineItemIfAgentKnown({
@@ -807,11 +551,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         explicitTitle: snapshot.config.title,
         hubcodeHome: options.hubcodeHome,
         logger: childLogger,
-        deps: options.workspaceGitService
-          ? {
-              workspaceGitService: options.workspaceGitService,
-            }
-          : undefined,
       });
 
       try {
@@ -827,7 +566,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         if (notifyOnFinish && callerAgentId) {
           setupFinishNotification({
             agentManager,
-            agentStorage,
             childAgentId: snapshot.id,
             callerAgentId,
             logger: childLogger,
@@ -993,24 +731,33 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ agentId, prompt, sessionMode, background = false, notifyOnFinish = false }) => {
+      const snapshot = agentManager.getAgent(agentId);
+      if (!snapshot) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+
       if (agentManager.hasInFlightRun(agentId)) {
         waitTracker.cancel(agentId, "Agent run interrupted by new prompt");
       }
 
-      await sendPromptToAgent({
-        agentManager,
-        agentStorage,
-        agentId,
-        userMessageText: prompt,
-        prompt,
-        sessionMode,
-        logger: childLogger,
-      });
+      if (sessionMode) {
+        await agentManager.setAgentMode(agentId, sessionMode);
+      }
 
+      try {
+        agentManager.recordUserMessage(agentId, prompt, {
+          emitState: false,
+        });
+      } catch (error) {
+        childLogger.error({ err: error, agentId }, "Failed to record user message");
+      }
+
+      startAgentRun(agentManager, agentId, prompt, childLogger, {
+        replaceRunning: true,
+      });
       if (notifyOnFinish && callerAgentId) {
         setupFinishNotification({
           agentManager,
-          agentStorage,
           childAgentId: agentId,
           callerAgentId,
           logger: childLogger,
@@ -1074,34 +821,19 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
     async ({ agentId }) => {
       const snapshot = agentManager.getAgent(agentId);
-      if (snapshot) {
-        const structuredSnapshot = await serializeSnapshotWithMetadata(
-          agentStorage,
-          snapshot,
-          childLogger,
-        );
-        return {
-          content: [],
-          structuredContent: ensureValidJson({
-            status: snapshot.lifecycle,
-            snapshot: structuredSnapshot,
-          }),
-        };
-      }
-
-      const record = await agentStorage.get(agentId);
-      if (!record || record.internal) {
+      if (!snapshot) {
         throw new Error(`Agent ${agentId} not found`);
       }
 
-      const structuredSnapshot = buildStoredAgentPayload(
-        record,
-        resolveRegisteredProviderIds(agentManager, providerRegistry),
+      const structuredSnapshot = await serializeSnapshotWithMetadata(
+        agentStorage,
+        snapshot,
+        childLogger,
       );
       return {
         content: [],
         structuredContent: ensureValidJson({
-          status: structuredSnapshot.status,
+          status: snapshot.lifecycle,
           snapshot: structuredSnapshot,
         }),
       };
@@ -1112,54 +844,19 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     "list_agents",
     {
       title: "List agents",
-      description: "List recent agents as compact metadata.",
-      inputSchema: {
-        includeArchived: z.boolean().optional().default(false),
-        cwd: z.string().optional(),
-        sinceHours: z
-          .number()
-          .int()
-          .positive()
-          .max(24 * 30)
-          .optional()
-          .default(48),
-        statuses: z.array(AgentStatusEnum).optional(),
-        limit: z.number().int().positive().max(200).optional().default(50),
-      },
+      description: "List all live agents managed by the server.",
+      inputSchema: {},
       outputSchema: {
-        agents: z.array(AgentListItemPayloadSchema),
+        agents: z.array(AgentSnapshotPayloadSchema),
       },
     },
-    async ({ includeArchived = false, cwd, sinceHours = 48, statuses, limit = 50 }) => {
-      const callerCwd = callerAgentId ? resolveCallerAgent()?.cwd : undefined;
-      const requestedCwd = cwd?.trim() ? expandUserPath(cwd) : callerCwd;
-      const statusFilter = statuses && statuses.length > 0 ? new Set(statuses) : null;
-      const sinceMs = Date.now() - sinceHours * 60 * 60 * 1000;
-      const liveSnapshots = agentManager.listAgents();
-      const liveAgents = await Promise.all(
-        liveSnapshots.map((snapshot) =>
+    async () => {
+      const snapshots = agentManager.listAgents();
+      const agents = await Promise.all(
+        snapshots.map((snapshot) =>
           serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger),
         ),
       );
-      const liveIds = new Set(liveSnapshots.map((snapshot) => snapshot.id));
-      const storedRecords = await agentStorage.list();
-      const registeredProviderIds = resolveRegisteredProviderIds(agentManager, providerRegistry);
-      const storedAgents = storedRecords
-        .filter((record) => !record.internal && !liveIds.has(record.id))
-        .filter((record) => includeArchived || !record.archivedAt)
-        .filter(
-          (record) =>
-            includeArchived || isStoredAgentProviderAvailable(record, registeredProviderIds),
-        )
-        .map((record) => buildStoredAgentPayload(record, registeredProviderIds));
-      const agents = [...liveAgents, ...storedAgents]
-        .map(toAgentListItemPayload)
-        .filter((agent) => !requestedCwd || isSameOrDescendantPath(requestedCwd, agent.cwd))
-        .filter((agent) => !statusFilter || statusFilter.has(agent.status))
-        .filter((agent) => !agent.archivedAt || resolveAgentListActivityTime(agent) >= sinceMs)
-        .sort(compareAgentListItems)
-        .slice(0, limit);
-
       return {
         content: [],
         structuredContent: ensureValidJson({ agents }),
@@ -1301,7 +998,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         ? (
             await Promise.all(
               terminalManager.listDirectories().map(async (directory) =>
-                (await terminalManager.getTerminals(directory)).map((terminal) => ({
+                (
+                  await terminalManager.getTerminals(directory)
+                ).map((terminal) => ({
                   id: terminal.id,
                   name: terminal.name,
                   cwd: terminal.cwd,
@@ -1482,16 +1181,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cron: z.string().optional(),
         name: z.string().optional(),
         target: z.enum(["self", "new-agent"]).optional(),
-        provider: AgentProviderEnum.optional().describe(
-          "Provider, or provider/model (for example: codex or codex/gpt-5.4).",
-        ),
-        cwd: z.string().optional(),
         maxRuns: z.number().int().positive().optional(),
         expiresIn: z.string().optional(),
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, every, cron, name, target, provider, cwd, maxRuns, expiresIn }) => {
+    async ({ prompt, every, cron, name, target, maxRuns, expiresIn }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -1504,33 +1199,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       const scheduleTarget =
         target === "self"
           ? (() => {
-              const callerAgent = resolveCallerAgent();
-              if (!callerAgentId || !callerAgent) {
+              if (!callerAgentId) {
                 throw new Error("target=self requires a caller agent");
-              }
-              const trimmedCwd = cwd?.trim();
-              if (trimmedCwd && expandUserPath(trimmedCwd) !== callerAgent.cwd) {
-                throw new Error("cwd can only differ from the caller agent when target=new-agent");
-              }
-              if (provider !== undefined) {
-                const resolved = resolveScheduleProviderAndModel({
-                  provider,
-                  defaultProvider: callerAgent.provider,
-                });
-                if (
-                  resolved.provider !== callerAgent.provider ||
-                  (resolved.model !== undefined && resolved.model !== callerAgent.config.model)
-                ) {
-                  throw new Error(
-                    "provider can only differ from the caller agent when target=new-agent",
-                  );
-                }
               }
               return { type: "agent" as const, agentId: callerAgentId };
             })()
-          : (() => {
-              return resolveNewAgentScheduleTarget({ provider, cwd });
-            })();
+          : resolveNewAgentScheduleTarget();
 
       const schedule = await scheduleService.create({
         prompt: prompt.trim(),
@@ -1679,23 +1353,26 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     "list_providers",
     {
       title: "List providers",
-      description: "List configured agent providers, availability, and their modes.",
+      description: "List available agent providers and their modes.",
       inputSchema: {},
       outputSchema: {
         providers: z.array(ProviderSummarySchema),
       },
     },
-    async () => {
-      const providers = await Promise.all(
-        Object.values(providerRegistry ?? {}).map((provider) =>
-          resolveProviderSummary(provider, childLogger),
-        ),
-      );
-      return {
-        content: [],
-        structuredContent: ensureValidJson({ providers }),
-      };
-    },
+    async () => ({
+      content: [],
+      structuredContent: ensureValidJson({
+        providers: Object.values(providerRegistry ?? {}).map((provider) => ({
+          id: provider.id,
+          label: provider.label,
+          modes: provider.modes.map((mode) => ({
+            id: mode.id,
+            label: mode.label,
+            ...(mode.description ? { description: mode.description } : {}),
+          })),
+        })),
+      }),
+    }),
   );
 
   server.registerTool(
@@ -1720,11 +1397,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       if (!definition) {
         throw new Error(`Provider ${provider} is not configured`);
       }
-      if (!definition.enabled) {
-        throw new Error(`Provider '${provider}' is disabled`);
-      }
 
-      const models = await definition.fetchModels({ cwd: resolveSnapshotCwd(), force: false });
+      const models = await definition.fetchModels();
       return {
         content: [],
         structuredContent: ensureValidJson({
@@ -1752,11 +1426,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
     async ({ cwd }) => {
       const resolvedCwd = resolveScopedCwd(cwd, { required: true });
-      if (!options.workspaceGitService) {
-        throw new Error("WorkspaceGitService is required to list worktrees");
-      }
-      const worktrees = await options.workspaceGitService.listWorktrees(resolvedCwd, {
-        reason: "mcp:list-worktrees",
+      const worktrees = await listHubcodeWorktrees({
+        cwd: resolvedCwd,
+        hubcodeHome: options.hubcodeHome,
       });
 
       return {
@@ -1776,43 +1448,27 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           .string()
           .optional()
           .describe("Optional repository cwd. Defaults to the caller agent cwd."),
-        branchName: z.string().optional(),
-        baseBranch: z.string().optional(),
-        refName: z.string().min(1).optional(),
-        action: z.enum(["branch-off", "checkout"]).optional(),
-        githubPrNumber: z.number().int().positive().optional(),
+        branchName: z.string(),
+        baseBranch: z.string(),
       },
       outputSchema: {
         branchName: z.string(),
         worktreePath: z.string(),
       },
     },
-    async ({ cwd, branchName, baseBranch, refName, action, githubPrNumber }) => {
-      if (!branchName && !refName && githubPrNumber === undefined) {
-        throw new Error("create_worktree requires branchName, refName, or githubPrNumber");
-      }
-      const repoRoot = resolveScopedCwd(cwd, { required: true });
-      const createdWorktree = await createMcpWorktree({
-        input: {
-          cwd: repoRoot,
-          worktreeSlug: branchName,
-          refName,
-          action,
-          githubPrNumber,
-          runSetup: false,
-          hubcodeHome: options.hubcodeHome,
-        },
-        createHubcodeWorktree: options.createHubcodeWorktree,
-        resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
-        workspaceGitService: options.workspaceGitService,
-        logger: options.logger,
+    async ({ cwd, branchName, baseBranch }) => {
+      const worktree = await createAgentWorktree({
+        branchName,
+        cwd: resolveScopedCwd(cwd, { required: true }),
+        baseBranch,
+        worktreeSlug: branchName,
+        hubcodeHome: options.hubcodeHome,
       });
-      const { worktree } = createdWorktree;
 
       return {
         content: [],
         structuredContent: ensureValidJson({
-          branchName: worktree.branchName,
+          branchName,
           worktreePath: worktree.worktreePath,
         }),
       };
@@ -1837,59 +1493,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ cwd, worktreePath, worktreeSlug }) => {
-      const repoRoot = resolveScopedCwd(cwd, { required: true });
-      if (!worktreePath && !worktreeSlug) {
-        throw new Error("worktreePath or worktreeSlug is required");
-      }
-      if (!options.github) {
-        throw new Error("GitHub service is required to archive worktrees");
-      }
-      if (!options.workspaceGitService) {
-        throw new Error("WorkspaceGitService is required to archive worktrees");
-      }
-      if (!options.archiveWorkspaceRecord) {
-        throw new Error("Workspace registry archiver is required to archive worktrees");
-      }
-      if (!options.emitWorkspaceUpdatesForCwds) {
-        throw new Error("Workspace update emitter is required to archive worktrees");
-      }
-      if (!options.emitSessionMessage) {
-        throw new Error("Session message emitter is required to archive worktrees");
-      }
-
-      const targetPath =
-        worktreePath ??
-        join(await getHubcodeWorktreesRoot(repoRoot, options.hubcodeHome), worktreeSlug!);
-
-      await archiveHubcodeWorktree(
-        {
-          hubcodeHome: options.hubcodeHome,
-          github: options.github,
-          workspaceGitService: options.workspaceGitService,
-          agentManager,
-          agentStorage,
-          archiveWorkspaceRecord: options.archiveWorkspaceRecord,
-          emit: options.emitSessionMessage,
-          emitWorkspaceUpdatesForCwds: options.emitWorkspaceUpdatesForCwds,
-          isPathWithinRoot: isSameOrDescendantPath,
-          killTerminalsUnderPath: (rootPath) =>
-            killTerminalsUnderPath(
-              {
-                terminalManager: terminalManager ?? null,
-                isPathWithinRoot: isSameOrDescendantPath,
-                killTrackedTerminal: () => {},
-                sessionLogger: childLogger,
-              },
-              rootPath,
-            ),
-          sessionLogger: childLogger,
-        },
-        {
-          targetPath,
-          repoRoot,
-          requestId: "mcp:archive_worktree",
-        },
-      );
+      await deleteHubcodeWorktree({
+        cwd: resolveScopedCwd(cwd, { required: true }),
+        worktreePath,
+        worktreeSlug,
+        hubcodeHome: options.hubcodeHome,
+      });
 
       return {
         content: [],
@@ -1918,11 +1527,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ agentId, limit }) => {
-      await ensureAgentLoaded(agentId, {
-        agentManager,
-        agentStorage,
-        logger: childLogger,
-      });
       const timeline = agentManager.getTimeline(agentId);
       const snapshot = agentManager.getAgent(agentId);
 
@@ -2036,52 +1640,4 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
   );
 
   return server;
-}
-
-interface CreateMcpWorktreeOptions {
-  input: CreateHubcodeWorktreeInput;
-  createHubcodeWorktree: CreateHubcodeWorktreeFn | undefined;
-  resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
-  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot">;
-  logger: Logger;
-}
-
-async function createMcpWorktree(
-  options: CreateMcpWorktreeOptions,
-): Promise<CreateHubcodeWorktreeResult> {
-  try {
-    if (!options.createHubcodeWorktree) {
-      throw new Error("Hubcode worktree service is not configured");
-    }
-    const result = await options.createHubcodeWorktree(options.input, {
-      resolveDefaultBranch: options.resolveDefaultBranch,
-    });
-    if (options.workspaceGitService) {
-      const refreshResults = await Promise.allSettled([
-        options.workspaceGitService.getSnapshot(options.input.cwd, {
-          force: true,
-          reason: "create-worktree",
-        }),
-        options.workspaceGitService.getSnapshot(result.worktree.worktreePath, {
-          force: true,
-          reason: "create-worktree",
-        }),
-      ]);
-      for (const [index, refreshResult] of refreshResults.entries()) {
-        if (refreshResult.status === "fulfilled") {
-          continue;
-        }
-        options.logger.warn(
-          {
-            err: refreshResult.reason,
-            cwd: index === 0 ? options.input.cwd : result.worktree.worktreePath,
-          },
-          "Failed to force-refresh workspace git snapshot after creating worktree",
-        );
-      }
-    }
-    return result;
-  } catch (error) {
-    throw toWorktreeRequestError(error);
-  }
 }

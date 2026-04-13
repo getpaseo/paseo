@@ -4,14 +4,13 @@ on:
   push:
     branches: [main]
     paths:
-      - "CHANGELOG.md"
-      - "packages/website/**"
-      - "package.json"
-      - "package-lock.json"
-      - "patches/**"
-      - ".github/workflows/deploy-website.yml"
+      - 'packages/website/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'patches/**'
+      - '.github/workflows/deploy-website.yml'
   release:
-    types: [published]
+    types: [published, edited]
   workflow_dispatch:
 
 jobs:
@@ -24,16 +23,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "npm"
+          node-version: '22'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: npm install --workspace=@gethubcode/website --include-workspace-root
+        run: npm install --workspace=@hubtool/website --include-workspace-root
 
       - name: Typecheck
-        run: npm run typecheck --workspace=@gethubcode/website
+        run: npm run typecheck --workspace=@hubtool/website
 
       - name: Deploy to Cloudflare Workers
-        run: npm run deploy --workspace=@gethubcode/website
+        run: npm run deploy --workspace=@hubtool/website
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

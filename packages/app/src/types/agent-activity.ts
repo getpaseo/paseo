@@ -1,3 +1,6 @@
+/**
+ * Discriminated union types for session updates
+ */
 export type SessionUpdate =
   | UserMessageChunk
   | AgentMessageChunk
@@ -7,22 +10,6 @@ export type SessionUpdate =
   | Plan
   | AvailableCommandsUpdate
   | CurrentModeUpdate;
-
-export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
-
-export type ToolKind =
-  | "read"
-  | "edit"
-  | "delete"
-  | "move"
-  | "search"
-  | "execute"
-  | "think"
-  | "fetch"
-  | "switch_mode"
-  | "other";
-
-type TextMessageType = "user" | "agent" | "thought";
 
 export interface UserMessageChunk {
   kind: "user_message_chunk";
@@ -52,8 +39,18 @@ export interface ToolCall {
   kind: "tool_call";
   toolCallId: string;
   title: string;
-  status?: ToolCallStatus;
-  toolKind?: ToolKind;
+  status?: "pending" | "in_progress" | "completed" | "failed";
+  toolKind?:
+    | "read"
+    | "edit"
+    | "delete"
+    | "move"
+    | "search"
+    | "execute"
+    | "think"
+    | "fetch"
+    | "switch_mode"
+    | "other";
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   content?: unknown[];
@@ -64,8 +61,19 @@ export interface ToolCallUpdate {
   kind: "tool_call_update";
   toolCallId: string;
   title?: string | null;
-  status?: ToolCallStatus | null;
-  toolKind?: ToolKind | null;
+  status?: "pending" | "in_progress" | "completed" | "failed" | null;
+  toolKind?:
+    | "read"
+    | "edit"
+    | "delete"
+    | "move"
+    | "search"
+    | "execute"
+    | "think"
+    | "fetch"
+    | "switch_mode"
+    | "other"
+    | null;
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   content?: unknown[] | null;
@@ -94,25 +102,44 @@ export interface CurrentModeUpdate {
   currentModeId: string;
 }
 
+/**
+ * Activity item with timestamp
+ */
 export interface AgentActivity {
   timestamp: Date;
   update: SessionUpdate;
 }
 
+/**
+ * Grouped text message (consecutive chunks combined)
+ */
 export interface GroupedTextMessage {
   kind: "grouped_text";
-  messageType: TextMessageType;
+  messageType: "user" | "agent" | "thought";
   text: string;
   startTimestamp: Date;
   endTimestamp: Date;
 }
 
+/**
+ * Merged tool call (initial call + all updates combined)
+ */
 export interface MergedToolCall {
   kind: "merged_tool_call";
   toolCallId: string;
   title: string;
-  status: ToolCallStatus;
-  toolKind?: ToolKind;
+  status: "pending" | "in_progress" | "completed" | "failed";
+  toolKind?:
+    | "read"
+    | "edit"
+    | "delete"
+    | "move"
+    | "search"
+    | "execute"
+    | "think"
+    | "fetch"
+    | "switch_mode"
+    | "other";
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   content?: unknown[];
@@ -121,214 +148,89 @@ export interface MergedToolCall {
   endTimestamp: Date;
 }
 
-export type GroupedActivity = GroupedTextMessage | MergedToolCall | AgentActivity;
+/**
+ * Group consecutive text chunks into messages and merge tool calls by ID
+ */
+export function groupActivities(
+  activities: AgentActivity[],
+): Array<GroupedTextMessage | MergedToolCall | AgentActivity> {
+  const result: Array<GroupedTextMessage | MergedToolCall | AgentActivity> = [];
 
-interface TextGroup {
-  messageType: TextMessageType;
-  chunks: string[];
-  startTimestamp: Date;
-  endTimestamp: Date;
-}
+  // Track current text group
+  let currentTextGroup: {
+    messageType: "user" | "agent" | "thought";
+    chunks: string[];
+    startTimestamp: Date;
+    endTimestamp: Date;
+  } | null = null;
 
-type ToolCallAccumulator = Omit<MergedToolCall, "kind"> & {
-  insertIndex: number;
-};
-
-function getMessageType(
-  update: UserMessageChunk | AgentMessageChunk | AgentThoughtChunk,
-): TextMessageType {
-  switch (update.kind) {
-    case "user_message_chunk":
-      return "user";
-    case "agent_message_chunk":
-      return "agent";
-    case "agent_thought_chunk":
-      return "thought";
-  }
-}
-
-function isTextChunk(
-  update: SessionUpdate,
-): update is UserMessageChunk | AgentMessageChunk | AgentThoughtChunk {
-  return (
-    update.kind === "user_message_chunk" ||
-    update.kind === "agent_message_chunk" ||
-    update.kind === "agent_thought_chunk"
-  );
-}
-
-function isGroupedActivity(item: GroupedActivity | null): item is GroupedActivity {
-  return item !== null;
-}
-
-function toMergedToolCall(toolCall: ToolCallAccumulator): MergedToolCall {
-  return {
-    kind: "merged_tool_call",
-    toolCallId: toolCall.toolCallId,
-    title: toolCall.title,
-    status: toolCall.status,
-    toolKind: toolCall.toolKind,
-    input: toolCall.input,
-    output: toolCall.output,
-    content: toolCall.content,
-    locations: toolCall.locations,
-    startTimestamp: toolCall.startTimestamp,
-    endTimestamp: toolCall.endTimestamp,
-  };
-}
-
-interface ApplyToolCallUpdateArgs {
-  update: ToolCall | ToolCallUpdate;
-  timestamp: Date;
-  result: Array<GroupedActivity | null>;
-  toolCallsById: Map<string, ToolCallAccumulator>;
-}
-
-function applyToolCallUpdate({
-  update,
-  timestamp,
-  result,
-  toolCallsById,
-}: ApplyToolCallUpdateArgs): void {
-  const toolCallId = update.toolCallId;
-  const existing = toolCallsById.get(toolCallId);
-
-  if (update.kind === "tool_call") {
-    if (existing) {
-      mergeInitialToolCall(existing, update, timestamp);
-      return;
+  // Track tool calls by ID
+  const toolCallsById = new Map<
+    string,
+    {
+      toolCallId: string;
+      title: string;
+      status: "pending" | "in_progress" | "completed" | "failed";
+      toolKind?:
+        | "read"
+        | "edit"
+        | "delete"
+        | "move"
+        | "search"
+        | "execute"
+        | "think"
+        | "fetch"
+        | "switch_mode"
+        | "other";
+      input?: Record<string, unknown>;
+      output?: Record<string, unknown>;
+      content?: unknown[];
+      locations?: unknown[];
+      startTimestamp: Date;
+      endTimestamp: Date;
+      insertIndex: number; // Track where to insert in result
     }
-    insertNewToolCall({
-      result,
-      toolCallsById,
-      accumulator: createAccumulatorFromToolCall(update, timestamp, result.length),
-    });
-    return;
-  }
-
-  if (existing) {
-    mergeToolCallUpdate(existing, update, timestamp);
-    return;
-  }
-  insertNewToolCall({
-    result,
-    toolCallsById,
-    accumulator: createAccumulatorFromToolCallUpdate(update, timestamp, result.length),
-  });
-}
-
-function mergeInitialToolCall(
-  existing: ToolCallAccumulator,
-  update: ToolCall,
-  timestamp: Date,
-): void {
-  existing.title = update.title;
-  if (update.status) existing.status = update.status;
-  if (update.toolKind) existing.toolKind = update.toolKind;
-  if (update.input) existing.input = update.input;
-  if (update.output) existing.output = update.output;
-  if (update.content) existing.content = update.content;
-  if (update.locations) existing.locations = update.locations;
-  existing.endTimestamp = timestamp;
-}
-
-function mergeToolCallUpdate(
-  existing: ToolCallAccumulator,
-  update: ToolCallUpdate,
-  timestamp: Date,
-): void {
-  if (update.title) existing.title = update.title;
-  if (update.status) existing.status = update.status;
-  if (update.toolKind) existing.toolKind = update.toolKind;
-  if (update.input) existing.input = { ...existing.input, ...update.input };
-  if (update.output) existing.output = { ...existing.output, ...update.output };
-  if (update.content) existing.content = update.content;
-  if (update.locations) existing.locations = update.locations;
-  existing.endTimestamp = timestamp;
-}
-
-function createAccumulatorFromToolCall(
-  update: ToolCall,
-  timestamp: Date,
-  insertIndex: number,
-): ToolCallAccumulator {
-  return {
-    toolCallId: update.toolCallId,
-    title: update.title,
-    status: update.status || "pending",
-    toolKind: update.toolKind,
-    input: update.input,
-    output: update.output,
-    content: update.content,
-    locations: update.locations,
-    startTimestamp: timestamp,
-    endTimestamp: timestamp,
-    insertIndex,
-  };
-}
-
-function createAccumulatorFromToolCallUpdate(
-  update: ToolCallUpdate,
-  timestamp: Date,
-  insertIndex: number,
-): ToolCallAccumulator {
-  return {
-    toolCallId: update.toolCallId,
-    title: update.title || "Tool Call",
-    status: update.status || "pending",
-    toolKind: update.toolKind || undefined,
-    input: update.input,
-    output: update.output,
-    content: update.content || undefined,
-    locations: update.locations || undefined,
-    startTimestamp: timestamp,
-    endTimestamp: timestamp,
-    insertIndex,
-  };
-}
-
-function insertNewToolCall(args: {
-  result: Array<GroupedActivity | null>;
-  toolCallsById: Map<string, ToolCallAccumulator>;
-  accumulator: ToolCallAccumulator;
-}): void {
-  args.result.push(null);
-  args.toolCallsById.set(args.accumulator.toolCallId, args.accumulator);
-}
-
-export function groupActivities(activities: AgentActivity[]): GroupedActivity[] {
-  const result: Array<GroupedActivity | null> = [];
-  const toolCallsById = new Map<string, ToolCallAccumulator>();
-  let currentTextGroup: TextGroup | null = null;
+  >();
 
   function flushTextGroup() {
-    if (!currentTextGroup) {
-      return;
+    if (currentTextGroup) {
+      result.push({
+        kind: "grouped_text",
+        messageType: currentTextGroup.messageType,
+        text: currentTextGroup.chunks.join(""),
+        startTimestamp: currentTextGroup.startTimestamp,
+        endTimestamp: currentTextGroup.endTimestamp,
+      });
+      currentTextGroup = null;
     }
-
-    result.push({
-      kind: "grouped_text",
-      messageType: currentTextGroup.messageType,
-      text: currentTextGroup.chunks.join(""),
-      startTimestamp: currentTextGroup.startTimestamp,
-      endTimestamp: currentTextGroup.endTimestamp,
-    });
-    currentTextGroup = null;
   }
 
   for (const activity of activities) {
     const update = activity.update;
 
-    if (isTextChunk(update)) {
-      const messageType = getMessageType(update);
+    // Handle text chunks
+    if (
+      update.kind === "user_message_chunk" ||
+      update.kind === "agent_message_chunk" ||
+      update.kind === "agent_thought_chunk"
+    ) {
+      const messageType =
+        update.kind === "user_message_chunk"
+          ? "user"
+          : update.kind === "agent_message_chunk"
+            ? "agent"
+            : "thought";
+
       const text = update.content.text;
 
+      // If we have a current group of the same type, add to it
       if (currentTextGroup && currentTextGroup.messageType === messageType) {
         currentTextGroup.chunks.push(text);
         currentTextGroup.endTimestamp = activity.timestamp;
       } else {
         flushTextGroup();
 
+        // Start new group
         currentTextGroup = {
           messageType,
           chunks: [text],
@@ -336,25 +238,104 @@ export function groupActivities(activities: AgentActivity[]): GroupedActivity[] 
           endTimestamp: activity.timestamp,
         };
       }
-    } else if (update.kind === "tool_call" || update.kind === "tool_call_update") {
+    }
+    // Handle tool calls and updates
+    else if (update.kind === "tool_call" || update.kind === "tool_call_update") {
       flushTextGroup();
-      applyToolCallUpdate({
-        update,
-        timestamp: activity.timestamp,
-        result,
-        toolCallsById,
-      });
-    } else {
+
+      const toolCallId = update.toolCallId;
+      const existing = toolCallsById.get(toolCallId);
+
+      if (update.kind === "tool_call") {
+        // Initial tool call
+        if (!existing) {
+          // Create new entry and placeholder in result
+          const insertIndex = result.length;
+          result.push(null as any); // Placeholder
+
+          toolCallsById.set(toolCallId, {
+            toolCallId,
+            title: update.title,
+            status: update.status || "pending",
+            toolKind: update.toolKind,
+            input: update.input,
+            output: update.output,
+            content: update.content,
+            locations: update.locations,
+            startTimestamp: activity.timestamp,
+            endTimestamp: activity.timestamp,
+            insertIndex,
+          });
+        } else {
+          // Update existing
+          existing.title = update.title;
+          if (update.status) existing.status = update.status;
+          if (update.toolKind) existing.toolKind = update.toolKind;
+          if (update.input) existing.input = update.input;
+          if (update.output) existing.output = update.output;
+          if (update.content) existing.content = update.content;
+          if (update.locations) existing.locations = update.locations;
+          existing.endTimestamp = activity.timestamp;
+        }
+      } else {
+        // Tool call update
+        if (existing) {
+          // Merge update into existing
+          if (update.title) existing.title = update.title;
+          if (update.status) existing.status = update.status;
+          if (update.toolKind) existing.toolKind = update.toolKind;
+          if (update.input) existing.input = { ...existing.input, ...update.input };
+          if (update.output) existing.output = { ...existing.output, ...update.output };
+          if (update.content) existing.content = update.content;
+          if (update.locations) existing.locations = update.locations;
+          existing.endTimestamp = activity.timestamp;
+        } else {
+          // Update without initial call - create entry
+          const insertIndex = result.length;
+          result.push(null as any); // Placeholder
+
+          toolCallsById.set(toolCallId, {
+            toolCallId,
+            title: update.title || "Tool Call",
+            status: update.status || "pending",
+            toolKind: update.toolKind || undefined,
+            input: update.input,
+            output: update.output,
+            content: update.content || undefined,
+            locations: update.locations || undefined,
+            startTimestamp: activity.timestamp,
+            endTimestamp: activity.timestamp,
+            insertIndex,
+          });
+        }
+      }
+    }
+    // Handle other activities
+    else {
       flushTextGroup();
       result.push(activity);
     }
   }
 
+  // Flush final text group
   flushTextGroup();
 
+  // Replace placeholders with merged tool calls
   for (const toolCall of toolCallsById.values()) {
-    result[toolCall.insertIndex] = toMergedToolCall(toolCall);
+    result[toolCall.insertIndex] = {
+      kind: "merged_tool_call",
+      toolCallId: toolCall.toolCallId,
+      title: toolCall.title,
+      status: toolCall.status,
+      toolKind: toolCall.toolKind,
+      input: toolCall.input,
+      output: toolCall.output,
+      content: toolCall.content,
+      locations: toolCall.locations,
+      startTimestamp: toolCall.startTimestamp,
+      endTimestamp: toolCall.endTimestamp,
+    };
   }
 
-  return result.filter(isGroupedActivity);
+  return result;
 }

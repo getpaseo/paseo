@@ -20,7 +20,7 @@ function resolveSecretFile(params) {
 const variants = {
   production: {
     name: "Hubcode",
-    packageId: "ai.hubcode",
+    packageId: "sh.hubcode",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_PROD",
       fallbackRelativePath: "./.secrets/google-services.prod.json",
@@ -32,7 +32,7 @@ const variants = {
   },
   development: {
     name: "Hubcode Debug",
-    packageId: "ai.hubcode.debug",
+    packageId: "sh.hubcode.debug",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_DEBUG",
       fallbackRelativePath: "./.secrets/google-services.debug.json",
@@ -151,6 +151,6 @@ export default {
         projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
       },
     },
-    owner: "gethubcode",
+    owner: "hubtool",
   },
 };

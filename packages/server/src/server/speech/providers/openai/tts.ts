@@ -1,5 +1,5 @@
 import type pino from "pino";
-import { OpenAI } from "openai";
+import OpenAI from "openai";
 import { Readable } from "node:stream";
 import type { SpeechStreamResult, TextToSpeechProvider } from "../../speech-provider.js";
 
@@ -74,10 +74,9 @@ export class OpenAITTS implements TextToSpeechProvider {
         stream: audioStream,
         format: this.config.responseFormat || "mp3",
       };
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error({ err: error }, "Speech synthesis error");
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`TTS synthesis failed: ${message}`, { cause: error });
+      throw new Error(`TTS synthesis failed: ${error.message}`);
     }
   }
 }

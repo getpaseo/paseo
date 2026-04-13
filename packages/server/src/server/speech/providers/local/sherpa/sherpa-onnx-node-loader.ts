@@ -7,22 +7,21 @@ import {
   resolveSherpaLoaderEnv,
   sherpaPlatformPackageName,
 } from "./sherpa-runtime-env.js";
-import { createExternalCommandProcessEnv } from "../../../../hubcode-env.js";
 
-export interface SherpaOnnxNodeModule {
-  OfflineRecognizer: new (config: unknown) => unknown;
-  OnlineRecognizer?: new (config: unknown) => unknown;
-  OfflineTts?: new (config: unknown) => unknown;
-  Vad?: new (config: unknown, bufferSizeInSeconds: number) => unknown;
-  CircularBuffer?: new (capacity: number) => unknown;
-}
+export type SherpaOnnxNodeModule = {
+  OfflineRecognizer: new (config: any) => any;
+  OnlineRecognizer?: new (config: any) => any;
+  OfflineTts?: new (config: any) => any;
+  Vad?: new (config: any, bufferSizeInSeconds: number) => any;
+  CircularBuffer?: new (capacity: number) => any;
+};
 
 let cached: SherpaOnnxNodeModule | null = null;
 
-interface LoadAttempt {
+type LoadAttempt = {
   target: string;
   error: unknown;
-}
+};
 
 function appendAttempt(attempts: LoadAttempt[], target: string, error: unknown): void {
   attempts.push({ target, error });
@@ -42,9 +41,7 @@ function maybePatchLinuxAddonRunpath(addonPath: string): void {
   if (process.platform !== "linux") {
     return;
   }
-  const patchelfEnv = createExternalCommandProcessEnv("patchelf", process.env);
   const patchelfCheck = spawnSync("patchelf", ["--version"], {
-    env: patchelfEnv,
     stdio: "ignore",
   });
   if (patchelfCheck.status !== 0) {
@@ -53,7 +50,6 @@ function maybePatchLinuxAddonRunpath(addonPath: string): void {
 
   const currentRpath = spawnSync("patchelf", ["--print-rpath", addonPath], {
     encoding: "utf8",
-    env: patchelfEnv,
   });
   if (currentRpath.status !== 0) {
     return;
@@ -64,7 +60,6 @@ function maybePatchLinuxAddonRunpath(addonPath: string): void {
   }
 
   spawnSync("patchelf", ["--set-rpath", "$ORIGIN", addonPath], {
-    env: patchelfEnv,
     stdio: "ignore",
   });
 }

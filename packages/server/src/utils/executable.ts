@@ -1,99 +1,54 @@
-import type { ChildProcess } from "node:child_process";
-import { createRequire } from "node:module";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { extname } from "node:path";
-import { spawnProcess } from "./spawn.js";
-import { isWindowsCommandScript } from "./windows-command.js";
+import path, { extname } from "node:path";
+import { promisify } from "node:util";
 
-export { quoteWindowsArgument, quoteWindowsCommand } from "./windows-command.js";
+const execFileAsync = promisify(execFile);
 
-type Which = (command: string, options: { all: true }) => Promise<string[]>;
+function pickBestWindowsCandidate(lines: string[]): string | null {
+  const candidates = lines.filter((line) => line.length > 0);
+  if (candidates.length === 0) return null;
 
-const require = createRequire(import.meta.url);
-const which = require("which") as Which;
-const PROBE_TIMEOUT_MS = 2000;
-
-function hasPathSeparator(value: string): boolean {
-  return value.includes("/") || value.includes("\\");
-}
-
-async function enumerateCandidates(name: string): Promise<string[]> {
-  let candidates: string[];
-  try {
-    candidates = await which(name, { all: true });
-  } catch (error) {
-    // `which` throws ENOENT when the command is absent from PATH.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw error;
+  const extPriority = [".exe", ".cmd", ".ps1"];
+  for (const ext of extPriority) {
+    const match = candidates.find((candidate) => candidate.toLowerCase().endsWith(ext));
+    if (match) return match;
   }
 
-  const seen = new Set<string>();
-  return candidates.filter((candidate) => {
-    if (seen.has(candidate)) {
-      return false;
-    }
-    seen.add(candidate);
-    return true;
-  });
+  return candidates[0] ?? null;
 }
 
-async function probeExecutable(executablePath: string): Promise<boolean> {
-  return await new Promise((resolve) => {
-    let pendingResolve: ((result: boolean) => void) | null = resolve;
-    let started = false;
-    let timer: NodeJS.Timeout | undefined;
+function resolveExecutableFromWhichOutput(
+  name: string,
+  output: string,
+  source: "which",
+): string | null {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const candidate = lines.at(-1);
 
-    const settle = (result: boolean) => {
-      if (!pendingResolve) {
-        return;
-      }
-      const fn = pendingResolve;
-      pendingResolve = null;
-      if (timer) {
-        clearTimeout(timer);
-      }
-      fn(result);
-    };
+  if (!candidate) {
+    return null;
+  }
 
-    let child: ChildProcess;
-    try {
-      child = spawnProcess(executablePath, ["--version"], {
-        stdio: "ignore",
-        // Windows batch shims (.cmd/.bat) require cmd.exe; native binaries do not.
-        shell: isWindowsCommandScript(executablePath),
-      });
-    } catch {
-      settle(false);
-      return;
-    }
+  if (!path.isAbsolute(candidate)) {
+    console.warn(
+      `[findExecutable] Ignoring non-absolute ${source} output for '${name}': ${JSON.stringify(candidate)}`,
+    );
+    return null;
+  }
 
-    timer = setTimeout(() => {
-      if (started) {
-        child.kill();
-        settle(true);
-        return;
-      }
-      settle(false);
-    }, PROBE_TIMEOUT_MS) as unknown as NodeJS.Timeout;
-    timer.unref();
-
-    child.once("spawn", () => {
-      started = true;
-    });
-    child.once("error", () => {
-      // ENOENT/EACCES/EPERM/UNKNOWN here means the OS could not start the candidate.
-      settle(started);
-    });
-    child.once("exit", () => {
-      settle(started);
-    });
-  });
+  return candidate;
 }
 
 /**
- * Check a literal executable path. PATH search is handled by findExecutable().
+ * On Unix we use `which`. On Windows we use `where.exe`.
+ *
+ * Both rely on the inherited process.env.PATH — on macOS/Linux, Electron
+ * enriches it at startup via inheritLoginShellEnv(); on Windows, Electron
+ * inherits the full user environment from Explorer.
  */
 export function executableExists(
   executablePath: string,
@@ -101,7 +56,7 @@ export function executableExists(
 ): string | null {
   if (exists(executablePath)) return executablePath;
   if (process.platform === "win32" && !extname(executablePath)) {
-    for (const ext of [".exe", ".cmd"]) {
+    for (const ext of [".exe", ".cmd", ".ps1"]) {
       const candidate = executablePath + ext;
       if (exists(candidate)) return candidate;
     }
@@ -115,16 +70,70 @@ export async function findExecutable(name: string): Promise<string | null> {
     return null;
   }
 
-  if (hasPathSeparator(trimmed)) {
-    return (await probeExecutable(trimmed)) ? trimmed : null;
+  if (trimmed.includes("/") || trimmed.includes("\\")) {
+    return executableExists(trimmed);
   }
 
-  const candidates = await enumerateCandidates(trimmed);
-  const probeResults = await Promise.all(candidates.map((candidate) => probeExecutable(candidate)));
-  const firstMatch = probeResults.findIndex((result) => result);
-  return firstMatch === -1 ? null : candidates[firstMatch];
+  if (process.platform === "win32") {
+    try {
+      const { stdout } = await execFileAsync("where.exe", [trimmed], {
+        encoding: "utf8",
+        windowsHide: true,
+      });
+      return (
+        pickBestWindowsCandidate(
+          stdout
+            .trim()
+            .split(/\r?\n/)
+            .map((line) => line.trim()),
+        ) ?? null
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const { stdout } = await execFileAsync("which", [trimmed], { encoding: "utf8" });
+    return resolveExecutableFromWhichOutput(trimmed, stdout.trim(), "which");
+  } catch {
+    return null;
+  }
 }
 
 export async function isCommandAvailable(command: string): Promise<boolean> {
   return (await findExecutable(command)) !== null;
+}
+
+function escapeWindowsCmdValue(value: string): string {
+  if (process.platform !== "win32") return value;
+
+  const isQuoted = value.startsWith('"') && value.endsWith('"');
+  const unquoted = isQuoted ? value.slice(1, -1) : value;
+  const escaped = unquoted.replace(/%/g, "%%").replace(/([&|^<>()!])/g, "^$1");
+
+  if (isQuoted || escaped.includes(" ")) {
+    return `"${escaped}"`;
+  }
+
+  return escaped;
+}
+
+/**
+ * When spawning with `shell: true` on Windows, the command is passed to
+ * `cmd.exe /d /s /c "command args"`. The `/s` strips outer quotes, so a
+ * command path with spaces (e.g. `C:\Program Files\...`) is split at the
+ * space. Wrapping it in quotes produces the correct `"C:\Program Files\..." args`.
+ */
+export function quoteWindowsCommand(command: string): string {
+  return escapeWindowsCmdValue(command);
+}
+
+/**
+ * `spawn(..., { shell: true })` on Windows also passes argv through `cmd.exe`.
+ * Any argument containing spaces must be quoted or it will be split before the
+ * child process sees it.
+ */
+export function quoteWindowsArgument(argument: string): string {
+  return escapeWindowsCmdValue(argument);
 }

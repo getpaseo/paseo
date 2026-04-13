@@ -1,31 +1,26 @@
 import { dialog, ipcMain, BrowserWindow } from "electron";
 
-interface AskOptions {
+type AskOptions = {
   title?: string;
   okLabel?: string;
   cancelLabel?: string;
   kind?: "info" | "warning" | "error";
-}
+};
 
-interface OpenOptions {
+type OpenOptions = {
   title?: string;
   defaultPath?: string;
   directory?: boolean;
   multiple?: boolean;
   filters?: Array<{ name: string; extensions: string[] }>;
-}
-
-function resolveDialogType(kind: AskOptions["kind"]): "warning" | "error" | "question" {
-  if (kind === "warning") return "warning";
-  if (kind === "error") return "error";
-  return "question";
-}
+};
 
 export function registerDialogHandlers(): void {
   ipcMain.handle("hubcode:dialog:ask", async (event, message: string, options?: AskOptions) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showMessageBox(win ?? BrowserWindow.getFocusedWindow()!, {
-      type: resolveDialogType(options?.kind),
+      type:
+        options?.kind === "warning" ? "warning" : options?.kind === "error" ? "error" : "question",
       title: options?.title ?? "Confirm",
       message,
       buttons: [options?.cancelLabel ?? "Cancel", options?.okLabel ?? "OK"],
