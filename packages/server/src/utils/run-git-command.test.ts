@@ -1,8 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const ORIGINAL_PLATFORM = process.platform;
-
 interface FakeSpawnBehavior {
   delayMs?: number;
   emitError?: Error;
@@ -179,13 +177,6 @@ async function loadRunGitCommand(concurrency: number) {
   return import("./run-git-command.js");
 }
 
-function setPlatform(platform: NodeJS.Platform): void {
-  Object.defineProperty(process, "platform", {
-    value: platform,
-    configurable: true,
-  });
-}
-
 describe("runGitCommand", () => {
   beforeEach(() => {
     fakeSpawnController.reset();
@@ -195,7 +186,6 @@ describe("runGitCommand", () => {
     fakeSpawnController.reset();
     vi.resetModules();
     vi.unstubAllEnvs();
-    setPlatform(ORIGINAL_PLATFORM);
   });
 
   it("throttles concurrent git commands to the configured limit", async () => {
@@ -410,61 +400,4 @@ describe("runGitCommand", () => {
     ]);
   });
 
-  it("passes windowsHide to spawn", async () => {
-    const { runGitCommand } = await loadRunGitCommand(1);
-    const { spawn } = await import("node:child_process");
-
-    enqueueSpawnBehaviors({ delayMs: 0, stdoutData: "ok" });
-
-    await runGitCommand(["status"], {
-      cwd: process.cwd(),
-    });
-
-    expect(vi.mocked(spawn)).toHaveBeenCalledWith(
-      "git",
-      ["status"],
-      expect.objectContaining({
-        windowsHide: true,
-      }),
-    );
-  });
-
-  it("uses shell on Windows", async () => {
-    setPlatform("win32");
-    const { runGitCommand } = await loadRunGitCommand(1);
-    const { spawn } = await import("node:child_process");
-
-    enqueueSpawnBehaviors({ delayMs: 0, stdoutData: "ok" });
-
-    await runGitCommand(["rev-parse", "--git-dir", "path with spaces"], {
-      cwd: process.cwd(),
-    });
-
-    expect(vi.mocked(spawn)).toHaveBeenCalledWith(
-      "git",
-      ["rev-parse", "--git-dir", '"path with spaces"'],
-      expect.objectContaining({
-        shell: true,
-        windowsHide: true,
-      }),
-    );
-
-    setPlatform("darwin");
-    const { runGitCommand: runGitCommandOnUnix } = await loadRunGitCommand(1);
-
-    enqueueSpawnBehaviors({ delayMs: 0, stdoutData: "ok" });
-
-    await runGitCommandOnUnix(["rev-parse", "--git-dir", "path with spaces"], {
-      cwd: process.cwd(),
-    });
-
-    expect(vi.mocked(spawn)).toHaveBeenLastCalledWith(
-      "git",
-      ["rev-parse", "--git-dir", "path with spaces"],
-      expect.objectContaining({
-        shell: false,
-        windowsHide: true,
-      }),
-    );
-  });
 });

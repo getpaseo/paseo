@@ -1,7 +1,6 @@
 import pLimit from "p-limit";
-import { spawn } from "node:child_process";
+import { spawnProcess } from "./spawn.js";
 
-const IS_WINDOWS = process.platform === "win32";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024; // 20MB
 const DEFAULT_STDERR_LIMIT = 2048;
@@ -36,14 +35,11 @@ export function runGitCommand(
         const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
         const acceptExitCodes = options.acceptExitCodes ?? [0];
         const command = formatGitCommand(args);
-        const resolvedArgs = IS_WINDOWS ? args.map(quoteForCmd) : args;
 
-        const child = spawn(IS_WINDOWS ? quoteForCmd("git") : "git", resolvedArgs, {
+        const child = spawnProcess("git", args, {
           cwd: options.cwd,
           env: options.env,
           stdio: ["ignore", "pipe", "pipe"],
-          shell: IS_WINDOWS,
-          windowsHide: true,
         });
 
         let settled = false;
@@ -141,10 +137,4 @@ export function runGitCommand(
 
 function formatGitCommand(args: string[]): string {
   return ["git", ...args].join(" ");
-}
-
-function quoteForCmd(value: string): string {
-  if (!value.includes(" ")) return value;
-  if (value.startsWith('"') && value.endsWith('"')) return value;
-  return `"${value}"`;
 }
