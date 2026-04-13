@@ -36,6 +36,28 @@ type TrackedCodexProcessSession = {
 const DEFAULT_SCAN_INTERVAL_MS = 2500;
 const DEFAULT_MISSING_SCAN_GRACE = 2;
 
+function normalizePersistedCodexSessionId(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  if (!normalized || normalized.startsWith("/dev/")) {
+    return null;
+  }
+  return normalized;
+}
+
+function normalizePersistedLeaderPid(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
 export interface CodexProcessBridgeServiceOptions {
   logger: Logger;
   paseoHome: string;
@@ -123,12 +145,18 @@ export class CodexProcessBridgeService {
       throw new Error("Not a codex process bridge handle");
     }
     const descriptors = await this.bridge.discover();
-    const tty = typeof input.handle.metadata?.tty === "string" ? input.handle.metadata.tty : null;
-    const descriptor = descriptors.find(
-      (entry) => entry.agentId === input.agentId || (tty ? entry.tty === tty : false),
-    );
+    const persistedSessionId = normalizePersistedCodexSessionId(input.handle.metadata?.sessionId);
+    const persistedLeaderPid = normalizePersistedLeaderPid(input.handle.metadata?.leaderPid);
+    const descriptor =
+      (persistedSessionId
+        ? descriptors.find((entry) => entry.sessionId === persistedSessionId)
+        : null) ??
+      (persistedLeaderPid != null
+        ? descriptors.find((entry) => entry.leaderPid === persistedLeaderPid)
+        : null) ??
+      descriptors.find((entry) => entry.agentId === input.agentId);
     if (!descriptor) {
-      throw new Error(`codex process session not found for ${tty ?? input.agentId}`);
+      throw new Error(`codex process session not found for ${input.agentId}`);
     }
     return this.adoptDescriptor(descriptor, {
       forcedAgentId: input.agentId,

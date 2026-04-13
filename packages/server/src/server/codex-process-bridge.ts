@@ -99,8 +99,10 @@ export function readCodexProcessLogPath(input: {
   return findCodexScriptAncestor(input)?.logPath ?? null;
 }
 
-function buildAgentId(input: { tty: string; sessionId: string | null }): string {
-  const stableKey = `${input.tty}:${input.sessionId ?? "no-session"}`;
+function buildAgentId(input: { tty: string; sessionId: string | null; leaderPid: number }): string {
+  const stableKey = input.sessionId
+    ? `${input.tty}:${input.sessionId}`
+    : `${input.tty}:pid:${input.leaderPid}`;
   return uuidv5(stableKey, CODEX_PROCESS_AGENT_NAMESPACE);
 }
 
@@ -156,7 +158,7 @@ export async function discoverCodexProcessDescriptors(input: {
     };
 
     descriptors.push({
-      agentId: buildAgentId({ tty, sessionId }),
+      agentId: buildAgentId({ tty, sessionId, leaderPid: process.pid }),
       tty,
       cwd,
       leaderPid: process.pid,

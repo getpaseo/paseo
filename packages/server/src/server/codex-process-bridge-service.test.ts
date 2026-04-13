@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:fs/promises", () => ({
   readlink: vi.fn(async (path: string) => {
-    if (path === "/proc/1831379/cwd") {
+    if (path === "/proc/1831379/cwd" || path === "/proc/1832000/cwd") {
       return "/workspace/repo-b";
     }
     throw new Error(`Unexpected readlink call: ${path}`);
@@ -161,5 +161,62 @@ describe("CodexProcessBridgeService", () => {
         },
       }),
     );
+  });
+
+  it("treats a tty-reused no-session codex process as a new external session", async () => {
+    const { service, state, adoptSession, closeAgent } = createService({ missingScanGrace: 1 });
+
+    state.psOutput =
+      "1831379 621663 pts/14 /opt/codex/codex --no-alt-screen\n";
+    await service.syncNow();
+
+    const firstAgentId = adoptSession.mock.calls[0]?.[2];
+
+    state.psOutput =
+      "1832000 621663 pts/14 /opt/codex/codex --no-alt-screen\n";
+    await service.syncNow();
+
+    const secondAgentId = adoptSession.mock.calls[1]?.[2];
+
+    expect(adoptSession).toHaveBeenCalledTimes(2);
+    expect(firstAgentId).not.toBe(secondAgentId);
+    expect(closeAgent).toHaveBeenCalledWith(firstAgentId);
+  });
+
+  it("does not resume a different no-session codex process only because the tty matches", async () => {
+    const { service, adoptSession, state } = createService();
+
+    state.psOutput =
+      "1832000 621663 pts/14 /opt/codex/codex --no-alt-screen\n";
+
+    await expect(
+      service.resumeFromPersistence({
+        handle: {
+          provider: "codex",
+          sessionId: "/dev/pts/14",
+          metadata: {
+            externalSessionSource: "codex_process",
+            tty: "/dev/pts/14",
+            cwd: "/workspace/repo-b",
+            leaderPid: 1831379,
+            sessionId: null,
+          },
+        },
+        agentId: "agent-external-resumed",
+        config: {
+          provider: "codex",
+          cwd: "/workspace/repo-b",
+          modeId: "auto",
+          title: "repo-b [pts/14]",
+        },
+        labels: {
+          source: "external",
+          bridge: "codex_process",
+          tty: "pts/14",
+        },
+      }),
+    ).rejects.toThrow("codex process session not found");
+
+    expect(adoptSession).not.toHaveBeenCalled();
   });
 });
