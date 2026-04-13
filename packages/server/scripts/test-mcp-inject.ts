@@ -123,11 +123,13 @@ async function verifyInjectedMcpForProvider(
 }
 
 async function main(): Promise<void> {
-  if (!isProviderAvailable("claude")) {
+  const claudeAvailable = await isProviderAvailable("claude");
+  if (!claudeAvailable) {
     throw new Error(
       "Claude is not available in this environment. Ensure the `claude` binary and credentials are configured.",
     );
   }
+  const codexAvailable = await isProviderAvailable("codex");
 
   const logger = pino({ level: "silent" });
   const rootCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-mcp-inject-real-"));
@@ -136,7 +138,7 @@ async function main(): Promise<void> {
   const daemon = await createTestPaseoDaemon({
     agentClients: {
       claude: new ClaudeAgentClient({ logger }),
-      ...(isProviderAvailable("codex") ? { codex: new CodexAppServerAgentClient(logger) } : {}),
+      ...(codexAvailable ? { codex: new CodexAppServerAgentClient(logger) } : {}),
     },
     logger,
   });
@@ -159,7 +161,7 @@ async function main(): Promise<void> {
     results.push(claudeResult);
     console.log(`[PASS] Claude MCP injection verified for agent ${claudeResult.agentId}`);
 
-    if (isProviderAvailable("codex")) {
+    if (codexAvailable) {
       const codexResult = await verifyInjectedMcpForProvider(client, "codex", codexCwd);
       createdAgentIds.push(codexResult.agentId);
       results.push(codexResult);

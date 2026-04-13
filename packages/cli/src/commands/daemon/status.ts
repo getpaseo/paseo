@@ -223,7 +223,7 @@ export async function runStatusCommand(
   if (!state.running) {
     daemonNode = "-";
   } else if (state.pidInfo?.pid) {
-    const fromPid = resolveNodePathFromPid(state.pidInfo.pid);
+    const fromPid = await resolveNodePathFromPid(state.pidInfo.pid);
     daemonNode = fromPid.nodePath ?? `unknown (${fromPid.error ?? "could not resolve from PID"})`;
   } else {
     daemonNode = "unknown (no PID available)";

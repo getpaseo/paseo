@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -281,142 +281,143 @@ async function createHarness(): Promise<{
 }
 
 describe("daemon E2E (real opencode) - send while working and interrupt", () => {
-  test.runIf(isProviderAvailable("opencode"))(
-    "send_message while sleep tool call is running starts a clean replacement turn",
-    async () => {
-      const cwd = tmpCwd();
-      const { client, daemon } = await createHarness();
-      const collector = createMessageCollector(client);
-      const followUpToken = "OPENCODE_SEND_WHILE_WORKING_OK";
+  let canRun = false;
 
-      try {
-        const modelList = await client.listProviderModels("opencode");
-        expect(modelList.models.length).toBeGreaterThan(0);
+  beforeAll(async (context) => {
+    canRun = await isProviderAvailable("opencode");
+    if (!canRun) {
+      context.skip();
+    }
+  });
 
-        const agent = await client.createAgent({
-          provider: "opencode",
-          cwd,
-          title: "OpenCode send while working",
-          model: pickOpenCodeModel(modelList.models),
-          modeId: "default",
-        });
+  test("send_message while sleep tool call is running starts a clean replacement turn", async () => {
+    const cwd = tmpCwd();
+    const { client, daemon } = await createHarness();
+    const collector = createMessageCollector(client);
+    const followUpToken = "OPENCODE_SEND_WHILE_WORKING_OK";
 
-        await client.sendMessage(
-          agent.id,
-          [
-            "Use the Bash tool.",
-            "Run exactly: sleep 60",
-            "Do not run it in the background.",
-            "Do not do anything after starting the command.",
-          ].join(" "),
-        );
+    try {
+      const modelList = await client.listProviderModels("opencode");
+      expect(modelList.models.length).toBeGreaterThan(0);
 
-        await client.waitForAgentUpsert(
-          agent.id,
-          (snapshot) => snapshot.status === "running",
-          90_000,
-        );
-        await waitForRunningBashToolCall(client, collector, agent.id);
+      const agent = await client.createAgent({
+        provider: "opencode",
+        cwd,
+        title: "OpenCode send while working",
+        model: pickOpenCodeModel(modelList.models),
+        modeId: "default",
+      });
 
-        collector.clear();
-        await client.sendMessage(agent.id, `Reply with exactly: ${followUpToken}`);
+      await client.sendMessage(
+        agent.id,
+        [
+          "Use the Bash tool.",
+          "Run exactly: sleep 60",
+          "Do not run it in the background.",
+          "Do not do anything after starting the command.",
+        ].join(" "),
+      );
 
-        const finish = await waitForIdleResolvingPermissions(client, agent.id, 240_000);
-        expect(finish.status).toBe("idle");
+      await client.waitForAgentUpsert(
+        agent.id,
+        (snapshot) => snapshot.status === "running",
+        90_000,
+      );
+      await waitForRunningBashToolCall(client, collector, agent.id);
 
-        const postSendAssistantTexts = getAssistantTexts(collector.messages, agent.id);
-        expect(postSendAssistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
-        expect(postSendAssistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET))).toBe(
-          false,
-        );
+      collector.clear();
+      await client.sendMessage(agent.id, `Reply with exactly: ${followUpToken}`);
 
-        const timeline = await client.fetchAgentTimeline(agent.id, { limit: 160 });
-        const assistantTexts = getTimelineAssistantTexts(timeline);
-        expect(assistantTexts.some((text) => text.includes(followUpToken))).toBe(true);
-        expect(assistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
-        expect(assistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET))).toBe(false);
-      } finally {
-        collector.unsubscribe();
-        await client.close().catch(() => undefined);
-        await daemon.close();
-        rmSync(cwd, { recursive: true, force: true });
-      }
-    },
-    360_000,
-  );
+      const finish = await waitForIdleResolvingPermissions(client, agent.id, 240_000);
+      expect(finish.status).toBe("idle");
 
-  test.runIf(isProviderAvailable("opencode"))(
-    "explicit interrupt during sleep tool call still allows the next turn to complete",
-    async () => {
-      const cwd = tmpCwd();
-      const { client, daemon } = await createHarness();
-      const collector = createMessageCollector(client);
-      const followUpToken = "OPENCODE_INTERRUPT_FOLLOWUP_OK";
+      const postSendAssistantTexts = getAssistantTexts(collector.messages, agent.id);
+      expect(postSendAssistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
+      expect(postSendAssistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET))).toBe(
+        false,
+      );
 
-      try {
-        const modelList = await client.listProviderModels("opencode");
-        expect(modelList.models.length).toBeGreaterThan(0);
+      const timeline = await client.fetchAgentTimeline(agent.id, { limit: 160 });
+      const assistantTexts = getTimelineAssistantTexts(timeline);
+      expect(assistantTexts.some((text) => text.includes(followUpToken))).toBe(true);
+      expect(assistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
+      expect(assistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET))).toBe(false);
+    } finally {
+      collector.unsubscribe();
+      await client.close().catch(() => undefined);
+      await daemon.close();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 360_000);
 
-        const agent = await client.createAgent({
-          provider: "opencode",
-          cwd,
-          title: "OpenCode explicit interrupt",
-          model: pickOpenCodeModel(modelList.models),
-          modeId: "default",
-        });
+  test("explicit interrupt during sleep tool call still allows the next turn to complete", async () => {
+    const cwd = tmpCwd();
+    const { client, daemon } = await createHarness();
+    const collector = createMessageCollector(client);
+    const followUpToken = "OPENCODE_INTERRUPT_FOLLOWUP_OK";
 
-        await client.sendMessage(
-          agent.id,
-          [
-            "Use the Bash tool.",
-            "Run exactly: sleep 60",
-            "Do not run it in the background.",
-            "Do not do anything after starting the command.",
-          ].join(" "),
-        );
+    try {
+      const modelList = await client.listProviderModels("opencode");
+      expect(modelList.models.length).toBeGreaterThan(0);
 
-        await client.waitForAgentUpsert(
-          agent.id,
-          (snapshot) => snapshot.status === "running",
-          90_000,
-        );
-        await waitForRunningBashToolCall(client, collector, agent.id);
+      const agent = await client.createAgent({
+        provider: "opencode",
+        cwd,
+        title: "OpenCode explicit interrupt",
+        model: pickOpenCodeModel(modelList.models),
+        modeId: "default",
+      });
 
-        await client.cancelAgent(agent.id);
-        await client.waitForAgentUpsert(
-          agent.id,
-          (snapshot) => snapshot.status === "idle" || snapshot.status === "error",
-          90_000,
-        );
-        const interruptedToolCall = await waitForSleepToolCallTerminal(client, agent.id, 45_000);
-        expect(interruptedToolCall.status).toBe("failed");
+      await client.sendMessage(
+        agent.id,
+        [
+          "Use the Bash tool.",
+          "Run exactly: sleep 60",
+          "Do not run it in the background.",
+          "Do not do anything after starting the command.",
+        ].join(" "),
+      );
 
-        collector.clear();
-        await client.sendMessage(agent.id, `Reply with exactly: ${followUpToken}`);
+      await client.waitForAgentUpsert(
+        agent.id,
+        (snapshot) => snapshot.status === "running",
+        90_000,
+      );
+      await waitForRunningBashToolCall(client, collector, agent.id);
 
-        const finish = await waitForIdleResolvingPermissions(client, agent.id, 240_000);
-        expect(finish.status).toBe("idle");
+      await client.cancelAgent(agent.id);
+      await client.waitForAgentUpsert(
+        agent.id,
+        (snapshot) => snapshot.status === "idle" || snapshot.status === "error",
+        90_000,
+      );
+      const interruptedToolCall = await waitForSleepToolCallTerminal(client, agent.id, 45_000);
+      expect(interruptedToolCall.status).toBe("failed");
 
-        const postInterruptAssistantTexts = getAssistantTexts(collector.messages, agent.id);
-        expect(postInterruptAssistantTexts.some((text) => text.includes("[System Error]"))).toBe(
-          false,
-        );
-        expect(
-          postInterruptAssistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET)),
-        ).toBe(false);
+      collector.clear();
+      await client.sendMessage(agent.id, `Reply with exactly: ${followUpToken}`);
 
-        const timeline = await client.fetchAgentTimeline(agent.id, { limit: 200 });
-        const assistantTexts = getTimelineAssistantTexts(timeline);
-        expect(assistantTexts.some((text) => text.includes(followUpToken))).toBe(true);
-        expect(assistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
-        expect(assistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET))).toBe(false);
-      } finally {
-        collector.unsubscribe();
-        await client.close().catch(() => undefined);
-        await daemon.close();
-        rmSync(cwd, { recursive: true, force: true });
-      }
-    },
-    360_000,
-  );
+      const finish = await waitForIdleResolvingPermissions(client, agent.id, 240_000);
+      expect(finish.status).toBe("idle");
+
+      const postInterruptAssistantTexts = getAssistantTexts(collector.messages, agent.id);
+      expect(postInterruptAssistantTexts.some((text) => text.includes("[System Error]"))).toBe(
+        false,
+      );
+      expect(postInterruptAssistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET))).toBe(
+        false,
+      );
+
+      const timeline = await client.fetchAgentTimeline(agent.id, { limit: 200 });
+      const assistantTexts = getTimelineAssistantTexts(timeline);
+      expect(assistantTexts.some((text) => text.includes(followUpToken))).toBe(true);
+      expect(assistantTexts.some((text) => text.includes("[System Error]"))).toBe(false);
+      expect(assistantTexts.some((text) => text.includes(SYSTEM_ERROR_SNIPPET))).toBe(false);
+    } finally {
+      collector.unsubscribe();
+      await client.close().catch(() => undefined);
+      await daemon.close();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 360_000);
 });

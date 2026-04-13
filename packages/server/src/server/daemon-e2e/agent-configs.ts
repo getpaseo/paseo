@@ -7,9 +7,8 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import dotenv from "dotenv";
-import { isCommandAvailableSync } from "../../utils/executable.js";
+import { isCommandAvailable } from "../../utils/executable.js";
 
-// Load .env.test eagerly so isProviderAvailable() has credentials at collection time.
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 dotenv.config({ path: resolve(serverRoot, ".env.test"), override: true });
 
@@ -64,6 +63,7 @@ export const agentConfigs = {
 } as const satisfies Record<string, AgentTestConfig>;
 
 export type AgentProvider = keyof typeof agentConfigs;
+const providerAvailabilityCache = new Map<AgentProvider, Promise<boolean>>();
 
 /**
  * Get test config for creating an agent with full permissions (no prompts).
@@ -101,31 +101,42 @@ export function getAskModeConfig(provider: AgentProvider) {
  * This MUST be a function (not a const) so process.env is read at call time,
  * after dotenv has injected the test credentials.
  */
-export function isProviderAvailable(provider: AgentProvider): boolean {
-  switch (provider) {
-    case "claude":
-      return (
-        isCommandAvailableSync("claude") &&
-        (Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY))
-      );
-    case "codex":
-      return (
-        isCommandAvailableSync("codex") &&
-        (existsSync(join(homedir(), ".codex", "auth.json")) || Boolean(process.env.OPENAI_API_KEY))
-      );
-    case "copilot":
-      return isCommandAvailableSync("copilot");
-    case "opencode":
-      return isCommandAvailableSync("opencode");
-    case "pi":
-      return (
-        isCommandAvailableSync(process.env.PI_ACP_PI_COMMAND ?? "pi") &&
-        (Boolean(process.env.OPENAI_API_KEY) ||
-          Boolean(process.env.ANTHROPIC_API_KEY) ||
-          Boolean(process.env.OPENROUTER_API_KEY) ||
-          existsSync(join(homedir(), ".pi", "agent", "auth.json")))
-      );
+export function isProviderAvailable(provider: AgentProvider): Promise<boolean> {
+  const cached = providerAvailabilityCache.get(provider);
+  if (cached) {
+    return cached;
   }
+
+  const availability = (async (): Promise<boolean> => {
+    switch (provider) {
+      case "claude":
+        return (
+          (await isCommandAvailable("claude")) &&
+          (Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY))
+        );
+      case "codex":
+        return (
+          (await isCommandAvailable("codex")) &&
+          (existsSync(join(homedir(), ".codex", "auth.json")) ||
+            Boolean(process.env.OPENAI_API_KEY))
+        );
+      case "copilot":
+        return await isCommandAvailable("copilot");
+      case "opencode":
+        return await isCommandAvailable("opencode");
+      case "pi":
+        return (
+          (await isCommandAvailable(process.env.PI_ACP_PI_COMMAND ?? "pi")) &&
+          (Boolean(process.env.OPENAI_API_KEY) ||
+            Boolean(process.env.ANTHROPIC_API_KEY) ||
+            Boolean(process.env.OPENROUTER_API_KEY) ||
+            existsSync(join(homedir(), ".pi", "agent", "auth.json")))
+        );
+    }
+  })();
+
+  providerAvailabilityCache.set(provider, availability);
+  return availability;
 }
 
 /**
