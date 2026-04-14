@@ -780,15 +780,18 @@ export class OpenCodeAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const cwd = overrides?.cwd ?? (handle.metadata?.cwd as string);
+    const metadata = readOpenCodeRecord(handle.metadata) as Partial<AgentSessionConfig> | null;
+    const metadataCwd = typeof metadata?.cwd === "string" ? metadata.cwd : undefined;
+    const cwd = overrides?.cwd ?? metadataCwd ?? (handle.metadata?.cwd as string);
     if (!cwd) {
       throw new Error("OpenCode resume requires the original working directory");
     }
 
     const config: AgentSessionConfig = {
+      ...(metadata ?? {}),
+      ...overrides,
       provider: "opencode",
       cwd,
-      ...overrides,
     };
     const openCodeConfig = this.assertConfig(config);
     const { url } = await this.serverManager.ensureRunning();
@@ -1925,7 +1928,10 @@ class OpenCodeAgentSession implements AgentSession {
       sessionId: this.sessionId,
       nativeHandle: this.sessionId,
       metadata: {
+        ...this.config,
+        provider: "opencode",
         cwd: this.config.cwd,
+        modeId: this.currentMode,
       },
     };
   }
