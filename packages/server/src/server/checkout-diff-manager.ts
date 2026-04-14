@@ -1,6 +1,7 @@
 import { watch, type FSWatcher } from "node:fs";
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
+import ignore, { type Ignore } from "ignore";
 import type pino from "pino";
 import type { SubscribeCheckoutDiffRequest, SessionOutboundMessage } from "./messages.js";
 import { getCheckoutDiff } from "../utils/checkout-git.js";
@@ -31,7 +32,7 @@ type CheckoutDiffWatchTarget = {
   diffCwd: string;
   compare: CheckoutDiffCompareInput;
   listeners: Set<(snapshot: CheckoutDiffSnapshotPayload) => void>;
-  watchers: FSWatcher[];
+  watchers: Map<string, FSWatcher>;
   fallbackRefreshInterval: NodeJS.Timeout | null;
   debounceTimer: NodeJS.Timeout | null;
   refreshPromise: Promise<void> | null;
@@ -43,6 +44,15 @@ type CheckoutDiffWatchTarget = {
   linuxTreeRefreshPromise: Promise<void> | null;
   linuxTreeRefreshQueued: boolean;
 };
+
+type GitIgnoreMatcher = {
+  basePath: string;
+  matcher: Ignore;
+};
+
+interface LinuxWatchTraversalState {
+  trackedDirectories: ReadonlySet<string> | null;
+}
 
 export class CheckoutDiffManager {
   private readonly logger: pino.Logger;
@@ -98,7 +108,7 @@ export class CheckoutDiffManager {
 
     for (const target of this.targets.values()) {
       checkoutDiffSubscriptionCount += target.listeners.size;
-      checkoutDiffWatcherCount += target.watchers.length;
+      checkoutDiffWatcherCount += target.watchers.size;
       if (target.fallbackRefreshInterval) {
         checkoutDiffFallbackRefreshTargetCount += 1;
       }
@@ -148,10 +158,10 @@ export class CheckoutDiffManager {
       clearInterval(target.fallbackRefreshInterval);
       target.fallbackRefreshInterval = null;
     }
-    for (const watcher of target.watchers) {
+    for (const watcher of target.watchers.values()) {
       watcher.close();
     }
-    target.watchers = [];
+    target.watchers.clear();
     target.watchedPaths.clear();
     target.listeners.clear();
   }
@@ -281,7 +291,7 @@ export class CheckoutDiffManager {
       diffCwd: watchRoot ?? cwd,
       compare,
       listeners: new Set(),
-      watchers: [],
+      watchers: new Map<string, FSWatcher>(),
       fallbackRefreshInterval: null,
       debounceTimer: null,
       refreshPromise: null,
@@ -319,7 +329,7 @@ export class CheckoutDiffManager {
     }
 
     const missingRepoCoverage = !hasRecursiveRepoCoverage;
-    if (target.watchers.length === 0 || missingRepoCoverage) {
+    if (target.watchers.size === 0 || missingRepoCoverage) {
       target.fallbackRefreshInterval = setInterval(() => {
         this.scheduleTargetRefresh(target);
       }, CHECKOUT_DIFF_FALLBACK_REFRESH_MS);
@@ -329,7 +339,7 @@ export class CheckoutDiffManager {
           compare,
           intervalMs: CHECKOUT_DIFF_FALLBACK_REFRESH_MS,
           reason:
-            target.watchers.length === 0 ? "no_watchers" : "missing_recursive_repo_root_coverage",
+            target.watchers.size === 0 ? "no_watchers" : "missing_recursive_repo_root_coverage",
         },
         "Checkout diff watchers unavailable; using timed refresh fallback",
       );
@@ -398,7 +408,7 @@ export class CheckoutDiffManager {
     watcher.on("error", (error) => {
       this.logger.warn({ err: error, watchPath, cwd, compare }, "Checkout diff watcher error");
     });
-    target.watchers.push(watcher);
+    target.watchers.set(watchPath, watcher);
     target.watchedPaths.add(watchPath);
     return watcherIsRecursive;
   }
@@ -407,7 +417,9 @@ export class CheckoutDiffManager {
     target: CheckoutDiffWatchTarget,
     rootPath: string,
   ): Promise<boolean> {
-    const directories = await this.listLinuxWatchDirectories(rootPath);
+    const traversalState = await this.createLinuxWatchTraversalState(rootPath);
+    const directories = await this.listLinuxWatchDirectories(rootPath, traversalState);
+    this.pruneLinuxRepoTreeWatchers(target, new Set(directories));
     let complete = true;
     for (const directory of directories) {
       const watcherWasRecursive = this.addWatcher(target, directory, false);
@@ -416,6 +428,31 @@ export class CheckoutDiffManager {
       }
     }
     return complete && target.watchedPaths.has(rootPath);
+  }
+
+  private async createLinuxWatchTraversalState(
+    rootPath: string,
+  ): Promise<LinuxWatchTraversalState> {
+    return {
+      trackedDirectories: await this.listTrackedDirectories(rootPath),
+    };
+  }
+
+  private pruneLinuxRepoTreeWatchers(
+    target: CheckoutDiffWatchTarget,
+    nextDirectories: ReadonlySet<string>,
+  ): void {
+    for (const [watchPath, watcher] of target.watchers) {
+      if (watchPath === target.repoWatchPath || watchPath.endsWith(`${sep}.git`)) {
+        continue;
+      }
+      if (nextDirectories.has(watchPath)) {
+        continue;
+      }
+      watcher.close();
+      target.watchers.delete(watchPath);
+      target.watchedPaths.delete(watchPath);
+    }
   }
 
   private async refreshLinuxRepoTreeWatchers(target: CheckoutDiffWatchTarget): Promise<void> {
@@ -454,15 +491,22 @@ export class CheckoutDiffManager {
     }
   }
 
-  private async listLinuxWatchDirectories(rootPath: string): Promise<string[]> {
+  private async listLinuxWatchDirectories(
+    rootPath: string,
+    traversalState: LinuxWatchTraversalState,
+  ): Promise<string[]> {
     const directories: string[] = [];
-    const pending = [rootPath];
+    const pending: Array<{ directory: string; gitIgnoreMatchers: readonly GitIgnoreMatcher[] }> = [
+      { directory: rootPath, gitIgnoreMatchers: [] },
+    ];
 
     while (pending.length > 0) {
-      const directory = pending.pop();
-      if (!directory) {
+      const current = pending.pop();
+      if (!current) {
         continue;
       }
+
+      const { directory } = current;
       directories.push(directory);
 
       let entries;
@@ -472,14 +516,114 @@ export class CheckoutDiffManager {
         continue;
       }
 
+      const localGitIgnoreMatcher = await this.loadGitIgnoreMatcher(directory, entries);
+      const gitIgnoreMatchers = localGitIgnoreMatcher
+        ? [...current.gitIgnoreMatchers, localGitIgnoreMatcher]
+        : current.gitIgnoreMatchers;
+
       for (const entry of entries) {
         if (!entry.isDirectory() || entry.name === ".git") {
           continue;
         }
-        pending.push(join(directory, entry.name));
+        const childDirectory = join(directory, entry.name);
+        if (
+          this.isGitIgnoredDirectory(childDirectory, gitIgnoreMatchers) &&
+          traversalState.trackedDirectories !== null &&
+          !traversalState.trackedDirectories.has(childDirectory)
+        ) {
+          continue;
+        }
+        pending.push({ directory: childDirectory, gitIgnoreMatchers });
       }
     }
 
     return directories;
+  }
+
+  private async listTrackedDirectories(rootPath: string): Promise<Set<string> | null> {
+    try {
+      const { stdout } = await runGitCommand(["ls-files"], {
+        cwd: rootPath,
+        env: READ_ONLY_GIT_ENV,
+      });
+      const trackedDirectories = new Set<string>();
+
+      for (const filePath of stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)) {
+        const pathSegments = filePath.split("/");
+        if (pathSegments.length < 2) {
+          continue;
+        }
+
+        let currentPath = rootPath;
+        for (const pathSegment of pathSegments.slice(0, -1)) {
+          currentPath = join(currentPath, pathSegment);
+          trackedDirectories.add(currentPath);
+        }
+      }
+
+      return trackedDirectories;
+    } catch {
+      return null;
+    }
+  }
+
+  private async loadGitIgnoreMatcher(
+    directory: string,
+    entries: Array<{ name: string }>,
+  ): Promise<GitIgnoreMatcher | null> {
+    if (!entries.some((entry) => entry.name === ".gitignore")) {
+      return null;
+    }
+
+    try {
+      const contents = await readFile(join(directory, ".gitignore"), "utf8");
+      return {
+        basePath: directory,
+        matcher: ignore().add(contents),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private isGitIgnoredDirectory(
+    directory: string,
+    gitIgnoreMatchers: readonly GitIgnoreMatcher[],
+  ): boolean {
+    let ignored = false;
+
+    for (const gitIgnoreMatcher of gitIgnoreMatchers) {
+      const relativePath = relative(gitIgnoreMatcher.basePath, directory);
+      if (
+        relativePath.length === 0 ||
+        relativePath === "." ||
+        relativePath.startsWith(`..${sep}`) ||
+        relativePath === ".."
+      ) {
+        continue;
+      }
+
+      const result = gitIgnoreMatcher.matcher.test(this.toGitIgnorePath(relativePath, true));
+      if (result.ignored) {
+        ignored = true;
+        continue;
+      }
+      if (result.unignored) {
+        ignored = false;
+      }
+    }
+
+    return ignored;
+  }
+
+  private toGitIgnorePath(targetPath: string, isDirectory: boolean): string {
+    const normalizedPath = targetPath.split(sep).join("/");
+    if (!isDirectory || normalizedPath.endsWith("/")) {
+      return normalizedPath;
+    }
+    return `${normalizedPath}/`;
   }
 }

@@ -78,6 +78,7 @@
     "express-basic-auth": "^1.2.1",
     "fast-deep-equal": "^3.1.3",
     "fast-uri": "^3.1.0",
+    "ignore": "^7.0.5",
     "mnemonic-id": "^3.2.7",
     "node-pty": "1.2.0-beta.11",
     "onnxruntime-node": "^1.23.0",
