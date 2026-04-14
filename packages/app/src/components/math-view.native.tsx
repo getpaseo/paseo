@@ -49,10 +49,6 @@ function InlineMath({ expression, theme }: { expression: string; theme: any }) {
         fontFamily: Fonts.mono,
         fontSize: theme.fontSize.sm,
         color: theme.colors.foreground,
-        backgroundColor: theme.colors.surface2,
-        paddingHorizontal: theme.spacing[1],
-        paddingVertical: 1,
-        borderRadius: theme.borderRadius.md,
       }}
     >
       {expression}
@@ -113,6 +109,7 @@ function BlockMath({ expression, theme }: { expression: string; theme: any }) {
         onMessage={onMessage}
         originWhitelist={["*"]}
         opaque={false}
+        androidLayerType="software"
       />
     </View>
   );
