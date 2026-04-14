@@ -472,7 +472,9 @@ test("runValidation force-stops the dev client before launching and retrying", a
     );
     const initialLaunchIndex = spawnInvocations.findIndex(
       (invocation) =>
-        invocation.command === "adb" && invocation.args.includes("start") && invocation.args[0] === "-s",
+        invocation.command === "adb" &&
+        invocation.args.includes("start") &&
+        invocation.args[0] === "-s",
     );
     const retryForceStopIndex = spawnInvocations.findIndex(
       (invocation, index) =>
@@ -482,7 +484,9 @@ test("runValidation force-stops the dev client before launching and retrying", a
     );
     const retryLaunchIndex = spawnInvocations.findLastIndex(
       (invocation) =>
-        invocation.command === "adb" && invocation.args.includes("start") && invocation.args[0] === "-s",
+        invocation.command === "adb" &&
+        invocation.args.includes("start") &&
+        invocation.args[0] === "-s",
     );
 
     assert.notEqual(initialForceStopIndex, -1);
