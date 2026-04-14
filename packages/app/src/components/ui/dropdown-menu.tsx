@@ -28,6 +28,7 @@ import Animated, { Keyframe, runOnJS } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Check, CheckCircle } from "lucide-react-native";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
 // Action status for menu items with loading/success feedback
 export type ActionStatus = "idle" | "pending" | "success";
@@ -267,6 +268,7 @@ export function DropdownMenuContent({
 }>): ReactElement | null {
   const { open, setOpen, triggerRef } = useDropdownMenuContext("DropdownMenuContent");
   const [modalVisible, setModalVisible] = useState(false);
+  const webScrollbarStyle = useWebScrollbarStyle();
   const [closing, setClosing] = useState(false);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
@@ -411,6 +413,7 @@ export function DropdownMenuContent({
             <ScrollView
               bounces={false}
               showsVerticalScrollIndicator
+              style={webScrollbarStyle}
               contentContainerStyle={{ flexGrow: 1 }}
             >
               {children}

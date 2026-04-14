@@ -10,6 +10,7 @@ import { Fonts } from "@/constants/theme";
 import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { isWeb } from "@/constants/platform";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
 type StartupSplashScreenProps = {
   bootstrapState?: {
@@ -161,6 +162,7 @@ const styles = StyleSheet.create((theme) => ({
 
 export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps) {
   const { theme } = useUnistyles();
+  const webScrollbarStyle = useWebScrollbarStyle();
   const [daemonLogs, setDaemonLogs] = useState<DesktopDaemonLogs | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -282,7 +284,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
     <View style={styles.errorScreen}>
       <TitlebarDragRegion />
       <ScrollView
-        style={styles.errorScrollView}
+        style={[styles.errorScrollView, webScrollbarStyle]}
         contentContainerStyle={styles.errorScrollContent}
         showsVerticalScrollIndicator
       >
@@ -303,7 +305,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
 
           <View style={styles.logsContainer}>
             <ScrollView
-              style={styles.logsScroll}
+              style={[styles.logsScroll, webScrollbarStyle]}
               contentContainerStyle={styles.logsContent}
               showsVerticalScrollIndicator
             >
