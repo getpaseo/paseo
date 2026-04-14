@@ -4225,12 +4225,16 @@ export class Session {
 
   private async syncWorkspaceGitWatchTarget(
     cwd: string,
-    options: { isGit: boolean },
+    options: { isGit: boolean; forceResubscribe?: boolean },
   ): Promise<void> {
     const workspaceId = normalizePersistedWorkspaceId(cwd);
     if (!options.isGit) {
       this.removeWorkspaceGitSubscription(workspaceId);
       return;
+    }
+
+    if (options.forceResubscribe && this.workspaceGitSubscriptions.has(workspaceId)) {
+      this.removeWorkspaceGitSubscription(workspaceId);
     }
 
     if (this.workspaceGitSubscriptions.has(workspaceId)) {
@@ -6196,6 +6200,8 @@ export class Session {
         emit: (message) => this.emit(message),
         registerPendingWorktreeWorkspace: (options) =>
           this.registerPendingWorktreeWorkspace(options),
+        syncWorkspaceGitWatchTarget: (cwd, syncOptions) =>
+          this.syncWorkspaceGitWatchTarget(cwd, syncOptions),
         sessionLogger: this.sessionLogger,
         runWorktreeSetupInBackground: (options) => this.runWorktreeSetupInBackground(options),
       },

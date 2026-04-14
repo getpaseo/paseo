@@ -283,6 +283,28 @@ describe("workspace git watch targets", () => {
     await session.cleanup();
   });
 
+  test("syncWorkspaceGitWatchTarget can force a resubscribe for existing workspaces", async () => {
+    const { session, workspaceGitService, subscriptions } =
+      createSessionForWorkspaceGitWatchTests();
+    const sessionAny = session as any;
+
+    await sessionAny.syncWorkspaceGitWatchTarget("/tmp/repo", { isGit: true });
+    await sessionAny.syncWorkspaceGitWatchTarget("/tmp/repo", { isGit: true });
+
+    expect(workspaceGitService.subscribe).toHaveBeenCalledTimes(1);
+    expect(subscriptions).toHaveLength(1);
+
+    await sessionAny.syncWorkspaceGitWatchTarget("/tmp/repo", {
+      isGit: true,
+      forceResubscribe: true,
+    });
+
+    expect(subscriptions[0]?.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(workspaceGitService.subscribe).toHaveBeenCalledTimes(2);
+
+    await session.cleanup();
+  });
+
   test("checkout_pr_status_request reads pull request status from the workspace git service snapshot", async () => {
     const { session, emitted, workspaceGitService } = createSessionForWorkspaceGitWatchTests();
 
