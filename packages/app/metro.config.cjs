@@ -7,7 +7,10 @@ const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
 const serverSrcRoot = path.resolve(projectRoot, "../server/src");
+const relayPackageRoot = path.resolve(projectRoot, "../relay");
 const relaySrcRoot = path.resolve(projectRoot, "../relay/src");
+const highlightPackageRoot = path.resolve(projectRoot, "../highlight");
+const expoTwoWayAudioPackageRoot = path.resolve(projectRoot, "../expo-two-way-audio");
 const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
   .trim()
   .replace(/^\./, "")
@@ -23,11 +26,26 @@ const pathSeparatorPattern = "[\\\\/]";
 
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules ?? {}),
+  "@server": serverSrcRoot,
+  "@relay": relaySrcRoot,
+  "@getpaseo/relay": relayPackageRoot,
+  "@getpaseo/highlight": highlightPackageRoot,
+  "@getpaseo/expo-two-way-audio": expoTwoWayAudioPackageRoot,
   react: path.join(appNodeModulesRoot, "react"),
   "react-dom": path.join(appNodeModulesRoot, "react-dom"),
   "react/jsx-runtime": path.join(appNodeModulesRoot, "react/jsx-runtime"),
   "react/jsx-dev-runtime": path.join(appNodeModulesRoot, "react/jsx-dev-runtime"),
 };
+config.watchFolders = [
+  ...new Set([
+    ...(config.watchFolders ?? []),
+    serverSrcRoot,
+    relayPackageRoot,
+    relaySrcRoot,
+    highlightPackageRoot,
+    expoTwoWayAudioPackageRoot,
+  ]),
+];
 config.resolver.blockList = new RegExp(
   `(^${escapedAppSrcRoot}${pathSeparatorPattern}.*\\.(test|spec)\\.(ts|tsx)$|${pathSeparatorPattern}__tests__${pathSeparatorPattern}.*)$`,
 );
