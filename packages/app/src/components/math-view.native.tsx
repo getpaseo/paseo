@@ -1,7 +1,7 @@
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useRef } from "react";
 import { Text, View } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
-import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import { WebView } from "react-native-webview";
 import { Fonts } from "@/constants/theme";
 
 export interface MathViewProps {
@@ -9,64 +9,62 @@ export interface MathViewProps {
   displayMode: boolean;
 }
 
-const KATEX_CSS = "https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css";
-const KATEX_JS = "https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js";
+const HEIGHT_SCRIPT = `
+(function(){
+  var last=0;
+  function send(){
+    var s=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight);
+    var r=document.body.getBoundingClientRect().height;
+    var h=Math.ceil(Math.max(s,r));
+    if(h>0&&Math.abs(h-last)>2){
+      last=h;
+      window.ReactNativeWebView.postMessage(JSON.stringify({type:'height',height:h}));
+    }
+  }
+  if(typeof ResizeObserver!=='undefined'){
+    new ResizeObserver(send).observe(document.body);
+  }
+  send();
+  setTimeout(send,100);
+  setTimeout(send,300);
+  setTimeout(send,800);
+  setTimeout(send,1500);
+  if(document.fonts&&document.fonts.ready){
+    document.fonts.ready.then(function(){send();setTimeout(send,100);});
+  }
+})();
+true;
+`;
 
-/**
- * Build an HTML page that loads KaTeX inside the WebView and renders there.
- * This avoids calling katex.renderToString() in Hermes, which is unreliable.
- */
 function buildHtml(expression: string, textColor: string, displayMode: boolean): string {
-  // Escape the expression for safe embedding in a JS string literal
-  const escaped = expression.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+  const delimiter = displayMode ? "$$" : "$";
+  const content = `${delimiter}${expression}${delimiter}`;
   return `<!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<link rel="stylesheet" href="${KATEX_CSS}" crossorigin="anonymous">
-<script src="${KATEX_JS}" crossorigin="anonymous"><\/script>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
 <style>
-  html, body {
-    margin: 0;
-    padding: ${displayMode ? "4px 0" : "0"};
-    background: transparent;
-    color: ${textColor};
-    text-align: ${displayMode ? "center" : "left"};
-    overflow: hidden;
-  }
-  .katex { font-size: 1.1em; }
-  .katex-error { color: ${textColor}; font-family: monospace; font-size: 14px; }
+*{margin:0;padding:0;}
+body{background:transparent;color:${textColor};padding:4px 8px;font-size:16px;text-align:${displayMode ? "center" : "left"};}
+.katex-display{overflow-x:auto;overflow-y:visible;margin:0 !important;}
+.katex{font-size:1.1em;}
 </style>
-</head>
-<body>
-<div id="math"></div>
 <script>
-  try {
-    katex.render(\`${escaped}\`, document.getElementById("math"), {
-      displayMode: ${displayMode},
-      throwOnError: false,
-      trust: false,
-      strict: "ignore"
-    });
-  } catch(e) {
-    document.getElementById("math").textContent = \`${escaped}\`;
-  }
-  // Report height after fonts/CSS load
-  function postHeight() {
-    var h = document.getElementById("math").offsetHeight;
-    if (h > 0) {
-      window.ReactNativeWebView.postMessage(JSON.stringify({ height: h + ${displayMode ? 8 : 0} }));
-    }
-  }
-  if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(postHeight);
-  } else {
-    window.onload = postHeight;
-  }
-  // Fallback in case fonts.ready doesn't fire
-  setTimeout(postHeight, 1000);
-<\/script>
-</body>
+document.addEventListener("DOMContentLoaded",function(){
+  renderMathInElement(document.body,{
+    delimiters:[
+      {left:"$$",right:"$$",display:true},
+      {left:"$",right:"$",display:false}
+    ],
+    throwOnError:false
+  });
+});
+</script>
+</head>
+<body>${content}</body>
 </html>`;
 }
 
@@ -89,38 +87,44 @@ function InlineMath({ expression, theme }: { expression: string; theme: any }) {
 }
 
 /**
- * Native block math: KaTeX is loaded and rendered entirely inside the WebView
- * (not in Hermes) for reliable rendering.
+ * Native block math: WebView with KaTeX loaded from CDN via auto-render.
  */
 function BlockMath({ expression, theme }: { expression: string; theme: any }) {
-  const [height, setHeight] = useState(60);
+  const [height, setHeight] = useState(80);
+  const lastHeightRef = useRef(80);
 
   const html = useMemo(
     () => buildHtml(expression, theme.colors.foreground, true),
     [expression, theme.colors.foreground],
   );
 
-  const onMessage = useCallback((event: WebViewMessageEvent) => {
+  const handleMessage = useCallback((event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
-      if (typeof data.height === "number" && data.height > 0) {
-        setHeight(data.height);
+      if (data.type === "height" && typeof data.height === "number" && data.height > 0) {
+        const newHeight = Math.max(data.height, 30);
+        if (Math.abs(newHeight - lastHeightRef.current) > 2) {
+          lastHeightRef.current = newHeight;
+          setHeight(newHeight);
+        }
       }
     } catch {
-      // ignore malformed messages
+      // ignore
     }
   }, []);
 
   return (
-    <View style={{ alignItems: "center", marginVertical: theme.spacing[2] }}>
+    <View style={{ width: "100%", height, overflow: "hidden", marginVertical: theme.spacing[2] }}>
       <WebView
         source={{ html }}
-        style={{ height, width: "100%", backgroundColor: "transparent" }}
+        injectedJavaScript={HEIGHT_SCRIPT}
+        onMessage={handleMessage}
         scrollEnabled={false}
         showsVerticalScrollIndicator={false}
         showsHorizontalScrollIndicator={false}
-        onMessage={onMessage}
         originWhitelist={["*"]}
+        javaScriptEnabled={true}
+        style={{ backgroundColor: "transparent" }}
         opaque={false}
         androidLayerType="software"
       />

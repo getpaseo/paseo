@@ -1176,20 +1176,33 @@ export const AssistantMessage = memo(function AssistantMessage({
         !resolvedDisableOuterSpacing && assistantMessageStylesheet.containerSpacing,
       ]}
     >
-      {blocks.map((block, index) => (
-        <View
-          key={index}
-          style={index < blocks.length - 1 ? { marginBottom: theme.spacing[3] } : undefined}
-        >
-          <MemoizedMarkdownBlock
-            text={block}
-            styles={markdownStyles}
-            rules={markdownRules}
-            parser={markdownParser}
-            onLinkPress={handleLinkPress}
-          />
-        </View>
-      ))}
+      {blocks.map((block, index) => {
+        const trimmed = block.trim();
+        const marginStyle =
+          index < blocks.length - 1 ? { marginBottom: theme.spacing[3] } : undefined;
+
+        // Standalone block math: render outside markdown to avoid
+        // View-in-Text nesting issues on native.
+        if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length > 4) {
+          return (
+            <View key={index} style={marginStyle}>
+              <MathView expression={trimmed.slice(2, -2).trim()} displayMode={true} />
+            </View>
+          );
+        }
+
+        return (
+          <View key={index} style={marginStyle}>
+            <MemoizedMarkdownBlock
+              text={block}
+              styles={markdownStyles}
+              rules={markdownRules}
+              parser={markdownParser}
+              onLinkPress={handleLinkPress}
+            />
+          </View>
+        );
+      })}
     </View>
   );
 });
