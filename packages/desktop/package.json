@@ -8,6 +8,7 @@
     "build": "npm --prefix ../.. run build:daemon && npm run build:main && electron-builder --config electron-builder.yml",
     "build:main": "tsc -p tsconfig.json",
     "dev": "./scripts/dev.sh",
+    "dev:win": "powershell ./scripts/dev.ps1",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

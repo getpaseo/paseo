@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "dev": "./scripts/dev.sh",
+    "dev:win": "powershell ./scripts/dev.ps1",
     "dev:server": "npm run dev --workspace=@getpaseo/server",
     "dev:app": "npm run start --workspace=@getpaseo/app",
     "dev:website": "npm run dev --workspace=@getpaseo/website",
@@ -36,6 +37,7 @@
     "ios": "npm run ios --workspace=@getpaseo/app",
     "web": "npm run web --workspace=@getpaseo/app",
     "dev:desktop": "npm run dev --workspace=@getpaseo/desktop",
+    "dev:win:desktop": "npm run dev:win --workspace=@getpaseo/desktop",
     "build:desktop": "npm run version:sync-internal && npm run build:web --workspace=@getpaseo/app && npm run build --workspace=@getpaseo/desktop",
     "cli": "npx tsx packages/cli/src/index.js",
     "version": "npm run version:sync-internal && npm run release:prepare && git add -A",
