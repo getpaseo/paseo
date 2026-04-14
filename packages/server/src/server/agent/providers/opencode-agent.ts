@@ -867,7 +867,9 @@ export class OpenCodeAgentClient implements AgentClient {
     ]);
 
     if (response.error) {
-      throw new Error(`Failed to create OpenCode session: ${JSON.stringify(response.error)}`);
+      throw new Error(
+        `Failed to create OpenCode session: ${normalizeTurnFailureError(response.error)}`,
+      );
     }
 
     const session = response.data;
@@ -949,7 +951,9 @@ export class OpenCodeAgentClient implements AgentClient {
     ]);
 
     if (response.error) {
-      throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
+      throw new Error(
+        `Failed to fetch OpenCode providers: ${normalizeTurnFailureError(response.error)}`,
+      );
     }
 
     const providers = response.data;
