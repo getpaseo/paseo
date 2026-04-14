@@ -15,8 +15,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -31,8 +31,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -55,8 +55,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Fetch origin/main (worktree tests)
         run: git fetch --no-tags origin main:refs/remotes/origin/main
@@ -85,8 +85,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -123,8 +123,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -136,14 +136,15 @@ jobs:
         run: npm run test --workspace=@getpaseo/app
 
   playwright:
+    if: ${{ secrets.OPENAI_API_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -185,8 +186,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -204,8 +205,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -219,6 +220,6 @@ jobs:
       - name: Run CLI tests
         run: npm run test --workspace=@getpaseo/cli
         env:
-          PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: '0'
-          PASEO_DICTATION_ENABLED: '0'
-          PASEO_VOICE_MODE_ENABLED: '0'
+          PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0"
+          PASEO_DICTATION_ENABLED: "0"
+          PASEO_VOICE_MODE_ENABLED: "0"
