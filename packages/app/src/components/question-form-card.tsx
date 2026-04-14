@@ -123,7 +123,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
   function handleSubmit() {
     if (!allAnswered || isResponding) return;
     setRespondingAction("submit");
-    const answers: Record<string, string> = {};
+    const answers: Record<string, string | string[]> = {};
     for (let i = 0; i < questions!.length; i++) {
       const q = questions![i];
       const selected = selections[i];
@@ -133,7 +133,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         answers[q.header] = otherText;
       } else if (selected && selected.size > 0) {
         const labels = Array.from(selected).map((idx) => q.options[idx].label);
-        answers[q.header] = labels.join(", ");
+        answers[q.header] = labels;
       }
     }
 

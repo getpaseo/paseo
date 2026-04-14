@@ -1045,6 +1045,37 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function normalizeOpenCodeQuestionAnswer(
+  rawAnswer: unknown,
+  optionLabels?: ReadonlySet<string>,
+): string[] {
+  if (Array.isArray(rawAnswer)) {
+    return rawAnswer
+      .map((value) => readNonEmptyString(value))
+      .filter((value): value is string => value !== null);
+  }
+
+  const answer = readNonEmptyString(rawAnswer);
+  if (!answer) {
+    return [];
+  }
+
+  if (!optionLabels || !answer.includes(",")) {
+    return [answer];
+  }
+
+  const splitAnswers = answer
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (splitAnswers.length > 1 && splitAnswers.every((entry) => optionLabels.has(entry))) {
+    return splitAnswers;
+  }
+
+  return [answer];
+}
+
 export function translateOpenCodeEvent(
   event: OpenCodeEvent,
   state: OpenCodeEventTranslationState,
@@ -1889,15 +1920,21 @@ class OpenCodeAgentSession implements AgentSession {
         const answersRecord = readOpenCodeRecord(response.updatedInput?.answers);
         const questions = Array.isArray(pending.input?.questions) ? pending.input.questions : [];
         const answers = questions.map((item) => {
-          const header = readNonEmptyString(readOpenCodeRecord(item)?.header);
-          const rawAnswer = header ? readNonEmptyString(answersRecord?.[header]) : null;
-          if (!rawAnswer) {
-            return [];
-          }
-          return rawAnswer
-            .split(",")
-            .map((entry) => entry.trim())
-            .filter((entry) => entry.length > 0);
+          const question = readOpenCodeRecord(item);
+          const header = readNonEmptyString(question?.header);
+          const optionLabels = new Set(
+            Array.isArray(question?.options)
+              ? question.options.flatMap((option) => {
+                  const label = readNonEmptyString(readOpenCodeRecord(option)?.label);
+                  return label ? [label] : [];
+                })
+              : [],
+          );
+          const rawAnswer = header ? answersRecord?.[header] : undefined;
+          return normalizeOpenCodeQuestionAnswer(
+            rawAnswer,
+            optionLabels.size > 0 ? optionLabels : undefined,
+          );
         });
 
         await this.client.question.reply({
