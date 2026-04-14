@@ -693,39 +693,31 @@ export const __openCodeInternals = {
 };
 
 export class OpenCodeServerManager {
-  private static instance: OpenCodeServerManager | null = null;
+  private static instances = new Map<string, OpenCodeServerManager>();
   private static exitHandlerRegistered = false;
   private server: ChildProcess | null = null;
   private port: number | null = null;
   private startPromise: Promise<{ port: number; url: string }> | null = null;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
-  private readonly runtimeSettingsKey: string;
 
   private constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
     this.logger = logger;
     this.runtimeSettings = runtimeSettings;
-    this.runtimeSettingsKey = JSON.stringify(runtimeSettings ?? {});
   }
 
   static getInstance(
     logger: Logger,
     runtimeSettings?: ProviderRuntimeSettings,
   ): OpenCodeServerManager {
-    const nextSettingsKey = JSON.stringify(runtimeSettings ?? {});
-    if (!OpenCodeServerManager.instance) {
-      OpenCodeServerManager.instance = new OpenCodeServerManager(logger, runtimeSettings);
+    const settingsKey = JSON.stringify(runtimeSettings ?? {});
+    let manager = OpenCodeServerManager.instances.get(settingsKey);
+    if (!manager) {
+      manager = new OpenCodeServerManager(logger, runtimeSettings);
+      OpenCodeServerManager.instances.set(settingsKey, manager);
       OpenCodeServerManager.registerExitHandler();
-    } else if (OpenCodeServerManager.instance.runtimeSettingsKey !== nextSettingsKey) {
-      logger.warn(
-        {
-          existingRuntimeSettings: OpenCodeServerManager.instance.runtimeSettingsKey,
-          requestedRuntimeSettings: nextSettingsKey,
-        },
-        "OpenCode server manager already initialized with different runtime settings",
-      );
     }
-    return OpenCodeServerManager.instance;
+    return manager;
   }
 
   private static registerExitHandler(): void {
@@ -735,9 +727,10 @@ export class OpenCodeServerManager {
     OpenCodeServerManager.exitHandlerRegistered = true;
 
     const cleanup = () => {
-      const instance = OpenCodeServerManager.instance;
-      if (instance?.server && !instance.server.killed) {
-        instance.server.kill("SIGTERM");
+      for (const instance of OpenCodeServerManager.instances.values()) {
+        if (instance.server && !instance.server.killed) {
+          instance.server.kill("SIGTERM");
+        }
       }
     };
 
