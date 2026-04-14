@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback } from "react";
 import { Text, View } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import { Fonts } from "@/constants/theme";
 import katex from "katex";
 
 export interface MathViewProps {
@@ -11,8 +12,7 @@ export interface MathViewProps {
 
 const KATEX_CSS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css";
 
-function buildHtml(katexHtml: string, textColor: string, displayMode: boolean): string {
-  const align = displayMode ? "center" : "left";
+function buildHtml(katexHtml: string, textColor: string): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -24,7 +24,7 @@ function buildHtml(katexHtml: string, textColor: string, displayMode: boolean): 
     padding: 0;
     background: transparent;
     color: ${textColor};
-    text-align: ${align};
+    text-align: center;
   }
   .katex { font-size: 1.1em; }
 </style>
@@ -38,14 +38,38 @@ function buildHtml(katexHtml: string, textColor: string, displayMode: boolean): 
 </html>`;
 }
 
-export function MathView({ expression, displayMode }: MathViewProps) {
-  const { theme } = useUnistyles();
-  const [height, setHeight] = useState(displayMode ? 60 : 24);
+/**
+ * Native inline math: rendered as styled text since <View>/<WebView> cannot
+ * be nested inside <Text> parents used by react-native-markdown-display.
+ */
+function InlineMath({ expression, theme }: { expression: string; theme: any }) {
+  return (
+    <Text
+      style={{
+        fontFamily: Fonts.mono,
+        fontSize: theme.fontSize.sm,
+        color: theme.colors.foreground,
+        backgroundColor: theme.colors.surface2,
+        paddingHorizontal: theme.spacing[1],
+        paddingVertical: 1,
+        borderRadius: theme.borderRadius.md,
+      }}
+    >
+      {expression}
+    </Text>
+  );
+}
+
+/**
+ * Native block math: rendered via WebView with KaTeX for full display rendering.
+ */
+function BlockMath({ expression, theme }: { expression: string; theme: any }) {
+  const [height, setHeight] = useState(60);
 
   const katexHtml = useMemo(() => {
     try {
       return katex.renderToString(expression, {
-        displayMode,
+        displayMode: true,
         throwOnError: false,
         errorColor: theme.colors.destructive,
         trust: false,
@@ -54,12 +78,12 @@ export function MathView({ expression, displayMode }: MathViewProps) {
     } catch {
       return null;
     }
-  }, [expression, displayMode, theme.colors.destructive]);
+  }, [expression, theme.colors.destructive]);
 
   const html = useMemo(() => {
     if (!katexHtml) return null;
-    return buildHtml(katexHtml, theme.colors.foreground, displayMode);
-  }, [katexHtml, theme.colors.foreground, displayMode]);
+    return buildHtml(katexHtml, theme.colors.foreground);
+  }, [katexHtml, theme.colors.foreground]);
 
   const onMessage = useCallback((event: WebViewMessageEvent) => {
     try {
@@ -74,26 +98,15 @@ export function MathView({ expression, displayMode }: MathViewProps) {
 
   if (!html) {
     return (
-      <Text style={{ fontFamily: "monospace", color: theme.colors.destructive }}>{expression}</Text>
+      <Text style={{ fontFamily: Fonts.mono, color: theme.colors.destructive }}>{expression}</Text>
     );
   }
 
   return (
-    <View
-      style={
-        displayMode
-          ? { alignItems: "center", marginVertical: theme.spacing[2] }
-          : { flexDirection: "row" }
-      }
-    >
+    <View style={{ alignItems: "center", marginVertical: theme.spacing[2] }}>
       <WebView
         source={{ html }}
-        style={{
-          height,
-          width: displayMode ? "100%" : undefined,
-          backgroundColor: "transparent",
-          minWidth: displayMode ? undefined : 40,
-        }}
+        style={{ height, width: "100%", backgroundColor: "transparent" }}
         scrollEnabled={false}
         showsVerticalScrollIndicator={false}
         showsHorizontalScrollIndicator={false}
@@ -102,4 +115,14 @@ export function MathView({ expression, displayMode }: MathViewProps) {
       />
     </View>
   );
+}
+
+export function MathView({ expression, displayMode }: MathViewProps) {
+  const { theme } = useUnistyles();
+
+  if (displayMode) {
+    return <BlockMath expression={expression} theme={theme} />;
+  }
+
+  return <InlineMath expression={expression} theme={theme} />;
 }
