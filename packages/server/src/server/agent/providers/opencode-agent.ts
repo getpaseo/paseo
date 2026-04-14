@@ -2310,10 +2310,11 @@ class OpenCodeAgentSession implements AgentSession {
   private async resolveSlashCommandInvocation(
     prompt: AgentPromptInput,
   ): Promise<{ commandName: string; args?: string } | null> {
-    if (typeof prompt !== "string") {
+    const slashCandidate = this.extractSlashCommandCandidate(prompt);
+    if (!slashCandidate) {
       return null;
     }
-    const parsed = this.parseSlashCommandInput(prompt);
+    const parsed = this.parseSlashCommandInput(slashCandidate);
     if (!parsed) {
       return null;
     }
@@ -2327,6 +2328,24 @@ class OpenCodeAgentSession implements AgentSession {
       );
       return null;
     }
+  }
+
+  private extractSlashCommandCandidate(prompt: AgentPromptInput): string | null {
+    if (typeof prompt === "string") {
+      return prompt;
+    }
+
+    for (const part of prompt) {
+      if (part.type !== "text") {
+        continue;
+      }
+
+      if (part.text.trim().length > 0) {
+        return part.text;
+      }
+    }
+
+    return null;
   }
 
   private parseModel(model?: string): { providerID: string; modelID: string } | undefined {
