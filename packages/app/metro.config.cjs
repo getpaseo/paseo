@@ -23,11 +23,14 @@ const pathSeparatorPattern = "[\\\\/]";
 
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules ?? {}),
+  "@server": serverSrcRoot,
+  "@relay": relaySrcRoot,
   react: path.join(appNodeModulesRoot, "react"),
   "react-dom": path.join(appNodeModulesRoot, "react-dom"),
   "react/jsx-runtime": path.join(appNodeModulesRoot, "react/jsx-runtime"),
   "react/jsx-dev-runtime": path.join(appNodeModulesRoot, "react/jsx-dev-runtime"),
 };
+config.watchFolders = [...new Set([...(config.watchFolders ?? []), serverSrcRoot, relaySrcRoot])];
 config.resolver.blockList = new RegExp(
   `(^${escapedAppSrcRoot}${pathSeparatorPattern}.*\\.(test|spec)\\.(ts|tsx)$|${pathSeparatorPattern}__tests__${pathSeparatorPattern}.*)$`,
 );

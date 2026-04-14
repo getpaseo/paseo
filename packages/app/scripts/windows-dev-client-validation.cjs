@@ -14,6 +14,10 @@ const DEFAULT_SCHEME = "exp+voice-mobile";
 const DEFAULT_SUCCESS_TEXT = "Welcome to Paseo";
 const DEFAULT_WAIT_MS = 15000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 120000;
+const DEFAULT_ADB_COMMAND_TIMEOUT_MS = 15000;
+const DEFAULT_BUILD_WORKSPACE_DEPS_TIMEOUT_MS = 180000;
+const DEFAULT_LAUNCH_COMMAND_TIMEOUT_MS = 30000;
+const DEFAULT_DEVICE_CAPTURE_TIMEOUT_MS = 15000;
 const HTTP_PROBE_TIMEOUT_MS = 2000;
 const HTTP_MANIFEST_PROBE_TIMEOUT_MS = 20000;
 const HTTP_PROBE_BODY_LIMIT = 32768;
@@ -375,6 +379,89 @@ function writeJsonFile(filePath, value) {
   writeTextFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function buildValidationSummary(config, summary) {
+  return {
+    outputDir: config.outputDir,
+    port: config.publicPort,
+    metroPort: config.metroPort,
+    host: config.host,
+    launchHost: config.launchHost,
+    appId: config.appId,
+    scheme: config.scheme,
+    deepLinkUrl: config.deepLinkUrl,
+    buildWorkspaceDeps: config.buildWorkspaceDeps,
+    adbReverse: config.adbReverse,
+    captureScreenshot: config.captureScreenshot,
+    captureUiDump: config.captureUiDump,
+    clearLogcat: config.clearLogcat,
+    captureFirstRequest: config.captureFirstRequest,
+    retryOnTimeout: config.retryOnTimeout,
+    envOverrides: config.envOverrides,
+    ...summary,
+  };
+}
+
+function createCommandTimeoutError({ command, args, timeoutMs, stdout = "", stderr = "" }) {
+  const error = new Error(`${command} ${args.join(" ")} timed out after ${timeoutMs}ms`);
+  error.code = "COMMAND_TIMEOUT";
+  error.timedOut = true;
+  error.command = command;
+  error.args = [...args];
+  error.timeoutMs = timeoutMs;
+  error.stdout = stdout;
+  error.stderr = stderr;
+  return error;
+}
+
+function createCommandExitError({ command, args, exitCode, stdout = "", stderr = "" }) {
+  const error = new Error(
+    `${command} ${args.join(" ")} exited with code ${exitCode}\n${stdout}${stderr}`,
+  );
+  error.code = "COMMAND_EXIT";
+  error.command = command;
+  error.args = [...args];
+  error.commandExitCode = exitCode;
+  error.stdout = stdout;
+  error.stderr = stderr;
+  return error;
+}
+
+function failureArtifactPathForPhase(config, phase) {
+  switch (phase) {
+    case "adb_devices":
+      return config.artifactPaths.adbDevices;
+    case "build_workspace_deps":
+      return config.artifactPaths.buildWorkspaceDeps;
+    case "launch_app":
+      return config.artifactPaths.launch;
+    case "retry_launch":
+      return config.artifactPaths.retryLaunch;
+    default:
+      return null;
+  }
+}
+
+function terminateChildProcess(child, platform = process.platform) {
+  return new Promise((resolve) => {
+    if (!child?.pid || child.exitCode !== null || child.killed) {
+      resolve();
+      return;
+    }
+
+    if (platform === "win32") {
+      const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+        stdio: "ignore",
+      });
+      killer.on("error", () => resolve());
+      killer.on("close", () => resolve());
+      return;
+    }
+
+    child.kill("SIGKILL");
+    resolve();
+  });
+}
+
 function shellCommandName(command, platform = process.platform) {
   if (platform === "win32" && (command === "npm" || command === "npx")) {
     return `${command}.cmd`;
@@ -408,26 +495,68 @@ function spawnCapture(command, args, options = {}) {
     });
     const stdoutChunks = [];
     const stderrChunks = [];
+    let settled = false;
+    let timeoutHandle = null;
+
+    const settle = (callback) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      callback();
+    };
 
     child.stdout.on("data", (chunk) => stdoutChunks.push(Buffer.from(chunk)));
     child.stderr.on("data", (chunk) => stderrChunks.push(Buffer.from(chunk)));
-    child.on("error", reject);
+    child.on("error", (error) => settle(() => reject(error)));
     child.on("close", (code) => {
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const stderr = Buffer.concat(stderrChunks).toString("utf8");
-      if (code !== 0 && !options.allowFailure) {
-        reject(
-          new Error(`${command} ${args.join(" ")} exited with code ${code}\n${stdout}${stderr}`),
-        );
-        return;
-      }
+      settle(() => {
+        const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+        const stderr = Buffer.concat(stderrChunks).toString("utf8");
+        if (code !== 0 && !options.allowFailure) {
+          reject(
+            createCommandExitError({
+              command,
+              args,
+              exitCode: code,
+              stdout,
+              stderr,
+            }),
+          );
+          return;
+        }
 
-      resolve({
-        code,
-        stdout,
-        stderr,
+        resolve({
+          code,
+          stdout,
+          stderr,
+        });
       });
     });
+
+    if (options.timeoutMs) {
+      timeoutHandle = setTimeout(() => {
+        const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+        const stderr = Buffer.concat(stderrChunks).toString("utf8");
+        const timeoutError = createCommandTimeoutError({
+          command,
+          args,
+          timeoutMs: options.timeoutMs,
+          stdout,
+          stderr,
+        });
+        terminateChildProcess(child).finally(() => {
+          settle(() => reject(timeoutError));
+        });
+      }, options.timeoutMs);
+
+      if (typeof timeoutHandle.unref === "function") {
+        timeoutHandle.unref();
+      }
+    }
   });
 }
 
@@ -442,25 +571,71 @@ function captureBinaryToFile(command, args, outputPath, options = {}) {
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stderrChunks = [];
+    let settled = false;
+    let timeoutHandle = null;
+
+    const settle = (callback) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      callback();
+    };
 
     child.stdout.pipe(file);
     child.stderr.on("data", (chunk) => stderrChunks.push(Buffer.from(chunk)));
     child.on("error", (error) => {
-      file.destroy();
-      reject(error);
-    });
-    child.on("close", (code) => {
-      file.end();
-      const stderr = Buffer.concat(stderrChunks).toString("utf8");
-      if (code !== 0) {
-        reject(new Error(`${command} ${args.join(" ")} exited with code ${code}\n${stderr}`));
-        return;
-      }
-      resolve({
-        code,
-        stderr,
+      settle(() => {
+        file.destroy();
+        reject(error);
       });
     });
+    child.on("close", (code) => {
+      settle(() => {
+        file.end();
+        const stderr = Buffer.concat(stderrChunks).toString("utf8");
+        if (code !== 0) {
+          reject(
+            createCommandExitError({
+              command,
+              args,
+              exitCode: code,
+              stderr,
+            }),
+          );
+          return;
+        }
+        resolve({
+          code,
+          stderr,
+        });
+      });
+    });
+
+    if (options.timeoutMs) {
+      timeoutHandle = setTimeout(() => {
+        const stderr = Buffer.concat(stderrChunks).toString("utf8");
+        const timeoutError = createCommandTimeoutError({
+          command,
+          args,
+          timeoutMs: options.timeoutMs,
+          stderr,
+        });
+        terminateChildProcess(child).finally(() => {
+          settle(() => {
+            file.destroy();
+            reject(timeoutError);
+          });
+        });
+      }, options.timeoutMs);
+
+      if (typeof timeoutHandle.unref === "function") {
+        timeoutHandle.unref();
+      }
+    }
   });
 }
 
@@ -1014,27 +1189,35 @@ async function captureDeviceState(config, adbPrefix, artifactPaths) {
       "adb",
       [...adbPrefix, "exec-out", "screencap", "-p"],
       artifactPaths.screenshot,
+      {
+        timeoutMs: DEFAULT_DEVICE_CAPTURE_TIMEOUT_MS,
+      },
     );
   }
 
   if (artifactPaths.uiDump && config.captureUiDump) {
     const remoteUiDumpPath = `/sdcard/paseo-dev-client-validation-${path.basename(artifactPaths.uiDump)}`;
-    await spawnCapture("adb", [...adbPrefix, "shell", "uiautomator", "dump", remoteUiDumpPath]);
-    await spawnCapture("adb", [...adbPrefix, "pull", remoteUiDumpPath, artifactPaths.uiDump]);
+    await spawnCapture("adb", [...adbPrefix, "shell", "uiautomator", "dump", remoteUiDumpPath], {
+      timeoutMs: DEFAULT_DEVICE_CAPTURE_TIMEOUT_MS,
+    });
+    await spawnCapture("adb", [...adbPrefix, "pull", remoteUiDumpPath, artifactPaths.uiDump], {
+      timeoutMs: DEFAULT_DEVICE_CAPTURE_TIMEOUT_MS,
+    });
     uiDumpXml = fs.readFileSync(artifactPaths.uiDump, "utf8");
   }
 
-  const activityTop = await spawnCapture("adb", [
-    ...adbPrefix,
-    "shell",
-    "dumpsys",
-    "activity",
-    "top",
-  ]);
+  const activityTop = await spawnCapture(
+    "adb",
+    [...adbPrefix, "shell", "dumpsys", "activity", "top"],
+    {
+      timeoutMs: DEFAULT_DEVICE_CAPTURE_TIMEOUT_MS,
+    },
+  );
   writeTextFile(artifactPaths.activityTop, `${activityTop.stdout}${activityTop.stderr}`);
 
   const logcat = await spawnCapture("adb", [...adbPrefix, "logcat", "-d", "-v", "time"], {
     allowFailure: true,
+    timeoutMs: DEFAULT_DEVICE_CAPTURE_TIMEOUT_MS,
   });
   const logcatText = `${logcat.stdout}${logcat.stderr}`;
   writeTextFile(artifactPaths.logcat, logcatText);
@@ -1045,55 +1228,30 @@ async function captureDeviceState(config, adbPrefix, artifactPaths) {
   };
 }
 
-async function runValidation(config) {
+async function runValidation(config, dependencies = {}) {
+  const spawnCaptureFn = dependencies.spawnCapture ?? spawnCapture;
+  const startRequestCaptureProxyFn =
+    dependencies.startRequestCaptureProxy ?? startRequestCaptureProxy;
+  const startExpoProcessFn = dependencies.startExpoProcess ?? startExpoProcess;
+  const waitForExpoReadyFn = dependencies.waitForExpoReady ?? waitForExpoReady;
+  const captureDeviceStateFn = dependencies.captureDeviceState ?? captureDeviceState;
   ensureDir(config.outputDir);
-  writeJsonFile(config.artifactPaths.summary, {
-    phase: "starting",
-    outputDir: config.outputDir,
-    port: config.publicPort,
-    metroPort: config.metroPort,
-    host: config.host,
-    launchHost: config.launchHost,
-    appId: config.appId,
-    scheme: config.scheme,
-    deepLinkUrl: config.deepLinkUrl,
-    buildWorkspaceDeps: config.buildWorkspaceDeps,
-    adbReverse: config.adbReverse,
-    captureScreenshot: config.captureScreenshot,
-    captureUiDump: config.captureUiDump,
-    clearLogcat: config.clearLogcat,
-    captureFirstRequest: config.captureFirstRequest,
-    retryOnTimeout: config.retryOnTimeout,
-    envOverrides: config.envOverrides,
-  });
+  let currentPhase = "starting";
+  const writeSummary = (summary) =>
+    writeJsonFile(config.artifactPaths.summary, buildValidationSummary(config, summary));
+  const setPhase = (phase, extra = {}) => {
+    currentPhase = phase;
+    writeSummary({
+      phase,
+      ...extra,
+    });
+  };
+
+  setPhase("starting");
 
   const adbPrefix = config.deviceId ? ["-s", config.deviceId] : [];
-  const adbDevices = await spawnCapture("adb", ["devices"]);
-  writeTextFile(config.artifactPaths.adbDevices, `${adbDevices.stdout}${adbDevices.stderr}`);
-
-  if (config.buildWorkspaceDeps) {
-    const buildResult = await spawnCapture("npm", ["run", "build:workspace-deps"], {
-      cwd: config.appDir,
-      env: config.expoEnv,
-    });
-    writeTextFile(
-      config.artifactPaths.buildWorkspaceDeps,
-      `${buildResult.stdout}${buildResult.stderr}`,
-    );
-  }
-
-  if (config.clearLogcat) {
-    await spawnCapture("adb", [...adbPrefix, "logcat", "-c"], {
-      allowFailure: true,
-    });
-  }
-
-  const requestProxy = startRequestCaptureProxy(config);
-  if (requestProxy) {
-    await requestProxy.start();
-  }
-
-  const expoProcess = startExpoProcess(config);
+  let requestProxy = null;
+  let expoProcess = null;
   let launchResult = "";
   let initialClassification = {
     status: "unknown",
@@ -1103,39 +1261,87 @@ async function runValidation(config) {
   let replaySummary = null;
 
   try {
-    await waitForExpoReady(config, expoProcess);
+    setPhase("adb_devices");
+    const adbDevices = await spawnCaptureFn("adb", ["devices"], {
+      timeoutMs: DEFAULT_ADB_COMMAND_TIMEOUT_MS,
+    });
+    writeTextFile(config.artifactPaths.adbDevices, `${adbDevices.stdout}${adbDevices.stderr}`);
+
+    if (config.buildWorkspaceDeps) {
+      setPhase("build_workspace_deps");
+      const buildResult = await spawnCaptureFn("npm", ["run", "build:workspace-deps"], {
+        cwd: config.appDir,
+        env: config.expoEnv,
+        timeoutMs: DEFAULT_BUILD_WORKSPACE_DEPS_TIMEOUT_MS,
+      });
+      writeTextFile(
+        config.artifactPaths.buildWorkspaceDeps,
+        `${buildResult.stdout}${buildResult.stderr}`,
+      );
+    }
+
+    if (config.clearLogcat) {
+      setPhase("clear_logcat");
+      await spawnCaptureFn("adb", [...adbPrefix, "logcat", "-c"], {
+        allowFailure: true,
+        timeoutMs: DEFAULT_ADB_COMMAND_TIMEOUT_MS,
+      });
+    }
+
+    setPhase("start_request_capture");
+    requestProxy = startRequestCaptureProxyFn(config);
+    if (requestProxy) {
+      await requestProxy.start();
+    }
+
+    setPhase("start_expo");
+    expoProcess = startExpoProcessFn(config);
+
+    setPhase("wait_for_expo");
+    await waitForExpoReadyFn(config, expoProcess);
 
     if (config.adbReverse) {
-      const reverseResult = await spawnCapture("adb", [
-        ...adbPrefix,
-        "reverse",
-        `tcp:${config.publicPort}`,
-        `tcp:${config.publicPort}`,
-      ]);
+      setPhase("adb_reverse");
+      const reverseResult = await spawnCaptureFn(
+        "adb",
+        [...adbPrefix, "reverse", `tcp:${config.publicPort}`, `tcp:${config.publicPort}`],
+        {
+          timeoutMs: DEFAULT_ADB_COMMAND_TIMEOUT_MS,
+        },
+      );
       writeTextFile(
         path.join(config.outputDir, "adb-reverse.txt"),
         `${reverseResult.stdout}${reverseResult.stderr}`,
       );
     }
 
-    const launch = await spawnCapture("adb", [
-      ...adbPrefix,
-      "shell",
-      "am",
-      "start",
-      "-W",
-      "-a",
-      "android.intent.action.VIEW",
-      "-d",
-      config.deepLinkUrl,
-      config.appId,
-    ]);
+    setPhase("launch_app");
+    const launch = await spawnCaptureFn(
+      "adb",
+      [
+        ...adbPrefix,
+        "shell",
+        "am",
+        "start",
+        "-W",
+        "-a",
+        "android.intent.action.VIEW",
+        "-d",
+        config.deepLinkUrl,
+        config.appId,
+      ],
+      {
+        timeoutMs: DEFAULT_LAUNCH_COMMAND_TIMEOUT_MS,
+      },
+    );
     launchResult = `${launch.stdout}${launch.stderr}`;
     writeTextFile(config.artifactPaths.launch, launchResult);
 
+    setPhase("wait_for_app");
     await sleep(config.waitMs);
 
-    const initialState = await captureDeviceState(config, adbPrefix, {
+    setPhase("capture_device_state");
+    const initialState = await captureDeviceStateFn(config, adbPrefix, {
       activityTop: config.artifactPaths.activityTop,
       screenshot: config.artifactPaths.screenshot,
       uiDump: config.artifactPaths.uiDump,
@@ -1150,29 +1356,39 @@ async function runValidation(config) {
     });
 
     if (requestProxy) {
+      setPhase("replay_captured_request");
       replaySummary = await replayCapturedRequest(config, requestProxy.entries[0]);
       writeJsonFile(config.artifactPaths.requestReplay, replaySummary);
     }
 
     if (config.retryOnTimeout && initialClassification.status === "dev_client_read_timeout") {
-      const retryLaunch = await spawnCapture("adb", [
-        ...adbPrefix,
-        "shell",
-        "am",
-        "start",
-        "-W",
-        "-a",
-        "android.intent.action.VIEW",
-        "-d",
-        config.deepLinkUrl,
-        config.appId,
-      ]);
+      setPhase("retry_launch");
+      const retryLaunch = await spawnCaptureFn(
+        "adb",
+        [
+          ...adbPrefix,
+          "shell",
+          "am",
+          "start",
+          "-W",
+          "-a",
+          "android.intent.action.VIEW",
+          "-d",
+          config.deepLinkUrl,
+          config.appId,
+        ],
+        {
+          timeoutMs: DEFAULT_LAUNCH_COMMAND_TIMEOUT_MS,
+        },
+      );
       const retryLaunchText = `${retryLaunch.stdout}${retryLaunch.stderr}`;
       writeTextFile(config.artifactPaths.retryLaunch, retryLaunchText);
 
+      setPhase("wait_for_retry");
       await sleep(config.waitMs);
 
-      const retryState = await captureDeviceState(config, adbPrefix, {
+      setPhase("capture_retry_device_state");
+      const retryState = await captureDeviceStateFn(config, adbPrefix, {
         activityTop: config.artifactPaths.retryActivityTop,
         screenshot: config.artifactPaths.retryScreenshot,
         uiDump: config.artifactPaths.retryUiDump,
@@ -1213,13 +1429,46 @@ async function runValidation(config) {
       replay: replaySummary,
       retry: retrySummary,
     };
-    writeJsonFile(config.artifactPaths.summary, summary);
+    writeSummary(summary);
     return summary;
+  } catch (error) {
+    const failureArtifactPath = failureArtifactPathForPhase(config, currentPhase);
+    if (failureArtifactPath && (error?.stdout || error?.stderr)) {
+      writeTextFile(failureArtifactPath, `${error.stdout ?? ""}${error.stderr ?? ""}`);
+    }
+
+    const summary = {
+      phase: "completed",
+      status: error?.timedOut ? "command_timeout" : "validation_failed",
+      reason: error?.timedOut ? `${currentPhase}_timeout` : `${currentPhase}_failed`,
+      failedPhase: currentPhase,
+      artifactPaths: config.artifactPaths,
+      error: String(error?.stack || error?.message || error),
+      failedCommand: error?.command
+        ? {
+            command: error.command,
+            args: error.args,
+            exitCode: error.commandExitCode ?? null,
+            timeoutMs: error.timeoutMs ?? null,
+          }
+        : null,
+      timedOutCommand: error?.timedOut
+        ? {
+            command: error.command,
+            args: error.args,
+            timeoutMs: error.timeoutMs,
+          }
+        : null,
+    };
+    writeSummary(summary);
+    return buildValidationSummary(config, summary);
   } finally {
     if (requestProxy) {
       await requestProxy.stop();
     }
-    await expoProcess.stop();
+    if (expoProcess) {
+      await expoProcess.stop();
+    }
   }
 }
 
@@ -1260,6 +1509,7 @@ module.exports = {
   rewriteExpoManifestResponse,
   waitForExpoReady,
   shouldEndUpstreamImmediately,
+  spawnCapture,
   runValidation,
 };
 

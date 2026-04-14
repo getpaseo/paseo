@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 
@@ -14,7 +15,9 @@ const {
   deriveValidationOutcome,
   parseArgs,
   shouldEndUpstreamImmediately,
+  spawnCapture,
   waitForExpoReady,
+  runValidation,
 } = require("./windows-dev-client-validation.cjs");
 
 test("buildDeepLinkUrl encodes the localhost launch target for Expo dev client", () => {
@@ -191,6 +194,22 @@ test("buildSpawnInvocation leaves adb untouched on Windows", () => {
   });
 });
 
+test("spawnCapture rejects when a command exceeds timeoutMs", async () => {
+  await assert.rejects(
+    () =>
+      spawnCapture(process.execPath, ["-e", "setTimeout(() => {}, 1000)"], {
+        timeoutMs: 50,
+      }),
+    (error) => {
+      assert.equal(error.timedOut, true);
+      assert.equal(error.command, process.execPath);
+      assert.equal(error.timeoutMs, 50);
+      assert.match(error.message, /timed out after 50ms/);
+      return true;
+    },
+  );
+});
+
 test("buildConfig offsets Metro to a private upstream port when request capture is enabled", () => {
   const config = buildConfig(
     {
@@ -229,6 +248,141 @@ test("buildConfig offsets Metro to a private upstream port when request capture 
   );
   assert.match(config.artifactPaths.requestCapture, /request-capture\.json$/);
   assert.match(config.artifactPaths.requestReplay, /request-replay\.json$/);
+});
+
+test("runValidation records a completed timeout summary when adb enumeration hangs", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-validation-timeout-"));
+  const config = buildConfig(
+    {
+      port: 8108,
+      host: "lan",
+      launchHost: "127.0.0.1",
+      deviceId: "f66d9150",
+      appId: "sh.paseo.debug",
+      scheme: "exp+voice-mobile",
+      outputDir,
+      waitMs: 1,
+      startupTimeoutMs: 1000,
+      successText: "Welcome to Paseo",
+      envOverrides: {},
+      keepProxyEnv: false,
+      buildWorkspaceDeps: false,
+      adbReverse: false,
+      captureScreenshot: false,
+      captureUiDump: false,
+      clearLogcat: false,
+      help: false,
+      captureFirstRequest: false,
+      retryOnTimeout: false,
+    },
+    {
+      repoRoot: "/repo",
+      appDir: "/repo/packages/app",
+      baseEnv: {},
+    },
+  );
+  const timeoutError = new Error("adb devices timed out after 25ms");
+  timeoutError.timedOut = true;
+  timeoutError.command = "adb";
+  timeoutError.args = ["devices"];
+  timeoutError.timeoutMs = 25;
+
+  try {
+    const summary = await runValidation(config, {
+      spawnCapture: async (command, args) => {
+        assert.equal(command, "adb");
+        assert.deepEqual(args, ["devices"]);
+        throw timeoutError;
+      },
+      startRequestCaptureProxy: () => {
+        throw new Error("request capture should not start before adb devices succeeds");
+      },
+      startExpoProcess: () => {
+        throw new Error("Expo should not start before adb devices succeeds");
+      },
+    });
+
+    assert.equal(summary.phase, "completed");
+    assert.equal(summary.status, "command_timeout");
+    assert.equal(summary.reason, "adb_devices_timeout");
+    assert.equal(summary.failedPhase, "adb_devices");
+    assert.deepEqual(summary.timedOutCommand, {
+      command: "adb",
+      args: ["devices"],
+      timeoutMs: 25,
+    });
+
+    const writtenSummary = JSON.parse(
+      fs.readFileSync(path.join(outputDir, "summary.json"), "utf8"),
+    );
+    assert.equal(writtenSummary.phase, "completed");
+    assert.equal(writtenSummary.status, "command_timeout");
+    assert.equal(writtenSummary.reason, "adb_devices_timeout");
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("runValidation persists failing adb devices output for later inspection", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-validation-adb-failure-"));
+  const config = buildConfig(
+    {
+      port: 8109,
+      host: "lan",
+      launchHost: "127.0.0.1",
+      deviceId: "f66d9150",
+      appId: "sh.paseo.debug",
+      scheme: "exp+voice-mobile",
+      outputDir,
+      waitMs: 1,
+      startupTimeoutMs: 1000,
+      successText: "Welcome to Paseo",
+      envOverrides: {},
+      keepProxyEnv: false,
+      buildWorkspaceDeps: false,
+      adbReverse: false,
+      captureScreenshot: false,
+      captureUiDump: false,
+      clearLogcat: false,
+      help: false,
+      captureFirstRequest: false,
+      retryOnTimeout: false,
+    },
+    {
+      repoRoot: "/repo",
+      appDir: "/repo/packages/app",
+      baseEnv: {},
+    },
+  );
+  const exitError = new Error("adb devices exited with code 1\nadb server version mismatch");
+  exitError.command = "adb";
+  exitError.args = ["devices"];
+  exitError.commandExitCode = 1;
+  exitError.stdout = "List of devices attached\n";
+  exitError.stderr = "adb server version mismatch\n";
+
+  try {
+    const summary = await runValidation(config, {
+      spawnCapture: async () => {
+        throw exitError;
+      },
+    });
+
+    assert.equal(summary.status, "validation_failed");
+    assert.equal(summary.reason, "adb_devices_failed");
+    assert.deepEqual(summary.failedCommand, {
+      command: "adb",
+      args: ["devices"],
+      exitCode: 1,
+      timeoutMs: null,
+    });
+    assert.equal(
+      fs.readFileSync(path.join(outputDir, "adb-devices.txt"), "utf8"),
+      "List of devices attached\nadb server version mismatch\n",
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
 });
 
 test("buildUpstreamRequestHeaders rewrites host to Metro and strips hop-by-hop headers", () => {
