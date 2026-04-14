@@ -1021,10 +1021,48 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async listPersistedAgents(
-    _options?: ListPersistedAgentsOptions,
+    options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    // TODO: Implement by listing sessions from OpenCode
-    return [];
+    const { url } = await this.serverManager.ensureRunning();
+    const client = createOpencodeClient({
+      baseUrl: url,
+      directory: process.cwd(),
+    });
+    const limit = options?.limit ?? 20;
+    const response = await client.session.list({ limit });
+    if (response.error || !response.data) {
+      return [];
+    }
+
+    return response.data.slice(0, limit).map((session) => {
+      const cwd = readNonEmptyString(session.directory) ?? process.cwd();
+      const title = readNonEmptyString(session.title);
+      const updatedAtMs =
+        typeof session.time?.updated === "number"
+          ? session.time.updated
+          : typeof session.time?.created === "number"
+            ? session.time.created
+            : Date.now();
+
+      return {
+        provider: "opencode",
+        sessionId: session.id,
+        cwd,
+        title,
+        lastActivityAt: new Date(updatedAtMs),
+        persistence: {
+          provider: "opencode",
+          sessionId: session.id,
+          nativeHandle: session.id,
+          metadata: {
+            provider: "opencode",
+            cwd,
+            ...(title ? { title } : {}),
+          },
+        },
+        timeline: [],
+      } satisfies PersistedAgentDescriptor;
+    });
   }
 
   async isAvailable(): Promise<boolean> {
