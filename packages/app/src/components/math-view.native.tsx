@@ -112,6 +112,7 @@ function BlockMath({ expression, theme }: { expression: string; theme: any }) {
         showsHorizontalScrollIndicator={false}
         onMessage={onMessage}
         originWhitelist={["*"]}
+        opaque={false}
       />
     </View>
   );
