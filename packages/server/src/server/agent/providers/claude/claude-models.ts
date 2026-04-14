@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { AgentModelDefinition } from "../../agent-sdk-types.js";
 
 const CLAUDE_THINKING_OPTIONS = [
@@ -38,8 +41,60 @@ const CLAUDE_MODELS: AgentModelDefinition[] = [
   },
 ];
 
-export function getClaudeModels(): AgentModelDefinition[] {
-  return CLAUDE_MODELS.map((model) => ({ ...model }));
+interface ClaudeSettings {
+  model?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Read custom model from ~/.claude/settings.json if configured.
+ * Returns the custom model definition or null if not configured.
+ */
+async function readCustomModelFromSettings(): Promise<AgentModelDefinition | null> {
+  try {
+    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const settingsPath = path.join(configDir, "settings.json");
+
+    const settingsContent = await fs.promises.readFile(settingsPath, "utf8");
+    const settings: ClaudeSettings = JSON.parse(settingsContent);
+
+    const customModel = settings.model;
+    if (!customModel || typeof customModel !== "string") {
+      return null;
+    }
+
+    // Don't return custom model if it's already in the built-in list
+    const existingModelIds = new Set(CLAUDE_MODELS.map((m) => m.id));
+    if (existingModelIds.has(customModel)) {
+      return null;
+    }
+
+    return {
+      provider: "claude",
+      id: customModel,
+      label: customModel,
+      description: "Custom model from ~/.claude/settings.json",
+    };
+  } catch (error) {
+    // Silently ignore errors - settings.json may not exist or be invalid
+    return null;
+  }
+}
+
+/**
+ * Get Claude models including custom models from ~/.claude/settings.json.
+ * The custom model (if configured and not already in the built-in list) is prepended.
+ */
+export async function getClaudeModels(): Promise<AgentModelDefinition[]> {
+  const customModel = await readCustomModelFromSettings();
+
+  const models = CLAUDE_MODELS.map((model) => ({ ...model }));
+
+  if (customModel) {
+    models.unshift(customModel);
+  }
+
+  return models;
 }
 
 /**
