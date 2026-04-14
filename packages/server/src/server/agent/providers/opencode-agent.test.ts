@@ -475,4 +475,32 @@ describe("OpenCode adapter context-window normalization", () => {
 
     expect(onAssistantModelContextWindowResolved).toHaveBeenCalledWith(400_000);
   });
+
+  test("normalizes nested OpenCode API errors into message and code", () => {
+    expect(
+      __openCodeInternals.normalizeTurnFailure({
+        name: "UnknownError",
+        data: {
+          message: JSON.stringify({
+            type: "error",
+            error: {
+              type: "service_unavailable_error",
+              code: "server_is_overloaded",
+              message: "Our servers are currently overloaded. Please try again later.",
+            },
+          }),
+        },
+      }),
+    ).toEqual({
+      error: "Our servers are currently overloaded. Please try again later.",
+      code: "server_is_overloaded",
+      diagnostic: "type: service_unavailable_error",
+    });
+  });
+
+  test("normalizes Error instances without collapsing them to empty JSON", () => {
+    expect(__openCodeInternals.normalizeTurnFailure(new Error("transport closed"))).toEqual({
+      error: "transport closed",
+    });
+  });
 });

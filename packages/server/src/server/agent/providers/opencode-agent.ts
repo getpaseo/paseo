@@ -219,6 +219,9 @@ function stringifyUnknownError(error: unknown): string {
   if (typeof error === "string") {
     return error;
   }
+  if (error instanceof Error) {
+    return error.message || error.name;
+  }
   try {
     return JSON.stringify(error);
   } catch {
@@ -226,9 +229,149 @@ function stringifyUnknownError(error: unknown): string {
   }
 }
 
+type OpenCodeTurnFailureDetails = {
+  error: string;
+  code?: string;
+  diagnostic?: string;
+};
+
+function buildOpenCodeTurnFailureDetails(
+  error?: string,
+  code?: string,
+  diagnostic?: string,
+): Partial<OpenCodeTurnFailureDetails> {
+  return {
+    ...(error ? { error } : {}),
+    ...(code ? { code } : {}),
+    ...(diagnostic ? { diagnostic } : {}),
+  };
+}
+
+function readTrimmedString(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return undefined;
+}
+
+function tryParseJsonString(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+}
+
+function extractOpenCodeTurnFailureDetails(
+  error: unknown,
+  depth = 0,
+): Partial<OpenCodeTurnFailureDetails> {
+  if (depth > 6 || error == null) {
+    return {};
+  }
+
+  if (typeof error === "string") {
+    const normalized = readTrimmedString(error);
+    if (!normalized) {
+      return {};
+    }
+    const parsed = tryParseJsonString(normalized);
+    if (parsed !== undefined) {
+      const nested = extractOpenCodeTurnFailureDetails(parsed, depth + 1);
+      if (nested.error || nested.code || nested.diagnostic) {
+        return nested;
+      }
+    }
+    return buildOpenCodeTurnFailureDetails(normalized);
+  }
+
+  if (error instanceof Error) {
+    const nested = extractOpenCodeTurnFailureDetails(
+      (error as Error & { cause?: unknown }).cause,
+      depth + 1,
+    );
+    const errorCode = readTrimmedString((error as Error & { code?: unknown }).code);
+    return buildOpenCodeTurnFailureDetails(
+      nested.error ?? (error.message.trim() || error.name),
+      errorCode,
+      nested.diagnostic,
+    );
+  }
+
+  if (typeof error !== "object") {
+    const normalized = stringifyUnknownError(error).trim();
+    return normalized.length > 0 ? buildOpenCodeTurnFailureDetails(normalized) : {};
+  }
+
+  const record = error as Record<string, unknown>;
+  const nestedCandidates = [record.error, record.data, record.cause];
+  let nested: Partial<OpenCodeTurnFailureDetails> = {};
+  for (const candidate of nestedCandidates) {
+    const candidateDetails = extractOpenCodeTurnFailureDetails(candidate, depth + 1);
+    nested = {
+      error: nested.error ?? candidateDetails.error,
+      code: nested.code ?? candidateDetails.code,
+      diagnostic: nested.diagnostic ?? candidateDetails.diagnostic,
+    };
+  }
+
+  const directMessage =
+    readTrimmedString(record.message) ??
+    readTrimmedString(record.detail) ??
+    readTrimmedString(record.description);
+  const parsedMessageDetails = directMessage
+    ? extractOpenCodeTurnFailureDetails(directMessage, depth + 1)
+    : {};
+
+  const code =
+    nested.code ??
+    parsedMessageDetails.code ??
+    readTrimmedString(record.code) ??
+    readTrimmedString(record.error_code);
+  const type = readTrimmedString(record.type);
+  const diagnostic =
+    nested.diagnostic ??
+    parsedMessageDetails.diagnostic ??
+    (type && type !== code ? `type: ${type}` : undefined);
+  const message =
+    nested.error ??
+    parsedMessageDetails.error ??
+    directMessage ??
+    readTrimmedString(record.name) ??
+    readTrimmedString(record.kind);
+
+  return buildOpenCodeTurnFailureDetails(message, code, diagnostic);
+}
+
+function normalizeTurnFailure(error: unknown): OpenCodeTurnFailureDetails {
+  const details = extractOpenCodeTurnFailureDetails(error);
+  return {
+    error: details.error ?? "Unknown error",
+    ...buildOpenCodeTurnFailureDetails(undefined, details.code, details.diagnostic),
+  };
+}
+
+function buildOpenCodeTurnFailedEvent(
+  failure: OpenCodeTurnFailureDetails,
+): Extract<AgentStreamEvent, { type: "turn_failed" }> {
+  return {
+    type: "turn_failed",
+    provider: "opencode",
+    error: failure.error,
+    ...buildOpenCodeTurnFailureDetails(undefined, failure.code, failure.diagnostic),
+  };
+}
+
 function normalizeTurnFailureError(error: unknown): string {
-  const normalized = stringifyUnknownError(error).trim();
-  return normalized.length > 0 ? normalized : "Unknown error";
+  return normalizeTurnFailure(error).error;
 }
 
 function isFatalOpenCodeRetryMessage(message: string | null | undefined): boolean {
@@ -569,6 +712,7 @@ export const __openCodeInternals = {
   extractOpenCodeModelContextWindow,
   hasNormalizedOpenCodeUsage,
   mergeOpenCodeStepFinishUsage,
+  normalizeTurnFailure,
   parseOpenCodeModelLookupKey,
   resolveOpenCodeModelLookupKeyFromAssistantMessage,
   resolveOpenCodeSelectedModelContextWindow,
@@ -1278,11 +1422,8 @@ export function translateOpenCodeEvent(
       if (event.properties.sessionID === state.sessionId) {
         state.streamedPartKeys.clear();
         state.partTypes.clear();
-        events.push({
-          type: "turn_failed",
-          provider: "opencode",
-          error: normalizeTurnFailureError(event.properties.error),
-        });
+        const failure = normalizeTurnFailure(event.properties.error);
+        events.push(buildOpenCodeTurnFailedEvent(failure));
       }
       break;
     }
@@ -1303,11 +1444,8 @@ export function translateOpenCodeEvent(
       } else if (status.type === "retry" && isFatalOpenCodeRetryMessage(status.message)) {
         state.streamedPartKeys.clear();
         state.partTypes.clear();
-        events.push({
-          type: "turn_failed",
-          provider: "opencode",
-          error: normalizeTurnFailureError(status.message),
-        });
+        const failure = normalizeTurnFailure(status.message);
+        events.push(buildOpenCodeTurnFailedEvent(failure));
       }
       // "retry" and "busy" are transient — no terminal event.
       break;
@@ -1530,11 +1668,8 @@ class OpenCodeAgentSession implements AgentSession {
         })
         .then((response) => {
           if (response.error) {
-            const errorMsg = normalizeTurnFailureError(response.error);
-            this.finishForegroundTurn(
-              { type: "turn_failed", provider: "opencode", error: errorMsg },
-              turnId,
-            );
+            const failure = normalizeTurnFailure(response.error);
+            this.finishForegroundTurn(buildOpenCodeTurnFailedEvent(failure), turnId);
           } else {
             this.finishForegroundTurn(
               { type: "turn_completed", provider: "opencode", usage: undefined },
@@ -1543,10 +1678,8 @@ class OpenCodeAgentSession implements AgentSession {
           }
         })
         .catch((err) => {
-          this.finishForegroundTurn(
-            { type: "turn_failed", provider: "opencode", error: normalizeTurnFailureError(err) },
-            turnId,
-          );
+          const failure = normalizeTurnFailure(err);
+          this.finishForegroundTurn(buildOpenCodeTurnFailedEvent(failure), turnId);
         });
     } else {
       void this.client.session
@@ -1569,25 +1702,13 @@ class OpenCodeAgentSession implements AgentSession {
         })
         .then((promptResponse) => {
           if (promptResponse.error) {
-            this.finishForegroundTurn(
-              {
-                type: "turn_failed",
-                provider: "opencode",
-                error: normalizeTurnFailureError(promptResponse.error),
-              },
-              turnId,
-            );
+            const failure = normalizeTurnFailure(promptResponse.error);
+            this.finishForegroundTurn(buildOpenCodeTurnFailedEvent(failure), turnId);
           }
         })
         .catch((error) => {
-          this.finishForegroundTurn(
-            {
-              type: "turn_failed",
-              provider: "opencode",
-              error: normalizeTurnFailureError(error),
-            },
-            turnId,
-          );
+          const failure = normalizeTurnFailure(error);
+          this.finishForegroundTurn(buildOpenCodeTurnFailedEvent(failure), turnId);
         });
     }
 
@@ -1630,14 +1751,12 @@ class OpenCodeAgentSession implements AgentSession {
             e.type === "turn_canceled"
           ) {
             if (e.type === "turn_failed") {
-              this.finishForegroundTurn(
-                {
-                  type: "turn_failed",
-                  provider: "opencode",
-                  error: normalizeTurnFailureError(e.error),
-                },
-                turnId,
-              );
+              const failure = normalizeTurnFailure({
+                error: e.error,
+                code: e.code,
+                diagnostic: e.diagnostic,
+              });
+              this.finishForegroundTurn(buildOpenCodeTurnFailedEvent(failure), turnId);
             } else {
               this.finishForegroundTurn(e, turnId);
             }
@@ -1659,14 +1778,8 @@ class OpenCodeAgentSession implements AgentSession {
       }
     } catch (error) {
       if (!turnAbortController.signal.aborted && this.activeForegroundTurnId === turnId) {
-        this.finishForegroundTurn(
-          {
-            type: "turn_failed",
-            provider: "opencode",
-            error: normalizeTurnFailureError(error),
-          },
-          turnId,
-        );
+        const failure = normalizeTurnFailure(error);
+        this.finishForegroundTurn(buildOpenCodeTurnFailedEvent(failure), turnId);
       }
     } finally {
       if (turnAbortController.signal.aborted) {
