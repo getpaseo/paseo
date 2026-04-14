@@ -1290,11 +1290,14 @@ const styles = StyleSheet.create(((theme: any) => ({
     justifyContent: "space-between",
   },
   leftButtonGroup: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "flex-end",
     gap: theme.spacing[1],
   },
   rightButtonGroup: {
+    flexShrink: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: isWeb ? theme.spacing[2] : theme.spacing[1],
