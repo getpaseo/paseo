@@ -2456,7 +2456,7 @@ class CodexAppServerAgentSession implements AgentSession {
     config: AgentSessionConfig,
     private readonly resumeHandle: { sessionId: string; metadata?: Record<string, unknown> } | null,
     logger: Logger,
-    private readonly spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>,
+    private readonly spawnAppServer: (cwd?: string) => Promise<ChildProcessWithoutNullStreams>,
   ) {
     this.logger = logger.child({ module: "agent", provider: CODEX_PROVIDER });
     if (config.modeId === undefined) {
@@ -2494,7 +2494,7 @@ class CodexAppServerAgentSession implements AgentSession {
 
   async connect(): Promise<void> {
     if (this.connected) return;
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(this.config.cwd ?? process.cwd());
     this.client = new CodexAppServerClient(child, this.logger);
     this.client.setNotificationHandler((method, params) => this.handleNotification(method, params));
     this.registerRequestHandlers();
@@ -2537,9 +2537,10 @@ class CodexAppServerAgentSession implements AgentSession {
   private async loadSkills(): Promise<void> {
     if (!this.client) return;
     try {
-      const response = (await this.client.request("skills/list", {
-        cwd: [this.config.cwd],
-      })) as { data?: Array<any> };
+      const response = (await this.client.request(
+        "skills/list",
+        this.config.cwd ? { cwds: [this.config.cwd] } : {},
+      )) as { data?: Array<any> };
       const entries = Array.isArray(response?.data) ? response.data : [];
       const skills: Array<{ name: string; description: string; path: string }> = [];
       for (const entry of entries) {
@@ -4000,6 +4001,7 @@ export class CodexAppServerAgentClient implements AgentClient {
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
+    cwd?: string,
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     this.logger.trace(
@@ -4009,6 +4011,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       "Spawning Codex app server",
     );
     return spawnProcess(launchPrefix.command, [...launchPrefix.args, "app-server"], {
+      cwd,
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
       env: buildCodexAppServerEnv(this.runtimeSettings, launchEnv),
@@ -4020,8 +4023,8 @@ export class CodexAppServerAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
-    const session = new CodexAppServerAgentSession(sessionConfig, null, this.logger, () =>
-      this.spawnAppServer(launchContext?.env),
+    const session = new CodexAppServerAgentSession(sessionConfig, null, this.logger, (cwd) =>
+      this.spawnAppServer(launchContext?.env, cwd ?? sessionConfig.cwd ?? process.cwd()),
     );
     await session.connect();
     return session;
@@ -4039,8 +4042,8 @@ export class CodexAppServerAgentClient implements AgentClient {
       provider: CODEX_PROVIDER,
       cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
     };
-    const session = new CodexAppServerAgentSession(merged, handle, this.logger, () =>
-      this.spawnAppServer(launchContext?.env),
+    const session = new CodexAppServerAgentSession(merged, handle, this.logger, (cwd) =>
+      this.spawnAppServer(launchContext?.env, cwd ?? merged.cwd ?? process.cwd()),
     );
     await session.connect();
     return session;

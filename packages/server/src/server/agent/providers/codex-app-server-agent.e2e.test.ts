@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
@@ -237,6 +237,48 @@ describe("Codex app-server provider (e2e)", () => {
       const result = await session.run("Say hello in one sentence.");
       expect(result.finalText.length).toBeGreaterThan(0);
       await session.close();
+    },
+    30000,
+  );
+
+  test.runIf(isCodexInstalled())(
+    "lists repo-local Codex skills from the session workspace",
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-app-server-skills-cwd-"));
+      const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-app-server-skills-home-"));
+
+      mkdirSync(path.join(cwd, ".codex", "skills", "repo-skill"), { recursive: true });
+      writeFileSync(
+        path.join(cwd, ".codex", "skills", "repo-skill", "SKILL.md"),
+        ["---", "name: repo-skill", "description: Repo-local skill", "---", "", "Use it.", ""].join(
+          "\n",
+        ),
+      );
+
+      const client = new CodexAppServerAgentClient(createTestLogger());
+      const session = await client.createSession(
+        {
+          provider: "codex",
+          cwd,
+          modeId: "auto",
+          model: CODEX_TEST_MODEL,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        },
+        {
+          env: {
+            CODEX_HOME: codexHome,
+          },
+        },
+      );
+
+      try {
+        const commands = await session.listCommands();
+        expect(commands.some((command) => command.name === "repo-skill")).toBe(true);
+      } finally {
+        await session.close();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(codexHome, { recursive: true, force: true });
+      }
     },
     30000,
   );
