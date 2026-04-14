@@ -110,7 +110,7 @@ const consoleLogger: Logger = {
 
 function getRawSessionMessage(
   payload: unknown,
-): { type: string } & Record<string, unknown> | null {
+): ({ type: string } & Record<string, unknown>) | null {
   if (!payload || typeof payload !== "object") {
     return null;
   }
@@ -119,7 +119,9 @@ function getRawSessionMessage(
     return null;
   }
   const message = record.message as { type?: unknown } & Record<string, unknown>;
-  return typeof message.type === "string" ? message : null;
+  return typeof message.type === "string"
+    ? ({ ...message, type: message.type } as { type: string } & Record<string, unknown>)
+    : null;
 }
 
 export type {
