@@ -2010,7 +2010,27 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {
-    this.abortController?.abort();
+    const activeTurnId = this.activeForegroundTurnId;
+    if (activeTurnId) {
+      this.finishForegroundTurn(
+        { type: "turn_canceled", provider: "opencode", reason: "session_closed" },
+        activeTurnId,
+      );
+    } else {
+      this.abortController?.abort();
+      this.abortController = null;
+      this.runningToolCalls.clear();
+    }
+
+    for (const requestId of this.pendingPermissions.keys()) {
+      this.notifySubscribers({
+        type: "permission_resolved",
+        provider: "opencode",
+        requestId,
+        resolution: { behavior: "deny", message: "Session closed" },
+      });
+    }
+    this.pendingPermissions.clear();
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
   }
