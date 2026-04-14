@@ -1847,7 +1847,9 @@ class OpenCodeAgentSession implements AgentSession {
       if (event.type === "timeline") {
         timeline.push(event.item);
         if (event.item.type === "assistant_message") {
-          finalText = event.item.text;
+          finalText = event.item.text.startsWith(finalText)
+            ? event.item.text
+            : `${finalText}${event.item.text}`;
         }
         return;
       }
