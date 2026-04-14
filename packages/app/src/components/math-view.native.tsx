@@ -3,44 +3,76 @@ import { Text, View } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { Fonts } from "@/constants/theme";
-import katex from "katex";
 
 export interface MathViewProps {
   expression: string;
   displayMode: boolean;
 }
 
-const KATEX_CSS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css";
+const KATEX_CSS = "https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css";
+const KATEX_JS = "https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js";
 
-function buildHtml(katexHtml: string, textColor: string): string {
+/**
+ * Build an HTML page that loads KaTeX inside the WebView and renders there.
+ * This avoids calling katex.renderToString() in Hermes, which is unreliable.
+ */
+function buildHtml(expression: string, textColor: string, displayMode: boolean): string {
+  // Escape the expression for safe embedding in a JS string literal
+  const escaped = expression.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<link rel="stylesheet" href="${KATEX_CSS_URL}" crossorigin="anonymous">
+<link rel="stylesheet" href="${KATEX_CSS}" crossorigin="anonymous">
+<script src="${KATEX_JS}" crossorigin="anonymous"><\/script>
 <style>
   html, body {
     margin: 0;
-    padding: 0;
+    padding: ${displayMode ? "4px 0" : "0"};
     background: transparent;
     color: ${textColor};
-    text-align: center;
+    text-align: ${displayMode ? "center" : "left"};
+    overflow: hidden;
   }
   .katex { font-size: 1.1em; }
+  .katex-error { color: ${textColor}; font-family: monospace; font-size: 14px; }
 </style>
 </head>
-<body>${katexHtml}<script>
-  window.onload = function() {
-    var h = document.body.scrollHeight;
-    window.ReactNativeWebView.postMessage(JSON.stringify({ height: h }));
-  };
-</script></body>
+<body>
+<div id="math"></div>
+<script>
+  try {
+    katex.render(\`${escaped}\`, document.getElementById("math"), {
+      displayMode: ${displayMode},
+      throwOnError: false,
+      trust: false,
+      strict: "ignore"
+    });
+  } catch(e) {
+    document.getElementById("math").textContent = \`${escaped}\`;
+  }
+  // Report height after fonts/CSS load
+  function postHeight() {
+    var h = document.getElementById("math").offsetHeight;
+    if (h > 0) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ height: h + ${displayMode ? 8 : 0} }));
+    }
+  }
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(postHeight);
+  } else {
+    window.onload = postHeight;
+  }
+  // Fallback in case fonts.ready doesn't fire
+  setTimeout(postHeight, 1000);
+<\/script>
+</body>
 </html>`;
 }
 
 /**
- * Native inline math: rendered as styled text since <View>/<WebView> cannot
- * be nested inside <Text> parents used by react-native-markdown-display.
+ * Native inline math: rendered as styled text since WebView cannot be nested
+ * inside <Text> parents used by react-native-markdown-display.
  */
 function InlineMath({ expression, theme }: { expression: string; theme: any }) {
   return (
@@ -57,29 +89,16 @@ function InlineMath({ expression, theme }: { expression: string; theme: any }) {
 }
 
 /**
- * Native block math: rendered via WebView with KaTeX for full display rendering.
+ * Native block math: KaTeX is loaded and rendered entirely inside the WebView
+ * (not in Hermes) for reliable rendering.
  */
 function BlockMath({ expression, theme }: { expression: string; theme: any }) {
   const [height, setHeight] = useState(60);
 
-  const katexHtml = useMemo(() => {
-    try {
-      return katex.renderToString(expression, {
-        displayMode: true,
-        throwOnError: false,
-        errorColor: theme.colors.destructive,
-        trust: false,
-        strict: "ignore",
-      });
-    } catch {
-      return null;
-    }
-  }, [expression, theme.colors.destructive]);
-
-  const html = useMemo(() => {
-    if (!katexHtml) return null;
-    return buildHtml(katexHtml, theme.colors.foreground);
-  }, [katexHtml, theme.colors.foreground]);
+  const html = useMemo(
+    () => buildHtml(expression, theme.colors.foreground, true),
+    [expression, theme.colors.foreground],
+  );
 
   const onMessage = useCallback((event: WebViewMessageEvent) => {
     try {
@@ -91,12 +110,6 @@ function BlockMath({ expression, theme }: { expression: string; theme: any }) {
       // ignore malformed messages
     }
   }, []);
-
-  if (!html) {
-    return (
-      <Text style={{ fontFamily: Fonts.mono, color: theme.colors.destructive }}>{expression}</Text>
-    );
-  }
 
   return (
     <View style={{ alignItems: "center", marginVertical: theme.spacing[2] }}>
