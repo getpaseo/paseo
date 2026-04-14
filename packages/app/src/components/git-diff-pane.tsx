@@ -32,11 +32,15 @@ import {
 } from "lucide-react-native";
 import { useCheckoutGitActionsStore } from "@/stores/checkout-git-actions-store";
 import {
-  useCheckoutDiffQuery,
   type ParsedDiffFile,
   type DiffLine,
   type HighlightToken,
 } from "@/hooks/use-checkout-diff-query";
+import {
+  useCheckoutDiffMetadataQuery,
+  type DiffFileMetadata,
+} from "@/hooks/use-checkout-diff-metadata-query";
+import { useFileHunks } from "@/hooks/use-file-hunks";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { useCheckoutPrStatusQuery } from "@/hooks/use-checkout-pr-status-query";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
@@ -130,8 +134,16 @@ function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
   );
 }
 
+interface DiffFileHeaderFields {
+  path: string;
+  isNew: boolean;
+  isDeleted: boolean;
+  additions: number;
+  deletions: number;
+}
+
 interface DiffFileSectionProps {
-  file: ParsedDiffFile;
+  file: DiffFileHeaderFields;
   isExpanded: boolean;
   onToggle: (path: string) => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
@@ -617,6 +629,109 @@ function DiffFileBody({
   );
 }
 
+interface LazyDiffFileBodyProps {
+  file: DiffFileMetadata;
+  serverId: string;
+  cwd: string;
+  mode: "uncommitted" | "base";
+  baseRef?: string;
+  ignoreWhitespace?: boolean;
+  layout: "unified" | "split";
+  wrapLines: boolean;
+  onBodyHeightChange?: (path: string, height: number) => void;
+  testID?: string;
+}
+
+function LazyDiffFileBody({
+  file,
+  serverId,
+  cwd,
+  mode,
+  baseRef,
+  ignoreWhitespace,
+  layout,
+  wrapLines,
+  onBodyHeightChange,
+  testID,
+}: LazyDiffFileBodyProps) {
+  const {
+    file: resolvedFile,
+    isLoading,
+    isError,
+    error,
+  } = useFileHunks({
+    serverId,
+    cwd,
+    mode,
+    baseRef,
+    ignoreWhitespace,
+    file,
+    enabled: true,
+  });
+
+  if (file.status === "binary" || file.status === "too_large") {
+    return (
+      <View
+        style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]}
+        onLayout={(event) => {
+          onBodyHeightChange?.(file.path, event.nativeEvent.layout.height);
+        }}
+        testID={testID}
+      >
+        <View style={styles.statusMessageContainer}>
+          <Text style={styles.statusMessageText}>
+            {file.status === "binary" ? "Binary file" : "Diff too large to display"}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <View
+        style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]}
+        onLayout={(event) => {
+          onBodyHeightChange?.(file.path, event.nativeEvent.layout.height);
+        }}
+        testID={testID}
+      >
+        <View style={styles.statusMessageContainer}>
+          <ActivityIndicator size="small" />
+        </View>
+      </View>
+    );
+  }
+
+  if (isError || !resolvedFile) {
+    return (
+      <View
+        style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]}
+        onLayout={(event) => {
+          onBodyHeightChange?.(file.path, event.nativeEvent.layout.height);
+        }}
+        testID={testID}
+      >
+        <View style={styles.statusMessageContainer}>
+          <Text style={styles.statusMessageText}>
+            {error instanceof Error ? error.message : "Failed to load diff"}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <DiffFileBody
+      file={resolvedFile}
+      layout={layout}
+      wrapLines={wrapLines}
+      onBodyHeightChange={onBodyHeightChange}
+      testID={testID}
+    />
+  );
+}
+
 interface GitDiffPaneProps {
   serverId: string;
   workspaceId?: string | null;
@@ -625,8 +740,8 @@ interface GitDiffPaneProps {
 }
 
 type DiffFlatItem =
-  | { type: "header"; file: ParsedDiffFile; fileIndex: number; isExpanded: boolean }
-  | { type: "body"; file: ParsedDiffFile; fileIndex: number };
+  | { type: "header"; file: DiffFileHeaderFields; fileIndex: number; isExpanded: boolean }
+  | { type: "lazy-body"; file: DiffFileMetadata; fileIndex: number };
 
 export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
@@ -687,7 +802,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     isError: isDiffError,
     error: diffError,
     refresh: refreshDiff,
-  } = useCheckoutDiffQuery({
+  } = useCheckoutDiffMetadataQuery({
     serverId,
     cwd,
     mode: diffMode,
@@ -788,7 +903,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         stickyIndices.push(items.length - 1);
       }
       if (isExpanded) {
-        items.push({ type: "body", file, fileIndex: i });
+        items.push({ type: "lazy-body", file: file as DiffFileMetadata, fileIndex: i });
       }
     }
     return { flatItems: items, stickyHeaderIndices: stickyIndices };
@@ -1068,8 +1183,13 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         );
       }
       return (
-        <DiffFileBody
+        <LazyDiffFileBody
           file={item.file}
+          serverId={serverId}
+          cwd={cwd}
+          mode={diffMode}
+          baseRef={baseRef}
+          ignoreWhitespace={changesPreferences.hideWhitespace}
           layout={effectiveLayout}
           wrapLines={wrapLines}
           onBodyHeightChange={handleBodyHeightChange}
@@ -1078,10 +1198,15 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       );
     },
     [
+      baseRef,
+      changesPreferences.hideWhitespace,
+      cwd,
+      diffMode,
       effectiveLayout,
       handleBodyHeightChange,
       handleHeaderHeightChange,
       handleToggleExpanded,
+      serverId,
       wrapLines,
     ],
   );

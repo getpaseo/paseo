@@ -47,6 +47,13 @@ import {
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
 } from "../server/loop/rpc-schemas.js";
+import {
+  CheckoutDiffSnapshotSchema,
+  CheckoutFileHunksResponseSchema,
+  CheckoutGetFileHunksRequestSchema,
+  CheckoutSubscribeDiffRequestSchema,
+  CheckoutUnsubscribeDiffRequestSchema,
+} from "../server/checkout/rpc-schemas.js";
 // ---------------------------------------------------------------------------
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
@@ -1013,12 +1020,12 @@ const CheckoutErrorCodeSchema = z.enum([
   "UNKNOWN",
 ]);
 
-const CheckoutErrorSchema = z.object({
+export const CheckoutErrorSchema = z.object({
   code: CheckoutErrorCodeSchema,
   message: z.string(),
 });
 
-const CheckoutDiffCompareSchema = z.object({
+export const CheckoutDiffCompareSchema = z.object({
   mode: z.enum(["uncommitted", "base"]),
   baseRef: z.string().optional(),
   ignoreWhitespace: z.boolean().optional(),
@@ -1231,18 +1238,18 @@ export const ArchiveWorkspaceRequestSchema = z.object({
 
 // Highlighted diff token schema
 // Note: style can be a compound class name (e.g., "heading meta") from the syntax highlighter
-const HighlightTokenSchema = z.object({
+export const HighlightTokenSchema = z.object({
   text: z.string(),
   style: z.string().nullable(),
 });
 
-const DiffLineSchema = z.object({
+export const DiffLineSchema = z.object({
   type: z.enum(["add", "remove", "context", "header"]),
   content: z.string(),
   tokens: z.array(HighlightTokenSchema).optional(),
 });
 
-const DiffHunkSchema = z.object({
+export const DiffHunkSchema = z.object({
   oldStart: z.number(),
   oldCount: z.number(),
   newStart: z.number(),
@@ -1250,7 +1257,7 @@ const DiffHunkSchema = z.object({
   lines: z.array(DiffLineSchema),
 });
 
-const ParsedDiffFileSchema = z.object({
+export const ParsedDiffFileSchema = z.object({
   path: z.string(),
   isNew: z.boolean(),
   isDeleted: z.boolean(),
@@ -1464,6 +1471,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutStatusRequestSchema,
   SubscribeCheckoutDiffRequestSchema,
   UnsubscribeCheckoutDiffRequestSchema,
+  CheckoutSubscribeDiffRequestSchema,
+  CheckoutUnsubscribeDiffRequestSchema,
+  CheckoutGetFileHunksRequestSchema,
   CheckoutCommitRequestSchema,
   CheckoutMergeRequestSchema,
   CheckoutMergeFromBaseRequestSchema,
@@ -1686,6 +1696,7 @@ export const ServerInfoStatusPayloadSchema = z
     features: z
       .object({
         providersSnapshot: z.boolean().optional(),
+        lazyDiffRpcs: z.boolean().optional(),
       })
       .optional(),
   })
@@ -2789,6 +2800,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutStatusResponseSchema,
   SubscribeCheckoutDiffResponseSchema,
   CheckoutDiffUpdateSchema,
+  CheckoutDiffSnapshotSchema,
+  CheckoutFileHunksResponseSchema,
   CheckoutCommitResponseSchema,
   CheckoutMergeResponseSchema,
   CheckoutMergeFromBaseResponseSchema,
@@ -2999,8 +3012,13 @@ export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
 export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;
 export type SubscribeCheckoutDiffRequest = z.infer<typeof SubscribeCheckoutDiffRequestSchema>;
 export type UnsubscribeCheckoutDiffRequest = z.infer<typeof UnsubscribeCheckoutDiffRequestSchema>;
+export type CheckoutSubscribeDiffRequest = z.infer<typeof CheckoutSubscribeDiffRequestSchema>;
+export type CheckoutUnsubscribeDiffRequest = z.infer<typeof CheckoutUnsubscribeDiffRequestSchema>;
+export type CheckoutGetFileHunksRequest = z.infer<typeof CheckoutGetFileHunksRequestSchema>;
 export type SubscribeCheckoutDiffResponse = z.infer<typeof SubscribeCheckoutDiffResponseSchema>;
 export type CheckoutDiffUpdate = z.infer<typeof CheckoutDiffUpdateSchema>;
+export type CheckoutDiffSnapshot = z.infer<typeof CheckoutDiffSnapshotSchema>;
+export type CheckoutFileHunksResponse = z.infer<typeof CheckoutFileHunksResponseSchema>;
 export type CheckoutCommitRequest = z.infer<typeof CheckoutCommitRequestSchema>;
 export type CheckoutCommitResponse = z.infer<typeof CheckoutCommitResponseSchema>;
 export type CheckoutMergeRequest = z.infer<typeof CheckoutMergeRequestSchema>;

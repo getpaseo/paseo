@@ -81,6 +81,53 @@ vi.mock("./checkout-git-utils.js", () => ({
 
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 
+function createStructuredFile(options?: {
+  path?: string;
+  addContent?: string;
+  tokenStyle?: string;
+}): {
+  path: string;
+  isNew: boolean;
+  isDeleted: boolean;
+  additions: number;
+  deletions: number;
+  hunks: Array<{
+    oldStart: number;
+    oldCount: number;
+    newStart: number;
+    newCount: number;
+    lines: Array<{ type: "header" | "context" | "add"; content: string; tokens?: unknown[] }>;
+  }>;
+  status: "ok";
+} {
+  const addContent = options?.addContent ?? "const value = 2;";
+  return {
+    path: options?.path ?? "src/example.ts",
+    isNew: false,
+    isDeleted: false,
+    additions: 1,
+    deletions: 0,
+    hunks: [
+      {
+        oldStart: 1,
+        oldCount: 1,
+        newStart: 1,
+        newCount: 2,
+        lines: [
+          { type: "header", content: "@@ -1,1 +1,2 @@" },
+          { type: "context", content: "const value = 1;" },
+          {
+            type: "add",
+            content: addContent,
+            tokens: [{ text: "const", style: options?.tokenStyle ?? "keyword" }],
+          },
+        ],
+      },
+    ],
+    status: "ok",
+  };
+}
+
 describe("CheckoutDiffManager Linux watchers", () => {
   const originalPlatform = process.platform;
 
@@ -132,6 +179,104 @@ describe("CheckoutDiffManager Linux watchers", () => {
     ]);
 
     subscription.unsubscribe();
+    manager.dispose();
+  });
+
+  test("subscribeLazy returns metadata snapshots and caches file hunks", async () => {
+    getCheckoutDiffMock.mockResolvedValueOnce({
+      diff: "",
+      structured: [createStructuredFile()],
+    });
+
+    const logger = {
+      child: () => logger,
+      warn: vi.fn(),
+    };
+    const manager = new CheckoutDiffManager({
+      logger: logger as any,
+      paseoHome: "/tmp/paseo-test",
+    });
+
+    const listener = vi.fn();
+    const subscription = await manager.subscribeLazy(
+      {
+        cwd: path.join("/tmp/repo", "packages", "server"),
+        compare: { mode: "uncommitted" },
+      },
+      listener,
+    );
+
+    expect(subscription.initial.error).toBeNull();
+    expect(subscription.initial.files).toEqual([
+      expect.objectContaining({
+        path: "src/example.ts",
+        additions: 1,
+        deletions: 0,
+        fingerprint: expect.any(String),
+      }),
+    ]);
+    expect((subscription.initial.files[0] as any).hunks).toBeUndefined();
+    expect(
+      manager.getFileHunks(
+        path.join("/tmp/repo", "packages", "server"),
+        { mode: "uncommitted" },
+        "src/example.ts",
+      ),
+    ).toEqual(createStructuredFile().hunks);
+
+    subscription.unsubscribe();
+    manager.dispose();
+  });
+
+  test("lazy metadata fingerprint ignores token-only changes but emits on hunk changes", async () => {
+    getCheckoutDiffMock.mockResolvedValueOnce({
+      diff: "",
+      structured: [createStructuredFile({ tokenStyle: "keyword" })],
+    });
+    getCheckoutDiffMock.mockResolvedValueOnce({
+      diff: "",
+      structured: [createStructuredFile({ tokenStyle: "variableName" })],
+    });
+    getCheckoutDiffMock.mockResolvedValueOnce({
+      diff: "",
+      structured: [createStructuredFile({ addContent: "const value = 3;" })],
+    });
+
+    const logger = {
+      child: () => logger,
+      warn: vi.fn(),
+    };
+    const manager = new CheckoutDiffManager({
+      logger: logger as any,
+      paseoHome: "/tmp/paseo-test",
+    });
+
+    const listener = vi.fn();
+    await manager.subscribeLazy(
+      {
+        cwd: path.join("/tmp/repo", "packages", "server"),
+        compare: { mode: "uncommitted" },
+      },
+      listener,
+    );
+
+    const target = Array.from((manager as any).targets.values())[0];
+    await (manager as any).refreshTarget(target);
+    expect(listener).not.toHaveBeenCalled();
+
+    await (manager as any).refreshTarget(target);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        files: [
+          expect.objectContaining({
+            path: "src/example.ts",
+            fingerprint: expect.any(String),
+          }),
+        ],
+      }),
+    );
+
     manager.dispose();
   });
 });

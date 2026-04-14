@@ -28,6 +28,9 @@ import {
   type CaptureTerminalRequest,
   type SubscribeCheckoutDiffRequest,
   type UnsubscribeCheckoutDiffRequest,
+  type CheckoutSubscribeDiffRequest,
+  type CheckoutUnsubscribeDiffRequest,
+  type CheckoutGetFileHunksRequest,
   type DirectorySuggestionsRequest,
   type EditorTargetDescriptorPayload,
   type EditorTargetId,
@@ -149,6 +152,7 @@ import { type WorktreeConfig } from "../utils/worktree.js";
 import { runAsyncWorktreeBootstrap } from "./worktree-bootstrap.js";
 import {
   getCheckoutDiff,
+  getCheckoutDiffFile,
   getCheckoutStatus,
   listBranchSuggestions,
   commitChanges,
@@ -622,6 +626,7 @@ export class Session {
   private inflightRequests = 0;
   private peakInflightRequests = 0;
   private readonly checkoutDiffSubscriptions = new Map<string, () => void>();
+  private readonly checkoutDiffLazySubscriptions = new Map<string, () => void>();
   private readonly workspaceGitSubscriptions = new Map<string, () => void>();
   private readonly registerVoiceSpeakHandler?: (
     agentId: string,
@@ -1781,6 +1786,18 @@ export class Session {
 
           case "unsubscribe_checkout_diff_request":
             this.handleUnsubscribeCheckoutDiffRequest(msg);
+            break;
+
+          case "checkout/subscribe_diff":
+            await this.handleCheckoutSubscribeDiffRequest(msg);
+            break;
+
+          case "checkout/get_file_hunks":
+            await this.handleCheckoutGetFileHunksRequest(msg);
+            break;
+
+          case "checkout/unsubscribe_diff":
+            this.handleCheckoutUnsubscribeDiffRequest(msg);
             break;
 
           case "checkout_switch_branch_request":
@@ -4275,6 +4292,89 @@ export class Session {
   private handleUnsubscribeCheckoutDiffRequest(msg: UnsubscribeCheckoutDiffRequest): void {
     this.checkoutDiffSubscriptions.get(msg.subscriptionId)?.();
     this.checkoutDiffSubscriptions.delete(msg.subscriptionId);
+  }
+
+  private async handleCheckoutSubscribeDiffRequest(
+    msg: CheckoutSubscribeDiffRequest,
+  ): Promise<void> {
+    const cwd = expandTilde(msg.cwd);
+    this.checkoutDiffLazySubscriptions.get(msg.subscriptionId)?.();
+    this.checkoutDiffLazySubscriptions.delete(msg.subscriptionId);
+
+    const subscription = await this.checkoutDiffManager.subscribeLazy(
+      { cwd, compare: msg.compare },
+      (snapshot) => {
+        this.emit({
+          type: "checkout/diff_snapshot",
+          payload: {
+            subscriptionId: msg.subscriptionId,
+            ...snapshot,
+          },
+        });
+      },
+    );
+    this.checkoutDiffLazySubscriptions.set(msg.subscriptionId, subscription.unsubscribe);
+
+    this.emit({
+      type: "checkout/diff_snapshot",
+      payload: {
+        subscriptionId: msg.subscriptionId,
+        ...subscription.initial,
+        requestId: msg.requestId,
+      },
+    });
+  }
+
+  private async handleCheckoutGetFileHunksRequest(msg: CheckoutGetFileHunksRequest): Promise<void> {
+    const cwd = expandTilde(msg.cwd);
+    let hunks = this.checkoutDiffManager.getFileHunks(cwd, msg.compare, msg.path);
+    let error: {
+      code: "UNKNOWN" | "NOT_ALLOWED" | "NOT_GIT_REPO" | "MERGE_CONFLICT";
+      message: string;
+    } | null = null;
+
+    if (hunks === null) {
+      try {
+        const file = await getCheckoutDiffFile(
+          cwd,
+          {
+            mode: msg.compare.mode,
+            baseRef: msg.compare.baseRef,
+            ignoreWhitespace: msg.compare.ignoreWhitespace,
+            includeStructured: true,
+          },
+          msg.path,
+          { paseoHome: this.paseoHome },
+        );
+        if (file) {
+          hunks = file.hunks;
+        } else {
+          hunks = [];
+          error = {
+            code: "UNKNOWN",
+            message: "File no longer present in diff",
+          };
+        }
+      } catch (caughtError) {
+        hunks = [];
+        error = toCheckoutError(caughtError);
+      }
+    }
+
+    this.emit({
+      type: "checkout/file_hunks_response",
+      payload: {
+        requestId: msg.requestId,
+        path: msg.path,
+        hunks,
+        error,
+      },
+    });
+  }
+
+  private handleCheckoutUnsubscribeDiffRequest(msg: CheckoutUnsubscribeDiffRequest): void {
+    this.checkoutDiffLazySubscriptions.get(msg.subscriptionId)?.();
+    this.checkoutDiffLazySubscriptions.delete(msg.subscriptionId);
   }
 
   private async handleCheckoutSwitchBranchRequest(
@@ -7386,6 +7486,11 @@ export class Session {
       unsubscribe();
     }
     this.checkoutDiffSubscriptions.clear();
+
+    for (const unsubscribe of this.checkoutDiffLazySubscriptions.values()) {
+      unsubscribe();
+    }
+    this.checkoutDiffLazySubscriptions.clear();
 
     for (const unsubscribe of this.workspaceGitSubscriptions.values()) {
       unsubscribe();

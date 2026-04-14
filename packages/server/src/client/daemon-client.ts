@@ -216,6 +216,14 @@ type SubscribeCheckoutDiffPayload = Extract<
   { type: "subscribe_checkout_diff_response" }
 >["payload"];
 type CheckoutDiffPayload = Omit<SubscribeCheckoutDiffPayload, "subscriptionId">;
+type CheckoutDiffMetadataSnapshotPayload = Extract<
+  SessionOutboundMessage,
+  { type: "checkout/diff_snapshot" }
+>["payload"];
+type CheckoutFileHunksPayload = Extract<
+  SessionOutboundMessage,
+  { type: "checkout/file_hunks_response" }
+>["payload"];
 type CheckoutCommitPayload = CheckoutCommitResponse["payload"];
 type CheckoutMergePayload = CheckoutMergeResponse["payload"];
 type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
@@ -500,8 +508,13 @@ type SetDaemonConfigResponse = Extract<
   SessionOutboundMessage,
   { type: "set_daemon_config_response" }
 >;
+type CheckoutDiffSnapshotResponse = Extract<
+  SessionOutboundMessage,
+  { type: "checkout/diff_snapshot" }
+>;
 type CorrelatedResponseMessage =
   | Extract<SessionOutboundMessage, { payload: { requestId: string } }>
+  | CheckoutDiffSnapshotResponse
   | GetDaemonConfigResponse
   | SetDaemonConfigResponse;
 type CorrelatedResponseType = CorrelatedResponseMessage["type"];
@@ -610,6 +623,13 @@ export class DaemonClient {
   private lastErrorValue: string | null = null;
   private connectionState: ConnectionState = { status: "idle" };
   private checkoutDiffSubscriptions = new Map<
+    string,
+    {
+      cwd: string;
+      compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+    }
+  >();
+  private checkoutDiffLazySubscriptions = new Map<
     string,
     {
       cwd: string;
@@ -1399,6 +1419,22 @@ export class DaemonClient {
     for (const [subscriptionId, subscription] of this.checkoutDiffSubscriptions) {
       const message = SessionInboundMessageSchema.parse({
         type: "subscribe_checkout_diff_request",
+        subscriptionId,
+        cwd: subscription.cwd,
+        compare: subscription.compare,
+        requestId: this.createRequestId(),
+      });
+      this.sendSessionMessage(message);
+    }
+  }
+
+  private resubscribeCheckoutDiffLazySubscriptions(): void {
+    if (this.checkoutDiffLazySubscriptions.size === 0) {
+      return;
+    }
+    for (const [subscriptionId, subscription] of this.checkoutDiffLazySubscriptions) {
+      const message = SessionInboundMessageSchema.parse({
+        type: "checkout/subscribe_diff",
         subscriptionId,
         cwd: subscription.cwd,
         compare: subscription.compare,
@@ -2267,6 +2303,105 @@ export class DaemonClient {
     this.sendSessionMessage({
       type: "unsubscribe_checkout_diff_request",
       subscriptionId,
+    });
+  }
+
+  async getCheckoutDiffMetadata(
+    cwd: string,
+    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+    requestId?: string,
+  ): Promise<Omit<CheckoutDiffMetadataSnapshotPayload, "subscriptionId">> {
+    const oneShotSubscriptionId = `oneshot-checkout-diff-lazy:${crypto.randomUUID()}`;
+    try {
+      const payload = await this.subscribeCheckoutDiffLazy(cwd, compare, {
+        subscriptionId: oneShotSubscriptionId,
+        requestId,
+      });
+      return {
+        cwd: payload.cwd,
+        files: payload.files,
+        error: payload.error,
+        requestId: payload.requestId,
+      };
+    } finally {
+      try {
+        this.unsubscribeCheckoutDiffLazy(oneShotSubscriptionId);
+      } catch {
+        // Ignore disconnect races during one-shot cleanup.
+      }
+    }
+  }
+
+  async subscribeCheckoutDiffLazy(
+    cwd: string,
+    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+    options?: { subscriptionId?: string; requestId?: string },
+  ): Promise<CheckoutDiffMetadataSnapshotPayload> {
+    const subscriptionId = options?.subscriptionId ?? crypto.randomUUID();
+    const normalizedCompare = this.normalizeCheckoutDiffCompare(compare);
+    const previousSubscription = this.checkoutDiffLazySubscriptions.get(subscriptionId) ?? null;
+    this.checkoutDiffLazySubscriptions.set(subscriptionId, {
+      cwd,
+      compare: normalizedCompare,
+    });
+
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "checkout/subscribe_diff",
+      subscriptionId,
+      cwd,
+      compare: normalizedCompare,
+      requestId: resolvedRequestId,
+    });
+
+    try {
+      return await this.sendCorrelatedRequest({
+        requestId: resolvedRequestId,
+        message,
+        responseType: "checkout/diff_snapshot",
+        timeout: 60000,
+        options: { skipQueue: true },
+        selectPayload: (payload) => {
+          if (payload.subscriptionId !== subscriptionId) {
+            return null;
+          }
+          return payload;
+        },
+      });
+    } catch (error) {
+      if (previousSubscription) {
+        this.checkoutDiffLazySubscriptions.set(subscriptionId, previousSubscription);
+      } else {
+        this.checkoutDiffLazySubscriptions.delete(subscriptionId);
+      }
+      throw error;
+    }
+  }
+
+  unsubscribeCheckoutDiffLazy(subscriptionId: string): void {
+    this.checkoutDiffLazySubscriptions.delete(subscriptionId);
+    this.sendSessionMessage({
+      type: "checkout/unsubscribe_diff",
+      subscriptionId,
+    });
+  }
+
+  async getCheckoutFileHunks(
+    cwd: string,
+    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+    path: string,
+    requestId?: string,
+  ): Promise<CheckoutFileHunksPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout/get_file_hunks",
+        cwd,
+        compare: this.normalizeCheckoutDiffCompare(compare),
+        path,
+      },
+      responseType: "checkout/file_hunks_response",
+      timeout: 60000,
     });
   }
 
@@ -3723,6 +3858,7 @@ export class DaemonClient {
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" }, { event: "HELLO_SERVER_INFO" });
           this.resubscribeCheckoutDiffSubscriptions();
+          this.resubscribeCheckoutDiffLazySubscriptions();
           this.resubscribeTerminalDirectorySubscriptions();
           this.flushPendingSendQueue();
           this.resolveConnect();

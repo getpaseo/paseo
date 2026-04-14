@@ -1,6 +1,6 @@
-import type { SubscribeCheckoutDiffResponse } from "@server/shared/messages";
-
-type ParsedDiffFile = SubscribeCheckoutDiffResponse["payload"]["files"][number];
+interface DiffFileWithPath {
+  path: string;
+}
 
 export function compareCheckoutDiffPaths(left: string, right: string): number {
   if (left === right) {
@@ -9,7 +9,7 @@ export function compareCheckoutDiffPaths(left: string, right: string): number {
   return left < right ? -1 : 1;
 }
 
-export function orderCheckoutDiffFiles(files: ParsedDiffFile[]): ParsedDiffFile[] {
+export function orderCheckoutDiffFiles<T extends DiffFileWithPath>(files: T[]): T[] {
   if (files.length < 2) {
     return files;
   }

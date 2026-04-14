@@ -1277,9 +1277,10 @@ export async function getCheckoutShortstat(
   }
 }
 
-export async function getCheckoutDiff(
+async function getCheckoutDiffInternal(
   cwd: string,
   compare: CheckoutDiffCompare,
+  options?: { path?: string },
   context?: CheckoutContext,
 ): Promise<CheckoutDiffResult> {
   await requireGitRepo(cwd);
@@ -1305,7 +1306,12 @@ export async function getCheckoutDiff(
 
   const ignoreWhitespace = compare.ignoreWhitespace === true;
   const changes = await listCheckoutFileChanges(cwd, refForDiff, ignoreWhitespace);
-  changes.sort((a, b) => {
+  const targetPath = options?.path;
+  const filteredChanges =
+    typeof targetPath === "string"
+      ? changes.filter((change) => change.path === targetPath)
+      : changes;
+  filteredChanges.sort((a, b) => {
     if (a.path === b.path) return 0;
     return a.path < b.path ? -1 : 1;
   });
@@ -1329,8 +1335,8 @@ export async function getCheckoutDiff(
     }
   };
 
-  const trackedChanges = changes.filter((change) => !change.isUntracked);
-  const untrackedChanges = changes.filter((change) => change.isUntracked === true);
+  const trackedChanges = filteredChanges.filter((change) => !change.isUntracked);
+  const untrackedChanges = filteredChanges.filter((change) => change.isUntracked === true);
   const trackedChangeByPath = new Map(trackedChanges.map((change) => [change.path, change]));
 
   const trackedNumstatByPath =
@@ -1512,6 +1518,24 @@ export async function getCheckoutDiff(
     return { diff: diffText, structured };
   }
   return { diff: diffText };
+}
+
+export async function getCheckoutDiff(
+  cwd: string,
+  compare: CheckoutDiffCompare,
+  context?: CheckoutContext,
+): Promise<CheckoutDiffResult> {
+  return getCheckoutDiffInternal(cwd, compare, undefined, context);
+}
+
+export async function getCheckoutDiffFile(
+  cwd: string,
+  compare: CheckoutDiffCompare,
+  path: string,
+  context?: CheckoutContext,
+): Promise<ParsedDiffFile | null> {
+  const result = await getCheckoutDiffInternal(cwd, compare, { path }, context);
+  return result.structured?.[0] ?? null;
 }
 
 export async function commitChanges(

@@ -516,6 +516,70 @@ describe("DaemonClient", () => {
     });
   });
 
+  test("subscribes to lazy checkout diff updates via RPC handshake", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.subscribeCheckoutDiffLazy(
+      "/tmp/project",
+      { mode: "uncommitted" },
+      { subscriptionId: "checkout-lazy-sub-1" },
+    );
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "checkout/subscribe_diff";
+        subscriptionId: string;
+        cwd: string;
+        compare: { mode: "uncommitted" | "base"; baseRef?: string };
+        requestId: string;
+      };
+    };
+    expect(request.message.type).toBe("checkout/subscribe_diff");
+    expect(request.message.subscriptionId).toBe("checkout-lazy-sub-1");
+    expect(request.message.cwd).toBe("/tmp/project");
+    expect(request.message.compare).toEqual({ mode: "uncommitted", ignoreWhitespace: false });
+
+    mock.triggerMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "checkout/diff_snapshot",
+          payload: {
+            subscriptionId: "checkout-lazy-sub-1",
+            cwd: "/tmp/project",
+            files: [],
+            error: null,
+            requestId: request.message.requestId,
+          },
+        },
+      }),
+    );
+
+    await expect(promise).resolves.toEqual({
+      subscriptionId: "checkout-lazy-sub-1",
+      cwd: "/tmp/project",
+      files: [],
+      error: null,
+      requestId: request.message.requestId,
+    });
+  });
+
   test("getCheckoutDiff uses one-shot subscription protocol", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();
@@ -587,6 +651,105 @@ describe("DaemonClient", () => {
     };
     expect(unsubscribeRequest.message.type).toBe("unsubscribe_checkout_diff_request");
     expect(unsubscribeRequest.message.subscriptionId).toBe(subscribeRequest.message.subscriptionId);
+  });
+
+  test("getCheckoutFileHunks requests hunks via RPC", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.getCheckoutFileHunks(
+      "/tmp/project",
+      { mode: "base", baseRef: "main" },
+      "src/app.ts",
+    );
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "checkout/get_file_hunks";
+        cwd: string;
+        compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+        path: string;
+        requestId: string;
+      };
+    };
+    expect(request.message.type).toBe("checkout/get_file_hunks");
+    expect(request.message.cwd).toBe("/tmp/project");
+    expect(request.message.compare).toEqual({
+      mode: "base",
+      baseRef: "main",
+      ignoreWhitespace: false,
+    });
+    expect(request.message.path).toBe("src/app.ts");
+
+    mock.triggerMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "checkout/file_hunks_response",
+          payload: {
+            requestId: request.message.requestId,
+            path: "src/app.ts",
+            hunks: [],
+            error: null,
+          },
+        },
+      }),
+    );
+
+    await expect(promise).resolves.toEqual({
+      requestId: request.message.requestId,
+      path: "src/app.ts",
+      hunks: [],
+      error: null,
+    });
+  });
+
+  test("unsubscribeCheckoutDiffLazy sends unsubscribe request", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    client.unsubscribeCheckoutDiffLazy("checkout-lazy-sub-1");
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "checkout/unsubscribe_diff";
+        subscriptionId: string;
+      };
+    };
+    expect(request.message).toEqual({
+      type: "checkout/unsubscribe_diff",
+      subscriptionId: "checkout-lazy-sub-1",
+    });
   });
 
   test("requests branch suggestions via RPC", async () => {
@@ -882,6 +1045,60 @@ describe("DaemonClient", () => {
     expect(request.message.subscriptionId).toBe("checkout-sub-1");
     expect(request.message.cwd).toBe("/tmp/project");
     expect(request.message.compare).toEqual({ mode: "base", baseRef: "main" });
+    expect(typeof request.message.requestId).toBe("string");
+    expect(request.message.requestId.length).toBeGreaterThan(0);
+  });
+
+  test("resubscribes lazy checkout diff streams after reconnect", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const internal = client as unknown as {
+      checkoutDiffLazySubscriptions: Map<
+        string,
+        {
+          cwd: string;
+          compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+        }
+      >;
+    };
+    internal.checkoutDiffLazySubscriptions.set("checkout-lazy-sub-1", {
+      cwd: "/tmp/project",
+      compare: { mode: "base", baseRef: "main", ignoreWhitespace: false },
+    });
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "checkout/subscribe_diff";
+        subscriptionId: string;
+        cwd: string;
+        compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+        requestId: string;
+      };
+    };
+    expect(request.message.type).toBe("checkout/subscribe_diff");
+    expect(request.message.subscriptionId).toBe("checkout-lazy-sub-1");
+    expect(request.message.cwd).toBe("/tmp/project");
+    expect(request.message.compare).toEqual({
+      mode: "base",
+      baseRef: "main",
+      ignoreWhitespace: false,
+    });
     expect(typeof request.message.requestId).toBe("string");
     expect(request.message.requestId.length).toBeGreaterThan(0);
   });

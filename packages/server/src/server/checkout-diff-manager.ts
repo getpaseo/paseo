@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type pino from "pino";
 import type { SubscribeCheckoutDiffRequest, SessionOutboundMessage } from "./messages.js";
+import type { DiffFileMetadata } from "./checkout/rpc-schemas.js";
 import { getCheckoutDiff } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
@@ -18,6 +20,16 @@ export type CheckoutDiffSnapshotPayload = Omit<
   "subscriptionId"
 >;
 
+type ParsedDiffFile = CheckoutDiffSnapshotPayload["files"][number];
+
+export type { DiffFileMetadata };
+
+export type CheckoutLazyDiffSnapshotPayload = {
+  cwd: string;
+  files: DiffFileMetadata[];
+  error: CheckoutDiffSnapshotPayload["error"];
+};
+
 export type CheckoutDiffMetrics = {
   checkoutDiffTargetCount: number;
   checkoutDiffSubscriptionCount: number;
@@ -31,13 +43,17 @@ type CheckoutDiffWatchTarget = {
   diffCwd: string;
   compare: CheckoutDiffCompareInput;
   listeners: Set<(snapshot: CheckoutDiffSnapshotPayload) => void>;
+  lazyListeners: Set<(snapshot: CheckoutLazyDiffSnapshotPayload) => void>;
   watchers: FSWatcher[];
   fallbackRefreshInterval: NodeJS.Timeout | null;
   debounceTimer: NodeJS.Timeout | null;
   refreshPromise: Promise<void> | null;
   refreshQueued: boolean;
   latestPayload: CheckoutDiffSnapshotPayload | null;
+  latestLazyPayload: CheckoutLazyDiffSnapshotPayload | null;
   latestFingerprint: string | null;
+  latestFilesByPath: Map<string, ParsedDiffFile>;
+  latestMetadataFingerprints: Map<string, string>;
   watchedPaths: Set<string>;
   repoWatchPath: string | null;
   linuxTreeRefreshPromise: Promise<void> | null;
@@ -72,11 +88,42 @@ export class CheckoutDiffManager {
         diffCwd: target.diffCwd,
       }));
     target.latestPayload = initial;
+    target.latestFilesByPath = new Map(initial.files.map((file) => [file.path, file]));
     target.latestFingerprint = JSON.stringify(initial);
     return {
       initial,
       unsubscribe: () => {
         this.removeListener(target.key, listener);
+      },
+    };
+  }
+
+  async subscribeLazy(
+    params: {
+      cwd: string;
+      compare: CheckoutDiffCompareInput;
+    },
+    listener: (snapshot: CheckoutLazyDiffSnapshotPayload) => void,
+  ): Promise<{ initial: CheckoutLazyDiffSnapshotPayload; unsubscribe: () => void }> {
+    const cwd = params.cwd;
+    const compare = this.normalizeCompare(params.compare);
+    const target = await this.ensureTarget(cwd, compare);
+    target.lazyListeners.add(listener);
+
+    const baseSnapshot =
+      target.latestPayload ??
+      (await this.computeCheckoutDiffSnapshot(target.cwd, target.compare, {
+        diffCwd: target.diffCwd,
+      }));
+    target.latestPayload = baseSnapshot;
+    target.latestFilesByPath = new Map(baseSnapshot.files.map((file) => [file.path, file]));
+    const initial = target.latestLazyPayload ?? this.buildLazySnapshot(baseSnapshot);
+    target.latestLazyPayload = initial;
+    target.latestMetadataFingerprints = this.buildMetadataFingerprintMap(initial.files);
+    return {
+      initial,
+      unsubscribe: () => {
+        this.removeLazyListener(target.key, listener);
       },
     };
   }
@@ -98,6 +145,7 @@ export class CheckoutDiffManager {
 
     for (const target of this.targets.values()) {
       checkoutDiffSubscriptionCount += target.listeners.size;
+      checkoutDiffSubscriptionCount += target.lazyListeners.size;
       checkoutDiffWatcherCount += target.watchers.length;
       if (target.fallbackRefreshInterval) {
         checkoutDiffFallbackRefreshTargetCount += 1;
@@ -154,6 +202,9 @@ export class CheckoutDiffManager {
     target.watchers = [];
     target.watchedPaths.clear();
     target.listeners.clear();
+    target.lazyListeners.clear();
+    target.latestFilesByPath.clear();
+    target.latestMetadataFingerprints.clear();
   }
 
   private removeListener(
@@ -165,7 +216,23 @@ export class CheckoutDiffManager {
       return;
     }
     target.listeners.delete(listener);
-    if (target.listeners.size > 0) {
+    if (target.listeners.size > 0 || target.lazyListeners.size > 0) {
+      return;
+    }
+    this.closeTarget(target);
+    this.targets.delete(targetKey);
+  }
+
+  private removeLazyListener(
+    targetKey: string,
+    listener: (snapshot: CheckoutLazyDiffSnapshotPayload) => void,
+  ): void {
+    const target = this.targets.get(targetKey);
+    if (!target) {
+      return;
+    }
+    target.lazyListeners.delete(listener);
+    if (target.listeners.size > 0 || target.lazyListeners.size > 0) {
       return;
     }
     this.closeTarget(target);
@@ -188,6 +255,15 @@ export class CheckoutDiffManager {
     }
   }
 
+  getFileHunks(
+    cwd: string,
+    compare: CheckoutDiffCompareInput,
+    path: string,
+  ): ParsedDiffFile["hunks"] | null {
+    const target = this.targets.get(this.buildTargetKey(cwd, this.normalizeCompare(compare)));
+    return target?.latestFilesByPath.get(path)?.hunks ?? null;
+  }
+
   private scheduleTargetRefresh(target: CheckoutDiffWatchTarget): void {
     if (target.debounceTimer) {
       clearTimeout(target.debounceTimer);
@@ -196,6 +272,81 @@ export class CheckoutDiffManager {
       target.debounceTimer = null;
       void this.refreshTarget(target);
     }, CHECKOUT_DIFF_WATCH_DEBOUNCE_MS);
+  }
+
+  private buildLazySnapshot(
+    snapshot: CheckoutDiffSnapshotPayload,
+  ): CheckoutLazyDiffSnapshotPayload {
+    return {
+      cwd: snapshot.cwd,
+      files: this.deriveMetadata(snapshot.files),
+      error: snapshot.error,
+    };
+  }
+
+  private deriveMetadata(files: ParsedDiffFile[]): DiffFileMetadata[] {
+    return files.map((file) => ({
+      path: file.path,
+      isNew: file.isNew,
+      isDeleted: file.isDeleted,
+      additions: file.additions,
+      deletions: file.deletions,
+      ...(file.status ? { status: file.status } : {}),
+      fingerprint: this.buildFileFingerprint(file),
+    }));
+  }
+
+  private buildFileFingerprint(file: ParsedDiffFile): string {
+    const serialized = JSON.stringify({
+      hunks: file.hunks.map((hunk) => ({
+        oldStart: hunk.oldStart,
+        oldCount: hunk.oldCount,
+        newStart: hunk.newStart,
+        newCount: hunk.newCount,
+        lines: hunk.lines.map((line) => ({
+          type: line.type,
+          content: line.content,
+        })),
+      })),
+    });
+    return createHash("sha256").update(serialized).digest("hex");
+  }
+
+  private buildMetadataFingerprintMap(files: DiffFileMetadata[]): Map<string, string> {
+    return new Map(
+      files.map((file) => [
+        file.path,
+        createHash("sha256").update(JSON.stringify(file)).digest("hex"),
+      ]),
+    );
+  }
+
+  private metadataSnapshotChanged(
+    target: CheckoutDiffWatchTarget,
+    snapshot: CheckoutLazyDiffSnapshotPayload,
+  ): boolean {
+    if (!target.latestLazyPayload) {
+      return true;
+    }
+    if (Boolean(target.latestLazyPayload.error) !== Boolean(snapshot.error)) {
+      return true;
+    }
+    if (
+      target.latestLazyPayload.error?.code !== snapshot.error?.code ||
+      target.latestLazyPayload.error?.message !== snapshot.error?.message
+    ) {
+      return true;
+    }
+    const nextFingerprints = this.buildMetadataFingerprintMap(snapshot.files);
+    if (nextFingerprints.size !== target.latestMetadataFingerprints.size) {
+      return true;
+    }
+    for (const [path, fingerprint] of nextFingerprints) {
+      if (target.latestMetadataFingerprints.get(path) !== fingerprint) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private async computeCheckoutDiffSnapshot(
@@ -247,12 +398,24 @@ export class CheckoutDiffManager {
           diffCwd: target.diffCwd,
         });
         target.latestPayload = snapshot;
+        target.latestFilesByPath = new Map(snapshot.files.map((file) => [file.path, file]));
         const fingerprint = JSON.stringify(snapshot);
         if (fingerprint !== target.latestFingerprint) {
           target.latestFingerprint = fingerprint;
           for (const listener of target.listeners) {
             listener(snapshot);
           }
+        }
+
+        const lazySnapshot = this.buildLazySnapshot(snapshot);
+        if (this.metadataSnapshotChanged(target, lazySnapshot)) {
+          target.latestLazyPayload = lazySnapshot;
+          target.latestMetadataFingerprints = this.buildMetadataFingerprintMap(lazySnapshot.files);
+          for (const listener of target.lazyListeners) {
+            listener(lazySnapshot);
+          }
+        } else {
+          target.latestLazyPayload = lazySnapshot;
         }
       } while (target.refreshQueued);
     })();
@@ -281,13 +444,17 @@ export class CheckoutDiffManager {
       diffCwd: watchRoot ?? cwd,
       compare,
       listeners: new Set(),
+      lazyListeners: new Set(),
       watchers: [],
       fallbackRefreshInterval: null,
       debounceTimer: null,
       refreshPromise: null,
       refreshQueued: false,
       latestPayload: null,
+      latestLazyPayload: null,
       latestFingerprint: null,
+      latestFilesByPath: new Map(),
+      latestMetadataFingerprints: new Map(),
       watchedPaths: new Set<string>(),
       repoWatchPath: null,
       linuxTreeRefreshPromise: null,
