@@ -11,6 +11,7 @@ const DEFAULT_HOST = "lan";
 const DEFAULT_LAUNCH_HOST = "127.0.0.1";
 const DEFAULT_APP_ID = "sh.paseo.debug";
 const DEFAULT_SCHEME = "exp+voice-mobile";
+const DEFAULT_PAIRING_SCHEME = "paseo";
 const DEFAULT_SUCCESS_TEXT = "Welcome to Paseo";
 const DEFAULT_WAIT_MS = 15000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 120000;
@@ -31,6 +32,7 @@ const WORKSPACE_UI_MARKERS = [
   "workspace-open-in-editor-primary",
   "permission-request-question",
 ];
+const HOST_UI_MARKERS = ["open-project-submit"];
 const HOP_BY_HOP_REQUEST_HEADERS = new Set([
   "connection",
   "proxy-connection",
@@ -45,6 +47,11 @@ const PROXY_ENV_KEYS = [
   "http_proxy",
   "HTTPS_PROXY",
   "https_proxy",
+];
+const SYSTEM_PERMISSION_DIALOG_PACKAGES = [
+  "com.android.permissioncontroller",
+  "com.google.android.permissioncontroller",
+  "com.lbe.security.miui",
 ];
 
 function printHelp() {
@@ -61,6 +68,9 @@ Options:
   --wait-ms <number>              Delay after launch before collecting evidence
   --startup-timeout-ms <number>   Expo readiness timeout
   --success-text <text>           UI text that indicates a successful app boot
+  --pairing-offer-url <url>       Optional pairing offer URL to import after app boot
+  --pairing-scheme <scheme>       App scheme used for pairing-link import (default: ${DEFAULT_PAIRING_SCHEME})
+  --pairing-wait-ms <number>      Delay after importing pairing link before collecting evidence
   --env KEY=VALUE                 Additional environment override (repeatable)
   --capture-first-request         Put an HTTP capture proxy in front of Metro and record the first requests
   --retry-on-timeout              Relaunch once if the first attempt hits the Expo timeout screen
@@ -106,6 +116,9 @@ function parseArgs(argv) {
     waitMs: DEFAULT_WAIT_MS,
     startupTimeoutMs: DEFAULT_STARTUP_TIMEOUT_MS,
     successText: DEFAULT_SUCCESS_TEXT,
+    pairingOfferUrl: null,
+    pairingScheme: DEFAULT_PAIRING_SCHEME,
+    pairingWaitMs: DEFAULT_WAIT_MS,
     envOverrides: {},
     keepProxyEnv: false,
     buildWorkspaceDeps: true,
@@ -151,6 +164,15 @@ function parseArgs(argv) {
         break;
       case "--success-text":
         options.successText = argv[++index];
+        break;
+      case "--pairing-offer-url":
+        options.pairingOfferUrl = argv[++index];
+        break;
+      case "--pairing-scheme":
+        options.pairingScheme = argv[++index];
+        break;
+      case "--pairing-wait-ms":
+        options.pairingWaitMs = parsePositiveInteger("--pairing-wait-ms", argv[++index]);
         break;
       case "--env": {
         const assignment = parseEnvAssignment(argv[++index]);
@@ -206,6 +228,30 @@ function buildDeepLinkUrl({ scheme, launchHost, port }) {
   )}`;
 }
 
+function extractOfferFragment(offerUrl) {
+  const marker = "#offer=";
+  const normalizedUrl = String(offerUrl ?? "").trim();
+  const markerIndex = normalizedUrl.indexOf(marker);
+  if (markerIndex === -1) {
+    throw new Error("Pairing offer URL must include #offer=...");
+  }
+
+  const encodedOffer = normalizedUrl.slice(markerIndex + marker.length).trim();
+  if (!encodedOffer) {
+    throw new Error("Pairing offer payload is empty");
+  }
+
+  return encodedOffer;
+}
+
+function buildPairingImportUrl({ pairingOfferUrl, pairingScheme }) {
+  if (!pairingOfferUrl) {
+    return null;
+  }
+
+  return `${pairingScheme}:///#offer=${extractOfferFragment(pairingOfferUrl)}`;
+}
+
 function uniqueCsv(values) {
   return [...new Set(values.filter(Boolean))].join(",");
 }
@@ -238,6 +284,88 @@ function buildExpoEnv(baseEnv, options) {
   return env;
 }
 
+function readXmlAttr(nodeTag, attributeName) {
+  const match = nodeTag.match(new RegExp(`${attributeName}="([^"]*)"`, "i"));
+  return match ? match[1] : "";
+}
+
+function parseBoundsCenter(boundsText) {
+  const match = String(boundsText ?? "").match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
+  if (!match) {
+    return null;
+  }
+
+  const left = Number.parseInt(match[1], 10);
+  const top = Number.parseInt(match[2], 10);
+  const right = Number.parseInt(match[3], 10);
+  const bottom = Number.parseInt(match[4], 10);
+  return {
+    x: Math.round((left + right) / 2),
+    y: Math.round((top + bottom) / 2),
+  };
+}
+
+function findPermissionDialogAllowButton(uiDumpXml) {
+  const xml = String(uiDumpXml ?? "");
+  if (!/Paseo/i.test(xml)) {
+    return null;
+  }
+
+  const nodeTags = xml.match(/<node\b[^>]*\/>/g) ?? [];
+  const buttons = [];
+
+  for (const nodeTag of nodeTags) {
+    const packageName = readXmlAttr(nodeTag, "package");
+    if (!SYSTEM_PERMISSION_DIALOG_PACKAGES.includes(packageName)) {
+      continue;
+    }
+
+    if (readXmlAttr(nodeTag, "class") !== "android.widget.Button") {
+      continue;
+    }
+
+    if (readXmlAttr(nodeTag, "clickable") !== "true" || readXmlAttr(nodeTag, "enabled") !== "true") {
+      continue;
+    }
+
+    const center = parseBoundsCenter(readXmlAttr(nodeTag, "bounds"));
+    if (!center) {
+      continue;
+    }
+
+    buttons.push({
+      packageName,
+      x: center.x,
+      y: center.y,
+    });
+  }
+
+  if (buttons.length < 2) {
+    return null;
+  }
+
+  return buttons.sort((left, right) => right.x - left.x)[0];
+}
+
+function isBenignTopInstanceDelivery(launchText) {
+  return /intent has been delivered to currently running top-most instance/i.test(
+    String(launchText ?? ""),
+  );
+}
+
+function hasAdbLaunchFailure(launchText) {
+  const text = String(launchText ?? "");
+  if (/Error: Activity class|unable to resolve Intent/i.test(text)) {
+    return true;
+  }
+
+  if (/Activity not started/i.test(text) && !isBenignTopInstanceDelivery(text)) {
+    return true;
+  }
+
+  return false;
+}
+
 function hasVisibleWorkspaceUi(uiDumpXml) {
   const xml = String(uiDumpXml ?? "");
   let matchedMarkers = 0;
@@ -249,6 +377,11 @@ function hasVisibleWorkspaceUi(uiDumpXml) {
   }
 
   return matchedMarkers >= 2;
+}
+
+function hasVisibleHostUi(uiDumpXml) {
+  const xml = String(uiDumpXml ?? "");
+  return HOST_UI_MARKERS.some((marker) => xml.includes(marker));
 }
 
 function classifyValidationResult({ uiDumpXml, logcatText, launchOutput, successText }) {
@@ -280,6 +413,13 @@ function classifyValidationResult({ uiDumpXml, logcatText, launchOutput, success
     };
   }
 
+  if (hasVisibleHostUi(uiXml)) {
+    return {
+      status: "app_loaded",
+      reason: "host_ui_visible",
+    };
+  }
+
   if (
     /SocketTimeoutException|Read timed out|timeout waiting for response headers/i.test(
       deviceLogcat,
@@ -292,7 +432,7 @@ function classifyValidationResult({ uiDumpXml, logcatText, launchOutput, success
     };
   }
 
-  if (/Activity not started|Error: Activity class|unable to resolve Intent/i.test(launchText)) {
+  if (hasAdbLaunchFailure(launchText)) {
     return {
       status: "launch_failed",
       reason: "adb_launch_error",
@@ -302,6 +442,56 @@ function classifyValidationResult({ uiDumpXml, logcatText, launchOutput, success
   return {
     status: "unknown",
     reason: "no_success_or_failure_signature",
+  };
+}
+
+function classifyPairingResult({ uiDumpXml, logcatText, launchOutput, successText }) {
+  const uiXml = String(uiDumpXml ?? "");
+  const deviceLogcat = String(logcatText ?? "");
+  const launchText = String(launchOutput ?? "");
+
+  if (hasVisibleWorkspaceUi(uiXml)) {
+    return {
+      status: "paired_workspace_loaded",
+      reason: "workspace_ui_visible_after_pairing",
+    };
+  }
+
+  if (hasVisibleHostUi(uiXml)) {
+    return {
+      status: "paired_host_loaded",
+      reason: "host_ui_visible_after_pairing",
+    };
+  }
+
+  if (successText && uiXml.includes(successText)) {
+    return {
+      status: "pairing_failed",
+      reason: "still_on_welcome_screen",
+    };
+  }
+
+  if (
+    /Unable to pair host|Pairing failed|Missing #offer= fragment|Offer payload is empty/i.test(
+      `${uiXml}\n${deviceLogcat}\n${launchText}`,
+    )
+  ) {
+    return {
+      status: "pairing_failed",
+      reason: "pairing_error_visible",
+    };
+  }
+
+  if (hasAdbLaunchFailure(launchText)) {
+    return {
+      status: "launch_failed",
+      reason: "adb_launch_error",
+    };
+  }
+
+  return {
+    status: "pairing_failed",
+    reason: "workspace_ui_not_visible_after_pairing",
   };
 }
 
@@ -330,6 +520,8 @@ function buildConfig(options, overrides = {}) {
   const appDir = overrides.appDir ?? path.join(repoRoot, "packages", "app");
   const outputDir = resolveOutputDir(options.outputDir, overrides.now);
   const networkPlan = resolveNetworkPlan(options);
+  const pairingScheme = options.pairingScheme ?? DEFAULT_PAIRING_SCHEME;
+  const pairingWaitMs = options.pairingWaitMs ?? options.waitMs ?? DEFAULT_WAIT_MS;
 
   return {
     ...options,
@@ -338,6 +530,12 @@ function buildConfig(options, overrides = {}) {
     outputDir,
     publicPort: networkPlan.publicPort,
     metroPort: networkPlan.metroPort,
+    pairingScheme,
+    pairingWaitMs,
+    pairingImportUrl: buildPairingImportUrl({
+      pairingOfferUrl: options.pairingOfferUrl,
+      pairingScheme,
+    }),
     deepLinkUrl: buildDeepLinkUrl({
       scheme: options.scheme,
       launchHost: options.launchHost,
@@ -352,6 +550,14 @@ function buildConfig(options, overrides = {}) {
       expoProbe: path.join(outputDir, "expo-probe.json"),
       launch: path.join(outputDir, "adb-start.txt"),
       logcat: path.join(outputDir, "logcat.txt"),
+      pairingActivityTop: path.join(outputDir, "activity-top-pairing.txt"),
+      pairingLaunch: path.join(outputDir, "adb-start-pairing.txt"),
+      pairingLogcat: path.join(outputDir, "logcat-pairing.txt"),
+      pairingPermissionDialogMeta: path.join(outputDir, "pairing-permission-dialog.json"),
+      pairingPermissionDialogScreenshot: path.join(outputDir, "device-pairing-permission-dialog.png"),
+      pairingPermissionDialogUiDump: path.join(outputDir, "device-pairing-permission-dialog.xml"),
+      pairingScreenshot: path.join(outputDir, "device-pairing.png"),
+      pairingUiDump: path.join(outputDir, "device-pairing.xml"),
       requestCapture: path.join(outputDir, "request-capture.json"),
       requestReplay: path.join(outputDir, "request-replay.json"),
       retryLaunch: path.join(outputDir, "adb-start-retry.txt"),
@@ -379,6 +585,15 @@ function writeJsonFile(filePath, value) {
   writeTextFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function copyArtifactIfPresent(sourcePath, destinationPath) {
+  if (!sourcePath || !destinationPath || !fs.existsSync(sourcePath)) {
+    return;
+  }
+
+  ensureDir(path.dirname(destinationPath));
+  fs.copyFileSync(sourcePath, destinationPath);
+}
+
 function buildValidationSummary(config, summary) {
   return {
     outputDir: config.outputDir,
@@ -396,6 +611,9 @@ function buildValidationSummary(config, summary) {
     clearLogcat: config.clearLogcat,
     captureFirstRequest: config.captureFirstRequest,
     retryOnTimeout: config.retryOnTimeout,
+    pairingRequested: Boolean(config.pairingImportUrl),
+    pairingScheme: config.pairingScheme,
+    pairingWaitMs: config.pairingWaitMs,
     envOverrides: config.envOverrides,
     ...summary,
   };
@@ -436,6 +654,8 @@ function failureArtifactPathForPhase(config, phase) {
       return config.artifactPaths.launch;
     case "retry_launch":
       return config.artifactPaths.retryLaunch;
+    case "launch_pairing_offer":
+      return config.artifactPaths.pairingLaunch;
     default:
       return null;
   }
@@ -637,6 +857,14 @@ function captureBinaryToFile(command, args, outputPath, options = {}) {
       }
     }
   });
+}
+
+function assertSupportedPlatform(platform = process.platform) {
+  if (platform !== "win32" && platform !== "linux") {
+    throw new Error(
+      "windows-dev-client-validation.cjs must run on Windows or Linux",
+    );
+  }
 }
 
 function sleep(ms) {
@@ -1258,6 +1486,7 @@ async function runValidation(config, dependencies = {}) {
     reason: "validation_interrupted",
   };
   let retrySummary = null;
+  let pairingSummary = null;
   let replaySummary = null;
 
   try {
@@ -1417,7 +1646,102 @@ async function runValidation(config, dependencies = {}) {
       };
     }
 
-    const finalOutcome = deriveValidationOutcome(initialClassification, retrySummary);
+    let finalOutcome = deriveValidationOutcome(initialClassification, retrySummary);
+
+    if (
+      config.pairingImportUrl &&
+      (finalOutcome.status === "app_loaded" || finalOutcome.status === "app_loaded_after_retry")
+    ) {
+      setPhase("launch_pairing_offer");
+      const pairingLaunch = await spawnCaptureFn(
+        "adb",
+        [
+          ...adbPrefix,
+          "shell",
+          "am",
+          "start",
+          "-W",
+          "-a",
+          "android.intent.action.VIEW",
+          "-d",
+          config.pairingImportUrl,
+          config.appId,
+        ],
+        {
+          timeoutMs: DEFAULT_LAUNCH_COMMAND_TIMEOUT_MS,
+        },
+      );
+      const pairingLaunchText = `${pairingLaunch.stdout}${pairingLaunch.stderr}`;
+      writeTextFile(config.artifactPaths.pairingLaunch, pairingLaunchText);
+
+      setPhase("wait_for_pairing");
+      await sleep(config.pairingWaitMs);
+
+      setPhase("capture_pairing_device_state");
+      const pairingState = await captureDeviceStateFn(config, adbPrefix, {
+        activityTop: config.artifactPaths.pairingActivityTop,
+        screenshot: config.artifactPaths.pairingScreenshot,
+        uiDump: config.artifactPaths.pairingUiDump,
+        logcat: config.artifactPaths.pairingLogcat,
+      });
+      let pairingClassification = classifyPairingResult({
+        uiDumpXml: pairingState.uiDumpXml,
+        logcatText: pairingState.logcatText,
+        launchOutput: pairingLaunchText,
+        successText: config.successText,
+      });
+      let permissionDialog = null;
+
+      const allowButton = findPermissionDialogAllowButton(pairingState.uiDumpXml);
+      if (allowButton && pairingClassification.status !== "paired_workspace_loaded") {
+        permissionDialog = {
+          dismissed: true,
+          ...allowButton,
+        };
+        writeJsonFile(config.artifactPaths.pairingPermissionDialogMeta, permissionDialog);
+        copyArtifactIfPresent(
+          config.artifactPaths.pairingScreenshot,
+          config.artifactPaths.pairingPermissionDialogScreenshot,
+        );
+        copyArtifactIfPresent(
+          config.artifactPaths.pairingUiDump,
+          config.artifactPaths.pairingPermissionDialogUiDump,
+        );
+
+        setPhase("dismiss_pairing_permission_dialog");
+        await spawnCaptureFn(
+          "adb",
+          [...adbPrefix, "shell", "input", "tap", String(allowButton.x), String(allowButton.y)],
+          {
+            timeoutMs: DEFAULT_ADB_COMMAND_TIMEOUT_MS,
+          },
+        );
+
+        setPhase("wait_for_pairing_after_permission_dialog");
+        await sleep(config.pairingWaitMs);
+
+        setPhase("capture_pairing_device_state_after_permission_dialog");
+        const postDialogPairingState = await captureDeviceStateFn(config, adbPrefix, {
+          activityTop: config.artifactPaths.pairingActivityTop,
+          screenshot: config.artifactPaths.pairingScreenshot,
+          uiDump: config.artifactPaths.pairingUiDump,
+          logcat: config.artifactPaths.pairingLogcat,
+        });
+        pairingClassification = classifyPairingResult({
+          uiDumpXml: postDialogPairingState.uiDumpXml,
+          logcatText: postDialogPairingState.logcatText,
+          launchOutput: pairingLaunchText,
+          successText: config.successText,
+        });
+      }
+
+      pairingSummary = {
+        launch: pairingLaunchText,
+        permissionDialog,
+        ...pairingClassification,
+      };
+      finalOutcome = pairingSummary;
+    }
 
     const summary = {
       phase: "completed",
@@ -1438,6 +1762,7 @@ async function runValidation(config, dependencies = {}) {
       },
       replay: replaySummary,
       retry: retrySummary,
+      pairing: pairingSummary,
     };
     writeSummary(summary);
     return summary;
@@ -1489,9 +1814,7 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
-  if (process.platform !== "win32") {
-    throw new Error("windows-dev-client-validation.cjs must run on Windows");
-  }
+  assertSupportedPlatform();
 
   const config = buildConfig(options);
   console.log(`Artifacts: ${config.outputDir}`);
@@ -1499,22 +1822,38 @@ async function main(argv = process.argv.slice(2)) {
   const summary = await runValidation(config);
   console.log(`Validation status: ${summary.status} (${summary.reason})`);
 
-  if (summary.status === "app_loaded" || summary.status === "app_loaded_after_retry") {
+  if (
+    summary.status === "app_loaded" ||
+    summary.status === "app_loaded_after_retry" ||
+    summary.status === "paired_workspace_loaded" ||
+    summary.status === "paired_host_loaded"
+  ) {
     return;
   }
 
   process.exitCode =
-    summary.status === "dev_client_read_timeout" ? 2 : summary.status === "launch_failed" ? 3 : 4;
+    summary.status === "dev_client_read_timeout"
+      ? 2
+      : summary.status === "launch_failed"
+        ? 3
+        : summary.status === "pairing_failed"
+          ? 5
+          : 4;
 }
 
 module.exports = {
+  assertSupportedPlatform,
   buildSpawnInvocation,
   buildUpstreamRequestHeaders,
   buildConfig,
   buildDeepLinkUrl,
+  buildPairingImportUrl,
   buildExpoEnv,
   classifyValidationResult,
+  classifyPairingResult,
   deriveValidationOutcome,
+  findPermissionDialogAllowButton,
+  hasAdbLaunchFailure,
   parseArgs,
   rewriteExpoManifestResponse,
   waitForExpoReady,

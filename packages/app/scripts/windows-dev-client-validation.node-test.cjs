@@ -5,14 +5,18 @@ const path = require("node:path");
 const os = require("node:os");
 
 const {
+  assertSupportedPlatform,
   buildSpawnInvocation,
   buildConfig,
   buildDeepLinkUrl,
+  buildPairingImportUrl,
   buildExpoEnv,
   rewriteExpoManifestResponse,
   buildUpstreamRequestHeaders,
   classifyValidationResult,
+  classifyPairingResult,
   deriveValidationOutcome,
+  findPermissionDialogAllowButton,
   parseArgs,
   shouldEndUpstreamImmediately,
   spawnCapture,
@@ -93,6 +97,21 @@ test("parseArgs accepts request capture and retry flags", () => {
   assert.equal(args.retryOnTimeout, true);
 });
 
+test("parseArgs accepts pairing import options", () => {
+  const args = parseArgs([
+    "--pairing-offer-url",
+    "https://app.paseo.sh/#offer=abc123",
+    "--pairing-scheme",
+    "paseo-debug",
+    "--pairing-wait-ms",
+    "9000",
+  ]);
+
+  assert.equal(args.pairingOfferUrl, "https://app.paseo.sh/#offer=abc123");
+  assert.equal(args.pairingScheme, "paseo-debug");
+  assert.equal(args.pairingWaitMs, 9000);
+});
+
 test("classifyValidationResult detects successful app boot from the UI dump", () => {
   const result = classifyValidationResult({
     uiDumpXml: '<node text="Welcome to Paseo" />',
@@ -149,6 +168,18 @@ test("classifyValidationResult detects a usable workspace UI without relying on 
   assert.equal(result.reason, "workspace_ui_visible");
 });
 
+test("classifyValidationResult accepts host root UI as a successful app boot", () => {
+  const result = classifyValidationResult({
+    uiDumpXml: '<node package="sh.paseo.debug" resource-id="open-project-submit" text="Add a project" />',
+    logcatText: "",
+    launchOutput: "Starting: Intent { ... }",
+    successText: "Welcome to Paseo",
+  });
+
+  assert.equal(result.status, "app_loaded");
+  assert.equal(result.reason, "host_ui_visible");
+});
+
 test("classifyValidationResult prefers visible workspace UI over timeout-only logcat noise", () => {
   const result = classifyValidationResult({
     uiDumpXml: [
@@ -180,6 +211,69 @@ test("classifyValidationResult ignores unrelated logcat timeouts when the app UI
   assert.equal(result.reason, "no_success_or_failure_signature");
 });
 
+test("buildPairingImportUrl rewrites the offer fragment onto the app scheme", () => {
+  assert.equal(
+    buildPairingImportUrl({
+      pairingOfferUrl: "https://app.paseo.sh/#offer=abc123",
+      pairingScheme: "paseo",
+    }),
+    "paseo:///#offer=abc123",
+  );
+});
+
+test("classifyPairingResult requires workspace UI instead of the welcome screen", () => {
+  const result = classifyPairingResult({
+    uiDumpXml: '<node text="Welcome to Paseo" />',
+    logcatText: "",
+    launchOutput: "Starting: Intent { ... }",
+    successText: "Welcome to Paseo",
+  });
+
+  assert.equal(result.status, "pairing_failed");
+  assert.equal(result.reason, "still_on_welcome_screen");
+});
+
+test("classifyPairingResult accepts host root UI after importing pairing link", () => {
+  const result = classifyPairingResult({
+    uiDumpXml: '<node package="sh.paseo.debug" resource-id="open-project-submit" text="Add a project" />',
+    logcatText: "",
+    launchOutput: "Starting: Intent { ... }",
+    successText: "Welcome to Paseo",
+  });
+
+  assert.equal(result.status, "paired_host_loaded");
+  assert.equal(result.reason, "host_ui_visible_after_pairing");
+});
+
+test("classifyPairingResult does not treat delivered-to-top-instance warnings as adb launch errors", () => {
+  const result = classifyPairingResult({
+    uiDumpXml: "",
+    logcatText: "",
+    launchOutput:
+      "Warning: Activity not started, intent has been delivered to currently running top-most instance.\nComplete\n",
+    successText: "Welcome to Paseo",
+  });
+
+  assert.equal(result.status, "pairing_failed");
+  assert.equal(result.reason, "workspace_ui_not_visible_after_pairing");
+});
+
+test("findPermissionDialogAllowButton picks right-most allow button from MIUI prompt", () => {
+  const button = findPermissionDialogAllowButton([
+    "<hierarchy>",
+    '<node package="com.lbe.security.miui" text="允许“Paseo Debug”发送通知？" />',
+    '<node package="com.lbe.security.miui" class="android.widget.Button" clickable="true" enabled="true" bounds="[131,2887][698,3070]" text="拒绝" />',
+    '<node package="com.lbe.security.miui" class="android.widget.Button" clickable="true" enabled="true" bounds="[741,2887][1308,3070]" text="始终允许" />',
+    "</hierarchy>",
+  ].join(""));
+
+  assert.deepEqual(button, {
+    packageName: "com.lbe.security.miui",
+    x: 1025,
+    y: 2979,
+  });
+});
+
 test("buildSpawnInvocation routes npm.cmd through cmd.exe on Windows", () => {
   assert.deepEqual(buildSpawnInvocation("npm", ["run", "build:workspace-deps"], "win32"), {
     command: "cmd.exe",
@@ -192,6 +286,10 @@ test("buildSpawnInvocation leaves adb untouched on Windows", () => {
     command: "adb",
     args: ["devices"],
   });
+});
+
+test("assertSupportedPlatform allows Linux validation host", () => {
+  assert.doesNotThrow(() => assertSupportedPlatform("linux"));
 });
 
 test("spawnCapture rejects when a command exceeds timeoutMs", async () => {
@@ -493,6 +591,236 @@ test("runValidation force-stops the dev client before launching and retrying", a
     assert.notEqual(retryForceStopIndex, -1);
     assert.ok(initialForceStopIndex < initialLaunchIndex);
     assert.ok(retryForceStopIndex < retryLaunchIndex);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("runValidation imports the pairing offer after app boot and waits for workspace UI", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-validation-pairing-"));
+  const config = buildConfig(
+    {
+      port: 8111,
+      host: "lan",
+      launchHost: "127.0.0.1",
+      deviceId: "f66d9150",
+      appId: "sh.paseo.debug",
+      scheme: "exp+voice-mobile",
+      outputDir,
+      waitMs: 1,
+      startupTimeoutMs: 1000,
+      successText: "Welcome to Paseo",
+      envOverrides: {},
+      keepProxyEnv: false,
+      buildWorkspaceDeps: false,
+      adbReverse: false,
+      captureScreenshot: false,
+      captureUiDump: false,
+      clearLogcat: false,
+      help: false,
+      captureFirstRequest: false,
+      retryOnTimeout: false,
+      pairingOfferUrl: "https://app.paseo.sh/#offer=abc123",
+      pairingScheme: "paseo",
+      pairingWaitMs: 1,
+    },
+    {
+      repoRoot: "/repo",
+      appDir: "/repo/packages/app",
+      baseEnv: {},
+    },
+  );
+  const spawnInvocations = [];
+  let captureCount = 0;
+
+  try {
+    const summary = await runValidation(config, {
+      spawnCapture: async (command, args) => {
+        spawnInvocations.push({ command, args });
+
+        if (command === "adb" && args[0] === "devices") {
+          return { stdout: "List of devices attached\nf66d9150\tdevice\n", stderr: "" };
+        }
+
+        if (command === "adb" && args.includes("force-stop")) {
+          return { stdout: "", stderr: "" };
+        }
+
+        if (command === "adb" && args.includes("start")) {
+          return { stdout: "Starting: Intent { ... }\nComplete\n", stderr: "" };
+        }
+
+        throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+      },
+      startRequestCaptureProxy: () => null,
+      startExpoProcess: () => ({
+        child: { exitCode: null },
+        getOutput: () => "Waiting on http://localhost:8111",
+        stop: async () => {},
+      }),
+      waitForExpoReady: async () => {},
+      captureDeviceState: async () => {
+        captureCount += 1;
+        if (captureCount === 1) {
+          return {
+            uiDumpXml: '<node text="Welcome to Paseo" />',
+            logcatText: "",
+          };
+        }
+
+        return {
+          uiDumpXml: [
+            "<hierarchy>",
+            '<node package="sh.paseo.debug" resource-id="workspace-header-title" text="codex_device_pair_test" />',
+            '<node package="sh.paseo.debug" resource-id="message-input-root" text="" />',
+            '<node package="sh.paseo.debug" resource-id="workspace-tabs-row" text="" />',
+            "</hierarchy>",
+          ].join(""),
+          logcatText: "",
+        };
+      },
+    });
+
+    assert.equal(summary.status, "paired_workspace_loaded");
+    assert.equal(summary.reason, "workspace_ui_visible_after_pairing");
+
+    const appLaunchIndex = spawnInvocations.findIndex(
+      (invocation) =>
+        invocation.command === "adb" &&
+        invocation.args.includes("start") &&
+        invocation.args.includes(config.deepLinkUrl),
+    );
+    const pairingLaunchIndex = spawnInvocations.findIndex(
+      (invocation) =>
+        invocation.command === "adb" &&
+        invocation.args.includes("start") &&
+        invocation.args.includes("paseo:///#offer=abc123"),
+    );
+
+    assert.notEqual(appLaunchIndex, -1);
+    assert.notEqual(pairingLaunchIndex, -1);
+    assert.ok(pairingLaunchIndex > appLaunchIndex);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("runValidation dismisses permission dialog during pairing before classifying workspace UI", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-dev-client-validation-"));
+  const config = buildConfig(
+    {
+      port: 8112,
+      host: "localhost",
+      launchHost: "127.0.0.1",
+      deviceId: "f66d9150",
+      appId: "sh.paseo.debug",
+      scheme: "exp+voice-mobile",
+      outputDir,
+      waitMs: 1,
+      startupTimeoutMs: 10,
+      successText: "Welcome to Paseo",
+      envOverrides: {},
+      keepProxyEnv: false,
+      buildWorkspaceDeps: false,
+      adbReverse: false,
+      captureScreenshot: false,
+      captureUiDump: false,
+      clearLogcat: false,
+      help: false,
+      captureFirstRequest: false,
+      retryOnTimeout: false,
+      pairingOfferUrl: "https://app.paseo.sh/#offer=abc123",
+      pairingScheme: "paseo",
+      pairingWaitMs: 1,
+    },
+    {
+      repoRoot: "/repo",
+      appDir: "/repo/packages/app",
+      baseEnv: {},
+    },
+  );
+  const spawnInvocations = [];
+  let captureCount = 0;
+
+  try {
+    const summary = await runValidation(config, {
+      spawnCapture: async (command, args) => {
+        spawnInvocations.push({ command, args });
+
+        if (command === "adb" && args[0] === "devices") {
+          return { stdout: "List of devices attached\nf66d9150\tdevice\n", stderr: "" };
+        }
+
+        if (command === "adb" && args.includes("force-stop")) {
+          return { stdout: "", stderr: "" };
+        }
+
+        if (command === "adb" && args.includes("start")) {
+          return {
+            stdout:
+              "Warning: Activity not started, intent has been delivered to currently running top-most instance.\nComplete\n",
+            stderr: "",
+          };
+        }
+
+        if (command === "adb" && args.includes("input") && args.includes("tap")) {
+          return { stdout: "", stderr: "" };
+        }
+
+        throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+      },
+      startRequestCaptureProxy: () => null,
+      startExpoProcess: () => ({
+        child: { exitCode: null },
+        getOutput: () => "Waiting on http://localhost:8112",
+        stop: async () => {},
+      }),
+      waitForExpoReady: async () => {},
+      captureDeviceState: async () => {
+        captureCount += 1;
+        if (captureCount === 1) {
+          return {
+            uiDumpXml: '<node text="Welcome to Paseo" />',
+            logcatText: "",
+          };
+        }
+
+        if (captureCount === 2) {
+          return {
+            uiDumpXml: [
+              "<hierarchy>",
+              '<node package="com.lbe.security.miui" text="允许“Paseo Debug”发送通知？" />',
+              '<node package="com.lbe.security.miui" class="android.widget.Button" clickable="true" enabled="true" bounds="[131,2887][698,3070]" text="拒绝" />',
+              '<node package="com.lbe.security.miui" class="android.widget.Button" clickable="true" enabled="true" bounds="[741,2887][1308,3070]" text="始终允许" />',
+              "</hierarchy>",
+            ].join(""),
+            logcatText: "",
+          };
+        }
+
+        return {
+          uiDumpXml: [
+            "<hierarchy>",
+            '<node package="sh.paseo.debug" resource-id="workspace-header-title" text="codex_device_pair_test" />',
+            '<node package="sh.paseo.debug" resource-id="message-input-root" text="" />',
+            '<node package="sh.paseo.debug" resource-id="workspace-tabs-row" text="" />',
+            "</hierarchy>",
+          ].join(""),
+          logcatText: "",
+        };
+      },
+    });
+
+    assert.equal(summary.status, "paired_workspace_loaded");
+    assert.equal(summary.reason, "workspace_ui_visible_after_pairing");
+    assert.equal(captureCount, 3);
+    assert.ok(
+      spawnInvocations.some(
+        (invocation) =>
+          invocation.command === "adb" &&
+          invocation.args.join(" ") === "-s f66d9150 shell input tap 1025 2979",
+      ),
+    );
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
