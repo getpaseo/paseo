@@ -259,6 +259,7 @@ export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionReque
   title: z.string().optional(),
   description: z.string().optional(),
   input: z.record(z.unknown()).optional(),
+  detail: z.lazy(() => ToolCallDetailPayloadSchema).optional(),
   suggestions: z.array(AgentPermissionUpdateSchema).optional(),
   actions: z.array(AgentPermissionActionSchema).optional(),
   metadata: z.record(z.unknown()).optional(),

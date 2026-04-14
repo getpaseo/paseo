@@ -255,6 +255,114 @@ describe("translateOpenCodeEvent", () => {
     ]);
   });
 
+  it("humanizes permission requests and includes shell detail when command metadata exists", () => {
+    const state = createState();
+
+    const result = translateOpenCodeEvent(
+      {
+        type: "permission.asked",
+        properties: {
+          id: "perm-1",
+          sessionID: "session-1",
+          permission: "external_directory",
+          patterns: ["/home/user/secrets/*"],
+          metadata: {
+            command: "ls /home/user/secrets",
+            reason: "Need to inspect generated files",
+          },
+          tool: {
+            messageID: "message-1",
+            callID: "call-1",
+          },
+        },
+      },
+      state,
+    );
+
+    expect(result).toEqual([
+      {
+        type: "permission_requested",
+        provider: "opencode",
+        request: {
+          id: "perm-1",
+          provider: "opencode",
+          name: "external_directory",
+          kind: "tool",
+          title: "Access external directory",
+          description: "Need to inspect generated files - Scope: /home/user/secrets/*",
+          input: {
+            patterns: ["/home/user/secrets/*"],
+            metadata: {
+              command: "ls /home/user/secrets",
+              reason: "Need to inspect generated files",
+            },
+            tool: {
+              messageID: "message-1",
+              callID: "call-1",
+            },
+            command: "ls /home/user/secrets",
+          },
+          detail: {
+            type: "shell",
+            command: "ls /home/user/secrets",
+          },
+        },
+      },
+    ]);
+  });
+
+  it("falls back to unknown permission detail when command metadata is absent", () => {
+    const state = createState();
+
+    const result = translateOpenCodeEvent(
+      {
+        type: "permission.asked",
+        properties: {
+          id: "perm-2",
+          sessionID: "session-1",
+          permission: "external_directory",
+          patterns: ["/tmp/outside/*"],
+          metadata: {
+            reason: "Need to access temporary checkout",
+          },
+        },
+      },
+      state,
+    );
+
+    expect(result).toEqual([
+      {
+        type: "permission_requested",
+        provider: "opencode",
+        request: {
+          id: "perm-2",
+          provider: "opencode",
+          name: "external_directory",
+          kind: "tool",
+          title: "Access external directory",
+          description: "Need to access temporary checkout - Scope: /tmp/outside/*",
+          input: {
+            patterns: ["/tmp/outside/*"],
+            metadata: {
+              reason: "Need to access temporary checkout",
+            },
+          },
+          detail: {
+            type: "unknown",
+            input: {
+              permission: "external_directory",
+              patterns: ["/tmp/outside/*"],
+              metadata: {
+                reason: "Need to access temporary checkout",
+              },
+            },
+            output: null,
+          },
+        },
+      },
+    ]);
+  });
+
   it("emits usage_updated after step-finish parts", () => {
     const state = createState();
     state.accumulatedUsage.contextWindowMaxTokens = 400_000;
