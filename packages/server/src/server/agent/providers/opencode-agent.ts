@@ -1189,7 +1189,7 @@ export function translateOpenCodeEvent(
         }
       } else if (part.type === "reasoning") {
         const partKey = resolvePartDedupeKey(part, "reasoning");
-        if (part.time.end) {
+        if (part.time?.end) {
           if (partKey && state.streamedPartKeys.delete(partKey)) {
             break;
           }
