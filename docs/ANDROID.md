@@ -4,9 +4,9 @@
 
 Controlled by `APP_VARIANT` in `packages/app/app.config.js` (vanilla Expo, no custom Gradle plugin):
 
-| Variant | App name | Package ID |
-|---|---|---|
-| `production` | Paseo | `sh.paseo` |
+| Variant       | App name    | Package ID       |
+| ------------- | ----------- | ---------------- |
+| `production`  | Paseo       | `sh.paseo`       |
 | `development` | Paseo Debug | `sh.paseo.debug` |
 
 EAS profiles: `development`, `production`, and `production-apk` in `packages/app/eas.json`.
@@ -43,6 +43,33 @@ rm -rf android
 ```bash
 adb exec-out screencap -p > screenshot.png
 ```
+
+## Windows real-device Expo validation
+
+For clean-worktree Android dev-client validation on Windows, use the repo script from `packages/app`:
+
+```powershell
+npm run validate:windows-dev-client -- `
+  --device-id f66d9150 `
+  --port 8097 `
+  --host lan `
+  --env EXPO_NO_METRO_WORKSPACE_ROOT=1
+```
+
+What it does:
+
+- optionally runs `npm run build:workspace-deps`
+- starts Expo in the foreground and records `expo.log`
+- clears proxy env for the Expo child unless `--keep-proxy-env` is set
+- runs `adb reverse`, launches the dev-client deep link, and captures screenshot, UI dump, logcat, and top activity
+- writes artifacts to a temp directory outside the checkout by default so the worktree stays clean
+
+Exit codes are classification-oriented, not just process-oriented:
+
+- `0` if the configured success text is visible in the dumped UI tree
+- `2` if Android logcat shows a dev-client socket/read timeout
+- `3` if `adb am start` fails to launch the target package
+- `4` if artifacts were captured but no known success or failure signature was found
 
 ## Cloud build + submit (EAS)
 

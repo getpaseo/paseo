@@ -7,6 +7,7 @@
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "build:workspace-deps": "npm run build --workspace=@getpaseo/highlight && npm run build --workspace=@getpaseo/expo-two-way-audio",
+    "validate:windows-dev-client": "node ./scripts/windows-dev-client-validation.cjs",
     "eas-build-post-install": "npm run build:workspace-deps",
     "android": "npm run android:development",
     "android:development": "APP_VARIANT=development expo prebuild --platform android --non-interactive && APP_VARIANT=development expo run:android --variant=debug",
