@@ -1535,6 +1535,21 @@ export function translateOpenCodeEvent(
       break;
     }
 
+    case "permission.replied": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "permission_resolved",
+        provider: "opencode",
+        requestId: event.properties.requestID,
+        resolution:
+          event.properties.reply === "reject" ? { behavior: "deny" } : { behavior: "allow" },
+      });
+      break;
+    }
+
     case "question.asked": {
       if (event.properties.sessionID !== state.sessionId) {
         break;
@@ -1595,6 +1610,20 @@ export function translateOpenCodeEvent(
       break;
     }
 
+    case "question.replied": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "permission_resolved",
+        provider: "opencode",
+        requestId: event.properties.requestID,
+        resolution: { behavior: "allow" },
+      });
+      break;
+    }
+
     case "session.compacted": {
       if (event.properties.sessionID !== state.sessionId) {
         break;
@@ -1604,6 +1633,20 @@ export function translateOpenCodeEvent(
         type: "timeline",
         provider: "opencode",
         item: createCompactionTimelineItem("completed"),
+      });
+      break;
+    }
+
+    case "question.rejected": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "permission_resolved",
+        provider: "opencode",
+        requestId: event.properties.requestID,
+        resolution: { behavior: "deny", message: "Question rejected" },
       });
       break;
     }
@@ -2476,6 +2519,9 @@ class OpenCodeAgentSession implements AgentSession {
     for (const translatedEvent of translated) {
       if (translatedEvent.type === "permission_requested") {
         this.pendingPermissions.set(translatedEvent.request.id, translatedEvent.request);
+      }
+      if (translatedEvent.type === "permission_resolved") {
+        this.pendingPermissions.delete(translatedEvent.requestId);
       }
       if (translatedEvent.type === "turn_completed") {
         if (hasNormalizedOpenCodeUsage(this.accumulatedUsage)) {
