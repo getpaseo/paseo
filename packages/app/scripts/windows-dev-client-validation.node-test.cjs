@@ -170,7 +170,8 @@ test("classifyValidationResult detects a usable workspace UI without relying on 
 
 test("classifyValidationResult accepts host root UI as a successful app boot", () => {
   const result = classifyValidationResult({
-    uiDumpXml: '<node package="sh.paseo.debug" resource-id="open-project-submit" text="Add a project" />',
+    uiDumpXml:
+      '<node package="sh.paseo.debug" resource-id="open-project-submit" text="Add a project" />',
     logcatText: "",
     launchOutput: "Starting: Intent { ... }",
     successText: "Welcome to Paseo",
@@ -235,7 +236,8 @@ test("classifyPairingResult requires workspace UI instead of the welcome screen"
 
 test("classifyPairingResult accepts host root UI after importing pairing link", () => {
   const result = classifyPairingResult({
-    uiDumpXml: '<node package="sh.paseo.debug" resource-id="open-project-submit" text="Add a project" />',
+    uiDumpXml:
+      '<node package="sh.paseo.debug" resource-id="open-project-submit" text="Add a project" />',
     logcatText: "",
     launchOutput: "Starting: Intent { ... }",
     successText: "Welcome to Paseo",
@@ -259,13 +261,15 @@ test("classifyPairingResult does not treat delivered-to-top-instance warnings as
 });
 
 test("findPermissionDialogAllowButton picks right-most allow button from MIUI prompt", () => {
-  const button = findPermissionDialogAllowButton([
-    "<hierarchy>",
-    '<node package="com.lbe.security.miui" text="允许“Paseo Debug”发送通知？" />',
-    '<node package="com.lbe.security.miui" class="android.widget.Button" clickable="true" enabled="true" bounds="[131,2887][698,3070]" text="拒绝" />',
-    '<node package="com.lbe.security.miui" class="android.widget.Button" clickable="true" enabled="true" bounds="[741,2887][1308,3070]" text="始终允许" />',
-    "</hierarchy>",
-  ].join(""));
+  const button = findPermissionDialogAllowButton(
+    [
+      "<hierarchy>",
+      '<node package="com.lbe.security.miui" text="允许“Paseo Debug”发送通知？" />',
+      '<node package="com.lbe.security.miui" class="android.widget.Button" clickable="true" enabled="true" bounds="[131,2887][698,3070]" text="拒绝" />',
+      '<node package="com.lbe.security.miui" class="android.widget.Button" clickable="true" enabled="true" bounds="[741,2887][1308,3070]" text="始终允许" />',
+      "</hierarchy>",
+    ].join(""),
+  );
 
   assert.deepEqual(button, {
     packageName: "com.lbe.security.miui",

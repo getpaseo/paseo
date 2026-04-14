@@ -324,7 +324,10 @@ function findPermissionDialogAllowButton(uiDumpXml) {
       continue;
     }
 
-    if (readXmlAttr(nodeTag, "clickable") !== "true" || readXmlAttr(nodeTag, "enabled") !== "true") {
+    if (
+      readXmlAttr(nodeTag, "clickable") !== "true" ||
+      readXmlAttr(nodeTag, "enabled") !== "true"
+    ) {
       continue;
     }
 
@@ -554,7 +557,10 @@ function buildConfig(options, overrides = {}) {
       pairingLaunch: path.join(outputDir, "adb-start-pairing.txt"),
       pairingLogcat: path.join(outputDir, "logcat-pairing.txt"),
       pairingPermissionDialogMeta: path.join(outputDir, "pairing-permission-dialog.json"),
-      pairingPermissionDialogScreenshot: path.join(outputDir, "device-pairing-permission-dialog.png"),
+      pairingPermissionDialogScreenshot: path.join(
+        outputDir,
+        "device-pairing-permission-dialog.png",
+      ),
       pairingPermissionDialogUiDump: path.join(outputDir, "device-pairing-permission-dialog.xml"),
       pairingScreenshot: path.join(outputDir, "device-pairing.png"),
       pairingUiDump: path.join(outputDir, "device-pairing.xml"),
@@ -861,9 +867,7 @@ function captureBinaryToFile(command, args, outputPath, options = {}) {
 
 function assertSupportedPlatform(platform = process.platform) {
   if (platform !== "win32" && platform !== "linux") {
-    throw new Error(
-      "windows-dev-client-validation.cjs must run on Windows or Linux",
-    );
+    throw new Error("windows-dev-client-validation.cjs must run on Windows or Linux");
   }
 }
 
