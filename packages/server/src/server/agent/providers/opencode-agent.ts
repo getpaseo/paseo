@@ -1163,6 +1163,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
 export type OpenCodeEventTranslationState = {
   sessionId: string;
+  threadStartedEmitted: boolean;
   messageRoles: Map<string, OpenCodeMessageRole>;
   accumulatedUsage: AgentUsage;
   streamedPartKeys: Set<string>;
@@ -1382,7 +1383,8 @@ export function translateOpenCodeEvent(
   switch (event.type) {
     case "session.created":
     case "session.updated": {
-      if (event.properties.info.id === state.sessionId) {
+      if (event.properties.info.id === state.sessionId && !state.threadStartedEmitted) {
+        state.threadStartedEmitted = true;
         events.push({
           type: "thread_started",
           sessionId: state.sessionId,
@@ -1776,6 +1778,7 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
+  private threadStartedEmitted = false;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private selectedModelContextWindowMaxTokens: number | undefined;
   constructor(
@@ -2565,8 +2568,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private translateEvent(event: OpenCodeEvent): AgentStreamEvent[] {
-    const translated = translateOpenCodeEvent(event, {
+    const translationState: OpenCodeEventTranslationState = {
       sessionId: this.sessionId,
+      threadStartedEmitted: this.threadStartedEmitted,
       messageRoles: this.messageRoles,
       accumulatedUsage: this.accumulatedUsage,
       streamedPartKeys: this.streamedPartKeys,
@@ -2579,7 +2583,9 @@ class OpenCodeAgentSession implements AgentSession {
           this.selectedModelContextWindowMaxTokens = contextWindowMaxTokens;
         }
       },
-    });
+    };
+    const translated = translateOpenCodeEvent(event, translationState);
+    this.threadStartedEmitted = translationState.threadStartedEmitted;
 
     for (const translatedEvent of translated) {
       if (translatedEvent.type === "permission_requested") {
