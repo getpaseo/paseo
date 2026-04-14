@@ -135,8 +135,26 @@ jobs:
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
 
+  playwright-preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      has_openai_api_key: ${{ steps.secret-check.outputs.has_openai_api_key }}
+    steps:
+      - name: Detect OpenAI key availability
+        id: secret-check
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "has_openai_api_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_openai_api_key=false" >> "$GITHUB_OUTPUT"
+          fi
+
   playwright:
-    if: ${{ secrets.OPENAI_API_KEY != '' }}
+    needs: playwright-preflight
+    if: ${{ needs.playwright-preflight.outputs.has_openai_api_key == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
