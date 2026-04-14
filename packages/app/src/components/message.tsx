@@ -74,6 +74,8 @@ import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { markScrollInvestigationEvent } from "@/utils/scroll-jank-investigation";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { mathPlugin } from "@/utils/markdown-it-math";
+import { MathView } from "@/components/math-view";
 import {
   getAssistantImageMetadata,
   setAssistantImageMetadata,
@@ -969,6 +971,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   const markdownParser = useMemo(() => {
     const parser = MarkdownIt({ typographer: true, linkify: true });
+    parser.use(mathPlugin);
     const defaultValidateLink = parser.validateLink.bind(parser);
     parser.validateLink = (url: string) => {
       if (url.trim().toLowerCase().startsWith("file://")) {
@@ -1041,6 +1044,12 @@ export const AssistantMessage = memo(function AssistantMessage({
         <Text key={node.key} style={[inheritedStyles, styles.fence]}>
           {node.content}
         </Text>
+      ),
+      math_inline: (node: any) => (
+        <MathView key={node.key} expression={node.content} displayMode={false} />
+      ),
+      math_block: (node: any) => (
+        <MathView key={node.key} expression={node.content} displayMode={true} />
       ),
       code_inline: (
         node: any,
