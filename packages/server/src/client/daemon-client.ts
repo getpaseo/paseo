@@ -108,6 +108,20 @@ const consoleLogger: Logger = {
   error: (obj, msg) => console.error(msg, obj),
 };
 
+function getRawSessionMessage(
+  payload: unknown,
+): { type: string } & Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const record = payload as { type?: unknown; message?: unknown };
+  if (record.type !== "session" || !record.message || typeof record.message !== "object") {
+    return null;
+  }
+  const message = record.message as { type?: unknown } & Record<string, unknown>;
+  return typeof message.type === "string" ? message : null;
+}
+
 export type {
   DaemonTransport,
   DaemonTransportFactory,
@@ -3609,7 +3623,30 @@ export class DaemonClient {
       return;
     }
 
-    const parsed = WSOutboundMessageSchema.safeParse(parsedJson);
+    let parsed: ReturnType<typeof WSOutboundMessageSchema.safeParse>;
+    try {
+      parsed = WSOutboundMessageSchema.safeParse(parsedJson);
+    } catch (error) {
+      const rawSessionMessage = getRawSessionMessage(parsedJson);
+      if (rawSessionMessage) {
+        this.logger.debug(
+          {
+            msgType: rawSessionMessage.type,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "Message schema parse threw; falling back to raw session handling",
+        );
+        this.handleSessionMessage(rawSessionMessage as SessionOutboundMessage);
+        return;
+      }
+      this.logger.warn(
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Message schema parse threw",
+      );
+      return;
+    }
     if (!parsed.success) {
       const msgType = (parsedJson as { type?: string })?.type ?? "unknown";
       this.logger.warn({ msgType, error: parsed.error.message }, "Message validation failed");
