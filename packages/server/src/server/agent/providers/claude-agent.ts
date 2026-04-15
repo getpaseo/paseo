@@ -771,7 +771,7 @@ class TimelineAssembler {
     runId: string | null,
     messageIdHint: string | null,
   ): AgentTimelineItem[] {
-    const event = message.event as Record<string, unknown>;
+    const event = message.event as unknown as Record<string, unknown>;
     const eventType = readTrimmedString(event.type);
     const streamEventMessageId = this.readMessageIdFromStreamEvent(event) ?? messageIdHint;
 
@@ -2163,9 +2163,10 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private toSdkUserMessage(prompt: AgentPromptInput): SDKUserMessage {
+    type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
     const content: Array<
       | { type: "text"; text: string }
-      | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+      | { type: "image"; source: { type: "base64"; media_type: ImageMediaType; data: string } }
     > = [];
     if (Array.isArray(prompt)) {
       for (const chunk of prompt) {
@@ -2176,7 +2177,7 @@ class ClaudeAgentSession implements AgentSession {
             type: "image",
             source: {
               type: "base64",
-              media_type: chunk.mimeType,
+              media_type: chunk.mimeType as ImageMediaType,
               data: chunk.data,
             },
           });
