@@ -14,7 +14,22 @@
             "listen": {
               "type": "string"
             },
+            "hostnames": {
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "const": true
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            },
             "allowedHosts": {
+              "description": "Deprecated: use hostnames instead",
               "anyOf": [
                 {
                   "type": "boolean",

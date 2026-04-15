@@ -119,7 +119,7 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
-import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
+import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -162,7 +162,7 @@ export type PaseoDaemonConfig = {
   listen: string;
   paseoHome: string;
   corsAllowedOrigins: string[];
-  allowedHosts?: AllowedHostsConfig;
+  hostnames?: HostnamesConfig;
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   staticDir: string;
@@ -231,7 +231,7 @@ export async function createPaseoDaemon(
     if (listenTarget.type === "tcp") {
       app.use((req, res, next) => {
         const hostHeader = typeof req.headers.host === "string" ? req.headers.host : undefined;
-        if (!isHostAllowed(hostHeader, config.allowedHosts)) {
+        if (!isHostnameAllowed(hostHeader, config.hostnames)) {
           res.status(403).json({ error: "Invalid Host header" });
           return;
         }
@@ -604,7 +604,7 @@ export async function createPaseoDaemon(
               config.paseoHome,
               daemonConfigStore,
               mcpBaseUrl,
-              { allowedOrigins, allowedHosts: config.allowedHosts },
+              { allowedOrigins, hostnames: config.hostnames },
               speechService,
               terminalManager,
               {

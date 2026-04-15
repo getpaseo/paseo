@@ -11,11 +11,7 @@ import type {
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { AgentProviderSchema } from "./agent/provider-manifest.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
-import {
-  mergeAllowedHosts,
-  parseAllowedHostsEnv,
-  type AllowedHostsConfig,
-} from "./allowed-hosts.js";
+import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
@@ -42,7 +38,7 @@ export type CliConfigOverrides = Partial<{
   relayEnabled: boolean;
   mcpEnabled: boolean;
   mcpInjectIntoAgents: boolean;
-  allowedHosts: AllowedHostsConfig;
+  hostnames: HostnamesConfig;
 }>;
 
 const OptionalVoiceLlmProviderSchema = z
@@ -133,10 +129,10 @@ export function loadConfig(
 
   const persistedCorsOrigins = persisted.daemon?.cors?.allowedOrigins ?? [];
 
-  const allowedHosts = mergeAllowedHosts([
-    persisted.daemon?.allowedHosts,
-    parseAllowedHostsEnv(env.PASEO_ALLOWED_HOSTS),
-    options?.cli?.allowedHosts,
+  const hostnames = mergeHostnames([
+    persisted.daemon?.hostnames,
+    parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
+    options?.cli?.hostnames,
   ]);
 
   const mcpEnabled = options?.cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true;
@@ -181,7 +177,7 @@ export function loadConfig(
     corsAllowedOrigins: Array.from(
       new Set([...persistedCorsOrigins, ...envCorsOrigins].filter((s) => s.length > 0)),
     ),
-    allowedHosts,
+    hostnames,
     mcpEnabled,
     mcpInjectIntoAgents,
     mcpDebug: env.MCP_DEBUG === "1",

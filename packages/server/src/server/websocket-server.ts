@@ -23,8 +23,8 @@ import {
   wrapSessionMessage,
 } from "./messages.js";
 import { asUint8Array, decodeTerminalStreamFrame } from "../shared/terminal-stream-protocol.js";
-import type { AllowedHostsConfig } from "./allowed-hosts.js";
-import { isHostAllowed } from "./allowed-hosts.js";
+import type { HostnamesConfig } from "./hostnames.js";
+import { isHostnameAllowed } from "./hostnames.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import type {
@@ -61,7 +61,7 @@ type PendingConnection = {
 
 type WebSocketServerConfig = {
   allowedOrigins: Set<string>;
-  allowedHosts?: AllowedHostsConfig;
+  hostnames?: HostnamesConfig;
 };
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
@@ -433,7 +433,7 @@ export class VoiceAssistantWebSocketServer {
       this.broadcastAgentAttention(params);
     });
 
-    const { allowedOrigins, allowedHosts } = wsConfig;
+    const { allowedOrigins, hostnames } = wsConfig;
     this.wss = new WebSocketServer({
       server,
       path: "/ws",
@@ -441,7 +441,7 @@ export class VoiceAssistantWebSocketServer {
         const requestMetadata = extractSocketRequestMetadata(req);
         const origin = requestMetadata.origin;
         const requestHost = requestMetadata.host ?? null;
-        if (requestHost && !isHostAllowed(requestHost, allowedHosts)) {
+        if (requestHost && !isHostnameAllowed(requestHost, hostnames)) {
           this.incrementRuntimeCounter("hostRejected");
           this.logger.warn(
             { ...requestMetadata, host: requestHost },

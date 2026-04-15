@@ -228,6 +228,7 @@ export const PersistedConfigSchema = z
     daemon: z
       .object({
         listen: z.string().optional(),
+        hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
         allowedHosts: z.union([z.literal(true), z.array(z.string())]).optional(),
         mcp: z
           .object({
@@ -252,6 +253,10 @@ export const PersistedConfigSchema = z
           .optional(),
       })
       .strict()
+      .transform(({ allowedHosts, ...daemon }) => {
+        const hostnames = daemon.hostnames ?? allowedHosts;
+        return hostnames === undefined ? daemon : { ...daemon, hostnames };
+      })
       .optional(),
 
     app: z
