@@ -60,7 +60,59 @@ describe("shared tool-call display mapping", () => {
 
     expect(display).toEqual({
       displayName: "Explore",
-      summary: "Inspect repository structure",
+      summary: "Running - Inspect repository structure - Read README.md",
+    });
+  });
+
+  it("shows completed sub-agent progress in the summary", () => {
+    const display = buildToolCallDisplayModel({
+      name: "task",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Explore",
+        description: "Inspect repository structure",
+        log: "[Read] README.md\n[Edit] src/index.ts",
+        actions: [
+          {
+            index: 1,
+            toolName: "Read",
+            summary: "README.md",
+          },
+          {
+            index: 2,
+            toolName: "Edit",
+            summary: "src/index.ts",
+          },
+        ],
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "Explore",
+      summary: "Completed - Inspect repository structure - Edit src/index.ts - 2 steps",
+    });
+  });
+
+  it("uses task input to label unknown running sub-agents before detail upgrades", () => {
+    const display = buildToolCallDisplayModel({
+      name: "Task",
+      status: "running",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: {
+          subagent_type: "Explore",
+          description: "Inspect repository structure",
+        },
+        output: null,
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "Explore",
+      summary: "Running - Inspect repository structure",
     });
   });
 

@@ -20,6 +20,74 @@ type DetailDisplay = {
   summary?: string;
 };
 
+function pluralize(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function joinSummarySegments(...segments: Array<string | undefined>): string | undefined {
+  const definedSegments = segments.filter((segment) => Boolean(segment));
+  return definedSegments.length > 0 ? definedSegments.join(" - ") : undefined;
+}
+
+function formatToolCallStatus(status: ToolCallDisplayInput["status"]): string {
+  switch (status) {
+    case "running":
+      return "Running";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "canceled":
+      return "Canceled";
+  }
+}
+
+function getLatestSubAgentActionSummary(
+  input: Extract<ToolCallDisplayInput["detail"], { type: "sub_agent" }>,
+): string | undefined {
+  const latestAction = input.actions[input.actions.length - 1];
+  if (!latestAction) {
+    return undefined;
+  }
+
+  return latestAction.summary
+    ? `${latestAction.toolName} ${latestAction.summary}`
+    : latestAction.toolName;
+}
+
+function buildSubAgentSummary(input: ToolCallDisplayInput): string | undefined {
+  if (input.detail.type !== "sub_agent") {
+    return undefined;
+  }
+
+  const description = readString(input.detail.description);
+  const actionCount = input.detail.actions.length;
+  return joinSummarySegments(
+    formatToolCallStatus(input.status),
+    description,
+    getLatestSubAgentActionSummary(input.detail),
+    actionCount > 1 ? pluralize(actionCount, "step", "steps") : undefined,
+  );
+}
+
+function buildUnknownTaskDisplay(input: ToolCallDisplayInput): DetailDisplay {
+  if (input.detail.type !== "unknown" || input.name.trim().toLowerCase() !== "task") {
+    return {};
+  }
+
+  const taskInput = isRecord(input.detail.input) ? input.detail.input : null;
+  const subAgentType = taskInput ? readString(taskInput.subagent_type) : undefined;
+  const description = taskInput ? readString(taskInput.description) : undefined;
+  const activity = isRecord(input.metadata)
+    ? readString(input.metadata.subAgentActivity)
+    : undefined;
+
+  return {
+    displayName: subAgentType ?? "Task",
+    summary: joinSummarySegments(formatToolCallStatus(input.status), activity ?? description),
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -110,7 +178,7 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
     case "sub_agent":
       return {
         displayName: readString(input.detail.subAgentType) ?? "Task",
-        summary: readString(input.detail.description),
+        summary: buildSubAgentSummary(input),
       };
     case "plain_text":
       return {
@@ -128,10 +196,7 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
 function buildUnknownDetailOverride(input: ToolCallDisplayInput): DetailDisplay {
   const lowerName = input.name.trim().toLowerCase();
   if (input.detail.type === "unknown" && lowerName === "task") {
-    return {
-      displayName: "Task",
-      summary: isRecord(input.metadata) ? readString(input.metadata.subAgentActivity) : undefined,
-    };
+    return buildUnknownTaskDisplay(input);
   }
   if (input.detail.type === "unknown" && lowerName === "thinking") {
     return {

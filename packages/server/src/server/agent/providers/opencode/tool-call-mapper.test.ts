@@ -235,6 +235,30 @@ describe("opencode tool-call mapper", () => {
     });
   });
 
+  it("maps task tools to canonical sub-agent detail", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "task",
+        callId: "opencode-task-1",
+        status: "running",
+        input: {
+          subagent_type: "gsd-executor",
+          description: "Execute plan 03-04",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.name).toBe("task");
+    expect(item.detail).toEqual({
+      type: "sub_agent",
+      subAgentType: "gsd-executor",
+      description: "Execute plan 03-04",
+      log: "",
+      actions: [],
+    });
+  });
+
   it("does not apply cross-provider speak normalization in opencode mapper", () => {
     const item = expectMapped(
       mapOpencodeToolCall({

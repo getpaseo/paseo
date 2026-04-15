@@ -18,6 +18,7 @@ import {
   toWriteToolDetail,
   toolDetailBranchByToolName,
 } from "../tool-call-detail-primitives.js";
+import { nonEmptyString } from "../tool-call-mapper-utils.js";
 
 const OpencodeKnownToolDetailSchema = z.union([
   toolDetailBranchByToolName(
@@ -82,6 +83,25 @@ const OpencodeKnownToolDetailSchema = z.union([
   ),
   toolDetailBranchByToolName("web_search", ToolSearchInputSchema, z.unknown(), (input) =>
     toSearchToolDetail({ input, toolName: "web_search" }),
+  ),
+  toolDetailBranchByToolName(
+    "task",
+    z
+      .object({
+        subagent_type: z.string().optional(),
+        description: z.string().optional(),
+      })
+      .passthrough(),
+    z.unknown(),
+    (input, output): ToolCallDetail => ({
+      type: "sub_agent",
+      ...(input && nonEmptyString(input.subagent_type)
+        ? { subAgentType: input.subagent_type }
+        : {}),
+      ...(input && nonEmptyString(input.description) ? { description: input.description } : {}),
+      log: typeof output === "string" ? output : "",
+      actions: [],
+    }),
   ),
 ]);
 
