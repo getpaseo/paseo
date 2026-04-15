@@ -570,8 +570,15 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
                   ? entry.error.trim()
                   : null;
 
+              const modelCount = entry?.models?.length ?? 0;
+
               return (
-                <View key={def.id} style={styles.audioRow}>
+                <Pressable
+                  key={def.id}
+                  style={styles.audioRow}
+                  onPress={() => setDiagnosticProvider(def.id)}
+                  accessibilityRole="button"
+                >
                   <View style={styles.audioRowContent}>
                     <View
                       style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing[2] }}
@@ -584,31 +591,27 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
                         {providerError}
                       </Text>
                     ) : null}
+                    {status === "ready" && modelCount > 0 ? (
+                      <Text style={styles.audioRowSubtitle}>
+                        {modelCount === 1 ? "1 model" : `${modelCount} models`}
+                      </Text>
+                    ) : null}
                   </View>
-                  <View style={styles.providerActions}>
-                    <StatusBadge
-                      label={
-                        status === "ready"
-                          ? "Available"
-                          : status === "error"
-                            ? "Error"
-                            : status === "loading"
-                              ? "Loading..."
-                              : "Not installed"
-                      }
-                      variant={
-                        status === "ready" ? "success" : status === "error" ? "error" : "muted"
-                      }
-                    />
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onPress={() => setDiagnosticProvider(def.id)}
-                    >
-                      Diagnostic
-                    </Button>
-                  </View>
-                </View>
+                  <StatusBadge
+                    label={
+                      status === "ready"
+                        ? "Available"
+                        : status === "error"
+                          ? "Error"
+                          : status === "loading"
+                            ? "Loading..."
+                            : "Not installed"
+                    }
+                    variant={
+                      status === "ready" ? "success" : status === "error" ? "error" : "muted"
+                    }
+                  />
+                </Pressable>
               );
             })}
           </View>
@@ -1979,11 +1982,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
-  },
-  providerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
   },
   aboutValue: {
     color: theme.colors.foregroundMuted,

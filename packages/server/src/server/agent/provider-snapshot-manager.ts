@@ -7,19 +7,31 @@ import type { AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js"
 import type { ProviderDefinition } from "./provider-registry.js";
 
 const DEFAULT_CWD_KEY = "__default__";
+const DEFAULT_SNAPSHOT_TTL_MS = 300_000;
 
 type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd?: string) => void;
+type ProviderSnapshotManagerOptions = {
+  ttlMs?: number;
+  now?: () => number;
+};
 
 export class ProviderSnapshotManager {
   private readonly snapshots = new Map<string, Map<AgentProvider, ProviderSnapshotEntry>>();
+  private readonly lastCheckedAts = new Map<string, number>();
   private readonly warmUps = new Map<string, Promise<void>>();
   private readonly events = new EventEmitter();
   private destroyed = false;
+  private readonly ttlMs: number;
+  private readonly now: () => number;
 
   constructor(
     private readonly providerRegistry: Record<AgentProvider, ProviderDefinition>,
     private readonly logger: Logger,
-  ) {}
+    options: ProviderSnapshotManagerOptions = {},
+  ) {
+    this.ttlMs = options.ttlMs ?? DEFAULT_SNAPSHOT_TTL_MS;
+    this.now = options.now ?? Date.now;
+  }
 
   getSnapshot(cwd?: string): ProviderSnapshotEntry[] {
     const cwdKey = normalizeCwdKey(cwd);
@@ -28,6 +40,9 @@ export class ProviderSnapshotManager {
       const loadingEntries = this.resetSnapshotToLoading(cwdKey);
       void this.warmUp(cwd);
       return entriesToArray(loadingEntries);
+    }
+    if (this.shouldRevalidate(cwdKey)) {
+      void this.warmUp(cwd);
     }
     return entriesToArray(entries);
   }
@@ -56,6 +71,7 @@ export class ProviderSnapshotManager {
     this.destroyed = true;
     this.events.removeAllListeners();
     this.snapshots.clear();
+    this.lastCheckedAts.clear();
     this.warmUps.clear();
   }
 
@@ -83,7 +99,9 @@ export class ProviderSnapshotManager {
 
     const warmUpPromise = Promise.allSettled(
       this.getProviderIds().map((provider) => this.refreshProvider(cwdKey, provider, cwd)),
-    ).then(() => undefined);
+    ).then(() => {
+      this.lastCheckedAts.set(cwdKey, this.now());
+    });
 
     this.warmUps.set(cwdKey, warmUpPromise);
 
@@ -107,13 +125,6 @@ export class ProviderSnapshotManager {
     }
 
     const snapshot = this.getOrCreateSnapshot(cwdKey);
-    snapshot.set(provider, {
-      provider,
-      status: "loading",
-      label: definition.label,
-      description: definition.description,
-      defaultModeId: definition.defaultModeId,
-    });
 
     try {
       const client = definition.createClient(this.logger);
@@ -172,6 +183,17 @@ export class ProviderSnapshotManager {
       return;
     }
     this.events.emit("change", entriesToArray(snapshot), denormalizeCwdKey(cwdKey));
+  }
+
+  private shouldRevalidate(cwdKey: string): boolean {
+    if (this.warmUps.has(cwdKey)) {
+      return false;
+    }
+    const lastCheckedAt = this.lastCheckedAts.get(cwdKey);
+    if (lastCheckedAt === undefined) {
+      return false;
+    }
+    return this.now() - lastCheckedAt > this.ttlMs;
   }
 
   private getOrCreateSnapshot(cwdKey: string): Map<AgentProvider, ProviderSnapshotEntry> {
