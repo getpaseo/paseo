@@ -161,6 +161,7 @@ import {
 } from "../utils/checkout-git.js";
 import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
+import { persistAttachments } from "../utils/context-attachments.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
 import { READ_ONLY_GIT_ENV, toCheckoutError } from "./checkout-git-utils.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
@@ -833,6 +834,7 @@ export class Session {
   private buildAgentPrompt(
     text: string,
     images?: Array<{ data: string; mimeType: string }>,
+    persistedPaths?: Array<{ relativePath: string; fileName: string }>,
   ): AgentPromptInput {
     const normalized = text?.trim() ?? "";
     if (!images || images.length === 0) {
@@ -844,6 +846,13 @@ export class Session {
     }
     for (const image of images) {
       blocks.push({ type: "image", data: image.data, mimeType: image.mimeType });
+    }
+    if (persistedPaths && persistedPaths.length > 0) {
+      const pathList = persistedPaths.map((p) => `  ${p.relativePath}`).join("\n");
+      blocks.push({
+        type: "text",
+        text: `[Attached files saved to disk — you can read, copy, or move them:\n${pathList}]`,
+      });
     }
     return blocks;
   }
@@ -2932,7 +2941,25 @@ export class Session {
     }
 
     const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
-    const prompt = this.buildAgentPrompt(promptText, images);
+
+    // Persist attached images to .context/attachments/
+    let persistedPaths: Array<{ relativePath: string; fileName: string }> | undefined;
+    if (images && images.length > 0) {
+      const agent = this.agentManager.getAgent(agentId);
+      if (agent?.cwd) {
+        try {
+          const persisted = await persistAttachments(agent.cwd, images);
+          persistedPaths = persisted.map((p) => ({
+            relativePath: p.relativePath,
+            fileName: p.fileName,
+          }));
+        } catch {
+          // Non-fatal — images still sent inline
+        }
+      }
+    }
+
+    const prompt = this.buildAgentPrompt(promptText, images, persistedPaths);
 
     return this.startAgentStream(agentId, prompt, runOptions);
   }
@@ -6601,7 +6628,31 @@ export class Session {
         );
       }
 
-      const prompt = this.buildAgentPrompt(msg.text, msg.images);
+      // Persist attached images to .context/attachments/ so agents can reference them by path
+      let persistedPaths: Array<{ relativePath: string; fileName: string }> | undefined;
+      if (msg.images && msg.images.length > 0) {
+        const agent = this.agentManager.getAgent(agentId);
+        if (agent?.cwd) {
+          try {
+            const persisted = await persistAttachments(agent.cwd, msg.images);
+            persistedPaths = persisted.map((p) => ({
+              relativePath: p.relativePath,
+              fileName: p.fileName,
+            }));
+            this.sessionLogger.debug(
+              { agentId, count: persisted.length, paths: persisted.map((p) => p.relativePath) },
+              "Persisted attachments to .context/attachments",
+            );
+          } catch (error) {
+            this.sessionLogger.warn(
+              { err: error, agentId },
+              "Failed to persist attachments to .context directory",
+            );
+          }
+        }
+      }
+
+      const prompt = this.buildAgentPrompt(msg.text, msg.images, persistedPaths);
       this.sessionLogger.trace(
         { agentId, messageId: msg.messageId },
         "send_agent_message_request: starting agent stream",
