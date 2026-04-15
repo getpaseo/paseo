@@ -263,7 +263,7 @@ export function FilePane({
       );
       return { file: payload.file ?? null, error: payload.error ?? null };
     },
-    staleTime: 0,
+    staleTime: 5_000,
     refetchOnMount: true,
   });
 
