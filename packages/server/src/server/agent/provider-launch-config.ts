@@ -34,6 +34,7 @@ export const ProviderRuntimeSettingsSchema = z
   .object({
     command: ProviderCommandSchema.optional(),
     env: z.record(z.string()).optional(),
+    defaultModel: z.string().optional(),
   })
   .strict();
 
