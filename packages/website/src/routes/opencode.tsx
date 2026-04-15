@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { LandingPage } from "~/components/landing-page";
 import { pageMeta } from "~/meta";
 
@@ -14,9 +14,12 @@ export const Route = createFileRoute("/opencode")({
 
 function OpenCodePage() {
   return (
-    <LandingPage
-      title="Run OpenCode from your phone"
-      subtitle="Launch agents, check on builds, and ship code from anywhere. Same setup, same machine, just not at your desk."
-    />
+    <>
+      <LandingPage
+        title="Run OpenCode from your phone"
+        subtitle="Launch agents, check on builds, and ship code from anywhere. Same setup, same machine, just not at your desk."
+      />
+      <Outlet />
+    </>
   );
 }
