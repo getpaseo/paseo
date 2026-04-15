@@ -82,9 +82,12 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
   );
 
   const requestDirectoryListing = useCallback(
-    async (path: string, options?: { recordHistory?: boolean; setCurrentPath?: boolean }) => {
+    async (
+      path: string,
+      options?: { recordHistory?: boolean; setCurrentPath?: boolean },
+    ): Promise<boolean> => {
       if (!workspaceStateKey) {
-        return;
+        return false;
       }
       const normalizedPath = path && path.length > 0 ? path : ".";
       const shouldSetCurrentPath = options?.setCurrentPath ?? true;
@@ -113,7 +116,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
           lastError: "Workspace is unavailable",
           pendingRequest: null,
         }));
-        return;
+        return false;
       }
 
       if (!client) {
@@ -123,7 +126,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
           lastError: "Host is not connected",
           pendingRequest: null,
         }));
-        return;
+        return false;
       }
 
       try {
@@ -150,6 +153,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
 
           return nextState;
         });
+        return true;
       } catch (error) {
         updateExplorerState((state) => ({
           ...state,
@@ -157,6 +161,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
           lastError: error instanceof Error ? error.message : "Failed to list directory",
           pendingRequest: null,
         }));
+        return false;
       }
     },
     [client, normalizedWorkspaceRoot, updateExplorerState, workspaceStateKey],
