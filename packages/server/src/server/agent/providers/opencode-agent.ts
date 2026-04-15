@@ -231,6 +231,73 @@ function normalizeTurnFailureError(error: unknown): string {
   return normalized.length > 0 ? normalized : "Unknown error";
 }
 
+function isOpenCodeNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "NotFoundError"
+  );
+}
+
+async function reconcileOpenCodeSessionClose(params: {
+  client: Pick<OpencodeClient, "session">;
+  sessionId: string;
+  directory: string;
+  logger: Logger;
+}): Promise<void> {
+  const { client, sessionId, directory, logger } = params;
+
+  try {
+    const response = await client.session.abort({
+      sessionID: sessionId,
+      directory,
+    });
+    if (response.error && !isOpenCodeNotFoundError(response.error)) {
+      logger.warn(
+        {
+          sessionId,
+          error: normalizeTurnFailureError(response.error),
+        },
+        "Failed to abort OpenCode session during close",
+      );
+    }
+  } catch (error) {
+    logger.warn(
+      {
+        sessionId,
+        error: normalizeTurnFailureError(error),
+      },
+      "Failed to abort OpenCode session during close",
+    );
+  }
+
+  try {
+    const response = await client.session.update({
+      sessionID: sessionId,
+      directory,
+      time: { archived: Date.now() },
+    });
+    if (response.error && !isOpenCodeNotFoundError(response.error)) {
+      logger.warn(
+        {
+          sessionId,
+          error: normalizeTurnFailureError(response.error),
+        },
+        "Failed to archive OpenCode session during close",
+      );
+    }
+  } catch (error) {
+    logger.warn(
+      {
+        sessionId,
+        error: normalizeTurnFailureError(error),
+      },
+      "Failed to archive OpenCode session during close",
+    );
+  }
+}
+
 function isFatalOpenCodeRetryMessage(message: string | null | undefined): boolean {
   const normalized = typeof message === "string" ? message.trim().toLowerCase() : "";
   if (!normalized) {
@@ -570,6 +637,7 @@ export const __openCodeInternals = {
   hasNormalizedOpenCodeUsage,
   mergeOpenCodeStepFinishUsage,
   parseOpenCodeModelLookupKey,
+  reconcileOpenCodeSessionClose,
   resolveOpenCodeModelLookupKeyFromAssistantMessage,
   resolveOpenCodeSelectedModelContextWindow,
 };
@@ -1932,6 +2000,12 @@ class OpenCodeAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     this.abortController?.abort();
+    await reconcileOpenCodeSessionClose({
+      client: this.client,
+      sessionId: this.sessionId,
+      directory: this.config.cwd,
+      logger: this.logger,
+    });
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
   }

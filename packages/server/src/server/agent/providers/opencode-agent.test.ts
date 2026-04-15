@@ -315,6 +315,65 @@ const hasOpenCode = isBinaryInstalled("opencode");
 });
 
 describe("OpenCode adapter context-window normalization", () => {
+  test("close reconciliation aborts then archives upstream session", async () => {
+    const abort = vi.fn().mockResolvedValue({ data: true, error: undefined });
+    const update = vi.fn().mockResolvedValue({
+      data: { id: "session-1", time: { archived: Date.now() } },
+      error: undefined,
+    });
+
+    await __openCodeInternals.reconcileOpenCodeSessionClose({
+      client: {
+        session: {
+          abort,
+          update,
+        },
+      } as never,
+      sessionId: "session-1",
+      directory: "/tmp/project",
+      logger: createTestLogger(),
+    });
+
+    expect(abort).toHaveBeenCalledWith({
+      sessionID: "session-1",
+      directory: "/tmp/project",
+    });
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({
+      sessionID: "session-1",
+      directory: "/tmp/project",
+      time: {
+        archived: expect.any(Number),
+      },
+    });
+  });
+
+  test("close reconciliation still archives when abort returns an error", async () => {
+    const abort = vi.fn().mockResolvedValue({
+      data: undefined,
+      error: { data: {}, errors: [], success: false },
+    });
+    const update = vi.fn().mockResolvedValue({
+      data: { id: "session-1", time: { archived: Date.now() } },
+      error: undefined,
+    });
+
+    await __openCodeInternals.reconcileOpenCodeSessionClose({
+      client: {
+        session: {
+          abort,
+          update,
+        },
+      } as never,
+      sessionId: "session-1",
+      directory: "/tmp/project",
+      logger: createTestLogger(),
+    });
+
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
   test("builds OpenCode file parts for image prompt blocks", () => {
     expect(
       __openCodeInternals.buildOpenCodePromptParts([
