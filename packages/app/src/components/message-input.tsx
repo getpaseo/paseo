@@ -306,6 +306,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   const overlayTransition = useSharedValue(0);
   const sendAfterTranscriptRef = useRef(false);
   const valueRef = useRef(value);
+  // Tracks IME composition state independently of event.isComposing, which is
+  // unreliable on macOS (compositionend fires before keydown there).
+  const isComposingRef = useRef(false);
   const serverInfo = useSessionStore(
     useCallback(
       (state) => {
@@ -451,6 +454,34 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     }
     sendAfterTranscriptRef.current = false;
   }, [dictationStatus, isDictating, isDictationProcessing]);
+
+  // On macOS, compositionend fires before the Enter keydown that commits the
+  // composition, so KeyboardEvent.isComposing is already false by the time
+  // our handler runs. Deferring the flag clear with setTimeout(0) fixes this.
+  useEffect(() => {
+    if (!isWeb) return;
+    const current = textInputRef.current as (TextInput & { getNativeRef?: () => unknown }) | null;
+    const el = typeof current?.getNativeRef === "function" ? current.getNativeRef() : current;
+    if (!(el instanceof HTMLElement)) return;
+
+    const onCompositionStart = () => {
+      isComposingRef.current = true;
+    };
+    const onCompositionEnd = () => {
+      setTimeout(() => {
+        isComposingRef.current = false;
+      }, 0);
+    };
+
+    el.addEventListener("compositionstart", onCompositionStart);
+    el.addEventListener("compositionend", onCompositionEnd);
+    return () => {
+      el.removeEventListener("compositionstart", onCompositionStart);
+      el.removeEventListener("compositionend", onCompositionEnd);
+    };
+    // textInputRef and isComposingRef are stable refs; isWeb is a module constant
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startDictationIfAvailable = useCallback(async () => {
     if (dictationUnavailableMessage) {
@@ -889,9 +920,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     if (!shouldHandleDesktopSubmit) return;
 
     // IME composition in progress (e.g. CJK input) — all key events belong to the
-    // IME, not the app. keyCode 229 is a Chromium fallback for when isComposing is
-    // cleared before the keydown fires.
-    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    // IME, not the app. keyCode 229 is a Chromium fallback; isComposingRef covers
+    // the macOS case where compositionend fires before keydown.
+    if (
+      isComposingRef.current ||
+      event.nativeEvent.isComposing ||
+      event.nativeEvent.keyCode === 229
+    )
+      return;
 
     // Allow parent to intercept key events (e.g., for autocomplete navigation)
     if (onKeyPressCallback) {
