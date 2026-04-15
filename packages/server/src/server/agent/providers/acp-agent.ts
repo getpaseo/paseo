@@ -570,7 +570,10 @@ export class ACPAgentClient implements AgentClient {
     });
     return {
       command: prefix.command,
-      args: [...prefix.args, ...this.defaultCommand.slice(1)],
+      args:
+        this.runtimeSettings?.command?.mode === "replace"
+          ? prefix.args
+          : [...prefix.args, ...this.defaultCommand.slice(1)],
     };
   }
 
@@ -1328,7 +1331,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
 
     const command = prefix.command;
-    const args = [...prefix.args, ...this.defaultCommand.slice(1)];
+    const args =
+      this.runtimeSettings?.command?.mode === "replace"
+        ? prefix.args
+        : [...prefix.args, ...this.defaultCommand.slice(1)];
     const child = spawnProcess(command, args, {
       cwd: this.config.cwd,
       env: {
