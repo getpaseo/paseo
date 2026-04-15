@@ -1042,6 +1042,38 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function mapOpenCodeTodosToTimelineItems(
+  todos: Array<{ content?: string | null; status?: string | null }>,
+): Extract<AgentTimelineItem, { type: "todo" }> {
+  return {
+    type: "todo",
+    items: todos.flatMap((todo) => {
+      const text = readNonEmptyString(todo.content);
+      if (!text) {
+        return [];
+      }
+
+      return [
+        {
+          text,
+          completed: todo.status === "completed",
+        },
+      ];
+    }),
+  };
+}
+
+function createCompactionTimelineItem(
+  status: Extract<AgentTimelineItem, { type: "compaction" }>["status"],
+  trigger?: Extract<AgentTimelineItem, { type: "compaction" }>["trigger"],
+): Extract<AgentTimelineItem, { type: "compaction" }> {
+  return {
+    type: "compaction",
+    status,
+    ...(trigger ? { trigger } : {}),
+  };
+}
+
 export function translateOpenCodeEvent(
   event: OpenCodeEvent,
   state: OpenCodeEventTranslationState,
@@ -1141,6 +1173,12 @@ export function translateOpenCodeEvent(
             item: parsedToolPart.data,
           });
         }
+      } else if (part.type === "compaction") {
+        events.push({
+          type: "timeline",
+          provider: "opencode",
+          item: createCompactionTimelineItem("loading", part.auto ? "auto" : "manual"),
+        });
       } else if (part.type === "step-finish") {
         mergeOpenCodeStepFinishUsage(state.accumulatedUsage, part);
         if (hasNormalizedOpenCodeUsage(state.accumulatedUsage)) {
@@ -1257,6 +1295,32 @@ export function translateOpenCodeEvent(
             ...(event.properties.tool ?? {}),
           },
         },
+      });
+      break;
+    }
+
+    case "todo.updated": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "timeline",
+        provider: "opencode",
+        item: mapOpenCodeTodosToTimelineItems(event.properties.todos),
+      });
+      break;
+    }
+
+    case "session.compacted": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "timeline",
+        provider: "opencode",
+        item: createCompactionTimelineItem("completed"),
       });
       break;
     }

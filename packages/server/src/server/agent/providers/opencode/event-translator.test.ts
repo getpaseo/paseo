@@ -310,6 +310,96 @@ describe("translateOpenCodeEvent", () => {
     });
   });
 
+  it("emits normalized todo timeline items from todo.updated", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "todo.updated",
+        properties: {
+          sessionID: "session-1",
+          todos: [
+            { content: "Outline", status: "pending", priority: "high" },
+            { content: "Ship", status: "completed", priority: "medium" },
+            { content: "   ", status: "completed", priority: "low" },
+          ],
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "todo",
+          items: [
+            { text: "Outline", completed: false },
+            { text: "Ship", completed: true },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it("emits compaction loading timeline items from compaction parts", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "compaction-part-1",
+            sessionID: "session-1",
+            messageID: "message-compaction-1",
+            type: "compaction",
+            auto: true,
+          },
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "compaction",
+          status: "loading",
+          trigger: "auto",
+        },
+      },
+    ]);
+  });
+
+  it("emits compaction completed timeline items from session.compacted", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "session.compacted",
+        properties: {
+          sessionID: "session-1",
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "compaction",
+          status: "completed",
+        },
+      },
+    ]);
+  });
+
   it("emits reasoning from message.part.delta events", () => {
     const state = createState();
 
@@ -508,6 +598,99 @@ describe("translateOpenCodeEvent", () => {
     );
 
     expect(result).toEqual([]);
+  });
+
+  it("emits turn_completed from session.status idle", () => {
+    const state = createState();
+    state.streamedPartKeys.add("text:part-1");
+    state.partTypes.set("part-1", "text");
+
+    const result = translateOpenCodeEvent(
+      {
+        type: "session.status",
+        properties: {
+          sessionID: "session-1",
+          status: { type: "idle" },
+        },
+      },
+      state,
+    );
+
+    expect(result).toEqual([
+      {
+        type: "turn_completed",
+        provider: "opencode",
+        usage: undefined,
+      },
+    ]);
+    expect(state.streamedPartKeys.size).toBe(0);
+    expect(state.partTypes.size).toBe(0);
+  });
+
+  it("emits turn_failed from fatal session.status retry", () => {
+    const state = createState();
+    state.streamedPartKeys.add("text:part-1");
+    state.partTypes.set("part-1", "text");
+
+    const result = translateOpenCodeEvent(
+      {
+        type: "session.status",
+        properties: {
+          sessionID: "session-1",
+          status: {
+            type: "retry",
+            attempt: 2,
+            message: "Invalid API key",
+            next: Date.now() + 1000,
+          },
+        },
+      },
+      state,
+    );
+
+    expect(result).toEqual([
+      {
+        type: "turn_failed",
+        provider: "opencode",
+        error: "Invalid API key",
+      },
+    ]);
+    expect(state.streamedPartKeys.size).toBe(0);
+    expect(state.partTypes.size).toBe(0);
+  });
+
+  it("ignores transient session.status updates", () => {
+    const state = createState();
+
+    const busy = translateOpenCodeEvent(
+      {
+        type: "session.status",
+        properties: {
+          sessionID: "session-1",
+          status: { type: "busy" },
+        },
+      },
+      state,
+    );
+
+    const retry = translateOpenCodeEvent(
+      {
+        type: "session.status",
+        properties: {
+          sessionID: "session-1",
+          status: {
+            type: "retry",
+            attempt: 1,
+            message: "rate limited",
+            next: Date.now() + 1000,
+          },
+        },
+      },
+      state,
+    );
+
+    expect(busy).toEqual([]);
+    expect(retry).toEqual([]);
   });
 
   it("emits structured assistant output when schema mode completes without text parts", () => {
