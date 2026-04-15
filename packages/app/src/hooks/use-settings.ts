@@ -16,6 +16,36 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   manageBuiltInDaemon: true,
 };
 
+function normalizeTheme(value: unknown): AppSettings["theme"] {
+  if (value === "dark" || value === "light" || value === "auto") {
+    return value;
+  }
+  return DEFAULT_APP_SETTINGS.theme;
+}
+
+function sanitizeAppSettings(input: Record<string, unknown>): {
+  settings: AppSettings;
+  changed: boolean;
+} {
+  const normalizedTheme = normalizeTheme(input.theme);
+  const normalizedManageBuiltInDaemon =
+    typeof input.manageBuiltInDaemon === "boolean"
+      ? input.manageBuiltInDaemon
+      : DEFAULT_APP_SETTINGS.manageBuiltInDaemon;
+
+  const settings: AppSettings = {
+    theme: normalizedTheme,
+    manageBuiltInDaemon: normalizedManageBuiltInDaemon,
+  };
+
+  const changed =
+    input.theme !== undefined
+      ? input.theme !== normalizedTheme || typeof input.manageBuiltInDaemon !== "boolean"
+      : typeof input.manageBuiltInDaemon !== "boolean" && input.manageBuiltInDaemon !== undefined;
+
+  return { settings, changed };
+}
+
 export interface UseAppSettingsReturn {
   settings: AppSettings;
   isLoading: boolean;
@@ -38,7 +68,7 @@ export function useAppSettings(): UseAppSettingsReturn {
       try {
         const prev =
           queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ?? DEFAULT_APP_SETTINGS;
-        const next = { ...prev, ...updates };
+        const { settings: next } = sanitizeAppSettings({ ...prev, ...updates });
         queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
         await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
       } catch (err) {
@@ -73,8 +103,12 @@ export async function loadSettingsFromStorage(): Promise<AppSettings> {
   try {
     const stored = await AsyncStorage.getItem(APP_SETTINGS_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored) as Partial<AppSettings>;
-      return { ...DEFAULT_APP_SETTINGS, ...parsed };
+      const parsed = JSON.parse(stored) as Record<string, unknown>;
+      const { settings, changed } = sanitizeAppSettings(parsed);
+      if (changed) {
+        await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(settings));
+      }
+      return settings;
     }
 
     const legacyStored = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);

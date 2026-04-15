@@ -60,4 +60,32 @@ describe("use-settings", () => {
     });
     expect(asyncStorageMock.setItem).not.toHaveBeenCalled();
   });
+
+  it("migrates invalid persisted theme values to auto", async () => {
+    asyncStorageMock.getItem.mockImplementation(async (key: string) => {
+      if (key === "@paseo:app-settings") {
+        return JSON.stringify({
+          theme: "zinc",
+          manageBuiltInDaemon: true,
+        });
+      }
+      return null;
+    });
+    asyncStorageMock.setItem.mockResolvedValue();
+
+    const mod = await import("./use-settings");
+    const result = await mod.loadSettingsFromStorage();
+
+    expect(result).toEqual({
+      theme: "auto",
+      manageBuiltInDaemon: true,
+    });
+    expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
+      mod.APP_SETTINGS_KEY,
+      JSON.stringify({
+        theme: "auto",
+        manageBuiltInDaemon: true,
+      }),
+    );
+  });
 });
