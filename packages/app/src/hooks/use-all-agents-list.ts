@@ -7,6 +7,7 @@ import {
   useHostRuntimeIsDirectoryLoading,
 } from "@/runtime/host-runtime";
 import type { AggregatedAgent, AggregatedAgentsResult } from "@/hooks/use-aggregated-agents";
+import { buildSubtreePendingPermissionCounts } from "@/utils/agent-hierarchy";
 
 function toAggregatedAgent(params: {
   source: Agent;
@@ -39,14 +40,17 @@ function buildAllAgentsList(params: {
   serverLabel: string;
   includeArchived: boolean;
 }): AggregatedAgent[] {
+  const agents = Array.from(params.agents);
+  const pendingPermissionCounts = buildSubtreePendingPermissionCounts(agents);
   const list: AggregatedAgent[] = [];
 
-  for (const agent of params.agents) {
+  for (const agent of agents) {
     const aggregated = toAggregatedAgent({
       source: agent,
       serverId: params.serverId,
       serverLabel: params.serverLabel,
     });
+    aggregated.pendingPermissionCount = pendingPermissionCounts.get(agent.id) ?? 0;
     if (!params.includeArchived && aggregated.archivedAt) {
       continue;
     }

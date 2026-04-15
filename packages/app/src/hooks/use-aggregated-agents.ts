@@ -4,6 +4,7 @@ import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { Agent } from "@/stores/session-store";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import { buildSubtreePendingPermissionCounts } from "@/utils/agent-hierarchy";
 
 export interface AggregatedAgent extends AgentDirectoryEntry {
   serverId: string;
@@ -56,6 +57,7 @@ export function useAggregatedAgents(options?: {
         continue;
       }
       const serverLabel = serverLabelById.get(serverId) ?? serverId;
+      const pendingPermissionCounts = buildSubtreePendingPermissionCounts(agents.values());
       for (const agent of agents.values()) {
         if (!includeArchived && agent.archivedAt) {
           continue;
@@ -69,7 +71,7 @@ export function useAggregatedAgents(options?: {
           lastActivityAt: agent.lastActivityAt,
           cwd: agent.cwd,
           provider: agent.provider,
-          pendingPermissionCount: agent.pendingPermissions.length,
+          pendingPermissionCount: pendingPermissionCounts.get(agent.id) ?? 0,
           requiresAttention: agent.requiresAttention,
           attentionReason: agent.attentionReason,
           attentionTimestamp: agent.attentionTimestamp,

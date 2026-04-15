@@ -36,6 +36,7 @@ import {
 } from "@/runtime/host-runtime";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { buildSubtreePendingPermissionCounts, isAgentInSubtree } from "@/utils/agent-hierarchy";
 import { mergePendingCreateImages } from "@/utils/pending-create-images";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -80,12 +81,16 @@ function useAgentPanelDescriptor(
 ): PanelDescriptor {
   const descriptorState = useSessionStore(
     useShallow((state) => {
-      const agent = state.sessions[context.serverId]?.agents?.get(target.agentId) ?? null;
+      const agents = state.sessions[context.serverId]?.agents;
+      const agent = agents?.get(target.agentId) ?? null;
+      const pendingPermissionCounts = agents
+        ? buildSubtreePendingPermissionCounts(agents.values())
+        : null;
       return {
         provider: agent?.provider ?? "codex",
         title: agent?.title ?? null,
         status: agent?.status ?? null,
-        pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
+        pendingPermissionCount: pendingPermissionCounts?.get(target.agentId) ?? 0,
         requiresAttention: agent?.requiresAttention ?? false,
         attentionReason: agent?.attentionReason ?? null,
       };
@@ -297,6 +302,7 @@ function AgentPanelBody({
   const allPendingPermissions = useSessionStore(
     (state) => state.sessions[serverId]?.pendingPermissions,
   );
+  const allAgents = useSessionStore((state) => state.sessions[serverId]?.agents);
   const setAgents = useSessionStore((state) => state.setAgents);
   const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
@@ -329,17 +335,17 @@ function AgentPanelBody({
   const hasHydratedHistoryBefore = hasAppliedAuthoritativeHistory;
 
   const pendingPermissions = useMemo(() => {
-    if (!allPendingPermissions || !agentId) {
+    if (!allPendingPermissions || !allAgents || !agentId) {
       return new Map<string, PendingPermission>();
     }
     const filtered = new Map<string, PendingPermission>();
     for (const [key, permission] of allPendingPermissions) {
-      if (permission.agentId === agentId) {
+      if (isAgentInSubtree(allAgents, permission.agentId, agentId)) {
         filtered.set(key, permission);
       }
     }
     return filtered;
-  }, [agentId, allPendingPermissions]);
+  }, [agentId, allAgents, allPendingPermissions]);
 
   const attentionController = useAgentAttentionClear({
     agentId,

@@ -27,6 +27,7 @@ import type {
   WorkspaceDescriptorPayload,
 } from "@server/shared/messages";
 import { normalizeWorkspaceIdentity } from "@/utils/workspace-identity";
+import { buildSubtreePendingPermissionCounts } from "@/utils/agent-hierarchy";
 import {
   createAgentLastActivityCoalescer,
   type AgentLastActivityCommitter,
@@ -1139,6 +1140,9 @@ export const useSessionStore = create<SessionStore>()(
         }
 
         const entries: AgentDirectoryEntry[] = [];
+        const pendingPermissionCounts = buildSubtreePendingPermissionCounts(
+          session.agents.values(),
+        );
         for (const agent of session.agents.values()) {
           // Get lastActivityAt from top-level slice, fallback to agent.lastActivityAt
           const lastActivityAt = state.agentLastActivity.get(agent.id) ?? agent.lastActivityAt;
@@ -1150,7 +1154,7 @@ export const useSessionStore = create<SessionStore>()(
             lastActivityAt,
             cwd: agent.cwd,
             provider: agent.provider,
-            pendingPermissionCount: agent.pendingPermissions.length,
+            pendingPermissionCount: pendingPermissionCounts.get(agent.id) ?? 0,
             requiresAttention: agent.requiresAttention ?? false,
             attentionReason: agent.attentionReason ?? null,
             attentionTimestamp: agent.attentionTimestamp ?? null,
