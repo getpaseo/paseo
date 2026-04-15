@@ -1,5 +1,6 @@
 import React, { useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import {
   ActivityIndicator,
   Image as RNImage,
@@ -20,7 +21,9 @@ import {
   type HighlightStyle,
 } from "@getpaseo/highlight";
 import { lineNumberGutterWidth } from "@/components/code-insets";
+import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
+import { createMarkdownStyles } from "@/styles/markdown-styles";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -117,6 +120,9 @@ function FilePreviewBody({
   const isDark = theme.colorScheme === "dark";
   const colorMap = isDark ? darkHighlightColors : lightHighlightColors;
   const baseColor = isDark ? "#c9d1d9" : "#24292f";
+  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
+  const markdownParser = useMemo(() => MarkdownIt({ typographer: true, linkify: true }), []);
+  const isMarkdownFile = preview?.kind === "text" && isRenderedMarkdownFile(filePath);
 
   const previewScrollRef = useRef<RNScrollView>(null);
   const scrollbar = useWebScrollViewScrollbar(previewScrollRef, {
@@ -124,12 +130,12 @@ function FilePreviewBody({
   });
 
   const highlightedLines = useMemo(() => {
-    if (!preview || preview.kind !== "text") {
+    if (!preview || preview.kind !== "text" || isMarkdownFile) {
       return null;
     }
 
     return highlightCode(preview.content ?? "", filePath);
-  }, [preview?.kind, preview?.content, filePath]);
+  }, [isMarkdownFile, preview?.kind, preview?.content, filePath]);
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;
@@ -154,6 +160,28 @@ function FilePreviewBody({
   }
 
   if (preview.kind === "text") {
+    if (isMarkdownFile) {
+      return (
+        <View style={styles.previewScrollContainer}>
+          <RNScrollView
+            ref={previewScrollRef}
+            style={styles.previewContent}
+            contentContainerStyle={styles.previewMarkdownScrollContent}
+            onLayout={scrollbar.onLayout}
+            onScroll={scrollbar.onScroll}
+            onContentSizeChange={scrollbar.onContentSizeChange}
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+          >
+            <Markdown style={markdownStyles} markdownit={markdownParser}>
+              {preview.content ?? ""}
+            </Markdown>
+          </RNScrollView>
+          {scrollbar.overlay}
+        </View>
+      );
+    }
+
     const lines = highlightedLines ?? [[{ text: preview.content ?? "", style: null }]];
     const codeLines = (
       <View>
@@ -326,6 +354,9 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   previewCodeScrollContent: {
+    padding: theme.spacing[4],
+  },
+  previewMarkdownScrollContent: {
     padding: theme.spacing[4],
   },
   previewImageScrollContent: {
