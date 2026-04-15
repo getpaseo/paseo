@@ -2542,6 +2542,19 @@ export class DaemonClient {
     });
   }
 
+  sendBrowserCommandResult(result: {
+    requestId: string;
+    browserId: string;
+    success: boolean;
+    result?: Record<string, unknown>;
+    error?: string;
+  }): void {
+    this.sendSessionMessage({
+      type: "browser_command_result",
+      ...result,
+    } as any);
+  }
+
   async updateWorkspaceMetadata(
     input: {
       workspaceId: string;

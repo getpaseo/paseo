@@ -227,16 +227,6 @@ export function IntegrationSelector({
         </Pressable>
       )}
 
-      {/* Selected item display */}
-      {selectedItem ? (
-        <View style={selectorStyles.selectedItem}>
-          <Check size={12} color={theme.colors.foreground} />
-          <Text style={selectorStyles.selectedText} numberOfLines={1}>
-            {getItemLabel(selectedItem)}
-          </Text>
-        </View>
-      ) : null}
-
       {/* Selector dropdown */}
       {showSelector ? (
         <View style={selectorStyles.dropdown}>

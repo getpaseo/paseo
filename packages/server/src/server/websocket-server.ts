@@ -248,6 +248,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly speech: SpeechService | null;
   private readonly terminalManager: TerminalManager | null;
   private readonly browserManager: BrowserManager | null;
+  private readonly clientBrowserManager: any;
   private readonly dictation: {
     finalTimeoutMs?: number;
   } | null;
@@ -310,6 +311,7 @@ export class VoiceAssistantWebSocketServer {
     scheduleService?: ScheduleService,
     checkoutDiffManager?: CheckoutDiffManager,
     browserManager?: BrowserManager | null,
+    clientBrowserManager?: any,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -348,6 +350,7 @@ export class VoiceAssistantWebSocketServer {
     this.speech = speech ?? null;
     this.terminalManager = terminalManager ?? null;
     this.browserManager = browserManager ?? null;
+    this.clientBrowserManager = clientBrowserManager ?? null;
     this.dictation = dictation ?? null;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.providerOverrides = providerOverrides;
@@ -657,6 +660,7 @@ export class VoiceAssistantWebSocketServer {
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
       browserManager: this.browserManager,
+      clientBrowserManager: this.clientBrowserManager,
       providerSnapshotManager: this.providerSnapshotManager,
       voice: {
         turnDetection: () => this.speech?.resolveTurnDetection() ?? null,

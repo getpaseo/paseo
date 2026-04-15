@@ -25,6 +25,7 @@ interface BrowserPaneProps {
   cwd: string;
   browserId: string;
   isPaneFocused: boolean;
+  initialUrl?: string;
 }
 
 interface BrowserState {

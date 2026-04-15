@@ -49,6 +49,7 @@ import {
 } from "./messages.js";
 import type { TerminalManager, TerminalsChangedEvent } from "../terminal/terminal-manager.js";
 import { BrowserManager } from "./browser/browser-manager.js";
+import { ClientBrowserManager } from "./browser/client-browser-manager.js";
 import { captureTerminalLines, type TerminalSession } from "../terminal/terminal.js";
 import {
   TerminalStreamOpcode,
@@ -419,6 +420,7 @@ export type SessionOptions = {
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   browserManager?: BrowserManager | null;
+  clientBrowserManager?: ClientBrowserManager | null;
   providerSnapshotManager?: ProviderSnapshotManager;
   voice?: {
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
@@ -629,7 +631,9 @@ export class Session {
   private readonly MOBILE_BACKGROUND_STREAM_GRACE_MS = 60_000;
   private readonly terminalManager: TerminalManager | null;
   private readonly browserManager: BrowserManager;
+  private readonly clientBrowserManager: ClientBrowserManager;
   private unsubscribeBrowserLaunched: (() => void) | null = null;
+  private unsubscribeClientBrowserLaunched: (() => void) | null = null;
   private readonly providerSnapshotManager: ProviderSnapshotManager | null;
   private unsubscribeProviderSnapshotEvents: (() => void) | null = null;
   private readonly subscribedTerminalDirectories = new Set<string>();
@@ -711,8 +715,36 @@ export class Session {
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl ?? null;
     this.terminalManager = terminalManager;
-    this.browserManager = options.browserManager ?? new BrowserManager({ logger });
+    this.browserManager =
+      options.browserManager ??
+      new BrowserManager({
+        logger,
+        onStateChange: (event) => {
+          this.emit({
+            type: "browser_state_update",
+            payload: {
+              browserId: event.browserId,
+              url: event.url,
+              title: event.title,
+            },
+          });
+        },
+      });
+    this.clientBrowserManager =
+      (options.clientBrowserManager as ClientBrowserManager | null) ??
+      new ClientBrowserManager({ logger });
+    this.clientBrowserManager.setEmit((message) => this.emit(message as any));
     this.unsubscribeBrowserLaunched = this.browserManager.onBrowserLaunched((event) => {
+      this.emit({
+        type: "browser_launched",
+        payload: {
+          browserId: event.browserId,
+          url: event.url,
+          title: event.title,
+        },
+      });
+    });
+    this.unsubscribeClientBrowserLaunched = this.clientBrowserManager.onBrowserLaunched((event) => {
       this.emit({
         type: "browser_launched",
         payload: {
@@ -2163,6 +2195,11 @@ export class Session {
           // Workspace metadata update
           case "update_workspace_metadata_request":
             await this.handleUpdateWorkspaceMetadata(msg);
+            break;
+
+          // Client browser command result
+          case "browser_command_result":
+            this.handleBrowserCommandResult(msg);
             break;
         }
       } catch (error: any) {
@@ -8312,6 +8349,18 @@ export class Session {
     }
   }
 
+  private handleBrowserCommandResult(
+    msg: Extract<SessionInboundMessage, { type: "browser_command_result" }>,
+  ): void {
+    this.clientBrowserManager.handleCommandResult({
+      requestId: msg.requestId,
+      browserId: msg.browserId,
+      success: msg.success,
+      result: msg.result,
+      error: msg.error,
+    });
+  }
+
   private async handleUpdateWorkspaceMetadata(
     request: Extract<SessionInboundMessage, { type: "update_workspace_metadata_request" }>,
   ): Promise<void> {
@@ -8723,7 +8772,7 @@ export class Session {
 
   private async handleBrowserLaunchRequest(msg: BrowserLaunchRequest): Promise<void> {
     try {
-      const result = await this.browserManager.launch({ url: msg.url });
+      const result = await this.clientBrowserManager.launch({ url: msg.url });
       this.emit({
         type: "browser_launch_response",
         payload: {
@@ -8749,7 +8798,7 @@ export class Session {
 
   private async handleBrowserStateRequest(msg: BrowserStateRequest): Promise<void> {
     try {
-      const state = await this.browserManager.getPageState(msg.browserId);
+      const state = await this.clientBrowserManager.getPageState(msg.browserId);
       this.emit({
         type: "browser_state_response",
         payload: {
@@ -8778,7 +8827,7 @@ export class Session {
 
   private async handleBrowserScreenshotRequest(msg: BrowserScreenshotRequest): Promise<void> {
     try {
-      const shot = await this.browserManager.screenshot(msg.browserId);
+      const shot = await this.clientBrowserManager.screenshot(msg.browserId);
       this.emit({
         type: "browser_screenshot_response",
         payload: {
@@ -8807,7 +8856,7 @@ export class Session {
 
   private async handleBrowserNavigateRequest(msg: BrowserNavigateRequest): Promise<void> {
     try {
-      const result = await this.browserManager.navigate(msg.browserId, msg.url);
+      const result = await this.clientBrowserManager.navigate(msg.browserId, msg.url);
       this.emit({
         type: "browser_navigate_response",
         payload: {
@@ -8833,7 +8882,7 @@ export class Session {
 
   private async handleBrowserGoBackRequest(msg: BrowserGoBackRequest): Promise<void> {
     try {
-      const result = await this.browserManager.goBack(msg.browserId);
+      const result = await this.clientBrowserManager.goBack(msg.browserId);
       this.emit({
         type: "browser_go_back_response",
         payload: {
@@ -8859,7 +8908,7 @@ export class Session {
 
   private async handleBrowserGoForwardRequest(msg: BrowserGoForwardRequest): Promise<void> {
     try {
-      const result = await this.browserManager.goForward(msg.browserId);
+      const result = await this.clientBrowserManager.goForward(msg.browserId);
       this.emit({
         type: "browser_go_forward_response",
         payload: {
@@ -8885,7 +8934,7 @@ export class Session {
 
   private async handleBrowserCloseRequest(msg: BrowserCloseRequest): Promise<void> {
     try {
-      await this.browserManager.close(msg.browserId);
+      await this.clientBrowserManager.close(msg.browserId);
       this.emit({
         type: "browser_close_response",
         payload: { browserId: msg.browserId, success: true, requestId: msg.requestId },
@@ -8906,7 +8955,7 @@ export class Session {
 
   private async handleBrowserResizeRequest(msg: BrowserResizeRequest): Promise<void> {
     try {
-      await this.browserManager.resize(msg.browserId, msg.width, msg.height);
+      // Client webview handles its own sizing — this is a no-op for client-side browsers
       this.emit({
         type: "browser_resize_response",
         payload: { browserId: msg.browserId, success: true, requestId: msg.requestId },

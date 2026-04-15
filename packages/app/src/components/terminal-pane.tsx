@@ -550,7 +550,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
 
   return (
     <Animated.View style={[styles.container, keyboardPaddingStyle]}>
-      <SessionIntegrationBanner serverId={serverId} terminalId={terminalId} cwd={cwd} />
+      <SessionIntegrationBanner serverId={serverId} cwd={cwd} />
       <View style={styles.outputContainer}>
         {isScreenFocused ? (
           <View style={styles.terminalGestureContainer}>

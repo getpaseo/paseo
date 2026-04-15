@@ -7,7 +7,7 @@ export type WorkspaceTabTarget =
   | { kind: "agent"; agentId: string }
   | { kind: "terminal"; terminalId: string }
   | { kind: "file"; path: string }
-  | { kind: "browser"; browserId: string };
+  | { kind: "browser"; browserId: string; url?: string };
 
 export type WorkspaceTab = {
   tabId: string;
@@ -63,7 +63,8 @@ function normalizeTabTarget(
   }
   if (value.kind === "browser") {
     const browserId = trimNonEmpty((value as { browserId?: string }).browserId);
-    return browserId ? { kind: "browser", browserId } : null;
+    const url = (value as { url?: string }).url;
+    return browserId ? { kind: "browser", browserId, url } : null;
   }
   return null;
 }

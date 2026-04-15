@@ -68,7 +68,7 @@ export interface AgentMcpServerOptions {
   resolveCallerContext?: (callerAgentId: string) => VoiceCallerContext | null;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
-  browserManager?: BrowserManager | null;
+  browserManager?: BrowserManager | any | null;
   logger: Logger;
 }
 

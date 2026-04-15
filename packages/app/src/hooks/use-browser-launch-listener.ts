@@ -19,10 +19,12 @@ export function useBrowserLaunchListener(
 
     const unsubscribe = client.on("browser_launched", (msg: any) => {
       const browserId: string | undefined = msg?.payload?.browserId;
+      const url: string | undefined = msg?.payload?.url;
+      console.log("[BrowserLaunchListener] received browser_launched", { browserId, url });
       if (!browserId) return;
 
       const state = useWorkspaceLayoutStore.getState();
-      const target: WorkspaceTabTarget = { kind: "browser", browserId };
+      const target: WorkspaceTabTarget = { kind: "browser", browserId, url };
 
       // Check if a tab for this browser already exists
       const existingTabs = state.getWorkspaceTabs(workspaceKey);

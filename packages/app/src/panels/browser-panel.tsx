@@ -23,6 +23,7 @@ function BrowserPanel() {
   const isFocused = useIsFocused();
   const { serverId, workspaceId, target, isPaneFocused } = usePaneContext();
   invariant(target.kind === "browser", "BrowserPanel requires browser target");
+  console.log("[BrowserPanel] target:", JSON.stringify(target));
 
   if (!isFocused) {
     return <View style={{ flex: 1 }} />;
@@ -34,6 +35,7 @@ function BrowserPanel() {
       cwd={workspaceId}
       browserId={target.browserId}
       isPaneFocused={isPaneFocused}
+      initialUrl={target.url}
     />
   );
 }

@@ -1718,6 +1718,36 @@ export const UpdateWorkspaceMetadataResponseSchema = z.object({
   }),
 });
 
+/** Daemon → Client: execute a command in the client webview */
+export const BrowserCommandSchema = z.object({
+  type: z.literal("browser_command"),
+  payload: z.object({
+    requestId: z.string(),
+    browserId: z.string(),
+    command: z.enum([
+      "navigate",
+      "click",
+      "fill",
+      "evaluate",
+      "get_text",
+      "screenshot",
+      "go_back",
+      "go_forward",
+    ]),
+    args: z.record(z.unknown()).optional(),
+  }),
+});
+
+/** Client → Daemon: result of executing a webview command */
+export const BrowserCommandResultSchema = z.object({
+  type: z.literal("browser_command_result"),
+  requestId: z.string(),
+  browserId: z.string(),
+  success: z.boolean(),
+  result: z.record(z.unknown()).optional(),
+  error: z.string().optional(),
+});
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const _sessionInboundRaw: any = z.union([
   VoiceAudioChunkMessageSchema,
@@ -1828,6 +1858,7 @@ const _sessionInboundRaw: any = z.union([
   IntegrationFetchItemsRequestSchema,
   CliAgentListRequestSchema,
   UpdateWorkspaceMetadataRequestSchema,
+  BrowserCommandResultSchema,
   // Browser
   BrowserLaunchRequestSchema,
   BrowserStateRequestSchema,
@@ -1948,6 +1979,7 @@ export type SessionInboundMessage =
   | IntegrationFetchItemsRequest
   | CliAgentListRequest
   | UpdateWorkspaceMetadataRequest
+  | BrowserCommandResult
   | BrowserLaunchRequest
   | BrowserStateRequest
   | BrowserScreenshotRequest
@@ -3309,6 +3341,15 @@ export const BrowserLaunchedEventSchema = z.object({
   }),
 });
 
+export const BrowserStateUpdateSchema = z.object({
+  type: z.literal("browser_state_update"),
+  payload: z.object({
+    browserId: z.string(),
+    url: z.string(),
+    title: z.string(),
+  }),
+});
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const _sessionOutboundRaw: any = z.union([
   ActivityLogMessageSchema,
@@ -3431,6 +3472,8 @@ const _sessionOutboundRaw: any = z.union([
   BrowserCloseResponseSchema,
   BrowserResizeResponseSchema,
   BrowserLaunchedEventSchema,
+  BrowserStateUpdateSchema,
+  BrowserCommandSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 118-member union
 export type SessionOutboundMessage =
@@ -3552,7 +3595,9 @@ export type SessionOutboundMessage =
   | BrowserGoForwardResponse
   | BrowserCloseResponse
   | BrowserResizeResponse
-  | BrowserLaunchedEvent;
+  | BrowserLaunchedEvent
+  | BrowserStateUpdate
+  | BrowserCommand;
 export const SessionOutboundMessageSchema: z.ZodType<SessionOutboundMessage> =
   _sessionOutboundRaw as z.ZodType<SessionOutboundMessage>;
 
@@ -3859,6 +3904,9 @@ export type BrowserCloseResponse = z.infer<typeof BrowserCloseResponseSchema>;
 export type BrowserResizeRequest = z.infer<typeof BrowserResizeRequestSchema>;
 export type BrowserResizeResponse = z.infer<typeof BrowserResizeResponseSchema>;
 export type BrowserLaunchedEvent = z.infer<typeof BrowserLaunchedEventSchema>;
+export type BrowserStateUpdate = z.infer<typeof BrowserStateUpdateSchema>;
+export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
+export type BrowserCommandResult = z.infer<typeof BrowserCommandResultSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

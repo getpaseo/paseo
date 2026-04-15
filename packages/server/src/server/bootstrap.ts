@@ -375,6 +375,8 @@ export async function createHubcodeDaemon(
 
     const terminalManager = createTerminalManager();
     const browserManager = new BrowserManager({ logger });
+    const { ClientBrowserManager } = await import("./browser/client-browser-manager.js");
+    const clientBrowserManager = new ClientBrowserManager({ logger });
 
     const detachAgentStoragePersistence = attachAgentStoragePersistence(
       logger,
@@ -440,7 +442,7 @@ export async function createHubcodeDaemon(
           hubcodeHome: config.hubcodeHome,
           callerAgentId,
           enableVoiceTools: false,
-          browserManager,
+          browserManager: clientBrowserManager,
           resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
           resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
           logger,
@@ -628,6 +630,7 @@ export async function createHubcodeDaemon(
               scheduleService,
               checkoutDiffManager,
               browserManager,
+              clientBrowserManager,
             );
 
             if (typeof process.send === "function" && process.env.HUBCODE_SUPERVISED === "1") {

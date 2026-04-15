@@ -166,6 +166,9 @@ function getFallbackTabOptionDescription(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "terminal") {
     return "Terminal";
   }
+  if (tab.target.kind === "browser") {
+    return "Browser";
+  }
   return tab.target.path;
 }
 
