@@ -121,6 +121,14 @@ export interface WorkspaceDescriptor {
   name: string;
   status: WorkspaceDescriptorPayload["status"];
   diffStat: { additions: number; deletions: number } | null;
+  // Issue/integration data (optional — populated when workspace has linked issue)
+  issueContext?: WorkspaceDescriptorPayload["issueContext"];
+  issueMetadata?: Record<string, unknown>;
+  prompt?: string;
+  autoApprove?: boolean;
+  kanbanStatus?: "todo" | "in-progress" | "done";
+  agentProvider?: string;
+  agentMode?: "native" | "cli";
 }
 
 export function normalizeWorkspaceDescriptor(
@@ -136,6 +144,13 @@ export function normalizeWorkspaceDescriptor(
     name: payload.name,
     status: payload.status,
     diffStat: payload.diffStat ?? null,
+    issueContext: payload.issueContext,
+    issueMetadata: payload.issueMetadata,
+    prompt: payload.prompt,
+    autoApprove: payload.autoApprove,
+    kanbanStatus: payload.kanbanStatus,
+    agentProvider: payload.agentProvider,
+    agentMode: payload.agentMode,
   };
 }
 

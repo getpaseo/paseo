@@ -42,8 +42,10 @@ export function DownloadToast() {
 
   return (
     <View
-      style={[styles.container, { bottom: theme.spacing[4] + insets.bottom }]}
-      pointerEvents="box-none"
+      style={[
+        styles.container,
+        { bottom: theme.spacing[4] + insets.bottom, pointerEvents: "box-none" },
+      ]}
     >
       <View style={styles.toast}>
         {activeDownload.status === "downloading" ? (

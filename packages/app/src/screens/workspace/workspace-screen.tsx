@@ -12,6 +12,7 @@ import {
   Copy,
   Ellipsis,
   EllipsisVertical,
+  Globe,
   PanelRight,
   RotateCw,
   SquarePen,
@@ -111,6 +112,7 @@ import {
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
 import { isWeb, isNative } from "@/constants/platform";
+import { useBrowserLaunchListener } from "@/hooks/use-browser-launch-listener";
 
 const TERMINALS_QUERY_STALE_TIME = 5_000;
 const NEW_TAB_AGENT_OPTION_ID = "__new_tab_agent__";
@@ -677,6 +679,22 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       }
     },
   });
+  const launchBrowserMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) {
+        throw new Error("Host is not connected");
+      }
+      return await client.launchBrowser();
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/no supported browser/i.test(message)) {
+        toast.show("Install Google Chrome or Microsoft Edge to use browser features.");
+      } else {
+        toast.show("Failed to launch browser.");
+      }
+    },
+  });
   const killTerminalMutation = useMutation({
     mutationFn: async (terminalId: string) => {
       if (!client) {
@@ -826,6 +844,8 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       }),
     [normalizedServerId, normalizedWorkspaceId],
   );
+
+  useBrowserLaunchListener(normalizedServerId, persistenceKey);
 
   const workspaceLayout = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.layoutByWorkspace[persistenceKey] ?? null) : null,
@@ -1162,6 +1182,13 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     },
     [createTerminalMutation, normalizedWorkspaceId],
   );
+
+  const handleLaunchBrowser = useCallback(() => {
+    if (launchBrowserMutation.isPending) {
+      return;
+    }
+    launchBrowserMutation.mutate();
+  }, [launchBrowserMutation]);
 
   const handleSelectSwitcherTab = useCallback(
     (key: string) => {
@@ -2011,6 +2038,14 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                           New terminal
                         </DropdownMenuItem>
                         <DropdownMenuItem
+                          testID="workspace-header-open-browser"
+                          leading={<Globe size={16} color={theme.colors.foregroundMuted} />}
+                          disabled={launchBrowserMutation.isPending}
+                          onSelect={handleLaunchBrowser}
+                        >
+                          Open browser
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
                           testID="workspace-header-copy-path"
                           leading={<Copy size={16} color={theme.colors.foregroundMuted} />}
                           disabled={!isAbsolutePath(normalizedWorkspaceId)}
@@ -2199,6 +2234,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
               newTabAgentOptionId={NEW_TAB_AGENT_OPTION_ID}
               onReorderTabs={handleReorderTabsInFocusedPane}
               onNewTerminalTab={handleCreateTerminal}
+              onNewBrowserTab={handleLaunchBrowser}
               onSplitRight={() => {}}
               onSplitDown={() => {}}
               showPaneSplitActions={false}
@@ -2237,6 +2273,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                     buildPaneContentModel={buildDesktopPaneContentModel}
                     onFocusPane={handleFocusPane}
                     onNewTerminalTab={handleCreateTerminal}
+                    onNewBrowserTab={handleLaunchBrowser}
                     onSplitPane={handleSplitPane}
                     onSplitPaneEmpty={handleCreateDraftSplit}
                     onMoveTabToPane={handleMoveTabToPane}

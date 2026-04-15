@@ -6,6 +6,7 @@ import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
+import type { BrowserManager } from "./browser/browser-manager.js";
 import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
@@ -246,6 +247,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly mcpBaseUrl: string | null;
   private readonly speech: SpeechService | null;
   private readonly terminalManager: TerminalManager | null;
+  private readonly browserManager: BrowserManager | null;
   private readonly dictation: {
     finalTimeoutMs?: number;
   } | null;
@@ -307,6 +309,7 @@ export class VoiceAssistantWebSocketServer {
     loopService?: LoopService,
     scheduleService?: ScheduleService,
     checkoutDiffManager?: CheckoutDiffManager,
+    browserManager?: BrowserManager | null,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -344,6 +347,7 @@ export class VoiceAssistantWebSocketServer {
     this.mcpBaseUrl = mcpBaseUrl;
     this.speech = speech ?? null;
     this.terminalManager = terminalManager ?? null;
+    this.browserManager = browserManager ?? null;
     this.dictation = dictation ?? null;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.providerOverrides = providerOverrides;
@@ -652,6 +656,7 @@ export class VoiceAssistantWebSocketServer {
       stt: () => this.speech?.resolveStt() ?? null,
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
+      browserManager: this.browserManager,
       providerSnapshotManager: this.providerSnapshotManager,
       voice: {
         turnDetection: () => this.speech?.resolveTurnDetection() ?? null,

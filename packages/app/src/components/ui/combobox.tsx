@@ -99,7 +99,7 @@ function toNumericStyleValue(value: unknown): number | null {
 }
 
 function ComboboxSheetBackground({ style }: BottomSheetBackgroundProps) {
-  return <Animated.View pointerEvents="none" style={[style, styles.bottomSheetBackground]} />;
+  return <Animated.View style={[style, styles.bottomSheetBackground, { pointerEvents: "none" }]} />;
 }
 
 export interface SearchInputProps {

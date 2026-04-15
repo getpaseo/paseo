@@ -27,7 +27,7 @@ const MOBILE_MENU_LINE_HEIGHT = 2;
 
 function MobileMenuIcon({ color }: { color: string }) {
   return (
-    <View style={styles.mobileMenuIcon} pointerEvents="none">
+    <View style={[styles.mobileMenuIcon, { pointerEvents: "none" }]}>
       <View style={[styles.mobileMenuLine, { backgroundColor: color }]} />
       <View style={[styles.mobileMenuLine, { backgroundColor: color }]} />
       <View

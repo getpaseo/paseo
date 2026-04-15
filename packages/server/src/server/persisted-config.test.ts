@@ -340,6 +340,30 @@ describe("provider overrides (new format)", () => {
       },
     });
   });
+
+  test("cliProviders accepts built-in overrides and custom agents", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        cliProviders: {
+          codex: {
+            enabled: false,
+          },
+          "my-agent": {
+            name: "My Agent",
+            command: "my-agent",
+            versionArgs: ["--version"],
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.cliProviders?.codex?.enabled).toBe(false);
+    expect(parsed.agents?.cliProviders?.["my-agent"]).toEqual({
+      name: "My Agent",
+      command: "my-agent",
+      versionArgs: ["--version"],
+    });
+  });
 });
 
 describe("PersistedConfigSchema logging config", () => {

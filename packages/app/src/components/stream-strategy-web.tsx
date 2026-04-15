@@ -10,8 +10,12 @@ import {
 } from "react";
 import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
 import { estimateStreamItemHeight } from "./agent-stream-web-virtualization";
-import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./stream-strategy";
-import { createStreamStrategy } from "./stream-strategy";
+import type {
+  StreamRenderInput,
+  StreamStrategy,
+  StreamViewportHandle,
+} from "./stream-strategy-core";
+import { createStreamStrategy } from "./stream-strategy-core";
 
 type CreateWebStreamStrategyInput = {
   isMobileBreakpoint: boolean;

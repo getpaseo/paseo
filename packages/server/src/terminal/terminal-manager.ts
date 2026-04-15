@@ -20,6 +20,10 @@ export interface TerminalManager {
     cwd: string;
     name?: string;
     env?: Record<string, string>;
+    /** When set, spawn this command directly instead of a shell (for CLI agents). */
+    command?: string;
+    /** Arguments for the direct command. */
+    args?: string[];
   }): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   getTerminal(id: string): TerminalSession | undefined;
@@ -141,6 +145,8 @@ export function createTerminalManager(): TerminalManager {
       cwd: string;
       name?: string;
       env?: Record<string, string>;
+      command?: string;
+      args?: string[];
     }): Promise<TerminalSession> {
       assertAbsolutePath(options.cwd);
 
@@ -156,6 +162,7 @@ export function createTerminalManager(): TerminalManager {
           cwd: options.cwd,
           name: options.name ?? defaultName,
           ...(mergedEnv ? { env: mergedEnv } : {}),
+          ...(options.command ? { command: options.command, args: options.args } : {}),
         }),
       );
 

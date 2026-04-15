@@ -8,13 +8,17 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import type { StreamItem } from "@/types/stream";
+import type {
+  StreamRenderInput,
+  StreamStrategy,
+  StreamViewportHandle,
+} from "./stream-strategy-core";
 import { useBottomAnchorController } from "./use-bottom-anchor-controller";
-import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./stream-strategy";
 import {
   createStreamStrategy,
   isNearBottomForStreamRenderStrategy,
   resolveBottomAnchorTransportBehavior,
-} from "./stream-strategy";
+} from "./stream-strategy-core";
 
 const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   minIndexForVisible: 0,

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 
+import type { CliProviderOverrides } from "../shared/cli-provider-registry.js";
 import type { HubcodeDaemonConfig } from "./bootstrap.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
@@ -174,6 +175,9 @@ export function loadConfig(
   const providerOverrides = extractProviderOverrides(
     persisted.agents?.providers as Record<string, unknown> | undefined,
   );
+  const cliProviderOverrides = (persisted.agents?.cliProviders ?? undefined) as
+    | CliProviderOverrides
+    | undefined;
 
   return {
     listen,
@@ -199,5 +203,6 @@ export function loadConfig(
     voiceLlmModel,
     agentProviderSettings: extractAgentProviderSettings(providerOverrides),
     providerOverrides,
+    cliProviderOverrides,
   };
 }

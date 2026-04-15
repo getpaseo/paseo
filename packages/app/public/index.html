@@ -25,6 +25,15 @@
           background-color: #181B1A;
         }
       }
+      /* Base dark scrollbar — replaced by JS once React mounts with exact theme colors */
+      @media (prefers-color-scheme: dark) {
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1A181B; }
+        ::-webkit-scrollbar-thumb { background: rgba(117,113,116,0.45); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(117,113,116,0.85); }
+        ::-webkit-scrollbar-corner { background: #1A181B; }
+        * { scrollbar-width: thin; scrollbar-color: rgba(117,113,116,0.45) #1A181B; }
+      }
       /* These styles make the root element full-height */
       #root {
         display: flex;

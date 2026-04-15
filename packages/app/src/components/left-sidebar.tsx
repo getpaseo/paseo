@@ -530,7 +530,7 @@ function MobileSidebar({
   const overlayPointerEvents = isWeb ? (isOpen ? "auto" : "none") : "box-none";
 
   return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
+    <View style={[StyleSheet.absoluteFillObject, { pointerEvents: overlayPointerEvents }]}>
       <Animated.View style={[staticStyles.backdrop, backdropAnimatedStyle]} />
 
       <GestureDetector gesture={closeGesture} touchAction="pan-y">
@@ -539,11 +539,10 @@ function MobileSidebar({
             staticStyles.mobileSidebar,
             mobileSidebarInsetStyle,
             sidebarAnimatedStyle,
-            { backgroundColor: theme.colors.surfaceSidebar },
+            { backgroundColor: theme.colors.surfaceSidebar, pointerEvents: "auto" },
           ]}
-          pointerEvents="auto"
         >
-          <View style={styles.sidebarContent} pointerEvents="auto">
+          <View style={[styles.sidebarContent, { pointerEvents: "auto" }]}>
             <View style={styles.sidebarHeader}>
               <View style={styles.sidebarHeaderRow}>
                 <SessionsButton onPress={handleViewMore} />

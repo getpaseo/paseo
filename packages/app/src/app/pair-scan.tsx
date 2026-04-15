@@ -308,7 +308,7 @@ export default function PairScanScreen() {
               barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
               onBarcodeScanned={handleScan}
             />
-            <View style={styles.overlay} pointerEvents="none">
+            <View style={[styles.overlay, { pointerEvents: "none" }]}>
               <View style={styles.scanFrame}>
                 <View style={[styles.corner, styles.cornerTL]} />
                 <View style={[styles.corner, styles.cornerTR]} />

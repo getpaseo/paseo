@@ -21,6 +21,7 @@ import {
   ArrowRightToLine,
   Columns2,
   Copy,
+  Globe,
   RotateCw,
   Rows2,
   SquarePen,
@@ -88,6 +89,7 @@ type WorkspaceDesktopTabsRowProps = {
   newTabAgentOptionId: NewTabOptionId;
   onReorderTabs: (nextTabs: WorkspaceTabDescriptor[]) => void;
   onNewTerminalTab: (input: { paneId?: string }) => void;
+  onNewBrowserTab: () => void;
   onSplitRight: () => void;
   onSplitDown: () => void;
   externalDndContext?: boolean;
@@ -393,6 +395,7 @@ export function WorkspaceDesktopTabsRow({
   newTabAgentOptionId,
   onReorderTabs,
   onNewTerminalTab,
+  onNewBrowserTab,
   onSplitRight,
   onSplitDown,
   externalDndContext = false,
@@ -574,6 +577,22 @@ export function WorkspaceDesktopTabsRow({
                 <Shortcut chord={newTerminalTabKeys} style={styles.newTabTooltipShortcut} />
               ) : null}
             </View>
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+          <TooltipTrigger
+            onPress={onNewBrowserTab}
+            accessibilityRole="button"
+            accessibilityLabel="Open browser"
+            style={({ hovered, pressed }) => [
+              styles.newTabActionButton,
+              (hovered || pressed) && styles.newTabActionButtonHovered,
+            ]}
+          >
+            <Globe size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <Text style={styles.newTabTooltipText}>Open browser</Text>
           </TooltipContent>
         </Tooltip>
         {showPaneSplitActions ? (

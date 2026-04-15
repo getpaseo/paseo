@@ -103,11 +103,10 @@ export function ResizeHandle({
     >
       {highlighted && (
         <View
-          pointerEvents="none"
           style={[
             styles.highlight,
             direction === "horizontal" ? styles.highlightHorizontal : styles.highlightVertical,
-            { backgroundColor: theme.colors.accent },
+            { backgroundColor: theme.colors.accent, pointerEvents: "none" },
           ]}
         />
       )}

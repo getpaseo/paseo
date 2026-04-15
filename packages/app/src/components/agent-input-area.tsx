@@ -705,7 +705,7 @@ export function AgentInputArea({
           <View style={styles.messageInputContainer}>
             {/* Command + file mention autocomplete rendered as a true popover */}
             {autocomplete.isVisible && (
-              <View style={styles.autocompletePopover} pointerEvents="box-none">
+              <View style={[styles.autocompletePopover, { pointerEvents: "box-none" }]}>
                 <Autocomplete
                   options={autocomplete.options}
                   selectedIndex={autocomplete.selectedIndex}

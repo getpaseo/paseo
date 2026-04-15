@@ -466,9 +466,8 @@ export function TooltipContent({
   if (isWeb) {
     return (
       <Portal hostName={bottomSheetInternal?.hostName}>
-        <View pointerEvents="none" style={styles.portalOverlay}>
+        <View style={[styles.portalOverlay, { pointerEvents: "none" }]}>
           <Animated.View
-            pointerEvents="none"
             entering={FadeIn.duration(80)}
             exiting={FadeOut.duration(80)}
             collapsable={false}
@@ -482,6 +481,7 @@ export function TooltipContent({
                 position: "absolute",
                 top: position?.y ?? -9999,
                 left: position?.x ?? -9999,
+                pointerEvents: "none",
               },
             ]}
           >
@@ -502,7 +502,6 @@ export function TooltipContent({
     >
       <Pressable style={styles.overlay} onPress={() => ctx.setOpen(false)}>
         <Animated.View
-          pointerEvents="none"
           entering={FadeIn.duration(80)}
           exiting={FadeOut.duration(80)}
           collapsable={false}
@@ -516,6 +515,7 @@ export function TooltipContent({
               position: "absolute",
               top: position?.y ?? -9999,
               left: position?.x ?? -9999,
+              pointerEvents: "none",
             },
           ]}
         >

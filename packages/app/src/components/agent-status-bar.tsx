@@ -667,8 +667,11 @@ function ControlledStatusBar({
                   onClose={onDropdownClose}
                   renderTrigger={({ selectedModelLabel }) => (
                     <View
-                      style={[styles.sheetSelect, modelDisabled && styles.disabledSheetSelect]}
-                      pointerEvents="none"
+                      style={[
+                        styles.sheetSelect,
+                        modelDisabled && styles.disabledSheetSelect,
+                        { pointerEvents: "none" },
+                      ]}
                       testID="agent-preferences-model"
                     >
                       <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />

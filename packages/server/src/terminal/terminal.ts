@@ -39,6 +39,13 @@ export interface CreateTerminalOptions {
   rows?: number;
   cols?: number;
   name?: string;
+  /**
+   * When set, spawn this command directly instead of a shell.
+   * Used to launch CLI agents (e.g. "claude", "codex", "gemini").
+   */
+  command?: string;
+  /** Arguments for the direct command. Ignored when `command` is not set. */
+  args?: string[];
 }
 
 export interface CaptureTerminalLinesOptions {
@@ -313,8 +320,11 @@ export function captureTerminalLines(
 }
 
 export async function createTerminal(options: CreateTerminalOptions): Promise<TerminalSession> {
-  const { cwd, shell, env = {}, rows = 24, cols = 80, name = "Terminal" } = options;
-  const resolvedShell = shell ?? resolveDefaultTerminalShell();
+  const { cwd, shell, env = {}, rows = 24, cols = 80, name = "Terminal", command, args } = options;
+
+  // When `command` is provided, spawn that binary directly instead of a shell.
+  const spawnBinary = command ?? shell ?? resolveDefaultTerminalShell();
+  const spawnArgs = command ? (args ?? []) : [];
 
   const id = randomUUID();
   const listeners = new Set<(msg: ServerMessage) => void>();
@@ -334,7 +344,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
   // Create PTY
-  const ptyProcess = pty.spawn(resolvedShell, [], {
+  const ptyProcess = pty.spawn(spawnBinary, spawnArgs, {
     name: "xterm-256color",
     cols,
     rows,

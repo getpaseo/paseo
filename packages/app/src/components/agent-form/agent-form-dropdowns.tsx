@@ -229,7 +229,7 @@ interface DropdownSheetProps {
 }
 
 function DropdownSheetBackground({ style }: BottomSheetBackgroundProps) {
-  return <Animated.View pointerEvents="none" style={[style, styles.bottomSheetBackground]} />;
+  return <Animated.View style={[style, styles.bottomSheetBackground, { pointerEvents: "none" }]} />;
 }
 
 export function DropdownSheet({

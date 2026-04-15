@@ -20,6 +20,7 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
 import { isWeb } from "@/constants/platform";
+import { SessionIntegrationBanner } from "@/components/session-integration-banner";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
@@ -310,6 +311,11 @@ export function WorkspaceDraftAgentTab({
   return (
     <FileDropZone onFilesDropped={handleFilesDropped}>
       <View style={styles.container}>
+        <SessionIntegrationBanner
+          serverId={serverId}
+          cwd={workspaceId}
+          onSendToAgent={(prompt) => draftInput.setText(prompt)}
+        />
         <View style={styles.contentContainer}>
           {isSubmitting && draftAgent ? (
             <View style={styles.streamContainer}>

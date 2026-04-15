@@ -289,7 +289,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     (state) => state.sessions[serverId]?.focusedAgentId ?? null,
   );
   const sessionAgents = useSessionStore((state) => state.sessions[serverId]?.agents);
-
+  const sessionWorkspaces = useSessionStore((state) => state.sessions[serverId]?.workspaces);
+  const hasHydratedWorkspaces = useSessionStore(
+    (state) => state.sessions[serverId]?.hasHydratedWorkspaces ?? false,
+  );
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
   const sendAgentMessageRef = useRef<
     ((agentId: string, message: string, images?: AttachmentMetadata[]) => Promise<void>) | null
@@ -320,6 +323,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       sessionAgents,
     );
   }, [sessionAgents]);
+
+  // NOTE: The task↔workspace sync effect was removed. Issue/integration data
+  // is now stored directly on the workspace via issueContext/issueMetadata/kanbanStatus.
+  // The kanban board reads from workspaces instead of a separate task store.
 
   const hydrateWorkspaces = useCallback(
     async (options?: { subscribe?: boolean; isCancelled?: () => boolean }) => {

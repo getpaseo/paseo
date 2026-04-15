@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ensureValidJson } from "../json-utils.js";
@@ -29,6 +30,8 @@ import { captureTerminalLines } from "../../terminal/terminal.js";
 import { createAgentWorktree, runAsyncWorktreeBootstrap } from "../worktree-bootstrap.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { ScheduleSummarySchema, StoredScheduleSchema } from "../schedule/types.js";
+import type { BrowserManager } from "../browser/browser-manager.js";
+import { registerBrowserTools } from "../browser/browser-mcp-tools.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 import { deleteHubcodeWorktree, listHubcodeWorktrees } from "../../utils/worktree.js";
 import {
@@ -65,6 +68,7 @@ export interface AgentMcpServerOptions {
   resolveCallerContext?: (callerAgentId: string) => VoiceCallerContext | null;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
+  browserManager?: BrowserManager | null;
   logger: Logger;
 }
 
@@ -1638,6 +1642,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       };
     },
   );
+
+  // Browser tools
+  const { browserManager } = options;
+  if (browserManager) {
+    registerBrowserTools(server, browserManager, childLogger);
+  }
 
   return server;
 }

@@ -108,6 +108,7 @@ import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore } from "./daemon-config-store.js";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
+import { BrowserManager } from "./browser/browser-manager.js";
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
@@ -118,6 +119,7 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
+import type { CliProviderOverrides } from "../shared/cli-provider-registry.js";
 import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
@@ -181,6 +183,7 @@ export type HubcodeDaemonConfig = {
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
+  cliProviderOverrides?: CliProviderOverrides;
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
 };
 
@@ -206,6 +209,9 @@ export async function createHubcodeDaemon(
     config.hubcodeHome,
     {
       mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
+      agents: config.cliProviderOverrides
+        ? { cliProviders: config.cliProviderOverrides }
+        : undefined,
     },
     logger,
   );
@@ -368,6 +374,7 @@ export async function createHubcodeDaemon(
     });
 
     const terminalManager = createTerminalManager();
+    const browserManager = new BrowserManager({ logger });
 
     const detachAgentStoragePersistence = attachAgentStoragePersistence(
       logger,
@@ -433,6 +440,7 @@ export async function createHubcodeDaemon(
           hubcodeHome: config.hubcodeHome,
           callerAgentId,
           enableVoiceTools: false,
+          browserManager,
           resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
           resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
           logger,
@@ -619,6 +627,7 @@ export async function createHubcodeDaemon(
               loopService,
               scheduleService,
               checkoutDiffManager,
+              browserManager,
             );
 
             if (typeof process.send === "function" && process.env.HUBCODE_SUPERVISED === "1") {
@@ -687,6 +696,7 @@ export async function createHubcodeDaemon(
         providerOverrides: config.providerOverrides,
       });
       terminalManager.killAll();
+      await browserManager.dispose();
       speechService.stop();
       await scheduleService.stop().catch(() => undefined);
       await relayTransport?.stop().catch(() => undefined);

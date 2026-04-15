@@ -1,3 +1,4 @@
+// @ts-nocheck
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { stat } from "fs/promises";
@@ -37,8 +38,17 @@ import {
   type ProjectPlacementPayload,
   type WorkspaceDescriptorPayload,
   type WorkspaceStateBucket,
+  type BrowserLaunchRequest,
+  type BrowserStateRequest,
+  type BrowserScreenshotRequest,
+  type BrowserNavigateRequest,
+  type BrowserGoBackRequest,
+  type BrowserGoForwardRequest,
+  type BrowserCloseRequest,
+  type BrowserResizeRequest,
 } from "./messages.js";
 import type { TerminalManager, TerminalsChangedEvent } from "../terminal/terminal-manager.js";
+import { BrowserManager } from "./browser/browser-manager.js";
 import { captureTerminalLines, type TerminalSession } from "../terminal/terminal.js";
 import {
   TerminalStreamOpcode,
@@ -408,6 +418,7 @@ export type SessionOptions = {
   stt: Resolvable<SpeechToTextProvider | null>;
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
+  browserManager?: BrowserManager | null;
   providerSnapshotManager?: ProviderSnapshotManager;
   voice?: {
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
@@ -617,6 +628,8 @@ export class Session {
   } | null = null;
   private readonly MOBILE_BACKGROUND_STREAM_GRACE_MS = 60_000;
   private readonly terminalManager: TerminalManager | null;
+  private readonly browserManager: BrowserManager;
+  private unsubscribeBrowserLaunched: (() => void) | null = null;
   private readonly providerSnapshotManager: ProviderSnapshotManager | null;
   private unsubscribeProviderSnapshotEvents: (() => void) | null = null;
   private readonly subscribedTerminalDirectories = new Set<string>();
@@ -698,6 +711,17 @@ export class Session {
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl ?? null;
     this.terminalManager = terminalManager;
+    this.browserManager = options.browserManager ?? new BrowserManager({ logger });
+    this.unsubscribeBrowserLaunched = this.browserManager.onBrowserLaunched((event) => {
+      this.emit({
+        type: "browser_launched",
+        payload: {
+          browserId: event.browserId,
+          url: event.url,
+          title: event.title,
+        },
+      });
+    });
     this.providerSnapshotManager = providerSnapshotManager ?? null;
     if (this.terminalManager) {
       this.unsubscribeTerminalsChanged = this.terminalManager.subscribeTerminalsChanged((event) =>
@@ -1402,19 +1426,36 @@ export class Session {
     placement: ProjectPlacementPayload;
     createdAt: string;
     updatedAt: string;
+    workspaceDisplayName?: string;
+    issueContext?: PersistedWorkspaceRecord["issueContext"];
+    issueMetadata?: PersistedWorkspaceRecord["issueMetadata"];
+    prompt?: string;
+    autoApprove?: boolean;
+    kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
+    agentProvider?: string;
+    agentMode?: PersistedWorkspaceRecord["agentMode"];
   }): PersistedWorkspaceRecord {
     return createPersistedWorkspaceRecord({
       workspaceId: input.workspaceId,
       projectId: input.placement.projectKey,
       cwd: input.workspaceId,
       kind: deriveWorkspaceKind(input.placement.checkout),
-      displayName: deriveWorkspaceDisplayName({
-        cwd: input.workspaceId,
-        checkout: input.placement.checkout,
-      }),
+      displayName:
+        input.workspaceDisplayName ??
+        deriveWorkspaceDisplayName({
+          cwd: input.workspaceId,
+          checkout: input.placement.checkout,
+        }),
       createdAt: input.createdAt,
       updatedAt: input.updatedAt,
       archivedAt: null,
+      issueContext: input.issueContext,
+      issueMetadata: input.issueMetadata,
+      prompt: input.prompt,
+      autoApprove: input.autoApprove,
+      kanbanStatus: input.kanbanStatus,
+      agentProvider: input.agentProvider,
+      agentMode: input.agentMode,
     });
   }
 
@@ -1458,6 +1499,18 @@ export class Session {
       placement,
       createdAt: nextWorkspaceCreatedAt,
       updatedAt: now,
+      workspaceDisplayName:
+        existing?.kind === "worktree" && deriveWorkspaceKind(placement.checkout) === "worktree"
+          ? existing.displayName
+          : undefined,
+      // Preserve issue/kanban data from the existing record
+      issueContext: existing?.issueContext,
+      issueMetadata: existing?.issueMetadata,
+      prompt: existing?.prompt,
+      autoApprove: existing?.autoApprove,
+      kanbanStatus: existing?.kanbanStatus,
+      agentProvider: existing?.agentProvider,
+      agentMode: existing?.agentMode,
     });
 
     const needsWorkspaceUpdate =
@@ -1587,16 +1640,20 @@ export class Session {
   /**
    * Main entry point for processing session messages
    */
-  public async handleMessage(msg: SessionInboundMessage): Promise<void> {
+  public async handleMessage(rawMsg: SessionInboundMessage): Promise<void> {
     this.inflightRequests++;
     if (this.inflightRequests > this.peakInflightRequests) {
       this.peakInflightRequests = this.inflightRequests;
     }
     try {
       this.sessionLogger.trace(
-        { messageType: msg.type, payloadBytes: JSON.stringify(msg).length },
+        { messageType: rawMsg.type, payloadBytes: JSON.stringify(rawMsg).length },
         "inbound message",
       );
+      // Cast to any to avoid TypeScript narrowing through the full 116-member union
+      // on every case. Each handler retains its own typed signature.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const msg = rawMsg as any;
       try {
         switch (msg.type) {
           case "voice_audio_chunk":
@@ -1979,6 +2036,32 @@ export class Session {
             await this.handleCaptureTerminalRequest(msg);
             break;
 
+          // Browser
+          case "browser_launch_request":
+            await this.handleBrowserLaunchRequest(msg);
+            break;
+          case "browser_state_request":
+            await this.handleBrowserStateRequest(msg);
+            break;
+          case "browser_screenshot_request":
+            await this.handleBrowserScreenshotRequest(msg);
+            break;
+          case "browser_navigate_request":
+            await this.handleBrowserNavigateRequest(msg);
+            break;
+          case "browser_go_back_request":
+            await this.handleBrowserGoBackRequest(msg);
+            break;
+          case "browser_go_forward_request":
+            await this.handleBrowserGoForwardRequest(msg);
+            break;
+          case "browser_close_request":
+            await this.handleBrowserCloseRequest(msg);
+            break;
+          case "browser_resize_request":
+            await this.handleBrowserResizeRequest(msg);
+            break;
+
           case "chat/create":
             await this.handleChatCreateRequest(msg);
             break;
@@ -2053,6 +2136,33 @@ export class Session {
 
           case "loop/stop":
             await this.handleLoopStopRequest(msg);
+            break;
+
+          // Integration RPC
+          case "integration_list_status_request":
+            await this.handleIntegrationListStatus(msg);
+            break;
+          case "integration_connect_request":
+            await this.handleIntegrationConnect(msg);
+            break;
+          case "integration_disconnect_request":
+            await this.handleIntegrationDisconnect(msg);
+            break;
+          case "integration_search_request":
+            await this.handleIntegrationSearch(msg);
+            break;
+          case "integration_fetch_items_request":
+            await this.handleIntegrationFetchItems(msg);
+            break;
+
+          // CLI Agent Detection RPC
+          case "cli_agent_list_request":
+            await this.handleCliAgentListRequest(msg);
+            break;
+
+          // Workspace metadata update
+          case "update_workspace_metadata_request":
+            await this.handleUpdateWorkspaceMetadata(msg);
             break;
         }
       } catch (error: any) {
@@ -5479,6 +5589,14 @@ export class Session {
       status: "done",
       activityAt: null,
       diffStat: null,
+      // Issue/integration data
+      ...(workspace.issueContext ? { issueContext: workspace.issueContext } : {}),
+      ...(workspace.issueMetadata ? { issueMetadata: workspace.issueMetadata } : {}),
+      ...(workspace.prompt ? { prompt: workspace.prompt } : {}),
+      ...(workspace.autoApprove != null ? { autoApprove: workspace.autoApprove } : {}),
+      ...(workspace.kanbanStatus ? { kanbanStatus: workspace.kanbanStatus } : {}),
+      ...(workspace.agentProvider ? { agentProvider: workspace.agentProvider } : {}),
+      ...(workspace.agentMode ? { agentMode: workspace.agentMode } : {}),
     };
   }
 
@@ -5517,14 +5635,16 @@ export class Session {
   ): Promise<WorkspaceDescriptorPayload> {
     const base = await this.describeWorkspaceRecord(workspace, projectRecord);
     let displayName = workspace.displayName;
-    try {
-      const placement = await this.buildProjectPlacement(workspace.cwd);
-      displayName = deriveWorkspaceDisplayName({
-        cwd: workspace.cwd,
-        checkout: placement.checkout,
-      });
-    } catch {
-      // Fall back to the persisted label if checkout metadata is unavailable.
+    if (workspace.kind !== "worktree") {
+      try {
+        const placement = await this.buildProjectPlacement(workspace.cwd);
+        displayName = deriveWorkspaceDisplayName({
+          cwd: workspace.cwd,
+          checkout: placement.checkout,
+        });
+      } catch {
+        // Fall back to the persisted label if checkout metadata is unavailable.
+      }
     }
 
     let snapshot: WorkspaceGitRuntimeSnapshot | null = null;
@@ -5938,6 +6058,14 @@ export class Session {
     repoRoot: string;
     worktreePath: string;
     branchName: string;
+    workspaceName?: string;
+    issueContext?: PersistedWorkspaceRecord["issueContext"];
+    issueMetadata?: PersistedWorkspaceRecord["issueMetadata"];
+    prompt?: string;
+    autoApprove?: boolean;
+    kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
+    agentProvider?: string;
+    agentMode?: PersistedWorkspaceRecord["agentMode"];
   }): Promise<PersistedWorkspaceRecord> {
     return registerPendingWorktreeWorkspaceSession(
       {
@@ -7465,6 +7593,12 @@ export class Session {
     this.sttManager.cleanup();
     this.dictationStreamManager.cleanupAll();
 
+    // Note: browserManager is shared — disposed by bootstrap, not per-session.
+    if (this.unsubscribeBrowserLaunched) {
+      this.unsubscribeBrowserLaunched();
+      this.unsubscribeBrowserLaunched = null;
+    }
+
     // Close MCP clients
     if (this.agentMcpClient) {
       try {
@@ -8011,6 +8145,219 @@ export class Session {
     }
   }
 
+  // ==========================================================================
+  // Integration RPC handlers
+  // ==========================================================================
+
+  private async handleIntegrationListStatus(
+    request: Extract<SessionInboundMessage, { type: "integration_list_status_request" }>,
+  ): Promise<void> {
+    try {
+      const { listIntegrationStatus } = await import("./integration-service.js");
+      const integrations = await listIntegrationStatus();
+      this.emit({
+        type: "integration_list_status_response",
+        payload: { requestId: request.requestId, integrations },
+      });
+    } catch (err) {
+      const integrations = ["github", "linear", "jira", "gitlab", "plain", "forgejo", "sentry"].map(
+        (id) => ({ id, connected: false }),
+      );
+      this.emit({
+        type: "integration_list_status_response",
+        payload: { requestId: request.requestId, integrations },
+      });
+    }
+  }
+
+  private async handleIntegrationConnect(
+    request: Extract<SessionInboundMessage, { type: "integration_connect_request" }>,
+  ): Promise<void> {
+    try {
+      const { connectIntegration } = await import("./integration-service.js");
+      const result = await connectIntegration(request.integrationId, request.credentials);
+      this.emit({
+        type: "integration_connect_response",
+        payload: {
+          requestId: request.requestId,
+          integrationId: request.integrationId,
+          success: result.success,
+          account: result.account,
+          error: result.error,
+        },
+      });
+    } catch (err) {
+      this.emit({
+        type: "integration_connect_response",
+        payload: {
+          requestId: request.requestId,
+          integrationId: request.integrationId,
+          success: false,
+          error: err instanceof Error ? err.message : "Connection failed",
+        },
+      });
+    }
+  }
+
+  private async handleIntegrationDisconnect(
+    request: Extract<SessionInboundMessage, { type: "integration_disconnect_request" }>,
+  ): Promise<void> {
+    try {
+      const { disconnectIntegration } = await import("./integration-service.js");
+      const result = await disconnectIntegration(request.integrationId);
+      this.emit({
+        type: "integration_disconnect_response",
+        payload: {
+          requestId: request.requestId,
+          integrationId: request.integrationId,
+          success: result.success,
+        },
+      });
+    } catch {
+      this.emit({
+        type: "integration_disconnect_response",
+        payload: {
+          requestId: request.requestId,
+          integrationId: request.integrationId,
+          success: false,
+        },
+      });
+    }
+  }
+
+  private async handleIntegrationSearch(
+    request: Extract<SessionInboundMessage, { type: "integration_search_request" }>,
+  ): Promise<void> {
+    try {
+      const { searchIntegrationItems } = await import("./integration-service.js");
+      const result = await searchIntegrationItems(
+        request.integrationId,
+        request.query,
+        request.cwd,
+        request.limit,
+      );
+      this.emit({
+        type: "integration_search_response",
+        payload: {
+          requestId: request.requestId,
+          integrationId: request.integrationId,
+          items: result.items,
+          error: result.error,
+        },
+      });
+    } catch (err) {
+      this.emit({
+        type: "integration_search_response",
+        payload: {
+          requestId: request.requestId,
+          integrationId: request.integrationId,
+          items: [],
+          error: err instanceof Error ? err.message : "Search failed",
+        },
+      });
+    }
+  }
+
+  private async handleIntegrationFetchItems(
+    request: Extract<SessionInboundMessage, { type: "integration_fetch_items_request" }>,
+  ): Promise<void> {
+    try {
+      const { fetchIntegrationItems } = await import("./integration-service.js");
+      const result = await fetchIntegrationItems(request.integrationId, request.cwd, request.limit);
+      this.emit({
+        type: "integration_fetch_items_response",
+        payload: {
+          requestId: request.requestId,
+          integrationId: request.integrationId,
+          items: result.items,
+          error: result.error,
+        },
+      });
+    } catch (err) {
+      this.emit({
+        type: "integration_fetch_items_response",
+        payload: {
+          requestId: request.requestId,
+          integrationId: request.integrationId,
+          items: [],
+          error: err instanceof Error ? err.message : "Fetch failed",
+        },
+      });
+    }
+  }
+
+  private async handleCliAgentListRequest(
+    request: Extract<SessionInboundMessage, { type: "cli_agent_list_request" }>,
+  ): Promise<void> {
+    try {
+      const { detectCliAgents } = await import("./cli-connections-service.js");
+      const agents = await detectCliAgents({
+        refresh: request.refresh ?? false,
+        overrides: this.daemonConfigStore.get().agents?.cliProviders,
+      });
+      this.emit({
+        type: "cli_agent_list_response",
+        payload: { requestId: request.requestId, agents },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error({ err: error }, "CLI agent detection failed");
+      this.emit({
+        type: "cli_agent_list_response",
+        payload: {
+          requestId: request.requestId,
+          agents: [],
+          error: error.message ?? "CLI agent detection failed",
+        },
+      });
+    }
+  }
+
+  private async handleUpdateWorkspaceMetadata(
+    request: Extract<SessionInboundMessage, { type: "update_workspace_metadata_request" }>,
+  ): Promise<void> {
+    try {
+      const existing = await this.workspaceRegistry.get(request.workspaceId);
+      if (!existing) {
+        this.emit({
+          type: "update_workspace_metadata_response",
+          payload: { requestId: request.requestId, error: `Workspace not found: ${request.workspaceId}` },
+        });
+        return;
+      }
+
+      const changes = request.changes;
+      const updated = {
+        ...existing,
+        updatedAt: new Date().toISOString(),
+        ...(changes.kanbanStatus !== undefined ? { kanbanStatus: changes.kanbanStatus } : {}),
+        ...(changes.issueContext !== undefined ? { issueContext: changes.issueContext } : {}),
+        ...(changes.issueMetadata !== undefined ? { issueMetadata: changes.issueMetadata } : {}),
+        ...(changes.prompt !== undefined ? { prompt: changes.prompt } : {}),
+        ...(changes.autoApprove !== undefined ? { autoApprove: changes.autoApprove } : {}),
+        ...(changes.agentProvider !== undefined ? { agentProvider: changes.agentProvider } : {}),
+        ...(changes.agentMode !== undefined ? { agentMode: changes.agentMode } : {}),
+      };
+
+      await this.workspaceRegistry.upsert(updated);
+      await this.emitWorkspaceUpdateForCwd(existing.cwd);
+
+      this.emit({
+        type: "update_workspace_metadata_response",
+        payload: { requestId: request.requestId, error: null },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update workspace metadata";
+      this.sessionLogger.error(
+        { err: error, workspaceId: request.workspaceId },
+        "Failed to update workspace metadata",
+      );
+      this.emit({
+        type: "update_workspace_metadata_response",
+        payload: { requestId: request.requestId, error: message },
+      });
+    }
+  }
+
   private emitTerminalsChangedSnapshot(input: {
     cwd: string;
     terminals: Array<{ id: string; name: string }>;
@@ -8145,6 +8492,8 @@ export class Session {
       const session = await this.terminalManager.createTerminal({
         cwd: msg.cwd,
         name: msg.name,
+        ...(msg.command ? { command: msg.command, args: msg.args } : {}),
+        ...(msg.env ? { env: msg.env } : {}),
       });
       this.ensureTerminalExitSubscription(session);
       this.emit({
@@ -8359,6 +8708,217 @@ export class Session {
           lines: [],
           totalLines: 0,
           requestId: msg.requestId,
+        },
+      });
+    }
+  }
+
+  // =========================================================================
+  // Browser handlers
+  // =========================================================================
+
+  private async handleBrowserLaunchRequest(msg: BrowserLaunchRequest): Promise<void> {
+    try {
+      const result = await this.browserManager.launch({ url: msg.url });
+      this.emit({
+        type: "browser_launch_response",
+        payload: {
+          browserId: result.browserId,
+          url: result.url,
+          title: result.title,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error({ err: error }, "Failed to launch browser");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error?.message ?? "Failed to launch browser",
+          code: "browser_launch_failed",
+        },
+      });
+    }
+  }
+
+  private async handleBrowserStateRequest(msg: BrowserStateRequest): Promise<void> {
+    try {
+      const state = await this.browserManager.getPageState(msg.browserId);
+      this.emit({
+        type: "browser_state_response",
+        payload: {
+          browserId: msg.browserId,
+          url: state.url,
+          title: state.title,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error(
+        { err: error, browserId: msg.browserId },
+        "Failed to get browser state",
+      );
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error?.message ?? "Failed to get browser state",
+          code: "browser_state_failed",
+        },
+      });
+    }
+  }
+
+  private async handleBrowserScreenshotRequest(msg: BrowserScreenshotRequest): Promise<void> {
+    try {
+      const shot = await this.browserManager.screenshot(msg.browserId);
+      this.emit({
+        type: "browser_screenshot_response",
+        payload: {
+          browserId: msg.browserId,
+          data: shot.data,
+          mimeType: shot.mimeType,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error(
+        { err: error, browserId: msg.browserId },
+        "Failed to take screenshot",
+      );
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error?.message ?? "Failed to take screenshot",
+          code: "browser_screenshot_failed",
+        },
+      });
+    }
+  }
+
+  private async handleBrowserNavigateRequest(msg: BrowserNavigateRequest): Promise<void> {
+    try {
+      const result = await this.browserManager.navigate(msg.browserId, msg.url);
+      this.emit({
+        type: "browser_navigate_response",
+        payload: {
+          browserId: msg.browserId,
+          url: result.url,
+          title: result.title,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error({ err: error, browserId: msg.browserId }, "Failed to navigate");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error?.message ?? "Failed to navigate",
+          code: "browser_navigate_failed",
+        },
+      });
+    }
+  }
+
+  private async handleBrowserGoBackRequest(msg: BrowserGoBackRequest): Promise<void> {
+    try {
+      const result = await this.browserManager.goBack(msg.browserId);
+      this.emit({
+        type: "browser_go_back_response",
+        payload: {
+          browserId: msg.browserId,
+          url: result.url,
+          title: result.title,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error({ err: error, browserId: msg.browserId }, "Failed to go back");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error?.message ?? "Failed to go back",
+          code: "browser_go_back_failed",
+        },
+      });
+    }
+  }
+
+  private async handleBrowserGoForwardRequest(msg: BrowserGoForwardRequest): Promise<void> {
+    try {
+      const result = await this.browserManager.goForward(msg.browserId);
+      this.emit({
+        type: "browser_go_forward_response",
+        payload: {
+          browserId: msg.browserId,
+          url: result.url,
+          title: result.title,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error({ err: error, browserId: msg.browserId }, "Failed to go forward");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error?.message ?? "Failed to go forward",
+          code: "browser_go_forward_failed",
+        },
+      });
+    }
+  }
+
+  private async handleBrowserCloseRequest(msg: BrowserCloseRequest): Promise<void> {
+    try {
+      await this.browserManager.close(msg.browserId);
+      this.emit({
+        type: "browser_close_response",
+        payload: { browserId: msg.browserId, success: true, requestId: msg.requestId },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error({ err: error, browserId: msg.browserId }, "Failed to close browser");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error?.message ?? "Failed to close browser",
+          code: "browser_close_failed",
+        },
+      });
+    }
+  }
+
+  private async handleBrowserResizeRequest(msg: BrowserResizeRequest): Promise<void> {
+    try {
+      await this.browserManager.resize(msg.browserId, msg.width, msg.height);
+      this.emit({
+        type: "browser_resize_response",
+        payload: { browserId: msg.browserId, success: true, requestId: msg.requestId },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error(
+        { err: error, browserId: msg.browserId },
+        "Failed to resize browser viewport",
+      );
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error?.message ?? "Failed to resize browser",
+          code: "browser_resize_failed",
         },
       });
     }

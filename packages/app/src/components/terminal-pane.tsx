@@ -22,6 +22,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { SessionIntegrationBanner } from "@/components/session-integration-banner";
 
 interface TerminalPaneProps {
   serverId: string;
@@ -549,6 +550,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
 
   return (
     <Animated.View style={[styles.container, keyboardPaddingStyle]}>
+      <SessionIntegrationBanner serverId={serverId} terminalId={terminalId} cwd={cwd} />
       <View style={styles.outputContainer}>
         {isScreenFocused ? (
           <View style={styles.terminalGestureContainer}>
@@ -595,7 +597,10 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
         )}
 
         {isAttaching && isScreenFocused ? (
-          <View style={styles.attachOverlay} pointerEvents="none" testID="terminal-attach-loading">
+          <View
+            style={[styles.attachOverlay, { pointerEvents: "none" }]}
+            testID="terminal-attach-loading"
+          >
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
           </View>
         ) : null}

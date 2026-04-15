@@ -1,5 +1,6 @@
 node_modules
 dist
+.tsbuildinfo
 .env
 .DS_Store
 *.log

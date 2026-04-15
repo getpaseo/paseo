@@ -361,7 +361,7 @@ export function WebDesktopScrollbarOverlay({
   const handleInsetTop = Math.max(0, (thumbRegionHeight - geometry.handleSize) / 2);
 
   return (
-    <View style={styles.overlay} pointerEvents="box-none">
+    <View style={[styles.overlay, { pointerEvents: "box-none" }]}>
       <View
         style={[
           styles.thumbRegion,
@@ -369,6 +369,7 @@ export function WebDesktopScrollbarOverlay({
             top: 0,
             height: thumbRegionHeight,
             transform: [{ translateY: thumbRegionOffset }],
+            pointerEvents: handleVisible ? "auto" : "none",
           },
           platformIsWeb &&
             ({
@@ -380,7 +381,6 @@ export function WebDesktopScrollbarOverlay({
               transitionTimingFunction: "linear",
             } as any),
         ]}
-        pointerEvents={handleVisible ? "auto" : "none"}
         {...(panResponder?.panHandlers ?? {})}
         {...(platformIsWeb
           ? ({
@@ -401,6 +401,7 @@ export function WebDesktopScrollbarOverlay({
               width: handleWidth,
               backgroundColor: handleColor,
               opacity: handleOpacity,
+              pointerEvents: "none",
             },
             platformIsWeb &&
               ({
@@ -409,7 +410,6 @@ export function WebDesktopScrollbarOverlay({
                 transitionTimingFunction: "ease-out, cubic-bezier(0.22, 0.75, 0.2, 1), ease-out",
               } as any),
           ]}
-          pointerEvents="none"
         />
       </View>
     </View>

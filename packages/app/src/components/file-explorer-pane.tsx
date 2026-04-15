@@ -1154,7 +1154,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
-    outlineStyle: "none",
   },
   searchClear: {
     width: 20,
@@ -1284,7 +1283,6 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: Fonts.mono,
     borderWidth: 1,
     borderColor: theme.colors.borderAccent,
-    outlineStyle: "none",
   },
   renameActions: {
     flexDirection: "row",

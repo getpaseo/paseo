@@ -62,6 +62,8 @@ import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout
 import { CommandCenter } from "@/components/command-center";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
+import { WebGlobalScrollbarStyle } from "@/components/web-global-scrollbar-style";
+import { AddProjectModal } from "@/components/add-project-modal";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { queryClient } from "@/query/query-client";
 import {
@@ -460,6 +462,7 @@ function AppContainer({
       <UpdateBanner />
       <CommandCenter />
       <ProjectPickerModal />
+      <AddProjectModal />
       <KeyboardShortcutsDialog />
     </View>
   );
@@ -608,6 +611,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
 
   return (
     <VoiceProvider>
+      <WebGlobalScrollbarStyle />
       <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
       <HostSessionManager />
       <FaviconStatusSync />
@@ -804,18 +808,13 @@ function RootStack() {
         <Stack.Screen name="settings" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
-      <Stack.Screen
-        name="h/[serverId]/workspace/[workspaceId]"
-        getId={({ params }) => {
-          const serverId = getRouteParamValue(params?.serverId);
-          const workspaceId = getRouteParamValue(params?.workspaceId);
-          return serverId && workspaceId ? `${serverId}:${workspaceId}` : undefined;
-        }}
-      />
+      <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
       <Stack.Screen name="h/[serverId]/agent/[agentId]" options={{ gestureEnabled: false }} />
       <Stack.Screen name="h/[serverId]/index" />
       <Stack.Screen name="h/[serverId]/sessions" />
       <Stack.Screen name="h/[serverId]/open-project" />
+      <Stack.Screen name="h/[serverId]/kanban/index" />
+      <Stack.Screen name="h/[serverId]/project/[projectId]/kanban" />
       <Stack.Screen name="h/[serverId]/settings" />
       <Stack.Screen name="index" />
     </Stack>

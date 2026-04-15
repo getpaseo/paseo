@@ -94,6 +94,7 @@ interface SplitContainerProps {
     paneId?: string;
   }) => void;
   onNewTerminalTab: (input: { paneId?: string }) => void;
+  onNewBrowserTab: () => void;
   newTabAgentOptionId?: "__new_tab_agent__" | "__new_tab_terminal__";
   buildPaneContentModel: (input: {
     paneId: string;
@@ -260,6 +261,7 @@ export function SplitContainer({
   onCloseOtherTabs,
   onSelectNewTabOption,
   onNewTerminalTab,
+  onNewBrowserTab,
   newTabAgentOptionId = "__new_tab_agent__",
   buildPaneContentModel,
   onFocusPane,
@@ -530,6 +532,7 @@ export function SplitContainer({
         onCloseOtherTabs={onCloseOtherTabs}
         onSelectNewTabOption={onSelectNewTabOption}
         onNewTerminalTab={onNewTerminalTab}
+        onNewBrowserTab={onNewBrowserTab}
         newTabAgentOptionId={newTabAgentOptionId}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
@@ -653,6 +656,7 @@ function SplitNodeView({
   onCloseOtherTabs,
   onSelectNewTabOption,
   onNewTerminalTab,
+  onNewBrowserTab,
   newTabAgentOptionId,
   buildPaneContentModel,
   onFocusPane,
@@ -689,6 +693,7 @@ function SplitNodeView({
         onCloseOtherTabs={onCloseOtherTabs}
         onSelectNewTabOption={onSelectNewTabOption}
         onNewTerminalTab={onNewTerminalTab}
+        onNewBrowserTab={onNewBrowserTab}
         newTabAgentOptionId={newTabAgentOptionId}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
@@ -740,6 +745,7 @@ function SplitNodeView({
               onCloseOtherTabs={onCloseOtherTabs}
               onSelectNewTabOption={onSelectNewTabOption}
               onNewTerminalTab={onNewTerminalTab}
+              onNewBrowserTab={onNewBrowserTab}
               newTabAgentOptionId={newTabAgentOptionId}
               buildPaneContentModel={buildPaneContentModel}
               onFocusPane={onFocusPane}
@@ -790,6 +796,7 @@ function SplitPaneView({
   onCloseOtherTabs,
   onSelectNewTabOption,
   onNewTerminalTab,
+  onNewBrowserTab,
   newTabAgentOptionId,
   buildPaneContentModel,
   onFocusPane,
@@ -897,6 +904,7 @@ function SplitPaneView({
           onCloseOtherTabs={(tabId) => onCloseOtherTabs(tabId, paneTabs)}
           onSelectNewTabOption={onSelectNewTabOption}
           onNewTerminalTab={onNewTerminalTab}
+          onNewBrowserTab={onNewBrowserTab}
           newTabAgentOptionId={newTabAgentOptionId ?? "__new_tab_agent__"}
           onReorderTabs={(nextTabs) => {
             onReorderTabsInPane(

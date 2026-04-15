@@ -10,6 +10,7 @@ import { AgentStreamView, type AgentStreamViewHandle } from "@/components/agent-
 import { AgentInputArea } from "@/components/agent-input-area";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop-zone";
+import { SessionIntegrationBanner } from "@/components/session-integration-banner";
 import type { ImageAttachment } from "@/components/message-input";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ToastViewport, useToastHost } from "@/components/toast-host";
@@ -112,7 +113,7 @@ function useAgentPanelDescriptor(
 }
 
 function AgentPanel() {
-  const { serverId, target, isPaneFocused, openFileInWorkspace } = usePaneContext();
+  const { serverId, workspaceId, target, isPaneFocused, openFileInWorkspace } = usePaneContext();
   invariant(target.kind === "agent", "AgentPanel requires agent target");
 
   function openWorkspaceFile(input: { filePath: string }) {
@@ -125,6 +126,7 @@ function AgentPanel() {
     <AgentPanelContent
       serverId={serverId}
       agentId={target.agentId}
+      workspaceId={workspaceId}
       isPaneFocused={isPaneFocused}
       onOpenWorkspaceFile={handleOpenWorkspaceFile}
     />
@@ -155,11 +157,13 @@ function isNotFoundErrorMessage(message: string): boolean {
 function AgentPanelContent({
   serverId,
   agentId,
+  workspaceId,
   isPaneFocused,
   onOpenWorkspaceFile,
 }: {
   serverId: string;
   agentId: string;
+  workspaceId: string;
   isPaneFocused: boolean;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
 }) {
@@ -199,6 +203,7 @@ function AgentPanelContent({
     <AgentPanelBody
       serverId={resolvedServerId}
       agentId={resolvedAgentId}
+      workspaceId={workspaceId}
       isPaneFocused={isPaneFocused}
       client={runtimeClient}
       isConnected={runtimeIsConnected}
@@ -211,6 +216,7 @@ function AgentPanelContent({
 function AgentPanelBody({
   serverId,
   agentId,
+  workspaceId,
   isPaneFocused,
   client,
   isConnected,
@@ -219,6 +225,7 @@ function AgentPanelBody({
 }: {
   serverId: string;
   agentId?: string;
+  workspaceId: string;
   isPaneFocused: boolean;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isConnected: boolean;
@@ -742,6 +749,7 @@ function AgentPanelBody({
     <View style={styles.root}>
       <FileDropZone onFilesDropped={handleFilesDropped} disabled={isArchivingCurrentAgent}>
         <View style={styles.container}>
+          <SessionIntegrationBanner serverId={serverId} cwd={agentState.cwd ?? workspaceId} />
           <View style={styles.contentContainer}>
             <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
               <AgentStreamView

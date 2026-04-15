@@ -82,6 +82,14 @@ type RegisterPendingWorktreeWorkspaceDependencies = {
     placement: ProjectPlacementPayload;
     createdAt: string;
     updatedAt: string;
+    workspaceDisplayName?: string;
+    issueContext?: PersistedWorkspaceRecord["issueContext"];
+    issueMetadata?: PersistedWorkspaceRecord["issueMetadata"];
+    prompt?: string;
+    autoApprove?: boolean;
+    kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
+    agentProvider?: string;
+    agentMode?: PersistedWorkspaceRecord["agentMode"];
   }) => PersistedWorkspaceRecord;
   buildProjectPlacement: (cwd: string) => Promise<ProjectPlacementPayload>;
   projectRegistry: Pick<ProjectRegistry, "get" | "upsert">;
@@ -107,6 +115,14 @@ type HandleCreateHubcodeWorktreeRequestDependencies = {
     repoRoot: string;
     worktreePath: string;
     branchName: string;
+    workspaceName?: string;
+    issueContext?: PersistedWorkspaceRecord["issueContext"];
+    issueMetadata?: PersistedWorkspaceRecord["issueMetadata"];
+    prompt?: string;
+    autoApprove?: boolean;
+    kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
+    agentProvider?: string;
+    agentMode?: PersistedWorkspaceRecord["agentMode"];
   }) => Promise<PersistedWorkspaceRecord>;
   sessionLogger: Logger;
   runWorktreeSetupInBackground: (options: {
@@ -494,6 +510,14 @@ export async function registerPendingWorktreeWorkspace(
     repoRoot: string;
     worktreePath: string;
     branchName: string;
+    workspaceName?: string;
+    issueContext?: PersistedWorkspaceRecord["issueContext"];
+    issueMetadata?: PersistedWorkspaceRecord["issueMetadata"];
+    prompt?: string;
+    autoApprove?: boolean;
+    kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
+    agentProvider?: string;
+    agentMode?: PersistedWorkspaceRecord["agentMode"];
   },
 ): Promise<PersistedWorkspaceRecord> {
   const workspaceId = normalizePersistedWorkspaceId(options.worktreePath);
@@ -524,6 +548,14 @@ export async function registerPendingWorktreeWorkspace(
     placement,
     createdAt: existingWorkspace?.createdAt ?? now,
     updatedAt: now,
+    workspaceDisplayName: options.workspaceName,
+    issueContext: options.issueContext,
+    issueMetadata: options.issueMetadata,
+    prompt: options.prompt,
+    autoApprove: options.autoApprove,
+    kanbanStatus: options.kanbanStatus,
+    agentProvider: options.agentProvider,
+    agentMode: options.agentMode,
   });
 
   await dependencies.projectRegistry.upsert(nextProjectRecord);
@@ -561,7 +593,12 @@ export async function handleCreateHubcodeWorktreeRequest(
       throw new Error("Unable to resolve repository default branch");
     }
 
-    const normalizedSlug = request.worktreeSlug ? slugify(request.worktreeSlug) : uuidv4();
+    const requestedWorkspaceName = request.workspaceName?.trim() || undefined;
+    const normalizedSlug = request.worktreeSlug
+      ? slugify(request.worktreeSlug)
+      : requestedWorkspaceName
+        ? slugify(requestedWorkspaceName)
+        : uuidv4();
     const validation = validateBranchSlug(normalizedSlug);
     if (!validation.valid) {
       throw new Error(`Invalid worktree name: ${validation.error}`);
@@ -572,10 +609,27 @@ export async function handleCreateHubcodeWorktreeRequest(
       normalizedSlug,
       dependencies.hubcodeHome,
     );
+    dependencies.sessionLogger.info(
+      {
+        hasIssueContext: !!request.issueContext,
+        hasIssueMetadata: !!request.issueMetadata,
+        kanbanStatus: request.kanbanStatus,
+        issueContextKeys: request.issueContext ? Object.keys(request.issueContext) : [],
+      },
+      "create_hubcode_worktree: issue data from request",
+    );
     const workspace = await dependencies.registerPendingWorktreeWorkspace({
       repoRoot,
       worktreePath,
       branchName: normalizedSlug,
+      workspaceName: requestedWorkspaceName,
+      issueContext: request.issueContext,
+      issueMetadata: request.issueMetadata,
+      prompt: request.prompt,
+      autoApprove: request.autoApprove,
+      kanbanStatus: request.kanbanStatus,
+      agentProvider: request.agentProvider,
+      agentMode: request.agentMode,
     });
 
     await createAgentWorktree({

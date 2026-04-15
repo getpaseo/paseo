@@ -17,6 +17,18 @@ const PersistedProjectRecordSchema = z.object({
   archivedAt: z.string().nullable(),
 });
 
+const WorkspaceIssueContextSchema = z.object({
+  linearIssueId: z.string().optional(),
+  githubIssueId: z.string().optional(),
+  jiraIssueId: z.string().optional(),
+  gitlabIssueId: z.string().optional(),
+  plainThreadId: z.string().optional(),
+  forgejoIssueId: z.string().optional(),
+  sentryIssueId: z.string().optional(),
+});
+
+export const WorkspaceKanbanStatusSchema = z.enum(["todo", "in-progress", "done"]);
+
 const PersistedWorkspaceRecordSchema = z.object({
   workspaceId: z.string(),
   projectId: z.string(),
@@ -26,6 +38,14 @@ const PersistedWorkspaceRecordSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
+  // Issue/integration data (optional — workspaces created before this feature won't have them)
+  issueContext: WorkspaceIssueContextSchema.optional(),
+  issueMetadata: z.record(z.string(), z.unknown()).optional(),
+  prompt: z.string().optional(),
+  autoApprove: z.boolean().optional(),
+  kanbanStatus: WorkspaceKanbanStatusSchema.optional(),
+  agentProvider: z.string().optional(),
+  agentMode: z.enum(["native", "cli"]).optional(),
 });
 
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
@@ -221,6 +241,13 @@ export function createPersistedWorkspaceRecord(input: {
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
+  issueContext?: PersistedWorkspaceRecord["issueContext"];
+  issueMetadata?: PersistedWorkspaceRecord["issueMetadata"];
+  prompt?: string;
+  autoApprove?: boolean;
+  kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
+  agentProvider?: string;
+  agentMode?: PersistedWorkspaceRecord["agentMode"];
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
     ...input,

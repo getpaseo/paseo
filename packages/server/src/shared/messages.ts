@@ -3,6 +3,7 @@ import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "../server/agent/agent-title-limits.js";
 import { AgentProviderSchema } from "../server/agent/provider-manifest.js";
 import { TOOL_CALL_ICON_NAMES } from "../server/agent/agent-sdk-types.js";
+import { CliProviderOverridesSchema } from "./cli-provider-registry.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -51,6 +52,12 @@ import {
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
 
+const MutableDaemonAgentsConfigSchema = z
+  .object({
+    cliProviders: CliProviderOverridesSchema.optional(),
+  })
+  .passthrough();
+
 export const MutableDaemonConfigSchema = z
   .object({
     mcp: z
@@ -58,12 +65,14 @@ export const MutableDaemonConfigSchema = z
         injectIntoAgents: z.boolean(),
       })
       .passthrough(),
+    agents: MutableDaemonAgentsConfigSchema.optional(),
   })
   .passthrough();
 
 export const MutableDaemonConfigPatchSchema = z
   .object({
     mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
+    agents: MutableDaemonAgentsConfigSchema.partial().optional(),
   })
   .partial()
   .passthrough();
@@ -1166,11 +1175,33 @@ export const HubcodeWorktreeArchiveRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// Issue/integration schemas — used by workspace descriptors and worktree creation
+export const WorkspaceIssueContextPayloadSchema = z.object({
+  linearIssueId: z.string().optional(),
+  githubIssueId: z.string().optional(),
+  jiraIssueId: z.string().optional(),
+  gitlabIssueId: z.string().optional(),
+  plainThreadId: z.string().optional(),
+  forgejoIssueId: z.string().optional(),
+  sentryIssueId: z.string().optional(),
+});
+
+export const WorkspaceKanbanStatusPayloadSchema = z.enum(["todo", "in-progress", "done"]);
+
 export const CreateHubcodeWorktreeRequestSchema = z.object({
   type: z.literal("create_hubcode_worktree_request"),
   cwd: z.string(),
   worktreeSlug: z.string().optional(),
+  workspaceName: z.string().optional(),
   requestId: z.string(),
+  // Issue/integration data — allows creating a worktree with issue context in a single RPC
+  issueContext: WorkspaceIssueContextPayloadSchema.optional(),
+  issueMetadata: z.record(z.string(), z.unknown()).optional(),
+  prompt: z.string().optional(),
+  autoApprove: z.boolean().optional(),
+  kanbanStatus: WorkspaceKanbanStatusPayloadSchema.optional(),
+  agentProvider: z.string().optional(),
+  agentMode: z.enum(["native", "cli"]).optional(),
 });
 
 // TODO(2026-07): Remove once most clients are on >=0.1.50 and support arbitrary editor ids.
@@ -1399,6 +1430,12 @@ export const CreateTerminalRequestSchema = z.object({
   cwd: z.string(),
   name: z.string().optional(),
   requestId: z.string(),
+  /** When set, spawn this binary directly instead of a login shell (for CLI agents). */
+  command: z.string().optional(),
+  /** Arguments for the direct command. Ignored when `command` is not set. */
+  args: z.array(z.string()).optional(),
+  /** Optional env vars to inject into the spawned process. */
+  env: z.record(z.string()).optional(),
 });
 
 export const SubscribeTerminalRequestSchema = z.object({
@@ -1445,7 +1482,244 @@ export const CaptureTerminalRequestSchema = z.object({
   requestId: z.string(),
 });
 
-export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+// ============================================================================
+// Browser RPC Messages
+// ============================================================================
+
+export const BrowserLaunchRequestSchema = z.object({
+  type: z.literal("browser_launch_request"),
+  url: z.string().optional(),
+  requestId: z.string(),
+});
+
+export const BrowserStateRequestSchema = z.object({
+  type: z.literal("browser_state_request"),
+  browserId: z.string(),
+  requestId: z.string(),
+});
+
+export const BrowserScreenshotRequestSchema = z.object({
+  type: z.literal("browser_screenshot_request"),
+  browserId: z.string(),
+  requestId: z.string(),
+});
+
+export const BrowserNavigateRequestSchema = z.object({
+  type: z.literal("browser_navigate_request"),
+  browserId: z.string(),
+  url: z.string(),
+  requestId: z.string(),
+});
+
+export const BrowserGoBackRequestSchema = z.object({
+  type: z.literal("browser_go_back_request"),
+  browserId: z.string(),
+  requestId: z.string(),
+});
+
+export const BrowserGoForwardRequestSchema = z.object({
+  type: z.literal("browser_go_forward_request"),
+  browserId: z.string(),
+  requestId: z.string(),
+});
+
+export const BrowserCloseRequestSchema = z.object({
+  type: z.literal("browser_close_request"),
+  browserId: z.string(),
+  requestId: z.string(),
+});
+
+export const BrowserResizeRequestSchema = z.object({
+  type: z.literal("browser_resize_request"),
+  browserId: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  requestId: z.string(),
+});
+
+// ============================================================================
+// Integration RPC Messages
+// ============================================================================
+
+/** Common integration ID type */
+export const IntegrationIdSchema = z.enum([
+  "github",
+  "linear",
+  "jira",
+  "gitlab",
+  "plain",
+  "forgejo",
+  "sentry",
+]);
+
+/** Status for a single integration */
+export const IntegrationStatusEntrySchema = z.object({
+  id: IntegrationIdSchema,
+  connected: z.boolean(),
+  account: z.string().optional(), // e.g. username, email, org
+  error: z.string().optional(),
+});
+
+// -- List integration statuses --
+export const IntegrationListStatusRequestSchema = z.object({
+  type: z.literal("integration_list_status_request"),
+  requestId: z.string(),
+});
+
+export const IntegrationListStatusResponseSchema = z.object({
+  type: z.literal("integration_list_status_response"),
+  payload: z.object({
+    requestId: z.string(),
+    integrations: z.array(IntegrationStatusEntrySchema),
+  }),
+});
+
+// -- Connect integration (save credentials) --
+export const IntegrationConnectRequestSchema = z.object({
+  type: z.literal("integration_connect_request"),
+  requestId: z.string(),
+  integrationId: IntegrationIdSchema,
+  credentials: z.record(z.string()), // e.g. { apiKey: "..." } or { site: "...", email: "...", token: "..." }
+});
+
+export const IntegrationConnectResponseSchema = z.object({
+  type: z.literal("integration_connect_response"),
+  payload: z.object({
+    requestId: z.string(),
+    integrationId: IntegrationIdSchema,
+    success: z.boolean(),
+    account: z.string().optional(),
+    error: z.string().optional(),
+  }),
+});
+
+// -- Disconnect integration --
+export const IntegrationDisconnectRequestSchema = z.object({
+  type: z.literal("integration_disconnect_request"),
+  requestId: z.string(),
+  integrationId: IntegrationIdSchema,
+});
+
+export const IntegrationDisconnectResponseSchema = z.object({
+  type: z.literal("integration_disconnect_response"),
+  payload: z.object({
+    requestId: z.string(),
+    integrationId: IntegrationIdSchema,
+    success: z.boolean(),
+  }),
+});
+
+// -- Search issues/items for a given integration --
+export const IntegrationSearchRequestSchema = z.object({
+  type: z.literal("integration_search_request"),
+  requestId: z.string(),
+  integrationId: IntegrationIdSchema,
+  query: z.string(),
+  cwd: z.string().optional(), // project context (for GitHub repo inference, etc.)
+  limit: z.number().int().optional(),
+});
+
+export const IntegrationSearchResponseSchema = z.object({
+  type: z.literal("integration_search_response"),
+  payload: z.object({
+    requestId: z.string(),
+    integrationId: IntegrationIdSchema,
+    items: z.array(z.record(z.unknown())), // typed per-integration on the client side
+    error: z.string().optional(),
+  }),
+});
+
+// -- Fetch initial items (recently updated) --
+export const IntegrationFetchItemsRequestSchema = z.object({
+  type: z.literal("integration_fetch_items_request"),
+  requestId: z.string(),
+  integrationId: IntegrationIdSchema,
+  cwd: z.string().optional(),
+  limit: z.number().int().optional(),
+});
+
+export const IntegrationFetchItemsResponseSchema = z.object({
+  type: z.literal("integration_fetch_items_response"),
+  payload: z.object({
+    requestId: z.string(),
+    integrationId: IntegrationIdSchema,
+    items: z.array(z.record(z.unknown())),
+    error: z.string().optional(),
+  }),
+});
+
+// ============================================================================
+// CLI Agent Detection RPC Messages
+// ============================================================================
+
+export const CliAgentStatusCodeSchema = z.enum(["connected", "missing", "error"]);
+
+export const CliAgentStatusEntrySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: CliAgentStatusCodeSchema,
+  version: z.string().nullable().optional(),
+  path: z.string().nullable().optional(),
+  docUrl: z.string().nullable().optional(),
+  installCommand: z.string().nullable().optional(),
+  cli: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+});
+
+// -- List detected CLI agents --
+export const CliAgentListRequestSchema = z.object({
+  type: z.literal("cli_agent_list_request"),
+  requestId: z.string(),
+  /** When true, re-scan all CLI tools (ignoring cache). */
+  refresh: z.boolean().optional(),
+});
+
+export const CliAgentListResponseSchema = z.object({
+  type: z.literal("cli_agent_list_response"),
+  payload: z.object({
+    requestId: z.string(),
+    agents: z.array(CliAgentStatusEntrySchema),
+    error: z.string().nullable().optional(),
+  }),
+});
+
+// -- CLI agent status update (pushed to clients when a provider is re-checked) --
+export const CliAgentStatusUpdateSchema = z.object({
+  type: z.literal("cli_agent_status_update"),
+  payload: CliAgentStatusEntrySchema,
+});
+
+// ============================================================================
+// Workspace Metadata Update RPC
+// ============================================================================
+
+const WorkspaceMetadataChangesSchema = z.object({
+  kanbanStatus: WorkspaceKanbanStatusPayloadSchema.optional(),
+  issueContext: WorkspaceIssueContextPayloadSchema.optional(),
+  issueMetadata: z.record(z.string(), z.unknown()).optional(),
+  prompt: z.string().optional(),
+  autoApprove: z.boolean().optional(),
+  agentProvider: z.string().optional(),
+  agentMode: z.enum(["native", "cli"]).optional(),
+});
+
+export const UpdateWorkspaceMetadataRequestSchema = z.object({
+  type: z.literal("update_workspace_metadata_request"),
+  requestId: z.string(),
+  workspaceId: z.string(),
+  changes: WorkspaceMetadataChangesSchema,
+});
+
+export const UpdateWorkspaceMetadataResponseSchema = z.object({
+  type: z.literal("update_workspace_metadata_response"),
+  payload: z.object({
+    requestId: z.string(),
+    error: z.string().nullable(),
+  }),
+});
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _sessionInboundRaw: any = z.union([
   VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
@@ -1547,9 +1821,143 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectRequestSchema,
   LoopLogsRequestSchema,
   LoopStopRequestSchema,
+  IntegrationListStatusRequestSchema,
+  IntegrationConnectRequestSchema,
+  IntegrationDisconnectRequestSchema,
+  IntegrationSearchRequestSchema,
+  IntegrationFetchItemsRequestSchema,
+  CliAgentListRequestSchema,
+  UpdateWorkspaceMetadataRequestSchema,
+  // Browser
+  BrowserLaunchRequestSchema,
+  BrowserStateRequestSchema,
+  BrowserScreenshotRequestSchema,
+  BrowserNavigateRequestSchema,
+  BrowserGoBackRequestSchema,
+  BrowserGoForwardRequestSchema,
+  BrowserCloseRequestSchema,
+  BrowserResizeRequestSchema,
 ]);
-
-export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
+// Manually written union avoids TypeScript recursion crash from z.infer on 115-member union
+export type SessionInboundMessage =
+  | VoiceAudioChunkMessage
+  | AbortRequestMessage
+  | AudioPlayedMessage
+  | FetchAgentsRequestMessage
+  | FetchWorkspacesRequestMessage
+  | FetchAgentRequestMessage
+  | DeleteAgentRequestMessage
+  | ArchiveAgentRequestMessage
+  | CloseItemsRequest
+  | UpdateAgentRequestMessage
+  | SetVoiceModeMessage
+  | SendAgentMessageRequest
+  | WaitForFinishRequest
+  | GetDaemonConfigRequestMessage
+  | SetDaemonConfigRequestMessage
+  | DictationStreamStartMessage
+  | DictationStreamChunkMessage
+  | DictationStreamFinishMessage
+  | DictationStreamCancelMessage
+  | CreateAgentRequestMessage
+  | ListProviderModelsRequestMessage
+  | ListProviderModesRequestMessage
+  | ListProviderFeaturesRequestMessage
+  | ListAvailableProvidersRequestMessage
+  | GetProvidersSnapshotRequestMessage
+  | RefreshProvidersSnapshotRequestMessage
+  | ProviderDiagnosticRequestMessage
+  | ResumeAgentRequestMessage
+  | RefreshAgentRequestMessage
+  | CancelAgentRequestMessage
+  | ShutdownServerRequestMessage
+  | RestartServerRequestMessage
+  | FetchAgentTimelineRequestMessage
+  | SetAgentModeRequestMessage
+  | SetAgentModelRequestMessage
+  | SetAgentThinkingRequestMessage
+  | SetAgentFeatureRequestMessage
+  | AgentPermissionResponseMessage
+  | CheckoutStatusRequest
+  | SubscribeCheckoutDiffRequest
+  | UnsubscribeCheckoutDiffRequest
+  | CheckoutCommitRequest
+  | CheckoutMergeRequest
+  | CheckoutMergeFromBaseRequest
+  | CheckoutPullRequest
+  | CheckoutPushRequest
+  | CheckoutPrCreateRequest
+  | CheckoutPrStatusRequest
+  | CheckoutSwitchBranchRequest
+  | StashSaveRequest
+  | StashPopRequest
+  | StashListRequest
+  | ValidateBranchRequest
+  | BranchSuggestionsRequest
+  | DirectorySuggestionsRequest
+  | HubcodeWorktreeListRequest
+  | HubcodeWorktreeArchiveRequest
+  | CreateHubcodeWorktreeRequest
+  | ListAvailableEditorsRequest
+  | OpenInEditorRequest
+  | OpenProjectRequest
+  | ArchiveWorkspaceRequest
+  | FileExplorerRequest
+  | FileWriteRequest
+  | FileRenameRequest
+  | FileDeleteRequest
+  | ProjectIconRequest
+  | FileDownloadTokenRequest
+  | ClearAgentAttentionMessage
+  | ClientHeartbeatMessage
+  | PingMessage
+  | ListCommandsRequest
+  | RegisterPushTokenMessage
+  | ListTerminalsRequest
+  | SubscribeTerminalsRequest
+  | UnsubscribeTerminalsRequest
+  | CreateTerminalRequest
+  | SubscribeTerminalRequest
+  | UnsubscribeTerminalRequest
+  | TerminalInput
+  | KillTerminalRequest
+  | CaptureTerminalRequest
+  | ChatCreateRequest
+  | ChatListRequest
+  | ChatInspectRequest
+  | ChatDeleteRequest
+  | ChatPostRequest
+  | ChatReadRequest
+  | ChatWaitRequest
+  | ScheduleCreateRequest
+  | ScheduleListRequest
+  | ScheduleInspectRequest
+  | ScheduleLogsRequest
+  | SchedulePauseRequest
+  | ScheduleResumeRequest
+  | ScheduleDeleteRequest
+  | LoopRunRequest
+  | LoopListRequest
+  | LoopInspectRequest
+  | LoopLogsRequest
+  | LoopStopRequest
+  | IntegrationListStatusRequest
+  | IntegrationConnectRequest
+  | IntegrationDisconnectRequest
+  | IntegrationSearchRequest
+  | IntegrationFetchItemsRequest
+  | CliAgentListRequest
+  | UpdateWorkspaceMetadataRequest
+  | BrowserLaunchRequest
+  | BrowserStateRequest
+  | BrowserScreenshotRequest
+  | BrowserNavigateRequest
+  | BrowserGoBackRequest
+  | BrowserGoForwardRequest
+  | BrowserCloseRequest
+  | BrowserResizeRequest;
+export const SessionInboundMessageSchema: z.ZodType<SessionInboundMessage> =
+  _sessionInboundRaw as z.ZodType<SessionInboundMessage>;
 
 // ============================================================================
 // Session Outbound Messages (Session emits these)
@@ -1949,6 +2357,14 @@ export const WorkspaceDescriptorPayloadSchema = z.object({
     .optional(),
   gitRuntime: WorkspaceGitRuntimePayloadSchema,
   githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
+  // Issue/integration data (optional — backward-compatible with older clients/daemons)
+  issueContext: WorkspaceIssueContextPayloadSchema.optional(),
+  issueMetadata: z.record(z.string(), z.unknown()).optional(),
+  prompt: z.string().optional(),
+  autoApprove: z.boolean().optional(),
+  kanbanStatus: WorkspaceKanbanStatusPayloadSchema.optional(),
+  agentProvider: z.string().optional(),
+  agentMode: z.enum(["native", "cli"]).optional(),
 });
 
 export const AgentUpdateMessageSchema = z.object({
@@ -2801,7 +3217,100 @@ export const TerminalStreamExitSchema = z.object({
   }),
 });
 
-export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+// ============================================================================
+// Browser Response Messages
+// ============================================================================
+
+export const BrowserLaunchResponseSchema = z.object({
+  type: z.literal("browser_launch_response"),
+  payload: z.object({
+    browserId: z.string(),
+    url: z.string(),
+    title: z.string(),
+    requestId: z.string(),
+  }),
+});
+
+export const BrowserStateResponseSchema = z.object({
+  type: z.literal("browser_state_response"),
+  payload: z.object({
+    browserId: z.string(),
+    url: z.string(),
+    title: z.string(),
+    requestId: z.string(),
+  }),
+});
+
+export const BrowserScreenshotResponseSchema = z.object({
+  type: z.literal("browser_screenshot_response"),
+  payload: z.object({
+    browserId: z.string(),
+    data: z.string(),
+    mimeType: z.string(),
+    requestId: z.string(),
+  }),
+});
+
+export const BrowserNavigateResponseSchema = z.object({
+  type: z.literal("browser_navigate_response"),
+  payload: z.object({
+    browserId: z.string(),
+    url: z.string(),
+    title: z.string(),
+    requestId: z.string(),
+  }),
+});
+
+export const BrowserGoBackResponseSchema = z.object({
+  type: z.literal("browser_go_back_response"),
+  payload: z.object({
+    browserId: z.string(),
+    url: z.string(),
+    title: z.string(),
+    requestId: z.string(),
+  }),
+});
+
+export const BrowserGoForwardResponseSchema = z.object({
+  type: z.literal("browser_go_forward_response"),
+  payload: z.object({
+    browserId: z.string(),
+    url: z.string(),
+    title: z.string(),
+    requestId: z.string(),
+  }),
+});
+
+export const BrowserCloseResponseSchema = z.object({
+  type: z.literal("browser_close_response"),
+  payload: z.object({
+    browserId: z.string(),
+    success: z.boolean(),
+    requestId: z.string(),
+  }),
+});
+
+export const BrowserResizeResponseSchema = z.object({
+  type: z.literal("browser_resize_response"),
+  payload: z.object({
+    browserId: z.string(),
+    success: z.boolean(),
+    requestId: z.string(),
+  }),
+});
+
+/** Push notification when a browser context is launched (by any path — MCP or direct). */
+export const BrowserLaunchedEventSchema = z.object({
+  type: z.literal("browser_launched"),
+  payload: z.object({
+    browserId: z.string(),
+    url: z.string(),
+    title: z.string(),
+  }),
+});
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _sessionOutboundRaw: any = z.union([
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
   AudioOutputMessageSchema,
@@ -2904,9 +3413,148 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectResponseSchema,
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
+  IntegrationListStatusResponseSchema,
+  IntegrationConnectResponseSchema,
+  IntegrationDisconnectResponseSchema,
+  IntegrationSearchResponseSchema,
+  IntegrationFetchItemsResponseSchema,
+  CliAgentListResponseSchema,
+  CliAgentStatusUpdateSchema,
+  UpdateWorkspaceMetadataResponseSchema,
+  // Browser
+  BrowserLaunchResponseSchema,
+  BrowserStateResponseSchema,
+  BrowserScreenshotResponseSchema,
+  BrowserNavigateResponseSchema,
+  BrowserGoBackResponseSchema,
+  BrowserGoForwardResponseSchema,
+  BrowserCloseResponseSchema,
+  BrowserResizeResponseSchema,
+  BrowserLaunchedEventSchema,
 ]);
-
-export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
+// Manually written union avoids TypeScript recursion crash from z.infer on 118-member union
+export type SessionOutboundMessage =
+  | ActivityLogMessage
+  | AssistantChunkMessage
+  | AudioOutputMessage
+  | TranscriptionResultMessage
+  | VoiceInputStateMessage
+  | DictationStreamAckMessage
+  | DictationStreamFinishAcceptedMessage
+  | DictationStreamPartialMessage
+  | DictationStreamFinalMessage
+  | DictationStreamErrorMessage
+  | StatusMessage
+  | PongMessage
+  | RpcErrorMessage
+  | ArtifactMessage
+  | AgentUpdateMessage
+  | WorkspaceUpdateMessage
+  | AgentStreamMessage
+  | AgentStatusMessage
+  | FetchAgentsResponseMessage
+  | FetchWorkspacesResponseMessage
+  | OpenProjectResponseMessage
+  | ListAvailableEditorsResponseMessage
+  | OpenInEditorResponseMessage
+  | ArchiveWorkspaceResponseMessage
+  | FetchAgentResponseMessage
+  | FetchAgentTimelineResponseMessage
+  | SendAgentMessageResponseMessage
+  | SetVoiceModeResponseMessage
+  | GetDaemonConfigResponseMessage
+  | SetDaemonConfigResponseMessage
+  | SetAgentModeResponseMessage
+  | SetAgentModelResponseMessage
+  | SetAgentThinkingResponseMessage
+  | SetAgentFeatureResponseMessage
+  | UpdateAgentResponseMessage
+  | WaitForFinishResponseMessage
+  | AgentPermissionRequestMessage
+  | AgentPermissionResolvedMessage
+  | AgentDeletedMessage
+  | AgentArchivedMessage
+  | CloseItemsResponse
+  | CheckoutStatusResponse
+  | SubscribeCheckoutDiffResponse
+  | CheckoutDiffUpdate
+  | CheckoutCommitResponse
+  | CheckoutMergeResponse
+  | CheckoutMergeFromBaseResponse
+  | CheckoutPullResponse
+  | CheckoutPushResponse
+  | CheckoutPrCreateResponse
+  | CheckoutPrStatusResponse
+  | CheckoutSwitchBranchResponse
+  | StashSaveResponse
+  | StashPopResponse
+  | StashListResponse
+  | ValidateBranchResponse
+  | BranchSuggestionsResponse
+  | DirectorySuggestionsResponse
+  | HubcodeWorktreeListResponse
+  | HubcodeWorktreeArchiveResponse
+  | CreateHubcodeWorktreeResponse
+  | FileExplorerResponse
+  | FileWriteResponse
+  | FileRenameResponse
+  | FileDeleteResponse
+  | ProjectIconResponse
+  | FileDownloadTokenResponse
+  | ListProviderModelsResponseMessage
+  | ListProviderModesResponseMessage
+  | ListProviderFeaturesResponseMessage
+  | ListAvailableProvidersResponse
+  | GetProvidersSnapshotResponseMessage
+  | ProvidersSnapshotUpdateMessage
+  | RefreshProvidersSnapshotResponseMessage
+  | ProviderDiagnosticResponseMessage
+  | ListCommandsResponse
+  | ListTerminalsResponse
+  | TerminalsChanged
+  | CreateTerminalResponse
+  | SubscribeTerminalResponse
+  | KillTerminalResponse
+  | CaptureTerminalResponse
+  | TerminalStreamExit
+  | ChatCreateResponse
+  | ChatListResponse
+  | ChatInspectResponse
+  | ChatDeleteResponse
+  | ChatPostResponse
+  | ChatReadResponse
+  | ChatWaitResponse
+  | ScheduleCreateResponse
+  | ScheduleListResponse
+  | ScheduleInspectResponse
+  | ScheduleLogsResponse
+  | SchedulePauseResponse
+  | ScheduleResumeResponse
+  | ScheduleDeleteResponse
+  | LoopRunResponse
+  | LoopListResponse
+  | LoopInspectResponse
+  | LoopLogsResponse
+  | LoopStopResponse
+  | IntegrationListStatusResponse
+  | IntegrationConnectResponse
+  | IntegrationDisconnectResponse
+  | IntegrationSearchResponse
+  | IntegrationFetchItemsResponse
+  | CliAgentListResponse
+  | CliAgentStatusUpdate
+  | UpdateWorkspaceMetadataResponse
+  | BrowserLaunchResponse
+  | BrowserStateResponse
+  | BrowserScreenshotResponse
+  | BrowserNavigateResponse
+  | BrowserGoBackResponse
+  | BrowserGoForwardResponse
+  | BrowserCloseResponse
+  | BrowserResizeResponse
+  | BrowserLaunchedEvent;
+export const SessionOutboundMessageSchema: z.ZodType<SessionOutboundMessage> =
+  _sessionOutboundRaw as z.ZodType<SessionOutboundMessage>;
 
 // Type exports for individual message types
 export type ActivityLogMessage = z.infer<typeof ActivityLogMessageSchema>;
@@ -3142,6 +3790,75 @@ export type KillTerminalResponse = z.infer<typeof KillTerminalResponseSchema>;
 export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema>;
 export type CaptureTerminalResponse = z.infer<typeof CaptureTerminalResponseSchema>;
 export type TerminalStreamExit = z.infer<typeof TerminalStreamExitSchema>;
+
+// CLI Agent detection types
+export type CliAgentStatusCode = z.infer<typeof CliAgentStatusCodeSchema>;
+export type CliAgentStatusEntry = z.infer<typeof CliAgentStatusEntrySchema>;
+export type CliAgentListRequest = z.infer<typeof CliAgentListRequestSchema>;
+export type CliAgentListResponse = z.infer<typeof CliAgentListResponseSchema>;
+export type CliAgentStatusUpdate = z.infer<typeof CliAgentStatusUpdateSchema>;
+
+// Missing inbound message types (added to support manual SessionInboundMessage union)
+export type AbortRequestMessage = z.infer<typeof AbortRequestMessageSchema>;
+export type AudioPlayedMessage = z.infer<typeof AudioPlayedMessageSchema>;
+export type ArchiveAgentRequestMessage = z.infer<typeof ArchiveAgentRequestMessageSchema>;
+export type SetVoiceModeMessage = z.infer<typeof SetVoiceModeMessageSchema>;
+export type GetDaemonConfigRequestMessage = z.infer<typeof GetDaemonConfigRequestMessageSchema>;
+export type SetDaemonConfigRequestMessage = z.infer<typeof SetDaemonConfigRequestMessageSchema>;
+export type RefreshAgentRequestMessage = z.infer<typeof RefreshAgentRequestMessageSchema>;
+export type CancelAgentRequestMessage = z.infer<typeof CancelAgentRequestMessageSchema>;
+export type FetchAgentTimelineRequestMessage = z.infer<
+  typeof FetchAgentTimelineRequestMessageSchema
+>;
+export type CreateHubcodeWorktreeRequest = z.infer<typeof CreateHubcodeWorktreeRequestSchema>;
+export type PingMessage = z.infer<typeof PingMessageSchema>;
+export type IntegrationListStatusRequest = z.infer<typeof IntegrationListStatusRequestSchema>;
+export type IntegrationConnectRequest = z.infer<typeof IntegrationConnectRequestSchema>;
+export type IntegrationDisconnectRequest = z.infer<typeof IntegrationDisconnectRequestSchema>;
+export type IntegrationSearchRequest = z.infer<typeof IntegrationSearchRequestSchema>;
+export type IntegrationFetchItemsRequest = z.infer<typeof IntegrationFetchItemsRequestSchema>;
+export type UpdateWorkspaceMetadataRequest = z.infer<typeof UpdateWorkspaceMetadataRequestSchema>;
+
+// Missing outbound message types (added to support manual SessionOutboundMessage union)
+export type VoiceInputStateMessage = z.infer<typeof VoiceInputStateMessageSchema>;
+export type DictationStreamAckMessage = z.infer<typeof DictationStreamAckMessageSchema>;
+export type DictationStreamFinishAcceptedMessage = z.infer<
+  typeof DictationStreamFinishAcceptedMessageSchema
+>;
+export type DictationStreamPartialMessage = z.infer<typeof DictationStreamPartialMessageSchema>;
+export type DictationStreamFinalMessage = z.infer<typeof DictationStreamFinalMessageSchema>;
+export type DictationStreamErrorMessage = z.infer<typeof DictationStreamErrorMessageSchema>;
+export type PongMessage = z.infer<typeof PongMessageSchema>;
+export type WorkspaceUpdateMessage = z.infer<typeof WorkspaceUpdateMessageSchema>;
+export type GetDaemonConfigResponseMessage = z.infer<typeof GetDaemonConfigResponseMessageSchema>;
+export type SetDaemonConfigResponseMessage = z.infer<typeof SetDaemonConfigResponseMessageSchema>;
+export type AgentArchivedMessage = z.infer<typeof AgentArchivedMessageSchema>;
+export type CreateHubcodeWorktreeResponse = z.infer<typeof CreateHubcodeWorktreeResponseSchema>;
+export type IntegrationListStatusResponse = z.infer<typeof IntegrationListStatusResponseSchema>;
+export type IntegrationConnectResponse = z.infer<typeof IntegrationConnectResponseSchema>;
+export type IntegrationDisconnectResponse = z.infer<typeof IntegrationDisconnectResponseSchema>;
+export type IntegrationSearchResponse = z.infer<typeof IntegrationSearchResponseSchema>;
+export type IntegrationFetchItemsResponse = z.infer<typeof IntegrationFetchItemsResponseSchema>;
+export type UpdateWorkspaceMetadataResponse = z.infer<typeof UpdateWorkspaceMetadataResponseSchema>;
+
+// Browser message types
+export type BrowserLaunchRequest = z.infer<typeof BrowserLaunchRequestSchema>;
+export type BrowserLaunchResponse = z.infer<typeof BrowserLaunchResponseSchema>;
+export type BrowserStateRequest = z.infer<typeof BrowserStateRequestSchema>;
+export type BrowserStateResponse = z.infer<typeof BrowserStateResponseSchema>;
+export type BrowserScreenshotRequest = z.infer<typeof BrowserScreenshotRequestSchema>;
+export type BrowserScreenshotResponse = z.infer<typeof BrowserScreenshotResponseSchema>;
+export type BrowserNavigateRequest = z.infer<typeof BrowserNavigateRequestSchema>;
+export type BrowserNavigateResponse = z.infer<typeof BrowserNavigateResponseSchema>;
+export type BrowserGoBackRequest = z.infer<typeof BrowserGoBackRequestSchema>;
+export type BrowserGoBackResponse = z.infer<typeof BrowserGoBackResponseSchema>;
+export type BrowserGoForwardRequest = z.infer<typeof BrowserGoForwardRequestSchema>;
+export type BrowserGoForwardResponse = z.infer<typeof BrowserGoForwardResponseSchema>;
+export type BrowserCloseRequest = z.infer<typeof BrowserCloseRequestSchema>;
+export type BrowserCloseResponse = z.infer<typeof BrowserCloseResponseSchema>;
+export type BrowserResizeRequest = z.infer<typeof BrowserResizeRequestSchema>;
+export type BrowserResizeResponse = z.infer<typeof BrowserResizeResponseSchema>;
+export type BrowserLaunchedEvent = z.infer<typeof BrowserLaunchedEventSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

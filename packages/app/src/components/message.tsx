@@ -1961,7 +1961,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
               <View style={expandableBadgeStylesheet.spacer} />
             )}
             {isWebShimmer ? (
-              <View style={expandableBadgeStylesheet.shimmerOverlay} pointerEvents="none">
+              <View style={[expandableBadgeStylesheet.shimmerOverlay, { pointerEvents: "none" }]}>
                 <Text style={shimmerLabelTextStyle} numberOfLines={1}>
                   {label}
                 </Text>
@@ -1975,7 +1975,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
               </View>
             ) : null}
             {isNativeShimmer ? (
-              <View style={expandableBadgeStylesheet.shimmerOverlay} pointerEvents="none">
+              <View style={[expandableBadgeStylesheet.shimmerOverlay, { pointerEvents: "none" }]}>
                 <MaskedView
                   style={nativeShimmerTrackStyle}
                   maskElement={

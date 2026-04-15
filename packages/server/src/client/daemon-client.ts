@@ -53,6 +53,14 @@ import type {
   ListAvailableProvidersResponse,
   ListTerminalsResponse,
   CreateTerminalResponse,
+  BrowserLaunchResponse,
+  BrowserStateResponse,
+  BrowserScreenshotResponse,
+  BrowserNavigateResponse,
+  BrowserGoBackResponse,
+  BrowserGoForwardResponse,
+  BrowserCloseResponse,
+  BrowserResizeResponse,
   GetProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
   RefreshProvidersSnapshotResponseMessage,
@@ -275,6 +283,14 @@ type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
 type CloseItemsPayload = CloseItemsResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
 type CaptureTerminalPayload = CaptureTerminalResponse["payload"];
+type BrowserLaunchPayload = BrowserLaunchResponse["payload"];
+type BrowserStatePayload = BrowserStateResponse["payload"];
+type BrowserScreenshotPayload = BrowserScreenshotResponse["payload"];
+type BrowserNavigatePayload = BrowserNavigateResponse["payload"];
+type BrowserGoBackPayload = BrowserGoBackResponse["payload"];
+type BrowserGoForwardPayload = BrowserGoForwardResponse["payload"];
+type BrowserClosePayload = BrowserCloseResponse["payload"];
+type BrowserResizePayload = BrowserResizeResponse["payload"];
 type ChatCreatePayload = Extract<
   SessionOutboundMessage,
   { type: "chat/create/response" }
@@ -2484,7 +2500,26 @@ export class DaemonClient {
   }
 
   async createHubcodeWorktree(
-    input: { cwd: string; worktreeSlug?: string },
+    input: {
+      cwd: string;
+      worktreeSlug?: string;
+      workspaceName?: string;
+      issueContext?: {
+        linearIssueId?: string;
+        githubIssueId?: string;
+        jiraIssueId?: string;
+        gitlabIssueId?: string;
+        plainThreadId?: string;
+        forgejoIssueId?: string;
+        sentryIssueId?: string;
+      };
+      issueMetadata?: Record<string, unknown>;
+      prompt?: string;
+      autoApprove?: boolean;
+      kanbanStatus?: "todo" | "in-progress" | "done";
+      agentProvider?: string;
+      agentMode?: "native" | "cli";
+    },
     requestId?: string,
   ): Promise<CreateHubcodeWorktreePayload> {
     return this.sendCorrelatedSessionRequest({
@@ -2493,9 +2528,52 @@ export class DaemonClient {
         type: "create_hubcode_worktree_request",
         cwd: input.cwd,
         worktreeSlug: input.worktreeSlug,
+        workspaceName: input.workspaceName,
+        ...(input.issueContext ? { issueContext: input.issueContext } : {}),
+        ...(input.issueMetadata ? { issueMetadata: input.issueMetadata } : {}),
+        ...(input.prompt ? { prompt: input.prompt } : {}),
+        ...(input.autoApprove != null ? { autoApprove: input.autoApprove } : {}),
+        ...(input.kanbanStatus ? { kanbanStatus: input.kanbanStatus } : {}),
+        ...(input.agentProvider ? { agentProvider: input.agentProvider } : {}),
+        ...(input.agentMode ? { agentMode: input.agentMode } : {}),
       },
       responseType: "create_hubcode_worktree_response",
       timeout: 60000,
+    });
+  }
+
+  async updateWorkspaceMetadata(
+    input: {
+      workspaceId: string;
+      changes: {
+        kanbanStatus?: "todo" | "in-progress" | "done";
+        issueContext?: {
+          linearIssueId?: string;
+          githubIssueId?: string;
+          jiraIssueId?: string;
+          gitlabIssueId?: string;
+          plainThreadId?: string;
+          forgejoIssueId?: string;
+          sentryIssueId?: string;
+        };
+        issueMetadata?: Record<string, unknown>;
+        prompt?: string;
+        autoApprove?: boolean;
+        agentProvider?: string;
+        agentMode?: "native" | "cli";
+      };
+    },
+    requestId?: string,
+  ): Promise<{ error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "update_workspace_metadata_request",
+        workspaceId: input.workspaceId,
+        changes: input.changes,
+      },
+      responseType: "update_workspace_metadata_response",
+      timeout: 10000,
     });
   }
 
@@ -3956,6 +4034,292 @@ export class DaemonClient {
     };
 
     return { promise, cancel };
+  }
+
+  // ==========================================================================
+  // Integration RPC methods
+  // ==========================================================================
+
+  /** List connection status of all integrations */
+  async listIntegrationStatus(requestId?: string): Promise<{
+    requestId: string;
+    integrations: Array<{ id: string; connected: boolean; account?: string; error?: string }>;
+  }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "integration_list_status_request" },
+      responseType: "integration_list_status_response",
+      timeout: 10000,
+    });
+  }
+
+  /** Connect an integration with credentials */
+  async connectIntegration(
+    input: { integrationId: string; credentials: Record<string, string> },
+    requestId?: string,
+  ): Promise<{
+    requestId: string;
+    integrationId: string;
+    success: boolean;
+    account?: string;
+    error?: string;
+  }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "integration_connect_request",
+        integrationId: input.integrationId,
+        credentials: input.credentials,
+      },
+      responseType: "integration_connect_response",
+      timeout: 30000,
+    });
+  }
+
+  /** Disconnect an integration */
+  async disconnectIntegration(
+    input: { integrationId: string },
+    requestId?: string,
+  ): Promise<{
+    requestId: string;
+    integrationId: string;
+    success: boolean;
+  }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "integration_disconnect_request",
+        integrationId: input.integrationId,
+      },
+      responseType: "integration_disconnect_response",
+      timeout: 10000,
+    });
+  }
+
+  /** Search issues/items for a given integration */
+  async searchIntegration(
+    input: { integrationId: string; query: string; cwd?: string; limit?: number },
+    requestId?: string,
+  ): Promise<{
+    requestId: string;
+    integrationId: string;
+    items: Array<Record<string, unknown>>;
+    error?: string;
+  }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "integration_search_request",
+        integrationId: input.integrationId,
+        query: input.query,
+        ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      responseType: "integration_search_response",
+      timeout: 15000,
+    });
+  }
+
+  /** Fetch recent items for a given integration */
+  async fetchIntegrationItems(
+    input: { integrationId: string; cwd?: string; limit?: number },
+    requestId?: string,
+  ): Promise<{
+    requestId: string;
+    integrationId: string;
+    items: Array<Record<string, unknown>>;
+    error?: string;
+  }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "integration_fetch_items_request",
+        integrationId: input.integrationId,
+        ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      responseType: "integration_fetch_items_response",
+      timeout: 15000,
+    });
+  }
+
+  // ==========================================================================
+  // CLI Agent Detection RPC methods
+  // ==========================================================================
+
+  /** List detected CLI agents (cached or refreshed) */
+  async listCliAgents(
+    options?: { refresh?: boolean },
+    requestId?: string,
+  ): Promise<{
+    requestId: string;
+    agents: Array<{
+      id: string;
+      name: string;
+      status: string;
+      version?: string | null;
+      path?: string | null;
+      docUrl?: string | null;
+      installCommand?: string | null;
+      cli?: string | null;
+      error?: string | null;
+    }>;
+    error?: string | null;
+  }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "cli_agent_list_request",
+        ...(options?.refresh ? { refresh: true } : {}),
+      },
+      responseType: "cli_agent_list_response",
+      timeout: 30000,
+    });
+  }
+
+  /** Create a terminal running a CLI agent */
+  async createCliAgentTerminal(
+    input: {
+      cwd: string;
+      command: string;
+      args?: string[];
+      name?: string;
+      env?: Record<string, string>;
+    },
+    requestId?: string,
+  ): Promise<{
+    requestId: string;
+    terminal: { id: string; name: string; cwd: string } | null;
+    error: string | null;
+  }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "create_terminal_request",
+        cwd: input.cwd,
+        name: input.name,
+        command: input.command,
+        args: input.args,
+        env: input.env,
+      },
+      responseType: "create_terminal_response",
+      timeout: 15000,
+    });
+  }
+
+  // =========================================================================
+  // Browser
+  // =========================================================================
+
+  async launchBrowser(url?: string, requestId?: string): Promise<BrowserLaunchPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "browser_launch_request",
+        ...(url ? { url } : {}),
+      },
+      responseType: "browser_launch_response",
+      timeout: 30000,
+    });
+  }
+
+  async getBrowserState(browserId: string, requestId?: string): Promise<BrowserStatePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "browser_state_request",
+        browserId,
+      },
+      responseType: "browser_state_response",
+      timeout: 10000,
+    });
+  }
+
+  async getBrowserScreenshot(
+    browserId: string,
+    requestId?: string,
+  ): Promise<BrowserScreenshotPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "browser_screenshot_request",
+        browserId,
+      },
+      responseType: "browser_screenshot_response",
+      timeout: 15000,
+    });
+  }
+
+  async browserNavigate(
+    browserId: string,
+    url: string,
+    requestId?: string,
+  ): Promise<BrowserNavigatePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "browser_navigate_request",
+        browserId,
+        url,
+      },
+      responseType: "browser_navigate_response",
+      timeout: 30000,
+    });
+  }
+
+  async browserGoBack(browserId: string, requestId?: string): Promise<BrowserGoBackPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "browser_go_back_request",
+        browserId,
+      },
+      responseType: "browser_go_back_response",
+      timeout: 15000,
+    });
+  }
+
+  async browserGoForward(browserId: string, requestId?: string): Promise<BrowserGoForwardPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "browser_go_forward_request",
+        browserId,
+      },
+      responseType: "browser_go_forward_response",
+      timeout: 15000,
+    });
+  }
+
+  async closeBrowser(browserId: string, requestId?: string): Promise<BrowserClosePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "browser_close_request",
+        browserId,
+      },
+      responseType: "browser_close_response",
+      timeout: 10000,
+    });
+  }
+
+  async browserResize(
+    browserId: string,
+    width: number,
+    height: number,
+    requestId?: string,
+  ): Promise<BrowserResizePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "browser_resize_request",
+        browserId,
+        width,
+        height,
+      },
+      responseType: "browser_resize_response",
+      timeout: 5000,
+    });
   }
 }
 

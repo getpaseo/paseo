@@ -23,6 +23,8 @@ import {
   Puzzle,
   Blocks,
   Smartphone,
+  Plug,
+  Terminal,
 } from "lucide-react-native";
 import { useAppSettings, type AppSettings, type SendBehavior } from "@/hooks/use-settings";
 import { THEME_SWATCHES, type ThemeName } from "@/styles/theme";
@@ -55,6 +57,7 @@ import {
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
+import { TaskIntegrationsSection } from "@/components/integrations/task-integrations-section";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 import { PairDeviceSection } from "@/desktop/components/pair-device-section";
 import { isElectronRuntime } from "@/desktop/host";
@@ -73,6 +76,7 @@ import { ProviderDiagnosticSheet } from "@/components/provider-diagnostic-sheet"
 import { StatusBadge } from "@/components/ui/status-badge";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { isWeb } from "@/constants/platform";
+import { CliAgentsSection } from "@/screens/settings/cli-agents-section";
 
 // ---------------------------------------------------------------------------
 // Section definitions
@@ -83,7 +87,9 @@ type SettingsSectionId =
   | "general"
   | "shortcuts"
   | "integrations"
+  | "task-integrations"
   | "providers"
+  | "cli-agents"
   | "diagnostics"
   | "about"
   | "permissions"
@@ -100,6 +106,7 @@ function getSettingsSections(context: { isDesktopApp: boolean }): SettingsSectio
   const sections: SettingsSectionDef[] = [
     { id: "hosts", label: "Hosts", icon: Server },
     { id: "general", label: "General", icon: Settings },
+    { id: "task-integrations", label: "Task Integrations", icon: Plug },
     { id: "permissions", label: "Permissions", icon: Shield },
   ];
 
@@ -110,6 +117,7 @@ function getSettingsSections(context: { isDesktopApp: boolean }): SettingsSectio
       { id: "pair-device", label: "Pair device", icon: Smartphone },
       { id: "daemon", label: "Daemon", icon: Settings },
       { id: "providers", label: "Providers", icon: Blocks },
+      { id: "cli-agents", label: "CLI Agents", icon: Terminal },
     );
   }
 
@@ -701,6 +709,7 @@ interface SettingsSectionContentProps {
   appVersion: string | null;
   isLocalDaemon: boolean;
   isDesktopApp: boolean;
+  routeServerId: string;
 }
 
 function SettingsSectionContent({
@@ -713,6 +722,7 @@ function SettingsSectionContent({
   appVersion,
   isLocalDaemon,
   isDesktopApp,
+  routeServerId,
 }: SettingsSectionContentProps) {
   switch (sectionId) {
     case "hosts":
@@ -723,10 +733,14 @@ function SettingsSectionContent({
       return <KeyboardShortcutsSection />;
     case "providers":
       return <ProvidersSection {...providersProps} />;
+    case "cli-agents":
+      return isDesktopApp ? <CliAgentsSection routeServerId={routeServerId} /> : null;
     case "diagnostics":
       return <DiagnosticsSection {...diagnosticsProps} />;
     case "about":
       return <AboutSection {...aboutProps} />;
+    case "task-integrations":
+      return <TaskIntegrationsSection serverId={routeServerId || undefined} />;
     case "integrations":
       return isDesktopApp ? <IntegrationsSection /> : null;
     case "permissions":
@@ -1161,6 +1175,7 @@ export default function SettingsScreen() {
     appVersion,
     isLocalDaemon,
     isDesktopApp,
+    routeServerId,
   };
 
   if (isLoading) {

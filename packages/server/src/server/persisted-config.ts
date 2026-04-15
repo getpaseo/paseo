@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 
+import { CliProviderOverridesSchema } from "../shared/cli-provider-registry.js";
 import {
   AgentProviderRuntimeSettingsMapSchema,
   migrateProviderSettings,
@@ -265,6 +266,7 @@ export const PersistedConfigSchema = z
     agents: z
       .object({
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),
+        cliProviders: CliProviderOverridesSchema.optional(),
       })
       .strict()
       .optional(),

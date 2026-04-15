@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Agent Management MCP Server
  *

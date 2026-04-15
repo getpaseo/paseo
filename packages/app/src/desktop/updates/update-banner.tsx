@@ -66,7 +66,7 @@ export function UpdateBanner() {
   }
 
   return (
-    <View style={styles.container} pointerEvents="box-none">
+    <View style={[styles.container, { pointerEvents: "box-none" }]}>
       <Pressable onPress={() => setDismissed(true)} hitSlop={8} style={styles.closeButton}>
         <X size={12} color={theme.colors.foregroundMuted} />
       </Pressable>

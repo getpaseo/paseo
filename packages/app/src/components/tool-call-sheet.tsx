@@ -49,7 +49,7 @@ function CustomSheetBackground({ style }: BottomSheetBackgroundProps) {
     () => [style, { backgroundColor: theme.colors.surface2, borderRadius: 16 }],
     [style, theme.colors.surface2],
   );
-  return <Animated.View pointerEvents="none" style={containerStyle} />;
+  return <Animated.View style={[containerStyle, { pointerEvents: "none" }]} />;
 }
 
 // ----- Provider Component -----

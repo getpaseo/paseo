@@ -31,6 +31,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Columns3,
   ExternalLink,
   FolderPlus,
   FolderGit2,
@@ -46,7 +47,12 @@ import type { DraggableListDragHandleProps } from "./draggable-list.types";
 import { getHostRuntimeStore, isHostRuntimeConnected } from "@/runtime/host-runtime";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { projectIconQueryKey } from "@/hooks/use-project-icon-query";
-import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
+import {
+  buildHostAgentDetailRoute,
+  buildHostProjectKanbanRoute,
+  parseHostProjectKanbanRouteFromPathname,
+  parseHostWorkspaceRouteFromPathname,
+} from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import {
   type SidebarProjectEntry,
@@ -64,6 +70,11 @@ import {
 import { SyncedLoader } from "@/components/synced-loader";
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/stores/checkout-git-actions-store";
+import { useKanbanStore } from "@/stores/kanban-store";
+import {
+  TaskCreationModal,
+  type TaskCreationSubmission,
+} from "@/components/kanban/task-creation-modal";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
 import { decideLongPressMove } from "@/utils/sidebar-gesture-arbitration";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -80,10 +91,16 @@ import { type PrHint, useWorkspacePrHint } from "@/hooks/use-checkout-pr-status-
 import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
 import { useNavigationActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
-import { createNameId } from "mnemonic-id";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
+import { useCliAgentLaunch } from "@/hooks/use-cli-agent-launch";
+import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import type { CliProviderId } from "@server/shared/cli-provider-registry";
+import {
+  extractLinkedIntegrations,
+  integrationDisplayName,
+} from "@/components/kanban/integration-context";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -173,6 +190,12 @@ interface WorkspaceRowInnerProps {
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
+}
+
+interface ProjectKanbanRowProps {
+  selected: boolean;
+  count: number;
+  onPress: () => void;
 }
 
 function WorkspacePrBadge({ hint }: { hint: PrHint }) {
@@ -417,7 +440,7 @@ function NewWorktreeButton({
   const newWorktreeKeys = useShortcutKeys("new-worktree");
 
   return (
-    <View style={styles.projectTrailingControlSlot} pointerEvents={visible ? "auto" : "none"}>
+    <View style={[styles.projectTrailingControlSlot, { pointerEvents: visible ? "auto" : "none" }]}>
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild disabled={!visible}>
           <Pressable
@@ -704,12 +727,91 @@ function ProjectHeaderRow({
 }: ProjectHeaderRowProps) {
   const { theme } = useUnistyles();
   const [isHovered, setIsHovered] = useState(false);
+  const [showTaskModal, setShowTaskModal] = useState(false);
   const isMobileBreakpoint = useIsCompactFormFactor();
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
+  const setAgents = useSessionStore((state) => state.setAgents);
+  const updateTask = useKanbanStore((state) => state.updateTask);
   const toast = useToast();
+  const { launch: launchCliAgent } = useCliAgentLaunch(serverId);
+
+  const openSubmissionInWorkspace = useCallback(
+    async (
+      submission: TaskCreationSubmission,
+      workspaceId: string,
+      options?: { createdWorkspace?: boolean },
+    ) => {
+      const task = submission.task;
+
+      if (options?.createdWorkspace) {
+        onWorktreeCreated?.(workspaceId);
+      }
+      onWorkspacePress?.();
+
+      if (submission.agentSelection.mode === "cli") {
+        const launchResult = await launchCliAgent({
+          providerId: submission.agentSelection.id as CliProviderId,
+          cwd: workspaceId,
+          autoApprove: submission.autoApprove,
+          initialPrompt: submission.prompt,
+          name: `${submission.taskName} — ${submission.agentSelection.label}`,
+        });
+        if (task) {
+          updateTask(task.id, {
+            serverId: submission.serverId,
+            projectId: submission.projectId,
+            projectName: submission.projectName,
+            path: workspaceId,
+            terminalId: launchResult.terminalId,
+          });
+        }
+        router.navigate(
+          prepareWorkspaceTab({
+            serverId: serverId!,
+            workspaceId,
+            target: { kind: "terminal", terminalId: launchResult.terminalId },
+          }) as any,
+        );
+        return;
+      }
+
+      const client = getHostRuntimeStore().getClient(serverId!);
+      if (!client || !isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(serverId!))) {
+        throw new Error("Host is not connected");
+      }
+      const agent = await client.createAgent({
+        config: {
+          provider: submission.agentSelection.id as any,
+          cwd: workspaceId,
+          title: submission.taskName,
+        },
+        ...(submission.prompt ? { initialPrompt: submission.prompt } : {}),
+      });
+      if (!agent.id) {
+        throw new Error("Failed to create agent");
+      }
+      setAgents(serverId!, (prev) => {
+        const next = new Map(prev);
+        next.set(agent.id, normalizeAgentSnapshot(agent, serverId!));
+        return next;
+      });
+      if (task) {
+        updateTask(task.id, {
+          serverId: submission.serverId,
+          projectId: submission.projectId,
+          projectName: submission.projectName,
+          path: workspaceId,
+          agentId: agent.id,
+          agentProvider: submission.agentSelection.id,
+        });
+      }
+      router.navigate(buildHostAgentDetailRoute(serverId!, agent.id, workspaceId));
+    },
+    [launchCliAgent, onWorkspacePress, onWorktreeCreated, router, serverId, setAgents, updateTask],
+  );
 
   const createWorktreeMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (submission: TaskCreationSubmission) => {
       if (!serverId) {
         throw new Error("No server");
       }
@@ -717,16 +819,37 @@ function ProjectHeaderRow({
       if (!client || !isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(serverId))) {
         throw new Error("Host is not connected");
       }
+      const workspaceId = submission.workspacePath?.trim() || project.iconWorkingDir;
+      console.log("[Sidebar] createHubcodeWorktree with issue data:", {
+        issueContext: submission.integrations,
+        issueMetadata: submission.metadata ? Object.keys(submission.metadata) : null,
+        kanbanStatus: submission.linkToTask ? "todo" : undefined,
+        linkToTask: submission.linkToTask,
+      });
       const payload = await client.createHubcodeWorktree({
-        cwd: project.iconWorkingDir,
-        worktreeSlug: createNameId(),
+        cwd: workspaceId,
+        worktreeSlug: submission.taskName,
+        workspaceName: submission.taskName,
+        issueContext: submission.integrations,
+        issueMetadata: submission.metadata as Record<string, unknown> | undefined,
+        prompt: submission.prompt,
+        autoApprove: submission.autoApprove,
+        kanbanStatus: submission.linkToTask ? "todo" : undefined,
+        agentProvider: submission.agentSelection?.id,
+        agentMode: submission.agentSelection?.mode === "cli" ? "cli" : "native",
       });
       if (payload.error || !payload.workspace) {
         throw new Error(payload.error ?? "Failed to create worktree");
       }
-      return payload.workspace;
+      console.log("[Sidebar] createHubcodeWorktree response workspace:", {
+        id: payload.workspace.id,
+        issueContext: (payload.workspace as any).issueContext,
+        issueMetadata: (payload.workspace as any).issueMetadata ? Object.keys((payload.workspace as any).issueMetadata) : null,
+        kanbanStatus: (payload.workspace as any).kanbanStatus,
+      });
+      return { submission, workspace: payload.workspace };
     },
-    onSuccess: (workspace) => {
+    onSuccess: async ({ submission, workspace }) => {
       mergeWorkspaces(serverId!, [normalizeWorkspaceDescriptor(workspace)]);
       onWorktreeCreated?.(workspace.id);
       onWorkspacePress?.();
@@ -742,13 +865,29 @@ function ProjectHeaderRow({
       toast.error(error instanceof Error ? error.message : String(error));
     },
   });
+
+  const handleTaskCreated = useCallback(
+    (submission: TaskCreationSubmission) => {
+      if (!submission.useWorktree) {
+        const workspaceId = submission.workspacePath?.trim() || project.iconWorkingDir;
+        void openSubmissionInWorkspace(submission, workspaceId).catch((error) => {
+          toast.error(error instanceof Error ? error.message : String(error));
+        });
+        return;
+      }
+
+      // After the task is configured and created, create the worktree
+      createWorktreeMutation.mutate(submission);
+    },
+    [createWorktreeMutation, openSubmissionInWorkspace, project.iconWorkingDir, toast],
+  );
   useKeyboardActionHandler({
     handlerId: `worktree-new-${project.projectKey}`,
     actions: ["worktree.new"],
     enabled: isProjectActive && canCreateWorktree && !createWorktreeMutation.isPending,
     priority: 0,
     handle: () => {
-      createWorktreeMutation.mutate();
+      setShowTaskModal(true);
       return true;
     },
   });
@@ -793,7 +932,7 @@ function ProjectHeaderRow({
         {canCreateWorktree ? (
           <NewWorktreeButton
             displayName={displayName}
-            onPress={() => createWorktreeMutation.mutate()}
+            onPress={() => setShowTaskModal(true)}
             visible={isHovered || platformIsNative || isMobileBreakpoint}
             loading={createWorktreeMutation.isPending}
             showShortcutHint={isProjectActive}
@@ -802,11 +941,14 @@ function ProjectHeaderRow({
         ) : null}
         {onRemoveProject ? (
           <View
-            style={
+            style={[
               !(isHovered || platformIsNative || isMobileBreakpoint) &&
-              styles.projectKebabButtonHidden
-            }
-            pointerEvents={isHovered || platformIsNative || isMobileBreakpoint ? "auto" : "none"}
+                styles.projectKebabButtonHidden,
+              {
+                pointerEvents:
+                  isHovered || platformIsNative || isMobileBreakpoint ? "auto" : "none",
+              },
+            ]}
           >
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -849,6 +991,18 @@ function ProjectHeaderRow({
     </>
   );
 
+  const taskModal = (
+    <TaskCreationModal
+      visible={showTaskModal}
+      onClose={() => setShowTaskModal(false)}
+      onTaskCreated={handleTaskCreated}
+      serverId={serverId ?? undefined}
+      projectId={project.projectKey}
+      projectName={displayName}
+      workspacePath={project.iconWorkingDir}
+    />
+  );
+
   if (menuController) {
     return (
       <View onPointerEnter={() => setIsHovered(true)} onPointerLeave={() => setIsHovered(false)}>
@@ -869,6 +1023,7 @@ function ProjectHeaderRow({
         >
           {rowChildren}
         </ContextMenuTrigger>
+        {taskModal}
       </View>
     );
   }
@@ -890,6 +1045,40 @@ function ProjectHeaderRow({
         testID={`sidebar-project-row-${project.projectKey}`}
       >
         {rowChildren}
+      </Pressable>
+      {taskModal}
+    </View>
+  );
+}
+
+function ProjectKanbanRow({ selected, count, onPress }: ProjectKanbanRowProps) {
+  const { theme } = useUnistyles();
+  const [isHovered, setIsHovered] = useState(false);
+
+  return (
+    <View onPointerEnter={() => setIsHovered(true)} onPointerLeave={() => setIsHovered(false)}>
+      <Pressable
+        style={({ pressed }) => [
+          styles.projectKanbanRow,
+          selected && styles.sidebarRowSelected,
+          isHovered && styles.workspaceRowHovered,
+          pressed && styles.workspaceRowPressed,
+        ]}
+        onPress={onPress}
+      >
+        <View style={styles.workspaceRowMain}>
+          <View style={styles.workspaceRowLeft}>
+            <View style={styles.projectKanbanIconSlot}>
+              <Columns3 size={14} color={theme.colors.foregroundMuted} />
+            </View>
+            <Text style={styles.workspaceBranchText} numberOfLines={1}>
+              Tasks
+            </Text>
+          </View>
+          <View style={styles.projectKanbanCountBadge}>
+            <Text style={styles.projectKanbanCountText}>{count}</Text>
+          </View>
+        </View>
       </Pressable>
     </View>
   );
@@ -927,6 +1116,25 @@ function WorkspaceRowInner({
     drag,
     menuController,
   });
+  const workspaceDescriptor = useSessionStore(
+    (state) => state.sessions[workspace.serverId]?.workspaces?.get(workspace.workspaceId),
+  );
+  const linkedIntegrations = useMemo(
+    () =>
+      extractLinkedIntegrations(
+        workspaceDescriptor?.issueMetadata as import("@/types/integrations").TaskMetadata | undefined,
+        workspaceDescriptor?.issueContext,
+        workspaceDescriptor?.name,
+      ),
+    [workspaceDescriptor?.issueContext, workspaceDescriptor?.issueMetadata, workspaceDescriptor?.name],
+  );
+  const integrationSummary = useMemo(() => {
+    const first = linkedIntegrations[0];
+    if (!first) {
+      return null;
+    }
+    return `${integrationDisplayName(first.id)} \u00B7 ${first.identifier}`;
+  }, [linkedIntegrations]);
 
   const handlePress = useCallback(() => {
     if (interaction.didLongPressRef.current) {
@@ -969,16 +1177,23 @@ function WorkspaceRowInner({
               workspaceKind={workspace.workspaceKind}
               loading={isArchiving || isCreating}
             />
-            <Text
-              style={[
-                styles.workspaceBranchText,
-                isHovered && styles.workspaceBranchTextHovered,
-                isCreating && styles.workspaceBranchTextCreating,
-              ]}
-              numberOfLines={1}
-            >
-              {workspace.name}
-            </Text>
+            <View style={styles.workspaceNameBlock}>
+              <Text
+                style={[
+                  styles.workspaceBranchText,
+                  isHovered && styles.workspaceBranchTextHovered,
+                  isCreating && styles.workspaceBranchTextCreating,
+                ]}
+                numberOfLines={1}
+              >
+                {workspace.name}
+              </Text>
+              {integrationSummary ? (
+                <Text style={styles.workspaceContextText} numberOfLines={1}>
+                  {integrationSummary}
+                </Text>
+              ) : null}
+            </View>
           </View>
           <View style={styles.workspaceRowRight}>
             {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}
@@ -1081,6 +1296,7 @@ function WorkspaceRowWithMenu({
   const toast = useToast();
   const activeWorkspaceSelection = useNavigationActiveWorkspaceSelection();
   const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
+  const archiveKanbanTasks = useKanbanStore((s) => s.archiveByWorkspacePath);
   const sessionWorkspaces = useSessionStore(
     (state) => state.sessions[workspace.serverId]?.workspaces ?? EMPTY_WORKSPACES,
   );
@@ -1135,6 +1351,7 @@ function WorkspaceRowWithMenu({
         worktreePath: workspace.workspaceId,
       })
         .then(() => {
+          archiveKanbanTasks(workspace.workspaceId);
           redirectAfterArchive();
         })
         .catch((error) => {
@@ -1181,6 +1398,7 @@ function WorkspaceRowWithMenu({
         if (payload.error) {
           throw new Error(payload.error);
         }
+        archiveKanbanTasks(workspace.workspaceId);
         redirectAfterArchive();
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to hide workspace");
@@ -1355,6 +1573,7 @@ function ProjectBlock({
   iconDataUri,
   serverId,
   activeWorkspaceSelection,
+  activeProjectKanbanSelection,
   showShortcutBadges,
   shortcutIndexByWorkspaceKey,
   parentGestureRef,
@@ -1374,6 +1593,7 @@ function ProjectBlock({
   iconDataUri: string | null;
   serverId: string | null;
   activeWorkspaceSelection: { serverId: string; workspaceId: string } | null;
+  activeProjectKanbanSelection: { serverId: string; projectId: string } | null;
   showShortcutBadges: boolean;
   shortcutIndexByWorkspaceKey: Map<string, number>;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
@@ -1404,6 +1624,22 @@ function ProjectBlock({
     }
     return project.workspaces.some((w) => w.workspaceId === activeWorkspaceSelection.workspaceId);
   }, [serverId, activeWorkspaceSelection, project.workspaces]);
+  const kanbanTasksCount = useSessionStore((state) => {
+    if (!serverId) return 0;
+    const workspaces = state.sessions[serverId]?.workspaces;
+    if (!workspaces) return 0;
+    let count = 0;
+    for (const w of workspaces.values()) {
+      if (w.projectId === project.projectKey && (w.kanbanStatus || w.workspaceKind === "worktree")) {
+        count++;
+      }
+    }
+    return count;
+  });
+  const isProjectKanbanActive =
+    Boolean(serverId) &&
+    activeProjectKanbanSelection?.serverId === serverId &&
+    activeProjectKanbanSelection?.projectId === project.projectKey;
 
   const renderWorkspaceRow = useCallback(
     (
@@ -1476,6 +1712,7 @@ function ProjectBlock({
 
   const toast = useToast();
   const [isRemovingProject, setIsRemovingProject] = useState(false);
+  const archiveKanbanTasks = useKanbanStore((state) => state.archiveByWorkspacePath);
 
   const handleRemoveProject = useCallback(() => {
     if (isRemovingProject || !serverId) {
@@ -1507,6 +1744,7 @@ function ProjectBlock({
           if (payload.error) {
             throw new Error(payload.error);
           }
+          archiveKanbanTasks(ws.workspaceId);
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to remove project");
@@ -1514,35 +1752,50 @@ function ProjectBlock({
         setIsRemovingProject(false);
       }
     })();
-  }, [isRemovingProject, serverId, displayName, toast, project.workspaces]);
+  }, [archiveKanbanTasks, isRemovingProject, serverId, displayName, toast, project.workspaces]);
 
   return (
     <View style={styles.projectBlock}>
       {rowModel.kind === "workspace_link" ? (
-        <FlattenedProjectRow
-          project={project}
-          displayName={displayName}
-          iconDataUri={iconDataUri}
-          rowModel={rowModel}
-          onPress={() => {
-            if (!serverId) {
-              return;
+        <>
+          <FlattenedProjectRow
+            project={project}
+            displayName={displayName}
+            iconDataUri={iconDataUri}
+            rowModel={rowModel}
+            onPress={() => {
+              if (!serverId) {
+                return;
+              }
+              onWorkspacePress?.();
+              navigateToWorkspace(serverId, rowModel.workspace.workspaceId);
+            }}
+            serverId={serverId}
+            onWorkspacePress={onWorkspacePress}
+            onWorktreeCreated={onWorktreeCreated}
+            shortcutNumber={
+              shortcutIndexByWorkspaceKey.get(rowModel.workspace.workspaceKey) ?? null
             }
-            onWorkspacePress?.();
-            navigateToWorkspace(serverId, rowModel.workspace.workspaceId);
-          }}
-          serverId={serverId}
-          onWorkspacePress={onWorkspacePress}
-          onWorktreeCreated={onWorktreeCreated}
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(rowModel.workspace.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          drag={drag}
-          isDragging={isDragging}
-          dragHandleProps={dragHandleProps}
-          isProjectActive={isProjectActive}
-          onRemoveProject={handleRemoveProject}
-          removeProjectStatus={isRemovingProject ? "pending" : "idle"}
-        />
+            showShortcutBadge={showShortcutBadges}
+            drag={drag}
+            isDragging={isDragging}
+            dragHandleProps={dragHandleProps}
+            isProjectActive={isProjectActive}
+            onRemoveProject={handleRemoveProject}
+            removeProjectStatus={isRemovingProject ? "pending" : "idle"}
+          />
+          <ProjectKanbanRow
+            selected={isProjectKanbanActive}
+            count={kanbanTasksCount}
+            onPress={() => {
+              if (!serverId) {
+                return;
+              }
+              onWorkspacePress?.();
+              router.navigate(buildHostProjectKanbanRoute(serverId, project.projectKey) as any);
+            }}
+          />
+        </>
       ) : (
         <>
           <ProjectHeaderRow
@@ -1568,18 +1821,31 @@ function ProjectBlock({
           />
 
           {!collapsed ? (
-            <DraggableList
-              testID={`sidebar-workspace-list-${project.projectKey}`}
-              data={project.workspaces}
-              keyExtractor={workspaceKeyExtractor}
-              renderItem={renderWorkspace}
-              onDragEnd={handleWorkspaceDragEnd}
-              scrollEnabled={false}
-              useDragHandle
-              nestable={useNestable}
-              simultaneousGestureRef={parentGestureRef}
-              containerStyle={styles.workspaceListContainer}
-            />
+            <>
+              <ProjectKanbanRow
+                selected={isProjectKanbanActive}
+                count={kanbanTasksCount}
+                onPress={() => {
+                  if (!serverId) {
+                    return;
+                  }
+                  onWorkspacePress?.();
+                  router.navigate(buildHostProjectKanbanRoute(serverId, project.projectKey) as any);
+                }}
+              />
+              <DraggableList
+                testID={`sidebar-workspace-list-${project.projectKey}`}
+                data={project.workspaces}
+                keyExtractor={workspaceKeyExtractor}
+                renderItem={renderWorkspace}
+                onDragEnd={handleWorkspaceDragEnd}
+                scrollEnabled={false}
+                useDragHandle
+                nestable={useNestable}
+                simultaneousGestureRef={parentGestureRef}
+                containerStyle={styles.workspaceListContainer}
+              />
+            </>
           ) : null}
         </>
       )}
@@ -1616,6 +1882,10 @@ export function SidebarWorkspaceList({
 
   const isWorkspaceRoute = useMemo(
     () => Boolean(pathname && parseHostWorkspaceRouteFromPathname(pathname)),
+    [pathname],
+  );
+  const activeProjectKanbanSelection = useMemo(
+    () => (pathname ? parseHostProjectKanbanRouteFromPathname(pathname) : null),
     [pathname],
   );
   const effectiveActiveWorkspaceSelection = isWorkspaceRoute ? activeWorkspaceSelection : null;
@@ -1824,6 +2094,7 @@ export function SidebarWorkspaceList({
           iconDataUri={projectIconByProjectKey.get(item.projectKey) ?? null}
           serverId={serverId}
           activeWorkspaceSelection={effectiveActiveWorkspaceSelection}
+          activeProjectKanbanSelection={activeProjectKanbanSelection}
           showShortcutBadges={showShortcutBadges}
           shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
           parentGestureRef={parentGestureRef}
@@ -1840,6 +2111,7 @@ export function SidebarWorkspaceList({
       );
     },
     [
+      activeProjectKanbanSelection,
       collapsedProjectKeys,
       effectiveActiveWorkspaceSelection,
       handleWorktreeCreated,
@@ -1925,7 +2197,10 @@ const styles = StyleSheet.create((theme) => ({
     width: "100%",
   },
   projectBlock: {
-    marginBottom: theme.spacing[1],
+    marginBottom: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.surfaceSidebarHover,
   },
   workspaceListContainer: {},
   emptyContainer: {
@@ -1951,11 +2226,11 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: "center",
   },
   projectRow: {
-    minHeight: 36,
-    paddingVertical: theme.spacing[2],
+    minHeight: 34,
+    paddingVertical: 6,
     paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+    marginBottom: 2,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -1996,8 +2271,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectLeadingVisualSlot: {
     position: "relative",
-    width: theme.iconSize.md,
-    height: theme.iconSize.md,
+    width: 18,
+    height: 18,
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
@@ -2018,7 +2293,7 @@ const styles = StyleSheet.create((theme) => ({
   projectTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontWeight: "400",
+    fontWeight: theme.fontWeight.medium,
     minWidth: 0,
     flexShrink: 1,
   },
@@ -2093,12 +2368,22 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.borderAccent,
   },
   workspaceRow: {
-    minHeight: 36,
-    marginBottom: theme.spacing[1],
-    paddingVertical: theme.spacing[2],
+    minHeight: 32,
+    paddingVertical: 6,
     paddingLeft: theme.spacing[3] + theme.spacing[3],
     paddingRight: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
+    borderRadius: theme.borderRadius.md,
+    flexDirection: "column",
+    alignItems: "stretch",
+    justifyContent: "center",
+    gap: theme.spacing[1],
+  },
+  projectKanbanRow: {
+    minHeight: 32,
+    paddingVertical: 6,
+    paddingLeft: theme.spacing[3] + theme.spacing[3],
+    paddingRight: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
     flexDirection: "column",
     alignItems: "stretch",
     justifyContent: "center",
@@ -2115,6 +2400,10 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    flex: 1,
+    minWidth: 0,
+  },
+  workspaceNameBlock: {
     flex: 1,
     minWidth: 0,
   },
@@ -2143,6 +2432,27 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceRowContainer: {
     position: "relative",
+  },
+  projectKanbanIconSlot: {
+    width: WORKSPACE_STATUS_DOT_WIDTH,
+    height: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  projectKanbanCountBadge: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  projectKanbanCountText: {
+    fontSize: 11,
+    color: theme.colors.foregroundMuted,
+    fontWeight: theme.fontWeight.medium,
   },
   workspaceStatusDot: {
     position: "relative",
@@ -2179,10 +2489,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceBranchText: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: 13,
     fontWeight: "400",
-    lineHeight: 20,
-    opacity: 0.76,
+    lineHeight: 18,
+    opacity: 0.72,
     flex: 1,
     minWidth: 0,
   },
@@ -2191,6 +2501,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceBranchTextHovered: {
     opacity: 1,
+  },
+  workspaceContextText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: 1,
+    opacity: 0.88,
   },
   workspacePrBadgeRow: {
     paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
@@ -2217,16 +2534,17 @@ const styles = StyleSheet.create((theme) => ({
   diffStatRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 4,
     flexShrink: 0,
+    opacity: 0.8,
   },
   diffStatAdditions: {
-    fontSize: theme.fontSize.xs,
+    fontSize: 11,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.diffAddition,
   },
   diffStatDeletions: {
-    fontSize: theme.fontSize.xs,
+    fontSize: 11,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.diffDeletion,
   },

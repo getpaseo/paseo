@@ -26,9 +26,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const REPLACE_PATHS = new Set(["agents.cliProviders"]);
+
 function deepMerge<T extends Record<string, unknown>>(
   current: T,
   patch: Record<string, unknown>,
+  path: string[] = [],
 ): T {
   const next: Record<string, unknown> = { ...current };
 
@@ -36,9 +39,15 @@ function deepMerge<T extends Record<string, unknown>>(
     if (patchValue === undefined) {
       continue;
     }
+    const nextPath = [...path, key];
+    const nextPathKey = nextPath.join(".");
     const currentValue = next[key];
+    if (REPLACE_PATHS.has(nextPathKey) && isRecord(patchValue)) {
+      next[key] = { ...patchValue };
+      continue;
+    }
     if (isRecord(currentValue) && isRecord(patchValue)) {
-      next[key] = deepMerge(currentValue, patchValue);
+      next[key] = deepMerge(currentValue, patchValue, nextPath);
       continue;
     }
     next[key] = patchValue;
@@ -157,5 +166,15 @@ function mergeMutableConfigIntoPersistedConfig(params: {
         injectIntoAgents: mutable.mcp.injectIntoAgents,
       },
     },
+    agents:
+      mutable.agents?.cliProviders !== undefined
+        ? {
+            ...persisted.agents,
+            cliProviders:
+              Object.keys(mutable.agents.cliProviders).length > 0
+                ? mutable.agents.cliProviders
+                : undefined,
+          }
+        : persisted.agents,
   };
 }

@@ -1166,6 +1166,7 @@ describe("workspace aggregation", () => {
         type: "create_hubcode_worktree_request",
         cwd: repoDir,
         worktreeSlug: "worktree-123",
+        workspaceName: "Fix login bug",
         requestId: "req-worktree",
       });
     } finally {
@@ -1181,12 +1182,53 @@ describe("workspace aggregation", () => {
       projectDisplayName: "repo",
       projectKind: "git",
       workspaceKind: "worktree",
-      name: "worktree-123",
+      name: "Fix login bug",
       status: "done",
     });
     expect(response?.payload.workspace?.id).toContain(path.join("worktree-123"));
     expect(workspaces.has(response?.payload.workspace?.id)).toBe(true);
     expect(projects.has(response?.payload.workspace?.projectId)).toBe(true);
+  });
+
+  test("describeWorkspaceRecordWithGitData preserves persisted display names for worktrees", async () => {
+    const workspaceGitService = createNoopWorkspaceGitService();
+    workspaceGitService.peekSnapshot = vi.fn((cwd: string) =>
+      createWorkspaceRuntimeSnapshot(cwd, {
+        git: {
+          currentBranch: "fix-login-bug",
+          isHubcodeOwnedWorktree: true,
+          mainRepoRoot: "/tmp/repo",
+        },
+      }),
+    );
+
+    const session = createSessionForWorkspaceTests({ workspaceGitService }) as any;
+    const project = createPersistedProjectRecord({
+      projectId: "/tmp/repo",
+      rootPath: "/tmp/repo",
+      kind: "git",
+      displayName: "repo",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "/tmp/repo/.hubcode/worktrees/fix-login-bug",
+      projectId: project.projectId,
+      cwd: "/tmp/repo/.hubcode/worktrees/fix-login-bug",
+      kind: "worktree",
+      displayName: "Fix login bug",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+
+    session.buildProjectPlacement = vi.fn(async () => {
+      throw new Error("should not recompute worktree display names");
+    });
+
+    const descriptor = await session.describeWorkspaceRecordWithGitData(workspace, project);
+
+    expect(descriptor.name).toBe("Fix login bug");
+    expect(session.buildProjectPlacement).not.toHaveBeenCalled();
   });
 
   test("workspace update fanout for multiple cwd values is deduplicated", async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildHostAgentDetailRoute,
+  buildHostProjectKanbanRoute,
   buildHostRootRoute,
   buildHostWorkspaceRoute,
   decodeFilePathFromPathSegment,
@@ -8,6 +9,7 @@ import {
   encodeFilePathForPathSegment,
   encodeWorkspaceIdForPathSegment,
   parseHostAgentRouteFromPathname,
+  parseHostProjectKanbanRouteFromPathname,
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostWorkspaceRouteFromPathname,
   parseWorkspaceOpenIntent,
@@ -88,5 +90,19 @@ describe("workspace route parsing", () => {
     expect(buildHostAgentDetailRoute("local", "agent-1", "/tmp/repo")).toBe(
       "/h/local/workspace/L3RtcC9yZXBv?open=agent%3Aagent-1",
     );
+  });
+
+  it("builds and parses project kanban routes", () => {
+    expect(buildHostProjectKanbanRoute("local", "remote:github.com/org/repo")).toBe(
+      "/h/local/project/remote%3Agithub.com%2Forg%2Frepo/kanban",
+    );
+    expect(
+      parseHostProjectKanbanRouteFromPathname(
+        "/h/local/project/remote%3Agithub.com%2Forg%2Frepo/kanban",
+      ),
+    ).toEqual({
+      serverId: "local",
+      projectId: "remote:github.com/org/repo",
+    });
   });
 });

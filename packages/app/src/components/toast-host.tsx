@@ -232,7 +232,7 @@ export function ToastViewport({
     ) : null);
 
   const content = (
-    <View style={styles.container} pointerEvents="box-none">
+    <View style={[styles.container, { pointerEvents: "box-none" }]}>
       <Animated.View
         testID={toast.testID ?? "app-toast"}
         onPointerEnter={isWeb ? pauseDismiss : undefined}

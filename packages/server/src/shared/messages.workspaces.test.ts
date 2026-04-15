@@ -30,6 +30,19 @@ describe("workspace message schemas", () => {
     expect(parsed.type).toBe("open_project_request");
   });
 
+  test("parses create_hubcode_worktree_request with optional workspace name", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "create_hubcode_worktree_request",
+      cwd: "/tmp/repo",
+      worktreeSlug: "fix-login-bug",
+      workspaceName: "Fix login bug",
+      requestId: "req-worktree",
+    });
+
+    expect(parsed.type).toBe("create_hubcode_worktree_request");
+    expect(parsed.workspaceName).toBe("Fix login bug");
+  });
+
   test("parses list_available_editors_request", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "list_available_editors_request",

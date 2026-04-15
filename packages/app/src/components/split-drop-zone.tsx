@@ -62,11 +62,11 @@ export function SplitDropZone({ paneId, active, preview }: SplitDropZoneProps) {
   }
 
   return (
-    <View ref={setNodeRef as any} style={styles.overlay} pointerEvents="none">
+    <View ref={setNodeRef as any} style={[styles.overlay, { pointerEvents: "none" }]}>
       {previewStyles ? (
         <>
-          <View pointerEvents="none" style={previewStyles.overlay} />
-          <View pointerEvents="none" style={previewStyles.frame} />
+          <View style={[previewStyles.overlay, { pointerEvents: "none" }]} />
+          <View style={[previewStyles.frame, { pointerEvents: "none" }]} />
         </>
       ) : null}
     </View>

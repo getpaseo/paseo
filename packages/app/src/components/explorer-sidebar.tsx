@@ -262,7 +262,7 @@ export function ExplorerSidebar({
 
   if (isMobile) {
     return (
-      <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
+      <View style={[StyleSheet.absoluteFillObject, { pointerEvents: overlayPointerEvents }]}>
         {/* Backdrop */}
         <Animated.View style={[explorerStaticStyles.backdrop, backdropAnimatedStyle]} />
 
@@ -274,11 +274,11 @@ export function ExplorerSidebar({
                 width: windowWidth,
                 paddingTop: insets.top,
                 backgroundColor: theme.colors.surfaceSidebar,
+                pointerEvents: "auto",
               },
               sidebarAnimatedStyle,
               mobileKeyboardInsetStyle,
             ]}
-            pointerEvents="auto"
           >
             <SidebarContent
               activeTab={explorerTab}
@@ -356,7 +356,7 @@ function SidebarContent({
   const resolvedTab: ExplorerTab = !isGit && activeTab === "changes" ? "files" : activeTab;
 
   return (
-    <View style={styles.sidebarContent} pointerEvents="auto">
+    <View style={[styles.sidebarContent, { pointerEvents: "auto" }]}>
       {/* Header with tabs and close button */}
       <View style={[styles.header, { paddingRight: padding.right }]} testID="explorer-header">
         <TitlebarDragRegion />
