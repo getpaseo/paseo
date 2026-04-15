@@ -107,6 +107,12 @@ const OPENCODE_FATAL_RETRY_MESSAGE_TOKENS = [
   "does not exist",
   "unsupported model",
 ] as const;
+const OPENCODE_HEADERS_TIMEOUT_TOKENS = [
+  "headers timeout",
+  "headers timeout error",
+  "headers_timeout",
+  "und_err_headers_timeout",
+] as const;
 
 const OpencodeToolStateSchema = z
   .object({
@@ -237,6 +243,49 @@ function isFatalOpenCodeRetryMessage(message: string | null | undefined): boolea
     return false;
   }
   return OPENCODE_FATAL_RETRY_MESSAGE_TOKENS.some((token) => normalized.includes(token));
+}
+
+function isOpenCodeHeadersTimeoutFailure(error: unknown): boolean {
+  const diagnostics = new Set<string>();
+  const queue: unknown[] = [error];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+
+    const normalized = stringifyUnknownError(current).trim().toLowerCase();
+    if (normalized) {
+      diagnostics.add(normalized);
+    }
+
+    if (typeof current === "object") {
+      const record = current as {
+        message?: unknown;
+        code?: unknown;
+        name?: unknown;
+        cause?: unknown;
+      };
+
+      for (const value of [record.message, record.code, record.name]) {
+        if (typeof value === "string") {
+          const diagnostic = value.trim().toLowerCase();
+          if (diagnostic) {
+            diagnostics.add(diagnostic);
+          }
+        }
+      }
+
+      if (record.cause) {
+        queue.push(record.cause);
+      }
+    }
+  }
+
+  return [...diagnostics].some((diagnostic) =>
+    OPENCODE_HEADERS_TIMEOUT_TOKENS.some((token) => diagnostic.includes(token)),
+  );
 }
 
 function isAlreadyPresentMcpError(error: unknown): boolean {
@@ -1530,6 +1579,17 @@ class OpenCodeAgentSession implements AgentSession {
         })
         .then((response) => {
           if (response.error) {
+            if (isOpenCodeHeadersTimeoutFailure(response.error)) {
+              this.logger.warn(
+                {
+                  err: response.error,
+                  commandName: slashCommand.commandName,
+                  turnId,
+                },
+                "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+              );
+              return;
+            }
             const errorMsg = normalizeTurnFailureError(response.error);
             this.finishForegroundTurn(
               { type: "turn_failed", provider: "opencode", error: errorMsg },
@@ -1543,6 +1603,17 @@ class OpenCodeAgentSession implements AgentSession {
           }
         })
         .catch((err) => {
+          if (isOpenCodeHeadersTimeoutFailure(err)) {
+            this.logger.warn(
+              {
+                err,
+                commandName: slashCommand.commandName,
+                turnId,
+              },
+              "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+            );
+            return;
+          }
           this.finishForegroundTurn(
             { type: "turn_failed", provider: "opencode", error: normalizeTurnFailureError(err) },
             turnId,
