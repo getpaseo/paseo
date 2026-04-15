@@ -64,6 +64,7 @@ export const ProviderOverrideSchema = z
     command: z.array(z.string().min(1)).min(1).optional(),
     env: z.record(z.string()).optional(),
     models: z.array(ProviderProfileModelSchema).optional(),
+    webSearch: z.boolean().optional(),
     enabled: z.boolean().optional(),
     order: z.number().optional(),
   })

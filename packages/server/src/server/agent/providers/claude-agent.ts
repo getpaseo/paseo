@@ -2145,7 +2145,32 @@ class ClaudeAgentSession implements AgentSession {
     if (this.claudeSessionId) {
       base.resume = this.claudeSessionId;
     }
+
+    if (this.shouldDisableWebSearch()) {
+      base.disallowedTools = [...(base.disallowedTools ?? []), "WebSearch"];
+    }
+
     return this.applyRuntimeSettings(base);
+  }
+
+  private shouldDisableWebSearch(): boolean {
+    if (this.config.webSearch === false) {
+      return true;
+    }
+    if (this.config.webSearch === true) {
+      return false;
+    }
+    const baseUrl =
+      this.runtimeSettings?.env?.["ANTHROPIC_BASE_URL"] ??
+      process.env["ANTHROPIC_BASE_URL"];
+    if (!baseUrl) {
+      return false;
+    }
+    try {
+      return !new URL(baseUrl).hostname.endsWith("anthropic.com");
+    } catch {
+      return false;
+    }
   }
 
   private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
