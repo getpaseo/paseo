@@ -97,16 +97,17 @@ function removeAgentFromListPayload<T extends AgentsListQueryData | undefined>(
 
 function removeAgentFromCachedLists(queryClient: QueryClient, input: ArchiveAgentInput): void {
   const agentId = input.agentId.trim();
-  if (!agentId) {
+  const serverId = input.serverId.trim();
+  if (!agentId || !serverId) {
     return;
   }
 
   queryClient.setQueryData<AgentsListQueryData | undefined>(
-    ["sidebarAgentsList", input.serverId],
+    ["sidebarAgentsList", serverId],
     (current) => removeAgentFromListPayload(current, agentId),
   );
   queryClient.setQueryData<AgentsListQueryData | undefined>(
-    ["allAgents", input.serverId],
+    ["allAgents", serverId],
     (current) => removeAgentFromListPayload(current, agentId),
   );
 }
@@ -146,23 +147,25 @@ export function applyArchivedAgentCloseResults(input: ApplyArchivedAgentCloseRes
     return;
   }
 
+  const serverId = input.serverId.trim();
+
   for (const result of input.results) {
     markAgentArchivedInStore({
-      serverId: input.serverId,
+      serverId,
       agentId: result.agentId,
       archivedAt: result.archivedAt,
     });
     removeAgentFromCachedLists(input.queryClient, {
-      serverId: input.serverId,
+      serverId,
       agentId: result.agentId,
     });
   }
 
   void input.queryClient.invalidateQueries({
-    queryKey: ["sidebarAgentsList", input.serverId],
+    queryKey: ["sidebarAgentsList", serverId],
   });
   void input.queryClient.invalidateQueries({
-    queryKey: ["allAgents", input.serverId],
+    queryKey: ["allAgents", serverId],
   });
 }
 
@@ -173,11 +176,25 @@ export function clearArchiveAgentPending(input: IsAgentArchivingInput): void {
   });
 }
 
+export function useSendAgentMessage() {
+  return useMutation({
+    mutationFn: async (input: { serverId: string; agentId: string; content: string; attachments?: Array<{ name: string; base64: string; type: string }> }) => {
+      const client = useSessionStore.getState().sessions[input.serverId]?.client ?? null;
+      if (!client) {
+        throw new Error("Daemon client not available");
+      }
+      // The server-side implementation of sendAgentMessage handles saving attachments
+      // to {cwd}/.context/attachments/ and injecting the file paths into the prompt.
+      return await client.sendAgentMessage(input.agentId, input.content, input.attachments);
+    },
+  });
+}
+
 export function useArchiveAgent() {
   const queryClient = useQueryClient();
 
-  const pendingQuery = useQuery({
-    queryKey: ARCHIVE_AGENT_PENDING_QUERY_KEY,
+  const pendingQuery = useQuery({ 
+    queryKey: ARCHIVE_AGENT_PENDING_QUERY_KEY, 
     queryFn: async (): Promise<ArchiveAgentPendingState> => ({}),
     initialData: {} as ArchiveAgentPendingState,
     staleTime: Infinity,
