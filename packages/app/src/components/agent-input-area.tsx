@@ -16,6 +16,7 @@ import {
 import { ContextWindowMeter } from "./context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
+import { useSlashCommandUsageStore } from "@/stores/slash-command-usage-store";
 import {
   MessageInput,
   type MessagePayload,
@@ -51,6 +52,7 @@ import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispat
 import { submitAgentInput } from "@/components/agent-input-submit";
 import { useAppSettings } from "@/hooks/use-settings";
 import { isWeb, isNative } from "@/constants/platform";
+import { parseSlashCommandName } from "@/utils/slash-command-usage";
 
 type QueuedMessage = {
   id: string;
@@ -235,14 +237,20 @@ export function AgentInputArea({
   const submitMessage = useCallback(
     async (text: string, images?: ImageAttachment[]) => {
       onMessageSent?.();
+      const slashCommandName = parseSlashCommandName(text);
+
       if (onSubmitMessageRef.current) {
         await onSubmitMessageRef.current({ text, images });
-        return;
+      } else {
+        if (!sendAgentMessageRef.current) {
+          throw new Error("Host is not connected");
+        }
+        await sendAgentMessageRef.current(agentIdRef.current, text, images);
       }
-      if (!sendAgentMessageRef.current) {
-        throw new Error("Host is not connected");
+
+      if (slashCommandName) {
+        useSlashCommandUsageStore.getState().recordUsage(slashCommandName);
       }
-      await sendAgentMessageRef.current(agentIdRef.current, text, images);
     },
     [onMessageSent],
   );

@@ -5,12 +5,14 @@ import { useAgentCommandsQuery, type DraftCommandConfig } from "./use-agent-comm
 import { orderAutocompleteOptions } from "@/components/ui/autocomplete-utils";
 import { useAutocomplete } from "./use-autocomplete";
 import { useSessionStore } from "@/stores/session-store";
+import { useSlashCommandUsageStore } from "@/stores/slash-command-usage-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import {
   applyFileMentionReplacement,
   findActiveFileMention,
   type FileMentionRange,
 } from "@/utils/file-mention-autocomplete";
+import { rankSlashCommandsByUsage } from "@/utils/slash-command-usage";
 
 interface UseAgentAutocompleteInput {
   userInput: string;
@@ -46,6 +48,8 @@ interface DirectorySuggestionEntry {
   path: string;
   kind: "file" | "directory";
 }
+
+type AutocompleteMode = "command" | "file" | null;
 
 function normalizeDraftCommandConfig(
   draftConfig?: DraftCommandConfig,
@@ -96,6 +100,75 @@ function mapDirectorySuggestionsToEntries(payload: {
   }));
 }
 
+function getAutocompleteMode(args: {
+  showFileAutocomplete: boolean;
+  showCommandAutocomplete: boolean;
+}): AutocompleteMode {
+  if (args.showFileAutocomplete) {
+    return "file";
+  }
+
+  if (args.showCommandAutocomplete) {
+    return "command";
+  }
+
+  return null;
+}
+
+function getIsAutocompleteVisible(args: {
+  mode: AutocompleteMode;
+  canLoadCommands: boolean;
+  serverId: string;
+  autocompleteCwd: string;
+}): boolean {
+  if (args.mode === "command") {
+    return args.canLoadCommands;
+  }
+
+  if (args.mode === "file") {
+    return Boolean(args.serverId) && args.autocompleteCwd.length > 0;
+  }
+
+  return false;
+}
+
+function getAutocompleteLoadingState(args: {
+  mode: AutocompleteMode;
+  isCommandsLoading: boolean;
+  isFileSuggestionsPending: boolean;
+  isFileSuggestionsLoading: boolean;
+  optionCount: number;
+}): boolean {
+  if (args.mode === "command") {
+    return args.isCommandsLoading;
+  }
+
+  if (args.mode === "file") {
+    return (
+      args.isFileSuggestionsPending || (args.isFileSuggestionsLoading && args.optionCount === 0)
+    );
+  }
+
+  return false;
+}
+
+function getAutocompleteErrorMessage(args: {
+  mode: AutocompleteMode;
+  isCommandError: boolean;
+  commandError: Error | null;
+  fileSuggestionsError: unknown;
+}): string | undefined {
+  if (args.mode === "command") {
+    return args.isCommandError ? (args.commandError?.message ?? "Failed to load") : undefined;
+  }
+
+  if (args.mode === "file" && args.fileSuggestionsError instanceof Error) {
+    return args.fileSuggestionsError.message;
+  }
+
+  return undefined;
+}
+
 export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAutocompleteResult {
   const {
     userInput,
@@ -127,7 +200,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   );
 
   const isDraftContext = normalizedDraftConfig !== undefined;
-  const queryDraftConfig = isDraftContext ? normalizedDraftConfig : undefined;
+  const queryDraftConfig = normalizedDraftConfig;
   const canLoadCommands = Boolean(serverId) && (Boolean(agentId) || isDraftContext);
 
   const agentCwd = useSessionStore(
@@ -142,18 +215,18 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
 
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const commandUsageCounts = useSlashCommandUsageStore((state) => state.usageCountsByCommand);
 
-  const mode: "command" | "file" | null = showFileAutocomplete
-    ? "file"
-    : showCommandAutocomplete
-      ? "command"
-      : null;
-  const isVisible =
-    mode === "command"
-      ? canLoadCommands
-      : mode === "file"
-        ? Boolean(serverId) && autocompleteCwd.length > 0
-        : false;
+  const mode = getAutocompleteMode({
+    showFileAutocomplete,
+    showCommandAutocomplete,
+  });
+  const isVisible = getIsAutocompleteVisible({
+    mode,
+    canLoadCommands,
+    serverId,
+    autocompleteCwd,
+  });
 
   const {
     commands,
@@ -204,7 +277,8 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     if (mode === "command") {
       const filterLower = commandFilterQuery.toLowerCase();
       const matches = commands.filter((cmd) => cmd.name.toLowerCase().includes(filterLower));
-      const orderedMatches = orderAutocompleteOptions(matches);
+      const rankedMatches = rankSlashCommandsByUsage(matches, commandUsageCounts);
+      const orderedMatches = orderAutocompleteOptions(rankedMatches);
       return orderedMatches.map((cmd) => ({
         type: "command" as const,
         id: cmd.name,
@@ -228,7 +302,15 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     }
 
     return [];
-  }, [activeFileMention, commandFilterQuery, commands, fileSuggestionsQuery.data, isVisible, mode]);
+  }, [
+    activeFileMention,
+    commandFilterQuery,
+    commandUsageCounts,
+    commands,
+    fileSuggestionsQuery.data,
+    isVisible,
+    mode,
+  ]);
 
   const onSelectOption = useCallback(
     (option: AutocompleteOption) => {
@@ -258,22 +340,19 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     onEscape: mode === "command" ? () => setUserInput("") : undefined,
   });
 
-  const isLoading =
-    mode === "command"
-      ? isCommandsLoading
-      : mode === "file"
-        ? fileSuggestionsQuery.isPending || (fileSuggestionsQuery.isLoading && options.length === 0)
-        : false;
-  const errorMessage =
-    mode === "command"
-      ? isError
-        ? (error?.message ?? "Failed to load")
-        : undefined
-      : mode === "file"
-        ? fileSuggestionsQuery.error instanceof Error
-          ? fileSuggestionsQuery.error.message
-          : undefined
-        : undefined;
+  const isLoading = getAutocompleteLoadingState({
+    mode,
+    isCommandsLoading,
+    isFileSuggestionsPending: fileSuggestionsQuery.isPending,
+    isFileSuggestionsLoading: fileSuggestionsQuery.isLoading,
+    optionCount: options.length,
+  });
+  const errorMessage = getAutocompleteErrorMessage({
+    mode,
+    isCommandError: isError,
+    commandError: error ?? null,
+    fileSuggestionsError: fileSuggestionsQuery.error,
+  });
 
   const loadingText = mode === "file" ? "Searching workspace..." : "Loading commands...";
   const emptyText = mode === "file" ? "No files or directories found" : "No commands found";
