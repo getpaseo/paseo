@@ -8320,7 +8320,10 @@ export class Session {
       if (!existing) {
         this.emit({
           type: "update_workspace_metadata_response",
-          payload: { requestId: request.requestId, error: `Workspace not found: ${request.workspaceId}` },
+          payload: {
+            requestId: request.requestId,
+            error: `Workspace not found: ${request.workspaceId}`,
+          },
         });
         return;
       }
@@ -8346,7 +8349,8 @@ export class Session {
         payload: { requestId: request.requestId, error: null },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update workspace metadata";
+      const message =
+        error instanceof Error ? error.message : "Failed to update workspace metadata";
       this.sessionLogger.error(
         { err: error, workspaceId: request.workspaceId },
         "Failed to update workspace metadata",

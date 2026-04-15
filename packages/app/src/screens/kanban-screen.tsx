@@ -71,10 +71,7 @@ export function KanbanScreen({ serverId, projectId }: KanbanScreenProps) {
   // All worktree workspaces are shown in the kanban. Workspaces with explicit
   // kanbanStatus use that status; worktrees without one default to "todo".
   const kanbanWorkspaces = useMemo(
-    () =>
-      projectWorkspaces.filter(
-        (w) => w.kanbanStatus || w.workspaceKind === "worktree",
-      ),
+    () => projectWorkspaces.filter((w) => w.kanbanStatus || w.workspaceKind === "worktree"),
     [projectWorkspaces],
   );
 

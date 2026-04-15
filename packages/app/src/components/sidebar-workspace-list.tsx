@@ -844,7 +844,9 @@ function ProjectHeaderRow({
       console.log("[Sidebar] createHubcodeWorktree response workspace:", {
         id: payload.workspace.id,
         issueContext: (payload.workspace as any).issueContext,
-        issueMetadata: (payload.workspace as any).issueMetadata ? Object.keys((payload.workspace as any).issueMetadata) : null,
+        issueMetadata: (payload.workspace as any).issueMetadata
+          ? Object.keys((payload.workspace as any).issueMetadata)
+          : null,
         kanbanStatus: (payload.workspace as any).kanbanStatus,
       });
       return { submission, workspace: payload.workspace };
@@ -1116,17 +1118,23 @@ function WorkspaceRowInner({
     drag,
     menuController,
   });
-  const workspaceDescriptor = useSessionStore(
-    (state) => state.sessions[workspace.serverId]?.workspaces?.get(workspace.workspaceId),
+  const workspaceDescriptor = useSessionStore((state) =>
+    state.sessions[workspace.serverId]?.workspaces?.get(workspace.workspaceId),
   );
   const linkedIntegrations = useMemo(
     () =>
       extractLinkedIntegrations(
-        workspaceDescriptor?.issueMetadata as import("@/types/integrations").TaskMetadata | undefined,
+        workspaceDescriptor?.issueMetadata as
+          | import("@/types/integrations").TaskMetadata
+          | undefined,
         workspaceDescriptor?.issueContext,
         workspaceDescriptor?.name,
       ),
-    [workspaceDescriptor?.issueContext, workspaceDescriptor?.issueMetadata, workspaceDescriptor?.name],
+    [
+      workspaceDescriptor?.issueContext,
+      workspaceDescriptor?.issueMetadata,
+      workspaceDescriptor?.name,
+    ],
   );
   const integrationSummary = useMemo(() => {
     const first = linkedIntegrations[0];
@@ -1630,7 +1638,10 @@ function ProjectBlock({
     if (!workspaces) return 0;
     let count = 0;
     for (const w of workspaces.values()) {
-      if (w.projectId === project.projectKey && (w.kanbanStatus || w.workspaceKind === "worktree")) {
+      if (
+        w.projectId === project.projectKey &&
+        (w.kanbanStatus || w.workspaceKind === "worktree")
+      ) {
         count++;
       }
     }

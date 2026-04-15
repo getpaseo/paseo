@@ -1,7 +1,7 @@
 // SessionIntegrationBanner — shows linked integration issues in agent/terminal sessions
 // Displays a compact, collapsible banner at the top of the session view
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronUp, ExternalLink } from "lucide-react-native";
@@ -127,7 +127,16 @@ function IntegrationBannerItem({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- searchMutation is a new object each render; including it causes infinite loops
-  }, [cwd, expanded, resolvedItem.description, resolvedItem.id, resolvedItem.identifier, resolvedItem.title, resolvedItem.url, serverId]);
+  }, [
+    cwd,
+    expanded,
+    resolvedItem.description,
+    resolvedItem.id,
+    resolvedItem.identifier,
+    resolvedItem.title,
+    resolvedItem.url,
+    serverId,
+  ]);
 
   return (
     <View style={styles.item}>

@@ -87,9 +87,7 @@ export function TaskCreationModal({
   baseBranch,
 }: TaskCreationModalProps) {
   const { theme } = useUnistyles();
-  const sessionWorkspaces = useSessionStore(
-    (state) => state.sessions[serverId ?? ""]?.workspaces,
-  );
+  const sessionWorkspaces = useSessionStore((state) => state.sessions[serverId ?? ""]?.workspaces);
   const existingNames = useMemo(() => {
     if (!sessionWorkspaces) return [];
     return Array.from(sessionWorkspaces.values()).map((w) => w.name);
@@ -398,31 +396,15 @@ export function TaskCreationModal({
       {showAdvanced ? (
         <View style={modalStyles.advancedSection}>
           <View style={modalStyles.settingsCard}>
-            <Pressable
-              style={modalStyles.checkboxRow}
-              onPress={() => setUseWorktree((v) => !v)}
-            >
-              <View
-                style={[
-                  modalStyles.checkbox,
-                  useWorktree && modalStyles.checkboxChecked,
-                ]}
-              >
+            <Pressable style={modalStyles.checkboxRow} onPress={() => setUseWorktree((v) => !v)}>
+              <View style={[modalStyles.checkbox, useWorktree && modalStyles.checkboxChecked]}>
                 {useWorktree ? <Check size={12} color={theme.colors.surface0} /> : null}
               </View>
               <Text style={modalStyles.checkboxText}>Local worktree (recommended)</Text>
             </Pressable>
 
-            <Pressable
-              style={modalStyles.checkboxRow}
-              onPress={() => setAutoApprove((v) => !v)}
-            >
-              <View
-                style={[
-                  modalStyles.checkbox,
-                  autoApprove && modalStyles.checkboxChecked,
-                ]}
-              >
+            <Pressable style={modalStyles.checkboxRow} onPress={() => setAutoApprove((v) => !v)}>
+              <View style={[modalStyles.checkbox, autoApprove && modalStyles.checkboxChecked]}>
                 {autoApprove ? <Check size={12} color={theme.colors.surface0} /> : null}
               </View>
               <Text style={modalStyles.checkboxText}>Skip permissions for file operations</Text>
@@ -443,9 +425,7 @@ export function TaskCreationModal({
                       cwd={workspacePath}
                       searchSeed={taskName}
                       onSelect={(value) => handleIntegrationChange(integration.id, value)}
-                      onSelectItem={(item) =>
-                        handleIntegrationItemChange(integration.id, item)
-                      }
+                      onSelectItem={(item) => handleIntegrationItemChange(integration.id, item)}
                     />
                   ),
                 )

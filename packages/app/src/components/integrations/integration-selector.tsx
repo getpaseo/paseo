@@ -217,7 +217,11 @@ export function IntegrationSelector({
           ]}
           onPress={handleOpen}
         >
-          <IntegrationIcon integration={integration.id} size={16} color={theme.colors.foregroundMuted} />
+          <IntegrationIcon
+            integration={integration.id}
+            size={16}
+            color={theme.colors.foregroundMuted}
+          />
           <Text style={selectorStyles.selectButtonText}>{labelText}</Text>
           <ChevronDown size={14} color={theme.colors.foregroundMuted} />
         </Pressable>
@@ -284,13 +288,17 @@ export function IntegrationSelector({
                 const stateName =
                   typeof stateRaw === "string"
                     ? stateRaw
-                    : ((stateRaw as Record<string, unknown> | undefined)?.name as string | undefined);
+                    : ((stateRaw as Record<string, unknown> | undefined)?.name as
+                        | string
+                        | undefined);
                 const assigneeRaw = item.assignee;
                 const assigneeName =
                   typeof assigneeRaw === "string"
                     ? assigneeRaw
-                    : ((assigneeRaw as Record<string, unknown> | undefined)?.name ??
-                       (assigneeRaw as Record<string, unknown> | undefined)?.login) as string | undefined;
+                    : (((assigneeRaw as Record<string, unknown> | undefined)?.name ??
+                        (assigneeRaw as Record<string, unknown> | undefined)?.login) as
+                        | string
+                        | undefined);
                 const description = (item.description ?? item.body) as string | undefined;
                 const itemUrl = (item.url ?? item.webUrl ?? item.html_url) as string | undefined;
                 return (
