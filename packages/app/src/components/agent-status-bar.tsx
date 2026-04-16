@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, Pressable, Keyboard } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
@@ -942,6 +942,20 @@ export const AgentStatusBar = memo(function AgentStatusBar({
       label: option.label,
     }));
   }, [modelSelection.thinkingOptions]);
+  const [optimisticThinkingOptionId, setOptimisticThinkingOptionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setOptimisticThinkingOptionId((current) => {
+      if (!current) {
+        return current;
+      }
+      if (current === (modelSelection.selectedThinkingId ?? null)) {
+        return null;
+      }
+      const stillValid = thinkingOptions.some((option) => option.id === current);
+      return stillValid ? current : null;
+    });
+  }, [modelSelection.selectedThinkingId, thinkingOptions]);
 
   if (!agent) {
     return null;
@@ -996,11 +1010,14 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         });
       }}
       thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
-      selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
+      selectedThinkingOptionId={
+        optimisticThinkingOptionId ?? modelSelection.selectedThinkingId ?? undefined
+      }
       onSelectThinkingOption={(thinkingOptionId) => {
         if (!client) {
           return;
         }
+        setOptimisticThinkingOptionId(thinkingOptionId);
         const activeModelId = modelSelection.activeModelId;
         if (activeModelId) {
           void updatePreferences((current) =>
@@ -1019,6 +1036,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
           });
         }
         void client.setAgentThinkingOption(agentId, thinkingOptionId).catch((error) => {
+          setOptimisticThinkingOptionId(null);
           console.warn("[AgentStatusBar] setAgentThinkingOption failed", error);
         });
       }}

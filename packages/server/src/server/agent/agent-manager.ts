@@ -993,6 +993,16 @@ export class AgentManager {
         ? thinkingOptionId
         : null;
 
+    if (agent.provider === "droid") {
+      await this.reloadAgentSession(agentId, {
+        thinkingOptionId: normalizedThinkingOptionId ?? undefined,
+      });
+      const refreshedAgent = this.requireAgent(agentId);
+      this.touchUpdatedAt(refreshedAgent);
+      this.emitState(refreshedAgent);
+      return;
+    }
+
     if (agent.session.setThinkingOption) {
       await agent.session.setThinkingOption(normalizedThinkingOptionId);
     }

@@ -126,6 +126,59 @@ class TestAgentClient implements AgentClient {
   }
 }
 
+class TestDroidAgentClient implements AgentClient {
+  readonly provider = "droid" as const;
+  readonly capabilities = TEST_CAPABILITIES;
+  lastResumeConfig: Partial<AgentSessionConfig> | undefined;
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    return new TestDroidAgentSession(config);
+  }
+
+  async listModels() {
+    return [
+      {
+        provider: "droid" as const,
+        id: "gpt-5.4",
+        label: "GPT-5.4",
+        isDefault: true,
+        thinkingOptions: [
+          { id: "medium", label: "medium", isDefault: true },
+          { id: "high", label: "high" },
+        ],
+        defaultThinkingOptionId: "medium",
+      },
+    ];
+  }
+
+  async listModes() {
+    return [
+      { id: "normal", label: "Auto (Off)" },
+      { id: "spec", label: "Spec" },
+    ];
+  }
+
+  async resumeSession(
+    handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+    _launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    this.lastResumeConfig = config;
+    return new TestDroidAgentSession({
+      ...(handle.metadata ?? {}),
+      provider: "droid",
+      cwd: config?.cwd ?? process.cwd(),
+      model: config?.model,
+      modeId: config?.modeId,
+      thinkingOptionId: config?.thinkingOptionId,
+    });
+  }
+}
+
 class TestAgentSession implements AgentSession {
   readonly provider = "codex" as const;
   readonly capabilities = TEST_CAPABILITIES;
@@ -215,6 +268,21 @@ class TestAgentSession implements AgentSession {
   async close(): Promise<void> {}
 }
 
+class TestDroidAgentSession extends TestAgentSession {
+  readonly provider = "droid" as const;
+
+  override describePersistence() {
+    return {
+      provider: this.provider,
+      sessionId: this.id,
+      metadata: {
+        provider: this.provider,
+        cwd: process.cwd(),
+      },
+    };
+  }
+}
+
 function createFeature(overrides: Partial<AgentFeature> = {}): AgentFeature {
   return {
     type: "toggle",
@@ -271,6 +339,31 @@ describe("AgentManager", () => {
 
     expect(snapshot.config.model).toBe("gpt-5.4");
     expect(snapshot.config.modeId).toBe("auto");
+  });
+
+  test("setAgentThinkingOption reloads droid sessions with the new reasoning effort", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const droidClient = new TestDroidAgentClient();
+    const manager = new AgentManager({
+      clients: {
+        droid: droidClient,
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000102",
+    });
+
+    const created = await manager.createAgent({
+      provider: "droid",
+      cwd: workdir,
+    });
+
+    await manager.setAgentThinkingOption(created.id, "high");
+
+    expect(droidClient.lastResumeConfig?.thinkingOptionId).toBe("high");
+    expect(manager.getAgent(created.id)?.config.thinkingOptionId).toBe("high");
   });
 
   test("setAgentMode persists the selected mode across session reload", async () => {

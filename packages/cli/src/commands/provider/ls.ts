@@ -17,7 +17,7 @@ const PROVIDERS: ProviderListItem[] = AGENT_PROVIDER_DEFINITIONS.map((def) => ({
   provider: def.id,
   label: def.label,
   status: "available",
-  defaultMode: def.defaultModeId ?? "default",
+  defaultMode: def.defaultModeId ?? "-",
   modes: def.modes.map((m) => m.label).join(", "),
 }));
 
@@ -74,7 +74,7 @@ export async function runLsCommand(
         provider: entry.provider,
         label: entry.label ?? entry.provider,
         status: entry.status === "ready" ? "available" : entry.status,
-        defaultMode: entry.defaultModeId ?? "default",
+        defaultMode: entry.defaultModeId ?? "-",
         modes: (entry.modes ?? []).map((mode) => mode.label).join(", "),
       })),
       schema: providerLsSchema,
