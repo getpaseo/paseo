@@ -50,6 +50,13 @@ const CLAUDE_MODES: AgentProviderModeDefinition[] = [
     colorTier: "planning",
   },
   {
+    id: "auto",
+    label: "Auto",
+    description: "Use a model classifier to approve or deny permission prompts",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
     id: "bypassPermissions",
     label: "Bypass",
     description: "Skip all permission prompts (use with caution)",
