@@ -45,6 +45,7 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { formatShortcut } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
+import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import {
   markScrollInvestigationEvent,
   markScrollInvestigationRender,
@@ -895,7 +896,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     // IME composition in progress (e.g. CJK input) — all key events belong to the
     // IME, not the app. keyCode 229 is a Chromium fallback for when isComposing is
     // cleared before the keydown fires.
-    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (isImeComposingKeyboardEvent(event.nativeEvent)) return;
 
     // Allow parent to intercept key events (e.g., for autocomplete navigation)
     if (onKeyPressCallback) {
