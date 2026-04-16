@@ -71,7 +71,7 @@ const CodeLine = React.memo(function CodeLine({
       <View style={[codeLineStyles.gutter, { width: gutterWidth }]}>
         <Text style={[codeLineStyles.gutterText, { color: baseColor }]}>{String(lineNumber)}</Text>
       </View>
-      <Text style={codeLineStyles.lineText}>
+      <Text selectable style={codeLineStyles.lineText}>
         {tokens.map((token, index) => (
           <Text
             key={index}
