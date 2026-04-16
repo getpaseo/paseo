@@ -27,6 +27,7 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { isNative } from "@/constants/platform";
+import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -320,6 +321,12 @@ export function useKeyboardShortcuts({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandle()) {
+        return;
+      }
+
+      // During IME composition, Enter confirms the candidate selection and must
+      // not route through global shortcuts like message send.
+      if (isImeComposingKeyboardEvent(event)) {
         return;
       }
 
