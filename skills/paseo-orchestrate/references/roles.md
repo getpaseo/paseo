@@ -37,17 +37,17 @@ Adversarially challenges a plan. Looks for: bolted-on code vs natural fit, missi
 
 ### impl
 
-Writes code. Works TDD: failing test first, then make it pass. Runs typecheck and tests when done.
+Writes code. Works TDD: failing test first, then make it pass. Runs typecheck and all modified/related tests when done.
 
 - **Edits files:** Yes
-- **Prompt emphasis:** "Work TDD. Do not bolt new code on top — reshape existing code so the feature slots in naturally. Run typecheck and tests when done. Do NOT commit."
+- **Prompt emphasis:** "Work TDD. Do not bolt new code on top — reshape existing code so the feature slots in naturally. Run typecheck AND run any tests you modified or that cover your changes when done. Both must pass. Do NOT commit."
 
 ### tester
 
 Writes or fixes tests specifically. Used when test work is substantial enough to warrant a dedicated agent separate from impl.
 
 - **Edits files:** Yes
-- **Prompt emphasis:** "Write tests that verify behavior, not implementation details. Run the full relevant suite when done."
+- **Prompt emphasis:** "Write tests that verify behavior, not implementation details. Run every test you modified and confirm it passes. A test change without running the test is not done."
 
 ### auditor
 

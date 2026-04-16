@@ -1,6 +1,6 @@
 import net from "node:net";
 
-export type AllowedHostsConfig = true | string[] | undefined;
+export type HostnamesConfig = true | string[] | undefined;
 
 function normalizeHostname(hostname: string): string {
   return hostname.trim().toLowerCase();
@@ -25,7 +25,7 @@ function parseHostnameFromHostHeader(hostHeader: string): string | null {
   return normalizeHostname(trimmed.slice(0, colonIndex));
 }
 
-function matchesAllowedHostPattern(hostname: string, pattern: string): boolean {
+function matchesHostnamePattern(hostname: string, pattern: string): boolean {
   const normalizedPattern = normalizeHostname(pattern);
   if (!normalizedPattern) return false;
 
@@ -47,33 +47,33 @@ function isDefaultAllowedHostname(hostname: string): boolean {
 }
 
 /**
- * Vite-style allowed hosts check, adapted to raw Host headers.
+ * Vite-style hostname allowlist check, adapted to raw Host headers.
  *
  * Semantics:
- * - `allowedHosts === true` => allow any host.
- * - `allowedHosts === []` or `undefined` => allow localhost, *.localhost, and all IPs.
- * - `allowedHosts === ['.example.com', 'myhost']` => allow those *in addition* to defaults.
+ * - `hostnames === true` => allow any host.
+ * - `hostnames === []` or `undefined` => allow localhost, *.localhost, and all IPs.
+ * - `hostnames === ['.example.com', 'myhost']` => allow those *in addition* to defaults.
  */
-export function isHostAllowed(
+export function isHostnameAllowed(
   hostHeader: string | undefined,
-  allowedHosts: AllowedHostsConfig,
+  hostnames: HostnamesConfig,
 ): boolean {
   const hostname = hostHeader ? parseHostnameFromHostHeader(hostHeader) : null;
   if (!hostname) return false;
 
-  if (allowedHosts === true) return true;
+  if (hostnames === true) return true;
 
   // Defaults are always allowed.
   if (isDefaultAllowedHostname(hostname)) return true;
 
-  const patterns = allowedHosts ?? [];
+  const patterns = hostnames ?? [];
   for (const pattern of patterns) {
-    if (matchesAllowedHostPattern(hostname, pattern)) return true;
+    if (matchesHostnamePattern(hostname, pattern)) return true;
   }
   return false;
 }
 
-export function mergeAllowedHosts(values: Array<AllowedHostsConfig>): AllowedHostsConfig {
+export function mergeHostnames(values: Array<HostnamesConfig>): HostnamesConfig {
   let merged: string[] = [];
   for (const value of values) {
     if (value === true) return true;
@@ -85,7 +85,7 @@ export function mergeAllowedHosts(values: Array<AllowedHostsConfig>): AllowedHos
   return deduped;
 }
 
-export function parseAllowedHostsEnv(raw: string | undefined): AllowedHostsConfig {
+export function parseHostnamesEnv(raw: string | undefined): HostnamesConfig {
   if (!raw) return undefined;
   const trimmed = raw.trim();
   if (!trimmed) return undefined;

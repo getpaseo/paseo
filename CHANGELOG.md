@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.1.56 - 2026-04-14
+
+### Fixed
+- Projects with empty git repositories (no commits yet) no longer crash the app on startup.
+- A single problematic project can no longer prevent the rest of your workspaces from loading.
+
+## 0.1.55 - 2026-04-14
+
+### Added
+- Provider profiles — define custom providers in your Paseo config that appear alongside built-ins. Override a built-in's binary, env, or models, or create entirely new providers. See the [configuration guide](https://github.com/getpaseo/paseo/blob/main/docs/CUSTOM-PROVIDERS.md).
+- ACP agent support — add any ACP-compatible agent to Paseo with `extends: "acp"` in your provider config. No code changes needed.
+- Choose provider and model when creating scheduled agents.
+- Max reasoning effort option for Opus 4.6 models.
+- Cmd+, (Ctrl+, on Windows/Linux) opens settings.
+
+### Improved
+- Git operations are dramatically faster — workspace status, PR checks, and branch data all use a shared cached snapshot service instead of shelling out to git on every request. Running 20+ workspaces simultaneously is now smooth.
+- Windows support — the daemon and CLI run natively on Windows with proper shell quoting, executable resolution, and path handling.
+- iPad and tablet layouts work correctly across all screen sizes.
+- IME composition (Chinese, Japanese, Korean input) no longer submits prematurely when pressing Enter.
+
+### Fixed
+- Creating a worktree no longer briefly flashes it as a standalone project before placing it under the correct repository.
+- Worktree creation spinner stays visible throughout the process instead of disappearing on mouse-out.
+- Workspace navigation updates correctly when switching between workspaces in the same project.
+- Desktop workspace header alignment and model selector no longer overflow on narrow windows.
+- Loading indicators are visible in light mode.
+
 ## 0.1.54 - 2026-04-12
 
 ### Added

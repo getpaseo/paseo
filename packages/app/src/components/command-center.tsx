@@ -1,4 +1,4 @@
-import { Modal, Pressable, ScrollView, Text, TextInput, View, Platform } from "react-native";
+import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { memo, useEffect, useRef, type ReactNode } from "react";
 import { Plus, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -8,6 +8,7 @@ import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import { Shortcut } from "@/components/ui/shortcut";
+import { isNative } from "@/constants/platform";
 
 function agentKey(agent: Pick<AggregatedAgent, "serverId" | "id">): string {
   return `${agent.serverId}:${agent.id}`;
@@ -90,7 +91,7 @@ export function CommandCenter() {
     }
   }, [activeIndex, open]);
 
-  if (Platform.OS !== "web" || !open) return null;
+  if (isNative || !open) return null;
 
   const actionItems = items.filter((item) => item.kind === "action");
   const agentItems = items.filter((item) => item.kind === "agent");

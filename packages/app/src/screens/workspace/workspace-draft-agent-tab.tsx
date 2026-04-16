@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Keyboard, Platform, ScrollView, Text, View } from "react-native";
+import { Keyboard, ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { FileDropZone } from "@/components/file-drop-zone";
@@ -19,6 +19,7 @@ import type {
   AgentSessionConfig,
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
+import { isWeb } from "@/constants/platform";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
@@ -155,7 +156,7 @@ export function WorkspaceDraftAgentTab({
     },
     onBeforeSubmit: () => {
       void persistFormPreferences();
-      if (Platform.OS === "web") {
+      if (isWeb) {
         (document.activeElement as HTMLElement | null)?.blur?.();
       }
       Keyboard.dismiss();
@@ -341,7 +342,7 @@ export function WorkspaceDraftAgentTab({
           <AgentInputArea
             agentId={tabId}
             serverId={serverId}
-            isInputActive={isPaneFocused}
+            isPaneFocused={isPaneFocused}
             onSubmitMessage={handleCreateFromInput}
             isSubmitLoading={isSubmitting}
             blurOnSubmit={true}

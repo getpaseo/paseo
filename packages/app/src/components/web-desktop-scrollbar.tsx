@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   PanResponder,
-  Platform,
   View,
   type LayoutChangeEvent,
   type NativeScrollEvent,
@@ -12,6 +11,7 @@ import {
   computeScrollOffsetFromDragDelta,
   computeVerticalScrollbarGeometry,
 } from "./web-desktop-scrollbar.math";
+import { isWeb as platformIsWeb } from "@/constants/platform";
 
 const METRICS_EPSILON = 0.5;
 const HANDLE_WIDTH_IDLE = 6;
@@ -135,7 +135,6 @@ export function WebDesktopScrollbarOverlay({
     maxScrollOffset: 0,
   });
   const onScrollToOffsetRef = useRef(onScrollToOffset);
-  const isWeb = Platform.OS === "web";
 
   const maxScrollOffset = Math.max(0, metrics.contentSize - metrics.viewportSize);
   const normalizedOffset = inverted
@@ -258,7 +257,7 @@ export function WebDesktopScrollbarOverlay({
   );
 
   const panResponder = useMemo(() => {
-    if (isWeb) {
+    if (platformIsWeb) {
       return null;
     }
 
@@ -280,11 +279,11 @@ export function WebDesktopScrollbarOverlay({
         setIsDragging(false);
       },
     });
-  }, [applyDragDelta, isWeb]);
+  }, [applyDragDelta, platformIsWeb]);
 
   const startWebDrag = useCallback(
     (event: any) => {
-      if (!isWeb) {
+      if (!platformIsWeb) {
         return;
       }
       const clientY = readClientY(event);
@@ -298,7 +297,7 @@ export function WebDesktopScrollbarOverlay({
       dragStartClientYRef.current = clientY;
       setIsDragging(true);
     },
-    [isWeb],
+    [platformIsWeb],
   );
 
   const handleGrabHoverIn = useCallback(() => {
@@ -313,7 +312,7 @@ export function WebDesktopScrollbarOverlay({
   }, []);
 
   useEffect(() => {
-    if (!isWeb || !isDragging) {
+    if (!platformIsWeb || !isDragging) {
       return;
     }
 
@@ -335,7 +334,7 @@ export function WebDesktopScrollbarOverlay({
       window.removeEventListener("pointerup", stopDragging);
       window.removeEventListener("pointercancel", stopDragging);
     };
-  }, [applyDragDelta, isDragging, isWeb]);
+  }, [applyDragDelta, isDragging, platformIsWeb]);
 
   if (!enabled || !geometry.isVisible) {
     return null;
@@ -371,7 +370,7 @@ export function WebDesktopScrollbarOverlay({
             height: thumbRegionHeight,
             transform: [{ translateY: thumbRegionOffset }],
           },
-          isWeb &&
+          platformIsWeb &&
             ({
               cursor: handleCursor,
               touchAction: "none",
@@ -383,7 +382,7 @@ export function WebDesktopScrollbarOverlay({
         ]}
         pointerEvents={handleVisible ? "auto" : "none"}
         {...(panResponder?.panHandlers ?? {})}
-        {...(isWeb
+        {...(platformIsWeb
           ? ({
               onPointerDown: startWebDrag,
               onPointerEnter: handleGrabHoverIn,
@@ -403,7 +402,7 @@ export function WebDesktopScrollbarOverlay({
               backgroundColor: handleColor,
               opacity: handleOpacity,
             },
-            isWeb &&
+            platformIsWeb &&
               ({
                 transitionProperty: "opacity, width, background-color",
                 transitionDuration: `${HANDLE_FADE_DURATION_MS}ms, ${HANDLE_WIDTH_TRANSITION_DURATION_MS}ms, ${HANDLE_FADE_DURATION_MS}ms`,

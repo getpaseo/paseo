@@ -1,15 +1,21 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { platform } from "node:os";
-import path from "node:path";
+import path, { extname } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export interface FindExecutableDependencies {
-  execFileSync: typeof execFileSync;
-  existsSync: typeof existsSync;
-  platform: typeof platform;
+function pickBestWindowsCandidate(lines: string[]): string | null {
+  const candidates = lines.filter((line) => line.length > 0);
+  if (candidates.length === 0) return null;
+
+  const extPriority = [".exe", ".cmd", ".ps1"];
+  for (const ext of extPriority) {
+    const match = candidates.find((candidate) => candidate.toLowerCase().endsWith(ext));
+    if (match) return match;
+  }
+
+  return candidates[0] ?? null;
 }
 
 function resolveExecutableFromWhichOutput(
@@ -44,58 +50,18 @@ function resolveExecutableFromWhichOutput(
  * enriches it at startup via inheritLoginShellEnv(); on Windows, Electron
  * inherits the full user environment from Explorer.
  */
-export function findExecutableSync(
-  name: string,
-  dependencies?: FindExecutableDependencies,
+export function executableExists(
+  executablePath: string,
+  exists: typeof existsSync = existsSync,
 ): string | null {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const deps: FindExecutableDependencies = {
-    execFileSync,
-    existsSync,
-    platform,
-    ...dependencies,
-  };
-
-  if (trimmed.includes("/") || trimmed.includes("\\")) {
-    return deps.existsSync(trimmed) ? trimmed : null;
-  }
-
-  if (deps.platform() === "win32") {
-    try {
-      const out = deps
-        .execFileSync("where.exe", [trimmed], {
-          encoding: "utf8",
-          windowsHide: true,
-        })
-        .trim();
-      return (
-        out
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .find((line) => line.length > 0) ?? null
-      );
-    } catch {
-      return null;
+  if (exists(executablePath)) return executablePath;
+  if (process.platform === "win32" && !extname(executablePath)) {
+    for (const ext of [".exe", ".cmd", ".ps1"]) {
+      const candidate = executablePath + ext;
+      if (exists(candidate)) return candidate;
     }
   }
-
-  try {
-    return resolveExecutableFromWhichOutput(
-      trimmed,
-      deps.execFileSync("which", [trimmed], { encoding: "utf8" }).trim(),
-      "which",
-    );
-  } catch {
-    return null;
-  }
-}
-
-export function isCommandAvailableSync(command: string): boolean {
-  return findExecutableSync(command) !== null;
+  return null;
 }
 
 export async function findExecutable(name: string): Promise<string | null> {
@@ -105,21 +71,22 @@ export async function findExecutable(name: string): Promise<string | null> {
   }
 
   if (trimmed.includes("/") || trimmed.includes("\\")) {
-    return existsSync(trimmed) ? trimmed : null;
+    return executableExists(trimmed);
   }
 
-  if (platform() === "win32") {
+  if (process.platform === "win32") {
     try {
       const { stdout } = await execFileAsync("where.exe", [trimmed], {
         encoding: "utf8",
         windowsHide: true,
       });
       return (
-        stdout
-          .trim()
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .find((line) => line.length > 0) ?? null
+        pickBestWindowsCandidate(
+          stdout
+            .trim()
+            .split(/\r?\n/)
+            .map((line) => line.trim()),
+        ) ?? null
       );
     } catch {
       return null;
@@ -138,6 +105,20 @@ export async function isCommandAvailable(command: string): Promise<boolean> {
   return (await findExecutable(command)) !== null;
 }
 
+function escapeWindowsCmdValue(value: string): string {
+  if (process.platform !== "win32") return value;
+
+  const isQuoted = value.startsWith('"') && value.endsWith('"');
+  const unquoted = isQuoted ? value.slice(1, -1) : value;
+  const escaped = unquoted.replace(/%/g, "%%").replace(/([&|^<>()!])/g, "^$1");
+
+  if (isQuoted || escaped.includes(" ")) {
+    return `"${escaped}"`;
+  }
+
+  return escaped;
+}
+
 /**
  * When spawning with `shell: true` on Windows, the command is passed to
  * `cmd.exe /d /s /c "command args"`. The `/s` strips outer quotes, so a
@@ -145,10 +126,7 @@ export async function isCommandAvailable(command: string): Promise<boolean> {
  * space. Wrapping it in quotes produces the correct `"C:\Program Files\..." args`.
  */
 export function quoteWindowsCommand(command: string): string {
-  if (process.platform !== "win32") return command;
-  if (!command.includes(" ")) return command;
-  if (command.startsWith('"') && command.endsWith('"')) return command;
-  return `"${command}"`;
+  return escapeWindowsCmdValue(command);
 }
 
 /**
@@ -157,8 +135,5 @@ export function quoteWindowsCommand(command: string): string {
  * child process sees it.
  */
 export function quoteWindowsArgument(argument: string): string {
-  if (process.platform !== "win32") return argument;
-  if (!argument.includes(" ")) return argument;
-  if (argument.startsWith('"') && argument.endsWith('"')) return argument;
-  return `"${argument}"`;
+  return escapeWindowsCmdValue(argument);
 }

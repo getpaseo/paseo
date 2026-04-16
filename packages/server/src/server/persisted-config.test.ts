@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { PersistedConfigSchema } from "./persisted-config.js";
 
 describe("PersistedConfigSchema agent provider runtime settings", () => {
-  test("accepts provider command append args and env", () => {
+  test("legacy append entries are skipped during migration", () => {
     const parsed = PersistedConfigSchema.parse({
       agents: {
         providers: {
@@ -20,8 +20,7 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
       },
     });
 
-    expect(parsed.agents?.providers?.claude?.command?.mode).toBe("append");
-    expect(parsed.agents?.providers?.claude?.env?.FOO).toBe("bar");
+    expect(parsed.agents?.providers).toEqual({});
   });
 
   test("accepts provider command replace argv", () => {
@@ -38,7 +37,12 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
       },
     });
 
-    expect(parsed.agents?.providers?.codex?.command?.mode).toBe("replace");
+    expect(parsed.agents?.providers?.codex?.command).toEqual([
+      "docker",
+      "run",
+      "--rm",
+      "my-codex-wrapper",
+    ]);
   });
 
   test("rejects replace command without argv", () => {
@@ -55,6 +59,286 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("provider overrides (new format)", () => {
+  test("override built-in provider with command and env", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          claude: {
+            command: ["/opt/custom/claude"],
+            env: {
+              ANTHROPIC_API_KEY: "sk-test",
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.claude).toEqual({
+      command: ["/opt/custom/claude"],
+      env: {
+        ANTHROPIC_API_KEY: "sk-test",
+      },
+    });
+  });
+
+  test("new provider extending claude with label", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          zai: {
+            extends: "claude",
+            label: "ZAI",
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.zai).toEqual({
+      extends: "claude",
+      label: "ZAI",
+    });
+  });
+
+  test("new provider extending acp with command", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          "my-agent": {
+            extends: "acp",
+            label: "My Agent",
+            command: ["my-agent", "--acp"],
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.["my-agent"]).toEqual({
+      extends: "acp",
+      label: "My Agent",
+      command: ["my-agent", "--acp"],
+    });
+  });
+
+  test("enabled: false accepted", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          claude: {
+            enabled: false,
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.claude?.enabled).toBe(false);
+  });
+
+  test("models array accepted", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          zai: {
+            extends: "claude",
+            label: "ZAI",
+            models: [
+              {
+                id: "zai-fast",
+                label: "ZAI Fast",
+                isDefault: true,
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.zai?.models).toEqual([
+      {
+        id: "zai-fast",
+        label: "ZAI Fast",
+        isDefault: true,
+      },
+    ]);
+  });
+
+  test("order field accepted", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          claude: {
+            order: 1,
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.claude?.order).toBe(1);
+  });
+
+  test("new provider without extends → error", () => {
+    const result = PersistedConfigSchema.safeParse({
+      agents: {
+        providers: {
+          zai: {
+            label: "ZAI",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  test("new provider without label → error", () => {
+    const result = PersistedConfigSchema.safeParse({
+      agents: {
+        providers: {
+          zai: {
+            extends: "claude",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  test("extends: acp without command → error", () => {
+    const result = PersistedConfigSchema.safeParse({
+      agents: {
+        providers: {
+          "my-agent": {
+            extends: "acp",
+            label: "My Agent",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  test("extends unknown provider → error", () => {
+    const result = PersistedConfigSchema.safeParse({
+      agents: {
+        providers: {
+          zai: {
+            extends: "unknown",
+            label: "ZAI",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  test("invalid provider ID format → error", () => {
+    const result = PersistedConfigSchema.safeParse({
+      agents: {
+        providers: {
+          ZAI: {
+            extends: "claude",
+            label: "ZAI",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  test("old format with mode: replace auto-migrates", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          claude: {
+            command: {
+              mode: "replace",
+              argv: ["docker", "run", "--rm", "claude"],
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.claude).toEqual({
+      command: ["docker", "run", "--rm", "claude"],
+    });
+  });
+
+  test("old format with mode: default auto-migrates", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          claude: {
+            command: {
+              mode: "default",
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.claude).toEqual({});
+  });
+
+  test("old format env preserved during migration", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          claude: {
+            command: {
+              mode: "default",
+            },
+            env: {
+              FOO: "bar",
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.claude).toEqual({
+      env: {
+        FOO: "bar",
+      },
+    });
+  });
+
+  test("mixed old and new format entries both work", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          claude: {
+            command: {
+              mode: "replace",
+              argv: ["custom-claude"],
+            },
+          },
+          zai: {
+            extends: "claude",
+            label: "ZAI",
+            command: ["zai"],
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers).toEqual({
+      claude: {
+        command: ["custom-claude"],
+      },
+      zai: {
+        extends: "claude",
+        label: "ZAI",
+        command: ["zai"],
+      },
+    });
   });
 });
 

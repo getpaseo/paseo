@@ -255,6 +255,114 @@ describe("translateOpenCodeEvent", () => {
     ]);
   });
 
+  it("humanizes permission requests and includes shell detail when command metadata exists", () => {
+    const state = createState();
+
+    const result = translateOpenCodeEvent(
+      {
+        type: "permission.asked",
+        properties: {
+          id: "perm-1",
+          sessionID: "session-1",
+          permission: "external_directory",
+          patterns: ["/home/user/secrets/*"],
+          metadata: {
+            command: "ls /home/user/secrets",
+            reason: "Need to inspect generated files",
+          },
+          tool: {
+            messageID: "message-1",
+            callID: "call-1",
+          },
+        },
+      },
+      state,
+    );
+
+    expect(result).toEqual([
+      {
+        type: "permission_requested",
+        provider: "opencode",
+        request: {
+          id: "perm-1",
+          provider: "opencode",
+          name: "external_directory",
+          kind: "tool",
+          title: "Access external directory",
+          description: "Need to inspect generated files - Scope: /home/user/secrets/*",
+          input: {
+            patterns: ["/home/user/secrets/*"],
+            metadata: {
+              command: "ls /home/user/secrets",
+              reason: "Need to inspect generated files",
+            },
+            tool: {
+              messageID: "message-1",
+              callID: "call-1",
+            },
+            command: "ls /home/user/secrets",
+          },
+          detail: {
+            type: "shell",
+            command: "ls /home/user/secrets",
+          },
+        },
+      },
+    ]);
+  });
+
+  it("falls back to unknown permission detail when command metadata is absent", () => {
+    const state = createState();
+
+    const result = translateOpenCodeEvent(
+      {
+        type: "permission.asked",
+        properties: {
+          id: "perm-2",
+          sessionID: "session-1",
+          permission: "external_directory",
+          patterns: ["/tmp/outside/*"],
+          metadata: {
+            reason: "Need to access temporary checkout",
+          },
+        },
+      },
+      state,
+    );
+
+    expect(result).toEqual([
+      {
+        type: "permission_requested",
+        provider: "opencode",
+        request: {
+          id: "perm-2",
+          provider: "opencode",
+          name: "external_directory",
+          kind: "tool",
+          title: "Access external directory",
+          description: "Need to access temporary checkout - Scope: /tmp/outside/*",
+          input: {
+            patterns: ["/tmp/outside/*"],
+            metadata: {
+              reason: "Need to access temporary checkout",
+            },
+          },
+          detail: {
+            type: "unknown",
+            input: {
+              permission: "external_directory",
+              patterns: ["/tmp/outside/*"],
+              metadata: {
+                reason: "Need to access temporary checkout",
+              },
+            },
+            output: null,
+          },
+        },
+      },
+    ]);
+  });
+
   it("emits usage_updated after step-finish parts", () => {
     const state = createState();
     state.accumulatedUsage.contextWindowMaxTokens = 400_000;
@@ -308,6 +416,96 @@ describe("translateOpenCodeEvent", () => {
       outputTokens: 12_000,
       totalCostUsd: 0.25,
     });
+  });
+
+  it("emits normalized todo timeline items from todo.updated", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "todo.updated",
+        properties: {
+          sessionID: "session-1",
+          todos: [
+            { content: "Outline", status: "pending", priority: "high" },
+            { content: "Ship", status: "completed", priority: "medium" },
+            { content: "   ", status: "completed", priority: "low" },
+          ],
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "todo",
+          items: [
+            { text: "Outline", completed: false },
+            { text: "Ship", completed: true },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it("emits compaction loading timeline items from compaction parts", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "compaction-part-1",
+            sessionID: "session-1",
+            messageID: "message-compaction-1",
+            type: "compaction",
+            auto: true,
+          },
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "compaction",
+          status: "loading",
+          trigger: "auto",
+        },
+      },
+    ]);
+  });
+
+  it("emits compaction completed timeline items from session.compacted", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "session.compacted",
+        properties: {
+          sessionID: "session-1",
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "compaction",
+          status: "completed",
+        },
+      },
+    ]);
   });
 
   it("emits reasoning from message.part.delta events", () => {
@@ -508,6 +706,99 @@ describe("translateOpenCodeEvent", () => {
     );
 
     expect(result).toEqual([]);
+  });
+
+  it("emits turn_completed from session.status idle", () => {
+    const state = createState();
+    state.streamedPartKeys.add("text:part-1");
+    state.partTypes.set("part-1", "text");
+
+    const result = translateOpenCodeEvent(
+      {
+        type: "session.status",
+        properties: {
+          sessionID: "session-1",
+          status: { type: "idle" },
+        },
+      },
+      state,
+    );
+
+    expect(result).toEqual([
+      {
+        type: "turn_completed",
+        provider: "opencode",
+        usage: undefined,
+      },
+    ]);
+    expect(state.streamedPartKeys.size).toBe(0);
+    expect(state.partTypes.size).toBe(0);
+  });
+
+  it("emits turn_failed from fatal session.status retry", () => {
+    const state = createState();
+    state.streamedPartKeys.add("text:part-1");
+    state.partTypes.set("part-1", "text");
+
+    const result = translateOpenCodeEvent(
+      {
+        type: "session.status",
+        properties: {
+          sessionID: "session-1",
+          status: {
+            type: "retry",
+            attempt: 2,
+            message: "Invalid API key",
+            next: Date.now() + 1000,
+          },
+        },
+      },
+      state,
+    );
+
+    expect(result).toEqual([
+      {
+        type: "turn_failed",
+        provider: "opencode",
+        error: "Invalid API key",
+      },
+    ]);
+    expect(state.streamedPartKeys.size).toBe(0);
+    expect(state.partTypes.size).toBe(0);
+  });
+
+  it("ignores transient session.status updates", () => {
+    const state = createState();
+
+    const busy = translateOpenCodeEvent(
+      {
+        type: "session.status",
+        properties: {
+          sessionID: "session-1",
+          status: { type: "busy" },
+        },
+      },
+      state,
+    );
+
+    const retry = translateOpenCodeEvent(
+      {
+        type: "session.status",
+        properties: {
+          sessionID: "session-1",
+          status: {
+            type: "retry",
+            attempt: 1,
+            message: "rate limited",
+            next: Date.now() + 1000,
+          },
+        },
+      },
+      state,
+    );
+
+    expect(busy).toEqual([]);
+    expect(retry).toEqual([]);
   });
 
   it("emits structured assistant output when schema mode completes without text parts", () => {

@@ -55,7 +55,7 @@ Host header validation and CORS origin checks are defense-in-depth controls for 
 
 CORS is not a complete security boundary. It controls which browser origins can make requests, but does not prevent a malicious website from resolving its domain to your local machine (DNS rebinding).
 
-Paseo uses a host allowlist to validate the `Host` header on incoming requests. Requests with unrecognized hosts are rejected.
+Paseo validates the `Host` header on incoming requests against configured hostnames. Requests with unrecognized hosts are rejected.
 
 ## Agent authentication
 

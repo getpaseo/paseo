@@ -107,6 +107,7 @@ import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore } from "./daemon-config-store.js";
+import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
@@ -114,8 +115,11 @@ import { startRelayTransport, type RelayTransportController } from "./relay-tran
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
-import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
-import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
+import type {
+  AgentProviderRuntimeSettingsMap,
+  ProviderOverride,
+} from "./agent/provider-launch-config.js";
+import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -158,7 +162,7 @@ export type PaseoDaemonConfig = {
   listen: string;
   paseoHome: string;
   corsAllowedOrigins: string[];
-  allowedHosts?: AllowedHostsConfig;
+  hostnames?: HostnamesConfig;
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   staticDir: string;
@@ -177,6 +181,7 @@ export type PaseoDaemonConfig = {
   dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
+  providerOverrides?: Record<string, ProviderOverride>;
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
 };
 
@@ -226,7 +231,7 @@ export async function createPaseoDaemon(
     if (listenTarget.type === "tcp") {
       app.use((req, res, next) => {
         const hostHeader = typeof req.headers.host === "string" ? req.headers.host : undefined;
-        if (!isHostAllowed(hostHeader, config.allowedHosts)) {
+        if (!isHostnameAllowed(hostHeader, config.hostnames)) {
           res.status(403).json({ error: "Invalid Host header" });
           return;
         }
@@ -351,6 +356,7 @@ export async function createPaseoDaemon(
       clients: {
         ...createAllClients(logger, {
           runtimeSettings: config.agentProviderSettings,
+          providerOverrides: config.providerOverrides,
         }),
         ...config.agentClients,
       },
@@ -359,9 +365,14 @@ export async function createPaseoDaemon(
     });
     const providerRegistry = buildProviderRegistry(logger, {
       runtimeSettings: config.agentProviderSettings,
+      providerOverrides: config.providerOverrides,
     });
 
     const terminalManager = createTerminalManager();
+    const workspaceGitService = new WorkspaceGitServiceImpl({
+      logger,
+      paseoHome: config.paseoHome,
+    });
 
     const detachAgentStoragePersistence = attachAgentStoragePersistence(
       logger,
@@ -375,6 +386,7 @@ export async function createPaseoDaemon(
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      workspaceGitService,
       logger,
     });
     logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
@@ -383,6 +395,7 @@ export async function createPaseoDaemon(
     const checkoutDiffManager = new CheckoutDiffManager({
       logger,
       paseoHome: config.paseoHome,
+      workspaceGitService,
     });
     const loopService = new LoopService({
       paseoHome: config.paseoHome,
@@ -591,13 +604,14 @@ export async function createPaseoDaemon(
               config.paseoHome,
               daemonConfigStore,
               mcpBaseUrl,
-              { allowedOrigins, allowedHosts: config.allowedHosts },
+              { allowedOrigins, hostnames: config.hostnames },
               speechService,
               terminalManager,
               {
                 finalTimeoutMs: config.dictationFinalTimeoutMs,
               },
               config.agentProviderSettings,
+              config.providerOverrides,
               daemonVersion,
               (intent) => {
                 try {
@@ -612,6 +626,7 @@ export async function createPaseoDaemon(
               loopService,
               scheduleService,
               checkoutDiffManager,
+              workspaceGitService,
             );
 
             if (typeof process.send === "function" && process.env.PASEO_SUPERVISED === "1") {
@@ -631,8 +646,7 @@ export async function createPaseoDaemon(
                 relay: { endpoint: relayPublicEndpoint },
               });
 
-              const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
-              logger.info({ url }, "pairing_offer");
+              encodeOfferToFragmentUrl({ offer, appBaseUrl });
 
               relayTransport?.stop().catch(() => undefined);
               relayTransport = startRelayTransport({
@@ -677,6 +691,7 @@ export async function createPaseoDaemon(
       await agentStorage.flush().catch(() => undefined);
       await shutdownProviders(logger, {
         runtimeSettings: config.agentProviderSettings,
+        providerOverrides: config.providerOverrides,
       });
       terminalManager.killAll();
       speechService.stop();

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode, type RefObject } from "react";
 import {
-  Platform,
   type FlatList,
   type LayoutChangeEvent,
   type NativeScrollEvent,
@@ -12,6 +11,7 @@ import {
   useWebDesktopScrollbarMetrics,
   type ScrollbarMetrics,
 } from "./web-desktop-scrollbar";
+import { isWeb as platformIsWeb } from "@/constants/platform";
 
 const METRICS_EPSILON = 0.5;
 const HIDE_SCROLLBAR_STYLE_ID = "paseo-hide-scrollbar";
@@ -45,8 +45,7 @@ export function useWebElementScrollbar(
     contentRef?: RefObject<HTMLElement | null>;
   },
 ): ReactNode {
-  const isWeb = Platform.OS === "web";
-  const enabled = (options?.enabled ?? true) && isWeb;
+  const enabled = (options?.enabled ?? true) && platformIsWeb;
   const contentRef = options?.contentRef;
 
   const [metrics, setMetrics] = useState<ScrollbarMetrics>({
@@ -125,8 +124,7 @@ export function useWebScrollViewScrollbar(
   scrollableRef: RefObject<ScrollView | FlatList | null>,
   options?: { enabled?: boolean },
 ): WebScrollViewScrollbar {
-  const isWeb = Platform.OS === "web";
-  const enabled = (options?.enabled ?? true) && isWeb;
+  const enabled = (options?.enabled ?? true) && platformIsWeb;
   const metricsHook = useWebDesktopScrollbarMetrics();
 
   const onScrollToOffset = useCallback(

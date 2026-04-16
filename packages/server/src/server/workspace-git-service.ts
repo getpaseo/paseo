@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
 import { watch, type FSWatcher } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
 import type pino from "pino";
 import type { CheckoutContext } from "../utils/checkout-git.js";
 import {
@@ -13,12 +11,13 @@ import {
   resolveGhPath,
   resolveAbsoluteGitDir,
 } from "../utils/checkout-git.js";
+import { runGitCommand } from "../utils/run-git-command.js";
+import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
 import { normalizeWorkspaceId } from "./workspace-registry-model.js";
-
-const execFileAsync = promisify(execFile);
 
 const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 500;
 const BACKGROUND_GIT_FETCH_INTERVAL_MS = 180_000;
+const WORKING_TREE_WATCH_FALLBACK_REFRESH_MS = 5_000;
 
 export type WorkspaceGitRuntimeSnapshot = {
   cwd: string;
@@ -62,6 +61,11 @@ export interface WorkspaceGitService {
   peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null;
   getSnapshot(cwd: string): Promise<WorkspaceGitRuntimeSnapshot>;
   refresh(cwd: string, options?: { priority?: "normal" | "high" }): Promise<void>;
+  requestWorkingTreeWatch(
+    cwd: string,
+    onChange: () => void,
+  ): Promise<{ repoRoot: string | null; unsubscribe: () => void }>;
+  scheduleRefreshForCwd(cwd: string): void;
   dispose(): void;
 }
 
@@ -69,6 +73,7 @@ export type WorkspaceGitListener = (snapshot: WorkspaceGitRuntimeSnapshot) => vo
 
 interface WorkspaceGitServiceDependencies {
   watch: typeof watch;
+  readdir: typeof readdir;
   getCheckoutStatus: typeof getCheckoutStatus;
   getCheckoutShortstat: typeof getCheckoutShortstat;
   getPullRequestStatus: typeof getPullRequestStatus;
@@ -76,6 +81,7 @@ interface WorkspaceGitServiceDependencies {
   resolveAbsoluteGitDir: (cwd: string) => Promise<string | null>;
   hasOriginRemote: (cwd: string) => Promise<boolean>;
   runGitFetch: (cwd: string) => Promise<void>;
+  runGitCommand: typeof runGitCommand;
   now: () => Date;
 }
 
@@ -105,6 +111,18 @@ interface RepoGitTarget {
   fetchInFlight: boolean;
 }
 
+interface WorkingTreeWatchTarget {
+  cwd: string;
+  repoRoot: string | null;
+  repoWatchPath: string | null;
+  watchers: FSWatcher[];
+  watchedPaths: Set<string>;
+  fallbackRefreshInterval: NodeJS.Timeout | null;
+  linuxTreeRefreshPromise: Promise<void> | null;
+  linuxTreeRefreshQueued: boolean;
+  listeners: Set<() => void>;
+}
+
 export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly logger: pino.Logger;
   private readonly paseoHome: string;
@@ -112,12 +130,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
   private readonly workspaceTargetSetups = new Map<string, Promise<WorkspaceGitTarget>>();
+  private readonly workingTreeWatchTargets = new Map<string, WorkingTreeWatchTarget>();
+  private readonly workingTreeWatchSetups = new Map<string, Promise<WorkingTreeWatchTarget>>();
 
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
     this.deps = {
-      watch,
+      watch: options.deps?.watch ?? watch,
+      readdir: options.deps?.readdir ?? readdir,
       getCheckoutStatus: options.deps?.getCheckoutStatus ?? getCheckoutStatus,
       getCheckoutShortstat: options.deps?.getCheckoutShortstat ?? getCheckoutShortstat,
       getPullRequestStatus: options.deps?.getPullRequestStatus ?? getPullRequestStatus,
@@ -125,6 +146,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       resolveAbsoluteGitDir: options.deps?.resolveAbsoluteGitDir ?? resolveAbsoluteGitDir,
       hasOriginRemote: options.deps?.hasOriginRemote ?? hasOriginRemote,
       runGitFetch: options.deps?.runGitFetch ?? runGitFetch,
+      runGitCommand: options.deps?.runGitCommand ?? runGitCommand,
       now: options.deps?.now ?? (() => new Date()),
     };
   }
@@ -154,7 +176,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (target?.latestSnapshot) {
       return target.latestSnapshot;
     }
-    return this.refreshSnapshot(cwd);
+
+    const ensuredTarget = await this.ensureWorkspaceTarget(cwd);
+    return ensuredTarget.latestSnapshot ?? (await this.refreshSnapshot(cwd));
   }
 
   peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {
@@ -173,17 +197,47 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     await this.ensureWorkspaceTarget(cwd);
   }
 
+  async requestWorkingTreeWatch(
+    cwd: string,
+    onChange: () => void,
+  ): Promise<{ repoRoot: string | null; unsubscribe: () => void }> {
+    cwd = normalizeWorkspaceId(cwd);
+    const target = await this.ensureWorkingTreeWatchTarget(cwd);
+    target.listeners.add(onChange);
+
+    return {
+      repoRoot: target.repoRoot,
+      unsubscribe: () => {
+        this.removeWorkingTreeWatchListener(cwd, onChange);
+      },
+    };
+  }
+
+  scheduleRefreshForCwd(cwd: string): void {
+    cwd = normalizeWorkspaceId(cwd);
+    const target = this.workspaceTargets.get(cwd);
+    if (target) {
+      this.scheduleWorkspaceRefresh(target);
+    }
+  }
+
   dispose(): void {
     for (const target of this.workspaceTargets.values()) {
       this.closeWorkspaceTarget(target);
     }
     this.workspaceTargets.clear();
+    this.workspaceTargetSetups.clear();
 
     for (const target of this.repoTargets.values()) {
       this.closeRepoTarget(target);
     }
     this.repoTargets.clear();
-    this.workspaceTargetSetups.clear();
+
+    for (const target of this.workingTreeWatchTargets.values()) {
+      this.closeWorkingTreeWatchTarget(target);
+    }
+    this.workingTreeWatchTargets.clear();
+    this.workingTreeWatchSetups.clear();
   }
 
   private async ensureWorkspaceTarget(cwd: string): Promise<WorkspaceGitTarget> {
@@ -201,6 +255,24 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       this.workspaceTargetSetups.delete(cwd);
     });
     this.workspaceTargetSetups.set(cwd, setup);
+    return setup;
+  }
+
+  private async ensureWorkingTreeWatchTarget(cwd: string): Promise<WorkingTreeWatchTarget> {
+    const existingTarget = this.workingTreeWatchTargets.get(cwd);
+    if (existingTarget) {
+      return existingTarget;
+    }
+
+    const existingSetup = this.workingTreeWatchSetups.get(cwd);
+    if (existingSetup) {
+      return existingSetup;
+    }
+
+    const setup = this.createWorkingTreeWatchTarget(cwd).finally(() => {
+      this.workingTreeWatchSetups.delete(cwd);
+    });
+    this.workingTreeWatchSetups.set(cwd, setup);
     return setup;
   }
 
@@ -231,6 +303,83 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.startWorkspaceWatchers(target, gitDir, repoGitRoot);
     await this.ensureRepoTarget(target);
     return target;
+  }
+
+  private async createWorkingTreeWatchTarget(cwd: string): Promise<WorkingTreeWatchTarget> {
+    const repoRoot = await this.resolveCheckoutWatchRoot(cwd);
+    const target: WorkingTreeWatchTarget = {
+      cwd,
+      repoRoot,
+      repoWatchPath: null,
+      watchers: [],
+      watchedPaths: new Set<string>(),
+      fallbackRefreshInterval: null,
+      linuxTreeRefreshPromise: null,
+      linuxTreeRefreshQueued: false,
+      listeners: new Set(),
+    };
+
+    const repoWatchPath = repoRoot ?? cwd;
+    target.repoWatchPath = repoWatchPath;
+    const watchPaths = new Set<string>([repoWatchPath]);
+    const gitDir = await this.deps.resolveAbsoluteGitDir(cwd);
+    if (gitDir) {
+      watchPaths.add(gitDir);
+    }
+
+    let hasRecursiveRepoCoverage = false;
+    const allowRecursiveRepoWatch = process.platform !== "linux";
+    if (process.platform === "linux") {
+      hasRecursiveRepoCoverage = await this.ensureLinuxRepoTreeWatchers(target, repoWatchPath);
+    }
+    for (const watchPath of watchPaths) {
+      if (process.platform === "linux" && watchPath === repoWatchPath) {
+        continue;
+      }
+      const shouldTryRecursive = watchPath === repoWatchPath && allowRecursiveRepoWatch;
+      const watcherIsRecursive = this.addWorkingTreeWatcher(target, watchPath, shouldTryRecursive);
+      if (watchPath === repoWatchPath && watcherIsRecursive) {
+        hasRecursiveRepoCoverage = true;
+      }
+    }
+
+    const missingRepoCoverage = repoRoot === null || !hasRecursiveRepoCoverage;
+    if (target.watchers.length === 0 || missingRepoCoverage) {
+      target.fallbackRefreshInterval = setInterval(() => {
+        this.scheduleWorkspaceRefresh(cwd);
+        for (const listener of target.listeners) {
+          listener();
+        }
+      }, WORKING_TREE_WATCH_FALLBACK_REFRESH_MS);
+      this.logger.warn(
+        {
+          cwd,
+          intervalMs: WORKING_TREE_WATCH_FALLBACK_REFRESH_MS,
+          reason:
+            target.watchers.length === 0 ? "no_watchers" : "missing_recursive_repo_root_coverage",
+        },
+        "Working tree watchers unavailable; using timed refresh fallback",
+      );
+    }
+
+    this.workingTreeWatchTargets.set(cwd, target);
+    return target;
+  }
+
+  private async resolveCheckoutWatchRoot(cwd: string): Promise<string | null> {
+    try {
+      const { stdout } = await this.deps.runGitCommand(
+        ["rev-parse", "--path-format=absolute", "--show-toplevel"],
+        {
+          cwd,
+          env: READ_ONLY_GIT_ENV,
+        },
+      );
+      const root = stdout.trim();
+      return root.length > 0 ? root : null;
+    } catch {
+      return null;
+    }
   }
 
   private async resolveWorkspaceGitRefsRoot(gitDir: string): Promise<string> {
@@ -311,7 +460,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     void this.runRepoFetch(repoTarget);
   }
 
-  private scheduleWorkspaceRefresh(target: WorkspaceGitTarget): void {
+  private scheduleWorkspaceRefresh(targetOrCwd: WorkspaceGitTarget | string): void {
+    const target =
+      typeof targetOrCwd === "string"
+        ? this.workspaceTargets.get(normalizeWorkspaceId(targetOrCwd))
+        : targetOrCwd;
+    if (!target) {
+      return;
+    }
+
     if (target.debounceTimer) {
       clearTimeout(target.debounceTimer);
     }
@@ -320,6 +477,149 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       target.debounceTimer = null;
       void this.refreshWorkspaceTarget(target);
     }, WORKSPACE_GIT_WATCH_DEBOUNCE_MS);
+  }
+
+  private addWorkingTreeWatcher(
+    target: WorkingTreeWatchTarget,
+    watchPath: string,
+    shouldTryRecursive: boolean,
+  ): boolean {
+    if (target.watchedPaths.has(watchPath)) {
+      return false;
+    }
+
+    const { cwd } = target;
+    const onChange = () => {
+      if (process.platform === "linux" && target.repoWatchPath) {
+        void this.refreshLinuxRepoTreeWatchers(target);
+      }
+      this.scheduleWorkspaceRefresh(cwd);
+      for (const listener of target.listeners) {
+        listener();
+      }
+    };
+    const createWatcher = (recursive: boolean): FSWatcher =>
+      this.deps.watch(watchPath, { recursive }, () => {
+        onChange();
+      });
+
+    let watcher: FSWatcher | null = null;
+    let watcherIsRecursive = false;
+    try {
+      if (shouldTryRecursive) {
+        watcher = createWatcher(true);
+        watcherIsRecursive = true;
+      } else {
+        watcher = createWatcher(false);
+      }
+    } catch (error) {
+      if (shouldTryRecursive) {
+        try {
+          watcher = createWatcher(false);
+          this.logger.warn(
+            { err: error, watchPath, cwd },
+            "Working tree recursive watch unavailable; using non-recursive fallback",
+          );
+        } catch (fallbackError) {
+          this.logger.warn(
+            { err: fallbackError, watchPath, cwd },
+            "Failed to start working tree watcher",
+          );
+        }
+      } else {
+        this.logger.warn({ err: error, watchPath, cwd }, "Failed to start working tree watcher");
+      }
+    }
+
+    if (!watcher) {
+      return false;
+    }
+
+    watcher.on("error", (error) => {
+      this.logger.warn({ err: error, watchPath, cwd }, "Working tree watcher error");
+    });
+    target.watchers.push(watcher);
+    target.watchedPaths.add(watchPath);
+    return watcherIsRecursive;
+  }
+
+  private async ensureLinuxRepoTreeWatchers(
+    target: WorkingTreeWatchTarget,
+    rootPath: string,
+  ): Promise<boolean> {
+    const directories = await this.listLinuxWatchDirectories(rootPath);
+    let complete = true;
+    for (const directory of directories) {
+      const watcherWasRecursive = this.addWorkingTreeWatcher(target, directory, false);
+      if (!watcherWasRecursive && !target.watchedPaths.has(directory)) {
+        complete = false;
+      }
+    }
+    return complete && target.watchedPaths.has(rootPath);
+  }
+
+  private async refreshLinuxRepoTreeWatchers(target: WorkingTreeWatchTarget): Promise<void> {
+    if (process.platform !== "linux" || !target.repoWatchPath) {
+      return;
+    }
+    const rootPath = target.repoWatchPath;
+    if (target.linuxTreeRefreshPromise) {
+      target.linuxTreeRefreshQueued = true;
+      return;
+    }
+
+    target.linuxTreeRefreshPromise = (async () => {
+      do {
+        target.linuxTreeRefreshQueued = false;
+        try {
+          await this.ensureLinuxRepoTreeWatchers(target, rootPath);
+        } catch (error) {
+          this.logger.warn(
+            {
+              err: error,
+              cwd: target.cwd,
+              rootPath,
+            },
+            "Failed to refresh Linux working tree watchers",
+          );
+        }
+      } while (target.linuxTreeRefreshQueued);
+    })();
+
+    try {
+      await target.linuxTreeRefreshPromise;
+    } finally {
+      target.linuxTreeRefreshPromise = null;
+    }
+  }
+
+  private async listLinuxWatchDirectories(rootPath: string): Promise<string[]> {
+    const directories: string[] = [];
+    const pending = [rootPath];
+
+    while (pending.length > 0) {
+      const directory = pending.pop();
+      if (!directory) {
+        continue;
+      }
+      directories.push(directory);
+
+      let entries;
+      try {
+        entries = await this.deps.readdir(directory, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name === ".git") {
+          continue;
+        }
+        pending.push(join(directory, entry.name));
+      }
+    }
+
+    return directories;
   }
 
   private async refreshWorkspaceTarget(target: WorkspaceGitTarget): Promise<void> {
@@ -438,6 +738,21 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workspaceTargets.delete(target.cwd);
   }
 
+  private removeWorkingTreeWatchListener(cwd: string, listener: () => void): void {
+    const target = this.workingTreeWatchTargets.get(cwd);
+    if (!target) {
+      return;
+    }
+
+    target.listeners.delete(listener);
+    if (target.listeners.size > 0) {
+      return;
+    }
+
+    this.closeWorkingTreeWatchTarget(target);
+    this.workingTreeWatchTargets.delete(cwd);
+  }
+
   private closeWorkspaceTarget(target: WorkspaceGitTarget): void {
     if (target.debounceTimer) {
       clearTimeout(target.debounceTimer);
@@ -448,6 +763,20 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       watcher.close();
     }
     target.watchers = [];
+    target.listeners.clear();
+  }
+
+  private closeWorkingTreeWatchTarget(target: WorkingTreeWatchTarget): void {
+    if (target.fallbackRefreshInterval) {
+      clearInterval(target.fallbackRefreshInterval);
+      target.fallbackRefreshInterval = null;
+    }
+
+    for (const watcher of target.watchers) {
+      watcher.close();
+    }
+    target.watchers = [];
+    target.watchedPaths.clear();
     target.listeners.clear();
   }
 
@@ -587,11 +916,12 @@ function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
 }
 
 async function runGitFetch(cwd: string): Promise<void> {
-  await execFileAsync("git", ["fetch", "origin", "--prune"], {
+  await runGitCommand(["fetch", "origin", "--prune"], {
     cwd,
     env: {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
     },
+    timeout: 120_000,
   });
 }

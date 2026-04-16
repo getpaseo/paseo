@@ -16,6 +16,7 @@ import type {
 const testLogger = {
   child: () => testLogger,
   error: vi.fn(),
+  warn: vi.fn(),
 } as any;
 
 type ManagedAgentOverrides = Omit<
@@ -207,5 +208,23 @@ describe("persistence hooks", () => {
         },
       },
     });
+  });
+
+  test("buildSessionConfig skips records whose provider is missing from the registry", () => {
+    const record = createRecord({
+      id: "agent-missing-provider",
+      provider: "zai",
+    });
+
+    expect(
+      buildSessionConfig(record, {
+        validProviders: ["claude", "codex"],
+        logger: testLogger,
+      }),
+    ).toBeNull();
+    expect(testLogger.warn).toHaveBeenCalledWith(
+      { agentId: "agent-missing-provider", provider: "zai" },
+      "Skipping persisted agent with unknown provider 'zai'",
+    );
   });
 });

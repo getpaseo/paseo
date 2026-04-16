@@ -1,140 +1,184 @@
-import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { execMock, getCheckoutDiffMock, resolveCheckoutGitDirMock, readdirMock, watchCalls } =
-  vi.hoisted(() => {
-    const hoistedWatchCalls: Array<{ path: string; close: ReturnType<typeof vi.fn> }> = [];
-    return {
-      execMock: vi.fn(
-        (
-          _command: string,
-          _options: unknown,
-          callback: (error: null, result: { stdout: string; stderr: string }) => void,
-        ) => {
-          callback(null, { stdout: "/tmp/repo\n", stderr: "" });
-        },
-      ),
-      getCheckoutDiffMock: vi.fn(async () => ({ diff: "", structured: [] })),
-      resolveCheckoutGitDirMock: vi.fn(async () => "/tmp/repo/.git"),
-      readdirMock: vi.fn(async (directory: string) => {
-        if (directory === "/tmp/repo") {
-          return [
-            { name: "packages", isDirectory: () => true },
-            { name: ".git", isDirectory: () => true },
-            { name: "README.md", isDirectory: () => false },
-          ];
-        }
-        if (directory === path.join("/tmp/repo", "packages")) {
-          return [
-            { name: "server", isDirectory: () => true },
-            { name: "app", isDirectory: () => true },
-          ];
-        }
-        if (directory === path.join("/tmp/repo", "packages", "server")) {
-          return [{ name: "src", isDirectory: () => true }];
-        }
-        if (directory === path.join("/tmp/repo", "packages", "server", "src")) {
-          return [{ name: "server", isDirectory: () => true }];
-        }
-        return [];
-      }),
-      watchCalls: hoistedWatchCalls,
-    };
-  });
-
-vi.mock("child_process", () => ({
-  exec: execMock,
+const { getCheckoutDiffMock, toCheckoutErrorMock } = vi.hoisted(() => ({
+  getCheckoutDiffMock: vi.fn(async () => ({ diff: "", structured: [] })),
+  toCheckoutErrorMock: vi.fn((error: unknown) => ({
+    message: error instanceof Error ? error.message : String(error),
+  })),
 }));
-
-vi.mock("node:fs/promises", async () => {
-  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
-  return {
-    ...actual,
-    readdir: readdirMock,
-  };
-});
-
-vi.mock("node:fs", async () => {
-  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
-  return {
-    ...actual,
-    watch: vi.fn((watchPath: string) => {
-      const close = vi.fn();
-      watchCalls.push({ path: watchPath, close });
-      return {
-        close,
-        on: vi.fn().mockReturnThis(),
-      } as any;
-    }),
-  };
-});
 
 vi.mock("../utils/checkout-git.js", () => ({
   getCheckoutDiff: getCheckoutDiffMock,
 }));
 
 vi.mock("./checkout-git-utils.js", () => ({
-  READ_ONLY_GIT_ENV: {},
-  resolveCheckoutGitDir: resolveCheckoutGitDirMock,
-  toCheckoutError: vi.fn((error: unknown) => ({
-    message: error instanceof Error ? error.message : String(error),
-  })),
+  toCheckoutError: toCheckoutErrorMock,
 }));
 
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 
-describe("CheckoutDiffManager Linux watchers", () => {
-  const originalPlatform = process.platform;
-
+describe("CheckoutDiffManager", () => {
   beforeEach(() => {
-    watchCalls.length = 0;
-    execMock.mockClear();
-    getCheckoutDiffMock.mockClear();
-    resolveCheckoutGitDirMock.mockClear();
-    readdirMock.mockClear();
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      value: "linux",
-    });
+    vi.useFakeTimers();
+    getCheckoutDiffMock.mockReset();
+    getCheckoutDiffMock.mockResolvedValue({ diff: "", structured: [] });
+    toCheckoutErrorMock.mockClear();
   });
 
   afterEach(() => {
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      value: originalPlatform,
-    });
+    vi.useRealTimers();
   });
 
-  test("watches nested repository directories on Linux", async () => {
+  function createManager(options?: {
+    repoRoot?: string | null;
+    getCheckoutDiffImplementation?: typeof getCheckoutDiffMock;
+  }) {
+    const unsubscribe = vi.fn();
+    let onChange: (() => void) | null = null;
+    const mockRequestWorkingTreeWatch = vi.fn(async (_cwd: string, listener: () => void) => {
+      onChange = listener;
+      return {
+        repoRoot: options?.repoRoot === undefined ? "/tmp/repo" : options.repoRoot,
+        unsubscribe,
+      };
+    });
+
+    const workspaceGitService = {
+      subscribe: vi.fn(),
+      peekSnapshot: vi.fn(),
+      getSnapshot: vi.fn(),
+      refresh: vi.fn(),
+      scheduleRefreshForCwd: vi.fn(),
+      requestWorkingTreeWatch: mockRequestWorkingTreeWatch,
+      dispose: vi.fn(),
+    };
+
+    if (options?.getCheckoutDiffImplementation) {
+      getCheckoutDiffMock.mockImplementation(options.getCheckoutDiffImplementation);
+    }
+
     const logger = {
       child: () => logger,
       warn: vi.fn(),
     };
+
     const manager = new CheckoutDiffManager({
       logger: logger as any,
       paseoHome: "/tmp/paseo-test",
+      workspaceGitService: workspaceGitService as any,
     });
 
-    const subscription = await manager.subscribe(
+    return {
+      manager,
+      workspaceGitService,
+      mockRequestWorkingTreeWatch,
+      unsubscribe,
+      getOnChange: () => onChange,
+    };
+  }
+
+  test("subscribe requests a working tree watch with the correct cwd", async () => {
+    const { manager, mockRequestWorkingTreeWatch } = createManager();
+
+    await manager.subscribe(
       {
-        cwd: path.join("/tmp/repo", "packages", "server"),
+        cwd: "/tmp/repo/packages/server",
         compare: { mode: "uncommitted" },
       },
       () => {},
     );
 
-    expect(subscription.initial.error).toBeNull();
-    expect(watchCalls.map((entry) => entry.path).sort()).toEqual([
-      "/tmp/repo",
-      "/tmp/repo/.git",
-      "/tmp/repo/packages",
-      "/tmp/repo/packages/app",
+    expect(mockRequestWorkingTreeWatch).toHaveBeenCalledWith(
       "/tmp/repo/packages/server",
-      "/tmp/repo/packages/server/src",
-      "/tmp/repo/packages/server/src/server",
-    ]);
+      expect.any(Function),
+    );
+  });
+
+  test("unsubscribe calls the working tree watch unsubscribe", async () => {
+    const { manager, unsubscribe } = createManager();
+
+    const subscription = await manager.subscribe(
+      {
+        cwd: "/tmp/repo/packages/server",
+        compare: { mode: "uncommitted" },
+      },
+      () => {},
+    );
 
     subscription.unsubscribe();
-    manager.dispose();
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test("diffCwd uses repoRoot from the working tree watch result", async () => {
+    const { manager } = createManager({ repoRoot: "/tmp/repo" });
+
+    await manager.subscribe(
+      {
+        cwd: "/tmp/repo/packages/server",
+        compare: { mode: "uncommitted" },
+      },
+      () => {},
+    );
+
+    expect(getCheckoutDiffMock).toHaveBeenCalledWith(
+      "/tmp/repo",
+      expect.objectContaining({ mode: "uncommitted", includeStructured: true }),
+      { paseoHome: "/tmp/paseo-test" },
+    );
+  });
+
+  test("diff refresh is triggered when the working tree watch callback fires", async () => {
+    getCheckoutDiffMock
+      .mockResolvedValueOnce({
+        diff: "",
+        structured: [{ path: "a.ts", additions: 1, deletions: 0, status: "modified" }],
+      })
+      .mockResolvedValueOnce({
+        diff: "",
+        structured: [{ path: "b.ts", additions: 2, deletions: 0, status: "modified" }],
+      });
+
+    const { manager, getOnChange } = createManager();
+    const listener = vi.fn();
+
+    await manager.subscribe(
+      {
+        cwd: "/tmp/repo/packages/server",
+        compare: { mode: "uncommitted" },
+      },
+      listener,
+    );
+
+    const onChange = getOnChange();
+    expect(onChange).toBeTypeOf("function");
+
+    onChange?.();
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith({
+      cwd: "/tmp/repo/packages/server",
+      files: [{ path: "b.ts", additions: 2, deletions: 0, status: "modified" }],
+      error: null,
+    });
+  });
+
+  test("falls back to cwd when the working tree watch returns no repo root", async () => {
+    const { manager } = createManager({ repoRoot: null });
+
+    await manager.subscribe(
+      {
+        cwd: "/tmp/plain",
+        compare: { mode: "uncommitted" },
+      },
+      () => {},
+    );
+
+    expect(getCheckoutDiffMock).toHaveBeenCalledWith(
+      "/tmp/plain",
+      expect.objectContaining({ mode: "uncommitted", includeStructured: true }),
+      { paseoHome: "/tmp/paseo-test" },
+    );
   });
 });

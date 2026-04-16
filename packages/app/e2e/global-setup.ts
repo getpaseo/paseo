@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, execSync } from "node:child_process";
+import { spawn, type ChildProcess, execFileSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -224,6 +224,51 @@ function decodeOfferFromFragmentUrl(url: string): OfferPayload {
   return offer as OfferPayload;
 }
 
+function loadPairingOfferFromCli(repoRoot: string, paseoHomePath: string): OfferPayload {
+  const stdout = execFileSync(
+    process.execPath,
+    ["--import", "tsx", "packages/cli/src/index.ts", "daemon", "pair", "--json"],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PASEO_HOME: paseoHomePath,
+      },
+      encoding: "utf8",
+    },
+  );
+  const payload = JSON.parse(stdout) as { relayEnabled?: boolean; url?: string | null };
+  if (payload.relayEnabled !== true || typeof payload.url !== "string") {
+    throw new Error(`Unexpected daemon pair response: ${stdout}`);
+  }
+  return decodeOfferFromFragmentUrl(payload.url);
+}
+
+async function waitForPairingOfferFromCli(args: {
+  repoRoot: string;
+  paseoHome: string;
+  timeoutMs?: number;
+}): Promise<OfferPayload> {
+  const timeoutMs = args.timeoutMs ?? 15000;
+  const start = Date.now();
+  let lastError: unknown = null;
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      return loadPairingOfferFromCli(args.repoRoot, args.paseoHome);
+    } catch (error) {
+      lastError = error;
+      await sleep(100);
+    }
+  }
+
+  throw new Error(
+    `Timed out waiting for \`paseo daemon pair --json\` to produce a pairing offer: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
 export default async function globalSetup() {
   const repoRoot = path.resolve(__dirname, "../../..");
   ensureRelayBuildArtifact(repoRoot);
@@ -433,12 +478,6 @@ export default async function globalSetup() {
     const serverDir = path.resolve(__dirname, "../../..", "packages/server");
     const tsxBin = execSync("which tsx").toString().trim();
 
-    let offerPayload: OfferPayload | null = null;
-    let offerResolve: (() => void) | null = null;
-    const offerPromise = new Promise<void>((resolve) => {
-      offerResolve = resolve;
-    });
-
     daemonProcess = spawn(tsxBin, ["src/server/index.ts"], {
       cwd: serverDir,
       env: {
@@ -473,26 +512,6 @@ export default async function globalSetup() {
         const trimmed = line.trim();
         if (!trimmed) continue;
         daemonLineBuffer.add(`[stdout] ${trimmed}`);
-        if (!offerPayload) {
-          const clean = stripAnsi(trimmed);
-          try {
-            const obj = JSON.parse(clean) as { msg?: string; url?: string };
-            if (obj.msg === "pairing_offer" && typeof obj.url === "string") {
-              offerPayload = decodeOfferFromFragmentUrl(obj.url);
-              offerResolve?.();
-            }
-          } catch {
-            const match = clean.match(/https?:\/\/[^\s"]+#offer=[A-Za-z0-9_-]+/);
-            if (match && clean.includes("pairing_offer")) {
-              try {
-                offerPayload = decodeOfferFromFragmentUrl(match[0]);
-                offerResolve?.();
-              } catch {
-                // ignore parsing failures
-              }
-            }
-          }
-        }
         console.log(`[daemon] ${trimmed}`);
       }
     });
@@ -523,17 +542,10 @@ export default async function globalSetup() {
       }),
     ]);
 
-    // Wait for daemon to emit a pairing offer (includes relay session ID).
-    await Promise.race([
-      offerPromise,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Timed out waiting for pairing_offer log")), 15000),
-      ),
-    ]);
-    if (!offerPayload) {
-      throw new Error("pairing_offer was not parsed from daemon logs");
-    }
-    const offer = offerPayload as OfferPayload;
+    const offer = await waitForPairingOfferFromCli({
+      repoRoot,
+      paseoHome,
+    });
 
     process.env.E2E_DAEMON_PORT = String(port);
     process.env.E2E_RELAY_PORT = String(relayPort);

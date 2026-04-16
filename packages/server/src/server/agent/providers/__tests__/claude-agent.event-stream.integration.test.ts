@@ -10,14 +10,14 @@
  * CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment.
  * They are skipped automatically when credentials are unavailable.
  */
-import { describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
 import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
-import { isCommandAvailableSync } from "../../../../utils/executable.js";
+import { isCommandAvailable } from "../../../../utils/executable.js";
 import { ClaudeAgentClient } from "../claude-agent.js";
 
 // ---------------------------------------------------------------------------
@@ -28,7 +28,6 @@ const logger = pino({ level: "silent" });
 const client = new ClaudeAgentClient({ logger });
 const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
-const canRun = isCommandAvailableSync("claude") && hasClaudeCredentials;
 
 function tmpCwd(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
@@ -194,332 +193,308 @@ function assertInvariants(events: AgentStreamEvent[], foregroundTurnIds: string[
 // ---------------------------------------------------------------------------
 
 describe("Agent event stream redesign — integration", () => {
-  test.skipIf(!canRun)(
-    "Test 1: Basic foreground turn",
-    async () => {
-      const handle = await createSession({ cwdPrefix: "event-stream-basic-" });
+  let canRun = false;
 
-      try {
-        const { turnId, events } = await startTurnAndCollectEvents(
-          handle.session,
-          "respond with just the word hello",
-        );
+  beforeAll(async () => {
+    canRun = (await isCommandAvailable("claude")) && hasClaudeCredentials;
+  });
 
-        const turnStarted = events.find(
+  beforeEach((context) => {
+    if (!canRun) {
+      context.skip();
+    }
+  });
+
+  test("Test 1: Basic foreground turn", async () => {
+    const handle = await createSession({ cwdPrefix: "event-stream-basic-" });
+
+    try {
+      const { turnId, events } = await startTurnAndCollectEvents(
+        handle.session,
+        "respond with just the word hello",
+      );
+
+      const turnStarted = events.find(
+        (e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId,
+      );
+      expect(turnStarted).toBeDefined();
+
+      const terminal = events.find(
+        (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === turnId,
+      );
+      expect(terminal).toBeDefined();
+
+      assertInvariants(events, [turnId]);
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 60_000);
+
+  test("Test 2: No duplicate user_messages — THE BUG", async () => {
+    const handle = await createSession({ cwdPrefix: "event-stream-dedup-" });
+
+    try {
+      const { turnId, events } = await startTurnAndCollectEvents(handle.session, "say hi", {
+        extraMs: 3_000,
+      });
+
+      expect(userMessagesWithText(events, "say hi").length).toBeLessThanOrEqual(1);
+
+      // No turn_started after terminal for the same turnId
+      const terminalIdx = events.findIndex(
+        (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === turnId,
+      );
+      const staleTurnStarted = events
+        .slice(terminalIdx + 1)
+        .filter((e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId);
+      expect(staleTurnStarted.length).toBe(0);
+
+      assertInvariants(events, [turnId]);
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 60_000);
+
+  test("Test 3: Lifecycle doesn't get stuck in running", async () => {
+    const handle = await createSession({ cwdPrefix: "event-stream-lifecycle-" });
+
+    try {
+      const { turnId, events } = await startTurnAndCollectEvents(handle.session, "say hi", {
+        extraMs: 3_000,
+      });
+
+      const terminalIdx = events.findIndex(
+        (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === turnId,
+      );
+      const afterTerminal = events.slice(terminalIdx + 1);
+
+      // No subsequent turn_started for same turnId
+      expect(
+        afterTerminal.filter(
           (e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId,
-        );
-        expect(turnStarted).toBeDefined();
+        ).length,
+      ).toBe(0);
 
-        const terminal = events.find(
-          (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === turnId,
-        );
-        expect(terminal).toBeDefined();
-
-        assertInvariants(events, [turnId]);
-      } finally {
-        await cleanupSession(handle);
+      // Any turn_started after terminal must have a different turnId
+      for (const ts of afterTerminal.filter((e) => e.type === "turn_started" && hasTurnId(e))) {
+        expect((ts as EventWithTurnId).turnId).not.toBe(turnId);
       }
-    },
-    60_000,
-  );
 
-  test.skipIf(!canRun)(
-    "Test 2: No duplicate user_messages — THE BUG",
-    async () => {
-      const handle = await createSession({ cwdPrefix: "event-stream-dedup-" });
+      assertInvariants(events, [turnId]);
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 60_000);
 
-      try {
-        const { turnId, events } = await startTurnAndCollectEvents(handle.session, "say hi", {
-          extraMs: 3_000,
-        });
+  test("Test 4: Autonomous run", async () => {
+    const handle = await createSession({ cwdPrefix: "event-stream-autonomous-" });
+    const autonomousWakeToken = `AUTONOMOUS_WAKE_${Date.now().toString(36)}`;
 
-        expect(userMessagesWithText(events, "say hi").length).toBeLessThanOrEqual(1);
+    try {
+      const { turnId: fgTurnId, events } = await startTurnAndCollectEvents(
+        handle.session,
+        [
+          "Use the Task tool to start a background sub-agent.",
+          "In that task, run the Bash command exactly: sleep 3 && echo BACKGROUND_DONE",
+          "Do not wait for task completion.",
+          "Reply immediately with exactly: SPAWNED",
+          `When the background task completes later, reply with exactly: ${autonomousWakeToken}`,
+        ].join(" "),
+        {
+          extraMs: 10_000,
+          timeoutMs: 60_000,
+        },
+      );
 
-        // No turn_started after terminal for the same turnId
-        const terminalIdx = events.findIndex(
-          (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === turnId,
-        );
-        const staleTurnStarted = events
-          .slice(terminalIdx + 1)
-          .filter((e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId);
-        expect(staleTurnStarted.length).toBe(0);
+      const fgTerminalIdx = events.findIndex(
+        (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === fgTurnId,
+      );
+      const afterForeground = events.slice(fgTerminalIdx + 1);
 
-        assertInvariants(events, [turnId]);
-      } finally {
-        await cleanupSession(handle);
-      }
-    },
-    60_000,
-  );
-
-  test.skipIf(!canRun)(
-    "Test 3: Lifecycle doesn't get stuck in running",
-    async () => {
-      const handle = await createSession({ cwdPrefix: "event-stream-lifecycle-" });
-
-      try {
-        const { turnId, events } = await startTurnAndCollectEvents(handle.session, "say hi", {
-          extraMs: 3_000,
-        });
-
-        const terminalIdx = events.findIndex(
-          (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === turnId,
-        );
-        const afterTerminal = events.slice(terminalIdx + 1);
-
-        // No subsequent turn_started for same turnId
-        expect(
-          afterTerminal.filter(
-            (e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId,
-          ).length,
-        ).toBe(0);
-
-        // Any turn_started after terminal must have a different turnId
-        for (const ts of afterTerminal.filter((e) => e.type === "turn_started" && hasTurnId(e))) {
-          expect((ts as EventWithTurnId).turnId).not.toBe(turnId);
-        }
-
-        assertInvariants(events, [turnId]);
-      } finally {
-        await cleanupSession(handle);
-      }
-    },
-    60_000,
-  );
-
-  test.skipIf(!canRun)(
-    "Test 4: Autonomous run",
-    async () => {
-      const handle = await createSession({ cwdPrefix: "event-stream-autonomous-" });
-      const autonomousWakeToken = `AUTONOMOUS_WAKE_${Date.now().toString(36)}`;
-
-      try {
-        const { turnId: fgTurnId, events } = await startTurnAndCollectEvents(
-          handle.session,
-          [
-            "Use the Task tool to start a background sub-agent.",
-            "In that task, run the Bash command exactly: sleep 3 && echo BACKGROUND_DONE",
-            "Do not wait for task completion.",
-            "Reply immediately with exactly: SPAWNED",
-            `When the background task completes later, reply with exactly: ${autonomousWakeToken}`,
-          ].join(" "),
-          {
-            extraMs: 10_000,
-            timeoutMs: 60_000,
-          },
-        );
-
-        const fgTerminalIdx = events.findIndex(
-          (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === fgTurnId,
-        );
-        const afterForeground = events.slice(fgTerminalIdx + 1);
-
-        // Autonomous turn_started with a different turnId
-        const autoStarts = afterForeground.filter(
-          (e) => e.type === "turn_started" && hasTurnId(e) && e.turnId !== fgTurnId,
-        ) as EventWithTurnId[];
-        if (autoStarts.length === 0) {
-          assertInvariants(events, [fgTurnId]);
-          return;
-        }
-
-        const autoTurnId = autoStarts[0]!.turnId;
-        expect(fgTurnId).not.toBe(autoTurnId);
-
-        // Autonomous turn reaches terminal
-        expect(
-          afterForeground.find(
-            (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === autoTurnId,
-          ),
-        ).toBeDefined();
-
+      // Autonomous turn_started with a different turnId
+      const autoStarts = afterForeground.filter(
+        (e) => e.type === "turn_started" && hasTurnId(e) && e.turnId !== fgTurnId,
+      ) as EventWithTurnId[];
+      if (autoStarts.length === 0) {
         assertInvariants(events, [fgTurnId]);
-      } finally {
-        await cleanupSession(handle);
+        return;
       }
-    },
-    90_000,
-  );
 
-  test.skipIf(!canRun)(
-    "Test 5: Interruption",
-    async () => {
-      const handle = await createSession({ cwdPrefix: "event-stream-interrupt-" });
+      const autoTurnId = autoStarts[0]!.turnId;
+      expect(fgTurnId).not.toBe(autoTurnId);
 
-      try {
-        let turnId: string | null = null;
-        const events = await new Promise<AgentStreamEvent[]>((resolve, reject) => {
-          const collected: AgentStreamEvent[] = [];
-          let interrupted = false;
+      // Autonomous turn reaches terminal
+      expect(
+        afterForeground.find((e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === autoTurnId),
+      ).toBeDefined();
 
-          const timeout = setTimeout(() => {
+      assertInvariants(events, [fgTurnId]);
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 90_000);
+
+  test("Test 5: Interruption", async () => {
+    const handle = await createSession({ cwdPrefix: "event-stream-interrupt-" });
+
+    try {
+      let turnId: string | null = null;
+      const events = await new Promise<AgentStreamEvent[]>((resolve, reject) => {
+        const collected: AgentStreamEvent[] = [];
+        let interrupted = false;
+
+        const timeout = setTimeout(() => {
+          unsubscribe();
+          reject(new Error("Timed out after 45000ms waiting for terminal event"));
+        }, 45_000);
+
+        const unsubscribe = handle.session.subscribe((event) => {
+          collected.push(event);
+          if (!turnId && event.type === "turn_started" && hasTurnId(event)) {
+            turnId = event.turnId;
+          }
+
+          // Once we see turn_started, fire the interrupt
+          if (
+            !interrupted &&
+            turnId &&
+            event.type === "turn_started" &&
+            hasTurnId(event) &&
+            event.turnId === turnId
+          ) {
+            interrupted = true;
+            handle.session.interrupt().catch(() => undefined);
+          }
+
+          // Resolve when we get a terminal event for this turn
+          if (turnId && isTerminalEvent(event) && hasTurnId(event) && event.turnId === turnId) {
+            clearTimeout(timeout);
             unsubscribe();
-            reject(new Error("Timed out after 45000ms waiting for terminal event"));
-          }, 45_000);
+            resolve(collected);
+          }
+        });
 
-          const unsubscribe = handle.session.subscribe((event) => {
-            collected.push(event);
-            if (!turnId && event.type === "turn_started" && hasTurnId(event)) {
-              turnId = event.turnId;
-            }
-
-            // Once we see turn_started, fire the interrupt
-            if (
-              !interrupted &&
-              turnId &&
-              event.type === "turn_started" &&
-              hasTurnId(event) &&
-              event.turnId === turnId
-            ) {
-              interrupted = true;
-              handle.session.interrupt().catch(() => undefined);
-            }
-
-            // Resolve when we get a terminal event for this turn
-            if (turnId && isTerminalEvent(event) && hasTurnId(event) && event.turnId === turnId) {
+        void handle.session
+          .startTurn("write a very long essay about the history of computing")
+          .then((result) => {
+            if (turnId && turnId !== result.turnId) {
               clearTimeout(timeout);
               unsubscribe();
-              resolve(collected);
+              reject(
+                new Error(
+                  `Observed turn_started for ${turnId} but startTurn returned ${result.turnId}`,
+                ),
+              );
+              return;
             }
+            turnId = result.turnId;
+          })
+          .catch((error) => {
+            clearTimeout(timeout);
+            unsubscribe();
+            reject(error);
           });
+      });
 
-          void handle.session
-            .startTurn("write a very long essay about the history of computing")
-            .then((result) => {
-              if (turnId && turnId !== result.turnId) {
-                clearTimeout(timeout);
-                unsubscribe();
-                reject(
-                  new Error(
-                    `Observed turn_started for ${turnId} but startTurn returned ${result.turnId}`,
-                  ),
-                );
-                return;
-              }
-              turnId = result.turnId;
-            })
-            .catch((error) => {
-              clearTimeout(timeout);
-              unsubscribe();
-              reject(error);
-            });
-        });
+      expect(turnId).toBeDefined();
 
-        expect(turnId).toBeDefined();
+      // turn_canceled or turn_failed arrives for that turnId
+      const terminal = events.find(
+        (e) =>
+          (e.type === "turn_canceled" || e.type === "turn_failed") &&
+          hasTurnId(e) &&
+          e.turnId === turnId,
+      );
+      expect(terminal).toBeDefined();
 
-        // turn_canceled or turn_failed arrives for that turnId
-        const terminal = events.find(
-          (e) =>
-            (e.type === "turn_canceled" || e.type === "turn_failed") &&
-            hasTurnId(e) &&
-            e.turnId === turnId,
-        );
-        expect(terminal).toBeDefined();
+      // No further events for that turnId after terminal
+      const terminalIdx = events.indexOf(terminal!);
+      expect(
+        events.slice(terminalIdx + 1).filter((e) => hasTurnId(e) && e.turnId === turnId).length,
+      ).toBe(0);
 
-        // No further events for that turnId after terminal
-        const terminalIdx = events.indexOf(terminal!);
-        expect(
-          events.slice(terminalIdx + 1).filter((e) => hasTurnId(e) && e.turnId === turnId).length,
-        ).toBe(0);
+      assertInvariants(events, [turnId]);
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 60_000);
 
-        assertInvariants(events, [turnId]);
-      } finally {
-        await cleanupSession(handle);
-      }
-    },
-    60_000,
-  );
+  test("Test 6: Sequential foreground turns", async () => {
+    const handle = await createSession({ cwdPrefix: "event-stream-sequential-" });
 
-  test.skipIf(!canRun)(
-    "Test 6: Sequential foreground turns",
-    async () => {
-      const handle = await createSession({ cwdPrefix: "event-stream-sequential-" });
+    try {
+      const { turnId: turnId1, events: events1 } = await startTurnAndCollectEvents(
+        handle.session,
+        "say first",
+      );
 
-      try {
-        const { turnId: turnId1, events: events1 } = await startTurnAndCollectEvents(
-          handle.session,
-          "say first",
-        );
+      const { turnId: turnId2, events: events2 } = await startTurnAndCollectEvents(
+        handle.session,
+        "say second",
+      );
 
-        const { turnId: turnId2, events: events2 } = await startTurnAndCollectEvents(
-          handle.session,
-          "say second",
-        );
+      const allEvents = [...events1, ...events2];
 
-        const allEvents = [...events1, ...events2];
+      expect(turnId1).not.toBe(turnId2);
 
-        expect(turnId1).not.toBe(turnId2);
+      // No events from turn 1 after turn 2 starts
+      const turn2StartIdx = allEvents.findIndex(
+        (e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId2,
+      );
+      expect(
+        allEvents.slice(turn2StartIdx + 1).filter((e) => hasTurnId(e) && e.turnId === turnId1)
+          .length,
+      ).toBe(0);
 
-        // No events from turn 1 after turn 2 starts
-        const turn2StartIdx = allEvents.findIndex(
-          (e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId2,
-        );
-        expect(
-          allEvents.slice(turn2StartIdx + 1).filter((e) => hasTurnId(e) && e.turnId === turnId1)
-            .length,
-        ).toBe(0);
+      assertInvariants(allEvents, [turnId1, turnId2]);
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 90_000);
 
-        assertInvariants(allEvents, [turnId1, turnId2]);
-      } finally {
-        await cleanupSession(handle);
-      }
-    },
-    90_000,
-  );
+  test("Test 7: Fast-fail", async () => {
+    const handle = await createSession({ cwdPrefix: "event-stream-fast-fail-" });
 
-  test.skipIf(!canRun)(
-    "Test 7: Fast-fail",
-    async () => {
-      const handle = await createSession({ cwdPrefix: "event-stream-fast-fail-" });
+    try {
+      const { turnId, events } = await startTurnAndCollectEvents(handle.session, "", {
+        extraMs: 3_000,
+      });
 
-      try {
-        const { turnId, events } = await startTurnAndCollectEvents(handle.session, "", {
-          extraMs: 3_000,
-        });
+      // At most one turn_started
+      expect(
+        events.filter((e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId)
+          .length,
+      ).toBeLessThanOrEqual(1);
 
-        // At most one turn_started
-        expect(
-          events.filter((e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId)
-            .length,
-        ).toBeLessThanOrEqual(1);
+      // Terminal present
+      const terminal = events.find(
+        (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === turnId,
+      );
+      expect(terminal).toBeDefined();
 
-        // Terminal present
-        const terminal = events.find(
-          (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === turnId,
-        );
-        expect(terminal).toBeDefined();
+      // No stale turn_started after terminal
+      const terminalIdx = events.indexOf(terminal!);
+      expect(events.slice(terminalIdx + 1).filter((e) => e.type === "turn_started").length).toBe(0);
 
-        // No stale turn_started after terminal
-        const terminalIdx = events.indexOf(terminal!);
-        expect(events.slice(terminalIdx + 1).filter((e) => e.type === "turn_started").length).toBe(
-          0,
-        );
+      assertInvariants(events, [turnId]);
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 60_000);
 
-        assertInvariants(events, [turnId]);
-      } finally {
-        await cleanupSession(handle);
-      }
-    },
-    60_000,
-  );
+  test("Test 8: User message dedup by text", async () => {
+    const handle = await createSession({ cwdPrefix: "event-stream-user-dedup-" });
 
-  test.skipIf(!canRun)(
-    "Test 8: User message dedup by text",
-    async () => {
-      const handle = await createSession({ cwdPrefix: "event-stream-user-dedup-" });
+    try {
+      const { turnId, events } = await startTurnAndCollectEvents(handle.session, "hello world", {
+        extraMs: 3_000,
+      });
 
-      try {
-        const { turnId, events } = await startTurnAndCollectEvents(handle.session, "hello world", {
-          extraMs: 3_000,
-        });
+      expect(userMessagesWithText(events, "hello world").length).toBeLessThanOrEqual(1);
 
-        expect(userMessagesWithText(events, "hello world").length).toBeLessThanOrEqual(1);
-
-        assertInvariants(events, [turnId]);
-      } finally {
-        await cleanupSession(handle);
-      }
-    },
-    60_000,
-  );
+      assertInvariants(events, [turnId]);
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 60_000);
 });

@@ -1,5 +1,5 @@
 import { cancel, confirm, intro, isCancel, log, note, outro, spinner } from "@clack/prompts";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -23,6 +23,10 @@ interface OnboardOptions extends DaemonStartOptions {
   timeout?: string;
   voice?: "ask" | "enable" | "disable";
 }
+
+type RawOnboardOptions = OnboardOptions & {
+  allowedHosts?: string;
+};
 
 type OnboardPersistedConfig = PersistedConfig & {
   features?: PersistedConfig["features"] & {
@@ -64,7 +68,7 @@ function parseTimeoutMs(raw: string | undefined): number {
   return Math.ceil(seconds * 1000);
 }
 
-function toCliOverrides(options: DaemonStartOptions): CliConfigOverrides {
+function toCliOverrides(options: OnboardOptions): CliConfigOverrides {
   const cliOverrides: CliConfigOverrides = {};
 
   if (options.listen) {
@@ -77,9 +81,9 @@ function toCliOverrides(options: DaemonStartOptions): CliConfigOverrides {
     cliOverrides.relayEnabled = false;
   }
 
-  if (options.allowedHosts) {
-    const raw = options.allowedHosts.trim();
-    cliOverrides.allowedHosts =
+  if (options.hostnames) {
+    const raw = options.hostnames.trim();
+    cliOverrides.hostnames =
       raw.toLowerCase() === "true"
         ? true
         : raw
@@ -297,13 +301,17 @@ export function onboardCommand(): Command {
     .option("--no-relay", "Disable relay connection")
     .option("--no-mcp", "Disable the Agent MCP HTTP endpoint")
     .option(
-      "--allowed-hosts <hosts>",
-      'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")',
+      "--hostnames <hosts>",
+      'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',
     )
+    .addOption(new Option("--allowed-hosts <hosts>").hideHelp())
     .option("--timeout <seconds>", "Max time to wait for daemon readiness (default: 600)")
     .option("--voice <mode>", "Voice setup mode: ask, enable, disable", "ask")
-    .action(async (options: OnboardOptions) => {
-      await runOnboard(options);
+    .action(async (options: RawOnboardOptions) => {
+      await runOnboard({
+        ...options,
+        hostnames: options.hostnames ?? options.allowedHosts,
+      });
     });
 }
 

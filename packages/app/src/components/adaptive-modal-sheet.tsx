@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import type { TextInputProps } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -14,6 +14,7 @@ import {
   type BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import { X } from "lucide-react-native";
+import { isWeb } from "@/constants/platform";
 
 const styles = StyleSheet.create((theme) => ({
   desktopOverlay: {
@@ -216,7 +217,7 @@ export function AdaptiveModalSheet({
   );
 
   // On web, use portal to overlay root for consistent stacking with toasts
-  if (Platform.OS === "web" && typeof document !== "undefined") {
+  if (isWeb && typeof document !== "undefined") {
     if (!visible) return null;
     return createPortal(desktopContent, getOverlayRoot());
   }

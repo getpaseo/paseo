@@ -3,7 +3,6 @@ import {
   View,
   Text,
   Pressable,
-  Platform,
   useWindowDimensions,
   StyleSheet as RNStyleSheet,
 } from "react-native";
@@ -26,6 +25,7 @@ import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { isWeb } from "@/constants/platform";
 
 const MIN_CHAT_WIDTH = 400;
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
@@ -252,7 +252,7 @@ export function ExplorerSidebar({
 
   // Mobile: full-screen overlay with gesture.
   // On web, keep it interactive only while open so closed sidebars don't eat taps.
-  const overlayPointerEvents = Platform.OS === "web" ? (isOpen ? "auto" : "none") : "box-none";
+  const overlayPointerEvents = isWeb ? (isOpen ? "auto" : "none") : "box-none";
 
   // Navigation stacks can keep previous screens mounted; hide sidebars for unfocused
   // screens so only the active screen exposes explorer/terminal surfaces.
@@ -309,12 +309,7 @@ export function ExplorerSidebar({
       <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
         {/* Resize handle - absolutely positioned over left border */}
         <GestureDetector gesture={resizeGesture}>
-          <View
-            style={[
-              styles.resizeHandle,
-              Platform.OS === "web" && ({ cursor: "col-resize" } as any),
-            ]}
-          />
+          <View style={[styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as any)]} />
         </GestureDetector>
 
         <SidebarContent

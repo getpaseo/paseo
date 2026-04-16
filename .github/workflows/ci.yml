@@ -76,6 +76,31 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
+  server-tests-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build highlight dependency
+        run: npm run build --workspace=@getpaseo/highlight
+
+      - name: Build relay dependency
+        run: npm run build --workspace=@getpaseo/relay
+
+      - name: Run Windows-critical server tests
+        working-directory: packages/server
+        run: npx vitest run src/utils/executable.test.ts src/utils/spawn.test.ts src/utils/run-git-command.test.ts src/server/agent/provider-registry.test.ts src/server/agent/provider-launch-config.test.ts src/server/agent/provider-snapshot-manager.test.ts src/server/persisted-config.test.ts
+
   app-tests:
     runs-on: ubuntu-latest
     steps:

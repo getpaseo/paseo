@@ -1,5 +1,4 @@
-import { execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { promisify } from "node:util";
+import { type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
@@ -73,12 +72,11 @@ import type {
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
-import { findExecutable } from "../../../utils/executable.js";
-import { spawnProcess } from "../../../utils/spawn.js";
+import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { execCommand, spawnProcess } from "../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;
-const execFileAsync = promisify(execFile);
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
 
 type TurnState = "idle" | "foreground" | "autonomous";
@@ -241,6 +239,10 @@ function applyRuntimeSettingsToClaudeOptions(
 
 function isClaudeThinkingEffort(value: string | null | undefined): value is ClaudeThinkingEffort {
   return value === "low" || value === "medium" || value === "high" || value === "max";
+}
+
+function sanitizeClaudeProjectPath(cwd: string): string {
+  return cwd.replace(/[\\/._:]/g, "-");
 }
 
 type ClaudeOptionsLogSummary = {
@@ -1130,7 +1132,7 @@ export class ClaudeAgentClient implements AgentClient {
   async isAvailable(): Promise<boolean> {
     const command = this.runtimeSettings?.command;
     if (command?.mode === "replace") {
-      return fs.existsSync(command.argv[0]);
+      return await isCommandAvailable(command.argv[0]);
     }
     return true;
   }
@@ -1186,14 +1188,10 @@ async function resolveClaudeVersion(
 
   try {
     if (command?.mode === "replace") {
-      const { stdout } = await execFileAsync(
+      const { stdout } = await execCommand(
         command.argv[0]!,
         [...command.argv.slice(1), "--version"],
-        {
-          encoding: "utf8",
-          timeout: 5_000,
-          windowsHide: true,
-        },
+        { timeout: 5_000 },
       );
       return stdout.trim() || null;
     }
@@ -1203,11 +1201,7 @@ async function resolveClaudeVersion(
       return null;
     }
 
-    const { stdout } = await execFileAsync(executable, ["--version"], {
-      encoding: "utf8",
-      timeout: 5_000,
-      windowsHide: true,
-    });
+    const { stdout } = await execCommand(executable, ["--version"], { timeout: 5_000 });
     return stdout.trim() || null;
   } catch {
     return null;
@@ -2150,6 +2144,12 @@ class ClaudeAgentSession implements AgentSession {
     this.lastOptionsModel = base.model ?? null;
     if (this.claudeSessionId) {
       base.resume = this.claudeSessionId;
+    }
+    if (this.runtimeSettings?.disallowedTools?.length) {
+      base.disallowedTools = [
+        ...(base.disallowedTools ?? []),
+        ...this.runtimeSettings.disallowedTools,
+      ];
     }
     return this.applyRuntimeSettings(base);
   }
@@ -3270,8 +3270,7 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    // Match Claude CLI's path sanitization: replace slashes, dots, and underscores with dashes
-    const sanitized = cwd.replace(/[\\/\.]/g, "-").replace(/_/g, "-");
+    const sanitized = sanitizeClaudeProjectPath(cwd);
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     const dir = path.join(configDir, "projects", sanitized);
     return path.join(dir, `${sessionId}.jsonl`);

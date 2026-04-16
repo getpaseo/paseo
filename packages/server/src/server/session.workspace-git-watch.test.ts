@@ -65,6 +65,8 @@ function createSessionForWorkspaceGitWatchTests(): {
     peekSnapshot: ReturnType<typeof vi.fn>;
     getSnapshot: ReturnType<typeof vi.fn>;
     refresh: ReturnType<typeof vi.fn>;
+    requestWorkingTreeWatch: ReturnType<typeof vi.fn>;
+    scheduleRefreshForCwd: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
   };
   subscriptions: Array<{
@@ -105,6 +107,11 @@ function createSessionForWorkspaceGitWatchTests(): {
     peekSnapshot: vi.fn((cwd: string) => createWorkspaceRuntimeSnapshot(cwd)),
     getSnapshot: vi.fn(async (cwd: string) => createWorkspaceRuntimeSnapshot(cwd)),
     refresh: vi.fn(async () => {}),
+    requestWorkingTreeWatch: vi.fn(async (cwd: string) => ({
+      repoRoot: cwd,
+      unsubscribe: vi.fn(),
+    })),
+    scheduleRefreshForCwd: vi.fn(),
     dispose: vi.fn(),
   };
 
@@ -328,62 +335,17 @@ describe("workspace git watch targets", () => {
     });
   });
 
-  test("checkout_pr_status_request explicitly refreshes the focused workspace before reading runtime data", async () => {
+  test("checkout_pr_status_request reads cached snapshot without forcing a refresh", async () => {
     const { session, emitted, workspaceGitService } = createSessionForWorkspaceGitWatchTests();
-    let refreshed = false;
-
-    workspaceGitService.refresh.mockImplementation(async () => {
-      refreshed = true;
-    });
-    workspaceGitService.getSnapshot.mockImplementation(async (cwd: string) =>
-      createWorkspaceRuntimeSnapshot(cwd, {
-        github: {
-          pullRequest: refreshed
-            ? {
-                url: "https://github.com/acme/repo/pull/457",
-                title: "After explicit refresh",
-                state: "merged",
-                baseRefName: "main",
-                headRefName: "workspace-git-service",
-                isMerged: true,
-              }
-            : {
-                url: "https://github.com/acme/repo/pull/456",
-                title: "Before explicit refresh",
-                state: "open",
-                baseRefName: "main",
-                headRefName: "workspace-git-service",
-                isMerged: false,
-              },
-          refreshedAt: refreshed ? "2026-04-12T00:10:00.000Z" : "2026-04-12T00:05:00.000Z",
-        },
-      }),
-    );
 
     await session.handleMessage({
       type: "checkout_pr_status_request",
       cwd: "/tmp/repo",
-      requestId: "req-pr-refresh",
+      requestId: "req-pr-cached",
     });
 
-    expect(workspaceGitService.refresh).toHaveBeenCalledWith("/tmp/repo", {
-      priority: "high",
-    });
-    expect(
-      emitted.find((message) => message.type === "checkout_pr_status_response")?.payload,
-    ).toEqual({
-      cwd: "/tmp/repo",
-      status: {
-        url: "https://github.com/acme/repo/pull/457",
-        title: "After explicit refresh",
-        state: "merged",
-        baseRefName: "main",
-        headRefName: "workspace-git-service",
-        isMerged: true,
-      },
-      githubFeaturesEnabled: true,
-      error: null,
-      requestId: "req-pr-refresh",
-    });
+    expect(workspaceGitService.refresh).not.toHaveBeenCalled();
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo");
+    expect(emitted.find((message) => message.type === "checkout_pr_status_response")).toBeDefined();
   });
 });

@@ -13,7 +13,7 @@ export interface DaemonStartOptions {
   relay?: boolean;
   mcp?: boolean;
   injectMcp?: boolean;
-  allowedHosts?: string;
+  hostnames?: string;
 }
 
 export interface LocalDaemonPidInfo {
@@ -113,8 +113,8 @@ function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   } else if (options.port) {
     childEnv.PASEO_LISTEN = `127.0.0.1:${options.port}`;
   }
-  if (options.allowedHosts) {
-    childEnv.PASEO_ALLOWED_HOSTS = options.allowedHosts;
+  if (options.hostnames) {
+    childEnv.PASEO_HOSTNAMES = options.hostnames;
   }
   return childEnv;
 }
@@ -322,6 +322,7 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
     ...envWithHome(options.home),
     // Status should reflect local persisted config + pid file, not inherited daemon env overrides.
     PASEO_LISTEN: undefined,
+    PASEO_HOSTNAMES: undefined,
     PASEO_ALLOWED_HOSTS: undefined,
   };
   const home = resolvePaseoHome(env);

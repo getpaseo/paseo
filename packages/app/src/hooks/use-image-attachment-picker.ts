@@ -8,6 +8,7 @@ import {
   openImagePathsWithDesktopDialog,
   type PickedImageAttachmentInput,
 } from "@/hooks/image-attachment-picker";
+import { isWeb } from "@/constants/platform";
 
 interface UseImageAttachmentPickerResult {
   pickImages: () => Promise<PickedImageAttachmentInput[] | null>;
@@ -45,7 +46,7 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
     isPickingRef.current = true;
 
     try {
-      if (Platform.OS === "web" && isElectronRuntime()) {
+      if (isWeb && isElectronRuntime()) {
         const selectedPaths = await openImagePathsWithDesktopDialog();
         if (selectedPaths.length === 0) {
           return null;

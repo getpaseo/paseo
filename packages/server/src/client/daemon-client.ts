@@ -1187,8 +1187,28 @@ export class DaemonClient {
     }
   }
 
-  clearAgentAttention(agentId: string | string[]): void {
-    this.sendSessionMessage({ type: "clear_agent_attention", agentId });
+  async clearAgentAttention(agentId: string | string[]): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "clear_agent_attention",
+      agentId,
+      requestId,
+    });
+    await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "clear_agent_attention_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
   }
 
   sendHeartbeat(params: {
@@ -1692,7 +1712,27 @@ export class DaemonClient {
   }
 
   async cancelAgent(agentId: string): Promise<void> {
-    this.sendSessionMessage({ type: "cancel_agent_request", agentId });
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "cancel_agent_request",
+      agentId,
+      requestId,
+    });
+    await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "cancel_agent_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<void> {

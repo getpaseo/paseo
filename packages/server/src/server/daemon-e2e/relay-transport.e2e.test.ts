@@ -7,6 +7,7 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
 
+import { generateLocalPairingOffer } from "../pairing-offer.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import { buildRelayWebSocketUrl } from "../../shared/daemon-endpoints.js";
@@ -26,19 +27,25 @@ function createCapturingLogger() {
   return { logger, lines };
 }
 
-function parseOfferUrlFromLogs(lines: string[]): string {
-  for (const line of lines) {
-    if (!line.includes("pairing_offer")) continue;
-    try {
-      const obj = JSON.parse(line) as { msg?: string; url?: string };
-      if (obj.msg === "pairing_offer" && typeof obj.url === "string") {
-        return obj.url;
-      }
-    } catch {
-      // ignore
-    }
+async function getPairingOfferUrl(args: {
+  paseoHome: string;
+  relayEnabled?: boolean;
+  relayEndpoint?: string;
+  relayPublicEndpoint?: string;
+  appBaseUrl?: string;
+}): Promise<string> {
+  const pairing = await generateLocalPairingOffer({
+    paseoHome: args.paseoHome,
+    relayEnabled: args.relayEnabled,
+    relayEndpoint: args.relayEndpoint,
+    relayPublicEndpoint: args.relayPublicEndpoint,
+    appBaseUrl: args.appBaseUrl,
+    includeQr: false,
+  });
+  if (!pairing.url) {
+    throw new Error("Expected relay pairing URL to be available");
   }
-  throw new Error(`pairing_offer log not found. saw ${lines.length} lines`);
+  return pairing.url;
 }
 
 function decodeOfferFromFragmentUrl(url: string): {
@@ -199,7 +206,13 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
     });
 
     try {
-      const offerUrl = parseOfferUrlFromLogs(lines);
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: daemon.paseoHome,
+        relayEnabled: daemon.config.relayEnabled,
+        relayEndpoint: daemon.config.relayEndpoint,
+        relayPublicEndpoint: daemon.config.relayPublicEndpoint,
+        appBaseUrl: daemon.config.appBaseUrl,
+      });
       const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
 
       const stableClientId = `cid_test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
@@ -314,7 +327,13 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
     });
 
     try {
-      const offerUrl = parseOfferUrlFromLogs(lines);
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: daemon.paseoHome,
+        relayEnabled: daemon.config.relayEnabled,
+        relayEndpoint: daemon.config.relayEndpoint,
+        relayPublicEndpoint: daemon.config.relayPublicEndpoint,
+        appBaseUrl: daemon.config.appBaseUrl,
+      });
       const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
 
       // Previously, the daemon would time out waiting for `hello` and reconnect every ~10s.

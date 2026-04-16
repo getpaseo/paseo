@@ -21,6 +21,10 @@ export function createScheduleCommand(): Command {
       .option("--cron <expr>", "Cron cadence expression")
       .option("--name <name>", "Optional schedule name")
       .option("--target <self|new-agent|agent-id>", "Run target")
+      .option(
+        "--provider <provider>",
+        "Agent provider, or provider/model (e.g. codex or codex/gpt-5.4)",
+      )
       .option("--max-runs <n>", "Maximum number of runs")
       .option("--expires-in <duration>", "Time to live for the schedule"),
   ).action(withOutput(runCreateCommand));

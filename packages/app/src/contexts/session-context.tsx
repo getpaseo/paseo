@@ -1,6 +1,6 @@
 import { useRef, ReactNode, useCallback, useEffect, useMemo } from "react";
 import { Buffer } from "buffer";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
@@ -52,6 +52,7 @@ import { resolveProjectPlacement } from "@/utils/project-placement";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
+import { isNative } from "@/constants/platform";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -547,7 +548,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     (awayMs: number) => {
       scheduleAuthoritativeRevalidation();
 
-      if (Platform.OS !== "web") {
+      if (isNative) {
         const session = useSessionStore.getState().sessions[serverId];
         const agentId = session?.focusedAgentId;
         const cursor = agentId ? session?.agentTimelineCursor.get(agentId) : undefined;
@@ -1155,7 +1156,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         removeWorkspace(serverId, message.payload.id);
         return;
       }
-      mergeWorkspaces(serverId, [normalizeWorkspaceDescriptor(message.payload.workspace)]);
+      const workspace = normalizeWorkspaceDescriptor(message.payload.workspace);
+      const existingWorkspace = useSessionStore
+        .getState()
+        .sessions[serverId]?.workspaces.get(workspace.id);
+      mergeWorkspaces(serverId, [workspace]);
     });
 
     const unsubStatus = client.on("status", (message) => {
