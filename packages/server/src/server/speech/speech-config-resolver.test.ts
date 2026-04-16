@@ -142,6 +142,29 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(0);
   });
 
+  test("resolves funasr provider for dictation", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: {
+          stt: { provider: "funasr" },
+        },
+      },
+    });
+    const env = {} as NodeJS.ProcessEnv;
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env,
+      persisted,
+    });
+
+    expect(result.speech.providers.dictationStt).toEqual({
+      provider: "funasr",
+      explicit: true,
+      enabled: true,
+    });
+  });
+
   test("respects disabled dictation and voice mode feature flags", () => {
     const persisted = PersistedConfigSchema.parse({
       features: {

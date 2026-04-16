@@ -1,0 +1,6 @@
+funasr
+fastapi
+uvicorn
+python-multipart
+websockets
+numpy

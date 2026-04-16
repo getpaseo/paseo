@@ -1,4 +1,4 @@
-import { View, Text, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, ActivityIndicator, ScrollView } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X, ArrowUp, RefreshCcw, Check, Mic, Pencil } from "lucide-react-native";
 import { VolumeMeter } from "./volume-meter";
@@ -127,13 +127,14 @@ export function DictationOverlay({
   isRecording,
   isProcessing,
   status,
+  transcript,
   errorText,
   onCancel,
   onAccept,
   onAcceptAndSend,
   onRetry,
   onDiscard,
-}: Omit<DictationControlsProps, "onStart" | "disabled" | "transcript"> & { errorText?: string }) {
+}: Omit<DictationControlsProps, "onStart" | "disabled"> & { errorText?: string }) {
   const { theme } = useUnistyles();
   const isFailed = status === "failed";
   const showActiveState = isRecording || isProcessing || isFailed;
@@ -160,29 +161,53 @@ export function DictationOverlay({
       </Pressable>
 
       <View style={overlayStyles.centerContainer}>
-        <View style={overlayStyles.meterRow}>
-          <VolumeMeter
-            volume={volume}
-            isMuted={false}
-            isSpeaking={false}
-            orientation="horizontal"
-            color={theme.colors.palette.white}
-          />
-          <Text style={[overlayStyles.timerText, { color: theme.colors.palette.white }]}>
-            {formatDuration(duration)}
-          </Text>
-        </View>
-        {isFailed ? (
-          <Text
-            numberOfLines={2}
-            style={[
-              overlayStyles.transcriptText,
-              { color: theme.colors.palette.white, opacity: 0.95 },
-            ]}
-          >
-            {errorText ? `Dictation failed: ${errorText}` : "Dictation failed. Tap retry."}
-          </Text>
-        ) : null}
+        {transcript && !isFailed ? (
+          <View style={overlayStyles.streamingRow}>
+            <Text style={[overlayStyles.timerTextCompact, { color: theme.colors.palette.white }]}>
+              {formatDuration(duration)}
+            </Text>
+            <ScrollView
+              style={overlayStyles.streamingScrollView}
+              showsVerticalScrollIndicator
+              nestedScrollEnabled
+            >
+              <Text
+                style={[
+                  overlayStyles.streamingText,
+                  { color: theme.colors.palette.white },
+                ]}
+              >
+                {transcript}
+              </Text>
+            </ScrollView>
+          </View>
+        ) : (
+          <>
+            <View style={overlayStyles.meterRow}>
+              <VolumeMeter
+                volume={volume}
+                isMuted={false}
+                isSpeaking={false}
+                orientation="horizontal"
+                color={theme.colors.palette.white}
+              />
+              <Text style={[overlayStyles.timerText, { color: theme.colors.palette.white }]}>
+                {formatDuration(duration)}
+              </Text>
+            </View>
+            {isFailed ? (
+              <Text
+                numberOfLines={2}
+                style={[
+                  overlayStyles.transcriptText,
+                  { color: theme.colors.palette.white, opacity: 0.95 },
+                ]}
+              >
+                {errorText ? `Dictation failed: ${errorText}` : "Dictation failed. Tap retry."}
+              </Text>
+            ) : null}
+          </>
+        )}
       </View>
 
       <View style={overlayStyles.actionButtonsContainer}>
@@ -307,7 +332,7 @@ const overlayStyles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     paddingHorizontal: theme.spacing[4],
     paddingVertical: OVERLAY_VERTICAL_PADDING,
-    height: FOOTER_HEIGHT,
+    minHeight: FOOTER_HEIGHT,
   },
   cancelButton: {
     width: OVERLAY_BUTTON_SIZE,
@@ -323,6 +348,7 @@ const overlayStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     gap: theme.spacing[2],
+    overflow: "hidden",
   },
   meterRow: {
     flexDirection: "row",
@@ -330,10 +356,33 @@ const overlayStyles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     gap: theme.spacing[4],
   },
+  streamingRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[2],
+    width: "100%",
+    paddingHorizontal: theme.spacing[2],
+  },
+  streamingScrollView: {
+    flex: 1,
+    maxHeight: theme.fontSize.sm * 1.4 * 3, // 3 lines max
+  },
   timerText: {
     fontSize: theme.fontSize.xl,
     fontWeight: theme.fontWeight.semibold,
     fontVariant: ["tabular-nums"],
+  },
+  timerTextCompact: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    fontVariant: ["tabular-nums"],
+    opacity: 0.7,
+    flexShrink: 0,
+  },
+  streamingText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    opacity: 0.9,
   },
   transcriptText: {
     fontSize: theme.fontSize.sm,

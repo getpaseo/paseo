@@ -89,7 +89,7 @@ export class STTManager {
 
     const session = stt.createSession({
       logger: this.logger.child({ component: "stt-session" }),
-      language: "en",
+      ...(stt.id === "funasr" ? {} : { language: "en" }),
     });
 
     let inputRate: number;

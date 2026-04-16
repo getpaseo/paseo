@@ -4,6 +4,7 @@ import type { PersistedConfig } from "../persisted-config.js";
 import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
 import { resolveLocalSpeechConfig } from "./providers/local/config.js";
 import { resolveOpenAiSpeechConfig } from "./providers/openai/config.js";
+import { resolveFunASRConfig, type FunASRConfig } from "./providers/funasr/config.js";
 import {
   SpeechProviderIdSchema,
   type RequestedSpeechProvider,
@@ -135,6 +136,7 @@ export function resolveSpeechConfig(params: {
 }): {
   openai: PaseoOpenAIConfig | undefined;
   speech: PaseoSpeechConfig;
+  funasr: FunASRConfig | undefined;
 } {
   const providers = resolveRequestedSpeechProviders({
     env: params.env,
@@ -154,11 +156,19 @@ export function resolveSpeechConfig(params: {
     providers,
   });
 
+  const needsFunASR =
+    providers.dictationStt.provider === "local" ||
+    providers.voiceStt.provider === "local";
+  const funasr = needsFunASR
+    ? resolveFunASRConfig({ env: params.env, persisted: params.persisted })
+    : undefined;
+
   return {
     openai,
     speech: {
       providers,
       ...(local.local ? { local: local.local } : {}),
     },
+    funasr,
   };
 }
