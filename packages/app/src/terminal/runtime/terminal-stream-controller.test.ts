@@ -178,4 +178,49 @@ describe("terminal-stream-controller", () => {
       error: null,
     });
   });
+
+  it("re-subscribes after detaching the current terminal", async () => {
+    const harness = createHarness();
+    harness.client.nextSubscribeResults.push({ terminalId: "term-1", error: null });
+    harness.client.nextSubscribeResults.push({ terminalId: "term-1", error: null });
+
+    harness.controller.setTerminal({ terminalId: "term-1" });
+    await flushAsyncWork();
+
+    harness.client.emit({
+      terminalId: "term-1",
+      type: "output",
+      data: new TextEncoder().encode("before"),
+    });
+
+    harness.controller.setTerminal({ terminalId: null });
+    await flushAsyncWork();
+
+    harness.client.emit({
+      terminalId: "term-1",
+      type: "output",
+      data: new TextEncoder().encode("ignored"),
+    });
+
+    harness.controller.setTerminal({ terminalId: "term-1" });
+    await flushAsyncWork();
+
+    harness.client.emit({
+      terminalId: "term-1",
+      type: "output",
+      data: new TextEncoder().encode(" after"),
+    });
+
+    expect(harness.client.subscribeCalls).toEqual(["term-1", "term-1"]);
+    expect(harness.client.unsubscribeCalls).toEqual(["term-1"]);
+    expect(harness.outputs).toEqual([
+      { terminalId: "term-1", text: "before" },
+      { terminalId: "term-1", text: " after" },
+    ]);
+    expect(harness.statuses).toContainEqual({
+      terminalId: null,
+      isAttaching: false,
+      error: null,
+    });
+  });
 });
