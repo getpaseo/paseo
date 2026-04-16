@@ -1134,7 +1134,9 @@ export class ClaudeAgentClient implements AgentClient {
     if (command?.mode === "replace") {
       return await isCommandAvailable(command.argv[0]);
     }
-    return await isCommandAvailable("claude");
+    // Default mode uses @anthropic-ai/claude-agent-sdk's bundled cli.js run
+    // via process.execPath. No external `claude` binary is required.
+    return true;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {

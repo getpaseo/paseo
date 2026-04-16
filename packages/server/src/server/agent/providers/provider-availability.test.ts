@@ -61,12 +61,12 @@ describe("default provider availability", () => {
     await expect(client.isAvailable()).resolves.toBe(false);
   });
 
-  test("Claude reports unavailable when the default command cannot be resolved", async () => {
+  test("Claude reports available without a PATH binary because the SDK bundles its own cli.js", async () => {
     const binDir = makeTempDir("provider-availability-claude-");
     isolatePathTo(binDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    await expect(client.isAvailable()).resolves.toBe(false);
+    await expect(client.isAvailable()).resolves.toBe(true);
   });
 
   test("OpenCode reports unavailable when the default command cannot be resolved", async () => {
@@ -82,15 +82,6 @@ describe("default provider availability", () => {
     isolatePathTo(binDir);
     writeProviderShim(binDir, "codex");
     const client = new CodexAppServerAgentClient(createTestLogger());
-
-    await expect(client.isAvailable()).resolves.toBe(true);
-  });
-
-  test("Claude reports available when the default command resolves from PATH", async () => {
-    const binDir = makeTempDir("provider-availability-claude-");
-    isolatePathTo(binDir);
-    writeProviderShim(binDir, "claude");
-    const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
     await expect(client.isAvailable()).resolves.toBe(true);
   });
