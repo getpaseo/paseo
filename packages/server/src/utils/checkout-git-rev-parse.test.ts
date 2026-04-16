@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +23,12 @@ function normalizePathForPlatform(value: string): string {
     return value;
   }
   return value.replace(/\\/g, "/").toLowerCase();
+}
+
+function gitCanonicalize(dir: string): string {
+  return execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+  }).trim();
 }
 
 async function loadCheckoutGitWithRevParseTopLevelOutput(stdout: string) {
@@ -77,7 +83,7 @@ describe("checkout git rev-parse path handling", () => {
       throw new Error("Expected nested checkout to be detected as a git repository");
     }
     expect(normalizePathForPlatform(status.repoRoot)).toBe(
-      normalizePathForPlatform(realpathSync(repoRoot)),
+      normalizePathForPlatform(gitCanonicalize(repoRoot)),
     );
   });
 
