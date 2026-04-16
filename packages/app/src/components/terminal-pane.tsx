@@ -118,6 +118,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
   const keyboardRefitTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const lastAutoFocusKeyRef = useRef<string | null>(null);
   const initialSnapshot = workspaceTerminalSession.snapshots.get({ terminalId });
+  const shouldAttachTerminalStream = isScreenFocused && isAppVisible;
 
   useEffect(() => {
     terminalIdRef.current = terminalId;
@@ -274,7 +275,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
 
     streamControllerRef.current = controller;
     controller.setTerminal({
-      terminalId: isScreenFocused ? terminalIdRef.current : null,
+      terminalId: shouldAttachTerminalStream ? terminalIdRef.current : null,
     });
 
     return () => {
@@ -287,17 +288,17 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
     client,
     handleStreamControllerStatus,
     isConnected,
-    isScreenFocused,
+    shouldAttachTerminalStream,
     workspaceTerminalSession.snapshots,
   ]);
 
   useEffect(() => {
     pendingTerminalInputRef.current = [];
-    const nextTerminalId = isScreenFocused ? terminalId : null;
+    const nextTerminalId = shouldAttachTerminalStream ? terminalId : null;
     streamControllerRef.current?.setTerminal({
       terminalId: nextTerminalId,
     });
-  }, [isScreenFocused, terminalId]);
+  }, [shouldAttachTerminalStream, terminalId]);
 
   const enqueuePendingTerminalInput = useCallback((entry: PendingTerminalInput) => {
     const queue = pendingTerminalInputRef.current;
@@ -550,7 +551,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
   return (
     <Animated.View style={[styles.container, keyboardPaddingStyle]}>
       <View style={styles.outputContainer}>
-        {isScreenFocused ? (
+        {shouldAttachTerminalStream ? (
           <View style={styles.terminalGestureContainer}>
             <TerminalEmulator
               ref={emulatorRef}
@@ -594,7 +595,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
           <View style={styles.terminalGestureContainer} />
         )}
 
-        {isAttaching && isScreenFocused ? (
+        {isAttaching && shouldAttachTerminalStream ? (
           <View style={styles.attachOverlay} pointerEvents="none" testID="terminal-attach-loading">
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
           </View>

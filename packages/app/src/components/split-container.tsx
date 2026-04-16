@@ -97,6 +97,7 @@ interface SplitContainerProps {
   newTabAgentOptionId?: "__new_tab_agent__" | "__new_tab_terminal__";
   buildPaneContentModel: (input: {
     paneId: string;
+    isPaneVisible: boolean;
     isPaneFocused: boolean;
     tab: WorkspaceTabDescriptor;
   }) => WorkspacePaneContentModel;
@@ -166,6 +167,7 @@ interface MountedTabSlotProps {
   paneId: string;
   buildPaneContentModel: (input: {
     paneId: string;
+    isPaneVisible: boolean;
     isPaneFocused: boolean;
     tab: WorkspaceTabDescriptor;
   }) => WorkspacePaneContentModel;
@@ -181,11 +183,12 @@ const MountedTabSlot = memo(function MountedTabSlot({
   const content = useMemo(
     () =>
       buildPaneContentModel({
+        isPaneVisible: isVisible,
         paneId,
         isPaneFocused,
         tab: tabDescriptor,
       }),
-    [buildPaneContentModel, isPaneFocused, paneId, tabDescriptor],
+    [buildPaneContentModel, isPaneFocused, isVisible, paneId, tabDescriptor],
   );
 
   return (

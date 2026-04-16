@@ -496,6 +496,7 @@ interface MobileMountedTabSlotProps {
   paneId: string | null;
   buildPaneContentModel: (input: {
     paneId: string | null;
+    isPaneVisible: boolean;
     isPaneFocused: boolean;
     tab: WorkspaceTabDescriptor;
   }) => WorkspacePaneContentModel;
@@ -511,11 +512,12 @@ const MobileMountedTabSlot = memo(function MobileMountedTabSlot({
   const content = useMemo(
     () =>
       buildPaneContentModel({
+        isPaneVisible: isVisible,
         paneId,
         isPaneFocused,
         tab: tabDescriptor,
       }),
-    [buildPaneContentModel, isPaneFocused, paneId, tabDescriptor],
+    [buildPaneContentModel, isPaneFocused, isVisible, paneId, tabDescriptor],
   );
 
   return (
@@ -1732,6 +1734,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     (input: {
       tab: WorkspaceTabDescriptor;
       paneId?: string | null;
+      isPaneVisible: boolean;
       isPaneFocused: boolean;
       focusPaneBeforeOpen?: boolean;
     }) =>
@@ -1739,6 +1742,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
         tab: input.tab,
         normalizedServerId,
         normalizedWorkspaceId,
+        isPaneVisible: input.isPaneVisible,
         isPaneFocused: input.isPaneFocused,
         onOpenTab: (target) => {
           if (!persistenceKey) {
@@ -1795,12 +1799,14 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   const buildMobilePaneContentModel = useCallback(
     function buildMobilePaneContentModel(input: {
       paneId: string | null;
+      isPaneVisible: boolean;
       tab: WorkspaceTabDescriptor;
       isPaneFocused: boolean;
     }) {
       return buildPaneContentModel({
         tab: input.tab,
         paneId: input.paneId,
+        isPaneVisible: input.isPaneVisible,
         isPaneFocused: input.isPaneFocused,
         focusPaneBeforeOpen: false,
       });
@@ -1849,12 +1855,14 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   const buildDesktopPaneContentModel = useCallback(
     function buildDesktopPaneContentModel(input: {
       paneId: string;
+      isPaneVisible: boolean;
       tab: WorkspaceTabDescriptor;
       isPaneFocused: boolean;
     }) {
       return buildPaneContentModel({
         tab: input.tab,
         paneId: input.paneId,
+        isPaneVisible: input.isPaneVisible,
         isPaneFocused: input.isPaneFocused,
         focusPaneBeforeOpen: true,
       });
