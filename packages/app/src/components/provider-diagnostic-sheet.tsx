@@ -1,4 +1,4 @@
-import { Search } from "lucide-react-native";
+import { AlertCircle, Search } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -9,6 +9,7 @@ import { Fonts } from "@/constants/theme";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
+import { formatTimeAgo } from "@/utils/time";
 import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
 
 interface ProviderDiagnosticSheetProps {
@@ -29,7 +30,6 @@ export function ProviderDiagnosticSheet({
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
 
   const providerLabel = resolveProviderLabel(provider, snapshotEntries);
@@ -37,19 +37,28 @@ export function ProviderDiagnosticSheet({
     () => snapshotEntries?.find((entry) => entry.provider === provider),
     [snapshotEntries, provider],
   );
-  const models = useMemo(() => {
-    return providerEntry?.models ?? [];
-  }, [providerEntry]);
+  const models = providerEntry?.models ?? [];
   const providerSnapshotRefreshing = providerEntry?.status === "loading";
-  const refreshInFlight = refreshing || isRefreshing || providerSnapshotRefreshing || loading;
+  const providerErrorMessage =
+    providerEntry?.status === "error" ? (providerEntry.error ?? "Unknown error") : null;
+  const refreshInFlight = isRefreshing || providerSnapshotRefreshing || loading;
 
-  const filteredModels = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return models;
-    return models.filter(
-      (m) => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q),
-    );
-  }, [models, query]);
+  const [clockTick, setClockTick] = useState(0);
+  useEffect(() => {
+    if (!visible) return;
+    const id = setInterval(() => setClockTick((t) => t + 1), 10_000);
+    return () => clearInterval(id);
+  }, [visible]);
+  const fetchedAtLabel = useMemo(() => {
+    if (!providerEntry?.fetchedAt) return null;
+    return formatTimeAgo(new Date(providerEntry.fetchedAt));
+    // clockTick triggers re-computation on timer
+  }, [providerEntry?.fetchedAt, clockTick]);
+
+  const q = query.trim().toLowerCase();
+  const filteredModels = q
+    ? models.filter((m) => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+    : models;
 
   const fetchDiagnostic = useCallback(
     async (options?: { keepCurrent?: boolean }) => {
@@ -72,16 +81,9 @@ export function ProviderDiagnosticSheet({
     [client, provider],
   );
 
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await Promise.all([
-        refresh([provider as AgentProvider]),
-        fetchDiagnostic({ keepCurrent: true }),
-      ]);
-    } finally {
-      setRefreshing(false);
-    }
+  const handleRefresh = useCallback(() => {
+    void refresh([provider as AgentProvider]);
+    void fetchDiagnostic({ keepCurrent: true });
   }, [fetchDiagnostic, provider, refresh]);
 
   useEffect(() => {
@@ -92,6 +94,50 @@ export function ProviderDiagnosticSheet({
       setQuery("");
     }
   }, [visible, fetchDiagnostic]);
+
+  function renderModelsBody() {
+    if (models.length === 0 && providerSnapshotRefreshing) {
+      return (
+        <View style={sheetStyles.emptyState}>
+          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          <Text style={sheetStyles.mutedText}>Loading models…</Text>
+        </View>
+      );
+    }
+    if (models.length === 0 && providerErrorMessage) {
+      return (
+        <View style={sheetStyles.emptyState}>
+          <AlertCircle size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+          <Text style={sheetStyles.mutedText}>{providerErrorMessage}</Text>
+        </View>
+      );
+    }
+    if (models.length === 0) {
+      return (
+        <View style={sheetStyles.emptyState}>
+          <Text style={sheetStyles.mutedText}>No models detected.</Text>
+        </View>
+      );
+    }
+    if (filteredModels.length === 0) {
+      return (
+        <View style={sheetStyles.emptyState}>
+          <Search size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+          <Text style={sheetStyles.mutedText}>No models match your search</Text>
+        </View>
+      );
+    }
+    return filteredModels.map((model: AgentModelDefinition, index) => (
+      <View key={model.id} style={[sheetStyles.modelRow, index > 0 && sheetStyles.modelRowBorder]}>
+        <Text style={sheetStyles.modelLabel} numberOfLines={1}>
+          {model.label}
+        </Text>
+        <Text style={sheetStyles.modelId} numberOfLines={1} selectable>
+          {model.id}
+        </Text>
+      </View>
+    ));
+  }
 
   return (
     <AdaptiveModalSheet
@@ -152,7 +198,15 @@ export function ProviderDiagnosticSheet({
       <View style={sheetStyles.modelsSection}>
         <View style={sheetStyles.modelsHeader}>
           <Text style={sheetStyles.sectionTitle}>Models</Text>
-          <Text style={sheetStyles.countText}>{models.length}</Text>
+          <View style={sheetStyles.modelsHeaderMeta}>
+            <Text style={sheetStyles.countText}>{models.length}</Text>
+            {fetchedAtLabel ? (
+              <>
+                <Text style={sheetStyles.metaDot}>·</Text>
+                <Text style={sheetStyles.countText}>Updated {fetchedAtLabel}</Text>
+              </>
+            ) : null}
+          </View>
         </View>
         {models.length > 0 ? (
           <View style={sheetStyles.searchContainer}>
@@ -175,30 +229,7 @@ export function ProviderDiagnosticSheet({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {models.length === 0 ? (
-            <View style={sheetStyles.emptyState}>
-              <Text style={sheetStyles.mutedText}>No models detected.</Text>
-            </View>
-          ) : filteredModels.length === 0 ? (
-            <View style={sheetStyles.emptyState}>
-              <Search size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-              <Text style={sheetStyles.mutedText}>No models match your search</Text>
-            </View>
-          ) : (
-            filteredModels.map((model: AgentModelDefinition, index) => (
-              <View
-                key={model.id}
-                style={[sheetStyles.modelRow, index > 0 && sheetStyles.modelRowBorder]}
-              >
-                <Text style={sheetStyles.modelLabel} numberOfLines={1}>
-                  {model.label}
-                </Text>
-                <Text style={sheetStyles.modelId} numberOfLines={1} selectable>
-                  {model.id}
-                </Text>
-              </View>
-            ))
-          )}
+          {renderModelsBody()}
         </ScrollView>
       </View>
     </AdaptiveModalSheet>
@@ -268,6 +299,15 @@ const sheetStyles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  modelsHeaderMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  metaDot: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   countText: {
     fontSize: theme.fontSize.xs,

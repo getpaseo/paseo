@@ -51,16 +51,18 @@ export class ProviderSnapshotManager {
     return entriesToArray(entries);
   }
 
-  refresh(options: ProviderSnapshotRefreshOptions = {}): void {
+  async refresh(options: ProviderSnapshotRefreshOptions = {}): Promise<void> {
     const { cwd } = options;
     const cwdKey = normalizeCwdKey(cwd);
-    if (this.warmUps.has(cwdKey)) {
+    const inFlight = this.warmUps.get(cwdKey);
+    if (inFlight) {
+      await inFlight;
       return;
     }
     const providers = this.resolveRefreshProviders(options.providers);
     this.resetSnapshotToLoading(cwdKey, providers);
     this.emitChange(cwdKey);
-    void this.warmUp(cwd, providers);
+    await this.warmUp(cwd, providers);
   }
 
   on(event: "change", listener: ProviderSnapshotChangeListener): this {
@@ -222,17 +224,25 @@ export class ProviderSnapshotManager {
   ): Map<AgentProvider, ProviderSnapshotEntry> {
     const snapshot = this.getOrCreateSnapshot(cwdKey);
     const loadingEntries = this.createLoadingEntries();
+
     if (!providers) {
       snapshot.clear();
+      for (const [provider, entry] of loadingEntries) {
+        snapshot.set(provider, entry);
+      }
+      return snapshot;
     }
-    const entries = providers
-      ? providers.flatMap((provider) => {
-          const entry = loadingEntries.get(provider);
-          return entry ? [[provider, entry] as const] : [];
-        })
-      : loadingEntries;
-    for (const [provider, entry] of entries) {
-      snapshot.set(provider, entry);
+
+    for (const provider of providers) {
+      const loadingEntry = loadingEntries.get(provider);
+      if (!loadingEntry) continue;
+      const existing = snapshot.get(provider);
+      snapshot.set(provider, {
+        ...loadingEntry,
+        models: existing?.models,
+        modes: existing?.modes,
+        fetchedAt: existing?.fetchedAt,
+      });
     }
     return snapshot;
   }
