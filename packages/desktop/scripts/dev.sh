@@ -19,6 +19,9 @@ export EXPO_PORT
 # Allow the Metro dev origin so the Electron renderer can connect to the daemon WebSocket
 export HUBCODE_CORS_ORIGINS="http://localhost:${EXPO_PORT}"
 
+# Auth server URL (defaults to production — override for local dev)
+export HUBCODE_AUTH_SERVER_URL="${HUBCODE_AUTH_SERVER_URL:-http://localhost:3002}"
+
 echo "══════════════════════════════════════════════════════"
 echo "  Hubcode Desktop Dev"
 echo "══════════════════════════════════════════════════════"
@@ -31,4 +34,4 @@ echo "════════════════════════�
   --names "metro,electron" \
   --prefix-colors "magenta,cyan" \
   "cd '$APP_DIR' && npx expo start --port $EXPO_PORT" \
-  "$ROOT_DIR/node_modules/.bin/wait-on tcp:$EXPO_PORT && EXPO_DEV_URL=http://localhost:$EXPO_PORT $ROOT_DIR/node_modules/.bin/electron '$DESKTOP_DIR'"
+  "$ROOT_DIR/node_modules/.bin/wait-on tcp:$EXPO_PORT && EXPO_DEV_URL=http://localhost:$EXPO_PORT HUBCODE_AUTH_SERVER_URL=$HUBCODE_AUTH_SERVER_URL $ROOT_DIR/node_modules/.bin/electron '$DESKTOP_DIR'"

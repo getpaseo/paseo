@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Pressable, Text, View, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { QrCode, Link2, ClipboardPaste, ExternalLink } from "lucide-react-native";
+import { QrCode, Link2, ClipboardPaste, ExternalLink, Zap } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { HostProfile } from "@/types/host-connection";
 import {
@@ -18,7 +18,8 @@ import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { buildHostRootRoute } from "@/utils/host-routes";
 import { HubcodeLogo } from "@/components/icons/hubcode-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { isWeb, isNative } from "@/constants/platform";
+import { isWeb, isNative, getIsElectron } from "@/constants/platform";
+import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 
 type WelcomeAction = {
   key: "scan-qr" | "direct-connection" | "paste-pairing-link";
@@ -136,11 +137,38 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
+  signInLink: {
+    marginTop: theme.spacing[4],
+    alignItems: "center",
+  },
+  signInLinkText: {
+    color: theme.colors.accent,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  signedInHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    textAlign: "center",
+    marginTop: theme.spacing[4],
+  },
+  proLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    marginTop: theme.spacing[6],
+  },
+  proLinkText: {
+    color: theme.colors.accent,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+  },
   versionLabel: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     textAlign: "center",
-    marginTop: theme.spacing[6],
+    marginTop: theme.spacing[2],
   },
 }));
 
@@ -239,6 +267,8 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   const appVersionText = formatVersionWithPrefix(appVersion);
   const [isDirectOpen, setIsDirectOpen] = useState(false);
   const [isPasteLinkOpen, setIsPasteLinkOpen] = useState(false);
+  const isElectron = getIsElectron();
+  const { user, isAuthenticated, signIn, isSigningIn } = useAuthSession();
   const hosts = useHosts();
   const anyOnlineServerId = useAnyHostOnline(hosts.map((h) => h.serverId));
 
@@ -358,6 +388,22 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           })}
         </View>
 
+        {isElectron && !isAuthenticated && (
+          <Pressable
+            style={styles.signInLink}
+            onPress={() => void signIn(undefined)}
+            disabled={isSigningIn}
+          >
+            <Text style={styles.signInLinkText}>
+              {isSigningIn ? "Signing in…" : "Sign in to your account"}
+            </Text>
+          </Pressable>
+        )}
+
+        {isElectron && isAuthenticated && user && (
+          <Text style={styles.signedInHint}>Signed in as {user.username || user.email}</Text>
+        )}
+
         {showHostList && (
           <View style={styles.hostList}>
             {hosts.map((host) => (
@@ -366,6 +412,19 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           </View>
         )}
       </View>
+      <Pressable
+        style={styles.proLink}
+        onPress={() =>
+          openExternalUrl(
+            __DEV__
+              ? "http://localhost:3002/dashboard/billing"
+              : "https://auth.hubcode.ai/dashboard/billing",
+          )
+        }
+      >
+        <Zap size={12} color={theme.colors.accent} />
+        <Text style={styles.proLinkText}>Get Hubcode Pro</Text>
+      </Pressable>
       <Text style={styles.versionLabel}>{appVersionText}</Text>
 
       <AddHostModal

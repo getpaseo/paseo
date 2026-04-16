@@ -12,6 +12,7 @@ import {
   readManagedFileBase64,
   writeAttachmentBase64,
 } from "../features/attachments.js";
+import { createAuthCommandHandlers } from "../features/auth.js";
 import { checkForAppUpdate, downloadAndInstallUpdate } from "../features/auto-updater.js";
 import {
   installCli,
@@ -480,7 +481,10 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
 }
 
 export function registerDaemonManager(): void {
-  const handlers = createDaemonCommandHandlers();
+  const handlers = {
+    ...createDaemonCommandHandlers(),
+    ...createAuthCommandHandlers(),
+  };
 
   ipcMain.handle(
     "hubcode:invoke",

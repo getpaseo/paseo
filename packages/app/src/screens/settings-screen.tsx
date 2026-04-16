@@ -25,6 +25,7 @@ import {
   Smartphone,
   Plug,
   Terminal,
+  Zap,
 } from "lucide-react-native";
 import { useAppSettings, type AppSettings, type SendBehavior } from "@/hooks/use-settings";
 import { THEME_SWATCHES, type ThemeName } from "@/styles/theme";
@@ -77,14 +78,18 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { isWeb } from "@/constants/platform";
 import { CliAgentsSection } from "@/screens/settings/cli-agents-section";
+import { AccountSection } from "@/desktop/components/account-section";
+import { PlanUpgradeSection } from "@/components/plan-upgrade-section";
 
 // ---------------------------------------------------------------------------
 // Section definitions
 // ---------------------------------------------------------------------------
 
 type SettingsSectionId =
+  | "account"
   | "hosts"
   | "general"
+  | "plan"
   | "shortcuts"
   | "integrations"
   | "task-integrations"
@@ -108,9 +113,11 @@ function getSettingsSections(context: { isDesktopApp: boolean }): SettingsSectio
     { id: "general", label: "General", icon: Settings },
     { id: "task-integrations", label: "Task Integrations", icon: Plug },
     { id: "permissions", label: "Permissions", icon: Shield },
+    { id: "plan", label: "Plan", icon: Zap },
   ];
 
   if (context.isDesktopApp) {
+    sections.unshift({ id: "account", label: "Account", icon: Shield });
     sections.push(
       { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
       { id: "integrations", label: "Integrations", icon: Puzzle },
@@ -725,10 +732,14 @@ function SettingsSectionContent({
   routeServerId,
 }: SettingsSectionContentProps) {
   switch (sectionId) {
+    case "account":
+      return isDesktopApp ? <AccountSection /> : null;
     case "hosts":
       return <HostsSection {...hostsProps} />;
     case "general":
       return <GeneralSection {...generalProps} />;
+    case "plan":
+      return <PlanUpgradeSection />;
     case "shortcuts":
       return <KeyboardShortcutsSection />;
     case "providers":
@@ -792,7 +803,8 @@ function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayout
         {sections.map((section) => {
           const isSelected = section.id === selectedSectionId;
           const IconComponent = section.icon;
-          const showSeparator = section.id === "integrations" || section.id === "providers";
+          const showSeparator =
+            section.id === "account" || section.id === "integrations" || section.id === "providers";
           return (
             <View key={section.id}>
               {showSeparator ? <View style={desktopStyles.sidebarSeparator} /> : null}

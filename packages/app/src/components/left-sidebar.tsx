@@ -58,7 +58,9 @@ import {
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
-import { isWeb } from "@/constants/platform";
+import { isWeb, getIsElectron } from "@/constants/platform";
+import { useAuthSession } from "@/desktop/hooks/use-auth-session";
+import { UpgradeBanner } from "@/desktop/components/upgrade-banner";
 
 const MIN_CHAT_WIDTH = 400;
 
@@ -649,6 +651,40 @@ function MobileSidebar({
   );
 }
 
+function SidebarSignInCard() {
+  const { theme } = useUnistyles();
+  const isElectron = getIsElectron();
+  const { isAuthenticated, signIn, isSigningIn } = useAuthSession();
+
+  if (!isElectron || isAuthenticated) return null;
+
+  return (
+    <View style={styles.signInCard}>
+      <Text style={styles.signInCardText}>Sign in to sync settings and manage your team.</Text>
+      <Pressable
+        style={({ hovered = false }) => [
+          styles.signInCardButton,
+          hovered && styles.signInCardButtonHovered,
+          isSigningIn && styles.signInCardButtonDisabled,
+        ]}
+        onPress={() => void signIn(undefined)}
+        disabled={isSigningIn}
+      >
+        <Text style={styles.signInCardButtonText}>{isSigningIn ? "Waiting..." : "Sign in"}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function SidebarUpgradeHint() {
+  const isElectron = getIsElectron();
+  const { isAuthenticated } = useAuthSession();
+
+  if (!isElectron || !isAuthenticated) return null;
+
+  return <UpgradeBanner compact title="Upgrade to Pro" />;
+}
+
 function DesktopSidebar({
   theme,
   activeServerId,
@@ -752,6 +788,9 @@ function DesktopSidebar({
             onAddProject={handleOpenProject}
           />
         )}
+
+        <SidebarSignInCard />
+        <SidebarUpgradeHint />
 
         <View style={styles.sidebarFooter}>
           <View style={styles.footerHostSlot}>
@@ -1009,5 +1048,37 @@ const styles = StyleSheet.create((theme) => ({
   tooltipText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
+  },
+  signInCard: {
+    marginHorizontal: theme.spacing[3],
+    marginBottom: theme.spacing[2],
+    padding: theme.spacing[3],
+    backgroundColor: theme.colors.surface1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    gap: theme.spacing[3],
+  },
+  signInCardText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    lineHeight: theme.fontSize.xs * 1.4,
+  },
+  signInCardButton: {
+    alignSelf: "flex-start",
+    paddingVertical: theme.spacing[1] + 2,
+    paddingHorizontal: theme.spacing[3],
+    backgroundColor: theme.colors.accent,
+  },
+  signInCardButtonHovered: {
+    opacity: 0.85,
+  },
+  signInCardButtonDisabled: {
+    opacity: 0.5,
+  },
+  signInCardButtonText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.accentForeground,
   },
 }));
