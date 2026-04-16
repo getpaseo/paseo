@@ -37,8 +37,9 @@ import {
   shouldShowCustomComboboxOption,
 } from "./combobox-options";
 import type { ComboboxOptionModel } from "./combobox-options";
+import { isWeb } from "@/constants/platform";
 
-const IS_WEB = Platform.OS === "web";
+const IS_WEB = isWeb;
 
 export type ComboboxOption = ComboboxOptionModel;
 
@@ -107,6 +108,7 @@ export interface SearchInputProps {
   onChangeText: (text: string) => void;
   onSubmitEditing?: () => void;
   autoFocus?: boolean;
+  useBottomSheetInput?: boolean;
 }
 
 export function SearchInput({
@@ -115,10 +117,11 @@ export function SearchInput({
   onChangeText,
   onSubmitEditing,
   autoFocus = false,
+  useBottomSheetInput = false,
 }: SearchInputProps): ReactElement {
   const { theme } = useUnistyles();
   const inputRef = useRef<TextInput>(null);
-  const InputComponent = Platform.OS === "web" ? TextInput : BottomSheetTextInput;
+  const InputComponent = useBottomSheetInput ? BottomSheetTextInput : TextInput;
 
   useEffect(() => {
     if (autoFocus && IS_WEB && inputRef.current) {
@@ -264,9 +267,8 @@ export function Combobox({
 }: ComboboxProps): ReactElement {
   const isMobile = useIsCompactFormFactor();
   const effectiveOptionsPosition = isMobile ? "below-search" : optionsPosition;
-  const isDesktopAboveSearch =
-    !isMobile && Platform.OS === "web" && effectiveOptionsPosition === "above-search";
-  const { height: windowHeight } = useWindowDimensions();
+  const isDesktopAboveSearch = !isMobile && isWeb && effectiveOptionsPosition === "above-search";
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const hasPresentedBottomSheetRef = useRef(false);
   const snapPoints = useMemo(() => ["60%", "90%"], []);
@@ -274,11 +276,13 @@ export function Combobox({
     null,
   );
   const [referenceWidth, setReferenceWidth] = useState<number | null>(null);
+  const [referenceLeft, setReferenceLeft] = useState<number | null>(null);
   const [referenceTop, setReferenceTop] = useState<number | null>(null);
   const [referenceAtOrigin, setReferenceAtOrigin] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number>(-1);
   const desktopOptionsScrollRef = useRef<ScrollView>(null);
+  const [desktopContentWidth, setDesktopContentWidth] = useState<number | null>(null);
 
   const isControlled = typeof open === "boolean";
   const [internalOpen, setInternalOpen] = useState(false);
@@ -322,8 +326,8 @@ export function Combobox({
 
   const middleware = useMemo(
     () => [
-      floatingOffset(Platform.OS === "web" ? 0 : 4),
-      ...(Platform.OS === "web" ? [] : [flip({ padding: collisionPadding })]),
+      floatingOffset(isWeb ? 5 : 4),
+      ...(isWeb ? [] : [flip({ padding: collisionPadding })]),
       ...(isDesktopAboveSearch ? [] : [shift({ padding: collisionPadding })]),
       floatingSize({
         padding: collisionPadding,
@@ -336,6 +340,9 @@ export function Combobox({
           });
           setReferenceWidth((prev) => {
             const next = rects.reference.width;
+            if (!(next > 0)) {
+              return prev;
+            }
             if (prev === next) return prev;
             return next;
           });
@@ -346,7 +353,7 @@ export function Combobox({
   );
 
   const { refs, floatingStyles, update } = useFloating({
-    placement: Platform.OS === "web" ? desktopPlacement : "bottom-start",
+    placement: isWeb ? desktopPlacement : "bottom-start",
     middleware,
     sameScrollView: false,
     elements: {
@@ -357,15 +364,18 @@ export function Combobox({
   useEffect(() => {
     if (!isOpen || isMobile) {
       setAvailableSize(null);
+      setDesktopContentWidth(null);
+      setReferenceLeft(null);
       setReferenceWidth(null);
       return;
     }
     const raf = requestAnimationFrame(() => void update());
     return () => cancelAnimationFrame(raf);
-  }, [desktopPlacement, isMobile, update, isOpen]);
+  }, [desktopPlacement, isMobile, isOpen, update]);
 
   useEffect(() => {
     if (!isOpen || isMobile) {
+      setReferenceLeft(null);
       setReferenceAtOrigin(false);
       setReferenceTop(null);
       return;
@@ -379,9 +389,16 @@ export function Combobox({
     }
 
     const measure = () => {
-      referenceEl.measureInWindow((x, y) => {
+      referenceEl.measureInWindow((x, y, width, height) => {
+        setReferenceLeft((prev) => (prev === x ? prev : x));
         setReferenceAtOrigin(Math.abs(x) <= 1 && Math.abs(y) <= 1);
         setReferenceTop((prev) => (prev === y ? prev : y));
+        setReferenceWidth((prev) => {
+          if (!(width > 0)) {
+            return prev;
+          }
+          return prev === width ? prev : width;
+        });
       });
     };
 
@@ -396,32 +413,46 @@ export function Combobox({
     isDesktopAboveSearch && referenceTop !== null
       ? Math.max(windowHeight - referenceTop, collisionPadding)
       : null;
-  const hasResolvedDesktopPosition =
-    referenceWidth !== null &&
-    floatingLeft !== null &&
-    (isDesktopAboveSearch ? desktopAboveSearchBottom !== null : floatingTop !== null) &&
-    ((floatingTop ?? 0) !== 0 || floatingLeft !== 0 || referenceAtOrigin);
-  const shouldHideDesktopContent = desktopPreventInitialFlash && !hasResolvedDesktopPosition;
-  const shouldUseDesktopFade = !desktopPreventInitialFlash;
-  // For top-placed popups: once position resolves, use bottom-based CSS positioning
-  // so height changes grow upward naturally without floating-ui needing to reposition.
-  const useStableBottom =
+  const hasNonZeroFloatingPosition = (floatingTop ?? 0) !== 0 || floatingLeft !== 0;
+  const useMeasuredTopStartPosition =
     !isDesktopAboveSearch &&
     IS_WEB &&
     !isMobile &&
-    hasResolvedDesktopPosition &&
-    desktopPlacement.startsWith("top") &&
-    referenceTop !== null;
+    desktopPlacement === "top-start" &&
+    referenceTop !== null &&
+    referenceLeft !== null &&
+    desktopContentWidth !== null;
+  const clampedMeasuredTopStartLeft = useMeasuredTopStartPosition
+    ? Math.max(
+        collisionPadding,
+        Math.min(windowWidth - desktopContentWidth - collisionPadding, referenceLeft),
+      )
+    : null;
+  const measuredTopStartBottom = useMeasuredTopStartPosition
+    ? Math.max(windowHeight - referenceTop + 5, collisionPadding)
+    : null;
+  const hasResolvedDesktopPosition =
+    referenceWidth !== null &&
+    referenceWidth > 0 &&
+    (isDesktopAboveSearch
+      ? floatingLeft !== null && desktopAboveSearchBottom !== null
+      : useMeasuredTopStartPosition
+        ? clampedMeasuredTopStartLeft !== null && measuredTopStartBottom !== null
+        : floatingLeft !== null &&
+          floatingTop !== null &&
+          (hasNonZeroFloatingPosition || !referenceAtOrigin));
+  const shouldHideDesktopContent = desktopPreventInitialFlash && !hasResolvedDesktopPosition;
+  const shouldUseDesktopFade = !desktopPreventInitialFlash;
 
   const desktopPositionStyle = isDesktopAboveSearch
     ? {
         left: floatingLeft ?? 0,
         bottom: desktopAboveSearchBottom ?? 0,
       }
-    : useStableBottom
+    : useMeasuredTopStartPosition
       ? {
-          left: floatingLeft ?? 0,
-          bottom: Math.max(windowHeight - referenceTop!, collisionPadding),
+          left: clampedMeasuredTopStartLeft ?? 0,
+          bottom: measuredTopStartBottom ?? 0,
         }
       : floatingStyles;
 
@@ -626,6 +657,7 @@ export function Combobox({
       onChangeText={setSearchQueryWithCallback}
       onSubmitEditing={handleSubmitSearch}
       autoFocus={!isMobile}
+      useBottomSheetInput={isMobile}
     />
   );
 
@@ -725,7 +757,13 @@ export function Combobox({
           ]}
           ref={refs.setFloating}
           collapsable={false}
-          onLayout={() => update()}
+          onLayout={(event) => {
+            const { width, height } = event.nativeEvent.layout;
+            setDesktopContentWidth((prev) => (prev === width ? prev : width));
+            if (!useMeasuredTopStartPosition || !hasResolvedDesktopPosition) {
+              void update();
+            }
+          }}
         >
           {children ? (
             <>
@@ -852,6 +890,7 @@ const styles = StyleSheet.create((theme) => ({
   comboboxItemLabel: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+    flexShrink: 0,
   },
   comboboxItemDescription: {
     fontSize: theme.fontSize.xs,

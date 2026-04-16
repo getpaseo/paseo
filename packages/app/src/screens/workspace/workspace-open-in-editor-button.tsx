@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { ActivityIndicator, Platform, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -15,6 +15,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
 import { isAbsolutePath } from "@/utils/path";
+import { isWeb } from "@/constants/platform";
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
@@ -29,10 +30,7 @@ export function WorkspaceOpenInEditorButton({ serverId, cwd }: WorkspaceOpenInEd
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
 
   const shouldLoadEditors =
-    Platform.OS === "web" &&
-    Boolean(client && isConnected) &&
-    cwd.trim().length > 0 &&
-    isAbsolutePath(cwd);
+    isWeb && Boolean(client && isConnected) && cwd.trim().length > 0 && isAbsolutePath(cwd);
 
   const availableEditorsQuery = useQuery<EditorTargetDescriptorPayload[]>({
     queryKey: ["available-editors", serverId],

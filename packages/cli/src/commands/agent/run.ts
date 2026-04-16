@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 import { lookup } from "mime-types";
 import { parseDuration } from "../../utils/duration.js";
 import { collectMultiple } from "../../utils/command-options.js";
+import { resolveProviderAndModel } from "../../utils/provider-model.js";
 
 export function addRunOptions(cmd: Command): Command {
   return cmd
@@ -96,11 +97,6 @@ export interface AgentRunOptions extends CommandOptions {
   label?: string[];
   waitTimeout?: string;
   outputSchema?: string;
-}
-
-interface ResolvedProviderModel {
-  provider: string;
-  model: string | undefined;
 }
 
 function toRunResult(
@@ -219,54 +215,6 @@ function structuredRunSchema(output: Record<string, unknown>): OutputSchema<Agen
   return {
     ...agentRunSchema,
     serialize: () => output,
-  };
-}
-
-export function resolveProviderAndModel(
-  options: Pick<AgentRunOptions, "provider" | "model">,
-): ResolvedProviderModel {
-  const providerInput = options.provider?.trim() || "claude";
-  const modelInput = options.model?.trim();
-
-  if (options.model !== undefined && !modelInput) {
-    const error: CommandError = {
-      code: "INVALID_MODEL",
-      message: "--model cannot be empty",
-    };
-    throw error;
-  }
-
-  const slashIndex = providerInput.indexOf("/");
-  if (slashIndex === -1) {
-    return {
-      provider: providerInput,
-      model: modelInput,
-    };
-  }
-
-  const provider = providerInput.slice(0, slashIndex).trim();
-  const modelFromProvider = providerInput.slice(slashIndex + 1).trim();
-  if (!provider || !modelFromProvider) {
-    const error: CommandError = {
-      code: "INVALID_PROVIDER",
-      message: "Invalid --provider value",
-      details: "Use --provider <provider> or --provider <provider>/<model>",
-    };
-    throw error;
-  }
-
-  if (modelInput && modelInput !== modelFromProvider) {
-    const error: CommandError = {
-      code: "CONFLICTING_MODEL_OPTIONS",
-      message: "Conflicting model values provided",
-      details: `--provider specifies model ${modelFromProvider}, but --model specifies ${modelInput}`,
-    };
-    throw error;
-  }
-
-  return {
-    provider,
-    model: modelInput ?? modelFromProvider,
   };
 }
 

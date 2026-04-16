@@ -43,6 +43,8 @@ export type AgentMode = {
   id: string;
   label: string;
   description?: string;
+  icon?: string;
+  colorTier?: string;
 };
 
 export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";
@@ -73,6 +75,9 @@ export interface ProviderSnapshotEntry {
   models?: AgentModelDefinition[];
   modes?: AgentMode[];
   fetchedAt?: string;
+  label?: string;
+  description?: string;
+  defaultModeId?: string | null;
 }
 
 export type AgentFeatureToggle = {

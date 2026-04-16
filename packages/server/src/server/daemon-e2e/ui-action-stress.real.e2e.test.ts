@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -456,92 +456,94 @@ function createRealAgentClient(provider: AgentProvider, logger: pino.Logger): Ag
 }
 
 describe.each(allProviders)("daemon E2E (real %s) - UI action stress", (provider) => {
-  const shouldRun = isProviderAvailable(provider);
+  let shouldRun = false;
 
-  test.runIf(shouldRun)(
-    "normal UI submit path (idle sends) stays correct",
-    async () => {
-      const logger = pino({ level: "silent" });
-      const cwd = tmpCwd();
-      const daemon = await createTestPaseoDaemon({
-        agentClients: {
-          [provider]: createRealAgentClient(provider, logger),
-        } as Partial<Record<AgentProvider, AgentClient>>,
-        logger,
+  beforeAll(async () => {
+    shouldRun = await isProviderAvailable(provider);
+  });
+
+  beforeEach((context) => {
+    if (!shouldRun) {
+      context.skip();
+    }
+  });
+
+  test("normal UI submit path (idle sends) stays correct", async () => {
+    const logger = pino({ level: "silent" });
+    const cwd = tmpCwd();
+    const daemon = await createTestPaseoDaemon({
+      agentClients: {
+        [provider]: createRealAgentClient(provider, logger),
+      } as Partial<Record<AgentProvider, AgentClient>>,
+      logger,
+    });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+    try {
+      await client.connect();
+      await client.fetchAgents({
+        subscribe: { subscriptionId: `ui-stress-normal-${provider}` },
       });
-      const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+      const agent = await client.createAgent({
+        cwd,
+        title: `uist-n-${provider}`,
+        ...getFullAccessConfig(provider),
+      });
 
-      try {
-        await client.connect();
-        await client.fetchAgents({
-          subscribe: { subscriptionId: `ui-stress-normal-${provider}` },
-        });
+      await runUiScenario({
+        client,
+        agentId: agent.id,
+        scenario: buildNormalUsageScenario(provider, 7),
+      });
+
+      await client.deleteAgent(agent.id);
+    } finally {
+      await client.close();
+      await daemon.close();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 420_000);
+
+  test("queued-send-now path is stable under overlap", async () => {
+    const logger = pino({ level: "silent" });
+    const cwd = tmpCwd();
+    const daemon = await createTestPaseoDaemon({
+      agentClients: {
+        [provider]: createRealAgentClient(provider, logger),
+      } as Partial<Record<AgentProvider, AgentClient>>,
+      logger,
+    });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const scenarios = [
+      buildOverlapScenario(provider, 17, "last"),
+      buildOverlapScenario(provider, 31, "first"),
+    ];
+
+    try {
+      await client.connect();
+      await client.fetchAgents({
+        subscribe: { subscriptionId: `ui-stress-overlap-${provider}` },
+      });
+
+      for (const scenario of scenarios) {
         const agent = await client.createAgent({
           cwd,
-          title: `uist-n-${provider}`,
+          title: `uist-o-${provider}`,
           ...getFullAccessConfig(provider),
         });
 
         await runUiScenario({
           client,
           agentId: agent.id,
-          scenario: buildNormalUsageScenario(provider, 7),
+          scenario,
         });
 
         await client.deleteAgent(agent.id);
-      } finally {
-        await client.close();
-        await daemon.close();
-        rmSync(cwd, { recursive: true, force: true });
       }
-    },
-    420_000,
-  );
-
-  test.runIf(shouldRun)(
-    "queued-send-now path is stable under overlap",
-    async () => {
-      const logger = pino({ level: "silent" });
-      const cwd = tmpCwd();
-      const daemon = await createTestPaseoDaemon({
-        agentClients: {
-          [provider]: createRealAgentClient(provider, logger),
-        } as Partial<Record<AgentProvider, AgentClient>>,
-        logger,
-      });
-      const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
-      const scenarios = [
-        buildOverlapScenario(provider, 17, "last"),
-        buildOverlapScenario(provider, 31, "first"),
-      ];
-
-      try {
-        await client.connect();
-        await client.fetchAgents({
-          subscribe: { subscriptionId: `ui-stress-overlap-${provider}` },
-        });
-
-        for (const scenario of scenarios) {
-          const agent = await client.createAgent({
-            cwd,
-            title: `uist-o-${provider}`,
-            ...getFullAccessConfig(provider),
-          });
-
-          await runUiScenario({
-            client,
-            agentId: agent.id,
-            scenario,
-          });
-
-          await client.deleteAgent(agent.id);
-        }
-      } finally {
-        await client.close();
-        await daemon.close();
-        rmSync(cwd, { recursive: true, force: true });
-      }
-    },
-    600_000,
-  );
+    } finally {
+      await client.close();
+      await daemon.close();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 600_000);
 });

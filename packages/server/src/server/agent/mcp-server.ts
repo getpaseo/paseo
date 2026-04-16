@@ -12,9 +12,10 @@ import {
   AgentPermissionResponseSchema,
   AgentSnapshotPayloadSchema,
 } from "../messages.js";
-import { toAgentPayload } from "./agent-projections.js";
+import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
 import { curateAgentActivity } from "./activity-curator.js";
 import { AgentStorage } from "./agent-storage.js";
+import { ensureAgentLoaded } from "./agent-loading.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -29,7 +30,7 @@ import { captureTerminalLines } from "../../terminal/terminal.js";
 import { createAgentWorktree, runAsyncWorktreeBootstrap } from "../worktree-bootstrap.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { ScheduleSummarySchema, StoredScheduleSchema } from "../schedule/types.js";
-import { AGENT_PROVIDER_DEFINITIONS, type ProviderDefinition } from "./provider-registry.js";
+import type { ProviderDefinition } from "./provider-registry.js";
 import { deletePaseoWorktree, listPaseoWorktrees } from "../../utils/worktree.js";
 import {
   AgentModelSchema,
@@ -37,6 +38,7 @@ import {
   AgentStatusEnum,
   ProviderSummarySchema,
   parseDurationString,
+  resolveProviderAndModel,
   sanitizePermissionRequest,
   setupFinishNotification,
   serializeSnapshotWithMetadata,
@@ -197,6 +199,13 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     version: "2.0.0",
   });
 
+  const requireProviderRegistry = (): Record<AgentProvider, ProviderDefinition> => {
+    if (!providerRegistry) {
+      throw new Error("Provider registry is required to load stored agent records");
+    }
+    return providerRegistry;
+  };
+
   const resolveCallerAgent = () => {
     if (!callerAgentId) {
       return null;
@@ -230,16 +239,36 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return expandUserPath(trimmedCwd);
   };
 
-  const resolveNewAgentScheduleTarget = () => {
+  const resolveNewAgentScheduleTarget = (params?: { provider?: string; cwd?: string }) => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
+      const hasProviderOverride = params?.provider !== undefined;
+      const resolvedProviderModel = hasProviderOverride
+        ? resolveProviderAndModel({
+            provider: params?.provider,
+            defaultProvider: callerAgent.provider,
+          })
+        : null;
+      const resolvedProvider = resolvedProviderModel?.provider ?? callerAgent.provider;
       return {
         type: "new-agent" as const,
         config: {
-          provider: callerAgent.provider,
-          cwd: callerAgent.cwd,
-          ...(callerAgent.currentModeId ? { modeId: callerAgent.currentModeId } : {}),
-          ...(callerAgent.config.model ? { model: callerAgent.config.model } : {}),
+          provider: resolvedProvider,
+          cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : callerAgent.cwd,
+          ...(callerAgent.currentModeId
+            ? {
+                modeId: mapModeAcrossProviders(
+                  callerAgent.currentModeId,
+                  callerAgent.provider,
+                  resolvedProvider,
+                ),
+              }
+            : {}),
+          ...(resolvedProviderModel?.model
+            ? { model: resolvedProviderModel.model }
+            : !hasProviderOverride && callerAgent.config.model
+              ? { model: callerAgent.config.model }
+              : {}),
           ...(callerAgent.config.thinkingOptionId
             ? { thinkingOptionId: callerAgent.config.thinkingOptionId }
             : {}),
@@ -267,10 +296,17 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
     return {
       type: "new-agent" as const,
-      config: {
-        provider: "claude" as AgentProvider,
-        cwd: process.cwd(),
-      },
+      config: (() => {
+        const resolvedProviderModel = resolveProviderAndModel({
+          provider: params?.provider,
+          defaultProvider: "claude",
+        });
+        return {
+          provider: resolvedProviderModel.provider,
+          cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
+          ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
+        };
+      })(),
     };
   };
   const agentToAgentInputSchema = {
@@ -566,6 +602,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         if (notifyOnFinish && callerAgentId) {
           setupFinishNotification({
             agentManager,
+            agentStorage,
             childAgentId: snapshot.id,
             callerAgentId,
             logger: childLogger,
@@ -758,6 +795,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       if (notifyOnFinish && callerAgentId) {
         setupFinishNotification({
           agentManager,
+          agentStorage,
           childAgentId: agentId,
           callerAgentId,
           logger: childLogger,
@@ -821,19 +859,35 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
     async ({ agentId }) => {
       const snapshot = agentManager.getAgent(agentId);
-      if (!snapshot) {
+      if (snapshot) {
+        const structuredSnapshot = await serializeSnapshotWithMetadata(
+          agentStorage,
+          snapshot,
+          childLogger,
+        );
+        return {
+          content: [],
+          structuredContent: ensureValidJson({
+            status: snapshot.lifecycle,
+            snapshot: structuredSnapshot,
+          }),
+        };
+      }
+
+      const record = await agentStorage.get(agentId);
+      if (!record || record.internal) {
         throw new Error(`Agent ${agentId} not found`);
       }
 
-      const structuredSnapshot = await serializeSnapshotWithMetadata(
-        agentStorage,
-        snapshot,
+      const structuredSnapshot = buildStoredAgentPayload(
+        record,
+        requireProviderRegistry(),
         childLogger,
       );
       return {
         content: [],
         structuredContent: ensureValidJson({
-          status: snapshot.lifecycle,
+          status: structuredSnapshot.status,
           snapshot: structuredSnapshot,
         }),
       };
@@ -845,21 +899,30 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     {
       title: "List agents",
       description: "List all live agents managed by the server.",
-      inputSchema: {},
+      inputSchema: {
+        includeArchived: z.boolean().optional().default(false),
+      },
       outputSchema: {
         agents: z.array(AgentSnapshotPayloadSchema),
       },
     },
-    async () => {
-      const snapshots = agentManager.listAgents();
-      const agents = await Promise.all(
-        snapshots.map((snapshot) =>
+    async ({ includeArchived }) => {
+      const liveSnapshots = agentManager.listAgents();
+      const liveAgents = await Promise.all(
+        liveSnapshots.map((snapshot) =>
           serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger),
         ),
       );
+      const liveIds = new Set(liveSnapshots.map((snapshot) => snapshot.id));
+      const storedRecords = await agentStorage.list();
+      const storedAgents = storedRecords
+        .filter((record) => !record.internal && !liveIds.has(record.id))
+        .filter((record) => includeArchived || !record.archivedAt)
+        .map((record) => buildStoredAgentPayload(record, requireProviderRegistry(), childLogger));
+
       return {
         content: [],
-        structuredContent: ensureValidJson({ agents }),
+        structuredContent: ensureValidJson({ agents: [...liveAgents, ...storedAgents] }),
       };
     },
   );
@@ -1181,12 +1244,16 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cron: z.string().optional(),
         name: z.string().optional(),
         target: z.enum(["self", "new-agent"]).optional(),
+        provider: AgentProviderEnum.optional().describe(
+          "Provider, or provider/model (for example: codex or codex/gpt-5.4).",
+        ),
+        cwd: z.string().optional(),
         maxRuns: z.number().int().positive().optional(),
         expiresIn: z.string().optional(),
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, every, cron, name, target, maxRuns, expiresIn }) => {
+    async ({ prompt, every, cron, name, target, provider, cwd, maxRuns, expiresIn }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -1202,9 +1269,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
               if (!callerAgentId) {
                 throw new Error("target=self requires a caller agent");
               }
+              if (provider !== undefined || cwd !== undefined) {
+                throw new Error("provider and cwd can only be used with target=new-agent");
+              }
               return { type: "agent" as const, agentId: callerAgentId };
             })()
-          : resolveNewAgentScheduleTarget();
+          : resolveNewAgentScheduleTarget({ provider, cwd });
 
       const schedule = await scheduleService.create({
         prompt: prompt.trim(),
@@ -1362,7 +1432,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     async () => ({
       content: [],
       structuredContent: ensureValidJson({
-        providers: AGENT_PROVIDER_DEFINITIONS.map((provider) => ({
+        providers: Object.values(providerRegistry ?? {}).map((provider) => ({
           id: provider.id,
           label: provider.label,
           modes: provider.modes.map((mode) => ({
@@ -1527,6 +1597,11 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ agentId, limit }) => {
+      await ensureAgentLoaded(agentId, {
+        agentManager,
+        agentStorage,
+        logger: childLogger,
+      });
       const timeline = agentManager.getTimeline(agentId);
       const snapshot = agentManager.getAgent(agentId);
 

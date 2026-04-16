@@ -42,7 +42,7 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
     logger,
   });
 
-  let allowedHosts: string[] | undefined;
+  let mcpAllowedHosts: string[] | undefined;
   const agentMcpTransports = new Map<string, StreamableHTTPServerTransport>();
 
   const createAgentMcpTransport = async (callerAgentId?: string) => {
@@ -62,7 +62,7 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
         agentMcpTransports.delete(sessionId);
       },
       enableDnsRebindingProtection: true,
-      ...(allowedHosts ? { allowedHosts } : {}),
+      ...(mcpAllowedHosts ? { allowedHosts: mcpAllowedHosts } : {}),
     });
 
     transport.onclose = () => {
@@ -129,7 +129,7 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
     });
   });
 
-  allowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+  mcpAllowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
   const url = `http://127.0.0.1:${port}/mcp/agents`;
 
   return {

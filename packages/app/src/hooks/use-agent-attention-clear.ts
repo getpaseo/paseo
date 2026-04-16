@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 import type { DaemonClient } from "@server/client/daemon-client";
 import {
   shouldClearAgentAttention,
   type AgentAttentionClearTrigger,
 } from "@/utils/agent-attention";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
+import { isWeb } from "@/constants/platform";
 
 type AttentionReason = "finished" | "error" | "permission" | null | undefined;
 
@@ -58,7 +59,7 @@ export function useAgentAttentionClear({
         return;
       }
       deferredFocusEntryClearRef.current = false;
-      client.clearAgentAttention(resolvedAgentId);
+      client.clearAgentAttention(resolvedAgentId).catch(() => {});
     },
     [agentId, attentionReason, client, isConnected, requiresAttention],
   );
@@ -70,7 +71,7 @@ export function useAgentAttentionClear({
 
     const appStateSubscription = AppState.addEventListener("change", updateVisibility);
 
-    if (Platform.OS === "web" && typeof document !== "undefined") {
+    if (isWeb && typeof document !== "undefined") {
       document.addEventListener("visibilitychange", updateVisibility);
       window.addEventListener("focus", updateVisibility);
       window.addEventListener("blur", updateVisibility);

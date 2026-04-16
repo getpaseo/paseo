@@ -712,6 +712,32 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
 
+  // --- Settings toggle ---
+  {
+    id: "settings-toggle-cmd-comma-mac",
+    action: "settings.toggle",
+    combo: "Cmd+,",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "toggle-settings",
+      section: "panels",
+      label: "Toggle settings",
+      keys: ["mod", ","],
+    },
+  },
+  {
+    id: "settings-toggle-ctrl-comma-non-mac",
+    action: "settings.toggle",
+    combo: "Ctrl+,",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "toggle-settings",
+      section: "panels",
+      label: "Toggle settings",
+      keys: ["mod", ","],
+    },
+  },
+
   // --- Focus mode ---
   {
     id: "view-toggle-focus-cmd-shift-f-mac",
@@ -765,6 +791,32 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
 
   // --- Message input ---
+  {
+    id: "message-input-focus-cmd-l-mac",
+    action: "message-input.action",
+    combo: "Cmd+L",
+    when: { mac: true, commandCenter: false },
+    payload: { type: "message-input", kind: "focus" },
+    help: {
+      id: "focus-message-input",
+      section: "agent-input",
+      label: "Focus message input",
+      keys: ["mod", "L"],
+    },
+  },
+  {
+    id: "message-input-focus-ctrl-l-non-mac",
+    action: "message-input.action",
+    combo: "Ctrl+L",
+    when: { mac: false, commandCenter: false, terminal: false },
+    payload: { type: "message-input", kind: "focus" },
+    help: {
+      id: "focus-message-input",
+      section: "agent-input",
+      label: "Focus message input",
+      keys: ["mod", "L"],
+    },
+  },
   {
     id: "message-input-voice-toggle-cmd-shift-d-mac",
     action: "message-input.action",

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
-import { Platform } from "react-native";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
@@ -10,6 +9,7 @@ import {
   type WorkspaceOpenIntent,
 } from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import { isWeb } from "@/constants/platform";
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {
@@ -88,7 +88,7 @@ function HostWorkspaceLayoutContent() {
     // Expo Router's replace ignores query-param-only changes (findDivergentState
     // skips search params). Strip ?open from the browser URL directly so the
     // address bar reflects the clean workspace route.
-    if (Platform.OS === "web" && typeof window !== "undefined") {
+    if (isWeb && typeof window !== "undefined") {
       const url = new URL(window.location.href);
       if (url.searchParams.has("open")) {
         url.searchParams.delete("open");

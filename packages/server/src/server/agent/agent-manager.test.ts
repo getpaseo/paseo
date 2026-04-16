@@ -273,6 +273,156 @@ describe("AgentManager", () => {
     expect(snapshot.config.modeId).toBe("auto");
   });
 
+  test("setAgentMode persists the selected mode across session reload", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class ModeAwareSession implements AgentSession {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+      readonly id = randomUUID();
+      private currentMode: string | null;
+
+      constructor(private readonly config: AgentSessionConfig) {
+        this.currentMode = config.modeId ?? null;
+      }
+
+      async run(): Promise<AgentRunResult> {
+        return { sessionId: this.id, finalText: "", timeline: [] };
+      }
+
+      async startTurn(): Promise<{ turnId: string }> {
+        return { turnId: "turn-1" };
+      }
+
+      subscribe(): () => void {
+        return () => {};
+      }
+
+      async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+      async getRuntimeInfo() {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+          model: this.config.model ?? null,
+          modeId: this.currentMode,
+        };
+      }
+
+      async getAvailableModes() {
+        return [];
+      }
+
+      async getCurrentMode() {
+        return this.currentMode;
+      }
+
+      async setMode(modeId: string): Promise<void> {
+        this.currentMode = modeId;
+      }
+
+      getPendingPermissions() {
+        return [];
+      }
+
+      async respondToPermission(): Promise<void> {}
+
+      describePersistence() {
+        return { provider: this.provider, sessionId: this.id };
+      }
+
+      async interrupt(): Promise<void> {}
+      async close(): Promise<void> {}
+    }
+
+    class ModeAwareClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new ModeAwareSession(config);
+      }
+
+      async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new ModeAwareSession({
+          provider: "codex",
+          cwd: config?.cwd ?? workdir,
+          modeId: config?.modeId,
+          model: config?.model,
+        });
+      }
+
+      async listModels() {
+        return [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4", isDefault: true }];
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: {
+        codex: new ModeAwareClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000301",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      modeId: "auto",
+    });
+
+    await manager.setAgentMode(snapshot.id, "full-access");
+
+    const beforeReload = manager.getAgent(snapshot.id);
+    expect(beforeReload?.config.modeId).toBe("full-access");
+    expect(beforeReload?.currentModeId).toBe("full-access");
+
+    const reloaded = await manager.reloadAgentSession(snapshot.id);
+    expect(reloaded.config.modeId).toBe("full-access");
+    expect(reloaded.currentModeId).toBe("full-access");
+  });
+
+  test("listProviderAvailability uses registered client keys, including custom providers", async () => {
+    const customClient: AgentClient = {
+      provider: "zai",
+      capabilities: TEST_CAPABILITIES,
+      async isAvailable() {
+        return true;
+      },
+      async createSession() {
+        throw new Error("not implemented");
+      },
+      async resumeSession() {
+        throw new Error("not implemented");
+      },
+    };
+
+    const manager = new AgentManager({
+      clients: {
+        zai: customClient,
+      },
+      logger,
+    });
+
+    await expect(manager.listProviderAvailability()).resolves.toEqual([
+      {
+        provider: "zai",
+        available: true,
+        error: null,
+      },
+    ]);
+  });
+
   test("createAgent passes daemon launch env through the provider launch context", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");

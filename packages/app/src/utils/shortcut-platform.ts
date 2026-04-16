@@ -1,9 +1,10 @@
 import { Platform } from "react-native";
 import { getIsElectronRuntimeMac } from "@/constants/layout";
 import type { ShortcutOs } from "@/utils/format-shortcut";
+import { isNative } from "@/constants/platform";
 
 export function getShortcutOs(): ShortcutOs {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return Platform.OS === "ios" ? "mac" : "non-mac";
   }
   if (getIsElectronRuntimeMac()) return "mac";

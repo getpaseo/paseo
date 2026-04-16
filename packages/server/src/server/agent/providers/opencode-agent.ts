@@ -1,5 +1,4 @@
 import type { ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -37,6 +36,7 @@ import type {
   ListPersistedAgentsOptions,
   McpServerConfig,
   PersistedAgentDescriptor,
+  ToolCallDetail,
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
@@ -44,7 +44,7 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
-import { findExecutable } from "../../../utils/executable.js";
+import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
@@ -107,6 +107,12 @@ const OPENCODE_FATAL_RETRY_MESSAGE_TOKENS = [
   "unknown model",
   "does not exist",
   "unsupported model",
+] as const;
+const OPENCODE_HEADERS_TIMEOUT_TOKENS = [
+  "headers timeout",
+  "headers timeout error",
+  "headers_timeout",
+  "und_err_headers_timeout",
 ] as const;
 
 const OpencodeToolStateSchema = z
@@ -232,12 +238,122 @@ function normalizeTurnFailureError(error: unknown): string {
   return normalized.length > 0 ? normalized : "Unknown error";
 }
 
+function isOpenCodeNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "NotFoundError"
+  );
+}
+
+async function reconcileOpenCodeSessionClose(params: {
+  client: Pick<OpencodeClient, "session">;
+  sessionId: string;
+  directory: string;
+  logger: Logger;
+}): Promise<void> {
+  const { client, sessionId, directory, logger } = params;
+
+  try {
+    const response = await client.session.abort({
+      sessionID: sessionId,
+      directory,
+    });
+    if (response.error && !isOpenCodeNotFoundError(response.error)) {
+      logger.warn(
+        {
+          sessionId,
+          error: normalizeTurnFailureError(response.error),
+        },
+        "Failed to abort OpenCode session during close",
+      );
+    }
+  } catch (error) {
+    logger.warn(
+      {
+        sessionId,
+        error: normalizeTurnFailureError(error),
+      },
+      "Failed to abort OpenCode session during close",
+    );
+  }
+
+  try {
+    const response = await client.session.update({
+      sessionID: sessionId,
+      directory,
+      time: { archived: Date.now() },
+    });
+    if (response.error && !isOpenCodeNotFoundError(response.error)) {
+      logger.warn(
+        {
+          sessionId,
+          error: normalizeTurnFailureError(response.error),
+        },
+        "Failed to archive OpenCode session during close",
+      );
+    }
+  } catch (error) {
+    logger.warn(
+      {
+        sessionId,
+        error: normalizeTurnFailureError(error),
+      },
+      "Failed to archive OpenCode session during close",
+    );
+  }
+}
+
 function isFatalOpenCodeRetryMessage(message: string | null | undefined): boolean {
   const normalized = typeof message === "string" ? message.trim().toLowerCase() : "";
   if (!normalized) {
     return false;
   }
   return OPENCODE_FATAL_RETRY_MESSAGE_TOKENS.some((token) => normalized.includes(token));
+}
+
+function isOpenCodeHeadersTimeoutFailure(error: unknown): boolean {
+  const diagnostics = new Set<string>();
+  const queue: unknown[] = [error];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+
+    const normalized = stringifyUnknownError(current).trim().toLowerCase();
+    if (normalized) {
+      diagnostics.add(normalized);
+    }
+
+    if (typeof current === "object") {
+      const record = current as {
+        message?: unknown;
+        code?: unknown;
+        name?: unknown;
+        cause?: unknown;
+      };
+
+      for (const value of [record.message, record.code, record.name]) {
+        if (typeof value === "string") {
+          const diagnostic = value.trim().toLowerCase();
+          if (diagnostic) {
+            diagnostics.add(diagnostic);
+          }
+        }
+      }
+
+      if (record.cause) {
+        queue.push(record.cause);
+      }
+    }
+  }
+
+  return [...diagnostics].some((diagnostic) =>
+    OPENCODE_HEADERS_TIMEOUT_TOKENS.some((token) => diagnostic.includes(token)),
+  );
 }
 
 function isAlreadyPresentMcpError(error: unknown): boolean {
@@ -571,6 +687,7 @@ export const __openCodeInternals = {
   hasNormalizedOpenCodeUsage,
   mergeOpenCodeStepFinishUsage,
   parseOpenCodeModelLookupKey,
+  reconcileOpenCodeSessionClose,
   resolveOpenCodeModelLookupKeyFromAssistantMessage,
   resolveOpenCodeSelectedModelContextWindow,
 };
@@ -917,7 +1034,7 @@ export class OpenCodeAgentClient implements AgentClient {
   async isAvailable(): Promise<boolean> {
     const command = this.runtimeSettings?.command;
     if (command?.mode === "replace") {
-      return existsSync(command.argv[0]);
+      return await isCommandAvailable(command.argv[0]);
     }
     return true;
   }
@@ -1043,6 +1160,150 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function mapOpenCodeTodosToTimelineItems(
+  todos: Array<{ content?: string | null; status?: string | null }>,
+): Extract<AgentTimelineItem, { type: "todo" }> {
+  return {
+    type: "todo",
+    items: todos.flatMap((todo) => {
+      const text = readNonEmptyString(todo.content);
+      if (!text) {
+        return [];
+      }
+
+      return [
+        {
+          text,
+          completed: todo.status === "completed",
+        },
+      ];
+    }),
+  };
+}
+
+function createCompactionTimelineItem(
+  status: Extract<AgentTimelineItem, { type: "compaction" }>["status"],
+  trigger?: Extract<AgentTimelineItem, { type: "compaction" }>["trigger"],
+): Extract<AgentTimelineItem, { type: "compaction" }> {
+  return {
+    type: "compaction",
+    status,
+    ...(trigger ? { trigger } : {}),
+  };
+}
+
+const PERMISSION_COMMAND_KEYS = ["command", "cmd", "shellCommand"] as const;
+const PERMISSION_CWD_KEYS = ["cwd", "directory", "path", "workdir"] as const;
+const PERMISSION_REASON_KEYS = ["reason", "purpose", "description", "message"] as const;
+const PERMISSION_TITLE_BY_NAME: Record<string, string> = {
+  external_directory: "Access external directory",
+  bash: "Run shell command",
+  read: "Read files",
+  read_file: "Read files",
+  write: "Write files",
+  write_file: "Write files",
+  create_file: "Write files",
+  edit: "Edit files",
+  apply_patch: "Edit files",
+  apply_diff: "Edit files",
+};
+
+function toHumanReadablePermissionTitle(permission: string): string {
+  const mapped = PERMISSION_TITLE_BY_NAME[permission];
+  if (mapped) {
+    return mapped;
+  }
+
+  const normalized = permission
+    .split(/[\s_-]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+  return normalized.length > 0 ? normalized : "Permission request";
+}
+
+function readFirstStringFromRecord(
+  record: Record<string, unknown> | null,
+  keys: readonly string[],
+): string | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = readNonEmptyString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function readPermissionField(
+  metadata: Record<string, unknown> | null,
+  keys: readonly string[],
+): string | null {
+  const direct = readFirstStringFromRecord(metadata, keys);
+  if (direct) {
+    return direct;
+  }
+
+  const nestedInput = readOpenCodeRecord(metadata?.input);
+  return readFirstStringFromRecord(nestedInput, keys);
+}
+
+function buildOpenCodePermissionInput(params: {
+  patterns: string[];
+  metadata: Record<string, unknown> | null;
+  tool: Record<string, unknown> | null;
+  command: string | null;
+}): Record<string, unknown> {
+  return {
+    ...(params.patterns.length > 0 ? { patterns: params.patterns } : {}),
+    ...(params.metadata ? { metadata: params.metadata } : {}),
+    ...(params.tool ? { tool: params.tool } : {}),
+    ...(params.command ? { command: params.command } : {}),
+  };
+}
+
+function buildOpenCodePermissionDetail(params: {
+  permission: string;
+  input: Record<string, unknown>;
+  command: string | null;
+  cwd: string | null;
+}): ToolCallDetail {
+  if (params.command) {
+    return {
+      type: "shell",
+      command: params.command,
+      ...(params.cwd ? { cwd: params.cwd } : {}),
+    };
+  }
+
+  return {
+    type: "unknown",
+    input: {
+      permission: params.permission,
+      ...params.input,
+    },
+    output: null,
+  };
+}
+
+function buildOpenCodePermissionDescription(params: {
+  reason: string | null;
+  patterns: string[];
+}): string | undefined {
+  const parts: string[] = [];
+  if (params.reason) {
+    parts.push(params.reason);
+  }
+  if (params.patterns.length > 0) {
+    parts.push(`Scope: ${params.patterns.join(", ")}`);
+  }
+  return parts.length > 0 ? parts.join(" - ") : undefined;
+}
+
 export function translateOpenCodeEvent(
   event: OpenCodeEvent,
   state: OpenCodeEventTranslationState,
@@ -1142,6 +1403,12 @@ export function translateOpenCodeEvent(
             item: parsedToolPart.data,
           });
         }
+      } else if (part.type === "compaction") {
+        events.push({
+          type: "timeline",
+          provider: "opencode",
+          item: createCompactionTimelineItem("loading", part.auto ? "auto" : "manual"),
+        });
       } else if (part.type === "step-finish") {
         mergeOpenCodeStepFinishUsage(state.accumulatedUsage, part);
         if (hasNormalizedOpenCodeUsage(state.accumulatedUsage)) {
@@ -1199,6 +1466,31 @@ export function translateOpenCodeEvent(
         break;
       }
 
+      const metadata = readOpenCodeRecord(event.properties.metadata);
+      const tool = readOpenCodeRecord(event.properties.tool);
+      const patterns = Array.isArray(event.properties.patterns)
+        ? event.properties.patterns.filter((value): value is string => typeof value === "string")
+        : [];
+      const command = readPermissionField(metadata, PERMISSION_COMMAND_KEYS);
+      const cwd = readPermissionField(metadata, PERMISSION_CWD_KEYS);
+      const reason = readPermissionField(metadata, PERMISSION_REASON_KEYS);
+      const input = buildOpenCodePermissionInput({
+        patterns,
+        metadata,
+        tool,
+        command,
+      });
+      const detail = buildOpenCodePermissionDetail({
+        permission: event.properties.permission,
+        input,
+        command,
+        cwd,
+      });
+      const description = buildOpenCodePermissionDescription({
+        reason,
+        patterns,
+      });
+
       events.push({
         type: "permission_requested",
         provider: "opencode",
@@ -1207,9 +1499,10 @@ export function translateOpenCodeEvent(
           provider: "opencode",
           name: event.properties.permission,
           kind: "tool",
-          title: event.properties.permission,
-          description: event.properties.patterns?.join(", "),
-          input: event.properties.metadata,
+          title: toHumanReadablePermissionTitle(event.properties.permission),
+          ...(description ? { description } : {}),
+          input,
+          detail,
         },
       });
       break;
@@ -1258,6 +1551,32 @@ export function translateOpenCodeEvent(
             ...(event.properties.tool ?? {}),
           },
         },
+      });
+      break;
+    }
+
+    case "todo.updated": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "timeline",
+        provider: "opencode",
+        item: mapOpenCodeTodosToTimelineItems(event.properties.todos),
+      });
+      break;
+    }
+
+    case "session.compacted": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "timeline",
+        provider: "opencode",
+        item: createCompactionTimelineItem("completed"),
       });
       break;
     }
@@ -1531,6 +1850,17 @@ class OpenCodeAgentSession implements AgentSession {
         })
         .then((response) => {
           if (response.error) {
+            if (isOpenCodeHeadersTimeoutFailure(response.error)) {
+              this.logger.warn(
+                {
+                  err: response.error,
+                  commandName: slashCommand.commandName,
+                  turnId,
+                },
+                "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+              );
+              return;
+            }
             const errorMsg = normalizeTurnFailureError(response.error);
             this.finishForegroundTurn(
               { type: "turn_failed", provider: "opencode", error: errorMsg },
@@ -1544,6 +1874,17 @@ class OpenCodeAgentSession implements AgentSession {
           }
         })
         .catch((err) => {
+          if (isOpenCodeHeadersTimeoutFailure(err)) {
+            this.logger.warn(
+              {
+                err,
+                commandName: slashCommand.commandName,
+                turnId,
+              },
+              "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+            );
+            return;
+          }
           this.finishForegroundTurn(
             { type: "turn_failed", provider: "opencode", error: normalizeTurnFailureError(err) },
             turnId,
@@ -1933,6 +2274,12 @@ class OpenCodeAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     this.abortController?.abort();
+    await reconcileOpenCodeSessionClose({
+      client: this.client,
+      sessionId: this.sessionId,
+      directory: this.config.cwd,
+      logger: this.logger,
+    });
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
   }

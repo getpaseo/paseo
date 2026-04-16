@@ -139,6 +139,33 @@ The changelog is shown on the Paseo homepage. Write it for **end users**, not de
 - **Only list changes relative to the previous stable release.** The diff is `v(previous)..HEAD`. If something was introduced and fixed between those two tags, it never shipped — don't mention the fix.
 - **Cut low-signal entries.** "Toolbar buttons have consistent sizing" is too granular. Combine small polish items or drop them.
 
+## Changelog attribution
+
+Every changelog bullet must credit contributors and link to the PR(s) that delivered the change. This is not one-PR-per-line — a single bullet describes a user-facing change and may reference multiple PRs.
+
+Format: append `([#123](https://github.com/getpaseo/paseo/pull/123) by [@user](https://github.com/user))` at the end of each bullet. For changes spanning multiple PRs or contributors:
+
+```markdown
+- Voice mode now works on tablets with proper microphone permissions. ([#210](https://github.com/getpaseo/paseo/pull/210), [#215](https://github.com/getpaseo/paseo/pull/215) by [@alice](https://github.com/alice), [@bob](https://github.com/bob))
+```
+
+Rules:
+
+- **Always link the PR number** as `[#N](https://github.com/getpaseo/paseo/pull/N)`.
+- **Always link the contributor's GitHub profile** as `[@user](https://github.com/user)`.
+- **One bullet = one user-facing change**, regardless of how many PRs went into it. Group related PRs on the same bullet.
+- **De-duplicate contributors.** If the same person authored multiple PRs in one bullet, list them once.
+- **Only credit external contributors.** Skip attribution for [@boudra](https://github.com/boudra). The changelog credits community contributions — core team work is the default.
+- **Use `git log` to find PR numbers and authors.** PR numbers are typically in the commit message as `(#N)`. Use `gh pr view N --json author` if the commit doesn't include the GitHub username.
+
+## Changelog ordering
+
+Entries within each section (Added, Improved, Fixed) are ordered by user impact:
+
+1. **User-facing features and changes first** — things users will notice, want to try, or that change their workflow.
+2. **Quality-of-life improvements** — polish, performance, smoother interactions.
+3. **Internal/infra changes last** — only include if they have a tangible user benefit (e.g. "faster startup" is user-facing even if the fix was internal).
+
 ## Pre-release sanity check
 
 Before cutting any release (RC or stable), run a Codex review of the diff as a last line of defence against shipping bugs.

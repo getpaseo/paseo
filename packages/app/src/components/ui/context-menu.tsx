@@ -32,6 +32,8 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, CheckCircle } from "lucide-react-native";
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { isWeb, isNative } from "@/constants/platform";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
 // Keep parity with dropdown-menu action statuses.
 export type ActionStatus = "idle" | "pending" | "success";
@@ -254,8 +256,7 @@ export function ContextMenuTrigger({
 >): ReactElement {
   const ctx = useContextMenuContext("ContextMenuTrigger");
 
-  const shouldEnableOnThisPlatform =
-    enabled && (Platform.OS === "web" ? enabledOnWeb : enabledOnMobile);
+  const shouldEnableOnThisPlatform = enabled && (isWeb ? enabledOnWeb : enabledOnMobile);
 
   const openAtEvent = useCallback(
     (event: unknown) => {
@@ -294,7 +295,7 @@ export function ContextMenuTrigger({
       disabled={disabled}
       delayLongPress={longPressDelayMs}
       onLongPress={(event) => {
-        if (Platform.OS === "web") {
+        if (isWeb) {
           props.onLongPress?.(event);
           return;
         }
@@ -303,7 +304,7 @@ export function ContextMenuTrigger({
       }}
       // @ts-ignore - onContextMenu is web-only and not in RN types.
       onContextMenu={(event: unknown) => {
-        if (Platform.OS !== "web") {
+        if (isNative) {
           return;
         }
         const e: any = event;
@@ -348,6 +349,7 @@ export function ContextMenuContent({
   testID?: string;
 }>): ReactElement | null {
   const context = useContextMenuContext("ContextMenuContent");
+  const webScrollbarStyle = useWebScrollbarStyle();
   const isMobile = useIsCompactFormFactor();
   const useMobileSheet = isMobile && mobileMode === "sheet";
   const { open, setOpen, triggerRef, anchorRect } = context;
@@ -537,6 +539,7 @@ export function ContextMenuContent({
           <ScrollView
             bounces={false}
             showsVerticalScrollIndicator
+            style={webScrollbarStyle}
             contentContainerStyle={{ flexGrow: 1 }}
           >
             {children}

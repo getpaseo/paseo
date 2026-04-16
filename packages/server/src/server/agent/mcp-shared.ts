@@ -1,20 +1,15 @@
 import { z } from "zod";
 import type { Logger } from "pino";
 
-import type { AgentPromptInput, AgentProvider, AgentPermissionRequest } from "./agent-sdk-types.js";
+import type { AgentPromptInput, AgentPermissionRequest } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent, WaitForAgentResult } from "./agent-manager.js";
 import { curateAgentActivity } from "./activity-curator.js";
-import { AGENT_PROVIDER_DEFINITIONS } from "./provider-registry.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { serializeAgentSnapshot } from "../messages.js";
 import { StoredScheduleSchema } from "../schedule/types.js";
+import type { AgentProvider } from "./agent-sdk-types.js";
 
-export const AgentProviderEnum = z.enum(
-  AGENT_PROVIDER_DEFINITIONS.map((definition) => definition.id) as [
-    AgentProvider,
-    ...AgentProvider[],
-  ],
-);
+export const AgentProviderEnum = z.string();
 
 export const AgentStatusEnum = z.enum(["initializing", "idle", "running", "error", "closed"]);
 
@@ -22,6 +17,8 @@ export const ProviderModeSchema = z.object({
   id: z.string(),
   label: z.string(),
   description: z.string().optional(),
+  icon: z.string().optional(),
+  colorTier: z.string().optional(),
 });
 
 export const ProviderSummarySchema = z.object({
@@ -51,6 +48,49 @@ export const AgentModelSchema = z.object({
 
 // 30 seconds - surface friendly message before SDK tool timeout (~60s)
 export const AGENT_WAIT_TIMEOUT_MS = 30000;
+
+export interface ResolvedProviderModel {
+  provider: AgentProvider;
+  model: string | undefined;
+}
+
+export function resolveProviderAndModel(params: {
+  provider?: string;
+  model?: string;
+  defaultProvider: AgentProvider;
+}): ResolvedProviderModel {
+  const providerInput = params.provider?.trim() || params.defaultProvider;
+  const modelInput = params.model?.trim();
+
+  if (params.model !== undefined && !modelInput) {
+    throw new Error("model cannot be empty");
+  }
+
+  const slashIndex = providerInput.indexOf("/");
+  if (slashIndex === -1) {
+    return {
+      provider: providerInput as AgentProvider,
+      model: modelInput,
+    };
+  }
+
+  const provider = providerInput.slice(0, slashIndex).trim();
+  const modelFromProvider = providerInput.slice(slashIndex + 1).trim();
+  if (!provider || !modelFromProvider) {
+    throw new Error("provider must be <provider> or <provider>/<model>");
+  }
+
+  if (modelInput && modelInput !== modelFromProvider) {
+    throw new Error(
+      `Conflicting model values provided: provider specifies ${modelFromProvider}, but model specifies ${modelInput}`,
+    );
+  }
+
+  return {
+    provider: provider as AgentProvider,
+    model: modelInput ?? modelFromProvider,
+  };
+}
 
 export type StartAgentRunOptions = {
   replaceRunning?: boolean;
@@ -147,18 +187,19 @@ export function startAgentRun(
 
 interface SetupFinishNotificationParams {
   agentManager: AgentManager;
+  agentStorage: AgentStorage;
   childAgentId: string;
   callerAgentId: string;
   logger: Logger;
 }
 
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {
-  const { agentManager, childAgentId, callerAgentId, logger } = params;
+  const { agentManager, agentStorage, childAgentId, callerAgentId, logger } = params;
   let hasSeenRunning = false;
   let fired = false;
   let unsubscribe: (() => void) | null = null;
 
-  function notify(reason: "finished" | "errored" | "needs permission"): void {
+  async function notify(reason: "finished" | "errored" | "needs permission"): Promise<void> {
     if (fired) {
       return;
     }
@@ -166,6 +207,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     unsubscribe?.();
 
     if (!agentManager.getAgent(callerAgentId)) {
+      return;
+    }
+
+    const callerRecord = await agentStorage.get(callerAgentId);
+    if (callerRecord?.archivedAt) {
       return;
     }
 

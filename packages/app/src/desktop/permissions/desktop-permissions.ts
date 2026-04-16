@@ -1,5 +1,5 @@
-import { Platform } from "react-native";
 import { getDesktopHost } from "@/desktop/host";
+import { isWeb, isNative } from "@/constants/platform";
 
 export type DesktopPermissionKind = "notifications" | "microphone";
 
@@ -45,7 +45,7 @@ type NavigatorLike = {
 };
 
 export function shouldShowDesktopPermissionSection(): boolean {
-  return Platform.OS === "web" && getDesktopHost() !== null;
+  return isWeb && getDesktopHost() !== null;
 }
 
 function status(input: DesktopPermissionStatus): DesktopPermissionStatus {
@@ -83,7 +83,7 @@ function isPermissionsQueryRuntimeUnsupported(error: unknown): boolean {
 }
 
 function getWebNotificationConstructor(): NotificationConstructorLike | null {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return null;
   }
   const NotificationConstructor = (globalThis as { Notification?: unknown }).Notification;
@@ -97,7 +97,7 @@ function getWebNotificationConstructor(): NotificationConstructorLike | null {
 }
 
 function getNavigatorLike(): NavigatorLike | null {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return null;
   }
   const webNavigator = (globalThis as { navigator?: unknown }).navigator;
@@ -133,7 +133,7 @@ function mapNotificationPermissionString(permission: string): DesktopPermissionS
 }
 
 async function getNotificationPermissionStatus(): Promise<DesktopPermissionStatus> {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return status({
       state: "unavailable",
       detail: "Desktop notification status is only available on web runtime.",
@@ -167,7 +167,7 @@ async function getNotificationPermissionStatus(): Promise<DesktopPermissionStatu
 }
 
 async function getMicrophonePermissionStatus(): Promise<DesktopPermissionStatus> {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return status({
       state: "unavailable",
       detail: "Desktop microphone status is only available on web runtime.",
@@ -237,7 +237,7 @@ async function getMicrophonePermissionStatus(): Promise<DesktopPermissionStatus>
 }
 
 async function requestNotificationPermissionStatus(): Promise<DesktopPermissionStatus> {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return status({
       state: "unavailable",
       detail: "Desktop notification requests are only available on web runtime.",
@@ -264,7 +264,7 @@ async function requestNotificationPermissionStatus(): Promise<DesktopPermissionS
 }
 
 async function requestMicrophonePermissionStatus(): Promise<DesktopPermissionStatus> {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return status({
       state: "unavailable",
       detail: "Desktop microphone requests are only available on web runtime.",

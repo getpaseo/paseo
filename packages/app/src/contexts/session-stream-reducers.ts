@@ -1,7 +1,12 @@
 import type { AgentStreamEventPayload } from "@server/shared/messages";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type { StreamItem } from "@/types/stream";
-import { applyStreamEvent, hydrateStreamState, reduceStreamUpdate } from "@/types/stream";
+import {
+  applyStreamEvent,
+  flushHeadToTail,
+  hydrateStreamState,
+  reduceStreamUpdate,
+} from "@/types/stream";
 import {
   classifySessionTimelineSeq,
   type SessionTimelineSeqDecision,
@@ -214,12 +219,24 @@ export function processTimelineResponse(
     }
 
     if (acceptedUnits.length > 0) {
+      // Flush head to tail before appending canonical entries so that
+      // chronological ordering is preserved.  This matters on mobile where
+      // the server drops live events for backgrounded/unfocused agents:
+      // when the client catches up, the head may still hold stale live
+      // items from before the gap that must be committed ahead of the
+      // canonical gap-fill entries.
+      const baseTail =
+        currentHead.length > 0 ? flushHeadToTail(currentTail, currentHead) : currentTail;
+      if (currentHead.length > 0) {
+        nextHead = [];
+      }
+
       nextTail = acceptedUnits.reduce<StreamItem[]>(
         (state, { event, timestamp }) =>
           reduceStreamUpdate(state, event, timestamp, {
             source: "canonical",
           }),
-        currentTail,
+        baseTail,
       );
     }
 

@@ -285,6 +285,12 @@ export function useSidebarWorkspacesList(options?: {
   }, [persistedProjectOrder, persistedWorkspaceOrderByScope, serverId, sessionWorkspaces]);
 
   useEffect(() => {
+    if (!serverId) {
+      return;
+    }
+  }, [connectionStatus, hasHydratedWorkspaces, projects, serverId, sessionWorkspaces]);
+
+  useEffect(() => {
     if (!serverId || projects.length === 0) {
       return;
     }
@@ -349,7 +355,12 @@ export function useSidebarWorkspacesList(options?: {
         const store = useSessionStore.getState();
         store.setWorkspaces(serverId, next);
         store.setHasHydratedWorkspaces(serverId, true);
-      } catch {
+      } catch (error) {
+        console.error("[WorkspaceFetch][sidebar-refresh] failed", {
+          serverId,
+          cursor,
+          error,
+        });
         // ignore explicit refresh failures; hook keeps existing data
       }
     })();

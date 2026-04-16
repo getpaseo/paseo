@@ -258,7 +258,8 @@ export function AgentList({
     if (!actionAgent || !actionClient) {
       return;
     }
-    void actionClient.archiveAgent(actionAgent.id);
+    // Timeout errors are swallowed — the daemon will still process the archive
+    void actionClient.archiveAgent(actionAgent.id).catch(() => {});
     setActionAgent(null);
   }, [actionAgent, actionClient]);
 

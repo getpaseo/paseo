@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
-import { View, Text, Platform, Pressable, Keyboard } from "react-native";
+import { View, Text, Pressable, Keyboard } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
@@ -17,6 +17,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import {
   buildFavoriteModelKey,
   mergeProviderPreferences,
@@ -40,7 +41,6 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import {
-  AGENT_PROVIDER_DEFINITIONS,
   getModeVisuals,
   type AgentModeColorTier,
   type AgentModeIcon,
@@ -51,6 +51,7 @@ import {
   getStatusSelectorHint,
   resolveAgentModelSelection,
 } from "@/components/agent-status-bar.utils";
+import { isWeb as platformIsWeb } from "@/constants/platform";
 
 type StatusOption = {
   id: string;
@@ -58,10 +59,6 @@ type StatusOption = {
 };
 
 type StatusSelector = "provider" | "mode" | "model" | "thinking" | `feature-${string}`;
-
-const PROVIDER_DEFINITION_MAP = new Map(
-  AGENT_PROVIDER_DEFINITIONS.map((definition) => [definition.id, definition]),
-);
 
 type ControlledAgentStatusBarProps = {
   provider: string;
@@ -80,7 +77,7 @@ type ControlledAgentStatusBarProps = {
   onSelectThinkingOption?: (thinkingOptionId: string) => void;
   disabled?: boolean;
   isModelLoading?: boolean;
-  providerDefinitions?: AgentProviderDefinition[];
+  providerDefinitions: AgentProviderDefinition[];
   allProviderModels?: Map<string, AgentModelDefinition[]>;
   canSelectModelProvider?: (providerId: string) => boolean;
   favoriteKeys?: Set<string>;
@@ -222,7 +219,6 @@ function ControlledStatusBar({
   onModelSelectorOpen,
 }: ControlledAgentStatusBarProps) {
   const { theme } = useUnistyles();
-  const isWeb = Platform.OS === "web";
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [openSelector, setOpenSelector] = useState<StatusSelector | null>(null);
 
@@ -252,7 +248,9 @@ function ControlledStatusBar({
     thinkingOptions?.[0]?.label ?? "Unknown",
   );
 
-  const modeVisuals = selectedModeId ? getModeVisuals(provider, selectedModeId) : undefined;
+  const modeVisuals = selectedModeId
+    ? getModeVisuals(provider, selectedModeId, providerDefinitions)
+    : undefined;
   const ModeIconComponent = modeVisuals?.icon ? MODE_ICONS[modeVisuals.icon] : null;
   const modeIconColor = getModeIconColor(modeVisuals?.colorTier, theme.colors.palette);
   const ProviderIcon = getProviderIcon(provider);
@@ -300,9 +298,7 @@ function ControlledStatusBar({
     );
     return map;
   }, [modelOptions, provider]);
-  const effectiveProviderDefinitions =
-    providerDefinitions ??
-    (PROVIDER_DEFINITION_MAP.has(provider) ? [PROVIDER_DEFINITION_MAP.get(provider)!] : []);
+  const effectiveProviderDefinitions = providerDefinitions;
   const effectiveAllProviderModels = allProviderModels ?? fallbackAllProviderModels;
   const canSelectProviderInModelMenu = canSelectModelProvider ?? (() => true);
   const comboboxThinkingOptions = useMemo<ComboboxOption[]>(
@@ -322,7 +318,7 @@ function ControlledStatusBar({
       active: boolean;
       onPress: () => void;
     }) => {
-      const visuals = getModeVisuals(provider, option.id);
+      const visuals = getModeVisuals(provider, option.id, providerDefinitions);
       const IconComponent = visuals?.icon ? MODE_ICONS[visuals.icon] : ShieldCheck;
       return (
         <ComboboxItem
@@ -334,7 +330,7 @@ function ControlledStatusBar({
         />
       );
     },
-    [provider, theme.colors.foreground],
+    [provider, providerDefinitions, theme.colors.foreground],
   );
 
   const handleOpenChange = useCallback(
@@ -356,7 +352,7 @@ function ControlledStatusBar({
 
   return (
     <View style={styles.container}>
-      {isWeb ? (
+      {platformIsWeb ? (
         <>
           {providerOptions && providerOptions.length > 0 ? (
             <>
@@ -745,7 +741,7 @@ function ControlledStatusBar({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent side="top" align="start">
                     {modeOptions.map((mode) => {
-                      const visuals = getModeVisuals(provider, mode.id);
+                      const visuals = getModeVisuals(provider, mode.id, providerDefinitions);
                       const Icon = visuals?.icon ? MODE_ICONS[visuals.icon] : ShieldCheck;
                       return (
                         <DropdownMenuItem
@@ -896,9 +892,11 @@ export const AgentStatusBar = memo(function AgentStatusBar({
   const models = snapshotModels;
 
   const agentProviderDefinitions = useMemo(() => {
-    const definition = AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === agent?.provider);
+    const definition = agent?.provider
+      ? resolveProviderDefinition(agent.provider, snapshotEntries)
+      : undefined;
     return definition ? [definition] : [];
-  }, [agent?.provider]);
+  }, [agent?.provider, snapshotEntries]);
 
   const agentProviderModels = useMemo(() => {
     const map = new Map<string, AgentModelDefinition[]>();
@@ -1077,7 +1075,6 @@ export function DraftAgentStatusBar({
   onModelSelectorOpen,
   disabled = false,
 }: DraftAgentStatusBarProps) {
-  const isWeb = Platform.OS === "web";
   const { preferences, updatePreferences } = useFormPreferences();
 
   const mappedModeOptions = useMemo<StatusOption[]>(() => {
@@ -1105,7 +1102,7 @@ export function DraftAgentStatusBar({
   const effectiveSelectedThinkingOption =
     selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
 
-  if (isWeb) {
+  if (platformIsWeb) {
     return (
       <View style={styles.container}>
         <CombinedModelSelector
@@ -1129,6 +1126,7 @@ export function DraftAgentStatusBar({
         />
         <ControlledStatusBar
           provider={selectedProvider}
+          providerDefinitions={providerDefinitions}
           modeOptions={mappedModeOptions}
           selectedModeId={effectiveSelectedMode}
           onSelectMode={onSelectMode}
@@ -1227,6 +1225,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   prefsButton: {
     height: 28,
+    minWidth: 0,
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],

@@ -28,6 +28,8 @@ import { Portal } from "@gorhom/portal";
 import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb } from "@/constants/platform";
 
 type Side = "top" | "bottom" | "left" | "right";
 type Align = "start" | "center" | "end";
@@ -106,18 +108,6 @@ function measureElement(element: View): Promise<Rect> {
       resolve({ x, y, width, height });
     });
   });
-}
-
-function isMobileTooltipEnvironment(): boolean {
-  if (Platform.OS !== "web") {
-    return true;
-  }
-
-  if (typeof navigator === "undefined") {
-    return false;
-  }
-
-  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent ?? "");
 }
 
 function computePosition({
@@ -227,8 +217,8 @@ export function Tooltip({
     onOpenChange,
   });
 
-  const isMobile = isMobileTooltipEnvironment();
-  const enabled = isMobile ? enabledOnMobile : enabledOnDesktop;
+  const isCompact = useIsCompactFormFactor();
+  const enabled = isCompact ? enabledOnMobile : enabledOnDesktop;
 
   const value = useMemo<TooltipContextValue>(
     () => ({
@@ -236,10 +226,10 @@ export function Tooltip({
       setOpen: setIsOpen,
       triggerRef,
       enabled,
-      openOnPress: isMobile,
+      openOnPress: isCompact,
       delayDuration,
     }),
-    [isOpen, setIsOpen, enabled, isMobile, delayDuration],
+    [isOpen, setIsOpen, enabled, isCompact, delayDuration],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -354,7 +344,7 @@ export function TooltipTrigger({
     onFocus: handleFocus,
     onBlur: handleBlur,
     onPress: handlePress,
-    ...(Platform.OS === "web"
+    ...(isWeb
       ? ({
           // RN Web's hover handling can vary across environments; pointer events are the most reliable.
           onPointerEnter: handleHoverIn,
@@ -473,7 +463,7 @@ export function TooltipContent({
   // On web, avoid React Native's <Modal/> implementation (it uses <dialog> and can
   // steal focus / disrupt hover). Rendering via Portal + position:fixed keeps the
   // exact same positioning math as DropdownMenu, without hover feedback loops.
-  if (Platform.OS === "web") {
+  if (isWeb) {
     return (
       <Portal hostName={bottomSheetInternal?.hostName}>
         <View pointerEvents="none" style={styles.portalOverlay}>

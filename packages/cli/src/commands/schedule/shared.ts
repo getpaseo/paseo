@@ -9,6 +9,7 @@ import type {
   ScheduleTarget,
 } from "./types.js";
 import { parseDuration } from "../../utils/duration.js";
+import { resolveProviderAndModel } from "../../utils/provider-model.js";
 
 export interface ScheduleCommandOptions extends CommandOptions {
   host?: string;
@@ -58,7 +59,8 @@ export function formatTarget(target: ScheduleTarget | ScheduleListItem["target"]
   if (target.type === "agent") {
     return `agent:${target.agentId.slice(0, 7)}`;
   }
-  return `new-agent:${target.config.provider}`;
+  const modelSuffix = target.config.model ? `/${target.config.model}` : "";
+  return `new-agent:${target.config.provider}${modelSuffix}`;
 }
 
 export function formatDurationMs(durationMs: number): string {
@@ -87,6 +89,7 @@ export function parseScheduleCreateInput(options: {
   cron?: string;
   name?: string;
   target?: string;
+  provider?: string;
   maxRuns?: string;
   expiresIn?: string;
 }): CreateScheduleInput {
@@ -111,29 +114,53 @@ export function parseScheduleCreateInput(options: {
     : { type: "cron", expression: options.cron!.trim() };
 
   const targetValue = options.target?.trim();
+  const hasExplicitProviderSelection = options.provider !== undefined;
+  const resolvedProviderModel = resolveProviderAndModel({
+    provider: options.provider,
+    defaultProvider: "claude",
+  });
+  const newAgentTarget: ScheduleTarget = {
+    type: "new-agent",
+    config: {
+      provider: resolvedProviderModel.provider,
+      cwd: process.cwd(),
+      ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
+    },
+  };
   let target: ScheduleTarget;
-  if (!targetValue || targetValue === "self") {
+  if (!targetValue) {
     const currentAgentId = process.env.PASEO_AGENT_ID?.trim();
-    if (currentAgentId) {
+    if (currentAgentId && !hasExplicitProviderSelection) {
       target = { type: "self", agentId: currentAgentId };
     } else {
-      target = {
-        type: "new-agent",
-        config: {
-          provider: "claude",
-          cwd: process.cwd(),
-        },
-      };
+      target = newAgentTarget;
     }
+  } else if (targetValue === "self") {
+    if (hasExplicitProviderSelection) {
+      throw {
+        code: "INVALID_TARGET",
+        message: "--provider can only be used with a new-agent target",
+        details: "Use --target new-agent or omit --target to create a new agent schedule",
+      } satisfies CommandError;
+    }
+    const currentAgentId = process.env.PASEO_AGENT_ID?.trim();
+    if (!currentAgentId) {
+      throw {
+        code: "INVALID_TARGET",
+        message: "--target self requires running inside a Paseo agent",
+      } satisfies CommandError;
+    }
+    target = { type: "self", agentId: currentAgentId };
   } else if (targetValue === "new-agent") {
-    target = {
-      type: "new-agent",
-      config: {
-        provider: "claude",
-        cwd: process.cwd(),
-      },
-    };
+    target = newAgentTarget;
   } else {
+    if (hasExplicitProviderSelection) {
+      throw {
+        code: "INVALID_TARGET",
+        message: "--provider can only be used with a new-agent target",
+        details: "Use --target new-agent or omit --target to create a new agent schedule",
+      } satisfies CommandError;
+    }
     target = {
       type: "agent",
       agentId: targetValue,

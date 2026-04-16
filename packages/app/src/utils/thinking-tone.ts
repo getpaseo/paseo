@@ -1,6 +1,6 @@
 import { Asset } from "expo-asset";
 import { File } from "expo-file-system";
-import { Platform } from "react-native";
+import { isWeb } from "@/constants/platform";
 export { parsePcm16Wav, type Pcm16Wav } from "@/utils/pcm16-wav";
 
 export const THINKING_TONE_REPEAT_GAP_MS = 350;
@@ -11,7 +11,7 @@ async function readThinkingToneArrayBuffer(): Promise<ArrayBuffer> {
   const toneModule = require("../../assets/audio/thinking-tone.wav");
   const asset = Asset.fromModule(toneModule);
 
-  if (Platform.OS === "web") {
+  if (isWeb) {
     const response = await fetch(asset.uri);
     if (!response.ok) {
       throw new Error(`Failed to fetch thinking tone asset: ${response.status}`);

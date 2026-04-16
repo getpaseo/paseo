@@ -185,7 +185,7 @@ function Security() {
             <code className="font-mono">100.x.y.z:6767</code>)
           </li>
           <li>
-            Add your Tailscale hostname to <code className="font-mono">allowedHosts</code> and{" "}
+            Add your Tailscale hostname to <code className="font-mono">hostnames</code> and{" "}
             <code className="font-mono">cors.allowedOrigins</code>
           </li>
           <li>
@@ -199,7 +199,7 @@ function Security() {
           daemon reachable on all network interfaces, including public Wi-Fi and local networks.
           This can expose your daemon to unauthorized access. If you must bind to all interfaces,
           ensure you have proper firewall rules and review your{" "}
-          <code className="font-mono">allowedHosts</code> configuration.
+          <code className="font-mono">hostnames</code> configuration.
         </div>
       </section>
 
@@ -216,7 +216,7 @@ function Security() {
           on incoming requests. Requests with unrecognized hosts are rejected.
         </p>
         <p className="text-white/60 leading-relaxed">
-          Configure via <code className="font-mono">daemon.allowedHosts</code> in{" "}
+          Configure via <code className="font-mono">daemon.hostnames</code> in{" "}
           <code className="font-mono">config.json</code>:
         </p>
         <ul className="text-white/60 space-y-2 list-disc list-inside">

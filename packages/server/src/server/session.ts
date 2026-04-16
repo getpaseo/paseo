@@ -1,7 +1,7 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { stat } from "fs/promises";
-import { exec, execFile } from "node:child_process";
+import { exec } from "node:child_process";
 import { promisify } from "util";
 import { resolve, sep } from "path";
 import { homedir } from "node:os";
@@ -61,9 +61,10 @@ import {
 } from "./voice/voice-turn-controller.js";
 import {
   buildConfigOverrides,
-  buildSessionConfig,
   extractTimestamps,
+  toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
+import { ensureAgentLoaded } from "./agent/agent-loading.js";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
@@ -71,7 +72,10 @@ import type { DaemonConfigStore } from "./daemon-config-store.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 
 import { buildProviderRegistry } from "./agent/provider-registry.js";
-import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
+import type {
+  AgentProviderRuntimeSettingsMap,
+  ProviderOverride,
+} from "./agent/provider-launch-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
@@ -80,7 +84,12 @@ import type {
   ManagedAgent,
 } from "./agent/agent-manager.js";
 import { scheduleAgentMetadataGeneration } from "./agent/agent-metadata-generator.js";
-import { resolveEffectiveThinkingOptionId, toAgentPayload } from "./agent/agent-projections.js";
+import {
+  buildStoredAgentPayload,
+  resolveEffectiveThinkingOptionId,
+  resolveStoredAgentPayloadUpdatedAt,
+  toAgentPayload,
+} from "./agent/agent-projections.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent/agent-title-limits.js";
 import {
   appendTimelineItemIfAgentKnown,
@@ -98,20 +107,20 @@ import {
   generateStructuredAgentResponseWithFallback,
 } from "./agent/agent-response-loop.js";
 import type {
+  AgentPersistenceHandle,
   AgentPermissionResponse,
+  AgentProvider,
   AgentPromptContentBlock,
   AgentPromptInput,
   AgentRunOptions,
   AgentSessionConfig,
   AgentStreamEvent,
-  AgentProvider,
-  AgentPersistenceHandle,
   ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
-import { isValidAgentProvider, AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
 import {
   buildProjectPlacementForCwd,
+  checkoutLiteFromGitSnapshot,
   detectStaleWorkspaces,
   deriveProjectKind,
   deriveProjectRootPath,
@@ -170,10 +179,11 @@ import { ChatServiceError, FileBackedChatService } from "./chat/chat-service.js"
 import { notifyChatMentions } from "./chat/chat-mentions.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
+import { execCommand } from "../utils/spawn.js";
 import {
   assertSafeGitRef as assertWorktreeSafeGitRef,
   buildAgentSessionConfig as buildWorktreeAgentSessionConfig,
-  createPaseoWorktreeInBackground as createWorktreeInBackgroundSession,
+  runWorktreeSetupInBackground as runWorktreeSetupInBackgroundSession,
   handleCreatePaseoWorktreeRequest as handleCreateWorktreeRequest,
   handlePaseoWorktreeArchiveRequest as handleWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
@@ -182,10 +192,7 @@ import {
 } from "./worktree-session.js";
 
 const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
 const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
-const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
-const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
 
 // TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
@@ -332,6 +339,42 @@ type FetchWorkspacesCursor = {
   id: string;
 };
 
+function summarizeFetchWorkspacesEntries(entries: Iterable<FetchWorkspacesResponseEntry>): {
+  count: number;
+  projectIds: string[];
+  statusCounts: Record<string, number>;
+  workspaces: Array<{
+    id: string;
+    projectId: string;
+    projectDisplayName: string;
+    name: string;
+    status: FetchWorkspacesResponseEntry["status"];
+    workspaceKind: FetchWorkspacesResponseEntry["workspaceKind"];
+    activityAt: string | null;
+  }>;
+} {
+  const workspaces = Array.from(entries, (entry) => ({
+    id: entry.id,
+    projectId: entry.projectId,
+    projectDisplayName: entry.projectDisplayName,
+    name: entry.name,
+    status: entry.status,
+    workspaceKind: entry.workspaceKind,
+    activityAt: entry.activityAt,
+  }));
+  const statusCounts = new Map<string, number>();
+  for (const workspace of workspaces) {
+    statusCounts.set(workspace.status, (statusCounts.get(workspace.status) ?? 0) + 1);
+  }
+
+  return {
+    count: workspaces.length,
+    projectIds: [...new Set(workspaces.map((workspace) => workspace.projectId))],
+    statusCounts: Object.fromEntries(statusCounts),
+    workspaces,
+  };
+}
+
 class SessionRequestError extends Error {
   constructor(
     readonly code: string,
@@ -416,6 +459,7 @@ export type SessionOptions = {
     getSpeechReadiness?: () => SpeechReadinessSnapshot;
   };
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
+  providerOverrides?: Record<string, ProviderOverride>;
 };
 
 export type SessionLifecycleIntent =
@@ -485,41 +529,6 @@ function convertPCMToWavBuffer(
   pcmBuffer.copy(wavBuffer, 44);
 
   return wavBuffer;
-}
-
-function coerceAgentProvider(logger: pino.Logger, value: string, agentId?: string): AgentProvider {
-  if (isValidAgentProvider(value)) {
-    return value;
-  }
-  logger.warn(
-    { value, agentId, defaultProvider: DEFAULT_AGENT_PROVIDER },
-    `Unknown provider '${value}' for agent ${agentId ?? "unknown"}; defaulting to '${DEFAULT_AGENT_PROVIDER}'`,
-  );
-  return DEFAULT_AGENT_PROVIDER;
-}
-
-function toAgentPersistenceHandle(
-  logger: pino.Logger,
-  handle: StoredAgentRecord["persistence"],
-): AgentPersistenceHandle | null {
-  if (!handle) {
-    return null;
-  }
-  const provider = handle.provider;
-  if (!isValidAgentProvider(provider)) {
-    logger.warn({ provider }, `Ignoring persistence handle with unknown provider '${provider}'`);
-    return null;
-  }
-  if (!handle.sessionId) {
-    logger.warn("Ignoring persistence handle missing sessionId");
-    return null;
-  }
-  return {
-    provider,
-    sessionId: handle.sessionId,
-    nativeHandle: handle.nativeHandle,
-    metadata: handle.metadata,
-  } satisfies AgentPersistenceHandle;
 }
 
 /**
@@ -619,6 +628,7 @@ export class Session {
   private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
   private readonly getSpeechReadiness?: () => SpeechReadinessSnapshot;
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
+  private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
@@ -652,6 +662,7 @@ export class Session {
       voiceBridge,
       dictation,
       agentProviderRuntimeSettings,
+      providerOverrides,
     } = options;
     this.clientId = clientId;
     this.appVersion = appVersion;
@@ -707,6 +718,7 @@ export class Session {
     this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext;
     this.getSpeechReadiness = dictation?.getSpeechReadiness;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
+    this.providerOverrides = providerOverrides;
     this.abortController = new AbortController();
     this.sessionLogger = logger.child({
       module: "session",
@@ -715,6 +727,7 @@ export class Session {
     });
     this.providerRegistry = buildProviderRegistry(this.sessionLogger, {
       runtimeSettings: this.agentProviderRuntimeSettings,
+      providerOverrides: this.providerOverrides,
     });
 
     // Initialize per-session managers
@@ -1040,9 +1053,7 @@ export class Session {
     const storedRecord = await this.agentStorage.get(agent.id);
     const title = storedRecord?.title ?? storedRecord?.config?.title ?? null;
     const payload = toAgentPayload(agent, { title });
-    const storedUpdatedAt = storedRecord
-      ? this.resolveStoredAgentPayloadUpdatedAt(storedRecord)
-      : null;
+    const storedUpdatedAt = storedRecord ? resolveStoredAgentPayloadUpdatedAt(storedRecord) : null;
     if (storedUpdatedAt) {
       const liveUpdatedAt = Date.parse(payload.updatedAt);
       const persistedUpdatedAt = Date.parse(storedUpdatedAt);
@@ -1058,137 +1069,7 @@ export class Session {
   }
 
   private buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload {
-    const defaultCapabilities = {
-      supportsStreaming: false,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: false,
-      supportsMcpServers: false,
-      supportsReasoningStream: false,
-      supportsToolInvocations: true,
-    } as const;
-
-    const createdAt = new Date(record.createdAt);
-    const updatedAt = new Date(this.resolveStoredAgentPayloadUpdatedAt(record));
-    const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
-
-    const provider = coerceAgentProvider(this.sessionLogger, record.provider, record.id);
-    const runtimeInfo = record.runtimeInfo
-      ? {
-          provider: coerceAgentProvider(this.sessionLogger, record.runtimeInfo.provider, record.id),
-          sessionId: record.runtimeInfo.sessionId,
-          ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "model")
-            ? { model: record.runtimeInfo.model ?? null }
-            : {}),
-          ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "thinkingOptionId")
-            ? { thinkingOptionId: record.runtimeInfo.thinkingOptionId ?? null }
-            : {}),
-          ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "modeId")
-            ? { modeId: record.runtimeInfo.modeId ?? null }
-            : {}),
-          ...(record.runtimeInfo.extra ? { extra: record.runtimeInfo.extra } : {}),
-        }
-      : undefined;
-    return {
-      id: record.id,
-      provider,
-      cwd: record.cwd,
-      model: record.config?.model ?? null,
-      thinkingOptionId: record.config?.thinkingOptionId ?? null,
-      effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
-        runtimeInfo,
-        configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
-      }),
-      ...(runtimeInfo ? { runtimeInfo } : {}),
-      createdAt: createdAt.toISOString(),
-      updatedAt: updatedAt.toISOString(),
-      lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
-      status: record.lastStatus,
-      capabilities: defaultCapabilities,
-      currentModeId: record.lastModeId ?? null,
-      availableModes: [],
-      pendingPermissions: [],
-      persistence: toAgentPersistenceHandle(this.sessionLogger, record.persistence),
-      lastUsage: undefined,
-      lastError: undefined,
-      title: record.title ?? record.config?.title ?? null,
-      requiresAttention: record.requiresAttention ?? false,
-      attentionReason: record.attentionReason ?? null,
-      attentionTimestamp: record.attentionTimestamp ?? null,
-      archivedAt: record.archivedAt ?? null,
-      labels: record.labels,
-    };
-  }
-
-  private resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): string {
-    const timestamps = [record.updatedAt, record.lastActivityAt]
-      .filter((value): value is string => typeof value === "string" && value.length > 0)
-      .map((value) => ({
-        raw: value,
-        parsed: Date.parse(value),
-      }))
-      .filter((value) => !Number.isNaN(value.parsed));
-
-    if (timestamps.length === 0) {
-      return record.updatedAt;
-    }
-
-    timestamps.sort((a, b) => b.parsed - a.parsed);
-    return timestamps[0].raw;
-  }
-
-  private async ensureAgentLoaded(agentId: string): Promise<ManagedAgent> {
-    const existing = this.agentManager.getAgent(agentId);
-    if (existing) {
-      return existing;
-    }
-
-    const inflight = pendingAgentInitializations.get(agentId);
-    if (inflight) {
-      return inflight;
-    }
-
-    const initPromise = (async () => {
-      const record = await this.agentStorage.get(agentId);
-      if (!record) {
-        throw new Error(`Agent not found: ${agentId}`);
-      }
-
-      const handle = toAgentPersistenceHandle(this.sessionLogger, record.persistence);
-      let snapshot: ManagedAgent;
-      if (handle) {
-        snapshot = await this.agentManager.resumeAgentFromPersistence(
-          handle,
-          buildConfigOverrides(record),
-          agentId,
-          extractTimestamps(record),
-        );
-        this.sessionLogger.info(
-          { agentId, provider: record.provider },
-          "Agent resumed from persistence",
-        );
-      } else {
-        const config = buildSessionConfig(record);
-        snapshot = await this.agentManager.createAgent(config, agentId, { labels: record.labels });
-        this.sessionLogger.info(
-          { agentId, provider: record.provider },
-          "Agent created from stored config",
-        );
-      }
-
-      await this.agentManager.hydrateTimelineFromProvider(agentId);
-      return this.agentManager.getAgent(agentId) ?? snapshot;
-    })();
-
-    pendingAgentInitializations.set(agentId, initPromise);
-
-    try {
-      return await initPromise;
-    } finally {
-      const current = pendingAgentInitializations.get(agentId);
-      if (current === initPromise) {
-        pendingAgentInitializations.delete(agentId);
-      }
-    }
+    return buildStoredAgentPayload(record, this.providerRegistry, this.sessionLogger);
   }
 
   // TODO: Remove once all app store clients are on >=0.1.45.
@@ -1323,7 +1204,7 @@ export class Session {
   private async buildProjectPlacement(cwd: string): Promise<ProjectPlacementPayload> {
     return buildProjectPlacementForCwd({
       cwd,
-      paseoHome: this.paseoHome,
+      workspaceGitService: this.workspaceGitService,
     });
   }
 
@@ -1671,7 +1552,7 @@ export class Session {
             break;
 
           case "cancel_agent_request":
-            await this.handleCancelAgentRequest(msg.agentId);
+            await this.handleCancelAgentRequest(msg.agentId, msg.requestId);
             break;
 
           case "restart_server_request":
@@ -1852,7 +1733,7 @@ export class Session {
             break;
 
           case "clear_agent_attention":
-            await this.handleClearAgentAttention(msg.agentId);
+            await this.handleClearAgentAttention(msg.agentId, msg.requestId);
             break;
 
           case "client_heartbeat":
@@ -2617,7 +2498,11 @@ export class Session {
   private async enableVoiceModeForAgent(agentId: string): Promise<string> {
     const startedAt = Date.now();
     this.sessionLogger.info({ agentId }, "enableVoiceModeForAgent.ensureAgentLoaded.start");
-    const existing = await this.ensureAgentLoaded(agentId);
+    const existing = await ensureAgentLoaded(agentId, {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.sessionLogger,
+    });
     this.sessionLogger.info(
       { agentId, elapsedMs: Date.now() - startedAt },
       "enableVoiceModeForAgent.ensureAgentLoaded.done",
@@ -2829,7 +2714,11 @@ export class Session {
     await this.unarchiveAgentState(agentId);
 
     try {
-      await this.ensureAgentLoaded(agentId);
+      await ensureAgentLoaded(agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
     } catch (error) {
       this.handleAgentRunError(agentId, error, "Failed to initialize agent before sending prompt");
       return {
@@ -3065,7 +2954,11 @@ export class Session {
         if (!record) {
           throw new Error(`Agent not found: ${agentId}`);
         }
-        const handle = toAgentPersistenceHandle(this.sessionLogger, record.persistence);
+        const handle = toAgentPersistenceHandle(
+          this.sessionLogger,
+          this.providerRegistry,
+          record.persistence,
+        );
         if (!handle) {
           throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
         }
@@ -3104,11 +2997,23 @@ export class Session {
     }
   }
 
-  private async handleCancelAgentRequest(agentId: string): Promise<void> {
+  private async handleCancelAgentRequest(agentId: string, requestId?: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Cancel request received for agent ${agentId}`);
 
     try {
       await this.interruptAgentIfRunning(agentId);
+      if (requestId) {
+        const agent = this.agentManager.getAgent(agentId);
+        const payload = agent ? await this.buildAgentPayload(agent) : null;
+        this.emit({
+          type: "cancel_agent_response",
+          payload: {
+            requestId,
+            agentId,
+            agent: payload,
+          },
+        });
+      }
     } catch (error) {
       this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
     }
@@ -3124,6 +3029,7 @@ export class Session {
       {
         paseoHome: this.paseoHome,
         sessionLogger: this.sessionLogger,
+        workspaceGitService: this.workspaceGitService,
         checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
         createBranchFromBase: (params) => this.createBranchFromBase(params),
       },
@@ -3531,7 +3437,7 @@ export class Session {
   private async checkoutExistingBranch(cwd: string, branch: string): Promise<void> {
     this.assertSafeGitRef(branch, "branch");
     try {
-      await execFileAsync("git", ["rev-parse", "--verify", branch], { cwd });
+      await execCommand("git", ["rev-parse", "--verify", branch], { cwd });
     } catch (error) {
       throw new Error(`Branch not found: ${branch}`);
     }
@@ -3545,7 +3451,7 @@ export class Session {
     }
 
     await this.ensureCleanWorkingTree(cwd);
-    await execFileAsync("git", ["checkout", branch], { cwd });
+    await execCommand("git", ["checkout", branch], { cwd });
   }
 
   private async createBranchFromBase(params: {
@@ -3558,7 +3464,7 @@ export class Session {
     this.assertSafeGitRef(newBranchName, "new branch");
 
     try {
-      await execFileAsync("git", ["rev-parse", "--verify", baseBranch], { cwd });
+      await execCommand("git", ["rev-parse", "--verify", baseBranch], { cwd });
     } catch (error) {
       throw new Error(`Base branch not found: ${baseBranch}`);
     }
@@ -3569,7 +3475,7 @@ export class Session {
     }
 
     await this.ensureCleanWorkingTree(cwd);
-    await execFileAsync("git", ["checkout", "-b", newBranchName, baseBranch], {
+    await execCommand("git", ["checkout", "-b", newBranchName, baseBranch], {
       cwd,
     });
   }
@@ -3577,7 +3483,7 @@ export class Session {
   private async doesLocalBranchExist(cwd: string, branch: string): Promise<boolean> {
     this.assertSafeGitRef(branch, "branch");
     try {
-      await execFileAsync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+      await execCommand("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
         cwd,
       });
       return true;
@@ -3771,11 +3677,32 @@ export class Session {
   /**
    * Handle clearing agent attention flag
    */
-  private async handleClearAgentAttention(agentId: string | string[]): Promise<void> {
+  private async handleClearAgentAttention(
+    agentId: string | string[],
+    requestId?: string,
+  ): Promise<void> {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
     try {
       await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)));
+      if (requestId) {
+        const agents = (
+          await Promise.all(
+            agentIds.map(async (id) => {
+              const agent = this.agentManager.getAgent(id);
+              return agent ? this.buildAgentPayload(agent) : null;
+            }),
+          )
+        ).filter((payload): payload is NonNullable<typeof payload> => payload !== null);
+        this.emit({
+          type: "clear_agent_attention_response",
+          payload: {
+            requestId,
+            agentId,
+            agents,
+          },
+        });
+      }
     } catch (error: any) {
       this.sessionLogger.error({ err: error, agentIds }, "Failed to clear agent attention");
       // Don't throw - this is not critical
@@ -4030,7 +3957,7 @@ export class Session {
 
       // Try local branch first
       try {
-        await execFileAsync("git", ["rev-parse", "--verify", branchName], {
+        await execCommand("git", ["rev-parse", "--verify", branchName], {
           cwd: resolvedCwd,
           env: READ_ONLY_GIT_ENV,
         });
@@ -4051,7 +3978,7 @@ export class Session {
 
       // Try remote branch (origin/{branchName})
       try {
-        await execFileAsync("git", ["rev-parse", "--verify", `origin/${branchName}`], {
+        await execCommand("git", ["rev-parse", "--verify", `origin/${branchName}`], {
           cwd: resolvedCwd,
           env: READ_ONLY_GIT_ENV,
         });
@@ -4281,7 +4208,7 @@ export class Session {
       const message = branchLabel
         ? `${Session.PASEO_STASH_PREFIX} ${branchLabel}`
         : `${Session.PASEO_STASH_PREFIX} unnamed`;
-      await execFileAsync("git", ["stash", "push", "--include-untracked", "-m", message], { cwd });
+      await execCommand("git", ["stash", "push", "--include-untracked", "-m", message], { cwd });
       this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
       this.emit({
         type: "stash_save_response",
@@ -4300,7 +4227,7 @@ export class Session {
   ): Promise<void> {
     const { cwd, stashIndex, requestId } = msg;
     try {
-      await execFileAsync("git", ["stash", "pop", `stash@{${stashIndex}}`], { cwd });
+      await execCommand("git", ["stash", "pop", `stash@{${stashIndex}}`], { cwd });
       this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
       this.emit({
         type: "stash_pop_response",
@@ -4633,7 +4560,6 @@ export class Session {
     const { cwd, requestId } = msg;
 
     try {
-      await this.workspaceGitService.refresh(cwd, { priority: "high" });
       const snapshot = await this.workspaceGitService.getSnapshot(cwd);
       this.emit({
         type: "checkout_pr_status_response",
@@ -5358,26 +5284,27 @@ export class Session {
     projectRecord?: PersistedProjectRecord | null,
   ): Promise<WorkspaceDescriptorPayload> {
     const base = await this.describeWorkspaceRecord(workspace, projectRecord);
-    let displayName = workspace.displayName;
+
+    let snapshot: WorkspaceGitRuntimeSnapshot;
     try {
-      const placement = await this.buildProjectPlacement(workspace.cwd);
-      displayName = deriveWorkspaceDisplayName({
-        cwd: workspace.cwd,
-        checkout: placement.checkout,
-      });
-    } catch {
-      // Fall back to the persisted label if checkout metadata is unavailable.
+      snapshot = await this.workspaceGitService.getSnapshot(workspace.cwd);
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, cwd: workspace.cwd },
+        "Failed to load git snapshot for workspace",
+      );
+      return base;
     }
 
-    let snapshot: WorkspaceGitRuntimeSnapshot | null = null;
-    snapshot = this.workspaceGitService.peekSnapshot(workspace.cwd);
+    const checkout = checkoutLiteFromGitSnapshot(workspace.cwd, snapshot.git);
+    const displayName = deriveWorkspaceDisplayName({ cwd: workspace.cwd, checkout });
 
     return {
       ...base,
       name: displayName,
-      diffStat: snapshot?.git.diffStat ?? null,
-      gitRuntime: snapshot ? this.buildWorkspaceGitRuntimePayload(snapshot) : undefined,
-      githubRuntime: snapshot ? this.buildWorkspaceGitHubRuntimePayload(snapshot) : undefined,
+      diffStat: snapshot.git.diffStat ?? null,
+      gitRuntime: this.buildWorkspaceGitRuntimePayload(snapshot),
+      githubRuntime: this.buildWorkspaceGitHubRuntimePayload(snapshot),
     };
   }
 
@@ -5690,7 +5617,9 @@ export class Session {
     const filter = request.filter;
     const sort = this.normalizeFetchWorkspacesSort(request.sort);
     let entries = await this.listWorkspaceDescriptors();
+    const listedCount = entries.length;
     entries = entries.filter((workspace) => this.matchesWorkspaceFilter({ workspace, filter }));
+    const filteredCount = entries.length;
     entries.sort((left, right) => this.compareFetchWorkspacesEntries(left, right, sort));
 
     const cursorToken = request.page?.cursor;
@@ -5708,6 +5637,21 @@ export class Session {
       hasMore && pagedEntries.length > 0
         ? this.encodeFetchWorkspacesCursor(pagedEntries[pagedEntries.length - 1], sort)
         : null;
+
+    this.sessionLogger.debug(
+      {
+        requestId: request.requestId,
+        filter: request.filter ?? null,
+        sort,
+        page: request.page ?? null,
+        listedCount,
+        filteredCount,
+        returnedCount: pagedEntries.length,
+        hasMore,
+        nextCursor,
+      },
+      "fetch_workspaces_entries_listed",
+    );
 
     return {
       entries: pagedEntries,
@@ -5787,8 +5731,6 @@ export class Session {
         buildPersistedWorkspaceRecord: (input) => this.buildPersistedWorkspaceRecord(input),
         buildProjectPlacement: (cwd) => this.buildProjectPlacement(cwd),
         projectRegistry: this.projectRegistry,
-        syncWorkspaceGitWatchTarget: (cwd, syncOptions) =>
-          this.syncWorkspaceGitWatchTarget(cwd, syncOptions),
         workspaceRegistry: this.workspaceRegistry,
         archiveProjectRecordIfEmpty: (projectId, archivedAt) =>
           this.archiveProjectRecordIfEmpty(projectId, archivedAt),
@@ -5991,6 +5933,16 @@ export class Session {
       : null;
 
     try {
+      this.sessionLogger.debug(
+        {
+          requestId: request.requestId,
+          subscribeRequested: Boolean(request.subscribe),
+          filter: request.filter ?? null,
+          sort: request.sort ?? null,
+          page: request.page ?? null,
+        },
+        "fetch_workspaces_request_received",
+      );
       if (subscriptionId) {
         this.workspaceUpdatesSubscription = {
           subscriptionId,
@@ -6002,6 +5954,15 @@ export class Session {
       }
 
       const payload = await this.listFetchWorkspacesEntries(request);
+      this.sessionLogger.debug(
+        {
+          requestId: request.requestId,
+          subscriptionId,
+          pageInfo: payload.pageInfo,
+          payload: summarizeFetchWorkspacesEntries(payload.entries),
+        },
+        "fetch_workspaces_response_ready",
+      );
       const snapshotLatestActivityByWorkspaceId = new Map<string, number>();
       for (const entry of payload.entries) {
         const parsedLatestActivity = entry.activityAt
@@ -6152,25 +6113,27 @@ export class Session {
     return handleCreateWorktreeRequest(
       {
         paseoHome: this.paseoHome,
+        workspaceGitService: this.workspaceGitService,
         describeWorkspaceRecord: (workspace) => this.describeWorkspaceRecordWithGitData(workspace),
         emit: (message) => this.emit(message),
         registerPendingWorktreeWorkspace: (options) =>
           this.registerPendingWorktreeWorkspace(options),
+        syncWorkspaceGitWatchTarget: (cwd, syncOptions) =>
+          this.syncWorkspaceGitWatchTarget(cwd, syncOptions),
         sessionLogger: this.sessionLogger,
-        createPaseoWorktreeInBackground: (options) => this.createPaseoWorktreeInBackground(options),
+        runWorktreeSetupInBackground: (options) => this.runWorktreeSetupInBackground(options),
       },
       request,
     );
   }
 
-  private async createPaseoWorktreeInBackground(options: {
+  private async runWorktreeSetupInBackground(options: {
     requestCwd: string;
     repoRoot: string;
-    baseBranch: string;
     slug: string;
     worktreePath: string;
   }): Promise<void> {
-    return createWorktreeInBackgroundSession(
+    return runWorktreeSetupInBackgroundSession(
       {
         paseoHome: this.paseoHome,
         emitWorkspaceUpdateForCwd: (cwd) => this.emitWorkspaceUpdateForCwd(cwd),
@@ -6273,7 +6236,11 @@ export class Session {
       : undefined;
 
     try {
-      const snapshot = await this.ensureAgentLoaded(msg.agentId);
+      const snapshot = await ensureAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
       let timeline = this.agentManager.fetchTimeline(msg.agentId, {
@@ -6428,7 +6395,11 @@ export class Session {
       const agentId = resolved.agentId;
       await this.unarchiveAgentState(agentId);
 
-      await this.ensureAgentLoaded(agentId);
+      await ensureAgentLoaded(agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
 
       this.sessionLogger.trace(
         { agentId, messageId: msg.messageId, textPrefix: msg.text.slice(0, 80) },

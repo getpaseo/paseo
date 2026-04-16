@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createNameId } from "mnemonic-id";
 import type { ImageAttachment } from "@/components/message-input";
-import { View, Text, Pressable, ScrollView, Keyboard, Platform } from "react-native";
+import { View, Text, Pressable, ScrollView, Keyboard } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -49,7 +49,6 @@ import type {
   AgentCapabilityFlags,
   AgentSessionConfig,
 } from "@server/server/agent/agent-sdk-types";
-import { AGENT_PROVIDER_DEFINITIONS } from "@server/server/agent/provider-manifest";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
@@ -57,6 +56,7 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
 import { useDraftAgentCreateFlow } from "@/hooks/use-draft-agent-create-flow";
 import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
+import { isWeb } from "@/constants/platform";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
@@ -67,10 +67,6 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsReasoningStream: false,
   supportsToolInvocations: false,
 };
-const PROVIDER_DEFINITION_MAP = new Map(
-  AGENT_PROVIDER_DEFINITIONS.map((definition) => [definition.id, definition]),
-);
-
 function getParamValue(value: string | string[] | undefined) {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -91,16 +87,14 @@ function getValidProvider(value: string | undefined) {
   if (!value) {
     return undefined;
   }
-  return PROVIDER_DEFINITION_MAP.has(value as AgentProvider) ? (value as AgentProvider) : undefined;
+  return value as AgentProvider;
 }
 
 function getValidMode(provider: AgentProvider | undefined, value: string | undefined) {
   if (!provider || !value) {
     return undefined;
   }
-  const definition = PROVIDER_DEFINITION_MAP.get(provider);
-  const modes = definition?.modes ?? [];
-  return modes.some((mode) => mode.id === value) ? value : undefined;
+  return value;
 }
 
 type DraftAgentParams = {
@@ -850,7 +844,7 @@ function DraftAgentScreenContent({
     },
     onBeforeSubmit: () => {
       void persistFormPreferences();
-      if (Platform.OS === "web") {
+      if (isWeb) {
         (document.activeElement as HTMLElement | null)?.blur?.();
       }
       Keyboard.dismiss();
@@ -1238,7 +1232,7 @@ function DraftAgentScreenContent({
             <AgentInputArea
               agentId={draftAgentIdRef.current}
               serverId={selectedServerId ?? ""}
-              isInputActive={isFocused}
+              isPaneFocused={isFocused}
               onSubmitMessage={handleCreateFromInput}
               isSubmitLoading={isSubmitting}
               blurOnSubmit={true}

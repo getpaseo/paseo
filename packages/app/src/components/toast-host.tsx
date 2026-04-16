@@ -4,6 +4,7 @@ import { Animated, Easing, Platform, Text, ToastAndroid, View } from "react-nati
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb } from "@/constants/platform";
 import { AlertTriangle, CheckCircle2 } from "lucide-react-native";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import {
@@ -234,8 +235,8 @@ export function ToastViewport({
     <View style={styles.container} pointerEvents="box-none">
       <Animated.View
         testID={toast.testID ?? "app-toast"}
-        onPointerEnter={pauseDismiss}
-        onPointerLeave={resumeDismiss}
+        onPointerEnter={isWeb ? pauseDismiss : undefined}
+        onPointerLeave={isWeb ? resumeDismiss : undefined}
         style={[
           styles.toast,
           toast.variant === "success" ? styles.toastSuccess : null,
@@ -265,7 +266,7 @@ export function ToastViewport({
     </View>
   );
 
-  if (placement === "app-shell" && Platform.OS === "web" && typeof document !== "undefined") {
+  if (placement === "app-shell" && isWeb && typeof document !== "undefined") {
     return createPortal(content, getOverlayRoot());
   }
 

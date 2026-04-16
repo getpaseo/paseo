@@ -1,4 +1,4 @@
-import { View, Pressable, Text, ActivityIndicator, Platform } from "react-native";
+import { View, Pressable, Text, ActivityIndicator } from "react-native";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -50,6 +50,7 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { submitAgentInput } from "@/components/agent-input-submit";
 import { useAppSettings } from "@/hooks/use-settings";
+import { isWeb, isNative } from "@/constants/platform";
 
 type QueuedMessage = {
   id: string;
@@ -62,7 +63,7 @@ type ImageListUpdater = ImageAttachment[] | ((prev: ImageAttachment[]) => ImageA
 interface AgentInputAreaProps {
   agentId: string;
   serverId: string;
-  isInputActive: boolean;
+  isPaneFocused: boolean;
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>;
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
@@ -97,7 +98,7 @@ const MOBILE_MESSAGE_PLACEHOLDER = "Message, @files, /commands";
 export function AgentInputArea({
   agentId,
   serverId,
-  isInputActive,
+  isPaneFocused,
   onSubmitMessage,
   isSubmitLoading = false,
   blurOnSubmit = false,
@@ -118,7 +119,7 @@ export function AgentInputArea({
 }: AgentInputAreaProps) {
   markScrollInvestigationRender(`AgentInputArea:${serverId}:${agentId}`);
   const { theme } = useUnistyles();
-  const buttonIconSize = Platform.OS === "web" ? theme.iconSize.md : theme.iconSize.lg;
+  const buttonIconSize = isWeb ? theme.iconSize.md : theme.iconSize.lg;
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -156,7 +157,7 @@ export function AgentInputArea({
   const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
 
   const isMobile = useIsCompactFormFactor();
-  const isDesktopWebBreakpoint = Platform.OS === "web" && !isMobile;
+  const isDesktopWebBreakpoint = isWeb && !isMobile;
   const messagePlaceholder = isDesktopWebBreakpoint
     ? DESKTOP_MESSAGE_PLACEHOLDER
     : MOBILE_MESSAGE_PLACEHOLDER;
@@ -217,7 +218,7 @@ export function AgentInputArea({
   }, [addImages, onAddImages]);
 
   const focusInput = useCallback(() => {
-    if (Platform.OS !== "web") return;
+    if (isNative) return;
     focusWithRetries({
       focus: () => messageInputRef.current?.focus(),
       isFocused: () => {
@@ -420,7 +421,7 @@ export function AgentInputArea({
 
   const handleKeyboardAction = useCallback(
     (action: KeyboardActionDefinition): boolean => {
-      if (!isInputActive) {
+      if (!isPaneFocused) {
         return false;
       }
 
@@ -430,7 +431,7 @@ export function AgentInputArea({
         case "message-input.dictation-confirm":
           return messageInputRef.current?.runKeyboardAction("dictation-confirm") ?? false;
         case "message-input.focus":
-          if (Platform.OS !== "web") {
+          if (isNative) {
             messageInputRef.current?.focus();
             return true;
           }
@@ -460,7 +461,7 @@ export function AgentInputArea({
           return false;
       }
     },
-    [isInputActive],
+    [isPaneFocused],
   );
 
   useKeyboardActionHandler({
@@ -474,9 +475,9 @@ export function AgentInputArea({
       "message-input.voice-toggle",
       "message-input.voice-mute-toggle",
     ],
-    enabled: isInputActive,
+    enabled: isPaneFocused,
     priority: isMessageInputFocused ? 200 : 100,
-    isActive: () => isInputActive,
+    isActive: () => isPaneFocused,
     handle: handleKeyboardAction,
   });
 
@@ -735,7 +736,7 @@ export function AgentInputArea({
               autoFocus={autoFocus && isDesktopWebBreakpoint}
               autoFocusKey={`${serverId}:${agentId}`}
               disabled={isSubmitLoading}
-              isInputActive={isInputActive}
+              isPaneFocused={isPaneFocused}
               leftContent={leftContent}
               beforeVoiceContent={beforeVoiceContent}
               rightContent={rightContent}

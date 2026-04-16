@@ -83,6 +83,7 @@ export const baseColors = {
   // Amber scale
   amber: {
     500: "#f59e0b",
+    700: "#b45309",
   },
 
   // Yellow scale

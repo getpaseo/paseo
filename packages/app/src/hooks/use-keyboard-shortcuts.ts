@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
-import { Platform } from "react-native";
-import { usePathname } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import {
+  buildHostSettingsRoute,
   parseHostAgentRouteFromPathname,
   parseServerIdFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -26,6 +26,8 @@ import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
+import { isNative } from "@/constants/platform";
+import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -47,6 +49,7 @@ export function useKeyboardShortcuts({
   cycleTheme?: () => void;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const hosts = useHosts();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
@@ -65,7 +68,7 @@ export function useKeyboardShortcuts({
 
   useEffect(() => {
     if (!enabled) return;
-    if (Platform.OS !== "web") return;
+    if (isNative) return;
     if (isMobile) return;
 
     const isDesktopApp = getIsElectronRuntime();
@@ -244,6 +247,16 @@ export function useKeyboardShortcuts({
         case "sidebar.toggle.left":
           toggleAgentList();
           return true;
+        case "settings.toggle":
+          if (pathname.endsWith("/settings")) {
+            router.back();
+            return true;
+          }
+          if (!activeServerId) {
+            return false;
+          }
+          router.push(buildHostSettingsRoute(activeServerId));
+          return true;
         case "sidebar.toggle.both":
           if (toggleBothSidebars) {
             toggleBothSidebars();
@@ -308,6 +321,12 @@ export function useKeyboardShortcuts({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandle()) {
+        return;
+      }
+
+      // During IME composition, Enter confirms the candidate selection and must
+      // not route through global shortcuts like message send.
+      if (isImeComposingKeyboardEvent(event)) {
         return;
       }
 

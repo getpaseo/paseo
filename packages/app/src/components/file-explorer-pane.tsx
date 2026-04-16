@@ -7,7 +7,6 @@ import {
   Pressable,
   Text,
   View,
-  Platform,
 } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -52,6 +51,7 @@ import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
+import { isWeb } from "@/constants/platform";
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "name", label: "Name" },
@@ -91,7 +91,7 @@ export function FileExplorerPane({
 }: FileExplorerPaneProps) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
-  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
+  const showDesktopWebScrollbar = isWeb && !isMobile;
 
   const daemons = useHosts();
   const daemonProfile = useMemo(
@@ -167,23 +167,32 @@ export function FileExplorerPane({
     if (hasInitializedRef.current) {
       return;
     }
+    // Mark initialized eagerly so concurrent effect re-runs don't double-fetch.
+    // If the root listing fails (e.g. client not yet connected), we reset the
+    // flag so the next time requestDirectoryListing is recreated (when client
+    // becomes available) this effect retries automatically.
     hasInitializedRef.current = true;
     void requestDirectoryListing(".", {
       recordHistory: false,
       setCurrentPath: false,
-    });
-    const persistedPaths =
-      usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
-    if (persistedPaths) {
-      for (const path of persistedPaths) {
-        if (path !== ".") {
-          void requestDirectoryListing(path, {
-            recordHistory: false,
-            setCurrentPath: false,
-          });
+    }).then((succeeded) => {
+      if (!succeeded) {
+        hasInitializedRef.current = false;
+        return;
+      }
+      const persistedPaths =
+        usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
+      if (persistedPaths) {
+        for (const path of persistedPaths) {
+          if (path !== ".") {
+            void requestDirectoryListing(path, {
+              recordHistory: false,
+              setCurrentPath: false,
+            });
+          }
         }
       }
-    }
+    });
   }, [hasWorkspaceScope, requestDirectoryListing, workspaceStateKey]);
 
   // Expand ancestor directories when a file is selected (e.g., from an inline path click)

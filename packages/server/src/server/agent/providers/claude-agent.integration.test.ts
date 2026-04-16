@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeAll } from "vitest";
+import { describe, expect, test, beforeAll, beforeEach } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,7 +6,7 @@ import pino from "pino";
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentSession, AgentStreamEvent, ToolCallTimelineItem } from "../agent-sdk-types.js";
-import { isCommandAvailableSync } from "../../../utils/executable.js";
+import { isCommandAvailable } from "../../../utils/executable.js";
 import { ClaudeAgentClient } from "./claude-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 
@@ -174,111 +174,106 @@ async function cleanupSession(handle: { cwd: string; session: AgentSession }): P
 }
 
 describe("ClaudeAgentSession integration", () => {
-  const canRunClaudeIntegration = isCommandAvailableSync("claude") && hasClaudeCredentials;
+  let canRunClaudeIntegration = false;
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    canRunClaudeIntegration = (await isCommandAvailable("claude")) && hasClaudeCredentials;
     if (canRunClaudeIntegration) {
-      expect(isCommandAvailableSync("claude")).toBe(true);
+      expect(await isCommandAvailable("claude")).toBe(true);
     }
   });
 
-  test.runIf(canRunClaudeIntegration)(
-    "streams a basic response turn end-to-end",
-    async () => {
-      const handle = await createSession({
-        cwdPrefix: "claude-agent-basic-response-",
+  beforeEach((context) => {
+    if (!canRunClaudeIntegration) {
+      context.skip();
+    }
+  });
+
+  test("streams a basic response turn end-to-end", async () => {
+    const handle = await createSession({
+      cwdPrefix: "claude-agent-basic-response-",
+    });
+
+    try {
+      const events = await collectUntilTerminal(
+        streamSession(handle.session, "Respond with exactly: HELLO_WORLD"),
+      );
+
+      expect(events[0]).toMatchObject({
+        type: "turn_started",
+        provider: "claude",
       });
-
-      try {
-        const events = await collectUntilTerminal(
-          streamSession(handle.session, "Respond with exactly: HELLO_WORLD"),
-        );
-
-        expect(events[0]).toMatchObject({
-          type: "turn_started",
-          provider: "claude",
-        });
-        expect(
-          events.some(
-            (event) =>
-              event.type === "timeline" &&
-              event.item.type === "assistant_message" &&
-              compactText(event.item.text).includes("hello_world"),
-          ),
-        ).toBe(true);
-        expect(events.at(-1)).toMatchObject({
-          type: "turn_completed",
-          provider: "claude",
-        });
-      } finally {
-        await cleanupSession(handle);
-      }
-    },
-    60_000,
-  );
-
-  test.runIf(canRunClaudeIntegration)(
-    "keeps bypassPermissions available after a thinking-option restart",
-    async () => {
-      const handle = await createSession({
-        cwdPrefix: "claude-agent-bypass-restart-",
-        modeId: "bypassPermissions",
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "assistant_message" &&
+            compactText(event.item.text).includes("hello_world"),
+        ),
+      ).toBe(true);
+      expect(events.at(-1)).toMatchObject({
+        type: "turn_completed",
+        provider: "claude",
       });
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 60_000);
 
-      try {
-        await handle.session.setMode("acceptEdits");
-        await handle.session.setThinkingOption("high");
-        await expect(handle.session.setMode("bypassPermissions")).resolves.toBeUndefined();
-      } finally {
-        await cleanupSession(handle);
-      }
-    },
-    60_000,
-  );
+  test("keeps bypassPermissions available after a thinking-option restart", async () => {
+    const handle = await createSession({
+      cwdPrefix: "claude-agent-bypass-restart-",
+      modeId: "bypassPermissions",
+    });
 
-  test.runIf(canRunClaudeIntegration)(
-    "supportedModels returns the current abstract Claude SDK model shape",
-    async () => {
-      const claudeQuery = query({
-        prompt: createEmptyPrompt(),
-        options: {
-          cwd: process.cwd(),
-          permissionMode: "plan",
-          includePartialMessages: false,
-          settingSources: ["user", "project"],
-        },
-      });
+    try {
+      await handle.session.setMode("acceptEdits");
+      await handle.session.setThinkingOption("high");
+      await expect(handle.session.setMode("bypassPermissions")).resolves.toBeUndefined();
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 60_000);
 
-      try {
-        const models = await claudeQuery.supportedModels();
+  test("supportedModels returns the current abstract Claude SDK model shape", async () => {
+    const claudeQuery = query({
+      prompt: createEmptyPrompt(),
+      options: {
+        cwd: process.cwd(),
+        permissionMode: "plan",
+        includePartialMessages: false,
+        settingSources: ["user", "project"],
+      },
+    });
 
-        expect(models.length).toBeGreaterThanOrEqual(3);
-        expect(models).toContainEqual(
-          expect.objectContaining({
-            value: "default",
-            displayName: "Default (recommended)",
-            supportedEffortLevels: ["low", "medium", "high", "max"],
-          }),
-        );
-        expect(models).toContainEqual(
-          expect.objectContaining({
-            value: "haiku",
-            displayName: "Haiku",
-            description: expect.stringContaining("Haiku 4.5"),
-          }),
-        );
-        expect(
-          models.some(
-            (model) =>
-              model.description.includes("Opus 4.6") || model.description.includes("Sonnet 4.6"),
-          ),
-        ).toBe(true);
-      } finally {
-        await claudeQuery.return?.();
-      }
-    },
-    60_000,
-  );
+    try {
+      const models = await claudeQuery.supportedModels();
+
+      expect(models.length).toBeGreaterThanOrEqual(3);
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          value: "default",
+          displayName: "Default (recommended)",
+          supportedEffortLevels: ["low", "medium", "high", "max"],
+        }),
+      );
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          value: "haiku",
+          displayName: "Haiku",
+          description: expect.stringContaining("Haiku 4.5"),
+        }),
+      );
+      expect(
+        models.some(
+          (model) =>
+            model.description.includes("Opus 4.6") || model.description.includes("Sonnet 4.6"),
+        ),
+      ).toBe(true);
+    } finally {
+      await claudeQuery.return?.();
+    }
+  }, 60_000);
 
   test.runIf(canRunClaudeIntegration)(
     "runs a real Bash tool call and completes it",

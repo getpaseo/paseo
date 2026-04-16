@@ -9,7 +9,6 @@ import {
   TextInputKeyPressEventData,
   TextInputSelectionChangeEventData,
   Image,
-  Platform,
   BackHandler,
 } from "react-native";
 import {
@@ -43,11 +42,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWebElementScrollbar } from "@/components/use-web-scrollbar";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { formatShortcut } from "@/utils/format-shortcut";
+import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
+import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import {
   markScrollInvestigationEvent,
   markScrollInvestigationRender,
 } from "@/utils/scroll-jank-investigation";
+import { isWeb } from "@/constants/platform";
 
 export type ImageAttachment = AttachmentMetadata;
 
@@ -75,8 +78,8 @@ export interface MessageInputProps {
   autoFocus?: boolean;
   autoFocusKey?: string;
   disabled?: boolean;
-  /** True when this input is the active composer. Used to gate global hotkeys and stop dictation when hidden. */
-  isInputActive?: boolean;
+  /** True when this composer's pane is focused. Used to gate global hotkeys and stop dictation when hidden. */
+  isPaneFocused?: boolean;
   /** Content to render on the left side of the button row (e.g., AgentStatusBar) */
   leftContent?: React.ReactNode;
   /** Content to render on the right side before the voice button (e.g., context window meter) */
@@ -115,13 +118,15 @@ export interface MessageInputRef {
 
 const MIN_INPUT_HEIGHT = 30;
 const MAX_INPUT_HEIGHT = 160;
-const IS_WEB = Platform.OS === "web";
 
 type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {
     metaKey?: boolean;
     ctrlKey?: boolean;
     shiftKey?: boolean;
+    // Web-only: present on DOM KeyboardEvent during IME composition (CJK input).
+    isComposing?: boolean;
+    keyCode?: number;
   }
 >;
 
@@ -204,7 +209,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     autoFocus = false,
     autoFocusKey,
     disabled = false,
-    isInputActive = true,
+    isPaneFocused = true,
     leftContent,
     beforeVoiceContent,
     rightContent,
@@ -222,7 +227,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   ref,
 ) {
   const { theme } = useUnistyles();
-  const buttonIconSize = IS_WEB ? theme.iconSize.md : theme.iconSize.lg;
+  const buttonIconSize = isWeb ? theme.iconSize.md : theme.iconSize.lg;
   const investigationComponentId = `MessageInput:${voiceServerId ?? "unknown-server"}:${voiceAgentId ?? "unknown-agent"}`;
   markScrollInvestigationRender(investigationComponentId);
   const toast = useToast();
@@ -231,7 +236,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   const voiceMuteToggleKeys = useShortcutKeys("voice-mute-toggle");
   const dictationToggleKeys = useShortcutKeys("dictation-toggle");
   const queueKeys = useShortcutKeys("message-input-queue");
+  const focusInputKeys = useShortcutKeys("focus-message-input");
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
+  const [isInputFocused, setIsInputFocused] = useState(false);
   const rootRef = useRef<View | null>(null);
   const inputWrapperRef = useRef<View | null>(null);
   const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(
@@ -293,7 +300,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
       return false;
     },
     getNativeElement: () => {
-      if (!IS_WEB) return null;
+      if (!isWeb) return null;
       const current = textInputRef.current as (TextInput & { getNativeRef?: () => unknown }) | null;
       const native = typeof current?.getNativeRef === "function" ? current.getNativeRef() : current;
       return native instanceof HTMLElement ? native : null;
@@ -328,7 +335,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
 
   // Autofocus on web when autoFocus is true, and re-run when focus key changes.
   useEffect(() => {
-    if (!IS_WEB || !autoFocus) return;
+    if (!isWeb || !autoFocus) return;
     return focusWithRetries({
       focus: () => textInputRef.current?.focus(),
       isFocused: () => {
@@ -371,7 +378,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
         onChangeText(nextValue);
       }
 
-      if (IS_WEB && typeof requestAnimationFrame === "function") {
+      if (isWeb && typeof requestAnimationFrame === "function") {
         requestAnimationFrame(() => {
           measureWebInputHeight("dictation");
         });
@@ -425,7 +432,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     onError: handleDictationError,
     canStart: canStartDictation,
     canConfirm: canConfirmDictation,
-    autoStopWhenHidden: { isVisible: isInputActive },
+    autoStopWhenHidden: { isVisible: isPaneFocused },
     enableDuration: true,
   });
 
@@ -627,13 +634,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   const webTextareaRef = useRef<HTMLElement | null>(null);
 
   useLayoutEffect(() => {
-    if (IS_WEB) {
+    if (isWeb) {
       webTextareaRef.current = getWebTextArea() as HTMLElement | null;
     }
   }, [getWebTextArea]);
 
   const inputScrollbar = useWebElementScrollbar(webTextareaRef, {
-    enabled: IS_WEB && inputHeight >= MAX_INPUT_HEIGHT,
+    enabled: isWeb && inputHeight >= MAX_INPUT_HEIGHT,
   });
 
   const getWebElement = useCallback((target: "root" | "wrapper"): HTMLElement | null => {
@@ -647,7 +654,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   }, []);
 
   useEffect(() => {
-    if (!IS_WEB || !onAddImages) {
+    if (!isWeb || !onAddImages) {
       return;
     }
 
@@ -700,7 +707,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   ]);
 
   useEffect(() => {
-    if (!IS_WEB || typeof ResizeObserver === "undefined") {
+    if (!isWeb || typeof ResizeObserver === "undefined") {
       return;
     }
 
@@ -754,7 +761,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   }, [getWebElement, getWebTextArea]);
 
   useEffect(() => {
-    if (!IS_WEB) {
+    if (!isWeb) {
       return;
     }
     const textarea = getWebTextArea() as (HTMLTextAreaElement & TextAreaHandle) | null;
@@ -792,7 +799,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   }, [getWebTextArea]);
 
   function measureWebInputHeight(source: string): boolean {
-    if (!IS_WEB) return false;
+    if (!isWeb) return false;
     const textarea = getWebTextArea();
     if (!textarea || typeof textarea.scrollHeight !== "number") return false;
     const scrollHeight = textarea.scrollHeight ?? 0;
@@ -846,7 +853,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
   ) {
     const contentHeight = event.nativeEvent.contentSize.height;
-    if (IS_WEB) {
+    if (isWeb) {
       logWebStickyBottom("composer_content_size_change", {
         reportedHeight: contentHeight,
       });
@@ -866,7 +873,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   function handleSelectionChange(event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) {
     const start = event.nativeEvent.selection?.start ?? 0;
     const end = event.nativeEvent.selection?.end ?? start;
-    if (IS_WEB) {
+    if (isWeb) {
       const textarea = getWebTextArea();
       logWebStickyBottom("composer_selection_changed", {
         now: getDebugNow(),
@@ -880,11 +887,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     onSelectionChangeCallback?.({ start, end });
   }
 
-  const shouldHandleDesktopSubmit = IS_WEB;
+  const shouldHandleDesktopSubmit = isWeb;
 
   function handleDesktopKeyPress(event: WebTextInputKeyPressEvent) {
     markScrollInvestigationEvent(investigationComponentId, "keyPress");
     if (!shouldHandleDesktopSubmit) return;
+
+    // IME composition in progress (e.g. CJK input) — all key events belong to the
+    // IME, not the app. keyCode 229 is a Chromium fallback for when isComposing is
+    // cleared before the keydown fires.
+    if (isImeComposingKeyboardEvent(event.nativeEvent)) return;
 
     // Allow parent to intercept key events (e.g., for autocomplete navigation)
     if (onKeyPressCallback) {
@@ -935,7 +947,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     (nextValue: string) => {
       markScrollInvestigationEvent(investigationComponentId, "inputChange");
       onChangeText(nextValue);
-      if (IS_WEB) {
+      if (isWeb) {
         logWebStickyBottom("composer_text_changed", {
           valueLength: nextValue.length,
           lineCount: nextValue.split("\n").length,
@@ -966,7 +978,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                       <View
                         style={[
                           styles.removeImageButton,
-                          (hovered || !IS_WEB) && styles.removeImageButtonVisible,
+                          (hovered || !isWeb) && styles.removeImageButtonVisible,
                         ]}
                       >
                         <X size={theme.iconSize.md} color="white" />
@@ -990,15 +1002,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
             accessibilityLabel="Message agent..."
             onFocus={() => {
               isInputFocusedRef.current = true;
+              setIsInputFocused(true);
               onFocusChange?.(true);
             }}
             onBlur={() => {
               isInputFocusedRef.current = false;
+              setIsInputFocused(false);
               onFocusChange?.(false);
             }}
             style={[
               styles.textInput,
-              IS_WEB
+              isWeb
                 ? {
                     height: inputHeight,
                     minHeight: MIN_INPUT_HEIGHT,
@@ -1010,14 +1024,19 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                   },
             ]}
             multiline
-            scrollEnabled={IS_WEB ? inputHeight >= MAX_INPUT_HEIGHT : true}
+            scrollEnabled={isWeb ? inputHeight >= MAX_INPUT_HEIGHT : true}
             onContentSizeChange={handleContentSizeChange}
             editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
             onKeyPress={shouldHandleDesktopSubmit ? handleDesktopKeyPress : undefined}
             onSelectionChange={handleSelectionChange}
-            autoFocus={IS_WEB && autoFocus}
+            autoFocus={isWeb && autoFocus}
           />
           {inputScrollbar}
+          {isWeb && isPaneFocused && !isInputFocused && !value && focusInputKeys ? (
+            <Text style={styles.focusHintText} pointerEvents="none">
+              {formatShortcut(focusInputKeys[0], getShortcutOs())} to focus
+            </Text>
+          ) : null}
         </View>
 
         {/* Button row */}
@@ -1206,7 +1225,7 @@ const styles = StyleSheet.create(((theme: any) => ({
       xs: theme.spacing[3],
       md: theme.spacing[4],
     },
-    ...(IS_WEB
+    ...(isWeb
       ? {
           transitionProperty: "border-color",
           transitionDuration: "200ms",
@@ -1225,7 +1244,7 @@ const styles = StyleSheet.create(((theme: any) => ({
     borderWidth: 1,
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
-    ...(IS_WEB
+    ...(isWeb
       ? {
           cursor: "pointer",
         }
@@ -1250,7 +1269,7 @@ const styles = StyleSheet.create(((theme: any) => ({
     justifyContent: "center",
     backgroundColor: "rgba(0, 0, 0, 0.5)",
     opacity: 0,
-    ...(IS_WEB
+    ...(isWeb
       ? {
           transitionProperty: "opacity",
           transitionDuration: "150ms",
@@ -1263,13 +1282,21 @@ const styles = StyleSheet.create(((theme: any) => ({
   textInputScrollWrapper: {
     position: "relative",
   },
+  focusHintText: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    opacity: 0.5,
+  },
   textInput: {
     width: "100%",
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     lineHeight: theme.fontSize.base * 1.4,
-    ...(IS_WEB
+    ...(isWeb
       ? {
           outlineStyle: "none" as const,
           outlineWidth: 0,
@@ -1283,14 +1310,18 @@ const styles = StyleSheet.create(((theme: any) => ({
     justifyContent: "space-between",
   },
   leftButtonGroup: {
+    minWidth: 0,
+    flexShrink: 1,
+    flexGrow: 1,
     flexDirection: "row",
     alignItems: "flex-end",
     gap: theme.spacing[1],
   },
   rightButtonGroup: {
+    flexShrink: 0,
     flexDirection: "row",
     alignItems: "center",
-    gap: Platform.OS === "web" ? theme.spacing[2] : theme.spacing[1],
+    gap: isWeb ? theme.spacing[2] : theme.spacing[1],
   },
   attachButton: {
     width: 28,

@@ -134,7 +134,14 @@ export function WorkspaceTabIcon({
   if (shouldShowLoader) {
     return (
       <View style={[styles.agentIconWrapper, { width: size, height: size }]}>
-        <SyncedLoader size={size - 1} color={theme.colors.palette.amber[500]} />
+        <SyncedLoader
+          size={size - 1}
+          color={
+            theme.colorScheme === "light"
+              ? theme.colors.palette.amber[700]
+              : theme.colors.palette.amber[500]
+          }
+        />
       </View>
     );
   }

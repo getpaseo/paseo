@@ -83,6 +83,7 @@ import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-
 import { createNameId } from "mnemonic-id";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -199,8 +200,8 @@ function WorkspacePrBadge({ hint }: { hint: PrHint }) {
       hitSlop={4}
       onPressIn={handlePressIn}
       onPress={handlePress}
-      onPointerEnter={() => setIsHovered(true)}
-      onPointerLeave={() => setIsHovered(false)}
+      onHoverIn={() => setIsHovered(true)}
+      onHoverOut={() => setIsHovered(false)}
       style={({ pressed }) => [styles.workspacePrBadge, pressed && styles.workspacePrBadgePressed]}
     >
       <GitPullRequest size={12} color={iconColor} />
@@ -235,7 +236,14 @@ function WorkspaceStatusIndicator({
   if (shouldShowSyncedLoader) {
     return (
       <View style={styles.workspaceStatusDot}>
-        <SyncedLoader size={11} color={theme.colors.palette.amber[500]} />
+        <SyncedLoader
+          size={11}
+          color={
+            theme.colorScheme === "light"
+              ? theme.colors.palette.amber[700]
+              : theme.colors.palette.amber[500]
+          }
+        />
       </View>
     );
   }
@@ -339,7 +347,14 @@ function ProjectLeadingVisual({
   if (shouldShowSyncedLoader) {
     return (
       <View style={styles.projectLeadingVisualSlot}>
-        <SyncedLoader size={11} color={theme.colors.palette.amber[500]} />
+        <SyncedLoader
+          size={11}
+          color={
+            theme.colorScheme === "light"
+              ? theme.colors.palette.amber[700]
+              : theme.colors.palette.amber[500]
+          }
+        />
       </View>
     );
   }
@@ -543,7 +558,7 @@ function useLongPressDragInteraction(input: {
       input.drag();
     }, DRAG_ARM_DELAY_MS);
 
-    if (!input.menuController || Platform.OS === "web") {
+    if (!input.menuController || platformIsWeb) {
       return;
     }
 
@@ -793,7 +808,12 @@ function ProjectHeaderRow({
           <NewWorktreeButton
             displayName={displayName}
             onPress={() => createWorktreeMutation.mutate()}
-            visible={isHovered || isMobileBreakpoint}
+            visible={
+              isHovered ||
+              platformIsNative ||
+              isMobileBreakpoint ||
+              createWorktreeMutation.isPending
+            }
             loading={createWorktreeMutation.isPending}
             showShortcutHint={isProjectActive}
             testID={`sidebar-project-new-worktree-${project.projectKey}`}
@@ -801,8 +821,11 @@ function ProjectHeaderRow({
         ) : null}
         {onRemoveProject ? (
           <View
-            style={!(isHovered || isMobileBreakpoint) && styles.projectKebabButtonHidden}
-            pointerEvents={isHovered || isMobileBreakpoint ? "auto" : "none"}
+            style={
+              !(isHovered || platformIsNative || isMobileBreakpoint) &&
+              styles.projectKebabButtonHidden
+            }
+            pointerEvents={isHovered || platformIsNative || isMobileBreakpoint ? "auto" : "none"}
           >
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -912,8 +935,8 @@ function WorkspaceRowInner({
   archiveShortcutKeys,
 }: WorkspaceRowInnerProps) {
   const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
-  const isTouchPlatform = Platform.OS !== "web";
   const prHint = useWorkspacePrHint({
     serverId: workspace.serverId,
     cwd: workspace.workspaceId,
@@ -978,7 +1001,7 @@ function WorkspaceRowInner({
           </View>
           <View style={styles.workspaceRowRight}>
             {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}
-            {onArchive && (isHovered || isTouchPlatform) ? (
+            {onArchive && (isHovered || platformIsNative || isCompact) ? (
               <DropdownMenu>
                 <DropdownMenuTrigger
                   hitSlop={8}
@@ -1597,7 +1620,6 @@ export function SidebarWorkspaceList({
   parentGestureRef,
 }: SidebarWorkspaceListProps) {
   const isMobile = useIsCompactFormFactor();
-  const isNative = Platform.OS !== "web";
   const pathname = usePathname();
   const activeWorkspaceSelection = useNavigationActiveWorkspaceSelection();
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
@@ -1831,7 +1853,7 @@ export function SidebarWorkspaceList({
           drag={drag}
           isDragging={isActive}
           dragHandleProps={dragHandleProps}
-          useNestable={isNative}
+          useNestable={platformIsNative}
           creatingWorkspaceIds={creatingWorkspaceIds}
         />
       );
@@ -1848,7 +1870,7 @@ export function SidebarWorkspaceList({
       serverId,
       shortcutIndexByWorkspaceKey,
       showShortcutBadges,
-      isNative,
+      platformIsNative,
       creatingWorkspaceIds,
     ],
   );
@@ -1872,7 +1894,7 @@ export function SidebarWorkspaceList({
           onDragEnd={handleProjectDragEnd}
           scrollEnabled={false}
           useDragHandle
-          nestable={isNative}
+          nestable={platformIsNative}
           simultaneousGestureRef={parentGestureRef}
           containerStyle={styles.projectListContainer}
         />
@@ -1883,7 +1905,7 @@ export function SidebarWorkspaceList({
 
   return (
     <View style={styles.container}>
-      {isNative ? (
+      {platformIsNative ? (
         <NestableScrollContainer
           style={styles.list}
           contentContainerStyle={styles.listContent}

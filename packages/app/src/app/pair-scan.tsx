@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Platform, Pressable, Text, View } from "react-native";
+import { Alert, Pressable, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -10,6 +10,7 @@ import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-en
 import { connectToDaemon } from "@/utils/test-daemon-connection";
 import { ConnectionOfferSchema } from "@server/shared/connection-offer";
 import { buildHostRootRoute, buildHostSettingsRoute } from "@/utils/host-routes";
+import { isWeb } from "@/constants/platform";
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -198,7 +199,7 @@ export default function PairScanScreen() {
   }, [router, source, sourceServerId, targetServerId]);
 
   useEffect(() => {
-    if (Platform.OS === "web") return;
+    if (isWeb) return;
     if (permission && permission.granted) return;
     void requestPermission().catch(() => undefined);
   }, [permission, requestPermission]);
@@ -253,7 +254,7 @@ export default function PairScanScreen() {
     [daemons, isPairing, returnToSource, targetServerId, upsertDaemonFromOfferUrl],
   );
 
-  if (Platform.OS === "web") {
+  if (isWeb) {
     return (
       <View style={styles.container}>
         <View style={[styles.header, { paddingTop: insets.top + theme.spacing[2] }]}>

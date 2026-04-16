@@ -33,7 +33,7 @@ import type {
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import type { AgentStorage } from "./agent-storage.js";
-import { AGENT_PROVIDER_IDS, getAgentProviderDefinition } from "./provider-manifest.js";
+import { getAgentProviderDefinition } from "./provider-manifest.js";
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 
@@ -362,6 +362,10 @@ export class AgentManager {
     this.clients.set(provider, client);
   }
 
+  getRegisteredProviderIds(): AgentProvider[] {
+    return Array.from(this.clients.keys());
+  }
+
   setAgentAttentionCallback(callback: AgentAttentionCallback): void {
     this.onAgentAttention = callback;
   }
@@ -501,8 +505,7 @@ export class AgentManager {
   }
 
   async listProviderAvailability(): Promise<ProviderAvailability[]> {
-    const checks = AGENT_PROVIDER_IDS.map(async (providerId) => {
-      const provider = providerId as AgentProvider;
+    const checks = Array.from(this.clients.keys()).map(async (provider) => {
       const client = this.clients.get(provider);
       if (!client) {
         return {
@@ -950,6 +953,7 @@ export class AgentManager {
   async setAgentMode(agentId: string, modeId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     await agent.session.setMode(modeId);
+    agent.config.modeId = modeId;
     agent.currentModeId = modeId;
     // Update runtimeInfo to reflect the new mode
     if (agent.runtimeInfo) {
