@@ -20,7 +20,8 @@
  */
 
 import assert from "node:assert";
-import { createE2ETestContext } from "./helpers/test-daemon.ts";
+import { writeFile } from "node:fs/promises";
+import { createTempDirs, runPaseoCli, startTestDaemon, createE2ETestContext } from "./helpers/test-daemon.ts";
 
 console.log("=== Provider Commands ===\n");
 
@@ -172,6 +173,56 @@ try {
     assert(lines.includes("codex"), "should include codex");
     assert(lines.includes("opencode"), "should include opencode");
     console.log("✓ provider ls --quiet outputs provider names only\n");
+  }
+
+  // Test 4b: provider ls shows custom configured providers from daemon snapshot
+  {
+    console.log("Test 4b: provider ls shows custom configured providers from daemon snapshot");
+    const { paseoHome, workDir } = await createTempDirs();
+    await writeFile(
+      `${paseoHome}/config.json`,
+      JSON.stringify(
+        {
+          version: 1,
+          daemon: {
+            relay: {
+              enabled: false,
+            },
+          },
+          agents: {
+            providers: {
+              "claude-work": {
+                extends: "claude",
+                label: "Claude Work",
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const customProviderCtx = await startTestDaemon({
+      paseoHome,
+      workDir,
+      timeout: 120000,
+    });
+
+    try {
+      const result = await runPaseoCli(customProviderCtx, ["provider", "ls", "--json"], {
+        timeout: 120000,
+      });
+      assert.strictEqual(result.exitCode, 0, "provider ls --json should exit 0");
+      const data = JSON.parse(result.stdout.trim()) as Array<{ provider: string }>;
+      assert(
+        data.some((provider) => provider.provider === "claude-work"),
+        "provider ls should include daemon-backed custom providers",
+      );
+      console.log("✓ provider ls shows custom configured providers from daemon snapshot\n");
+    } finally {
+      await customProviderCtx.stop();
+    }
   }
 
   // Test 5: provider models claude lists canonical model aliases
