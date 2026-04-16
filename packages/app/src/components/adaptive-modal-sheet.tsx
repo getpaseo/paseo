@@ -16,6 +16,35 @@ import {
 import { X } from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
 
+type EscHandler = () => void;
+const escStack: EscHandler[] = [];
+let escListenerAttached = false;
+
+function handleEscKeyDown(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  const top = escStack[escStack.length - 1];
+  if (!top) return;
+  event.stopPropagation();
+  event.preventDefault();
+  top();
+}
+
+function pushEscHandler(handler: EscHandler): () => void {
+  escStack.push(handler);
+  if (!escListenerAttached && typeof window !== "undefined") {
+    window.addEventListener("keydown", handleEscKeyDown, true);
+    escListenerAttached = true;
+  }
+  return () => {
+    const index = escStack.lastIndexOf(handler);
+    if (index !== -1) escStack.splice(index, 1);
+    if (escStack.length === 0 && escListenerAttached && typeof window !== "undefined") {
+      window.removeEventListener("keydown", handleEscKeyDown, true);
+      escListenerAttached = false;
+    }
+  };
+}
+
 const styles = StyleSheet.create((theme) => ({
   desktopOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -48,9 +77,17 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.surface2,
   },
   title: {
+    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.medium,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginLeft: theme.spacing[3],
+    marginRight: theme.spacing[2],
   },
   closeButton: {
     padding: theme.spacing[2],
@@ -83,6 +120,18 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[6],
     gap: theme.spacing[4],
   },
+  bottomSheetStaticContent: {
+    flex: 1,
+    padding: theme.spacing[6],
+    gap: theme.spacing[4],
+    minHeight: 0,
+  },
+  desktopStaticContent: {
+    flexShrink: 1,
+    minHeight: 0,
+    padding: theme.spacing[6],
+    gap: theme.spacing[4],
+  },
 }));
 
 function SheetBackground({ style }: BottomSheetBackgroundProps) {
@@ -106,9 +155,11 @@ export interface AdaptiveModalSheetProps {
   visible: boolean;
   onClose: () => void;
   children: ReactNode;
+  headerActions?: ReactNode;
   snapPoints?: string[];
   stackBehavior?: "push" | "switch" | "replace";
   testID?: string;
+  scrollable?: boolean;
 }
 
 export function AdaptiveModalSheet({
@@ -116,9 +167,11 @@ export function AdaptiveModalSheet({
   visible,
   onClose,
   children,
+  headerActions,
   snapPoints,
   stackBehavior,
   testID,
+  scrollable = true,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
@@ -157,6 +210,11 @@ export function AdaptiveModalSheet({
     [],
   );
 
+  useEffect(() => {
+    if (!isWeb || isMobile || !visible) return;
+    return pushEscHandler(onClose);
+  }, [visible, isMobile, onClose]);
+
   if (isMobile) {
     return (
       <BottomSheetModal
@@ -174,18 +232,25 @@ export function AdaptiveModalSheet({
         keyboardBlurBehavior="restore"
       >
         <View style={styles.bottomSheetHeader}>
-          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+          {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
           <Pressable accessibilityLabel="Close" style={styles.closeButton} onPress={onClose}>
             <X size={16} color={theme.colors.foregroundMuted} />
           </Pressable>
         </View>
-        <BottomSheetScrollView
-          contentContainerStyle={styles.bottomSheetContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {children}
-        </BottomSheetScrollView>
+        {scrollable ? (
+          <BottomSheetScrollView
+            contentContainerStyle={styles.bottomSheetContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {children}
+          </BottomSheetScrollView>
+        ) : (
+          <View style={styles.bottomSheetStaticContent}>{children}</View>
+        )}
       </BottomSheetModal>
     );
   }
@@ -199,19 +264,26 @@ export function AdaptiveModalSheet({
       />
       <View style={styles.desktopCard}>
         <View style={styles.header}>
-          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+          {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
           <Pressable accessibilityLabel="Close" style={styles.closeButton} onPress={onClose}>
             <X size={16} color={theme.colors.foregroundMuted} />
           </Pressable>
         </View>
-        <ScrollView
-          style={styles.desktopScroll}
-          contentContainerStyle={styles.desktopContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {children}
-        </ScrollView>
+        {scrollable ? (
+          <ScrollView
+            style={styles.desktopScroll}
+            contentContainerStyle={styles.desktopContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {children}
+          </ScrollView>
+        ) : (
+          <View style={styles.desktopStaticContent}>{children}</View>
+        )}
       </View>
     </View>
   );

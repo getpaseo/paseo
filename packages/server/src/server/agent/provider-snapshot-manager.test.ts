@@ -270,7 +270,7 @@ describe("ProviderSnapshotManager", () => {
       );
     });
 
-    manager.refresh(projectCwd);
+    manager.refresh({ cwd: projectCwd });
     expect(manager.getSnapshot(projectCwd)).toEqual([
       {
         provider: "codex",
@@ -292,6 +292,155 @@ describe("ProviderSnapshotManager", () => {
     manager.destroy();
   });
 
+  test("refresh with providers only re-fetches matching providers", async () => {
+    const codexFetchModels = vi
+      .fn<() => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.1")])
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.2")]);
+    const claudeFetchModels = vi
+      .fn<() => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("claude", "sonnet-4")]);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: codexFetchModels,
+        fetchModes: async () => [createMode("auto")],
+      }),
+      createMockProvider({
+        provider: "claude",
+        fetchModels: claudeFetchModels,
+        fetchModes: async () => [createMode("default")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.1",
+      );
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.models?.[0]?.id).toBe(
+        "sonnet-4",
+      );
+    });
+
+    manager.refresh({ cwd: projectCwd, providers: ["codex"] });
+
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("loading");
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")).toMatchObject({
+      provider: "claude",
+      status: "ready",
+      models: [createModel("claude", "sonnet-4")],
+    });
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.2",
+      );
+    });
+
+    expect(codexFetchModels).toHaveBeenCalledTimes(2);
+    expect(claudeFetchModels).toHaveBeenCalledTimes(1);
+
+    manager.destroy();
+  });
+
+  test("refresh treats an empty providers list as a full refresh", async () => {
+    const codexFetchModels = vi
+      .fn<() => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.1")])
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.2")]);
+    const claudeFetchModels = vi
+      .fn<() => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("claude", "sonnet-4")])
+      .mockResolvedValueOnce([createModel("claude", "sonnet-4.5")]);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: codexFetchModels,
+        fetchModes: async () => [createMode("auto")],
+      }),
+      createMockProvider({
+        provider: "claude",
+        fetchModels: claudeFetchModels,
+        fetchModes: async () => [createMode("default")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.status).toBe("ready");
+    });
+
+    manager.refresh({ cwd: projectCwd, providers: [] });
+
+    expect(manager.getSnapshot(projectCwd)).toEqual([
+      {
+        provider: "codex",
+        status: "loading",
+        label: "codex",
+        description: "codex test provider",
+        defaultModeId: null,
+      },
+      {
+        provider: "claude",
+        status: "loading",
+        label: "claude",
+        description: "claude test provider",
+        defaultModeId: null,
+      },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.2",
+      );
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.models?.[0]?.id).toBe(
+        "sonnet-4.5",
+      );
+    });
+
+    expect(codexFetchModels).toHaveBeenCalledTimes(2);
+    expect(claudeFetchModels).toHaveBeenCalledTimes(2);
+
+    manager.destroy();
+  });
+
+  test("refresh ignores provider filters that are not in the registry", async () => {
+    const codexFetchModels = vi
+      .fn<() => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.1")]);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: codexFetchModels,
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+    });
+
+    manager.refresh({ cwd: projectCwd, providers: ["zai"] });
+
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")).toMatchObject({
+      provider: "codex",
+      status: "ready",
+      models: [createModel("codex", "gpt-5.1")],
+    });
+    expect(codexFetchModels).toHaveBeenCalledTimes(1);
+
+    manager.destroy();
+  });
+
   test("refresh during an in-flight refresh is a no-op", async () => {
     const fetchModels = deferred<AgentModelDefinition[]>();
     const fetchModes = deferred<AgentMode[]>();
@@ -306,7 +455,7 @@ describe("ProviderSnapshotManager", () => {
     const changes: ProviderSnapshotEntry[][] = [];
     manager.on("change", (entries) => changes.push(entries));
 
-    manager.refresh(projectCwd);
+    manager.refresh({ cwd: projectCwd });
 
     expect(manager.getSnapshot(projectCwd)).toEqual([
       {
@@ -318,9 +467,9 @@ describe("ProviderSnapshotManager", () => {
       },
     ]);
 
-    manager.refresh(projectCwd);
-    manager.refresh(projectCwd);
-    manager.refresh(projectCwd);
+    manager.refresh({ cwd: projectCwd });
+    manager.refresh({ cwd: projectCwd });
+    manager.refresh({ cwd: projectCwd });
 
     expect(changes).toHaveLength(1);
     expect(handles.codex?.isAvailable).toHaveBeenCalledTimes(1);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { AgentProvider, ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionForServer } from "./use-session-directory";
@@ -14,9 +14,10 @@ interface UseProvidersSnapshotResult {
   entries: ProviderSnapshotEntry[] | undefined;
   isLoading: boolean;
   isFetching: boolean;
+  isRefreshing: boolean;
   error: string | null;
   supportsSnapshot: boolean;
-  refresh: () => void;
+  refresh: (providers?: AgentProvider[]) => Promise<void>;
   invalidate: () => void;
 }
 
@@ -43,6 +44,16 @@ export function useProvidersSnapshot(serverId: string | null): UseProvidersSnaps
     },
   });
 
+  const refreshMutation = useMutation({
+    mutationFn: async (providers?: AgentProvider[]) => {
+      if (!client) {
+        return;
+      }
+      await client.refreshProvidersSnapshot({ providers });
+    },
+  });
+  const { mutateAsync: refreshSnapshot, isPending: isRefreshing } = refreshMutation;
+
   useEffect(() => {
     if (!supportsSnapshot || !client || !isConnected || !serverId) {
       return;
@@ -60,12 +71,12 @@ export function useProvidersSnapshot(serverId: string | null): UseProvidersSnaps
     });
   }, [client, isConnected, serverId, queryClient, queryKey, supportsSnapshot]);
 
-  const refresh = useCallback(() => {
-    if (!client) {
-      return;
-    }
-    void client.refreshProvidersSnapshot();
-  }, [client]);
+  const refresh = useCallback(
+    async (providers?: AgentProvider[]) => {
+      await refreshSnapshot(providers);
+    },
+    [refreshSnapshot],
+  );
 
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey });
@@ -75,6 +86,7 @@ export function useProvidersSnapshot(serverId: string | null): UseProvidersSnaps
     entries: snapshotQuery.data?.entries ?? undefined,
     isLoading: snapshotQuery.isLoading,
     isFetching: snapshotQuery.isFetching,
+    isRefreshing,
     error: snapshotQuery.error instanceof Error ? snapshotQuery.error.message : null,
     supportsSnapshot,
     refresh,

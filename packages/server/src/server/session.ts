@@ -3218,7 +3218,10 @@ export class Session {
   private async handleRefreshProvidersSnapshotRequest(
     msg: Extract<SessionInboundMessage, { type: "refresh_providers_snapshot_request" }>,
   ): Promise<void> {
-    this.providerSnapshotManager?.refresh(msg.cwd ? expandTilde(msg.cwd) : undefined);
+    this.providerSnapshotManager?.refresh({
+      cwd: msg.cwd ? expandTilde(msg.cwd) : undefined,
+      providers: msg.providers,
+    });
     this.emit({
       type: "refresh_providers_snapshot_response",
       payload: {
