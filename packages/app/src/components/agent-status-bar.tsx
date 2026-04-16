@@ -879,7 +879,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     isLoading: snapshotIsLoading,
     isFetching: snapshotIsFetching,
     invalidate: invalidateSnapshot,
-  } = useProvidersSnapshot(serverId);
+  } = useProvidersSnapshot(serverId, agent?.cwd);
 
   const snapshotModels = useMemo(() => {
     if (!snapshotEntries || !agent?.provider) {
