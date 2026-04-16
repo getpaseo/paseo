@@ -167,6 +167,7 @@ function toStatusRows(status: DaemonStatus): StatusRow[] {
 const PROVIDER_BINARIES: { label: string; binary: string }[] = [
   { label: "Claude", binary: "claude" },
   { label: "Codex", binary: "codex" },
+  { label: "Cursor", binary: "agent" },
   { label: "OpenCode", binary: "opencode" },
 ];
 

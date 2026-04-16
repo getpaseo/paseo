@@ -26,6 +26,8 @@ import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
 import { PiACPAgentClient } from "./providers/pi-acp-agent.js";
+import { CursorCliAgentClient } from "./providers/cursor-cli-agent.js";
+
 import {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
@@ -77,7 +79,12 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
   pi: (logger, runtimeSettings) =>
     new PiACPAgentClient({
       logger,
-      runtimeSettings,
+      runtimeSettings: runtimeSettings,
+    }),
+  cursor: (logger, runtimeSettings) =>
+    new CursorCliAgentClient({
+      logger,
+      runtimeSettings: runtimeSettings,
     }),
 };
 

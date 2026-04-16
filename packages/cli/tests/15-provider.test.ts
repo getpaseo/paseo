@@ -20,7 +20,10 @@
  */
 
 import assert from "node:assert";
+import { AGENT_PROVIDER_DEFINITIONS } from "@getpaseo/server";
 import { createE2ETestContext } from "./helpers/test-daemon.ts";
+
+const MANIFEST_PROVIDER_IDS_SORTED = AGENT_PROVIDER_DEFINITIONS.map((d) => d.id).sort();
 
 console.log("=== Provider Commands ===\n");
 
@@ -136,15 +139,13 @@ try {
     console.log("Test 2: provider ls lists all providers");
     const result = await ctx.paseo(["provider", "ls"]);
     assert.strictEqual(result.exitCode, 0, "provider ls should exit 0");
-    assert(result.stdout.includes("claude"), "output should include claude");
-    assert(result.stdout.includes("codex"), "output should include codex");
-    assert(result.stdout.includes("opencode"), "output should include opencode");
-    assert(
-      result.stdout.includes("available") ||
-        result.stdout.includes("loading") ||
-        result.stdout.includes("unavailable"),
-      "output should show a provider status",
-    );
+    for (const id of AGENT_PROVIDER_DEFINITIONS) {
+      assert(
+        result.stdout.includes(id.id),
+        `provider ls output should include manifest provider ${id.id}`,
+      );
+    }
+    assert(result.stdout.includes("available"), "output should show available status");
     console.log("✓ provider ls lists all providers\n");
   }
 
@@ -155,19 +156,17 @@ try {
     assert.strictEqual(result.exitCode, 0, "should exit 0");
     const data = JSON.parse(result.stdout.trim());
     assert(Array.isArray(data), "output should be an array");
-    assert(data.length >= 3, `should have at least 3 providers, got ${data.length}`);
-    assert(
-      data.some((p: { provider: string }) => p.provider === "claude"),
-      "should include claude",
+    assert.strictEqual(
+      data.length,
+      AGENT_PROVIDER_DEFINITIONS.length,
+      "should list every manifest provider",
     );
-    assert(
-      data.some((p: { provider: string }) => p.provider === "codex"),
-      "should include codex",
-    );
-    assert(
-      data.some((p: { provider: string }) => p.provider === "opencode"),
-      "should include opencode",
-    );
+    for (const def of AGENT_PROVIDER_DEFINITIONS) {
+      assert(
+        data.some((p: { provider: string }) => p.provider === def.id),
+        `should include provider ${def.id}`,
+      );
+    }
     console.log("✓ provider ls --json outputs valid JSON\n");
   }
 
@@ -176,11 +175,13 @@ try {
     console.log("Test 4: provider ls --quiet outputs provider names only");
     const result = await ctx.paseo(["provider", "ls", "--quiet"]);
     assert.strictEqual(result.exitCode, 0, "should exit 0");
-    const lines = result.stdout.trim().split("\n");
-    assert(lines.length >= 3, `should have at least 3 lines, got ${lines.length}`);
-    assert(lines.includes("claude"), "should include claude");
-    assert(lines.includes("codex"), "should include codex");
-    assert(lines.includes("opencode"), "should include opencode");
+    const lines = result.stdout.trim().split("\n").filter(Boolean);
+    assert.strictEqual(
+      lines.length,
+      AGENT_PROVIDER_DEFINITIONS.length,
+      "should have one line per manifest provider",
+    );
+    assert.deepStrictEqual([...lines].sort(), MANIFEST_PROVIDER_IDS_SORTED);
     console.log("✓ provider ls --quiet outputs provider names only\n");
   }
 
@@ -232,7 +233,28 @@ try {
       data.every((m) => m.model && m.id && m.description !== undefined),
       "every opencode model should have model, id, and description fields",
     );
+    const hasOpenRouterOpenAi = ids.some((id) => id.startsWith("openrouter/openai/"));
+    if (!hasOpenRouterOpenAi) {
+      console.log(
+        "(note) opencode model list had no openrouter/openai/* entries in this environment\n",
+      );
+    }
     console.log("✓ provider models opencode returns namespaced model IDs\n");
+  }
+
+  // Test 7b: provider models cursor (best-effort; requires Cursor CLI auth on the machine)
+  {
+    console.log("Test 7b: provider models cursor (best-effort)");
+    const result = await ctx.paseo(["provider", "models", "cursor", "--json"]);
+    if (result.exitCode === 0) {
+      const data = JSON.parse(result.stdout.trim()) as ProviderModel[];
+      assert(data.length >= 1, "cursor model list should be non-empty when CLI is authenticated");
+      const ids = data.map((m) => m.id);
+      assert.strictEqual(new Set(ids).size, ids.length, "cursor model IDs should be unique");
+    } else {
+      console.log("(skipped) provider models cursor did not exit 0 — likely no `agent` auth\n");
+    }
+    console.log("✓ provider models cursor check completed\n");
   }
 
   // Test 8: provider models unknown fails with error
