@@ -1253,6 +1253,15 @@ const DiffHunkSchema = z.object({
   lines: z.array(DiffLineSchema),
 });
 
+const SubmoduleDiffSchema = z
+  .object({
+    oldCommit: z.string().nullable(),
+    newCommit: z.string().nullable(),
+    isDirty: z.boolean().optional(),
+    logSummary: z.string().optional(),
+  })
+  .optional();
+
 const ParsedDiffFileSchema = z.object({
   path: z.string(),
   isNew: z.boolean(),
@@ -1261,6 +1270,8 @@ const ParsedDiffFileSchema = z.object({
   deletions: z.number(),
   hunks: z.array(DiffHunkSchema),
   status: z.enum(["ok", "too_large", "binary"]).optional(),
+  isSubmodule: z.boolean().optional(),
+  submodule: SubmoduleDiffSchema,
 });
 
 const FileExplorerEntrySchema = z.object({

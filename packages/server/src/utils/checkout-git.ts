@@ -66,6 +66,7 @@ type CheckoutFileChange = {
   isNew: boolean;
   isDeleted: boolean;
   isUntracked?: boolean;
+  isSubmodule?: boolean;
 };
 
 function normalizeBranchSuggestionName(raw: string): string | null {
@@ -203,6 +204,7 @@ async function listCheckoutFileChanges(
   cwd: string,
   ref: string,
   ignoreWhitespace = false,
+  submodulePaths: Set<string> = new Set(),
 ): Promise<CheckoutFileChange[]> {
   const changes: CheckoutFileChange[] = [];
 
@@ -232,6 +234,7 @@ async function listCheckoutFileChanges(
           status: rawStatus,
           isNew: false,
           isDeleted: false,
+          isSubmodule: submodulePaths.has(newPath),
         });
       }
       continue;
@@ -245,6 +248,7 @@ async function listCheckoutFileChanges(
       status: rawStatus,
       isNew: code === "A",
       isDeleted: code === "D",
+      isSubmodule: submodulePaths.has(path),
     });
   }
 
@@ -1212,6 +1216,144 @@ export async function getCheckoutShortstat(
   }
 }
 
+async function listSubmodulePaths(cwd: string): Promise<Set<string>> {
+  try {
+    const { stdout } = await runGitCommand(["ls-files", "--stage"], {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    const paths = new Set<string>();
+    for (const line of stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)) {
+      // format: "<mode> <sha> <stage>\t<path>"
+      const tabParts = line.split("\t");
+      if (tabParts.length < 2) continue;
+      const metaParts = tabParts[0].split(/\s+/);
+      const mode = metaParts[0];
+      const filePath = tabParts[1];
+      if (mode === "160000" && filePath) {
+        paths.add(filePath);
+      }
+    }
+    return paths;
+  } catch {
+    return new Set();
+  }
+}
+
+async function getSubmoduleDiffInfo(
+  cwd: string,
+  ref: string,
+  path: string,
+): Promise<{
+  oldCommit: string | null;
+  newCommit: string | null;
+  isDirty: boolean;
+  logSummary?: string;
+}> {
+  let oldCommit: string | null = null;
+  let newCommit: string | null = null;
+  let isDirty = false;
+
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", `${ref}:${path}`], {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    oldCommit = stdout.trim() || null;
+  } catch {
+    oldCommit = null;
+  }
+
+  if (ref === "HEAD") {
+    // For uncommitted diffs, the "new" commit is the submodule's current HEAD in the working tree.
+    try {
+      const { stdout } = await runGitCommand(["rev-parse", "HEAD"], {
+        cwd: `${cwd}/${path}`,
+        env: READ_ONLY_GIT_ENV,
+      });
+      newCommit = stdout.trim() || null;
+    } catch {
+      newCommit = null;
+    }
+
+    // If working tree HEAD matches the old commit, check the index in case a new pointer was staged.
+    if (newCommit === oldCommit) {
+      try {
+        const { stdout } = await runGitCommand(["ls-files", "--stage", path], {
+          cwd,
+          env: READ_ONLY_GIT_ENV,
+        });
+        const parts = stdout.trim().split(/\s+/);
+        if (parts[1]) {
+          newCommit = parts[1];
+        }
+      } catch {
+        // keep working tree value
+      }
+    }
+  } else {
+    // For base diffs, the "new" commit is the one recorded in the current branch HEAD.
+    try {
+      const { stdout } = await runGitCommand(["rev-parse", `HEAD:${path}`], {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      });
+      newCommit = stdout.trim() || null;
+    } catch {
+      newCommit = null;
+    }
+  }
+
+  // Detect uncommitted changes inside the submodule (working tree or staged).
+  try {
+    const wtResult = await runGitCommand(["diff", "--quiet"], {
+      cwd: `${cwd}/${path}`,
+      env: READ_ONLY_GIT_ENV,
+      acceptExitCodes: [0, 1],
+    });
+    isDirty = wtResult.exitCode === 1;
+  } catch {
+    isDirty = false;
+  }
+
+  if (!isDirty) {
+    try {
+      const stagedResult = await runGitCommand(["diff", "--cached", "--quiet"], {
+        cwd: `${cwd}/${path}`,
+        env: READ_ONLY_GIT_ENV,
+        acceptExitCodes: [0, 1],
+      });
+      isDirty = stagedResult.exitCode === 1;
+    } catch {
+      // keep previous value
+    }
+  }
+
+  let logSummary: string | undefined;
+  if (oldCommit && newCommit && oldCommit !== newCommit) {
+    try {
+      const { stdout } = await runGitCommand(
+        ["log", "--oneline", "--no-decorate", `${oldCommit}..${newCommit}`],
+        { cwd: `${cwd}/${path}`, env: READ_ONLY_GIT_ENV },
+      );
+      const lines = stdout.split("\n").filter(Boolean);
+      if (lines.length > 0) {
+        logSummary =
+          lines.length === 1
+            ? lines[0]
+            : `${lines.length} commits: ${lines[0]}${lines[1] ? ", " + lines[1] : ""}`;
+      }
+    } catch {
+      // ignore failures to gather log summary
+    }
+  }
+
+  return { oldCommit, newCommit, isDirty, logSummary };
+}
+
 export async function getCheckoutDiff(
   cwd: string,
   compare: CheckoutDiffCompare,
@@ -1239,7 +1381,8 @@ export async function getCheckoutDiff(
   }
 
   const ignoreWhitespace = compare.ignoreWhitespace === true;
-  const changes = await listCheckoutFileChanges(cwd, refForDiff, ignoreWhitespace);
+  const submodulePaths = await listSubmodulePaths(cwd);
+  const changes = await listCheckoutFileChanges(cwd, refForDiff, ignoreWhitespace, submodulePaths);
   changes.sort((a, b) => {
     if (a.path === b.path) return 0;
     return a.path < b.path ? -1 : 1;
@@ -1266,10 +1409,14 @@ export async function getCheckoutDiff(
 
   const trackedChanges = changes.filter((change) => !change.isUntracked);
   const untrackedChanges = changes.filter((change) => change.isUntracked === true);
+
+  const submoduleChanges = trackedChanges.filter((change) => change.isSubmodule);
+  const regularTrackedChanges = trackedChanges.filter((change) => !change.isSubmodule);
+
   const trackedChangeByPath = new Map(trackedChanges.map((change) => [change.path, change]));
 
   const trackedNumstatByPath =
-    trackedChanges.length > 0
+    regularTrackedChanges.length > 0
       ? await getTrackedNumstatByPath(cwd, refForDiff, ignoreWhitespace)
       : new Map<string, FileStat>();
   const trackedDiffPaths: string[] = [];
@@ -1278,7 +1425,7 @@ export async function getCheckoutDiff(
     { status: "binary" | "too_large"; stat: FileStat }
   >();
 
-  for (const change of trackedChanges) {
+  for (const change of regularTrackedChanges) {
     const stat = trackedNumstatByPath.get(change.path) ?? null;
     if (stat?.isBinary) {
       trackedPlaceholderByPath.set(change.path, { status: "binary", stat });
@@ -1325,6 +1472,31 @@ export async function getCheckoutDiff(
   };
 
   if (compare.includeStructured) {
+    // Process submodule changes first so they don't participate in the regular diff batch.
+    const submoduleDiffInfos = await Promise.all(
+      submoduleChanges.map((change) =>
+        getSubmoduleDiffInfo(cwd, refForDiff, change.path).then((info) => ({ change, info })),
+      ),
+    );
+    for (const { change, info } of submoduleDiffInfos) {
+      structured.push({
+        path: change.path,
+        isNew: change.isNew,
+        isDeleted: change.isDeleted,
+        additions: 0,
+        deletions: 0,
+        hunks: [],
+        status: "ok",
+        isSubmodule: true,
+        submodule: {
+          oldCommit: info.oldCommit,
+          newCommit: info.newCommit,
+          isDirty: info.isDirty,
+          logSummary: info.logSummary,
+        },
+      });
+    }
+
     const parsedTrackedFiles =
       trackedDiffText.length > 0
         ? await parseAndHighlightDiff(trackedDiffText, cwd, {
@@ -1340,7 +1512,7 @@ export async function getCheckoutDiff(
         : [];
     const parsedTrackedByPath = new Map(parsedTrackedFiles.map((file) => [file.path, file]));
 
-    for (const change of trackedChanges) {
+    for (const change of regularTrackedChanges) {
       const placeholder = trackedPlaceholderByPath.get(change.path);
       if (placeholder) {
         structured.push(
@@ -1384,7 +1556,7 @@ export async function getCheckoutDiff(
       });
     }
   } else {
-    for (const change of trackedChanges) {
+    for (const change of regularTrackedChanges) {
       const placeholder = trackedPlaceholderByPath.get(change.path);
       if (placeholder) {
         appendTrackedPlaceholderComment(change, placeholder.status);

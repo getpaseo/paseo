@@ -24,6 +24,13 @@ export interface ParsedDiffFile {
   deletions: number;
   hunks: DiffHunk[];
   status?: "ok" | "too_large" | "binary";
+  isSubmodule?: boolean;
+  submodule?: {
+    oldCommit: string | null;
+    newCommit: string | null;
+    isDirty?: boolean;
+    logSummary?: string;
+  };
 }
 
 interface HighlightDiffWithFileContentOptions {
