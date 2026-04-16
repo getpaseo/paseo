@@ -7,6 +7,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { promisify } from "node:util";
 import type { Logger } from "pino";
+import stripAnsi from "strip-ansi";
 
 import type {
   AgentCapabilityFlags,
@@ -76,10 +77,6 @@ const CURSOR_MODES: AgentMode[] = [
 ];
 
 // #region helpers
-
-function stripAnsi(value: string): string {
-  return value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-}
 
 function extractPromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") {
