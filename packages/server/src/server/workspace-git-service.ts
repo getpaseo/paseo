@@ -11,6 +11,7 @@ import {
   resolveGhPath,
   resolveAbsoluteGitDir,
 } from "../utils/checkout-git.js";
+import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
 import { normalizeWorkspaceId } from "./workspace-registry-model.js";
@@ -368,15 +369,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private async resolveCheckoutWatchRoot(cwd: string): Promise<string | null> {
     try {
-      const { stdout } = await this.deps.runGitCommand(
-        ["rev-parse", "--path-format=absolute", "--show-toplevel"],
-        {
-          cwd,
-          env: READ_ONLY_GIT_ENV,
-        },
-      );
-      const root = stdout.trim();
-      return root.length > 0 ? root : null;
+      const { stdout } = await this.deps.runGitCommand(["rev-parse", "--show-toplevel"], {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      });
+      return parseGitRevParsePath(stdout);
     } catch {
       return null;
     }

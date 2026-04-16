@@ -1,6 +1,10 @@
 import { describe, expect, test, vi } from "vitest";
 
-import { deriveWorkspaceId, detectStaleWorkspaces } from "./workspace-registry-model.js";
+import {
+  deriveWorkspaceId,
+  detectStaleWorkspaces,
+  normalizeWorkspaceId,
+} from "./workspace-registry-model.js";
 import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 
 function createWorkspaceRecord(workspaceId: string) {
@@ -66,6 +70,22 @@ describe("deriveWorkspaceId", () => {
         mainRepoRoot: null,
       }),
     ).toBe("/tmp/repo");
+  });
+
+  test("falls back to normalized cwd when git worktree root contains multiple lines", () => {
+    const cwd = String.raw`E:\project\node-ai`;
+
+    expect(
+      deriveWorkspaceId(cwd, {
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: null,
+        worktreeRoot: `--path-format=absolute\n${cwd}`,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+    ).toBe(normalizeWorkspaceId(cwd));
   });
 
   test("falls back to normalized cwd for non-git directories", () => {

@@ -800,6 +800,12 @@ export class AgentManager {
         : overrides;
     const launchContext = this.buildLaunchContext(resolvedAgentId);
     const client = this.requireClient(handle.provider);
+    const available = await client.isAvailable();
+    if (!available) {
+      throw new Error(
+        `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
+      );
+    }
     const session = await client.resumeSession(handle, resumeOverrides, launchContext);
     return this.registerSession(session, normalizedConfig, resolvedAgentId, options);
   }

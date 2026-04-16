@@ -4205,7 +4205,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     if (command?.mode === "replace") {
       return await isCommandAvailable(command.argv[0]);
     }
-    return true;
+    return await isCommandAvailable("codex");
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {

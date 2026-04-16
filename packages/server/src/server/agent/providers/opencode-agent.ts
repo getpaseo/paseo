@@ -1036,7 +1036,7 @@ export class OpenCodeAgentClient implements AgentClient {
     if (command?.mode === "replace") {
       return await isCommandAvailable(command.argv[0]);
     }
-    return true;
+    return await isCommandAvailable("opencode");
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {

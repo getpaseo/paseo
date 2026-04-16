@@ -15,6 +15,7 @@ import {
 import { runGitCommand } from "./run-git-command.js";
 import { platformBash, spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
+import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 
 interface PaseoConfig {
   worktree?: {
@@ -380,14 +381,11 @@ async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<
   } catch {
     // Fallback: best-effort resolve toplevel (will be the worktree root in typical cases)
     try {
-      const { stdout } = await runGitCommand(
-        ["rev-parse", "--path-format=absolute", "--show-toplevel"],
-        {
-          cwd: worktreePath,
-          env: READ_ONLY_GIT_ENV,
-        },
-      );
-      const topLevel = stdout.trim();
+      const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+        cwd: worktreePath,
+        env: READ_ONLY_GIT_ENV,
+      });
+      const topLevel = parseGitRevParsePath(stdout);
       if (topLevel) {
         return normalizePathForOwnership(topLevel);
       }
@@ -567,14 +565,11 @@ export async function runWorktreeTeardownCommands(options: {
  * This is where refs, objects, etc. are stored.
  */
 export async function getGitCommonDir(cwd: string): Promise<string> {
-  const { stdout } = await runGitCommand(
-    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    },
-  );
-  const commonDir = stdout.trim();
+  const { stdout } = await runGitCommand(["rev-parse", "--git-common-dir"], {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+  });
+  const commonDir = resolveGitRevParsePath(cwd, stdout);
   if (!commonDir) {
     throw new Error("Not in a git repository");
   }
@@ -834,15 +829,11 @@ export async function resolvePaseoWorktreeRootForCwd(
 
   let worktreeRoot: string | null = null;
   try {
-    const { stdout } = await runGitCommand(
-      ["rev-parse", "--path-format=absolute", "--show-toplevel"],
-      {
-        cwd,
-        env: READ_ONLY_GIT_ENV,
-      },
-    );
-    const trimmed = stdout.trim();
-    worktreeRoot = trimmed.length > 0 ? trimmed : null;
+    const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    worktreeRoot = parseGitRevParsePath(stdout);
   } catch {
     worktreeRoot = null;
   }

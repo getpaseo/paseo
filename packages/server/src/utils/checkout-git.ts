@@ -5,6 +5,7 @@ import { TTLCache } from "@isaacs/ttlcache";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
 import { findExecutable } from "./executable.js";
+import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
 import { execCommand } from "./spawn.js";
 import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
@@ -539,26 +540,25 @@ export async function getCurrentBranch(cwd: string): Promise<string | null> {
 
 async function getWorktreeRoot(cwd: string): Promise<string | null> {
   try {
-    const { stdout } = await runGitCommand(
-      ["rev-parse", "--path-format=absolute", "--show-toplevel"],
-      {
-        cwd,
-        env: READ_ONLY_GIT_ENV,
-      },
-    );
-    const root = stdout.trim();
-    return root.length > 0 ? root : null;
+    const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    return parseGitRevParsePath(stdout);
   } catch {
     return null;
   }
 }
 
 export async function getMainRepoRoot(cwd: string): Promise<string> {
-  const { stdout: commonDirOut } = await runGitCommand(
-    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    { cwd, env: READ_ONLY_GIT_ENV },
-  );
-  const commonDir = commonDirOut.trim();
+  const { stdout: commonDirOut } = await runGitCommand(["rev-parse", "--git-common-dir"], {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+  });
+  const commonDir = resolveGitRevParsePath(cwd, commonDirOut);
+  if (!commonDir) {
+    throw new Error("Not in a git repository");
+  }
   const normalized = realpathSync(commonDir);
 
   if (basename(normalized) === ".git") {

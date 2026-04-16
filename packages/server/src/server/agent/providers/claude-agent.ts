@@ -1134,7 +1134,7 @@ export class ClaudeAgentClient implements AgentClient {
     if (command?.mode === "replace") {
       return await isCommandAvailable(command.argv[0]);
     }
-    return true;
+    return await isCommandAvailable("claude");
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
