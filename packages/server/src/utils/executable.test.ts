@@ -51,6 +51,10 @@ function writeBrokenAbsoluteFixture(dir: string): string {
   return filePath;
 }
 
+function expectWindowsPathsEqual(actual: string | null, expected: string): void {
+  expect(actual?.toLowerCase()).toBe(expected.toLowerCase());
+}
+
 afterEach(() => {
   process.env.PATH = originalEnv.PATH;
   process.env.PATHEXT = originalEnv.PATHEXT;
@@ -83,7 +87,7 @@ describe("findExecutable", () => {
       writeFileSync(brokenExe, "");
       prependPath(dir);
 
-      await expect(findExecutable("foo")).resolves.toBe(cmd);
+      expectWindowsPathsEqual(await findExecutable("foo"), cmd);
     });
 
     test("returns null when the only candidate is a broken .exe", async () => {
@@ -101,7 +105,7 @@ describe("findExecutable", () => {
       const cmd = writeExecutable(path.join(dir, "foo.cmd"), "@echo off\r\necho 0.1\r\n");
       prependPath(dir);
 
-      await expect(findExecutable("foo")).resolves.toBe(cmd);
+      expectWindowsPathsEqual(await findExecutable("foo"), cmd);
     });
   });
 

@@ -18,6 +18,13 @@ function gitResult(stdout: string) {
   return { stdout, stderr: "", exitCode: 0 };
 }
 
+function normalizePathForPlatform(value: string): string {
+  if (process.platform !== "win32") {
+    return value;
+  }
+  return value.replace(/\\/g, "/").toLowerCase();
+}
+
 async function loadCheckoutGitWithRevParseTopLevelOutput(stdout: string) {
   vi.resetModules();
 
@@ -65,10 +72,13 @@ describe("checkout git rev-parse path handling", () => {
     const { getCheckoutStatus } = await import("./checkout-git.js");
     const status = await getCheckoutStatus(nested);
 
-    expect(status).toMatchObject({
-      isGit: true,
-      repoRoot: realpathSync(repoRoot),
-    });
+    expect(status.isGit).toBe(true);
+    if (!status.isGit) {
+      throw new Error("Expected nested checkout to be detected as a git repository");
+    }
+    expect(normalizePathForPlatform(status.repoRoot)).toBe(
+      normalizePathForPlatform(realpathSync(repoRoot)),
+    );
   });
 
   it("rejects multi-line rev-parse stdout and never calls the removed path-format command", async () => {

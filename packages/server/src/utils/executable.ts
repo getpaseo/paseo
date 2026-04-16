@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { extname } from "node:path";
@@ -44,22 +44,31 @@ async function probeExecutable(executablePath: string): Promise<boolean> {
   return await new Promise((resolve) => {
     let settled = false;
     let started = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const child = spawn(executablePath, ["--version"], {
-      stdio: "ignore",
-      windowsHide: true,
-      // Windows batch shims (.cmd/.bat) require cmd.exe; native binaries do not.
-      shell: isWindowsCommandScript(executablePath),
-    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const settle = (result: boolean) => {
       if (settled) {
         return;
       }
       settled = true;
-      clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+      }
       resolve(result);
     };
+
+    let child: ChildProcess;
+    try {
+      child = spawn(executablePath, ["--version"], {
+        stdio: "ignore",
+        windowsHide: true,
+        // Windows batch shims (.cmd/.bat) require cmd.exe; native binaries do not.
+        shell: isWindowsCommandScript(executablePath),
+      });
+    } catch {
+      settle(false);
+      return;
+    }
 
     timer = setTimeout(() => {
       if (started) {

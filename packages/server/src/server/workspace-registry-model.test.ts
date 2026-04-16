@@ -89,9 +89,11 @@ describe("deriveWorkspaceId", () => {
   });
 
   test("falls back to normalized cwd for non-git directories", () => {
+    const cwd = "/tmp/repo/../repo/scratch";
+
     expect(
-      deriveWorkspaceId("/tmp/repo/../repo/scratch", {
-        cwd: "/tmp/repo/../repo/scratch",
+      deriveWorkspaceId(cwd, {
+        cwd,
         isGit: false,
         currentBranch: null,
         remoteUrl: null,
@@ -99,6 +101,6 @@ describe("deriveWorkspaceId", () => {
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       }),
-    ).toBe("/tmp/repo/scratch");
+    ).toBe(normalizeWorkspaceId("/tmp/repo/scratch"));
   });
 });
