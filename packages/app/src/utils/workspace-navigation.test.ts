@@ -46,7 +46,7 @@ describe("prepareWorkspaceTab", () => {
       target: { kind: "agent", agentId: AGENT_ID },
     });
 
-    expect(route).toBe("/h/server-1/workspace/L3JlcG8vd29ya3RyZWU");
+    expect(route).toBe("/h/server-1/workspace/b64_L3JlcG8vd29ya3RyZWU");
     const key = "server-1:/repo/worktree";
     expect(useWorkspaceLayoutStore.getState().getWorkspaceTabs(key)).toHaveLength(1);
   });

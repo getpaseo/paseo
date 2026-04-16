@@ -16,7 +16,7 @@ describe("buildNewAgentRoute", () => {
 
   it("encodes the working directory as a workspace path segment", () => {
     expect(buildNewAgentRoute("srv-1", "/Users/me/dev/paseo")).toBe(
-      "/h/srv-1/workspace/L1VzZXJzL21lL2Rldi9wYXNlbw",
+      "/h/srv-1/workspace/b64_L1VzZXJzL21lL2Rldi9wYXNlbw",
     );
   });
 });
