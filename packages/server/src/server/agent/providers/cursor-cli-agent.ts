@@ -46,6 +46,7 @@ import {
 const execFileAsync = promisify(execFile);
 
 const CURSOR_PROVIDER = "cursor" as const;
+const MAX_CURSOR_TRANSCRIPT_BYTES = 2 * 1024 * 1024;
 
 const CURSOR_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -175,6 +176,10 @@ function loadCursorTranscriptHistory(cwd: string, sessionId: string): AgentTimel
   }
 
   try {
+    const transcriptSize = fs.statSync(transcriptPath).size;
+    if (transcriptSize > MAX_CURSOR_TRANSCRIPT_BYTES) {
+      return [];
+    }
     const content = fs.readFileSync(transcriptPath, "utf8");
     const timeline: AgentTimelineItem[] = [];
     for (const line of content.split(/\r?\n/)) {

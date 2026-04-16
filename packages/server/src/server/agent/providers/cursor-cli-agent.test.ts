@@ -125,4 +125,33 @@ describe("CursorCliAgentClient", () => {
 
     expect(events).toEqual([]);
   });
+
+  test("streamHistory ignores oversized transcript files", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "cursor-home-"));
+    process.env.HOME = home;
+
+    const cwd = "/Users/test/workspace/paseo";
+    const sessionId = "cursor-session-oversized";
+    const transcriptDir = path.join(
+      home,
+      ".cursor",
+      "projects",
+      "Users-test-workspace-paseo",
+      "agent-transcripts",
+      sessionId,
+    );
+    await mkdir(transcriptDir, { recursive: true });
+    await writeFile(path.join(transcriptDir, `${sessionId}.jsonl`), "x".repeat(2_100_000), "utf8");
+
+    const session = new CursorCliAgentSession(
+      { provider: "cursor", cwd },
+      { logger: createTestLogger(), resumeChatId: sessionId },
+    );
+    const events = [];
+    for await (const event of session.streamHistory()) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([]);
+  });
 });
