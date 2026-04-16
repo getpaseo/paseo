@@ -426,6 +426,34 @@ async function resendInvitation(args?: Record<string, unknown>): Promise<unknown
   return await response.json();
 }
 
+async function createShare(args?: Record<string, unknown>): Promise<unknown> {
+  const response = await authFetch("/api/sessions/share", {
+    method: "POST",
+    body: JSON.stringify(args),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? "Failed to create share.");
+  }
+  return await response.json();
+}
+
+async function revokeShare(args?: Record<string, unknown>): Promise<unknown> {
+  const token = args?.token as string;
+  if (!token) throw new Error("Token is required.");
+
+  const response = await authFetch(`/api/sessions/share/${encodeURIComponent(token)}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? "Failed to revoke share.");
+  }
+  return await response.json();
+}
+
 // ---------------------------------------------------------------------------
 // Export command handlers map
 // ---------------------------------------------------------------------------
@@ -442,5 +470,7 @@ export function createAuthCommandHandlers(): Record<string, DesktopCommandHandle
     desktop_auth_remove_member: (args) => removeMember(args),
     desktop_auth_cancel_invitation: (args) => cancelInvitation(args),
     desktop_auth_resend_invitation: (args) => resendInvitation(args),
+    desktop_auth_create_share: (args) => createShare(args),
+    desktop_auth_revoke_share: (args) => revokeShare(args),
   };
 }

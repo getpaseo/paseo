@@ -190,3 +190,34 @@ export const activityLog = pgTable("activity_log", {
   details: jsonb("details"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// ─── Session Sharing ────────────────────────────────────────────────────────
+
+export const sessionShare = pgTable("session_share", {
+  id: text("id").primaryKey(),
+  token: text("token").notNull().unique(),
+  daemonSessionId: text("daemon_session_id").notNull(),
+  serverId: text("server_id").notNull(),
+  orgId: text("org_id"),
+  ownerId: text("owner_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  accessLevel: text("access_level").notNull().default("read_only"),
+  pairingUrl: text("pairing_url"),
+  allowedUserIds: jsonb("allowed_user_ids").notNull().default([]),
+  maxParticipants: integer("max_participants").notNull().default(5),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const sessionParticipant = pgTable("session_participant", {
+  id: text("id").primaryKey(),
+  shareId: text("share_id")
+    .notNull()
+    .references(() => sessionShare.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  joinedAt: timestamp("joined_at").notNull().defaultNow(),
+  leftAt: timestamp("left_at"),
+});

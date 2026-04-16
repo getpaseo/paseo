@@ -12,8 +12,8 @@ npx esbuild src/main.ts src/preload.ts --outdir=dist --platform=node --format=cj
   --external:electron --external:electron-updater --external:electron-log --external:ws \
   --external:@hubtool/server --external:@hubtool/cli
 
-# Get a random available port for Metro
-EXPO_PORT=$("$ROOT_DIR/node_modules/.bin/get-port")
+# Use fixed port for Metro (so share links work consistently)
+EXPO_PORT="${EXPO_PORT:-8081}"
 export EXPO_PORT
 
 # Allow the Metro dev origin so the Electron renderer can connect to the daemon WebSocket

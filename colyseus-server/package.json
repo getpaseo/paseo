@@ -1,0 +1,28 @@
+{
+  "name": "hubcode-colyseus-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@colyseus/core": "^0.15.57",
+    "@colyseus/schema": "^2.0.35",
+    "@colyseus/ws-transport": "^0.15.0",
+    "nanoid": "^5.0.0",
+    "ws": "^8.18.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
