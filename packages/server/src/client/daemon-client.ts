@@ -2457,7 +2457,11 @@ export class DaemonClient {
 
   async checkoutCommit(
     cwd: string,
-    input: { message?: string; addAll?: boolean },
+    input: {
+      message?: string;
+      addAll?: boolean;
+      helperProviders?: Array<{ provider: AgentProvider; model?: string | null }>;
+    },
     requestId?: string,
   ): Promise<CheckoutCommitPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -2467,6 +2471,7 @@ export class DaemonClient {
         cwd,
         message: input.message,
         addAll: input.addAll,
+        helperProviders: input.helperProviders,
       },
       responseType: "checkout_commit_response",
       timeout: 60000,
@@ -2536,7 +2541,12 @@ export class DaemonClient {
 
   async checkoutPrCreate(
     cwd: string,
-    input: { title?: string; body?: string; baseRef?: string },
+    input: {
+      title?: string;
+      body?: string;
+      baseRef?: string;
+      helperProviders?: Array<{ provider: AgentProvider; model?: string | null }>;
+    },
     requestId?: string,
   ): Promise<CheckoutPrCreatePayload> {
     return this.sendCorrelatedSessionRequest({
@@ -2547,6 +2557,7 @@ export class DaemonClient {
         title: input.title,
         body: input.body,
         baseRef: input.baseRef,
+        helperProviders: input.helperProviders,
       },
       responseType: "checkout_pr_create_response",
       timeout: 60000,

@@ -4,9 +4,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
-const APP_SETTINGS_QUERY_KEY = ["app-settings"];
+export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
+import {
+  normalizeHelperProviderPreferences,
+  type HelperProviderPreference,
+} from "@/utils/helper-provider-preferences";
 
 export type SendBehavior = "interrupt" | "queue";
 export type ReleaseChannel = "stable" | "beta";
@@ -19,6 +23,7 @@ export interface AppSettings {
   manageBuiltInDaemon: boolean;
   sendBehavior: SendBehavior;
   releaseChannel: ReleaseChannel;
+  helperProviders: HelperProviderPreference[];
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -26,6 +31,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   manageBuiltInDaemon: true,
   sendBehavior: "interrupt",
   releaseChannel: "stable",
+  helperProviders: [],
 };
 
 export interface UseAppSettingsReturn {
@@ -92,6 +98,7 @@ export async function loadSettingsFromStorage(): Promise<AppSettings> {
       if (parsed.releaseChannel && !VALID_RELEASE_CHANNELS.has(parsed.releaseChannel)) {
         parsed.releaseChannel = DEFAULT_APP_SETTINGS.releaseChannel;
       }
+      parsed.helperProviders = normalizeHelperProviderPreferences(parsed.helperProviders);
       return { ...DEFAULT_APP_SETTINGS, ...parsed };
     }
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { resolveStructuredHelperMcpServers } from "./session.js";
+import { resolveStructuredHelperMcpServers, resolveStructuredHelperProviders } from "./session.js";
 
 describe("resolveStructuredHelperMcpServers", () => {
   test("prefers a running agent in the same cwd when it has MCP servers", () => {
@@ -78,5 +78,29 @@ describe("resolveStructuredHelperMcpServers", () => {
     });
 
     expect(result).toBeUndefined();
+  });
+});
+
+describe("resolveStructuredHelperProviders", () => {
+  test("uses default structured helper order when no helper preferences are configured", () => {
+    expect(resolveStructuredHelperProviders()).toEqual([
+      { provider: "claude", model: "haiku" },
+      { provider: "codex", model: "gpt-5.4-mini", thinkingOptionId: "low" },
+      { provider: "opencode", model: "opencode/gpt-5-nano" },
+    ]);
+  });
+
+  test("respects configured provider order and model overrides", () => {
+    expect(
+      resolveStructuredHelperProviders({
+        helperProviders: [
+          { provider: "codex", model: "gpt-5.4" },
+          { provider: "claude", model: null },
+        ],
+      }),
+    ).toEqual([
+      { provider: "codex", model: "gpt-5.4", thinkingOptionId: "low" },
+      { provider: "claude", model: "haiku" },
+    ]);
   });
 });
