@@ -14,10 +14,12 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
-import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
+import { type AggregatedAgent } from "@/types/aggregated-agent";
 import { useSessionStore } from "@/stores/session-store";
 import { Archive } from "lucide-react-native";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import { deriveAgentActionSheetState } from "@/utils/agent-list-actions";
+import { describeExternalSessionRecovery } from "@/utils/external-session";
 
 interface AgentListProps {
   agents: AggregatedAgent[];
@@ -131,6 +133,7 @@ function SessionRow({
   const isSelected = selectedAgentId === agentKey;
   const statusLabel = formatStatusLabel(agent.status);
   const projectPath = shortenPath(agent.cwd);
+  const recoveryDescriptor = describeExternalSessionRecovery(agent);
 
   return (
     <Pressable
@@ -157,6 +160,9 @@ function SessionRow({
               label="Archived"
               icon={<Archive size={theme.fontSize.xs} color={theme.colors.foregroundMuted} />}
             />
+          ) : null}
+          {recoveryDescriptor.canRecoverWhenClosed ? (
+            <SessionBadge label="Recoverable" tone="warning" />
           ) : null}
           {(agent.pendingPermissionCount ?? 0) > 0 ? (
             <SessionBadge label={`${agent.pendingPermissionCount} pending`} tone="warning" />
@@ -215,6 +221,8 @@ export function AgentList({
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
+  const [isSubmittingAction, setIsSubmittingAction] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const isMobile = useIsCompactFormFactor();
 
   const actionClient = useSessionStore((state) =>
@@ -223,45 +231,94 @@ export function AgentList({
 
   const isActionSheetVisible = actionAgent !== null;
   const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !actionClient);
+  const actionSheetState = useMemo(
+    () =>
+      actionAgent ? deriveAgentActionSheetState(actionAgent, isActionDaemonUnavailable) : null,
+    [actionAgent, isActionDaemonUnavailable],
+  );
+
+  const navigateToAgent = useCallback(
+    (agent: AggregatedAgent) => {
+      const route = prepareWorkspaceTab({
+        serverId: agent.serverId,
+        workspaceId: agent.cwd,
+        target: { kind: "agent", agentId: agent.id },
+        pin: Boolean(agent.archivedAt),
+      });
+      onAgentSelect?.();
+      router.navigate(route);
+    },
+    [onAgentSelect],
+  );
 
   const handleAgentPress = useCallback(
     (agent: AggregatedAgent) => {
       if (isActionSheetVisible) {
         return;
       }
-
-      const serverId = agent.serverId;
-      const agentId = agent.id;
-
-      onAgentSelect?.();
-
-      const route = prepareWorkspaceTab({
-        serverId,
-        workspaceId: agent.cwd,
-        target: { kind: "agent", agentId },
-        pin: Boolean(agent.archivedAt),
-      });
-      router.navigate(route);
+      navigateToAgent(agent);
     },
-    [isActionSheetVisible, onAgentSelect],
+    [isActionSheetVisible, navigateToAgent],
   );
 
   const handleAgentLongPress = useCallback((agent: AggregatedAgent) => {
+    setActionError(null);
     setActionAgent(agent);
   }, []);
 
   const handleCloseActionSheet = useCallback(() => {
+    setActionError(null);
+    setIsSubmittingAction(false);
     setActionAgent(null);
   }, []);
 
   const handleArchiveAgent = useCallback(() => {
-    if (!actionAgent || !actionClient) {
+    if (!actionAgent || !actionClient || isSubmittingAction || isActionDaemonUnavailable) {
       return;
     }
-    // Timeout errors are swallowed — the daemon will still process the archive
-    void actionClient.archiveAgent(actionAgent.id).catch(() => {});
+    setIsSubmittingAction(true);
+    // Timeout errors are swallowed — the daemon will still process the archive.
+    void actionClient
+      .archiveAgent(actionAgent.id)
+      .catch(() => {})
+      .finally(() => {
+        setIsSubmittingAction(false);
+      });
     setActionAgent(null);
-  }, [actionAgent, actionClient]);
+  }, [actionAgent, actionClient, isActionDaemonUnavailable, isSubmittingAction]);
+
+  const handleRecoverAgent = useCallback(async () => {
+    if (
+      !actionAgent ||
+      !actionClient ||
+      !actionSheetState?.canRecover ||
+      isSubmittingAction ||
+      isActionDaemonUnavailable
+    ) {
+      return;
+    }
+
+    setIsSubmittingAction(true);
+    setActionError(null);
+    try {
+      await actionClient.refreshAgent(actionAgent.id);
+      const recoveredAgent = actionAgent;
+      setActionAgent(null);
+      navigateToAgent(recoveredAgent);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setActionError(message);
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  }, [
+    actionAgent,
+    actionClient,
+    actionSheetState?.canRecover,
+    isActionDaemonUnavailable,
+    isSubmittingAction,
+    navigateToAgent,
+  ]);
 
   const flatItems = useMemo((): FlatListItem[] => {
     const order = ["Today", "Yesterday", "This week", "This month", "Older"] as const;
@@ -351,30 +408,64 @@ export function AgentList({
           >
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>
-              {isActionDaemonUnavailable ? "Host offline" : "Archive this session?"}
+              {actionSheetState?.title ??
+                (isActionDaemonUnavailable ? "Host offline" : "Session actions")}
             </Text>
-            <View style={styles.sheetButtonRow}>
+            {actionSheetState?.summary ? (
+              <Text style={styles.sheetMessage}>{actionSheetState.summary}</Text>
+            ) : null}
+            {actionError ? <Text style={styles.sheetErrorText}>{actionError}</Text> : null}
+            <View style={styles.sheetButtonColumn}>
+              {actionSheetState?.recoverLabel ? (
+                <Pressable
+                  disabled={!actionSheetState.canRecover || isSubmittingAction}
+                  style={[
+                    styles.sheetButton,
+                    styles.sheetPrimaryButton,
+                    (!actionSheetState.canRecover || isSubmittingAction) &&
+                      styles.sheetPrimaryButtonDisabled,
+                  ]}
+                  onPress={() => {
+                    void handleRecoverAgent();
+                  }}
+                  testID="agent-action-recover"
+                >
+                  <Text style={styles.sheetPrimaryText}>
+                    {isSubmittingAction ? "Recovering..." : actionSheetState.recoverLabel}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {actionSheetState?.canArchive ? (
+                <Pressable
+                  disabled={isSubmittingAction}
+                  style={[
+                    styles.sheetButton,
+                    actionSheetState.canRecover
+                      ? styles.sheetSecondaryButton
+                      : styles.sheetPrimaryButton,
+                    isSubmittingAction && styles.sheetPrimaryButtonDisabled,
+                  ]}
+                  onPress={handleArchiveAgent}
+                  testID="agent-action-archive"
+                >
+                  <Text
+                    style={[
+                      actionSheetState.canRecover
+                        ? styles.sheetSecondaryText
+                        : styles.sheetPrimaryText,
+                      isSubmittingAction && styles.sheetArchiveTextDisabled,
+                    ]}
+                  >
+                    Archive
+                  </Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 style={[styles.sheetButton, styles.sheetCancelButton]}
                 onPress={handleCloseActionSheet}
                 testID="agent-action-cancel"
               >
                 <Text style={styles.sheetCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                disabled={isActionDaemonUnavailable}
-                style={[styles.sheetButton, styles.sheetArchiveButton]}
-                onPress={handleArchiveAgent}
-                testID="agent-action-archive"
-              >
-                <Text
-                  style={[
-                    styles.sheetArchiveText,
-                    isActionDaemonUnavailable && styles.sheetArchiveTextDisabled,
-                  ]}
-                >
-                  Archive
-                </Text>
               </Pressable>
             </View>
           </View>
@@ -549,22 +640,44 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     textAlign: "center",
   },
-  sheetButtonRow: {
-    flexDirection: "row",
+  sheetMessage: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    textAlign: "center",
+  },
+  sheetErrorText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.palette.red[300],
+    textAlign: "center",
+  },
+  sheetButtonColumn: {
+    flexDirection: "column",
     gap: theme.spacing[3],
   },
   sheetButton: {
-    flex: 1,
     borderRadius: theme.borderRadius.lg,
     paddingVertical: theme.spacing[4],
     alignItems: "center",
     justifyContent: "center",
   },
-  sheetArchiveButton: {
+  sheetPrimaryButton: {
     backgroundColor: theme.colors.primary,
   },
-  sheetArchiveText: {
+  sheetPrimaryButtonDisabled: {
+    opacity: 0.5,
+  },
+  sheetPrimaryText: {
     color: theme.colors.primaryForeground,
+    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.base,
+  },
+  sheetSecondaryButton: {
+    backgroundColor: theme.colors.surface1,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  sheetSecondaryText: {
+    color: theme.colors.foreground,
     fontWeight: theme.fontWeight.semibold,
     fontSize: theme.fontSize.base,
   },

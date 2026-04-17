@@ -150,7 +150,47 @@ describe("paseo daemon bootstrap", () => {
     });
   });
 
-  test("generates a relay pairing offer for unix socket listeners", async () => {
+  test("passes the configured agent timeline budget into the agent manager", async () => {
+    const daemonHandle = await createTestPaseoDaemon({
+      agentTimelineMaxItems: 2,
+    });
+
+    try {
+      const agent = await daemonHandle.daemon.agentManager.createAgent({
+        provider: "codex",
+        cwd: daemonHandle.paseoHome,
+      });
+
+      await daemonHandle.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "first",
+      });
+      await daemonHandle.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "second",
+      });
+      await daemonHandle.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "third",
+      });
+
+      const timeline = daemonHandle.daemon.agentManager.fetchTimeline(agent.id, {
+        direction: "tail",
+        limit: 0,
+      });
+
+      expect(timeline.rows).toHaveLength(2);
+      expect(
+        timeline.rows.map((row) =>
+          row.item.type === "assistant_message" ? row.item.text : row.item.type,
+        ),
+      ).toEqual(["second", "third"]);
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  test("emits a relay pairing offer for unix socket listeners", async () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-socket-relay-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));

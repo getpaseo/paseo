@@ -8,6 +8,7 @@ import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
+import { isOriginAllowed } from "./origin-policy.js";
 
 export type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -120,6 +121,8 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
+import { TmuxCodexBridgeService } from "./tmux-codex-bridge-service.js";
+import { CodexProcessBridgeService } from "./codex-process-bridge-service.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -170,6 +173,7 @@ export type PaseoDaemonConfig = {
   agentClients: Partial<Record<AgentProvider, AgentClient>>;
   agentStoragePath: string;
   relayEnabled?: boolean;
+  agentTimelineMaxItems?: number;
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
   appBaseUrl?: string;
@@ -182,6 +186,8 @@ export type PaseoDaemonConfig = {
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
+  externalCodexRelaunchCommand?: string[];
+  tmuxCodexBridgeEnabled?: boolean;
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
 };
 
@@ -256,7 +262,15 @@ export async function createPaseoDaemon(
 
     app.use((req, res, next) => {
       const origin = req.headers.origin;
-      if (origin && (allowedOrigins.has("*") || allowedOrigins.has(origin))) {
+      const requestHost = typeof req.headers.host === "string" ? req.headers.host : null;
+      if (
+        origin &&
+        isOriginAllowed({
+          origin,
+          requestHost,
+          allowedOrigins,
+        })
+      ) {
         res.setHeader("Access-Control-Allow-Origin", origin);
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -361,6 +375,7 @@ export async function createPaseoDaemon(
         ...config.agentClients,
       },
       registry: agentStorage,
+      maxTimelineItems: config.agentTimelineMaxItems,
       logger,
     });
     const providerRegistry = buildProviderRegistry(logger, {
@@ -418,6 +433,31 @@ export async function createPaseoDaemon(
       { elapsed: elapsed() },
       `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
     );
+    const tmuxCodexBridge =
+      config.tmuxCodexBridgeEnabled === false
+        ? null
+        : new TmuxCodexBridgeService({
+            logger,
+            paseoHome: config.paseoHome,
+            agentManager,
+            agentStorage,
+            projectRegistry,
+            workspaceRegistry,
+            workspaceGitService,
+            relaunchCommand: config.externalCodexRelaunchCommand,
+          });
+    if (tmuxCodexBridge) {
+      await tmuxCodexBridge.start();
+    }
+    const codexProcessBridge = new CodexProcessBridgeService({
+      logger,
+      paseoHome: config.paseoHome,
+      agentManager,
+      projectRegistry,
+      workspaceRegistry,
+      workspaceGitService,
+    });
+    await codexProcessBridge.start();
     logger.info(
       "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
     );
@@ -627,6 +667,8 @@ export async function createPaseoDaemon(
               scheduleService,
               checkoutDiffManager,
               workspaceGitService,
+              tmuxCodexBridge,
+              codexProcessBridge,
             );
 
             if (typeof process.send === "function" && process.env.PASEO_SUPERVISED === "1") {
@@ -693,6 +735,8 @@ export async function createPaseoDaemon(
         runtimeSettings: config.agentProviderSettings,
         providerOverrides: config.providerOverrides,
       });
+      await codexProcessBridge.stop().catch(() => undefined);
+      await tmuxCodexBridge?.stop().catch(() => undefined);
       terminalManager.killAll();
       speechService.stop();
       await scheduleService.stop().catch(() => undefined);

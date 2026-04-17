@@ -17,4 +17,6 @@ export type AgentDirectoryEntry = Pick<
   | "labels"
 > & {
   pendingPermissionCount?: number;
+  persistence?: Agent["persistence"];
+  runtimeInfo?: Agent["runtimeInfo"];
 };

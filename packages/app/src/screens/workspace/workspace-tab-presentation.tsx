@@ -6,7 +6,12 @@ import invariant from "tiny-invariant";
 import { SyncedLoader } from "@/components/synced-loader";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { getPanelRegistration } from "@/panels/panel-registry";
+import {
+  deriveWorkspaceTabAgentManagementState,
+  type WorkspaceTabBadgeDescriptor,
+} from "@/screens/workspace/workspace-agent-management";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import { useSessionStore } from "@/stores/session-store";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor, isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
@@ -19,6 +24,7 @@ export interface WorkspaceTabPresentation {
   titleState: "ready" | "loading";
   icon: React.ComponentType<{ size: number; color: string }>;
   statusBucket: SidebarStateBucket | null;
+  badges: WorkspaceTabBadgeDescriptor[];
 }
 
 const DEFAULT_STATUS_DOT_SIZE = 7;
@@ -67,10 +73,19 @@ function WorkspaceTabPresentationResolverInner({
   workspaceId,
   children,
 }: WorkspaceTabPresentationResolverInnerProps): ReactElement {
+  const agentId = tab.target.kind === "agent" ? tab.target.agentId : null;
+  const agent =
+    useSessionStore((state) =>
+      agentId ? (state.sessions[serverId]?.agents?.get(agentId) ?? null) : null,
+    ) ?? null;
   const descriptor = registration.useDescriptor(tab.target as never, {
     serverId,
     workspaceId,
   });
+  const agentManagementState = useMemo(
+    () => deriveWorkspaceTabAgentManagementState(agent),
+    [agent],
+  );
 
   const presentation = useMemo(
     () => ({
@@ -81,8 +96,10 @@ function WorkspaceTabPresentationResolverInner({
       titleState: descriptor.titleState,
       icon: descriptor.icon,
       statusBucket: descriptor.statusBucket,
+      badges: tab.target.kind === "agent" ? agentManagementState.badges : [],
     }),
     [
+      agentManagementState.badges,
       descriptor.icon,
       descriptor.label,
       descriptor.statusBucket,
@@ -197,9 +214,26 @@ export function WorkspaceTabOptionRow({
           <WorkspaceTabIcon presentation={presentation} active={selected || active} />
         </View>
         <View style={styles.optionContent}>
-          <Text numberOfLines={1} style={styles.optionLabel}>
-            {presentation.titleState === "loading" ? "Loading..." : presentation.label}
-          </Text>
+          <View style={styles.optionLabelRow}>
+            <Text numberOfLines={1} style={styles.optionLabel}>
+              {presentation.titleState === "loading" ? "Loading..." : presentation.label}
+            </Text>
+            {presentation.badges.map((badge) => (
+              <View
+                key={badge.key}
+                style={[styles.optionBadge, badge.tone === "warning" && styles.optionBadgeWarning]}
+              >
+                <Text
+                  style={[
+                    styles.optionBadgeText,
+                    badge.tone === "warning" && styles.optionBadgeTextWarning,
+                  ]}
+                >
+                  {badge.label}
+                </Text>
+              </View>
+            ))}
+          </View>
         </View>
       </Pressable>
       {selected ? (
@@ -261,9 +295,33 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     flexShrink: 1,
   },
+  optionLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
   optionLabel: {
+    flexShrink: 1,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+  },
+  optionBadge: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 2,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+  },
+  optionBadgeWarning: {
+    borderWidth: 1,
+    borderColor: theme.colors.palette.amber[500],
+  },
+  optionBadgeText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    fontWeight: "500",
+  },
+  optionBadgeTextWarning: {
+    color: theme.colors.palette.amber[500],
   },
   optionTrailingSlot: {
     width: 16,

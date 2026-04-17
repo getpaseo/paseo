@@ -251,6 +251,12 @@ export const PersistedConfigSchema = z
           })
           .strict()
           .optional(),
+        agentTimeline: z
+          .object({
+            maxItems: z.number().int().nonnegative().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .transform(({ allowedHosts, ...daemon }) => {

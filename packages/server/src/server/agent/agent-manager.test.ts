@@ -519,6 +519,41 @@ describe("AgentManager", () => {
     expect(client.lastConfig?.mcpServers).toEqual(snapshot.config.mcpServers);
   });
 
+  test("adoptSession registers a provided session under the supplied agent id", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-adopt-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000104",
+    });
+
+    const session = new TestAgentSession({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    const snapshot = await manager.adoptSession(
+      session,
+      {
+        provider: "codex",
+        cwd: workdir,
+      },
+      "00000000-0000-4000-8000-000000000105",
+      {
+        labels: { source: "external", bridge: "codex_process" },
+      },
+    );
+
+    expect(snapshot.id).toBe("00000000-0000-4000-8000-000000000105");
+    expect(snapshot.labels).toEqual({ source: "external", bridge: "codex_process" });
+    expect(manager.getAgent(snapshot.id)?.config.model).toBe("gpt-5.4");
+  });
+
   test("createAgent preserves a user-provided paseo MCP config", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const storagePath = join(workdir, "agents");
@@ -2714,6 +2749,74 @@ describe("AgentManager", () => {
 
     // Should NOT have triggered attention callback for internal agent
     expect(attentionCalls).toHaveLength(0);
+  });
+
+  test("external bridged sessions do not create unread finished attention on completion", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-external-bridge-attention-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class ExternalBridgeSession extends TestAgentSession {
+      override describePersistence() {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+          metadata: {
+            externalSessionSource: "codex_process",
+            tty: "/dev/pts/2",
+          },
+        };
+      }
+    }
+
+    class ExternalBridgeClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new ExternalBridgeSession(config);
+      }
+
+      async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new ExternalBridgeSession({
+          provider: "codex",
+          cwd: config?.cwd ?? process.cwd(),
+        });
+      }
+    }
+
+    const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+    const manager = new AgentManager({
+      clients: {
+        codex: new ExternalBridgeClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000112",
+      onAgentAttention: ({ reason }) => {
+        attentionReasons.push(reason);
+      },
+    });
+
+    const agent = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "External bridge session",
+    });
+
+    await manager.runAgent(agent.id, "hello");
+
+    const completed = manager.getAgent(agent.id);
+    expect(completed?.lifecycle).toBe("idle");
+    expect(completed?.attention).toEqual({ requiresAttention: false });
+    expect(attentionReasons).toEqual([]);
   });
 
   test("clearAgentAttention on errored agent stays cleared until a new error transition", async () => {

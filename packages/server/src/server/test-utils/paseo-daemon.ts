@@ -29,6 +29,7 @@ type TestPaseoDaemonOptions = {
   voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
+  agentTimelineMaxItems?: number;
 };
 
 export type TestPaseoDaemon = {
@@ -101,6 +102,7 @@ export async function createTestPaseoDaemon(
       voiceLlmModel: options.voiceLlmModel ?? null,
       dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
       downloadTokenTtlMs: options.downloadTokenTtlMs,
+      agentTimelineMaxItems: options.agentTimelineMaxItems,
     };
 
     const logger = options.logger ?? pino({ level: "silent" });

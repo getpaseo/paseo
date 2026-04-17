@@ -770,6 +770,29 @@ export class AgentManager {
     });
   }
 
+  async adoptSession(
+    session: AgentSession,
+    config: AgentSessionConfig,
+    agentId: string,
+    options?: {
+      createdAt?: Date;
+      updatedAt?: Date;
+      lastUserMessageAt?: Date | null;
+      labels?: Record<string, string>;
+      timeline?: AgentTimelineItem[];
+      timelineRows?: AgentTimelineRow[];
+      timelineEpoch?: string;
+      timelineNextSeq?: number;
+      historyPrimed?: boolean;
+      lastUsage?: AgentUsage;
+      lastError?: string;
+      attention?: AttentionState;
+    },
+  ): Promise<ManagedAgent> {
+    const normalizedConfig = await this.normalizeConfig(config);
+    return this.registerSession(session, normalizedConfig, agentId, options);
+  }
+
   // Reconstruct an agent from provider persistence. Callers should explicitly
   // hydrate timeline history after resume.
   async resumeAgentFromPersistence(
@@ -2431,6 +2454,11 @@ export class AgentManager {
     }
   }
 
+  private isExternalBridgedSession(agent: ManagedAgent): boolean {
+    const source = agent.persistence?.metadata?.externalSessionSource;
+    return typeof source === "string" && source.trim().length > 0;
+  }
+
   private checkAndSetAttention(agent: ManagedAgent): void {
     const previousStatus = this.previousStatuses.get(agent.id);
     const currentStatus = agent.lifecycle;
@@ -2450,6 +2478,9 @@ export class AgentManager {
 
     // Check if agent transitioned from running to idle (finished)
     if (previousStatus === "running" && currentStatus === "idle") {
+      if (this.isExternalBridgedSession(agent)) {
+        return;
+      }
       agent.attention = {
         requiresAttention: true,
         attentionReason: "finished",

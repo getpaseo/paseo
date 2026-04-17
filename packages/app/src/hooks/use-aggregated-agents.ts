@@ -1,14 +1,12 @@
 import { useMemo, useCallback, useSyncExternalStore } from "react";
 import { useShallow } from "zustand/shallow";
 import { useSessionStore } from "@/stores/session-store";
-import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { Agent } from "@/stores/session-store";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import type { AggregatedAgent } from "@/types/aggregated-agent";
+import { toAggregatedAgent } from "@/utils/aggregated-agent";
 
-export interface AggregatedAgent extends AgentDirectoryEntry {
-  serverId: string;
-  serverLabel: string;
-}
+export type { AggregatedAgent } from "@/types/aggregated-agent";
 
 export interface AggregatedAgentsResult {
   agents: AggregatedAgent[];
@@ -61,21 +59,11 @@ export function useAggregatedAgents(options?: {
           continue;
         }
         const nextAgent: AggregatedAgent = {
-          id: agent.id,
-          serverId,
-          serverLabel,
-          title: agent.title ?? null,
-          status: agent.status,
-          lastActivityAt: agent.lastActivityAt,
-          cwd: agent.cwd,
-          provider: agent.provider,
-          pendingPermissionCount: agent.pendingPermissions.length,
-          requiresAttention: agent.requiresAttention,
-          attentionReason: agent.attentionReason,
-          attentionTimestamp: agent.attentionTimestamp,
-          archivedAt: agent.archivedAt,
-          createdAt: agent.createdAt,
-          labels: agent.labels,
+          ...toAggregatedAgent({
+            source: agent,
+            serverId,
+            serverLabel,
+          }),
         };
         allAgents.push(nextAgent);
       }

@@ -26,6 +26,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     ? new Date(snapshot.attentionTimestamp)
     : null;
   const archivedAt = snapshot.archivedAt ? new Date(snapshot.archivedAt) : null;
+  const resolvedTitle = resolveAgentSnapshotTitle(snapshot);
 
   return {
     serverId,
@@ -44,7 +45,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     runtimeInfo: snapshot.runtimeInfo,
     lastUsage: snapshot.lastUsage,
     lastError: snapshot.lastError ?? null,
-    title: snapshot.title ?? null,
+    title: resolvedTitle,
     cwd: snapshot.cwd,
     model: snapshot.model ?? null,
     features: snapshot.features,
@@ -55,4 +56,27 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     archivedAt,
     labels: snapshot.labels,
   };
+}
+
+function normalizeOptionalTitle(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function resolveAgentSnapshotTitle(snapshot: AgentSnapshotPayload): string | null {
+  const runtimeExtra =
+    snapshot.runtimeInfo?.extra && typeof snapshot.runtimeInfo.extra === "object"
+      ? snapshot.runtimeInfo.extra
+      : null;
+
+  return (
+    normalizeOptionalTitle(snapshot.title) ??
+    normalizeOptionalTitle(runtimeExtra?.title) ??
+    normalizeOptionalTitle(snapshot.persistence?.metadata?.title) ??
+    normalizeOptionalTitle(snapshot.persistence?.metadata?.paneTitle) ??
+    null
+  );
 }

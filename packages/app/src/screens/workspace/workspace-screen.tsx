@@ -85,6 +85,7 @@ import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
+import { deriveWorkspaceTabAgentManagementState } from "@/screens/workspace/workspace-agent-management";
 import { buildWorkspaceTabMenuEntries } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
@@ -301,6 +302,15 @@ function MobileWorkspaceTabOption({
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
 }) {
   const { theme } = useUnistyles();
+  const agentId = tab.target.kind === "agent" ? tab.target.agentId : null;
+  const agent =
+    useSessionStore((state) =>
+      agentId ? (state.sessions[normalizedServerId]?.agents?.get(agentId) ?? null) : null,
+    ) ?? null;
+  const agentManagementState = useMemo(
+    () => deriveWorkspaceTabAgentManagementState(agent),
+    [agent],
+  );
   const menuTestIDBase = `workspace-tab-menu-${tab.key}`;
   const menuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
@@ -308,6 +318,8 @@ function MobileWorkspaceTabOption({
     index: tabIndex,
     tabCount,
     menuTestIDBase,
+    reloadAgentLabel: agentManagementState.reloadLabel,
+    reloadAgentTooltip: agentManagementState.reloadTooltip,
     onCopyResumeCommand,
     onCopyAgentId,
     onReloadAgent,

@@ -1,8 +1,8 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { rmSync, mkdtempSync, writeFileSync } from "node:fs";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+import { promises as fs, rmSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseRolloutFile } from "./codex-rollout-timeline.js";
+import { loadCodexPersistedTimeline, parseRolloutFile } from "./codex-rollout-timeline.js";
 
 describe("codex rollout parsing", () => {
   let tmpDir: string;
@@ -546,6 +546,54 @@ describe("codex rollout parsing", () => {
         type: "assistant_message",
         text: "All tests passed!",
       });
+    });
+  });
+
+  describe("persisted timeline loading", () => {
+    test("reuses cached rollout parses until file changes", async () => {
+      const rolloutPath = join(tmpDir, "rollout.jsonl");
+      const lines = [
+        JSON.stringify({
+          timestamp: "2026-01-22T07:08:54.378Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "First answer" }],
+          },
+        }),
+      ];
+      writeFileSync(rolloutPath, lines.join("\n") + "\n");
+
+      const readSpy = vi.spyOn(fs, "readFile");
+
+      const first = await loadCodexPersistedTimeline("session-a", { rolloutPath });
+      const second = await loadCodexPersistedTimeline("session-a", { rolloutPath });
+
+      expect(first).toEqual([{ type: "assistant_message", text: "First answer" }]);
+      expect(second).toBe(first);
+      expect(readSpy).toHaveBeenCalledTimes(1);
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      writeFileSync(
+        rolloutPath,
+        [
+          JSON.stringify({
+            timestamp: "2026-01-22T07:08:55.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Updated answer" }],
+            },
+          }),
+        ].join("\n") + "\n",
+      );
+
+      const third = await loadCodexPersistedTimeline("session-a", { rolloutPath });
+
+      expect(third).toEqual([{ type: "assistant_message", text: "Updated answer" }]);
+      expect(readSpy).toHaveBeenCalledTimes(2);
     });
   });
 });

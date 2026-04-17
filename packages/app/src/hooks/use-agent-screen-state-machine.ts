@@ -27,11 +27,15 @@ export interface AgentScreenMachineInput {
   isArchivingCurrentAgent: boolean;
   isHistorySyncing: boolean;
   needsAuthoritativeSync: boolean;
+  deferAuthoritativeSync: boolean;
   shouldUseOptimisticStream: boolean;
   hasHydratedHistoryBefore: boolean;
 }
 
 function shouldBlockInitialAuthoritativeReadyState(input: AgentScreenMachineInput): boolean {
+  if (input.deferAuthoritativeSync) {
+    return false;
+  }
   return (
     !input.shouldUseOptimisticStream &&
     !input.hasHydratedHistoryBefore &&
@@ -170,7 +174,10 @@ export function deriveAgentScreenViewState({
     sync = { status: "reconnecting" };
   } else if (input.missingAgentState.kind === "error") {
     sync = { status: "sync_error" };
-  } else if (input.needsAuthoritativeSync || input.isHistorySyncing) {
+  } else if (
+    !input.deferAuthoritativeSync &&
+    (input.needsAuthoritativeSync || input.isHistorySyncing)
+  ) {
     let ui: "overlay" | "silent";
     if (input.shouldUseOptimisticStream) {
       ui = "silent";

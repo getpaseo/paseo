@@ -13,6 +13,8 @@ import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
+import type { TmuxCodexBridgeService } from "./tmux-codex-bridge-service.js";
+import type { CodexProcessBridgeService } from "./codex-process-bridge-service.js";
 import {
   type ServerInfoStatusPayload,
   type WSHelloMessage,
@@ -38,6 +40,7 @@ import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
+import { isOriginAllowed } from "./origin-policy.js";
 import {
   computeShouldNotifyClient,
   computeShouldSendPush,
@@ -306,6 +309,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly mcpBaseUrl: string | null;
   private readonly speech: SpeechService | null;
   private readonly terminalManager: TerminalManager | null;
+  private readonly tmuxCodexBridge: TmuxCodexBridgeService | null;
+  private readonly codexProcessBridge: CodexProcessBridgeService | null;
   private readonly dictation: {
     finalTimeoutMs?: number;
   } | null;
@@ -368,6 +373,8 @@ export class VoiceAssistantWebSocketServer {
     scheduleService?: ScheduleService,
     checkoutDiffManager?: CheckoutDiffManager,
     workspaceGitService?: WorkspaceGitServiceImpl,
+    tmuxCodexBridge?: TmuxCodexBridgeService | null,
+    codexProcessBridge?: CodexProcessBridgeService | null,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -402,6 +409,8 @@ export class VoiceAssistantWebSocketServer {
     this.mcpBaseUrl = mcpBaseUrl;
     this.speech = speech ?? null;
     this.terminalManager = terminalManager ?? null;
+    this.tmuxCodexBridge = tmuxCodexBridge ?? null;
+    this.codexProcessBridge = codexProcessBridge ?? null;
     this.dictation = dictation ?? null;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.providerOverrides = providerOverrides;
@@ -450,12 +459,13 @@ export class VoiceAssistantWebSocketServer {
           callback(false, 403, "Host not allowed");
           return;
         }
-        const sameOrigin =
-          !!origin &&
-          !!requestHost &&
-          (origin === `http://${requestHost}` || origin === `https://${requestHost}`);
-
-        if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin) || sameOrigin) {
+        if (
+          isOriginAllowed({
+            origin,
+            requestHost,
+            allowedOrigins,
+          })
+        ) {
           callback(true);
         } else {
           this.incrementRuntimeCounter("originRejected");
@@ -700,6 +710,8 @@ export class VoiceAssistantWebSocketServer {
       agentStorage: this.agentStorage,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
+      tmuxCodexBridge: this.tmuxCodexBridge,
+      codexProcessBridge: this.codexProcessBridge,
       chatService: this.chatService,
       loopService: this.loopService,
       scheduleService: this.scheduleService,
@@ -1436,18 +1448,21 @@ export class VoiceAssistantWebSocketServer {
       assistantMessage: agent ? findLatestAssistantMessageFromTimeline(agent.timeline) : null,
       permissionRequest: agent ? findLatestPermissionRequest(agent.pendingPermissions) : null,
     });
+    const isExternalBridgedAgent = Boolean(agent?.persistence?.metadata?.externalSessionSource);
 
     // Push is only a fallback when the user is away from desktop/web.
     // Also suppress push if they're actively using the mobile app.
-    const shouldSendPush = computeShouldSendPush({
-      reason: params.reason,
-      allClientStates: allStates,
-    });
+    const shouldSendPush =
+      !isExternalBridgedAgent &&
+      computeShouldSendPush({
+        reason: params.reason,
+        allClientStates: allStates,
+      });
 
     if (shouldSendPush) {
       const tokens = this.pushTokenStore.getAllTokens();
-      this.logger.info({ tokenCount: tokens.length }, "Sending push notification");
       if (tokens.length > 0) {
+        this.logger.info({ tokenCount: tokens.length }, "Sending push notification");
         void this.pushService.sendPush(tokens, notification);
       }
     }

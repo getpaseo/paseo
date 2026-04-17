@@ -169,4 +169,37 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
 
     expect(pushMocks.sendPush).toHaveBeenCalledTimes(1);
   });
+
+  it("suppresses push notifications for external bridged sessions", () => {
+    const { server } = createServer({
+      getAgent: vi.fn(() => ({
+        config: { title: null },
+        cwd: "/tmp/worktree",
+        labels: { bridge: "codex_process" },
+        persistence: {
+          provider: "codex",
+          sessionId: "session-123",
+          metadata: {
+            externalSessionSource: "codex_process",
+            tty: "/dev/pts/2",
+          },
+        },
+        timeline: [
+          {
+            type: "assistant_message",
+            text: "Done.",
+          },
+        ],
+        pendingPermissions: new Map(),
+      })),
+    });
+
+    (server as any).broadcastAgentAttention({
+      agentId: "agent-3",
+      provider: "codex",
+      reason: "finished",
+    });
+
+    expect(pushMocks.sendPush).not.toHaveBeenCalled();
+  });
 });

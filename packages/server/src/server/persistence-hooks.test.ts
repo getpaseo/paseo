@@ -5,7 +5,9 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import {
   attachAgentStoragePersistence,
   buildConfigOverrides,
+  buildExternalBridgeSessionConfig,
   buildSessionConfig,
+  resolveStoredAgentTitle,
 } from "./persistence-hooks.js";
 import type {
   AgentPermissionRequest,
@@ -226,5 +228,67 @@ describe("persistence hooks", () => {
       { agentId: "agent-missing-provider", provider: "zai" },
       "Skipping persisted agent with unknown provider 'zai'",
     );
+  });
+
+  test("buildExternalBridgeSessionConfig prefers the persisted canonical title", () => {
+    const record = createRecord({
+      provider: "codex",
+      title: "Renamed title",
+      config: {
+        title: "Creation title",
+        modeId: "default",
+      },
+    });
+
+    expect(buildExternalBridgeSessionConfig(record)).toMatchObject({
+      provider: "codex",
+      cwd: "/tmp/project",
+      modeId: "plan",
+      title: "Renamed title",
+    });
+  });
+
+  test("resolveStoredAgentTitle refreshes generated tmux fallback titles from tmux metadata", () => {
+    const record = createRecord({
+      provider: "codex",
+      cwd: "/tmp/project",
+      title: "project [tmux:%42]",
+      labels: { source: "tmux", bridge: "codex", pane: "%42" },
+      config: {
+        title: "Renamed title",
+        modeId: "default",
+        extra: {
+          codex: {
+            externalSessionSource: "tmux_codex",
+            paneId: "%42",
+          },
+        },
+      },
+      runtimeInfo: {
+        provider: "codex",
+        sessionId: "%42",
+        modeId: "auto",
+        extra: {
+          externalSessionSource: "tmux_codex",
+          paneId: "%42",
+          title: "Renamed title",
+        },
+      },
+      persistence: {
+        provider: "codex",
+        sessionId: "%42",
+        metadata: {
+          externalSessionSource: "tmux_codex",
+          paneId: "%42",
+          paneTitle: "Renamed title",
+          title: "Renamed title",
+        },
+      },
+    });
+
+    expect(resolveStoredAgentTitle(record)).toBe("Renamed title");
+    expect(buildExternalBridgeSessionConfig(record)).toMatchObject({
+      title: "Renamed title",
+    });
   });
 });

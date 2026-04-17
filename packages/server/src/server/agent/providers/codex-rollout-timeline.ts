@@ -10,6 +10,14 @@ import { mapCodexRolloutToolCall } from "./codex/tool-call-mapper.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 
 const MAX_ROLLOUT_SEARCH_DEPTH = 4;
+const rolloutTimelineCache = new Map<
+  string,
+  {
+    mtimeMs: number;
+    size: number;
+    timeline: AgentTimelineItem[];
+  }
+>();
 
 function resolveCodexSessionRoot(): string | null {
   if (process.env.CODEX_SESSION_DIR) {
@@ -582,6 +590,27 @@ export async function parseRolloutFile(filePath: string): Promise<AgentTimelineI
   return dedupeMirroredTextTimelineItems(timeline);
 }
 
+async function parseRolloutFileCached(filePath: string): Promise<AgentTimelineItem[]> {
+  const stat = await fs.stat(filePath);
+  if (!stat.isFile()) {
+    rolloutTimelineCache.delete(filePath);
+    return [];
+  }
+
+  const cached = rolloutTimelineCache.get(filePath);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.timeline;
+  }
+
+  const timeline = await parseRolloutFile(filePath);
+  rolloutTimelineCache.set(filePath, {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    timeline,
+  });
+  return timeline;
+}
+
 export type CodexPersistedTimelineOptions = {
   sessionRoot?: string | null;
   rolloutPath?: string | null;
@@ -595,12 +624,9 @@ export async function loadCodexPersistedTimeline(
   const rolloutPath = options?.rolloutPath ?? null;
   if (rolloutPath) {
     try {
-      const stat = await fs.stat(rolloutPath);
-      if (stat.isFile()) {
-        const timeline = await parseRolloutFile(rolloutPath);
-        if (timeline.length > 0) {
-          return timeline;
-        }
+      const timeline = await parseRolloutFileCached(rolloutPath);
+      if (timeline.length > 0) {
+        return timeline;
       }
     } catch {
       // Fall back to session root scan.
@@ -622,7 +648,7 @@ export async function loadCodexPersistedTimeline(
       return [];
     }
 
-    return await parseRolloutFile(rolloutFile);
+    return await parseRolloutFileCached(rolloutFile);
   } catch (error) {
     logger?.warn({ err: error, sessionId }, "Failed to load persisted timeline");
     return [];

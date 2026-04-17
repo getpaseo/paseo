@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { buildAllAgentsList } from "@/utils/aggregated-agent";
+import { toAggregatedAgent } from "./aggregated-agent";
+import { describeExternalSessionRecovery } from "./external-session";
 import type { Agent } from "@/stores/session-store";
 
 function makeAgent(input?: Partial<Agent>): Agent {
-  const timestamp = new Date("2026-03-08T10:00:00.000Z");
+  const timestamp = new Date("2026-04-12T10:00:00.000Z");
   return {
     serverId: "server-1",
     id: input?.id ?? "agent-1",
     provider: input?.provider ?? "codex",
-    status: input?.status ?? "idle",
+    status: input?.status ?? "closed",
     createdAt: input?.createdAt ?? timestamp,
     updatedAt: input?.updatedAt ?? timestamp,
     lastUserMessageAt: input?.lastUserMessageAt ?? null,
@@ -24,12 +25,19 @@ function makeAgent(input?: Partial<Agent>): Agent {
     currentModeId: input?.currentModeId ?? null,
     availableModes: input?.availableModes ?? [],
     pendingPermissions: input?.pendingPermissions ?? [],
-    persistence: input?.persistence ?? null,
+    persistence: input?.persistence ?? {
+      provider: "codex",
+      sessionId: "tmux:codex-main",
+      metadata: {
+        externalSessionSource: "tmux_codex",
+        sessionId: "codex-main",
+      },
+    },
     runtimeInfo: input?.runtimeInfo,
     lastUsage: input?.lastUsage,
     lastError: input?.lastError ?? null,
     title: input?.title ?? "Agent",
-    cwd: input?.cwd ?? "/tmp/project",
+    cwd: input?.cwd ?? "/workspace/project",
     model: input?.model ?? null,
     thinkingOptionId: input?.thinkingOptionId,
     requiresAttention: input?.requiresAttention ?? false,
@@ -41,39 +49,16 @@ function makeAgent(input?: Partial<Agent>): Agent {
   };
 }
 
-describe("useAllAgentsList", () => {
-  it("excludes archived agents by default", () => {
-    const visibleAgent = makeAgent({ id: "visible" });
-    const archivedAgent = makeAgent({
-      id: "archived",
-      archivedAt: new Date("2026-03-08T11:00:00.000Z"),
-    });
-
-    const result = buildAllAgentsList({
-      agents: [visibleAgent, archivedAgent],
+describe("toAggregatedAgent", () => {
+  it("preserves external session metadata for recovery-aware lists", () => {
+    const aggregated = toAggregatedAgent({
+      source: makeAgent(),
       serverId: "server-1",
       serverLabel: "Local",
-      includeArchived: false,
     });
 
-    expect(result.map((agent) => agent.id)).toEqual(["visible"]);
-  });
-
-  it("includes archived agents when requested", () => {
-    const visibleAgent = makeAgent({ id: "visible" });
-    const archivedAgent = makeAgent({
-      id: "archived",
-      archivedAt: new Date("2026-03-08T11:00:00.000Z"),
-    });
-
-    const result = buildAllAgentsList({
-      agents: [visibleAgent, archivedAgent],
-      serverId: "server-1",
-      serverLabel: "Local",
-      includeArchived: true,
-    });
-
-    expect(result.map((agent) => agent.id)).toEqual(["visible", "archived"]);
-    expect(result[1]?.archivedAt).toEqual(archivedAgent.archivedAt);
+    const descriptor = describeExternalSessionRecovery(aggregated);
+    expect(descriptor.canRecoverWhenClosed).toBe(true);
+    expect(descriptor.restartLabel).toBe("Reopen tmux session");
   });
 });
