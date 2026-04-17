@@ -7,6 +7,7 @@ import {
   type DesktopAuthSession,
   type DesktopAuthUser,
 } from "@/desktop/auth/desktop-auth";
+import { webGetSession } from "@/desktop/auth/web-auth-api";
 import { getIsElectron } from "@/constants/platform";
 
 const AUTH_SESSION_QUERY_KEY = ["desktopAuthSession"] as const;
@@ -17,10 +18,9 @@ export function useAuthSession() {
 
   const query = useQuery<DesktopAuthSession | null>({
     queryKey: AUTH_SESSION_QUERY_KEY,
-    enabled: isElectron,
     staleTime: 60_000,
     refetchOnMount: "always",
-    queryFn: () => desktopAuthGetSession(),
+    queryFn: () => (isElectron ? desktopAuthGetSession() : webGetSession()),
   });
 
   const signInMutation = useMutation({

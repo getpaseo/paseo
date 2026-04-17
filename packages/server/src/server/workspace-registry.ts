@@ -46,6 +46,10 @@ const PersistedWorkspaceRecordSchema = z.object({
   kanbanStatus: WorkspaceKanbanStatusSchema.optional(),
   agentProvider: z.string().optional(),
   agentMode: z.enum(["native", "cli"]).optional(),
+  // Organization scope — when set, the sidebar filters this workspace to
+  // only show when the matching org is active. Absent means "unscoped" and
+  // the workspace is visible under any org (legacy behavior).
+  orgId: z.string().optional(),
 });
 
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
@@ -248,6 +252,7 @@ export function createPersistedWorkspaceRecord(input: {
   kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
   agentProvider?: string;
   agentMode?: PersistedWorkspaceRecord["agentMode"];
+  orgId?: string;
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
     ...input,

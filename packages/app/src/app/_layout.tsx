@@ -45,6 +45,7 @@ import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
 import { LeftSidebar } from "@/components/left-sidebar";
+import { DesktopOrgRail, DesktopTitlebarAccent } from "@/components/desktop-org-rail";
 import { DownloadToast } from "@/components/download-toast";
 import { UpdateBanner } from "@/desktop/updates/update-banner";
 import { ToastProvider } from "@/contexts/toast-context";
@@ -64,6 +65,17 @@ import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { WebGlobalScrollbarStyle } from "@/components/web-global-scrollbar-style";
 import { AddProjectModal } from "@/components/add-project-modal";
+import { ParticipantBar } from "@/components/sharing/participant-bar";
+import { FloatingVideoPanel } from "@/components/sharing/floating-video-panel";
+import { SharedWorkspaceRouteGuard } from "@/components/sharing/shared-workspace-route-guard";
+import { SharedDrawOverlay } from "@/components/sharing/shared-draw-overlay";
+import {
+  reconnectIfNeeded,
+  useIsInSharedSession,
+  useSharedParticipants,
+  useSharedSessionStore,
+} from "@/stores/shared-session-store";
+import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { queryClient } from "@/query/query-client";
 import {
@@ -451,11 +463,18 @@ function AppContainer({
 
   const content = (
     <View style={containerStyle}>
+      <SharedWorkspaceRouteGuard />
+      <GlobalSharedSessionBar />
+      <SharedDrawOverlay />
       <View style={rowStyle}>
         {!isCompactLayout && chromeEnabled && !isFocusModeEnabled && (
-          <LeftSidebar selectedAgentId={selectedAgentId} />
+          <>
+            <DesktopOrgRail />
+            <LeftSidebar selectedAgentId={selectedAgentId} />
+          </>
         )}
         <View style={flexStyle}>{children}</View>
+        <DesktopTitlebarAccent />
       </View>
       {isCompactLayout && chromeEnabled && <LeftSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />
@@ -464,6 +483,7 @@ function AppContainer({
       <ProjectPickerModal />
       <AddProjectModal />
       <KeyboardShortcutsDialog />
+      <GlobalFloatingVideoPanel />
     </View>
   );
 
@@ -787,6 +807,29 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
 function FaviconStatusSync() {
   useFaviconStatus();
   return null;
+}
+
+function GlobalSharedSessionBar() {
+  const isInSharedSession = useIsInSharedSession();
+  const sharedParticipants = useSharedParticipants();
+  const sharedSessionRoom = useSharedSessionStore().room;
+  const { session: authSession } = useAuthSession();
+
+  useEffect(() => {
+    if (isInSharedSession && !sharedSessionRoom) {
+      void reconnectIfNeeded(authSession?.sessionToken);
+    }
+  }, [isInSharedSession, sharedSessionRoom, authSession]);
+
+  if (!isInSharedSession) return null;
+  return <ParticipantBar participants={sharedParticipants} />;
+}
+
+function GlobalFloatingVideoPanel() {
+  const isInSharedSession = useIsInSharedSession();
+  const [dismissed, setDismissed] = useState(false);
+  if (!isInSharedSession || dismissed) return null;
+  return <FloatingVideoPanel visible onClose={() => setDismissed(true)} />;
 }
 
 function RootStack() {

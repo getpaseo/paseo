@@ -68,18 +68,17 @@ export default function BillingSuccessPage() {
     if (!synced) return;
 
     const timer = window.setInterval(() => {
-      setCountdown((current) => {
-        if (current <= 1) {
-          window.clearInterval(timer);
-          router.push("/dashboard/billing");
-          return 0;
-        }
-        return current - 1;
-      });
+      setCountdown((current) => (current <= 1 ? 0 : current - 1));
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [router, synced]);
+  }, [synced]);
+
+  useEffect(() => {
+    if (synced && countdown === 0) {
+      router.push("/dashboard/billing");
+    }
+  }, [synced, countdown, router]);
 
   return (
     <div className="flex min-h-[60vh] items-center justify-center">

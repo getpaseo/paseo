@@ -90,6 +90,7 @@ type RegisterPendingWorktreeWorkspaceDependencies = {
     kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
     agentProvider?: string;
     agentMode?: PersistedWorkspaceRecord["agentMode"];
+    orgId?: string;
   }) => PersistedWorkspaceRecord;
   buildProjectPlacement: (cwd: string) => Promise<ProjectPlacementPayload>;
   projectRegistry: Pick<ProjectRegistry, "get" | "upsert">;
@@ -123,6 +124,7 @@ type HandleCreateHubcodeWorktreeRequestDependencies = {
     kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
     agentProvider?: string;
     agentMode?: PersistedWorkspaceRecord["agentMode"];
+    orgId?: string;
   }) => Promise<PersistedWorkspaceRecord>;
   sessionLogger: Logger;
   runWorktreeSetupInBackground: (options: {
@@ -518,6 +520,7 @@ export async function registerPendingWorktreeWorkspace(
     kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
     agentProvider?: string;
     agentMode?: PersistedWorkspaceRecord["agentMode"];
+    orgId?: string;
   },
 ): Promise<PersistedWorkspaceRecord> {
   const workspaceId = normalizePersistedWorkspaceId(options.worktreePath);
@@ -556,6 +559,7 @@ export async function registerPendingWorktreeWorkspace(
     kanbanStatus: options.kanbanStatus,
     agentProvider: options.agentProvider,
     agentMode: options.agentMode,
+    orgId: options.orgId,
   });
 
   await dependencies.projectRegistry.upsert(nextProjectRecord);
@@ -630,6 +634,7 @@ export async function handleCreateHubcodeWorktreeRequest(
       kanbanStatus: request.kanbanStatus,
       agentProvider: request.agentProvider,
       agentMode: request.agentMode,
+      orgId: request.orgId,
     });
 
     await createAgentWorktree({

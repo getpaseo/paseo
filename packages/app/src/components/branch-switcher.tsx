@@ -7,6 +7,7 @@ import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/com
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { useBranchSwitcher } from "@/hooks/use-branch-switcher";
+import { useSharedWorkspaceScope } from "@/stores/shared-session-store";
 
 interface BranchSwitcherProps {
   currentBranchName: string | null;
@@ -41,11 +42,17 @@ export function BranchSwitcher({
     queryClient,
   });
 
-  if (!currentBranchName) {
+  const sharedScope = useSharedWorkspaceScope();
+  const isScopedRecipient = sharedScope.workspaceId !== null;
+
+  if (!currentBranchName || isScopedRecipient) {
     return (
-      <Text testID="workspace-header-title" style={styles.headerTitle} numberOfLines={1}>
-        {title}
-      </Text>
+      <View style={styles.readOnlyBranchRow} collapsable={false}>
+        {currentBranchName ? <GitBranch size={14} color={theme.colors.foregroundMuted} /> : null}
+        <Text testID="workspace-header-title" style={styles.headerTitle} numberOfLines={1}>
+          {title}
+        </Text>
+      </View>
     );
   }
 
@@ -119,5 +126,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   branchSwitcherTriggerHovered: {
     backgroundColor: theme.colors.surface1,
+  },
+  readOnlyBranchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    flexShrink: 1,
+    minWidth: 0,
   },
 }));

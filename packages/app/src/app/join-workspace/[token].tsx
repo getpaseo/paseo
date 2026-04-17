@@ -1,9 +1,9 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { JoinSessionScreen } from "@/components/sharing/join-session-screen";
+import { JoinWorkspaceScreen } from "@/components/sharing/join-workspace-screen";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
-import { buildHostRootRoute } from "@/utils/host-routes";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
-export default function JoinSessionRoute() {
+export default function JoinWorkspaceRoute() {
   const { token, st } = useLocalSearchParams<{ token: string; st?: string }>();
   const router = useRouter();
   const { session } = useAuthSession();
@@ -11,10 +11,12 @@ export default function JoinSessionRoute() {
   const sessionToken = session?.sessionToken ?? st ?? null;
 
   return (
-    <JoinSessionScreen
+    <JoinWorkspaceScreen
       shareToken={token ?? ""}
       sessionToken={sessionToken}
-      onJoined={(serverId) => router.replace(buildHostRootRoute(serverId))}
+      onJoined={({ serverId, workspaceId }) =>
+        router.replace(buildHostWorkspaceRoute(serverId, workspaceId))
+      }
       onBack={() => router.replace("/")}
     />
   );

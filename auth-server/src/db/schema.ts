@@ -221,3 +221,28 @@ export const sessionParticipant = pgTable("session_participant", {
   joinedAt: timestamp("joined_at").notNull().defaultNow(),
   leftAt: timestamp("left_at"),
 });
+
+// ─── Workspace Sharing ──────────────────────────────────────────────────────
+
+export const workspaceShare = pgTable("workspace_share", {
+  id: text("id").primaryKey(),
+  token: text("token").notNull().unique(),
+  workspaceId: text("workspace_id").notNull(),
+  serverId: text("server_id").notNull(),
+  projectId: text("project_id").notNull(),
+  projectName: text("project_name").notNull(),
+  workspaceName: text("workspace_name").notNull(),
+  orgId: text("org_id")
+    .notNull()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  ownerId: text("owner_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  accessLevel: text("access_level").notNull().default("read_only"),
+  pairingUrl: text("pairing_url"),
+  allowedUserIds: jsonb("allowed_user_ids").notNull().default([]),
+  expiresAt: timestamp("expires_at"),
+  revokedAt: timestamp("revoked_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});

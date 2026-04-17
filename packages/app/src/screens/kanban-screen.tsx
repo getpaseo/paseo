@@ -27,6 +27,7 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import type { CliProviderId } from "@server/shared/cli-provider-registry";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 import { buildTaskAgentPrompt } from "@/lib/task-agent-prompt";
+import { useActiveOrgId } from "@/stores/active-org-store";
 
 interface KanbanScreenProps {
   serverId: string;
@@ -62,11 +63,18 @@ export function KanbanScreen({ serverId, projectId }: KanbanScreenProps) {
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const setAgents = useSessionStore((state) => state.setAgents);
   const { launch: launchCliAgent } = useCliAgentLaunch(serverId);
+  const activeOrgId = useActiveOrgId();
 
   const projectWorkspaces = useMemo(() => {
     const workspaces = sessionWorkspaces ? Array.from(sessionWorkspaces.values()) : [];
-    return workspaces.filter((workspace) => workspace.projectId === projectId);
-  }, [projectId, sessionWorkspaces]);
+    return workspaces.filter((workspace) => {
+      if (workspace.projectId !== projectId) return false;
+      // Hide workspaces scoped to a different org. Unscoped (legacy) workspaces
+      // remain visible so existing boards don't go empty after upgrade.
+      if (activeOrgId && workspace.orgId && workspace.orgId !== activeOrgId) return false;
+      return true;
+    });
+  }, [projectId, sessionWorkspaces, activeOrgId]);
 
   // All worktree workspaces are shown in the kanban. Workspaces with explicit
   // kanbanStatus use that status; worktrees without one default to "todo".
@@ -184,6 +192,7 @@ export function KanbanScreen({ serverId, projectId }: KanbanScreenProps) {
             kanbanStatus: "todo",
             agentProvider: submission.agentSelection?.id,
             agentMode: submission.agentSelection?.mode === "cli" ? "cli" : "native",
+            orgId: activeOrgId ?? undefined,
           });
           if (payload.error || !payload.workspace) {
             throw new Error(payload.error ?? "Failed to create workspace for task");

@@ -198,6 +198,16 @@ export type DaemonClientConfig = {
     baseDelayMs?: number;
     maxDelayMs?: number;
   };
+  /**
+   * When set, the hello handshake will carry workspace-share credentials. The
+   * daemon validates the token against the auth-server and restricts the
+   * session to the authorized workspace + access level.
+   */
+  shareAuth?: {
+    shareToken: string;
+    shareSessionToken: string;
+    authServerUrl?: string;
+  };
 };
 
 export type SendMessageOptions = {
@@ -2519,6 +2529,7 @@ export class DaemonClient {
       kanbanStatus?: "todo" | "in-progress" | "done";
       agentProvider?: string;
       agentMode?: "native" | "cli";
+      orgId?: string;
     },
     requestId?: string,
   ): Promise<CreateHubcodeWorktreePayload> {
@@ -2536,6 +2547,7 @@ export class DaemonClient {
         ...(input.kanbanStatus ? { kanbanStatus: input.kanbanStatus } : {}),
         ...(input.agentProvider ? { agentProvider: input.agentProvider } : {}),
         ...(input.agentMode ? { agentMode: input.agentMode } : {}),
+        ...(input.orgId ? { orgId: input.orgId } : {}),
       },
       responseType: "create_hubcode_worktree_response",
       timeout: 60000,
@@ -3617,6 +3629,15 @@ export class DaemonClient {
           clientType: this.config.clientType ?? "cli",
           protocolVersion: 1,
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
+          ...(this.config.shareAuth
+            ? {
+                shareToken: this.config.shareAuth.shareToken,
+                shareSessionToken: this.config.shareAuth.shareSessionToken,
+                ...(this.config.shareAuth.authServerUrl
+                  ? { shareAuthServerUrl: this.config.shareAuth.authServerUrl }
+                  : {}),
+              }
+            : {}),
         }),
       );
     } catch (error) {

@@ -12,6 +12,11 @@ import { Folder, GitBranch, PanelRight } from "lucide-react-native";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { AgentInputArea } from "@/components/agent-input-area";
+import { ReadOnlySharedNotice } from "@/components/sharing/read-only-shared-notice";
+import {
+  useIsInSharedSession,
+  useSharedSessionStore,
+} from "@/stores/shared-session-store";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { FormSelectTrigger } from "@/components/agent-form/agent-form-dropdowns";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
@@ -146,6 +151,9 @@ function DraftAgentScreenContent({
     () => runtime.getVersion(),
   );
   const params = useLocalSearchParams<DraftAgentParams>();
+  const isInSharedSession = useIsInSharedSession();
+  const sharedAccessLevel = useSharedSessionStore().accessLevel;
+  const isViewOnly = isInSharedSession && sharedAccessLevel === "read_only";
 
   const { style: animatedKeyboardStyle } = useKeyboardShiftStyle({
     mode: "translate",
@@ -1229,7 +1237,7 @@ function DraftAgentScreenContent({
             )}
           </Animated.View>
           <View style={styles.inputAreaWrapper}>
-            <AgentInputArea
+            {isViewOnly ? <ReadOnlySharedNotice /> : <AgentInputArea
               agentId={draftAgentIdRef.current}
               serverId={selectedServerId ?? ""}
               isInputActive={isFocused}
@@ -1266,7 +1274,7 @@ function DraftAgentScreenContent({
                 onModelSelectorOpen: invalidateProviderModels,
                 disabled: isSubmitting,
               }}
-            />
+            />}
           </View>
         </View>
 

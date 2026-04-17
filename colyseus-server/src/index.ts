@@ -6,10 +6,17 @@ import http from "node:http";
 
 async function main() {
   const server = new Server({
-    transport: new WebSocketTransport({}),
+    transport: new WebSocketTransport({
+      // WebRTC signals (SDP offers/answers + ICE candidates) can bump against
+      // the default ws payload limit when trickle-ICE accumulates. Raise the
+      // ceiling so peer handshakes don't truncate and drop the connection.
+      maxPayload: 10 * 1024 * 1024,
+    }),
   });
 
-  server.define("shared_session", SharedSessionRoom);
+  // Dedup rooms by shareToken so every recipient of the same share ends up in
+  // the SAME Colyseus room (and therefore sees each other as participants).
+  server.define("shared_session", SharedSessionRoom).filterBy(["shareToken"]);
 
   // Wait for transport to be ready, then add REST API routes
   const transport = await (server as any)._onTransportReady;

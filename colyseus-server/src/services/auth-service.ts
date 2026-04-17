@@ -24,75 +24,80 @@ export class AuthService {
   }
 
   /**
-   * Validate a share token and check if the user is allowed to join.
+   * Validate a workspace share token and check if the user is allowed to join.
+   *
+   * Enforces (server-side in auth-server):
+   * - Token exists, not revoked, not expired
+   * - Caller is a member of the owning organization
+   * - Caller is in allowedUserIds (or list is empty = open to all org members)
    */
   async validateShareToken(token: string, sessionToken: string): Promise<ShareValidation> {
+    const url = `${this.baseUrl}/api/workspaces/share/${encodeURIComponent(token)}`;
     try {
-      const response = await fetch(`${this.baseUrl}/api/sessions/share/${encodeURIComponent(token)}`, {
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-        },
+      console.log(`[auth] validateShareToken GET ${url}`);
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        return {
-          allowed: false,
-          reason: (body as { error?: string }).error ?? `HTTP ${response.status}`,
-        };
+        const reason = (body as { error?: string }).error ?? `HTTP ${response.status}`;
+        console.warn(`[auth] validateShareToken FAIL status=${response.status} reason="${reason}"`);
+        return { allowed: false, reason };
       }
 
       const data = (await response.json()) as {
         shareId: string;
-        daemonSessionId: string;
+        workspaceId: string;
         serverId: string;
         accessLevel: string;
-        owner: { userId: string; username: string; avatarUrl: string };
-        currentUser: { userId: string; username: string; avatarUrl: string; isOwner: boolean };
+        owner: { userId: string; name: string; email: string; image: string | null };
+        currentUser: {
+          userId: string;
+          name?: string;
+          email?: string;
+          image?: string | null;
+          isOwner: boolean;
+        };
       };
 
+      const resolvedName =
+        data.currentUser?.name ?? (data.currentUser?.isOwner ? data.owner?.name : null) ?? "Guest";
+      const resolvedAvatar =
+        data.currentUser?.image ?? (data.currentUser?.isOwner ? data.owner?.image : null) ?? "";
+
+      console.log(
+        `[auth] validateShareToken OK user=${data.currentUser?.userId} name=${resolvedName} isOwner=${data.currentUser?.isOwner} workspace=${data.workspaceId} accessLevel=${data.accessLevel}`,
+      );
       return {
         allowed: true,
-        user: data.currentUser,
-        daemonSessionId: data.daemonSessionId,
+        user: {
+          userId: data.currentUser.userId,
+          username: resolvedName,
+          avatarUrl: resolvedAvatar,
+          isOwner: data.currentUser.isOwner,
+        },
+        // Workspace id doubles as the session identifier for room dedup + daemon routing
+        daemonSessionId: data.workspaceId,
         serverId: data.serverId,
         accessLevel: data.accessLevel,
       };
     } catch (error) {
-      return {
-        allowed: false,
-        reason: error instanceof Error ? error.message : "Failed to validate token",
-      };
+      const message = error instanceof Error ? error.message : "Failed to validate token";
+      console.error(`[auth] validateShareToken ERROR url=${url} reason="${message}"`);
+      return { allowed: false, reason: message };
     }
   }
 
-  /**
-   * Record that a user joined a shared session.
-   */
-  async recordJoin(shareToken: string, userId: string): Promise<void> {
-    try {
-      await fetch(`${this.baseUrl}/api/sessions/share/${encodeURIComponent(shareToken)}/participants`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, action: "join" }),
-      });
-    } catch {
-      // Non-critical — don't fail the join
-    }
+  /** Kept as a no-op for backward compatibility with the shared-session-room contract. */
+  async recordJoin(_shareToken: string, _userId: string): Promise<void> {
+    void _shareToken;
+    void _userId;
   }
 
-  /**
-   * Record that a user left a shared session.
-   */
-  async recordLeave(shareToken: string, userId: string): Promise<void> {
-    try {
-      await fetch(`${this.baseUrl}/api/sessions/share/${encodeURIComponent(shareToken)}/participants`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, action: "leave" }),
-      });
-    } catch {
-      // Non-critical
-    }
+  /** Kept as a no-op for backward compatibility with the shared-session-room contract. */
+  async recordLeave(_shareToken: string, _userId: string): Promise<void> {
+    void _shareToken;
+    void _userId;
   }
 }

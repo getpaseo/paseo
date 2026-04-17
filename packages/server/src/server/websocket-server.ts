@@ -26,7 +26,12 @@ import {
 import { asUint8Array, decodeTerminalStreamFrame } from "../shared/terminal-stream-protocol.js";
 import type { AllowedHostsConfig } from "./allowed-hosts.js";
 import { isHostAllowed } from "./allowed-hosts.js";
-import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
+import {
+  Session,
+  type SessionLifecycleIntent,
+  type SessionRuntimeMetrics,
+  type SessionShareScope,
+} from "./session.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import type {
   AgentProviderRuntimeSettingsMap,
@@ -77,6 +82,59 @@ function createNoopProjectRegistry(): ProjectRegistry {
     archive: async () => {},
     remove: async () => {},
   };
+}
+
+const DEFAULT_AUTH_SERVER_URL =
+  process.env.HUBCODE_AUTH_SERVER_URL?.replace(/\/$/, "") ?? "https://auth.hubcode.ai";
+
+/**
+ * Validate a workspace-share token against the auth-server. Returns the
+ * authorized scope if the token is valid and the caller is permitted, or
+ * null if the token is missing/invalid/expired/out-of-scope.
+ */
+async function validateShareTokenAgainstAuthServer(params: {
+  shareToken: string;
+  shareSessionToken: string;
+  authServerUrl: string;
+  logger: pino.Logger;
+}): Promise<SessionShareScope | null> {
+  const { shareToken, shareSessionToken, authServerUrl, logger } = params;
+  const base = authServerUrl.replace(/\/$/, "");
+  const url = `${base}/api/workspaces/share/${encodeURIComponent(shareToken)}`;
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${shareSessionToken}` },
+    });
+    if (!response.ok) {
+      logger.warn(
+        { url, status: response.status },
+        "Share token validation failed — auth-server rejected request",
+      );
+      return null;
+    }
+    const data = (await response.json()) as {
+      workspaceId?: string;
+      accessLevel?: string;
+      owner?: { userId?: string };
+      currentUser?: { userId?: string };
+    };
+    const workspaceId = data.workspaceId?.trim();
+    const accessLevelRaw = data.accessLevel;
+    const ownerUserId = data.owner?.userId ?? "";
+    if (!workspaceId) {
+      logger.warn({ url }, "Share token response missing workspaceId");
+      return null;
+    }
+    const accessLevel: "read_only" | "full_access" =
+      accessLevelRaw === "full_access" ? "full_access" : "read_only";
+    return { workspaceId, accessLevel, shareToken, ownerUserId };
+  } catch (err) {
+    logger.error(
+      { err, url },
+      "Share token validation errored — rejecting share-scoped connection",
+    );
+    return null;
+  }
 }
 
 function createNoopWorkspaceRegistry(): WorkspaceRegistry {
@@ -619,13 +677,15 @@ export class VoiceAssistantWebSocketServer {
     clientId: string;
     appVersion: string | null;
     connectionLogger: pino.Logger;
+    shareScope?: SessionShareScope | null;
   }): SessionConnection {
-    const { ws, clientId, appVersion, connectionLogger } = params;
+    const { ws, clientId, appVersion, connectionLogger, shareScope } = params;
     let connection: SessionConnection | null = null;
 
     const session = new Session({
       clientId,
       appVersion,
+      shareScope: shareScope ?? null,
       onMessage: (msg) => {
         if (!connection) {
           return;
@@ -751,6 +811,79 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
+    // Share-scoped connection: the client presented a workspace-share token.
+    // Validate it against the auth-server BEFORE accepting the connection. A
+    // missing token means this is an owner/unrestricted session (normal flow).
+    if (message.shareToken) {
+      void this.handleShareScopedHello({ ws, message, pending, clientId }).catch((err) => {
+        pending.connectionLogger.error(
+          { err },
+          "Unexpected error during share-scoped hello — closing connection",
+        );
+        try {
+          ws.close(WS_CLOSE_INVALID_HELLO, "Share validation failed");
+        } catch {
+          // ignore
+        }
+      });
+      return;
+    }
+
+    this.finalizeHello({ ws, message, pending, clientId, shareScope: null });
+  }
+
+  private async handleShareScopedHello(params: {
+    ws: WebSocketLike;
+    message: WSHelloMessage;
+    pending: PendingConnection;
+    clientId: string;
+  }): Promise<void> {
+    const { ws, message, pending, clientId } = params;
+    const shareToken = message.shareToken ?? "";
+    const shareSessionToken = message.shareSessionToken ?? "";
+    if (!shareToken || !shareSessionToken) {
+      this.clearPendingConnection(ws);
+      pending.connectionLogger.warn(
+        "Rejected share-scoped hello missing shareToken or shareSessionToken",
+      );
+      try {
+        ws.close(WS_CLOSE_INVALID_HELLO, "Missing share credentials");
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    const authServerUrl = message.shareAuthServerUrl?.trim() || DEFAULT_AUTH_SERVER_URL;
+    const scope = await validateShareTokenAgainstAuthServer({
+      shareToken,
+      shareSessionToken,
+      authServerUrl,
+      logger: pending.connectionLogger,
+    });
+    if (!scope) {
+      this.clearPendingConnection(ws);
+      pending.connectionLogger.warn(
+        { clientId },
+        "Rejected share-scoped hello — token did not validate",
+      );
+      try {
+        ws.close(WS_CLOSE_INVALID_HELLO, "Share token invalid");
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    this.finalizeHello({ ws, message, pending, clientId, shareScope: scope });
+  }
+
+  private finalizeHello(params: {
+    ws: WebSocketLike;
+    message: WSHelloMessage;
+    pending: PendingConnection;
+    clientId: string;
+    shareScope: SessionShareScope | null;
+  }): void {
+    const { ws, message, pending, clientId, shareScope } = params;
     this.clearPendingConnection(ws);
     const existing = this.externalSessionsByKey.get(clientId);
     if (existing) {
@@ -785,6 +918,7 @@ export class VoiceAssistantWebSocketServer {
       clientId,
       appVersion: message.appVersion ?? null,
       connectionLogger,
+      shareScope,
     });
     this.sessions.set(ws, connection);
     this.externalSessionsByKey.set(clientId, connection);
@@ -794,6 +928,7 @@ export class VoiceAssistantWebSocketServer {
         clientId,
         resumed: false,
         totalSessions: this.sessions.size,
+        shareScoped: shareScope !== null,
       },
       "Client connected via hello",
     );

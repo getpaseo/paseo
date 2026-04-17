@@ -28,6 +28,7 @@ import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { BranchSwitcher } from "@/components/branch-switcher";
+import { useSharedWorkspaceScope } from "@/stores/shared-session-store";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
@@ -113,6 +114,8 @@ import { findAdjacentPane } from "@/utils/split-navigation";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
 import { isWeb, isNative } from "@/constants/platform";
 import { useBrowserLaunchListener } from "@/hooks/use-browser-launch-listener";
+import { useCliAgentLaunch } from "@/hooks/use-cli-agent-launch";
+import type { CliProviderId } from "@server/shared/cli-provider-registry";
 
 const TERMINALS_QUERY_STALE_TIME = 5_000;
 const NEW_TAB_AGENT_OPTION_ID = "__new_tab_agent__";
@@ -592,6 +595,8 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
+  const sharedScope = useSharedWorkspaceScope();
+  const isScopedRecipient = sharedScope.workspaceId !== null;
 
   const normalizedServerId = trimNonEmpty(decodeSegment(serverId)) ?? "";
   const normalizedWorkspaceId =
@@ -1077,6 +1082,41 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     [focusWorkspaceTab, persistenceKey],
   );
 
+  const { launch: launchCliAgent } = useCliAgentLaunch(normalizedServerId);
+
+  const launchWorkspaceCliAgentIfDefault = useCallback((): boolean => {
+    if (workspaceDescriptor?.agentMode !== "cli" || !workspaceDescriptor?.agentProvider) {
+      return false;
+    }
+    const providerId = workspaceDescriptor.agentProvider as CliProviderId;
+    void (async () => {
+      try {
+        const result = await launchCliAgent({
+          providerId,
+          cwd: normalizedWorkspaceId,
+        });
+        if (persistenceKey) {
+          const tabId = useWorkspaceLayoutStore
+            .getState()
+            .openTab(persistenceKey, { kind: "terminal", terminalId: result.terminalId });
+          if (tabId) {
+            useWorkspaceLayoutStore.getState().focusTab(persistenceKey, tabId);
+          }
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return true;
+  }, [
+    launchCliAgent,
+    normalizedWorkspaceId,
+    persistenceKey,
+    toast,
+    workspaceDescriptor?.agentMode,
+    workspaceDescriptor?.agentProvider,
+  ]);
+
   const emptyWorkspaceSeedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!persistenceKey) {
@@ -1095,8 +1135,12 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       return;
     }
     emptyWorkspaceSeedRef.current = workspaceKey;
+    if (launchWorkspaceCliAgentIfDefault()) {
+      return;
+    }
     openWorkspaceDraftTab();
   }, [
+    launchWorkspaceCliAgentIfDefault,
     normalizedServerId,
     normalizedWorkspaceId,
     openWorkspaceDraftTab,
@@ -1170,8 +1214,11 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   );
 
   const handleCreateDraftTab = useCallback(() => {
+    if (launchWorkspaceCliAgentIfDefault()) {
+      return;
+    }
     openWorkspaceDraftTab();
-  }, [openWorkspaceDraftTab]);
+  }, [launchWorkspaceCliAgentIfDefault, openWorkspaceDraftTab]);
 
   const handleCreateTerminal = useCallback(
     (input?: { paneId?: string }) => {
@@ -1226,9 +1273,18 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       }
 
       focusWorkspacePane(persistenceKey, paneId);
+      if (launchWorkspaceCliAgentIfDefault()) {
+        return;
+      }
       openWorkspaceDraftTab();
     },
-    [focusWorkspacePane, openWorkspaceDraftTab, persistenceKey, splitWorkspacePaneEmpty],
+    [
+      focusWorkspacePane,
+      launchWorkspaceCliAgentIfDefault,
+      openWorkspaceDraftTab,
+      persistenceKey,
+      splitWorkspacePaneEmpty,
+    ],
   );
 
   const killTerminalAsync = killTerminalMutation.mutateAsync;
@@ -2072,7 +2128,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
               }
               right={
                 <View style={styles.headerRight}>
-                  {!isMobile ? (
+                  {!isMobile && !isScopedRecipient ? (
                     <WorkspaceOpenInEditorButton
                       serverId={normalizedServerId}
                       cwd={normalizedWorkspaceId}

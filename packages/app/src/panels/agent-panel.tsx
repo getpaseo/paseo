@@ -4,7 +4,8 @@ import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import { Bot, Share2 } from "lucide-react-native";
+import { Bot } from "lucide-react-native";
+import { ReadOnlySharedNotice } from "@/components/sharing/read-only-shared-notice";
 import invariant from "tiny-invariant";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
@@ -50,16 +51,10 @@ import {
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
 import { isNative, getIsElectron } from "@/constants/platform";
 import { Pressable } from "react-native";
-import { ShareSessionModal } from "@/components/sharing/share-session-modal";
-import { ParticipantBar } from "@/components/sharing/participant-bar";
 import { MessageQueueIndicator } from "@/components/sharing/message-queue-indicator";
-import { FloatingVideoPanel } from "@/components/sharing/floating-video-panel";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
-import { useOrganizations } from "@/desktop/hooks/use-organizations";
-import { useOrgMembers } from "@/desktop/hooks/use-org-members";
 import {
   useIsInSharedSession,
-  useSharedParticipants,
   reconnectIfNeeded,
   useSharedSessionStore,
 } from "@/stores/shared-session-store";
@@ -250,26 +245,18 @@ function AgentPanelBody({
   const panelToast = useToastHost();
   const { isArchivingAgent } = useArchiveAgent();
 
-  // Share session hooks (must be at top, before any early returns)
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const isElectron = getIsElectron();
   const { isAuthenticated, session: authSession } = useAuthSession();
-  const { organizations } = useOrganizations();
-  const firstOrg = organizations[0] ?? null;
 
   // Shared session state (when someone joined via share link)
   const isInSharedSession = useIsInSharedSession();
-  const sharedParticipants = useSharedParticipants();
   const sharedSessionStore = useSharedSessionStore();
-  const [videoPanelDismissed, setVideoPanelDismissed] = useState(false);
-
   // Auto-reconnect to Colyseus on page refresh
   useEffect(() => {
     if (isInSharedSession && !sharedSessionStore.room) {
       void reconnectIfNeeded(authSession?.sessionToken);
     }
   }, [isInSharedSession, sharedSessionStore.room, authSession]);
-  const { members: orgMembers } = useOrgMembers(firstOrg?.id ?? null);
   const streamViewRef = useRef<AgentStreamViewHandle>(null);
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
   const clearOnAgentBlurRef = useRef<() => void>(() => {});
@@ -784,30 +771,6 @@ function AgentPanelBody({
     <View style={styles.root}>
       <FileDropZone onFilesDropped={handleFilesDropped} disabled={isArchivingCurrentAgent}>
         <View style={styles.container}>
-          {isElectron && isAuthenticated && (
-            <View style={styles.shareBar}>
-              <Pressable
-                style={({ hovered }) => [styles.shareButton, hovered && styles.shareButtonHovered]}
-                onPress={() => {
-                  console.log(
-                    "[share] button pressed, firstOrg:",
-                    firstOrg?.id,
-                    "agentId:",
-                    agentId,
-                    "isAuthenticated:",
-                    isAuthenticated,
-                  );
-                  setIsShareModalOpen(true);
-                }}
-              >
-                <Share2 size={14} color={theme.colors.foregroundMuted} />
-                <Text style={styles.shareButtonText}>Share</Text>
-              </Pressable>
-            </View>
-          )}
-          {isInSharedSession && (
-            <ParticipantBar participants={sharedParticipants} />
-          )}
           <SessionIntegrationBanner serverId={serverId} cwd={agentState.cwd ?? workspaceId} />
           <View style={styles.contentContainer}>
             <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
@@ -829,7 +792,9 @@ function AgentPanelBody({
             <MessageQueueIndicator queue={[]} />
           )}
 
-          {agentId && !isArchivingCurrentAgent && !agentState.archivedAt ? (
+          {isInSharedSession && sharedSessionStore.accessLevel === "read_only" ? (
+            <ReadOnlySharedNotice />
+          ) : agentId && !isArchivingCurrentAgent && !agentState.archivedAt ? (
             <AgentInputArea
               agentId={agentId}
               serverId={serverId}
@@ -885,24 +850,6 @@ function AgentPanelBody({
           <Text style={styles.archivingSubtitle}>Please wait while we archive this agent.</Text>
         </View>
       ) : null}
-
-      {isShareModalOpen && agentId && (
-        <ShareSessionModal
-          visible={isShareModalOpen}
-          onClose={() => setIsShareModalOpen(false)}
-          daemonSessionId={agentId}
-          serverId={serverId}
-          orgId={firstOrg?.id}
-          members={orgMembers}
-        />
-      )}
-
-      {isInSharedSession && !videoPanelDismissed && (
-        <FloatingVideoPanel
-          visible
-          onClose={() => setVideoPanelDismissed(true)}
-        />
-      )}
     </View>
   );
 }
@@ -1060,26 +1007,5 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
     textAlign: "center",
-  },
-  shareBar: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
-  },
-  shareButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.base,
-  },
-  shareButtonHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  shareButtonText: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
   },
 }));

@@ -5,6 +5,8 @@ import {
   desktopAuthCreateOrganization,
   type DesktopOrganization,
 } from "@/desktop/auth/desktop-auth";
+import { webGetOrganizations } from "@/desktop/auth/web-auth-api";
+import { getIsElectron } from "@/constants/platform";
 import { useAuthSession } from "./use-auth-session";
 
 const ORGANIZATIONS_QUERY_KEY = ["desktopOrganizations"] as const;
@@ -12,12 +14,13 @@ const ORGANIZATIONS_QUERY_KEY = ["desktopOrganizations"] as const;
 export function useOrganizations() {
   const queryClient = useQueryClient();
   const { isAuthenticated } = useAuthSession();
+  const isElectron = getIsElectron();
 
   const query = useQuery<DesktopOrganization[]>({
     queryKey: ORGANIZATIONS_QUERY_KEY,
     enabled: isAuthenticated,
     staleTime: 60_000,
-    queryFn: () => desktopAuthGetOrganizations(),
+    queryFn: () => (isElectron ? desktopAuthGetOrganizations() : webGetOrganizations()),
   });
 
   const createMutation = useMutation({

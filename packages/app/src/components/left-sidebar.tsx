@@ -34,6 +34,7 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { router, usePathname } from "expo-router";
 import { usePanelStore, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from "@/stores/panel-store";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+import { SidebarSharedWorkspaces } from "./sidebar-shared-workspaces";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
 import {
@@ -61,6 +62,7 @@ import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { isWeb, getIsElectron } from "@/constants/platform";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { UpgradeBanner } from "@/desktop/components/upgrade-banner";
+import { useSharedWorkspaceScope } from "@/stores/shared-session-store";
 
 const MIN_CHAT_WIDTH = 400;
 
@@ -97,6 +99,7 @@ interface SidebarSharedProps {
     active: boolean;
     onPress: () => void;
   }) => ReactElement;
+  isScopedRecipient: boolean;
 }
 
 interface MobileSidebarProps extends SidebarSharedProps {
@@ -255,6 +258,9 @@ export const LeftSidebar = memo(function LeftSidebar({
     [pathname],
   );
 
+  const sharedScope = useSharedWorkspaceScope();
+  const isScopedRecipient = sharedScope.workspaceId !== null;
+
   const sharedProps = {
     theme,
     activeServerId,
@@ -274,6 +280,7 @@ export const LeftSidebar = memo(function LeftSidebar({
     handleRefresh,
     handleHostSelect,
     renderHostOption,
+    isScopedRecipient,
   };
 
   if (isCompactLayout) {
@@ -394,6 +401,7 @@ function MobileSidebar({
   isOpen,
   closeToAgent,
   handleViewMoreNavigate,
+  isScopedRecipient,
 }: MobileSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const {
@@ -545,27 +553,37 @@ function MobileSidebar({
           ]}
         >
           <View style={[styles.sidebarContent, { pointerEvents: "auto" }]}>
-            <View style={styles.sidebarHeader}>
-              <View style={styles.sidebarHeaderRow}>
-                <SessionsButton onPress={handleViewMore} />
+            {!isScopedRecipient && (
+              <View style={styles.sidebarHeader}>
+                <View style={styles.sidebarHeaderRow}>
+                  <SessionsButton onPress={handleViewMore} />
+                </View>
               </View>
-            </View>
+            )}
 
             {isInitialLoad ? (
               <SidebarAgentListSkeleton />
             ) : (
-              <SidebarWorkspaceList
-                serverId={activeServerId}
-                collapsedProjectKeys={collapsedProjectKeys}
-                onToggleProjectCollapsed={toggleProjectCollapsed}
-                shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-                projects={projects}
-                isRefreshing={isManualRefresh && isRevalidating}
-                onRefresh={handleRefresh}
-                onWorkspacePress={() => closeToAgent()}
-                onAddProject={handleOpenProject}
-                parentGestureRef={closeGestureRef}
-              />
+              <>
+                {!isScopedRecipient && (
+                  <SidebarSharedWorkspaces
+                    serverId={activeServerId}
+                    onWorkspacePress={() => closeToAgent()}
+                  />
+                )}
+                <SidebarWorkspaceList
+                  serverId={activeServerId}
+                  collapsedProjectKeys={collapsedProjectKeys}
+                  onToggleProjectCollapsed={toggleProjectCollapsed}
+                  shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+                  projects={projects}
+                  isRefreshing={isManualRefresh && isRevalidating}
+                  onRefresh={handleRefresh}
+                  onWorkspacePress={() => closeToAgent()}
+                  onAddProject={isScopedRecipient ? undefined : handleOpenProject}
+                  parentGestureRef={closeGestureRef}
+                />
+              </>
             )}
 
             <View style={styles.sidebarFooter}>
@@ -576,8 +594,8 @@ function MobileSidebar({
                     styles.hostTrigger,
                     hovered && styles.hostTriggerHovered,
                   ]}
-                  onPress={() => setIsHostPickerOpen(true)}
-                  disabled={hostOptions.length === 0}
+                  onPress={() => !isScopedRecipient && setIsHostPickerOpen(true)}
+                  disabled={isScopedRecipient || hostOptions.length === 0}
                 >
                   <View style={hostStatusDotStyle} />
                   <Text style={styles.hostTriggerText} numberOfLines={1}>
@@ -585,52 +603,54 @@ function MobileSidebar({
                   </Text>
                 </Pressable>
               </View>
-              <View style={styles.footerIconRow}>
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <Pressable
-                      style={styles.footerIconButton}
-                      testID="sidebar-add-project"
-                      nativeID="sidebar-add-project"
-                      collapsable={false}
-                      accessible
-                      accessibilityLabel="Add project"
-                      accessibilityRole="button"
-                      onPress={handleOpenProject}
-                    >
-                      {({ hovered }) => (
-                        <Plus
-                          size={theme.iconSize.md}
-                          color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                        />
-                      )}
-                    </Pressable>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" align="center" offset={8}>
-                    <View style={styles.tooltipRow}>
-                      <Text style={styles.tooltipText}>Add project</Text>
-                      {newAgentKeys ? <Shortcut chord={newAgentKeys} /> : null}
-                    </View>
-                  </TooltipContent>
-                </Tooltip>
-                <Pressable
-                  style={styles.footerIconButton}
-                  testID="sidebar-settings"
-                  nativeID="sidebar-settings"
-                  collapsable={false}
-                  accessible
-                  accessibilityLabel="Settings"
-                  accessibilityRole="button"
-                  onPress={handleSettings}
-                >
-                  {({ hovered }) => (
-                    <Settings
-                      size={theme.iconSize.md}
-                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                    />
-                  )}
-                </Pressable>
-              </View>
+              {!isScopedRecipient && (
+                <View style={styles.footerIconRow}>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Pressable
+                        style={styles.footerIconButton}
+                        testID="sidebar-add-project"
+                        nativeID="sidebar-add-project"
+                        collapsable={false}
+                        accessible
+                        accessibilityLabel="Add project"
+                        accessibilityRole="button"
+                        onPress={handleOpenProject}
+                      >
+                        {({ hovered }) => (
+                          <Plus
+                            size={theme.iconSize.md}
+                            color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                          />
+                        )}
+                      </Pressable>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" align="center" offset={8}>
+                      <View style={styles.tooltipRow}>
+                        <Text style={styles.tooltipText}>Add project</Text>
+                        {newAgentKeys ? <Shortcut chord={newAgentKeys} /> : null}
+                      </View>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Pressable
+                    style={styles.footerIconButton}
+                    testID="sidebar-settings"
+                    nativeID="sidebar-settings"
+                    collapsable={false}
+                    accessible
+                    accessibilityLabel="Settings"
+                    accessibilityRole="button"
+                    onPress={handleSettings}
+                  >
+                    {({ hovered }) => (
+                      <Settings
+                        size={theme.iconSize.md}
+                        color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                      />
+                    )}
+                  </Pressable>
+                </View>
+              )}
               <Combobox
                 options={hostOptions}
                 value={activeServerId ?? ""}
@@ -709,6 +729,7 @@ function DesktopSidebar({
   insetsTop,
   isOpen,
   handleViewMore,
+  isScopedRecipient,
 }: DesktopSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const padding = useWindowControlsPadding("sidebar");
@@ -767,30 +788,35 @@ function DesktopSidebar({
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
           {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
-          <View style={styles.sidebarHeader}>
-            <View style={styles.sidebarHeaderRow}>
-              <SessionsButton onPress={handleViewMore} />
+          {!isScopedRecipient && (
+            <View style={styles.sidebarHeader}>
+              <View style={styles.sidebarHeaderRow}>
+                <SessionsButton onPress={handleViewMore} />
+              </View>
             </View>
-          </View>
+          )}
         </View>
 
         {isInitialLoad ? (
           <SidebarAgentListSkeleton />
         ) : (
-          <SidebarWorkspaceList
-            serverId={activeServerId}
-            collapsedProjectKeys={collapsedProjectKeys}
-            onToggleProjectCollapsed={toggleProjectCollapsed}
-            shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-            projects={projects}
-            isRefreshing={isManualRefresh && isRevalidating}
-            onRefresh={handleRefresh}
-            onAddProject={handleOpenProject}
-          />
+          <>
+            {!isScopedRecipient && <SidebarSharedWorkspaces serverId={activeServerId} />}
+            <SidebarWorkspaceList
+              serverId={activeServerId}
+              collapsedProjectKeys={collapsedProjectKeys}
+              onToggleProjectCollapsed={toggleProjectCollapsed}
+              shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+              projects={projects}
+              isRefreshing={isManualRefresh && isRevalidating}
+              onRefresh={handleRefresh}
+              onAddProject={isScopedRecipient ? undefined : handleOpenProject}
+            />
+          </>
         )}
 
-        <SidebarSignInCard />
-        <SidebarUpgradeHint />
+        {!isScopedRecipient && <SidebarSignInCard />}
+        {!isScopedRecipient && <SidebarUpgradeHint />}
 
         <View style={styles.sidebarFooter}>
           <View style={styles.footerHostSlot}>
@@ -800,8 +826,8 @@ function DesktopSidebar({
                 styles.hostTrigger,
                 hovered && styles.hostTriggerHovered,
               ]}
-              onPress={() => setIsHostPickerOpen(true)}
-              disabled={hostOptions.length === 0}
+              onPress={() => !isScopedRecipient && setIsHostPickerOpen(true)}
+              disabled={isScopedRecipient || hostOptions.length === 0}
             >
               <View style={hostStatusDotStyle} />
               <Text style={styles.hostTriggerText} numberOfLines={1}>
@@ -809,52 +835,54 @@ function DesktopSidebar({
               </Text>
             </Pressable>
           </View>
-          <View style={styles.footerIconRow}>
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <Pressable
-                  style={styles.footerIconButton}
-                  testID="sidebar-add-project"
-                  nativeID="sidebar-add-project"
-                  collapsable={false}
-                  accessible
-                  accessibilityLabel="Add project"
-                  accessibilityRole="button"
-                  onPress={handleOpenProject}
-                >
-                  {({ hovered }) => (
-                    <Plus
-                      size={theme.iconSize.md}
-                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                    />
-                  )}
-                </Pressable>
-              </TooltipTrigger>
-              <TooltipContent side="top" align="center" offset={8}>
-                <View style={styles.tooltipRow}>
-                  <Text style={styles.tooltipText}>Add project</Text>
-                  {newAgentKeys ? <Shortcut chord={newAgentKeys} /> : null}
-                </View>
-              </TooltipContent>
-            </Tooltip>
-            <Pressable
-              style={styles.footerIconButton}
-              testID="sidebar-settings"
-              nativeID="sidebar-settings"
-              collapsable={false}
-              accessible
-              accessibilityLabel="Settings"
-              accessibilityRole="button"
-              onPress={handleSettings}
-            >
-              {({ hovered }) => (
-                <Settings
-                  size={theme.iconSize.md}
-                  color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                />
-              )}
-            </Pressable>
-          </View>
+          {!isScopedRecipient && (
+            <View style={styles.footerIconRow}>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Pressable
+                    style={styles.footerIconButton}
+                    testID="sidebar-add-project"
+                    nativeID="sidebar-add-project"
+                    collapsable={false}
+                    accessible
+                    accessibilityLabel="Add project"
+                    accessibilityRole="button"
+                    onPress={handleOpenProject}
+                  >
+                    {({ hovered }) => (
+                      <Plus
+                        size={theme.iconSize.md}
+                        color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                      />
+                    )}
+                  </Pressable>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="center" offset={8}>
+                  <View style={styles.tooltipRow}>
+                    <Text style={styles.tooltipText}>Add project</Text>
+                    {newAgentKeys ? <Shortcut chord={newAgentKeys} /> : null}
+                  </View>
+                </TooltipContent>
+              </Tooltip>
+              <Pressable
+                style={styles.footerIconButton}
+                testID="sidebar-settings"
+                nativeID="sidebar-settings"
+                collapsable={false}
+                accessible
+                accessibilityLabel="Settings"
+                accessibilityRole="button"
+                onPress={handleSettings}
+              >
+                {({ hovered }) => (
+                  <Settings
+                    size={theme.iconSize.md}
+                    color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                  />
+                )}
+              </Pressable>
+            </View>
+          )}
           <Combobox
             options={hostOptions}
             value={activeServerId ?? ""}

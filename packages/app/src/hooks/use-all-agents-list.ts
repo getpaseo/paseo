@@ -1,11 +1,12 @@
 import { useCallback, useMemo } from "react";
 import { useHosts } from "@/runtime/host-runtime";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   getHostRuntimeStore,
   useHostRuntimeConnectionStatus,
   useHostRuntimeIsDirectoryLoading,
 } from "@/runtime/host-runtime";
+import { useActiveOrgId } from "@/stores/active-org-store";
 import type { AggregatedAgent, AggregatedAgentsResult } from "@/hooks/use-aggregated-agents";
 
 function toAggregatedAgent(params: {
@@ -38,6 +39,8 @@ function buildAllAgentsList(params: {
   serverId: string;
   serverLabel: string;
   includeArchived: boolean;
+  workspaces?: Map<string, WorkspaceDescriptor> | null;
+  activeOrgId?: string | null;
 }): AggregatedAgent[] {
   const list: AggregatedAgent[] = [];
 
@@ -49,6 +52,15 @@ function buildAllAgentsList(params: {
     });
     if (!params.includeArchived && aggregated.archivedAt) {
       continue;
+    }
+    // Scope agents by active org. Resolve the agent's workspace by cwd match;
+    // fall back to "visible" when we can't resolve it or when it's unscoped
+    // (legacy workspaces without orgId stay visible in any org).
+    if (params.activeOrgId && params.workspaces) {
+      const workspace = params.workspaces.get(agent.cwd);
+      if (workspace?.orgId && workspace.orgId !== params.activeOrgId) {
+        continue;
+      }
     }
     list.push(aggregated);
   }
@@ -84,6 +96,10 @@ export function useAllAgentsList(options?: {
   const liveAgents = useSessionStore((state) =>
     serverId ? (state.sessions[serverId]?.agents ?? null) : null,
   );
+  const sessionWorkspaces = useSessionStore((state) =>
+    serverId ? (state.sessions[serverId]?.workspaces ?? null) : null,
+  );
+  const activeOrgId = useActiveOrgId();
   const connectionStatus = useHostRuntimeConnectionStatus(serverId ?? "");
 
   const refreshAll = useCallback(() => {
@@ -103,8 +119,10 @@ export function useAllAgentsList(options?: {
       serverId,
       serverLabel,
       includeArchived,
+      workspaces: sessionWorkspaces,
+      activeOrgId,
     });
-  }, [daemons, includeArchived, liveAgents, serverId]);
+  }, [daemons, includeArchived, liveAgents, serverId, sessionWorkspaces, activeOrgId]);
 
   const isDirectoryLoading = useHostRuntimeIsDirectoryLoading(serverId ?? "");
   const isInitialLoad = isDirectoryLoading && agents.length === 0;

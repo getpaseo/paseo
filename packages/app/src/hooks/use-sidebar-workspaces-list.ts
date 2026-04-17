@@ -6,6 +6,8 @@ import {
 } from "@/stores/session-store";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import { useSharedWorkspaceScope } from "@/stores/shared-session-store";
+import { useActiveOrgId } from "@/stores/active-org-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceDescriptorPayload } from "@server/shared/messages";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
@@ -272,17 +274,56 @@ export function useSidebarWorkspacesList(options?: {
     },
   );
 
+  const sharedScope = useSharedWorkspaceScope();
+  const activeOrgId = useActiveOrgId();
+
   const projects = useMemo(() => {
     if (!sessionWorkspaces || sessionWorkspaces.size === 0 || !serverId) {
       return EMPTY_PROJECTS;
     }
+
+    // When the viewer entered via a workspace-share link, restrict the sidebar to only
+    // the specific workspace they were granted access to.
+    const scopeServerMatches = sharedScope.serverId === null || sharedScope.serverId === serverId;
+    const baseIter: Iterable<WorkspaceDescriptor> =
+      sharedScope.workspaceId && scopeServerMatches
+        ? (() => {
+            const filtered: WorkspaceDescriptor[] = [];
+            for (const ws of sessionWorkspaces.values()) {
+              if (ws.id === sharedScope.workspaceId) filtered.push(ws);
+            }
+            return filtered;
+          })()
+        : sessionWorkspaces.values();
+
+    // Scope by active organization. Legacy workspaces created before org scoping
+    // (orgId === undefined) remain visible under any org so existing data isn't
+    // hidden after upgrade.
+    const iter: Iterable<WorkspaceDescriptor> = activeOrgId
+      ? (() => {
+          const filtered: WorkspaceDescriptor[] = [];
+          for (const ws of baseIter) {
+            if (!ws.orgId || ws.orgId === activeOrgId) filtered.push(ws);
+          }
+          return filtered;
+        })()
+      : baseIter;
+
     return buildSidebarProjectsFromWorkspaces({
       serverId,
-      workspaces: sessionWorkspaces.values(),
+      workspaces: iter,
       projectOrder: persistedProjectOrder,
       workspaceOrderByScope: persistedWorkspaceOrderByScope,
     });
-  }, [persistedProjectOrder, persistedWorkspaceOrderByScope, serverId, sessionWorkspaces]);
+  }, [
+    activeOrgId,
+    persistedProjectOrder,
+    persistedWorkspaceOrderByScope,
+    serverId,
+    sessionWorkspaces,
+    sharedScope.serverId,
+    sharedScope.workspaceId,
+  ]);
 
   useEffect(() => {
     if (!serverId || projects.length === 0) {

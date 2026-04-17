@@ -66,6 +66,7 @@ import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { getIsElectron, isWeb } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
+import { useSharedWorkspaceScope } from "@/stores/shared-session-store";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 
@@ -181,6 +182,9 @@ export function FileExplorerPane({
 
   const [renamingEntry, setRenamingEntry] = useState<ExplorerEntry | null>(null);
   const [renamingName, setRenamingName] = useState("");
+
+  const sharedScope = useSharedWorkspaceScope();
+  const isScopedRecipient = sharedScope.workspaceId !== null;
 
   const handleRename = useCallback((entry: ExplorerEntry) => {
     setRenamingEntry(entry);
@@ -573,20 +577,24 @@ export function FileExplorerPane({
 
       const dropdownMenuItems = (
         <>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            leading={<Pencil size={14} color={theme.colors.foregroundMuted} />}
-            onSelect={() => handleRename(entry)}
-          >
-            Rename
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            leading={<Trash2 size={14} color={theme.colors.destructive} />}
-            onSelect={() => handleDelete(entry)}
-            destructive
-          >
-            Delete
-          </DropdownMenuItem>
+          {!isScopedRecipient && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                leading={<Pencil size={14} color={theme.colors.foregroundMuted} />}
+                onSelect={() => handleRename(entry)}
+              >
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                leading={<Trash2 size={14} color={theme.colors.destructive} />}
+                onSelect={() => handleDelete(entry)}
+                destructive
+              >
+                Delete
+              </DropdownMenuItem>
+            </>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
@@ -637,20 +645,24 @@ export function FileExplorerPane({
 
       const contextMenuItems = (
         <>
-          <ContextMenuItem
-            leading={<Pencil size={14} color={theme.colors.foregroundMuted} />}
-            onSelect={() => handleRename(entry)}
-          >
-            Rename
-          </ContextMenuItem>
-          <ContextMenuItem
-            leading={<Trash2 size={14} color={theme.colors.destructive} />}
-            onSelect={() => handleDelete(entry)}
-            destructive
-          >
-            Delete
-          </ContextMenuItem>
-          <ContextMenuSeparator />
+          {!isScopedRecipient && (
+            <>
+              <ContextMenuItem
+                leading={<Pencil size={14} color={theme.colors.foregroundMuted} />}
+                onSelect={() => handleRename(entry)}
+              >
+                Rename
+              </ContextMenuItem>
+              <ContextMenuItem
+                leading={<Trash2 size={14} color={theme.colors.destructive} />}
+                onSelect={() => handleDelete(entry)}
+                destructive
+              >
+                Delete
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+            </>
+          )}
           <ContextMenuItem
             leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
             onSelect={() => {
@@ -790,6 +802,7 @@ export function FileExplorerPane({
       handleOpenInTerminal,
       isDirectoryLoading,
       isElectron,
+      isScopedRecipient,
       selectedEntryPath,
       theme.colors,
       theme.spacing,

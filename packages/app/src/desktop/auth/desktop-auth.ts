@@ -52,6 +52,62 @@ export type DesktopInvitation = {
   createdAt: string;
 };
 
+export type WorkspaceShareAccessLevel = "read_only" | "full_access";
+
+export type WorkspaceShareAllowedUser = {
+  userId: string;
+  name: string;
+  email: string;
+  image: string | null;
+};
+
+export type WorkspaceShareRecord = {
+  shareId: string;
+  token: string;
+  workspaceId: string;
+  serverId: string;
+  projectId: string;
+  projectName: string;
+  workspaceName: string;
+  orgId: string;
+  accessLevel: WorkspaceShareAccessLevel;
+  allowedUserIds: string[];
+  allowedUsers: WorkspaceShareAllowedUser[];
+  expiresAt: string | null;
+  createdAt: string;
+  shareUrl: string;
+};
+
+export type SharedWorkspaceRecord = {
+  shareId: string;
+  token: string;
+  workspaceId: string;
+  serverId: string;
+  projectId: string;
+  projectName: string;
+  workspaceName: string;
+  orgId: string;
+  accessLevel: WorkspaceShareAccessLevel;
+  pairingUrl: string | null;
+  owner: {
+    userId: string;
+    name: string;
+    email: string;
+    image: string | null;
+  };
+  expiresAt: string | null;
+  createdAt: string;
+  shareUrl: string;
+};
+
+export type WorkspaceShareCreateResult = {
+  shareId: string;
+  token: string;
+  shareUrl: string;
+  accessLevel: WorkspaceShareAccessLevel;
+  expiresAt: string | null;
+};
+
 // ---------------------------------------------------------------------------
 // Parsing helpers
 // ---------------------------------------------------------------------------
@@ -221,4 +277,158 @@ export async function desktopAuthResendInvitation(
   invitationId: string,
 ): Promise<unknown> {
   return await invokeDesktopCommand("desktop_auth_resend_invitation", { orgId, invitationId });
+}
+
+// ---------------------------------------------------------------------------
+// Workspace share parsing
+// ---------------------------------------------------------------------------
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v): v is string => typeof v === "string");
+}
+
+function parseAllowedUser(raw: unknown): WorkspaceShareAllowedUser | null {
+  if (!isRecord(raw)) return null;
+  return {
+    userId: toStringOrNull(raw.userId) ?? "",
+    name: toStringOrNull(raw.name) ?? "Unknown",
+    email: toStringOrNull(raw.email) ?? "",
+    image: toStringOrNull(raw.image),
+  };
+}
+
+function parseWorkspaceShareRecord(raw: unknown): WorkspaceShareRecord | null {
+  if (!isRecord(raw)) return null;
+  const accessLevelRaw = toStringOrNull(raw.accessLevel) ?? "read_only";
+  const accessLevel: WorkspaceShareAccessLevel =
+    accessLevelRaw === "full_access" ? "full_access" : "read_only";
+  return {
+    shareId: toStringOrNull(raw.shareId) ?? "",
+    token: toStringOrNull(raw.token) ?? "",
+    workspaceId: toStringOrNull(raw.workspaceId) ?? "",
+    serverId: toStringOrNull(raw.serverId) ?? "",
+    projectId: toStringOrNull(raw.projectId) ?? "",
+    projectName: toStringOrNull(raw.projectName) ?? "",
+    workspaceName: toStringOrNull(raw.workspaceName) ?? "",
+    orgId: toStringOrNull(raw.orgId) ?? "",
+    accessLevel,
+    allowedUserIds: toStringArray(raw.allowedUserIds),
+    allowedUsers: Array.isArray(raw.allowedUsers)
+      ? raw.allowedUsers
+          .map(parseAllowedUser)
+          .filter((u): u is WorkspaceShareAllowedUser => u !== null)
+      : [],
+    expiresAt: toStringOrNull(raw.expiresAt),
+    createdAt: toStringOrNull(raw.createdAt) ?? "",
+    shareUrl: toStringOrNull(raw.shareUrl) ?? "",
+  };
+}
+
+function parseSharedWorkspaceRecord(raw: unknown): SharedWorkspaceRecord | null {
+  if (!isRecord(raw)) return null;
+  const accessLevelRaw = toStringOrNull(raw.accessLevel) ?? "read_only";
+  const accessLevel: WorkspaceShareAccessLevel =
+    accessLevelRaw === "full_access" ? "full_access" : "read_only";
+  const owner = isRecord(raw.owner)
+    ? {
+        userId: toStringOrNull(raw.owner.userId) ?? "",
+        name: toStringOrNull(raw.owner.name) ?? "Unknown",
+        email: toStringOrNull(raw.owner.email) ?? "",
+        image: toStringOrNull(raw.owner.image),
+      }
+    : { userId: "", name: "Unknown", email: "", image: null };
+  return {
+    shareId: toStringOrNull(raw.shareId) ?? "",
+    token: toStringOrNull(raw.token) ?? "",
+    workspaceId: toStringOrNull(raw.workspaceId) ?? "",
+    serverId: toStringOrNull(raw.serverId) ?? "",
+    projectId: toStringOrNull(raw.projectId) ?? "",
+    projectName: toStringOrNull(raw.projectName) ?? "",
+    workspaceName: toStringOrNull(raw.workspaceName) ?? "",
+    orgId: toStringOrNull(raw.orgId) ?? "",
+    accessLevel,
+    pairingUrl: toStringOrNull(raw.pairingUrl),
+    owner,
+    expiresAt: toStringOrNull(raw.expiresAt),
+    createdAt: toStringOrNull(raw.createdAt) ?? "",
+    shareUrl: toStringOrNull(raw.shareUrl) ?? "",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Workspace share commands
+// ---------------------------------------------------------------------------
+
+export interface DesktopCreateWorkspaceShareParams {
+  workspaceId: string;
+  serverId: string;
+  projectId: string;
+  projectName: string;
+  workspaceName: string;
+  orgId: string;
+  accessLevel: WorkspaceShareAccessLevel;
+  pairingUrl?: string;
+  allowedUserIds: string[];
+  expiresInMinutes?: number;
+}
+
+export async function desktopAuthCreateWorkspaceShare(
+  params: DesktopCreateWorkspaceShareParams,
+): Promise<WorkspaceShareCreateResult> {
+  const raw = await invokeDesktopCommand<unknown>(
+    "desktop_auth_create_workspace_share",
+    params as unknown as Record<string, unknown>,
+  );
+  if (!isRecord(raw)) {
+    throw new Error("Unexpected response from workspace share creation.");
+  }
+  const accessLevelRaw = toStringOrNull(raw.accessLevel) ?? params.accessLevel;
+  const accessLevel: WorkspaceShareAccessLevel =
+    accessLevelRaw === "full_access" ? "full_access" : "read_only";
+  return {
+    shareId: toStringOrNull(raw.shareId) ?? "",
+    token: toStringOrNull(raw.token) ?? "",
+    shareUrl: toStringOrNull(raw.shareUrl) ?? "",
+    accessLevel,
+    expiresAt: toStringOrNull(raw.expiresAt),
+  };
+}
+
+export interface DesktopUpdateWorkspaceShareParams {
+  token: string;
+  accessLevel?: WorkspaceShareAccessLevel;
+  allowedUserIds?: string[];
+  expiresInMinutes?: number | null;
+}
+
+export async function desktopAuthUpdateWorkspaceShare(
+  params: DesktopUpdateWorkspaceShareParams,
+): Promise<void> {
+  await invokeDesktopCommand(
+    "desktop_auth_update_workspace_share",
+    params as unknown as Record<string, unknown>,
+  );
+}
+
+export async function desktopAuthRevokeWorkspaceShare(token: string): Promise<void> {
+  await invokeDesktopCommand("desktop_auth_revoke_workspace_share", { token });
+}
+
+export async function desktopAuthListWorkspaceShares(
+  orgId: string,
+): Promise<WorkspaceShareRecord[]> {
+  const raw = await invokeDesktopCommand<unknown>("desktop_auth_list_workspace_shares", { orgId });
+  if (!isRecord(raw) || !Array.isArray(raw.shares)) return [];
+  return raw.shares
+    .map(parseWorkspaceShareRecord)
+    .filter((s): s is WorkspaceShareRecord => s !== null);
+}
+
+export async function desktopAuthListSharedWithMe(orgId: string): Promise<SharedWorkspaceRecord[]> {
+  const raw = await invokeDesktopCommand<unknown>("desktop_auth_list_shared_with_me", { orgId });
+  if (!isRecord(raw) || !Array.isArray(raw.shares)) return [];
+  return raw.shares
+    .map(parseSharedWorkspaceRecord)
+    .filter((s): s is SharedWorkspaceRecord => s !== null);
 }

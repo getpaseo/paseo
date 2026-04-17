@@ -44,22 +44,95 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     alignItems: "center",
   },
-  title: {
+  // WhatsApp-Web-style centered card
+  heroCard: {
+    width: "100%",
+    maxWidth: 960,
+    backgroundColor: theme.colors.surface1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.xl,
+    overflow: "hidden",
+  },
+  heroHeader: {
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[6],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    alignItems: "center",
+    flexDirection: "row",
+    gap: theme.spacing[3],
+  },
+  heroTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xl,
     fontWeight: theme.fontWeight.medium,
-    marginBottom: theme.spacing[3],
-    textAlign: "center",
+  },
+  heroBody: {
+    padding: theme.spacing[6],
+    flexDirection: "row",
+    gap: theme.spacing[6],
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+  },
+  heroStepsColumn: {
+    flex: 1,
+    minWidth: 260,
+    gap: theme.spacing[4],
+  },
+  heroStepsHeading: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.medium,
+  },
+  stepRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[3],
+  },
+  stepBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: theme.colors.surface2,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  stepBadgeText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+  },
+  stepText: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.5,
+  },
+  stepTextMuted: {
+    color: theme.colors.foregroundMuted,
+  },
+  heroActionsColumn: {
+    flex: 1,
+    minWidth: 260,
+    gap: theme.spacing[3],
+  },
+  heroActionsHeading: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: theme.spacing[1],
   },
   subtitle: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
-    textAlign: "center",
-    marginBottom: theme.spacing[8],
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.5,
   },
   actions: {
     width: "100%",
-    maxWidth: 420,
     gap: theme.spacing[3],
   },
   actionButton: {
@@ -87,8 +160,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   hostList: {
     width: "100%",
-    maxWidth: 420,
-    marginTop: theme.spacing[6],
+    marginTop: theme.spacing[4],
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
     paddingTop: theme.spacing[4],
@@ -345,72 +417,130 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
       testID="welcome-screen"
     >
       <View style={styles.content}>
-        <HubcodeLogo size={96} />
-        <Text style={styles.title}>Welcome to Hubcode</Text>
-        <Text style={styles.subtitle}>
-          {showHostList ? "Connecting to your hosts…" : "Connect to your host to start"}
-        </Text>
-
-        {!showHostList && isNative && (
-          <>
-            <Text style={styles.setupHint}>
-              You need the Hubcode desktop app or server running on your computer first.
-            </Text>
-            <Pressable
-              style={styles.setupLink}
-              onPress={() => openExternalUrl("https://hubcode.ai")}
-            >
-              <Text style={styles.setupLinkText}>Get started at hubcode.ai</Text>
-              <ExternalLink size={14} color={theme.colors.accent} />
-            </Pressable>
-          </>
-        )}
-
-        <View style={styles.actions}>
-          {actions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <Pressable
-                key={action.key}
-                style={[styles.actionButton, action.primary ? styles.actionButtonPrimary : null]}
-                onPress={action.onPress}
-                testID={action.testID}
-              >
-                <Icon
-                  size={18}
-                  color={action.primary ? theme.colors.accentForeground : theme.colors.foreground}
-                />
-                <Text style={[styles.actionText, action.primary ? styles.actionTextPrimary : null]}>
-                  {action.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {isElectron && !isAuthenticated && (
-          <Pressable
-            style={styles.signInLink}
-            onPress={() => void signIn(undefined)}
-            disabled={isSigningIn}
-          >
-            <Text style={styles.signInLinkText}>
-              {isSigningIn ? "Signing in…" : "Sign in to your account"}
-            </Text>
-          </Pressable>
-        )}
-
-        {isElectron && isAuthenticated && user && (
-          <Text style={styles.signedInHint}>Signed in as {user.username || user.email}</Text>
-        )}
-
-        {showHostList && (
-          <View style={styles.hostList}>
-            {hosts.map((host) => (
-              <HostStatusRow key={host.serverId} serverId={host.serverId} label={host.label} />
-            ))}
+        <View style={styles.heroCard}>
+          <View style={styles.heroHeader}>
+            <HubcodeLogo size={36} />
+            <Text style={styles.heroTitle}>Use Hubcode on your computer</Text>
           </View>
-        )}
+
+          <View style={styles.heroBody}>
+            <View style={styles.heroStepsColumn}>
+              <Text style={styles.heroStepsHeading}>To get started</Text>
+
+              <View style={styles.stepRow}>
+                <View style={styles.stepBadge}>
+                  <Text style={styles.stepBadgeText}>1</Text>
+                </View>
+                <Text style={styles.stepText}>
+                  Install and open the Hubcode{" "}
+                  <Text style={styles.stepTextMuted}>daemon or desktop app</Text> on the computer you
+                  want to control.
+                </Text>
+              </View>
+
+              <View style={styles.stepRow}>
+                <View style={styles.stepBadge}>
+                  <Text style={styles.stepBadgeText}>2</Text>
+                </View>
+                <Text style={styles.stepText}>
+                  Copy the <Text style={styles.stepTextMuted}>pairing link</Text> shown there, or
+                  have a direct host URL ready.
+                </Text>
+              </View>
+
+              <View style={styles.stepRow}>
+                <View style={styles.stepBadge}>
+                  <Text style={styles.stepBadgeText}>3</Text>
+                </View>
+                <Text style={styles.stepText}>
+                  Use one of the options on the right to connect — the link stays active until you
+                  sign out.
+                </Text>
+              </View>
+
+              {isNative && (
+                <Pressable
+                  style={styles.setupLink}
+                  onPress={() => openExternalUrl("https://hubcode.ai")}
+                >
+                  <Text style={styles.setupLinkText}>Get started at hubcode.ai</Text>
+                  <ExternalLink size={14} color={theme.colors.accent} />
+                </Pressable>
+              )}
+            </View>
+
+            <View style={styles.heroActionsColumn}>
+              <Text style={styles.heroActionsHeading}>Connect a host</Text>
+              <Text style={styles.subtitle}>
+                {showHostList
+                  ? "Connecting to your hosts…"
+                  : "Paste a pairing link or connect directly."}
+              </Text>
+
+              <View style={styles.actions}>
+                {actions.map((action) => {
+                  const Icon = action.icon;
+                  return (
+                    <Pressable
+                      key={action.key}
+                      style={[
+                        styles.actionButton,
+                        action.primary ? styles.actionButtonPrimary : null,
+                      ]}
+                      onPress={action.onPress}
+                      testID={action.testID}
+                    >
+                      <Icon
+                        size={18}
+                        color={
+                          action.primary ? theme.colors.accentForeground : theme.colors.foreground
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.actionText,
+                          action.primary ? styles.actionTextPrimary : null,
+                        ]}
+                      >
+                        {action.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {isElectron && !isAuthenticated && (
+                <Pressable
+                  style={styles.signInLink}
+                  onPress={() => void signIn(undefined)}
+                  disabled={isSigningIn}
+                >
+                  <Text style={styles.signInLinkText}>
+                    {isSigningIn ? "Signing in…" : "Sign in to your account"}
+                  </Text>
+                </Pressable>
+              )}
+
+              {isElectron && isAuthenticated && user && (
+                <Text style={styles.signedInHint}>
+                  Signed in as {user.username || user.email}
+                </Text>
+              )}
+
+              {showHostList && (
+                <View style={styles.hostList}>
+                  {hosts.map((host) => (
+                    <HostStatusRow
+                      key={host.serverId}
+                      serverId={host.serverId}
+                      label={host.label}
+                    />
+                  ))}
+                </View>
+              )}
+            </View>
+          </View>
+        </View>
       </View>
       <Pressable
         style={styles.proLink}

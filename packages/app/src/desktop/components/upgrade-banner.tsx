@@ -2,6 +2,18 @@ import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ArrowRight, Zap } from "lucide-react-native";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { useOrganizations } from "@/desktop/hooks/use-organizations";
+import { useActiveOrgId } from "@/stores/active-org-store";
+
+// Any plan that isn't the free tier unlocks everything — hide upgrade UI.
+function useIsOnPaidPlan(): boolean {
+  const { organizations } = useOrganizations();
+  const activeOrgId = useActiveOrgId();
+  const activeOrg =
+    organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;
+  const planId = activeOrg?.planId;
+  return !!planId && planId.toLowerCase() !== "free";
+}
 
 const AUTH_SERVER_URL = "https://auth.hubcode.ai";
 const BILLING_URL = `${AUTH_SERVER_URL}/dashboard/billing`;
@@ -30,6 +42,8 @@ export function UpgradeBanner({
   compact = false,
 }: UpgradeBannerProps) {
   const { theme } = useUnistyles();
+  const isPaid = useIsOnPaidPlan();
+  if (isPaid) return null;
 
   if (compact) {
     return (
@@ -76,9 +90,11 @@ interface LimitHintProps {
 
 export function UpgradeLimitHint({ current, limit, noun }: LimitHintProps) {
   const { theme } = useUnistyles();
+  const isPaid = useIsOnPaidPlan();
   const atLimit = current >= limit;
   const nearLimit = current >= limit - 1;
 
+  if (isPaid) return null;
   if (!nearLimit) return null;
 
   return (

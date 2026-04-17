@@ -9,6 +9,8 @@ import {
   type DesktopOrgMember,
   type DesktopInvitation,
 } from "@/desktop/auth/desktop-auth";
+import { webGetOrgMembers } from "@/desktop/auth/web-auth-api";
+import { getIsElectron } from "@/constants/platform";
 
 function orgMembersQueryKey(orgId: string) {
   return ["desktopOrgMembers", orgId] as const;
@@ -21,7 +23,7 @@ export function useOrgMembers(orgId: string | null) {
     queryKey: orgMembersQueryKey(orgId ?? ""),
     enabled: !!orgId,
     staleTime: 60_000,
-    queryFn: () => desktopAuthGetOrgMembers(orgId!),
+    queryFn: () => (getIsElectron() ? desktopAuthGetOrgMembers(orgId!) : webGetOrgMembers(orgId!)),
   });
 
   const inviteMutation = useMutation({

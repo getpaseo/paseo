@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { AgentInputArea } from "@/components/agent-input-area";
+import { ReadOnlySharedNotice } from "@/components/sharing/read-only-shared-notice";
+import { useIsInSharedSession, useSharedSessionStore } from "@/stores/shared-session-store";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import type { ImageAttachment } from "@/components/message-input";
@@ -11,7 +13,7 @@ import { useDraftAgentCreateFlow } from "@/hooks/use-draft-agent-create-flow";
 import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
-import type { Agent } from "@/stores/session-store";
+import { type Agent, useSessionStore } from "@/stores/session-store";
 import { encodeImages } from "@/utils/encode-images";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import type {
@@ -53,6 +55,14 @@ export function WorkspaceDraftAgentTab({
 }: WorkspaceDraftAgentTabProps) {
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const isInSharedSession = useIsInSharedSession();
+  const sharedAccessLevel = useSharedSessionStore().accessLevel;
+  const isViewOnly = isInSharedSession && sharedAccessLevel === "read_only";
+  const workspaceDefaultProvider = useSessionStore((state) => {
+    const ws = state.sessions[serverId]?.workspaces.get(workspaceId);
+    if (!ws || ws.agentMode === "cli") return undefined;
+    return ws.agentProvider;
+  });
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
   const draftInput = useAgentInputDraft(
     buildDraftStoreKey({
@@ -86,7 +96,10 @@ export function WorkspaceDraftAgentTab({
     persistFormPreferences,
   } = useAgentFormState({
     initialServerId: serverId,
-    initialValues: { workingDir: workspaceId },
+    initialValues: {
+      workingDir: workspaceId,
+      ...(workspaceDefaultProvider ? { provider: workspaceDefaultProvider } : {}),
+    },
     isVisible: true,
     isCreateFlow: true,
     onlineServerIds: isConnected ? [serverId] : [],
@@ -345,46 +358,50 @@ export function WorkspaceDraftAgentTab({
         </View>
 
         <View style={styles.inputAreaWrapper}>
-          <AgentInputArea
-            agentId={tabId}
-            serverId={serverId}
-            isInputActive={isPaneFocused}
-            onSubmitMessage={handleCreateFromInput}
-            isSubmitLoading={isSubmitting}
-            blurOnSubmit={true}
-            value={draftInput.text}
-            onChangeText={draftInput.setText}
-            images={draftInput.images}
-            onChangeImages={draftInput.setImages}
-            clearDraft={draftInput.clear}
-            autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
-            onAddImages={handleAddImagesCallback}
-            onFocusInput={handleFocusInputCallback}
-            commandDraftConfig={draftCommandConfig}
-            statusControls={{
-              providerDefinitions,
-              selectedProvider,
-              onSelectProvider: handleProviderSelectWithFocus,
-              modeOptions,
-              selectedMode,
-              onSelectMode: handleModeSelectWithFocus,
-              models: availableModels,
-              selectedModel,
-              onSelectModel: handleModelSelectWithFocus,
-              isModelLoading,
-              allProviderModels,
-              isAllModelsLoading,
-              onSelectProviderAndModel: handleProviderAndModelSelectWithFocus,
-              thinkingOptions: availableThinkingOptions,
-              selectedThinkingOptionId,
-              onSelectThinkingOption: handleThinkingOptionSelectWithFocus,
-              features: draftFeatures,
-              onSetFeature: handleSetFeatureWithFocus,
-              onDropdownClose: () => focusInputRef.current?.(),
-              onModelSelectorOpen: invalidateProviderModels,
-              disabled: isSubmitting,
-            }}
-          />
+          {isViewOnly ? (
+            <ReadOnlySharedNotice />
+          ) : (
+            <AgentInputArea
+              agentId={tabId}
+              serverId={serverId}
+              isInputActive={isPaneFocused}
+              onSubmitMessage={handleCreateFromInput}
+              isSubmitLoading={isSubmitting}
+              blurOnSubmit={true}
+              value={draftInput.text}
+              onChangeText={draftInput.setText}
+              images={draftInput.images}
+              onChangeImages={draftInput.setImages}
+              clearDraft={draftInput.clear}
+              autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
+              onAddImages={handleAddImagesCallback}
+              onFocusInput={handleFocusInputCallback}
+              commandDraftConfig={draftCommandConfig}
+              statusControls={{
+                providerDefinitions,
+                selectedProvider,
+                onSelectProvider: handleProviderSelectWithFocus,
+                modeOptions,
+                selectedMode,
+                onSelectMode: handleModeSelectWithFocus,
+                models: availableModels,
+                selectedModel,
+                onSelectModel: handleModelSelectWithFocus,
+                isModelLoading,
+                allProviderModels,
+                isAllModelsLoading,
+                onSelectProviderAndModel: handleProviderAndModelSelectWithFocus,
+                thinkingOptions: availableThinkingOptions,
+                selectedThinkingOptionId,
+                onSelectThinkingOption: handleThinkingOptionSelectWithFocus,
+                features: draftFeatures,
+                onSetFeature: handleSetFeatureWithFocus,
+                onDropdownClose: () => focusInputRef.current?.(),
+                onModelSelectorOpen: invalidateProviderModels,
+                disabled: isSubmitting,
+              }}
+            />
+          )}
         </View>
       </View>
     </FileDropZone>

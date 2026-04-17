@@ -1202,6 +1202,7 @@ export const CreateHubcodeWorktreeRequestSchema = z.object({
   kanbanStatus: WorkspaceKanbanStatusPayloadSchema.optional(),
   agentProvider: z.string().optional(),
   agentMode: z.enum(["native", "cli"]).optional(),
+  orgId: z.string().optional(),
 });
 
 // TODO(2026-07): Remove once most clients are on >=0.1.50 and support arbitrary editor ids.
@@ -2397,6 +2398,7 @@ export const WorkspaceDescriptorPayloadSchema = z.object({
   kanbanStatus: WorkspaceKanbanStatusPayloadSchema.optional(),
   agentProvider: z.string().optional(),
   agentMode: z.enum(["native", "cli"]).optional(),
+  orgId: z.string().optional(),
 });
 
 export const AgentUpdateMessageSchema = z.object({
@@ -3934,6 +3936,12 @@ export const WSHelloMessageSchema = z.object({
     })
     .passthrough()
     .optional(),
+  // Workspace-share scoping: when set, the daemon validates the token against the
+  // auth-server and restricts the connection to the authorized workspace + access level.
+  // Both optional for backward compat with older clients and non-share flows.
+  shareToken: z.string().optional(),
+  shareSessionToken: z.string().optional(),
+  shareAuthServerUrl: z.string().optional(),
 });
 
 export const WSRecordingStateMessageSchema = z.object({

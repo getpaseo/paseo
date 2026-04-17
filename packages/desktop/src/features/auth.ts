@@ -426,30 +426,86 @@ async function resendInvitation(args?: Record<string, unknown>): Promise<unknown
   return await response.json();
 }
 
-async function createShare(args?: Record<string, unknown>): Promise<unknown> {
-  const response = await authFetch("/api/sessions/share", {
+async function readErrorDetail(response: Response, fallback: string): Promise<string> {
+  const text = await response.text().catch(() => "");
+  if (!text) {
+    return `${fallback} (${response.status}) — empty response; restart the auth-server so Drizzle re-imports schema.ts`;
+  }
+  try {
+    const body = JSON.parse(text) as { error?: string };
+    if (body.error) return `${fallback} (${response.status}): ${body.error}`;
+  } catch {
+    // fall through to raw text
+  }
+  return `${fallback} (${response.status}): ${text.slice(0, 300)}`;
+}
+
+async function createWorkspaceShare(args?: Record<string, unknown>): Promise<unknown> {
+  const response = await authFetch("/api/workspaces/share", {
     method: "POST",
     body: JSON.stringify(args),
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? "Failed to create share.");
+    throw new Error(await readErrorDetail(response, "Failed to share workspace"));
   }
   return await response.json();
 }
 
-async function revokeShare(args?: Record<string, unknown>): Promise<unknown> {
+async function updateWorkspaceShare(args?: Record<string, unknown>): Promise<unknown> {
   const token = args?.token as string;
   if (!token) throw new Error("Token is required.");
 
-  const response = await authFetch(`/api/sessions/share/${encodeURIComponent(token)}`, {
+  const { token: _omitToken, ...rest } = args ?? {};
+  void _omitToken;
+
+  const response = await authFetch(`/api/workspaces/share/${encodeURIComponent(token)}`, {
+    method: "PATCH",
+    body: JSON.stringify(rest),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorDetail(response, "Failed to update workspace share"));
+  }
+  return await response.json();
+}
+
+async function revokeWorkspaceShare(args?: Record<string, unknown>): Promise<unknown> {
+  const token = args?.token as string;
+  if (!token) throw new Error("Token is required.");
+
+  const response = await authFetch(`/api/workspaces/share/${encodeURIComponent(token)}`, {
     method: "DELETE",
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? "Failed to revoke share.");
+    throw new Error(await readErrorDetail(response, "Failed to revoke workspace share"));
+  }
+  return await response.json();
+}
+
+async function listWorkspaceShares(args?: Record<string, unknown>): Promise<unknown> {
+  const orgId = args?.orgId as string;
+  if (!orgId) throw new Error("orgId is required.");
+
+  const response = await authFetch(`/api/workspaces/share?orgId=${encodeURIComponent(orgId)}`);
+
+  if (!response.ok) {
+    throw new Error(await readErrorDetail(response, "Failed to list workspace shares"));
+  }
+  return await response.json();
+}
+
+async function listSharedWithMe(args?: Record<string, unknown>): Promise<unknown> {
+  const orgId = args?.orgId as string;
+  if (!orgId) throw new Error("orgId is required.");
+
+  const response = await authFetch(
+    `/api/workspaces/shared-with-me?orgId=${encodeURIComponent(orgId)}`,
+  );
+
+  if (!response.ok) {
+    throw new Error(await readErrorDetail(response, "Failed to list shared workspaces"));
   }
   return await response.json();
 }
@@ -470,7 +526,10 @@ export function createAuthCommandHandlers(): Record<string, DesktopCommandHandle
     desktop_auth_remove_member: (args) => removeMember(args),
     desktop_auth_cancel_invitation: (args) => cancelInvitation(args),
     desktop_auth_resend_invitation: (args) => resendInvitation(args),
-    desktop_auth_create_share: (args) => createShare(args),
-    desktop_auth_revoke_share: (args) => revokeShare(args),
+    desktop_auth_create_workspace_share: (args) => createWorkspaceShare(args),
+    desktop_auth_update_workspace_share: (args) => updateWorkspaceShare(args),
+    desktop_auth_revoke_workspace_share: (args) => revokeWorkspaceShare(args),
+    desktop_auth_list_workspace_shares: (args) => listWorkspaceShares(args),
+    desktop_auth_list_shared_with_me: (args) => listSharedWithMe(args),
   };
 }

@@ -39,6 +39,7 @@ import {
   Monitor,
   MoreVertical,
   Plus,
+  Share2,
   Trash2,
 } from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
@@ -101,6 +102,11 @@ import {
   extractLinkedIntegrations,
   integrationDisplayName,
 } from "@/components/kanban/integration-context";
+import { ShareWorkspaceModal } from "@/components/sharing/share-workspace-modal";
+import { useOrganizations } from "@/desktop/hooks/use-organizations";
+import { useActiveOrgId } from "@/stores/active-org-store";
+import { useSharedWorkspaceScope } from "@/stores/shared-session-store";
+import { getIsElectron } from "@/constants/platform";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -189,6 +195,7 @@ interface WorkspaceRowInnerProps {
   onArchive?: () => void;
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
+  onShare?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }
 
@@ -734,6 +741,7 @@ function ProjectHeaderRow({
   const updateTask = useKanbanStore((state) => state.updateTask);
   const toast = useToast();
   const { launch: launchCliAgent } = useCliAgentLaunch(serverId);
+  const activeOrgId = useActiveOrgId();
 
   const openSubmissionInWorkspace = useCallback(
     async (
@@ -837,6 +845,7 @@ function ProjectHeaderRow({
         kanbanStatus: submission.linkToTask ? "todo" : undefined,
         agentProvider: submission.agentSelection?.id,
         agentMode: submission.agentSelection?.mode === "cli" ? "cli" : "native",
+        orgId: activeOrgId ?? undefined,
       });
       if (payload.error || !payload.workspace) {
         throw new Error(payload.error ?? "Failed to create worktree");
@@ -855,6 +864,33 @@ function ProjectHeaderRow({
       mergeWorkspaces(serverId!, [normalizeWorkspaceDescriptor(workspace)]);
       onWorktreeCreated?.(workspace.id);
       onWorkspacePress?.();
+
+      // Honor the agent selection made in the modal — if the user picked a CLI
+      // agent, launch it in a terminal tab instead of dropping them on the
+      // default GUI draft composer.
+      if (submission.agentSelection?.mode === "cli") {
+        try {
+          const launchResult = await launchCliAgent({
+            providerId: submission.agentSelection.id as CliProviderId,
+            cwd: workspace.id,
+            autoApprove: submission.autoApprove,
+            initialPrompt: submission.prompt,
+            name: `${submission.taskName} — ${submission.agentSelection.label}`,
+          });
+          router.navigate(
+            prepareWorkspaceTab({
+              serverId: serverId!,
+              workspaceId: workspace.id,
+              target: { kind: "terminal", terminalId: launchResult.terminalId },
+            }) as any,
+          );
+          return;
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : String(err));
+          return;
+        }
+      }
+
       router.navigate(
         prepareWorkspaceTab({
           serverId: serverId!,
@@ -1104,6 +1140,7 @@ function WorkspaceRowInner({
   onArchive,
   onCopyBranchName,
   onCopyPath,
+  onShare,
   archiveShortcutKeys,
 }: WorkspaceRowInnerProps) {
   const { theme } = useUnistyles();
@@ -1241,6 +1278,15 @@ function WorkspaceRowInner({
                       onSelect={onCopyBranchName}
                     >
                       Copy branch name
+                    </DropdownMenuItem>
+                  ) : null}
+                  {onShare ? (
+                    <DropdownMenuItem
+                      testID={`sidebar-workspace-menu-share-${workspace.workspaceKey}`}
+                      leading={<Share2 size={14} color={theme.colors.foregroundMuted} />}
+                      onSelect={onShare}
+                    >
+                      Share...
                     </DropdownMenuItem>
                   ) : null}
                   <DropdownMenuItem
@@ -1433,6 +1479,27 @@ function WorkspaceRowWithMenu({
     toast.copied("Branch name copied");
   }, [toast, workspace.name]);
 
+  const isElectron = getIsElectron();
+  const { organizations } = useOrganizations();
+  const activeOrgId = useActiveOrgId();
+  const orgId = activeOrgId ?? organizations[0]?.id ?? null;
+  const [isShareOpen, setIsShareOpen] = useState(false);
+  const shareTarget = useMemo(() => {
+    const descriptor = sessionWorkspaces.get(workspace.workspaceId);
+    return {
+      serverId: workspace.serverId,
+      workspaceId: workspace.workspaceId,
+      workspaceName: workspace.name,
+      projectId: descriptor?.projectId ?? "",
+      projectName:
+        (descriptor?.projectDisplayName && descriptor.projectDisplayName.length > 0
+          ? descriptor.projectDisplayName
+          : descriptor?.projectId) ?? "",
+    };
+  }, [sessionWorkspaces, workspace.name, workspace.serverId, workspace.workspaceId]);
+  const handleShare = useCallback(() => setIsShareOpen(true), []);
+  const canShare = isElectron && Boolean(orgId) && shareTarget.projectId.length > 0;
+
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
 
   useKeyboardActionHandler({
@@ -1451,26 +1518,35 @@ function WorkspaceRowWithMenu({
   });
 
   return (
-    <WorkspaceRowInner
-      workspace={workspace}
-      selected={selected}
-      shortcutNumber={shortcutNumber}
-      showShortcutBadge={showShortcutBadge}
-      onPress={onPress}
-      drag={drag}
-      isDragging={isDragging}
-      isArchiving={isArchiving}
-      isCreating={isCreating}
-      dragHandleProps={dragHandleProps}
-      menuController={null}
-      archiveLabel={isWorktree ? "Archive worktree" : "Hide from sidebar"}
-      archiveStatus={isWorktree ? archiveStatus : isArchivingWorkspace ? "pending" : "idle"}
-      archivePendingLabel={isWorktree ? "Archiving..." : "Hiding..."}
-      onArchive={isWorktree ? handleArchiveWorktree : handleArchiveWorkspace}
-      onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
-      onCopyPath={handleCopyPath}
-      archiveShortcutKeys={selected ? archiveShortcutKeys : null}
-    />
+    <>
+      <WorkspaceRowInner
+        workspace={workspace}
+        selected={selected}
+        shortcutNumber={shortcutNumber}
+        showShortcutBadge={showShortcutBadge}
+        onPress={onPress}
+        drag={drag}
+        isDragging={isDragging}
+        isArchiving={isArchiving}
+        isCreating={isCreating}
+        dragHandleProps={dragHandleProps}
+        menuController={null}
+        archiveLabel={isWorktree ? "Archive worktree" : "Hide from sidebar"}
+        archiveStatus={isWorktree ? archiveStatus : isArchivingWorkspace ? "pending" : "idle"}
+        archivePendingLabel={isWorktree ? "Archiving..." : "Hiding..."}
+        onArchive={isWorktree ? handleArchiveWorktree : handleArchiveWorkspace}
+        onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
+        onCopyPath={handleCopyPath}
+        onShare={canShare ? handleShare : undefined}
+        archiveShortcutKeys={selected ? archiveShortcutKeys : null}
+      />
+      <ShareWorkspaceModal
+        visible={isShareOpen}
+        onClose={() => setIsShareOpen(false)}
+        orgId={orgId}
+        workspace={shareTarget}
+      />
+    </>
   );
 }
 
@@ -1632,12 +1708,16 @@ function ProjectBlock({
     }
     return project.workspaces.some((w) => w.workspaceId === activeWorkspaceSelection.workspaceId);
   }, [serverId, activeWorkspaceSelection, project.workspaces]);
+  const sharedScope = useSharedWorkspaceScope();
   const kanbanTasksCount = useSessionStore((state) => {
     if (!serverId) return 0;
     const workspaces = state.sessions[serverId]?.workspaces;
     if (!workspaces) return 0;
+    const restrictedWorkspaceId =
+      sharedScope.serverId === serverId ? sharedScope.workspaceId : null;
     let count = 0;
     for (const w of workspaces.values()) {
+      if (restrictedWorkspaceId && w.id !== restrictedWorkspaceId) continue;
       if (
         w.projectId === project.projectKey &&
         (w.kanbanStatus || w.workspaceKind === "worktree")
@@ -1795,17 +1875,19 @@ function ProjectBlock({
             onRemoveProject={handleRemoveProject}
             removeProjectStatus={isRemovingProject ? "pending" : "idle"}
           />
-          <ProjectKanbanRow
-            selected={isProjectKanbanActive}
-            count={kanbanTasksCount}
-            onPress={() => {
-              if (!serverId) {
-                return;
-              }
-              onWorkspacePress?.();
-              router.navigate(buildHostProjectKanbanRoute(serverId, project.projectKey) as any);
-            }}
-          />
+          {!sharedScope.workspaceId && (
+            <ProjectKanbanRow
+              selected={isProjectKanbanActive}
+              count={kanbanTasksCount}
+              onPress={() => {
+                if (!serverId) {
+                  return;
+                }
+                onWorkspacePress?.();
+                router.navigate(buildHostProjectKanbanRoute(serverId, project.projectKey) as any);
+              }}
+            />
+          )}
         </>
       ) : (
         <>
@@ -1833,17 +1915,21 @@ function ProjectBlock({
 
           {!collapsed ? (
             <>
-              <ProjectKanbanRow
-                selected={isProjectKanbanActive}
-                count={kanbanTasksCount}
-                onPress={() => {
-                  if (!serverId) {
-                    return;
-                  }
-                  onWorkspacePress?.();
-                  router.navigate(buildHostProjectKanbanRoute(serverId, project.projectKey) as any);
-                }}
-              />
+              {!sharedScope.workspaceId && (
+                <ProjectKanbanRow
+                  selected={isProjectKanbanActive}
+                  count={kanbanTasksCount}
+                  onPress={() => {
+                    if (!serverId) {
+                      return;
+                    }
+                    onWorkspacePress?.();
+                    router.navigate(
+                      buildHostProjectKanbanRoute(serverId, project.projectKey) as any,
+                    );
+                  }}
+                />
+              )}
               <DraggableList
                 testID={`sidebar-workspace-list-${project.projectKey}`}
                 data={project.workspaces}

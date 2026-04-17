@@ -438,7 +438,20 @@ export type SessionOptions = {
   };
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
+  /**
+   * When set, this session was established via a workspace share token and is
+   * restricted to a single workspace with a specific access level. Every handler
+   * that operates on a workspace path must verify the cwd matches.
+   */
+  shareScope?: {
+    workspaceId: string;
+    accessLevel: "read_only" | "full_access";
+    shareToken: string;
+    ownerUserId: string;
+  } | null;
 };
+
+export type SessionShareScope = NonNullable<SessionOptions["shareScope"]>;
 
 export type SessionLifecycleIntent =
   | {
@@ -661,6 +674,7 @@ export class Session {
   private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
+  private readonly shareScope: SessionShareScope | null;
 
   constructor(options: SessionOptions) {
     const {
@@ -693,6 +707,7 @@ export class Session {
       dictation,
       agentProviderRuntimeSettings,
       providerOverrides,
+      shareScope,
     } = options;
     this.clientId = clientId;
     this.appVersion = appVersion;
@@ -788,6 +803,17 @@ export class Session {
     this.getSpeechReadiness = dictation?.getSpeechReadiness;
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.providerOverrides = providerOverrides;
+    this.shareScope = shareScope ?? null;
+    if (this.shareScope) {
+      this.sessionLogger.info(
+        {
+          workspaceId: this.shareScope.workspaceId,
+          accessLevel: this.shareScope.accessLevel,
+          ownerUserId: this.shareScope.ownerUserId,
+        },
+        "Session is share-scoped; workspace access will be enforced per-request",
+      );
+    }
     this.abortController = new AbortController();
     this.sessionLogger = logger.child({
       module: "session",
@@ -821,6 +847,169 @@ export class Session {
     if (appVersion && appVersion !== this.appVersion) {
       this.appVersion = appVersion;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Workspace-share access control
+  //
+  // When this session was established via a share token (see handleHello in
+  // websocket-server.ts), every handler that touches a workspace path MUST
+  // validate the request against the scope before doing any work — otherwise a
+  // malicious recipient could craft WS messages to read/write other workspaces.
+  // ---------------------------------------------------------------------------
+
+  private isShareRestricted(): boolean {
+    return this.shareScope !== null;
+  }
+
+  /**
+   * Returns null when access is allowed (or the session is not share-scoped).
+   * Returns an error string when the requested workspace is outside the scope.
+   */
+  private checkWorkspaceAccess(cwd: string | undefined | null): string | null {
+    if (!this.shareScope) return null;
+    const allowed = this.shareScope.workspaceId.trim();
+    const requested = (cwd ?? "").trim();
+    if (!requested) {
+      return "cwd is required for share-scoped sessions";
+    }
+    // Allow the authorized workspace and paths nested within it.
+    if (requested === allowed) return null;
+    const prefix = allowed.endsWith("/") ? allowed : `${allowed}/`;
+    if (requested.startsWith(prefix)) return null;
+    return "Access denied: this workspace is not shared with you";
+  }
+
+  /**
+   * Returns null when writes are allowed. Returns an error string when the
+   * session is share-scoped with read-only access.
+   */
+  private checkWriteAccess(): string | null {
+    if (!this.shareScope) return null;
+    if (this.shareScope.accessLevel === "read_only") {
+      return "Access denied: shared workspace is read-only";
+    }
+    return null;
+  }
+
+  /**
+   * Centralized pre-dispatch guard for share-scoped sessions. Returns true when
+   * the message was rejected (and an rpc_error was emitted) — the caller should
+   * skip handler dispatch. Returns false to continue normal processing.
+   *
+   * Scope decisions:
+   * - Server-control + settings writes are globally blocked for share sessions.
+   * - Write-class requests are blocked when accessLevel === "read_only".
+   * - Any request carrying a cwd/workspaceId that doesn't match the authorized
+   *   workspace is rejected.
+   * - Read-class list endpoints (fetch_workspaces, fetch_agents) are allowed;
+   *   their handlers filter the response to the authorized workspace.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: raw inbound message union is too large to narrow here
+  private enforceShareScopeOnMessage(msg: any): boolean {
+    if (!this.shareScope) return false;
+
+    const type: string = msg?.type ?? "";
+    const requestId: string | undefined = msg?.requestId;
+
+    // Globally blocked — shared recipients cannot use these even on their own workspace.
+    const GLOBAL_BLOCK = new Set([
+      "restart_server_request",
+      "shutdown_server_request",
+      "set_daemon_config_request",
+      "open_project_request",
+      "hubcode_worktree_list_request",
+      "hubcode_worktree_archive_request",
+      "create_hubcode_worktree_request",
+      "archive_workspace_request",
+      "set_agent_feature_request",
+      "set_agent_model_request",
+      "set_agent_mode_request",
+      "refresh_providers_snapshot_request",
+      "schedule_create_request",
+      "schedule_delete_request",
+      "loop_run_request",
+      "loop_stop_request",
+      "push_register_request",
+      "push_unregister_request",
+    ]);
+    if (GLOBAL_BLOCK.has(type)) {
+      this.emitShareScopeRejection(requestId, type, "Not permitted in shared session");
+      return true;
+    }
+
+    // Write-class operations blocked when the share is read-only.
+    const WRITE_TYPES = new Set([
+      "file_write_request",
+      "file_rename_request",
+      "file_delete_request",
+      "create_agent_request",
+      "delete_agent_request",
+      "archive_agent_request",
+      "update_agent_request",
+      "create_terminal_request",
+      "subscribe_terminal_request",
+      "kill_terminal_request",
+      "terminal_input",
+      "checkout_commit_request",
+      "checkout_push_request",
+      "checkout_merge_request",
+      "checkout_pr_create_request",
+      "checkout_switch_branch_request",
+      "checkout_pull_request",
+      "stash_save_request",
+      "stash_pop_request",
+      "browser_launch_request",
+      "browser_navigate_request",
+      "browser_fill_request",
+      "browser_click_request",
+      "browser_go_back_request",
+      "browser_go_forward_request",
+      "browser_close_request",
+      "browser_resize_request",
+    ]);
+    if (this.shareScope.accessLevel === "read_only" && WRITE_TYPES.has(type)) {
+      this.emitShareScopeRejection(requestId, type, "Shared workspace is read-only");
+      return true;
+    }
+
+    // Workspace path enforcement for any message carrying cwd / workspaceId / config.cwd.
+    const candidateCwd: unknown =
+      msg?.cwd ?? msg?.workspaceId ?? msg?.config?.cwd ?? msg?.worktreePath ?? null;
+    if (typeof candidateCwd === "string" && candidateCwd.length > 0) {
+      const err = this.checkWorkspaceAccess(candidateCwd);
+      if (err) {
+        this.emitShareScopeRejection(requestId, type, err);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private emitShareScopeRejection(
+    requestId: string | undefined,
+    requestType: string,
+    error: string,
+  ): void {
+    this.sessionLogger.warn(
+      {
+        requestType,
+        requestId,
+        shareWorkspaceId: this.shareScope?.workspaceId,
+        ownerUserId: this.shareScope?.ownerUserId,
+      },
+      "Rejecting request — violates share scope",
+    );
+    this.emit({
+      type: "rpc_error",
+      payload: {
+        requestId: requestId ?? "",
+        requestType,
+        error,
+        code: "share_scope_denied",
+      },
+    });
   }
 
   /**
@@ -1466,6 +1655,7 @@ export class Session {
     kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
     agentProvider?: string;
     agentMode?: PersistedWorkspaceRecord["agentMode"];
+    orgId?: string;
   }): PersistedWorkspaceRecord {
     return createPersistedWorkspaceRecord({
       workspaceId: input.workspaceId,
@@ -1488,6 +1678,7 @@ export class Session {
       kanbanStatus: input.kanbanStatus,
       agentProvider: input.agentProvider,
       agentMode: input.agentMode,
+      orgId: input.orgId,
     });
   }
 
@@ -1686,6 +1877,11 @@ export class Session {
       // on every case. Each handler retains its own typed signature.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = rawMsg as any;
+      // Share-scoped sessions go through a centralized guard that rejects
+      // out-of-scope or disallowed operations before they reach the handler.
+      if (this.enforceShareScopeOnMessage(msg)) {
+        return;
+      }
       try {
         switch (msg.type) {
           case "voice_audio_chunk":
@@ -5634,6 +5830,7 @@ export class Session {
       ...(workspace.kanbanStatus ? { kanbanStatus: workspace.kanbanStatus } : {}),
       ...(workspace.agentProvider ? { agentProvider: workspace.agentProvider } : {}),
       ...(workspace.agentMode ? { agentMode: workspace.agentMode } : {}),
+      ...(workspace.orgId ? { orgId: workspace.orgId } : {}),
     };
   }
 
@@ -6103,6 +6300,7 @@ export class Session {
     kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
     agentProvider?: string;
     agentMode?: PersistedWorkspaceRecord["agentMode"];
+    orgId?: string;
   }): Promise<PersistedWorkspaceRecord> {
     return registerPendingWorktreeWorkspaceSession(
       {
@@ -6264,6 +6462,14 @@ export class Session {
         this.isProviderVisibleToClient(entry.agent.provider),
       );
 
+      // Share-scoped filter: recipients only see agents inside their workspace.
+      if (this.shareScope) {
+        payload.entries = payload.entries.filter(
+          (entry) => this.checkWorkspaceAccess(entry.agent.cwd) === null,
+        );
+        payload.pageInfo = { ...payload.pageInfo, hasMore: false, nextCursor: null };
+      }
+
       const snapshotUpdatedAtByAgentId = new Map<string, number>();
       for (const entry of payload.entries) {
         const parsedUpdatedAt = Date.parse(entry.agent.updatedAt);
@@ -6324,7 +6530,18 @@ export class Session {
         };
       }
 
-      const payload = await this.listFetchWorkspacesEntries(request);
+      const payloadRaw = await this.listFetchWorkspacesEntries(request);
+      // Share-scoped sessions get a filtered view: only the authorized workspace.
+      const payload = this.shareScope
+        ? {
+            ...payloadRaw,
+            entries: payloadRaw.entries.filter((e) => {
+              const err = this.checkWorkspaceAccess(e.id);
+              return err === null;
+            }),
+            pageInfo: { ...payloadRaw.pageInfo, hasMore: false, nextCursor: null },
+          }
+        : payloadRaw;
       const snapshotLatestActivityByWorkspaceId = new Map<string, number>();
       for (const entry of payload.entries) {
         const parsedLatestActivity = entry.activityAt

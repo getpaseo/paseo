@@ -129,6 +129,7 @@ export interface WorkspaceDescriptor {
   kanbanStatus?: "todo" | "in-progress" | "done";
   agentProvider?: string;
   agentMode?: "native" | "cli";
+  orgId?: string;
 }
 
 export function normalizeWorkspaceDescriptor(
@@ -151,6 +152,7 @@ export function normalizeWorkspaceDescriptor(
     kanbanStatus: payload.kanbanStatus,
     agentProvider: payload.agentProvider,
     agentMode: payload.agentMode,
+    orgId: payload.orgId,
   };
 }
 
