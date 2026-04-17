@@ -144,6 +144,17 @@ const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+type ClaudeConfigFileSnapshot = {
+  exists: boolean;
+  mtimeMs: number | null;
+  size: number | null;
+};
+
+type ClaudeSettingsSnapshot = {
+  settings: ClaudeConfigFileSnapshot;
+  legacy: ClaudeConfigFileSnapshot;
+};
+
 type SlashCommandInvocation = {
   commandName: string;
   args?: string;
@@ -251,6 +262,61 @@ function isClaudeThinkingEffort(value: string | null | undefined): value is Clau
 
 function sanitizeClaudeProjectPath(cwd: string): string {
   return cwd.replace(/[\\/._:]/g, "-");
+}
+
+function resolveClaudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+}
+
+async function readClaudeConfigFileSnapshot(filePath: string): Promise<ClaudeConfigFileSnapshot> {
+  try {
+    const stats = await fsPromises.stat(filePath);
+    return {
+      exists: true,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {
+        exists: false,
+        mtimeMs: null,
+        size: null,
+      };
+    }
+    return {
+      exists: false,
+      mtimeMs: null,
+      size: null,
+    };
+  }
+}
+
+async function readClaudeSettingsSnapshot(
+  configDir = resolveClaudeConfigDir(),
+): Promise<ClaudeSettingsSnapshot> {
+  const [settings, legacy] = await Promise.all([
+    readClaudeConfigFileSnapshot(path.join(configDir, "settings.json")),
+    readClaudeConfigFileSnapshot(path.join(configDir, "claude.json")),
+  ]);
+  return { settings, legacy };
+}
+
+function claudeConfigFileSnapshotEquals(
+  left: ClaudeConfigFileSnapshot,
+  right: ClaudeConfigFileSnapshot,
+): boolean {
+  return left.exists === right.exists && left.mtimeMs === right.mtimeMs && left.size === right.size;
+}
+
+function claudeSettingsSnapshotEquals(
+  left: ClaudeSettingsSnapshot,
+  right: ClaudeSettingsSnapshot,
+): boolean {
+  return (
+    claudeConfigFileSnapshotEquals(left.settings, right.settings) &&
+    claudeConfigFileSnapshotEquals(left.legacy, right.legacy)
+  );
 }
 
 type ClaudeOptionsLogSummary = {
@@ -1116,7 +1182,7 @@ export class ClaudeAgentClient implements AgentClient {
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const configDir = resolveClaudeConfigDir();
     const projectsRoot = path.join(configDir, "projects");
     if (!(await pathExists(projectsRoot))) {
       return [];
@@ -1394,6 +1460,8 @@ class ClaudeAgentSession implements AgentSession {
   private lastStreamRequestOutputTokens: number | undefined;
   private userMessageIds: string[] = [];
   private recentStderr = "";
+  private claudeSettingsSnapshot: ClaudeSettingsSnapshot | null = null;
+  private claudeSettingsReloadPending = false;
   private closed = false;
 
   constructor(config: ClaudeAgentConfig, options: ClaudeAgentSessionOptions) {
@@ -1824,6 +1892,7 @@ class ClaudeAgentSession implements AgentSession {
     await this.awaitWithTimeout(this.query?.return?.(), "close query return");
     this.query = null;
     this.input = null;
+    this.claudeSettingsReloadPending = false;
     this.logger.trace(
       { claudeSessionId: this.claudeSessionId, turnState: this.turnState },
       "Claude session close: completed",
@@ -2045,6 +2114,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async ensureQuery(): Promise<Query> {
+    await this.maybeReloadForClaudeSettingsChange();
     if (this.query && !this.queryRestartNeeded) {
       return this.query;
     }
@@ -2086,6 +2156,40 @@ class ClaudeAgentSession implements AgentSession {
     // ensureQuery() (for listCommands()/setMode()), and sharing the same query
     // control plane can cause those calls to wait behind supportedModels().
     return this.query;
+  }
+
+  private async readClaudeSettingsSnapshot(): Promise<ClaudeSettingsSnapshot> {
+    return await readClaudeSettingsSnapshot(resolveClaudeConfigDir());
+  }
+
+  private async refreshClaudeSettingsReloadState(): Promise<void> {
+    const latestSnapshot = await this.readClaudeSettingsSnapshot();
+    const previousSnapshot = this.claudeSettingsSnapshot;
+    this.claudeSettingsSnapshot = latestSnapshot;
+    if (!previousSnapshot) {
+      return;
+    }
+    if (!claudeSettingsSnapshotEquals(previousSnapshot, latestSnapshot)) {
+      this.claudeSettingsReloadPending = true;
+    }
+  }
+
+  private async maybeReloadForClaudeSettingsChange(): Promise<void> {
+    await this.refreshClaudeSettingsReloadState();
+    if (!this.claudeSettingsReloadPending) {
+      return;
+    }
+    if (this.activeForegroundTurnId || this.autonomousTurn || this.turnState !== "idle") {
+      this.logger.info("Claude settings changed during an active turn; query restart deferred");
+      return;
+    }
+    this.claudeSettingsReloadPending = false;
+    this.queryRestartNeeded = this.query ? true : this.queryRestartNeeded;
+    this.claudeSessionId = null;
+    this.persistence = null;
+    this.cachedRuntimeInfo = null;
+    this.lastRuntimeModel = null;
+    this.userMessageIds = [];
   }
 
   private async awaitWithTimeout(
@@ -3332,7 +3436,7 @@ class ClaudeAgentSession implements AgentSession {
     const cwd = this.config.cwd;
     if (!cwd) return null;
     const sanitized = sanitizeClaudeProjectPath(cwd);
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const configDir = resolveClaudeConfigDir();
     const dir = path.join(configDir, "projects", sanitized);
     return path.join(dir, `${sessionId}.jsonl`);
   }
