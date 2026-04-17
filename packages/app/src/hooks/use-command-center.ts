@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { TextInput } from "react-native";
 import { router, usePathname, type Href } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -26,9 +27,15 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { focusWithRetries } from "@/utils/web-focus";
+import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import {
+  mapDirectorySuggestionsToCommandCenterFiles,
+  resolveCommandCenterWorkspaceScope,
+} from "@/utils/command-center-file-search";
 
 const EMPTY_AGENTS: AggregatedAgent[] = [];
 const EMPTY_ACTION_ITEMS: CommandCenterActionItem[] = [];
+const EMPTY_FILE_ITEMS: CommandCenterFileItem[] = [];
 const EMPTY_COMMAND_CENTER_ITEMS: CommandCenterItem[] = [];
 
 function isMatch(agent: AggregatedAgent, query: string): boolean {
@@ -100,10 +107,22 @@ export type CommandCenterActionItem = {
   shortcutKeys?: ShortcutKey[][];
 };
 
+export type CommandCenterFileItem = {
+  path: string;
+  name: string;
+  directory: string;
+  workspaceId: string;
+  serverId: string;
+};
+
 export type CommandCenterItem =
   | {
       kind: "action";
       action: CommandCenterActionItem;
+    }
+  | {
+      kind: "file";
+      file: CommandCenterFileItem;
     }
   | {
       kind: "agent";
@@ -159,6 +178,8 @@ export function useCommandCenter() {
   const { agents } = useAllAgentsList({
     serverId: activeServerId,
   });
+  const client = useHostRuntimeClient(activeServerId ?? "");
+  const isConnected = useHostRuntimeIsConnected(activeServerId ?? "");
 
   const agentResults = useMemo(() => {
     if (!open || agents.length === 0) {
@@ -168,6 +189,55 @@ export function useCommandCenter() {
     filtered.sort(sortAgents);
     return filtered;
   }, [agents, open, query]);
+
+  const searchWorkspace = useMemo(
+    () =>
+      resolveCommandCenterWorkspaceScope({
+        pathname,
+        agents,
+      }),
+    [agents, pathname],
+  );
+  const trimmedQuery = query.trim();
+
+  const fileSuggestionsQuery = useQuery({
+    queryKey: [
+      "command-center-file-search",
+      searchWorkspace?.serverId ?? "",
+      searchWorkspace?.workspaceId ?? "",
+      trimmedQuery,
+    ],
+    queryFn: async (): Promise<CommandCenterFileItem[]> => {
+      if (!client || !searchWorkspace) {
+        return [];
+      }
+      const response = await client.getDirectorySuggestions({
+        cwd: searchWorkspace.workspaceId,
+        query: trimmedQuery,
+        limit: 30,
+        includeFiles: true,
+        includeDirectories: false,
+      });
+      if (response.error) {
+        throw new Error(response.error);
+      }
+      return mapDirectorySuggestionsToCommandCenterFiles(response).map((entry) => ({
+        ...entry,
+        serverId: searchWorkspace.serverId,
+        workspaceId: searchWorkspace.workspaceId,
+      }));
+    },
+    enabled:
+      open && Boolean(client) && isConnected && searchWorkspace !== null && trimmedQuery.length > 0,
+    retry: false,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const fileItems = useMemo(
+    () => fileSuggestionsQuery.data ?? EMPTY_FILE_ITEMS,
+    [fileSuggestionsQuery.data],
+  );
 
   const settingsRoute = useMemo<Href>(() => {
     return buildSettingsRoute();
@@ -200,6 +270,12 @@ export function useCommandCenter() {
         action,
       });
     }
+    for (const file of fileItems) {
+      next.push({
+        kind: "file",
+        file,
+      });
+    }
     for (const agent of agentResults) {
       next.push({
         kind: "agent",
@@ -207,7 +283,7 @@ export function useCommandCenter() {
       });
     }
     return next;
-  }, [actionItems, agentResults, open]);
+  }, [actionItems, agentResults, fileItems, open]);
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -232,6 +308,21 @@ export function useCommandCenter() {
         serverId: agent.serverId,
         workspaceId,
         target: { kind: "agent", agentId: agent.id },
+      });
+      router.navigate(route);
+    },
+    [setOpen],
+  );
+
+  const handleSelectFile = useCallback(
+    (file: CommandCenterFileItem) => {
+      didNavigateRef.current = true;
+      clearCommandCenterFocusRestoreElement();
+      setOpen(false);
+      const route = prepareWorkspaceTab({
+        serverId: file.serverId,
+        workspaceId: file.workspaceId,
+        target: { kind: "file", path: file.path },
       });
       router.navigate(route);
     },
@@ -263,9 +354,13 @@ export function useCommandCenter() {
         handleSelectAction(item.action);
         return;
       }
+      if (item.kind === "file") {
+        handleSelectFile(item.file);
+        return;
+      }
       handleSelectAgent(item.agent);
     },
-    [handleSelectAction, handleSelectAgent],
+    [handleSelectAction, handleSelectAgent, handleSelectFile],
   );
 
   useEffect(() => {
