@@ -32,6 +32,7 @@ import {
   mapDirectorySuggestionsToCommandCenterFiles,
   resolveCommandCenterWorkspaceScope,
 } from "@/utils/command-center-file-search";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
 const EMPTY_AGENTS: AggregatedAgent[] = [];
 const EMPTY_ACTION_ITEMS: CommandCenterActionItem[] = [];
@@ -199,13 +200,14 @@ export function useCommandCenter() {
     [agents, pathname],
   );
   const trimmedQuery = query.trim();
+  const debouncedFileQuery = useDebouncedValue(trimmedQuery, 300);
 
   const fileSuggestionsQuery = useQuery({
     queryKey: [
       "command-center-file-search",
       searchWorkspace?.serverId ?? "",
       searchWorkspace?.workspaceId ?? "",
-      trimmedQuery,
+      debouncedFileQuery,
     ],
     queryFn: async (): Promise<CommandCenterFileItem[]> => {
       if (!client || !searchWorkspace) {
@@ -213,7 +215,7 @@ export function useCommandCenter() {
       }
       const response = await client.getDirectorySuggestions({
         cwd: searchWorkspace.workspaceId,
-        query: trimmedQuery,
+        query: debouncedFileQuery,
         limit: 30,
         includeFiles: true,
         includeDirectories: false,
@@ -228,7 +230,11 @@ export function useCommandCenter() {
       }));
     },
     enabled:
-      open && Boolean(client) && isConnected && searchWorkspace !== null && trimmedQuery.length > 0,
+      open &&
+      Boolean(client) &&
+      isConnected &&
+      searchWorkspace !== null &&
+      debouncedFileQuery.length > 0,
     retry: false,
     staleTime: 15_000,
     placeholderData: keepPreviousData,
