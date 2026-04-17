@@ -1,3 +1,4 @@
+import { requireOptionalNativeModule } from "expo-modules-core";
 import type {
   AudioEngine,
   AudioEngineCallbacks,
@@ -12,6 +13,77 @@ interface QueuedAudio {
 
 interface AudioEngineTraceOptions {
   traceLabel?: string;
+}
+
+interface ExpoTwoWayAudioNativeModule {
+  initialize: () => Promise<boolean> | boolean;
+  toggleRecording: (value: boolean) => boolean;
+  playPCMData: (data: Uint8Array) => number;
+  stopPlayback: () => void;
+  tearDown: () => void;
+  resumePlayback?: () => void;
+  addListener?: (
+    eventName: string,
+    handler: (event: any) => void,
+  ) => { remove?: () => void } | void;
+  getMicrophonePermissionsAsync?: () => Promise<{ granted?: boolean } | null>;
+  requestMicrophonePermissionsAsync?: () => Promise<{ granted?: boolean } | null>;
+}
+
+interface LoadedExpoTwoWayAudioNativeModule extends ExpoTwoWayAudioNativeModule {
+  addExpoTwoWayAudioEventListener: (
+    eventName: string,
+    handler: (event: any) => void,
+  ) => { remove: () => void };
+  getMicrophonePermissionsAsync: () => Promise<{ granted?: boolean } | null>;
+  requestMicrophonePermissionsAsync: () => Promise<{ granted?: boolean } | null>;
+}
+
+function createUnavailableAudioEngine(
+  callbacks: AudioEngineCallbacks,
+  errorMessage: string,
+): AudioEngine {
+  const buildError = (): Error => new Error(errorMessage);
+
+  async function rejectUnavailable(): Promise<never> {
+    const error = buildError();
+    callbacks.onError?.(error);
+    throw error;
+  }
+
+  return {
+    async initialize() {
+      return await rejectUnavailable();
+    },
+
+    async destroy() {},
+
+    async startCapture() {
+      return await rejectUnavailable();
+    },
+
+    async stopCapture() {},
+
+    toggleMute() {
+      return false;
+    },
+
+    isMuted() {
+      return false;
+    },
+
+    async play() {
+      return await rejectUnavailable();
+    },
+
+    stop() {},
+
+    clearQueue() {},
+
+    isPlaying() {
+      return false;
+    },
+  };
 }
 
 function parsePcmSampleRate(mimeType: string): number | null {
@@ -70,7 +142,34 @@ export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
   _options?: AudioEngineTraceOptions,
 ): AudioEngine {
-  const native = require("@getpaseo/expo-two-way-audio");
+  const nativeModule = requireOptionalNativeModule<ExpoTwoWayAudioNativeModule>("ExpoTwoWayAudio");
+  const native =
+    nativeModule && typeof nativeModule.addListener === "function"
+      ? {
+          ...nativeModule,
+          addExpoTwoWayAudioEventListener(eventName: string, handler: (event: any) => void) {
+            return nativeModule.addListener?.(eventName, handler) ?? { remove() {} };
+          },
+        }
+      : null;
+
+  const hasNativeBindings =
+    native &&
+    typeof native.addExpoTwoWayAudioEventListener === "function" &&
+    typeof native.initialize === "function" &&
+    typeof native.toggleRecording === "function" &&
+    typeof native.playPCMData === "function" &&
+    typeof native.stopPlayback === "function" &&
+    typeof native.tearDown === "function";
+
+  if (!hasNativeBindings) {
+    return createUnavailableAudioEngine(
+      callbacks,
+      "Voice is unavailable on this device because the native audio module is not registered.",
+    );
+  }
+
+  const loadedNative = native as LoadedExpoTwoWayAudioNativeModule;
 
   const refs: {
     initialized: boolean;
@@ -96,7 +195,7 @@ export function createAudioEngine(
     destroyed: false,
   };
 
-  const microphoneSubscription = native.addExpoTwoWayAudioEventListener(
+  const microphoneSubscription = loadedNative.addExpoTwoWayAudioEventListener(
     "onMicrophoneData",
     (event: any) => {
       if (!refs.captureActive || refs.muted) {
@@ -106,7 +205,7 @@ export function createAudioEngine(
       callbacks.onCaptureData(pcm);
     },
   );
-  const volumeSubscription = native.addExpoTwoWayAudioEventListener(
+  const volumeSubscription = loadedNative.addExpoTwoWayAudioEventListener(
     "onInputVolumeLevelData",
     (event: any) => {
       if (!refs.captureActive) {
@@ -121,7 +220,7 @@ export function createAudioEngine(
     if (refs.initialized) {
       return;
     }
-    const success = await native.initialize();
+    const success = await loadedNative.initialize();
     if (!success) {
       throw new Error("expo-two-way-audio: native initialize() returned false");
     }
@@ -129,9 +228,9 @@ export function createAudioEngine(
   }
 
   async function ensureMicrophonePermission(): Promise<void> {
-    let permission = await native.getMicrophonePermissionsAsync().catch(() => null);
+    let permission = await loadedNative.getMicrophonePermissionsAsync().catch(() => null);
     if (!permission?.granted) {
-      permission = await native.requestMicrophonePermissionsAsync().catch(() => null);
+      permission = await loadedNative.requestMicrophonePermissionsAsync().catch(() => null);
     }
     if (!permission?.granted) {
       throw new Error(
@@ -162,8 +261,8 @@ export function createAudioEngine(
         const pcm16k = resamplePcm16(pcm, inputRate, 16000);
         const durationSec = pcm16k.length / 2 / 16000;
 
-        native.resumePlayback();
-        native.playPCMData(pcm16k);
+        loadedNative.resumePlayback?.();
+        loadedNative.playPCMData(pcm16k);
 
         clearPlaybackTimeout();
         refs.playbackTimeout = setTimeout(() => {
@@ -219,14 +318,14 @@ export function createAudioEngine(
       this.stop();
       this.clearQueue();
       if (refs.captureActive) {
-        native.toggleRecording(false);
+        loadedNative.toggleRecording(false);
         refs.captureActive = false;
       }
       clearPlaybackTimeout();
       refs.muted = false;
       callbacks.onVolumeLevel(0);
       if (refs.initialized) {
-        native.tearDown();
+        loadedNative.tearDown();
         refs.initialized = false;
       }
       microphoneSubscription.remove();
@@ -241,7 +340,7 @@ export function createAudioEngine(
       try {
         await ensureMicrophonePermission();
         await ensureInitialized();
-        native.toggleRecording(true);
+        loadedNative.toggleRecording(true);
         refs.captureActive = true;
       } catch (error) {
         const wrapped = error instanceof Error ? error : new Error(String(error));
@@ -252,7 +351,7 @@ export function createAudioEngine(
 
     async stopCapture() {
       if (refs.captureActive) {
-        native.toggleRecording(false);
+        loadedNative.toggleRecording(false);
       }
       refs.captureActive = false;
       refs.muted = false;
@@ -281,7 +380,7 @@ export function createAudioEngine(
     },
 
     stop() {
-      native.stopPlayback();
+      loadedNative.stopPlayback();
       clearPlaybackTimeout();
       const active = refs.activePlayback;
       refs.activePlayback = null;
