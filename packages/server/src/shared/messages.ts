@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "../server/agent/agent-title-limits.js";
-import { AgentProviderSchema } from "../server/agent/provider-manifest.js";
+import {
+  AgentProviderSchema,
+  AgentProviderSchema as ImportedAgentProviderSchema,
+} from "../server/agent/provider-manifest.js";
+// COMPAT(rn-dev-client): Metro can evaluate this import path as undefined during circular init.
+const AgentProviderValueSchema: z.ZodType<string> = (ImportedAgentProviderSchema ??
+  z.string()) as z.ZodType<string>;
 import { TOOL_CALL_ICON_NAMES } from "../server/agent/agent-sdk-types.js";
 import {
   ChatCreateRequestSchema,
