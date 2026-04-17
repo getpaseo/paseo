@@ -358,6 +358,40 @@ describe("ClaudeAgentClient.listModels", () => {
   });
 });
 
+describe("ClaudeAgentClient prompt normalization", () => {
+  const logger = createTestLogger();
+
+  test("skips unsupported image mime types when building Claude SDK user messages", async () => {
+    const client = new ClaudeAgentClient({ logger });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    try {
+      const sdkMessage = session.toSdkUserMessage([
+        { type: "text", text: "before" },
+        { type: "image", mimeType: "image/png", data: "png-data" },
+        { type: "image", mimeType: "image/svg+xml", data: "svg-data" },
+      ]);
+
+      expect(sdkMessage.message.content).toEqual([
+        { type: "text", text: "before" },
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "png-data",
+          },
+        },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe("ClaudeAgentSession context window usage", () => {
   const logger = createTestLogger();
 
