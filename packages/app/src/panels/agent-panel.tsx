@@ -36,6 +36,7 @@ import {
 } from "@/runtime/host-runtime";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import type { StreamFocusRequest } from "@/utils/stream-focus-request";
 import { mergePendingCreateImages } from "@/utils/pending-create-images";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -234,10 +235,12 @@ function AgentPanelBody({
   const wasPaneFocusedRef = useRef(isPaneFocused);
   const reconnectToastArmedRef = useRef(false);
   const initAttemptTokenRef = useRef(0);
+  const messageFocusSequenceRef = useRef(0);
   const routeBottomAnchorRequestRef = useRef<{
     routeKey: string;
     reason: "initial-entry" | "resume";
   } | null>(null);
+  const [messageFocusRequest, setMessageFocusRequest] = useState<StreamFocusRequest | null>(null);
   const agentInputDraft = useAgentInputDraft(
     buildDraftStoreKey({
       serverId,
@@ -612,8 +615,39 @@ function AgentPanelBody({
 
   useEffect(() => {
     initAttemptTokenRef.current += 1;
+    messageFocusSequenceRef.current = 0;
+    setMessageFocusRequest(null);
     setMissingAgentState({ kind: "idle" });
   }, [agentId, serverId]);
+
+  const handleMessageSent = useCallback(
+    ({ clientMessageId }: { clientMessageId: string | null }) => {
+      if (!agentId || !clientMessageId) {
+        logWebStickyBottom("screen_message_sent_scroll_to_bottom", {
+          agentId,
+        });
+        streamViewRef.current?.scrollToBottom("message-sent");
+        return;
+      }
+
+      messageFocusSequenceRef.current += 1;
+      const requestKey = `${serverId}:${agentId}:${clientMessageId}:${messageFocusSequenceRef.current}`;
+      setMessageFocusRequest({
+        itemId: clientMessageId,
+        requestKey,
+      });
+      logWebStickyBottom("screen_message_sent_focus_request", {
+        agentId,
+        clientMessageId,
+        requestKey,
+      });
+    },
+    [agentId, serverId],
+  );
+
+  const handleMessageFocusRequestHandled = useCallback((requestKey: string) => {
+    setMessageFocusRequest((current) => (current?.requestKey === requestKey ? null : current));
+  }, []);
 
   useEffect(() => {
     if (!agentId) {
@@ -752,8 +786,10 @@ function AgentPanelBody({
                 streamItems={shouldUseOptimisticStream ? mergedStreamItems : streamItems}
                 pendingPermissions={pendingPermissions}
                 routeBottomAnchorRequest={routeBottomAnchorRequest}
+                focusRequest={messageFocusRequest}
                 isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onFocusRequestHandled={handleMessageFocusRequestHandled}
               />
             </ReanimatedAnimated.View>
           </View>
@@ -780,12 +816,7 @@ function AgentPanelBody({
                 });
                 streamViewRef.current?.prepareForViewportChange();
               }}
-              onMessageSent={() => {
-                logWebStickyBottom("screen_message_sent_scroll_to_bottom", {
-                  agentId,
-                });
-                streamViewRef.current?.scrollToBottom("message-sent");
-              }}
+              onMessageSent={handleMessageSent}
             />
           ) : agentId && agentState.archivedAt ? (
             <ArchivedAgentCallout serverId={serverId} agentId={agentId} />

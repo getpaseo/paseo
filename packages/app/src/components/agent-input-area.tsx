@@ -83,7 +83,7 @@ interface AgentInputAreaProps {
   /** Optional draft context for listing commands before an agent exists. */
   commandDraftConfig?: DraftCommandConfig;
   /** Called when a message is about to be sent (any path: keyboard, dictation, queued). */
-  onMessageSent?: () => void;
+  onMessageSent?: (input: { clientMessageId: string | null }) => void;
   onComposerHeightChange?: (height: number) => void;
   onAttentionInputFocus?: () => void;
   onAttentionPromptSend?: () => void;
@@ -234,8 +234,8 @@ export function AgentInputArea({
 
   const submitMessage = useCallback(
     async (text: string, images?: ImageAttachment[]) => {
-      onMessageSent?.();
       if (onSubmitMessageRef.current) {
+        onMessageSent?.({ clientMessageId: null });
         await onSubmitMessageRef.current({ text, images });
         return;
       }
@@ -291,6 +291,7 @@ export function AgentInputArea({
           return updated;
         });
       }
+      onMessageSent?.({ clientMessageId });
       const imagesData = await encodeImages(images);
       await client.sendAgentMessage(agentId, text, {
         messageId: clientMessageId,
@@ -298,7 +299,14 @@ export function AgentInputArea({
       });
       onAttentionPromptSend?.();
     };
-  }, [client, onAttentionPromptSend, serverId, setAgentStreamTail, setAgentStreamHead]);
+  }, [
+    client,
+    onAttentionPromptSend,
+    onMessageSent,
+    serverId,
+    setAgentStreamTail,
+    setAgentStreamHead,
+  ]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;

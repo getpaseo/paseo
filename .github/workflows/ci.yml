@@ -15,8 +15,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -31,8 +31,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -55,8 +55,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Fetch origin/main (worktree tests)
         run: git fetch --no-tags origin main:refs/remotes/origin/main
@@ -85,8 +85,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -123,8 +123,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -135,15 +135,34 @@ jobs:
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
 
+  playwright-preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      has_openai_api_key: ${{ steps.secret-check.outputs.has_openai_api_key }}
+    steps:
+      - name: Detect OpenAI key availability
+        id: secret-check
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "has_openai_api_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_openai_api_key=false" >> "$GITHUB_OUTPUT"
+          fi
+
   playwright:
+    needs: playwright-preflight
+    if: ${{ needs.playwright-preflight.outputs.has_openai_api_key == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -185,8 +204,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -204,8 +223,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -219,6 +238,6 @@ jobs:
       - name: Run CLI tests
         run: npm run test --workspace=@getpaseo/cli
         env:
-          PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: '0'
-          PASEO_DICTATION_ENABLED: '0'
-          PASEO_VOICE_MODE_ENABLED: '0'
+          PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0"
+          PASEO_DICTATION_ENABLED: "0"
+          PASEO_VOICE_MODE_ENABLED: "0"

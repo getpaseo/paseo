@@ -1,6 +1,7 @@
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
+import type { StreamFocusRequest } from "@/utils/stream-focus-request";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./agent-stream-render-model";
 import type {
   BottomAnchorLocalRequest,
@@ -60,7 +61,9 @@ export type StreamRenderInput = {
   listEmptyComponent: ReactNode;
   viewportRef: RefObject<StreamViewportHandle | null>;
   routeBottomAnchorRequest: BottomAnchorRouteRequest | null;
+  focusRequest: StreamFocusRequest | null;
   isAuthoritativeHistoryReady: boolean;
+  onFocusRequestHandled?: (requestKey: string) => void;
   onNearBottomChange: (value: boolean) => void;
   scrollEnabled: boolean;
   listStyle: StyleProp<ViewStyle>;

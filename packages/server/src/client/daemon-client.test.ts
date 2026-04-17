@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
 import { DaemonClient, type DaemonTransport } from "./daemon-client";
+import * as SharedMessages from "../shared/messages.js";
 import {
   asUint8Array,
   decodeTerminalResizePayload,
@@ -1824,6 +1825,91 @@ describe("DaemonClient", () => {
       expect(firstEntry.item.error).toBeNull();
       expect(firstEntry.item.detail.type).toBe("shell");
     }
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test("falls back to raw session handling when outbound schema parsing throws", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const received: unknown[] = [];
+    const unsubscribe = client.on("fetch_agent_timeline_response", (msg) => {
+      received.push(msg);
+    });
+
+    const safeParseSpy = vi
+      .spyOn(SharedMessages.WSOutboundMessageSchema, "safeParse")
+      .mockImplementationOnce(() => {
+        throw new TypeError("Cannot read property '_zod' of undefined");
+      });
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "fetch_agent_timeline_response",
+        payload: {
+          requestId: "req-fallback",
+          agentId: "agent_cli",
+          agent: null,
+          direction: "tail",
+          projection: "projected",
+          epoch: "epoch-1",
+          reset: false,
+          staleCursor: false,
+          gap: false,
+          window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+          startCursor: { epoch: "epoch-1", seq: 1 },
+          endCursor: { epoch: "epoch-1", seq: 1 },
+          hasOlder: false,
+          hasNewer: false,
+          entries: [
+            {
+              timestamp: "2026-02-08T20:20:00.000Z",
+              provider: "codex",
+              seqStart: 1,
+              seqEnd: 1,
+              sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+              collapsed: [],
+              item: {
+                type: "tool_call",
+                callId: "call_cli_fallback",
+                name: "shell",
+                status: "running",
+                detail: {
+                  type: "shell",
+                  command: "pwd",
+                },
+                error: null,
+              },
+            },
+          ],
+          error: null,
+        },
+      }),
+    );
+
+    safeParseSpy.mockRestore();
+    unsubscribe();
+
+    expect(received).toHaveLength(1);
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        msgType: "fetch_agent_timeline_response",
+      }),
+      "Message schema parse threw; falling back to raw session handling",
+    );
     expect(logger.warn).not.toHaveBeenCalled();
   });
 

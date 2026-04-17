@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
+import { resolveStreamFocusTarget } from "@/utils/stream-focus-request";
 import { estimateStreamItemHeight } from "./agent-stream-web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./stream-strategy";
 import { createStreamStrategy } from "./stream-strategy";
@@ -100,7 +101,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     listEmptyComponent,
     viewportRef,
     routeBottomAnchorRequest,
+    focusRequest,
     isAuthoritativeHistoryReady,
+    onFocusRequestHandled,
     onNearBottomChange,
     scrollEnabled,
     isMobileBreakpoint,
@@ -180,6 +183,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [rowVirtualizer]);
   const virtualRows = rowVirtualizer.getVirtualItems();
   const virtualTotalSize = rowVirtualizer.getTotalSize();
+  const historyItemIds = useMemo(
+    () => [
+      ...segments.historyVirtualized.map((item) => item.id),
+      ...segments.historyMounted.map((item) => item.id),
+    ],
+    [segments.historyMounted, segments.historyVirtualized],
+  );
+  const liveHeadItemIds = useMemo(
+    () => segments.liveHead.map((item) => item.id),
+    [segments.liveHead],
+  );
 
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
@@ -251,6 +265,24 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scrollMessagesToBottom("auto");
     scheduleStickToBottom();
   }, [cancelPendingStickToBottom, scheduleStickToBottom, scrollMessagesToBottom]);
+
+  const scrollMessageNodeIntoView = useCallback((itemId: string) => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer || typeof scrollContainer.querySelector !== "function") {
+      return false;
+    }
+    const messageNode = scrollContainer.querySelector(
+      `[data-testid="stream-item-${itemId}"]`,
+    ) as HTMLElement | null;
+    if (!messageNode) {
+      return false;
+    }
+    messageNode.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
+    return true;
+  }, []);
 
   const updateScrollMetrics = useCallback(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -353,6 +385,59 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       window.clearTimeout(timeout);
     };
   }, [activationKey, forceStickToBottom, isActivationReady, scheduleStickToBottom]);
+
+  useEffect(() => {
+    if (!focusRequest) {
+      return;
+    }
+
+    const target = resolveStreamFocusTarget({
+      itemId: focusRequest.itemId,
+      historyItemIds,
+      liveHeadItemIds,
+    });
+    if (target.kind === "missing") {
+      return;
+    }
+
+    cancelPendingStickToBottom();
+    if (target.kind === "live-head") {
+      setFollowOutput(true);
+      forceStickToBottom();
+      onFocusRequestHandled?.(focusRequest.requestKey);
+      return;
+    }
+
+    if (target.index < segments.historyVirtualized.length) {
+      setFollowOutput(true);
+      rowVirtualizer.scrollToIndex(target.index, {
+        align: "center",
+      });
+      onFocusRequestHandled?.(focusRequest.requestKey);
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const didScroll = scrollMessageNodeIntoView(focusRequest.itemId);
+      if (didScroll) {
+        onFocusRequestHandled?.(focusRequest.requestKey);
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [
+    cancelPendingStickToBottom,
+    focusRequest,
+    forceStickToBottom,
+    historyItemIds,
+    liveHeadItemIds,
+    onFocusRequestHandled,
+    rowVirtualizer,
+    scrollMessageNodeIntoView,
+    segments.historyVirtualized.length,
+  ]);
 
   useEffect(() => {
     if (!followOutputRef.current) {

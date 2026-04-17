@@ -15,6 +15,7 @@ import {
   isNearBottomForStreamRenderStrategy,
   resolveBottomAnchorTransportBehavior,
 } from "./stream-strategy";
+import { resolveStreamFocusTarget } from "@/utils/stream-focus-request";
 
 const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   minIndexForVisible: 0,
@@ -30,7 +31,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     listEmptyComponent,
     viewportRef,
     routeBottomAnchorRequest,
+    focusRequest,
     isAuthoritativeHistoryReady,
+    onFocusRequestHandled,
     onNearBottomChange,
     scrollEnabled,
     listStyle,
@@ -58,6 +61,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     }
     return [...segments.historyVirtualized, ...segments.historyMounted];
   }, [segments.historyMounted, segments.historyVirtualized]);
+  const historyItemIds = useMemo(() => historyRows.map((item) => item.id), [historyRows]);
+  const liveHeadItemIds = useMemo(
+    () => segments.liveHead.map((item) => item.id),
+    [segments.liveHead],
+  );
 
   const clearNativeViewportSettling = useCallback(() => {
     if (nativeViewportSettlingFrameIdRef.current !== null) {
@@ -168,6 +176,50 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   useEffect(() => {
     bottomAnchorController.prepareForStickyContentChange();
   }, [bottomAnchorController, historyRows, segments.liveHead]);
+
+  useEffect(() => {
+    if (!focusRequest) {
+      return;
+    }
+
+    const target = resolveStreamFocusTarget({
+      itemId: focusRequest.itemId,
+      historyItemIds,
+      liveHeadItemIds,
+    });
+    if (target.kind === "missing") {
+      return;
+    }
+    if (target.kind === "live-head") {
+      bottomAnchorController.requestLocalAnchor({
+        agentId,
+        reason: "message-sent",
+      });
+      onFocusRequestHandled?.(focusRequest.requestKey);
+      return;
+    }
+
+    const frameId = requestAnimationFrame(() => {
+      programmaticScrollEventBudgetRef.current = 3;
+      flatListRef.current?.scrollToIndex({
+        index: target.index,
+        animated: true,
+        viewPosition: 0.5,
+      });
+      onFocusRequestHandled?.(focusRequest.requestKey);
+    });
+
+    return () => {
+      cancelAnimationFrame(frameId);
+    };
+  }, [
+    agentId,
+    bottomAnchorController,
+    focusRequest,
+    historyItemIds,
+    liveHeadItemIds,
+    onFocusRequestHandled,
+  ]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
