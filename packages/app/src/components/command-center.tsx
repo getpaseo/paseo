@@ -236,9 +236,11 @@ export function CommandCenter() {
                                   style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
                                   numberOfLines={1}
                                 >
-                                  {item.file.directory === "."
-                                    ? "Workspace root"
-                                    : item.file.directory}
+                                  {shortenPath(
+                                    item.file.directory === "."
+                                      ? item.file.workspaceId
+                                      : `${item.file.workspaceId}/${item.file.directory}`,
+                                  )}
                                 </Text>
                               </View>
                             </View>
