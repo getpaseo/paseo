@@ -27,6 +27,8 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { focusWithRetries } from "@/utils/web-focus";
+import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
+import { useWorkspaceLayoutStore, collectAllTabs } from "@/stores/workspace-layout-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import {
   mapDirectorySuggestionsToCommandCenterFiles,
@@ -240,10 +242,48 @@ export function useCommandCenter() {
     placeholderData: keepPreviousData,
   });
 
-  const fileItems = useMemo(
-    () => fileSuggestionsQuery.data ?? EMPTY_FILE_ITEMS,
-    [fileSuggestionsQuery.data],
+  const workspaceTabsKey = searchWorkspace
+    ? buildWorkspaceTabPersistenceKey({
+        serverId: searchWorkspace.serverId,
+        workspaceId: searchWorkspace.workspaceId,
+      })
+    : null;
+
+  const workspaceLayout = useWorkspaceLayoutStore(
+    (state) => (workspaceTabsKey ? (state.layoutByWorkspace[workspaceTabsKey] ?? null) : null),
   );
+
+  const openFileTabs = useMemo(() => {
+    if (!workspaceLayout || !searchWorkspace) {
+      return EMPTY_FILE_ITEMS;
+    }
+    const allTabs = collectAllTabs(workspaceLayout.root);
+    const fileTabs: CommandCenterFileItem[] = [];
+    for (const tab of allTabs) {
+      if (tab.target.kind !== "file") {
+        continue;
+      }
+      const path = tab.target.path;
+      const segments = path.split("/");
+      const name = segments[segments.length - 1] ?? path;
+      const directory = segments.length > 1 ? segments.slice(0, -1).join("/") : ".";
+      fileTabs.push({
+        path,
+        name,
+        directory,
+        serverId: searchWorkspace.serverId,
+        workspaceId: searchWorkspace.workspaceId,
+      });
+    }
+    return fileTabs.length > 0 ? fileTabs : EMPTY_FILE_ITEMS;
+  }, [workspaceLayout, searchWorkspace]);
+
+  const fileItems = useMemo(() => {
+    if (trimmedQuery.length === 0) {
+      return openFileTabs;
+    }
+    return fileSuggestionsQuery.data ?? EMPTY_FILE_ITEMS;
+  }, [trimmedQuery, openFileTabs, fileSuggestionsQuery.data]);
 
   const settingsRoute = useMemo<Href>(() => {
     return buildSettingsRoute();
