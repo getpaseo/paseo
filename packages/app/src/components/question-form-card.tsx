@@ -1,11 +1,11 @@
-import { useState, useCallback } from "react";
-import { View, Text, TextInput, Pressable, ActivityIndicator } from "react-native";
+import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
+import { Check, CircleHelp, X } from "lucide-react-native";
+import { useCallback, useState } from "react";
+import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { Check, CircleHelp, X } from "lucide-react-native";
-import type { PendingPermission } from "@/types/shared";
-import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 import { isWeb } from "@/constants/platform";
+import type { PendingPermission } from "@/types/shared";
 
 interface QuestionOption {
   label: string;
@@ -123,7 +123,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
   function handleSubmit() {
     if (!allAnswered || isResponding) return;
     setRespondingAction("submit");
-    const answers: Record<string, string> = {};
+    const answers: Record<string, string | string[]> = {};
     for (let i = 0; i < questions!.length; i++) {
       const q = questions![i];
       const selected = selections[i];
@@ -133,7 +133,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         answers[q.header] = otherText;
       } else if (selected && selected.size > 0) {
         const labels = Array.from(selected).map((idx) => q.options[idx].label);
-        answers[q.header] = labels.join(", ");
+        answers[q.header] = labels;
       }
     }
 

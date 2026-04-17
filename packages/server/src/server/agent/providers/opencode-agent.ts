@@ -1,17 +1,18 @@
 import type { ChildProcess } from "node:child_process";
+import net from "node:net";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
   type Event as OpenCodeEvent,
   type FilePartInput as OpenCodeFilePartInput,
-  type OpencodeClient,
   type Part as OpenCodePart,
   type TextPartInput as OpenCodeTextPartInput,
+  type OpencodeClient,
 } from "@opencode-ai/sdk/v2/client";
-import net from "node:net";
 import type { Logger } from "pino";
 import { z } from "zod";
-
+import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { spawnProcess } from "../../../utils/spawn.js";
 import type {
   AgentCapabilityFlags,
   AgentClient,
@@ -41,12 +42,9 @@ import type {
 } from "../agent-sdk-types.js";
 import {
   applyProviderEnv,
-  resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
+  resolveProviderCommandPrefix,
 } from "../provider-launch-config.js";
-import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
-import { spawnProcess } from "../../../utils/spawn.js";
-import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
@@ -54,6 +52,7 @@ import {
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -693,39 +692,31 @@ export const __openCodeInternals = {
 };
 
 export class OpenCodeServerManager {
-  private static instance: OpenCodeServerManager | null = null;
+  private static instances = new Map<string, OpenCodeServerManager>();
   private static exitHandlerRegistered = false;
   private server: ChildProcess | null = null;
   private port: number | null = null;
   private startPromise: Promise<{ port: number; url: string }> | null = null;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
-  private readonly runtimeSettingsKey: string;
 
   private constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
     this.logger = logger;
     this.runtimeSettings = runtimeSettings;
-    this.runtimeSettingsKey = JSON.stringify(runtimeSettings ?? {});
   }
 
   static getInstance(
     logger: Logger,
     runtimeSettings?: ProviderRuntimeSettings,
   ): OpenCodeServerManager {
-    const nextSettingsKey = JSON.stringify(runtimeSettings ?? {});
-    if (!OpenCodeServerManager.instance) {
-      OpenCodeServerManager.instance = new OpenCodeServerManager(logger, runtimeSettings);
+    const settingsKey = JSON.stringify(runtimeSettings ?? {});
+    let manager = OpenCodeServerManager.instances.get(settingsKey);
+    if (!manager) {
+      manager = new OpenCodeServerManager(logger, runtimeSettings);
+      OpenCodeServerManager.instances.set(settingsKey, manager);
       OpenCodeServerManager.registerExitHandler();
-    } else if (OpenCodeServerManager.instance.runtimeSettingsKey !== nextSettingsKey) {
-      logger.warn(
-        {
-          existingRuntimeSettings: OpenCodeServerManager.instance.runtimeSettingsKey,
-          requestedRuntimeSettings: nextSettingsKey,
-        },
-        "OpenCode server manager already initialized with different runtime settings",
-      );
     }
-    return OpenCodeServerManager.instance;
+    return manager;
   }
 
   private static registerExitHandler(): void {
@@ -735,9 +726,10 @@ export class OpenCodeServerManager {
     OpenCodeServerManager.exitHandlerRegistered = true;
 
     const cleanup = () => {
-      const instance = OpenCodeServerManager.instance;
-      if (instance?.server && !instance.server.killed) {
-        instance.server.kill("SIGTERM");
+      for (const instance of OpenCodeServerManager.instances.values()) {
+        if (instance.server && !instance.server.killed) {
+          instance.server.kill("SIGTERM");
+        }
       }
     };
 
@@ -874,7 +866,9 @@ export class OpenCodeAgentClient implements AgentClient {
     ]);
 
     if (response.error) {
-      throw new Error(`Failed to create OpenCode session: ${JSON.stringify(response.error)}`);
+      throw new Error(
+        `Failed to create OpenCode session: ${normalizeTurnFailureError(response.error)}`,
+      );
     }
 
     const session = response.data;
@@ -898,15 +892,18 @@ export class OpenCodeAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const cwd = overrides?.cwd ?? (handle.metadata?.cwd as string);
+    const metadata = readOpenCodeRecord(handle.metadata) as Partial<AgentSessionConfig> | null;
+    const metadataCwd = typeof metadata?.cwd === "string" ? metadata.cwd : undefined;
+    const cwd = overrides?.cwd ?? metadataCwd ?? (handle.metadata?.cwd as string);
     if (!cwd) {
       throw new Error("OpenCode resume requires the original working directory");
     }
 
     const config: AgentSessionConfig = {
+      ...(metadata ?? {}),
+      ...overrides,
       provider: "opencode",
       cwd,
-      ...overrides,
     };
     const openCodeConfig = this.assertConfig(config);
     const { url } = await this.serverManager.ensureRunning();
@@ -953,7 +950,9 @@ export class OpenCodeAgentClient implements AgentClient {
     ]);
 
     if (response.error) {
-      throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
+      throw new Error(
+        `Failed to fetch OpenCode providers: ${normalizeTurnFailureError(response.error)}`,
+      );
     }
 
     const providers = response.data;
@@ -1025,10 +1024,48 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async listPersistedAgents(
-    _options?: ListPersistedAgentsOptions,
+    options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    // TODO: Implement by listing sessions from OpenCode
-    return [];
+    const { url } = await this.serverManager.ensureRunning();
+    const client = createOpencodeClient({
+      baseUrl: url,
+      directory: process.cwd(),
+    });
+    const limit = options?.limit ?? 20;
+    const response = await client.session.list({ limit });
+    if (response.error || !response.data) {
+      return [];
+    }
+
+    return response.data.slice(0, limit).map((session) => {
+      const cwd = readNonEmptyString(session.directory) ?? process.cwd();
+      const title = readNonEmptyString(session.title);
+      const updatedAtMs =
+        typeof session.time?.updated === "number"
+          ? session.time.updated
+          : typeof session.time?.created === "number"
+            ? session.time.created
+            : Date.now();
+
+      return {
+        provider: "opencode",
+        sessionId: session.id,
+        cwd,
+        title,
+        lastActivityAt: new Date(updatedAtMs),
+        persistence: {
+          provider: "opencode",
+          sessionId: session.id,
+          nativeHandle: session.id,
+          metadata: {
+            provider: "opencode",
+            cwd,
+            ...(title ? { title } : {}),
+          },
+        },
+        timeline: [],
+      } satisfies PersistedAgentDescriptor;
+    });
   }
 
   async isAvailable(): Promise<boolean> {
@@ -1125,6 +1162,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
 export type OpenCodeEventTranslationState = {
   sessionId: string;
+  threadStartedEmitted: boolean;
   messageRoles: Map<string, OpenCodeMessageRole>;
   accumulatedUsage: AgentUsage;
   streamedPartKeys: Set<string>;
@@ -1304,6 +1342,37 @@ function buildOpenCodePermissionDescription(params: {
   return parts.length > 0 ? parts.join(" - ") : undefined;
 }
 
+function normalizeOpenCodeQuestionAnswer(
+  rawAnswer: unknown,
+  optionLabels?: ReadonlySet<string>,
+): string[] {
+  if (Array.isArray(rawAnswer)) {
+    return rawAnswer
+      .map((value) => readNonEmptyString(value))
+      .filter((value): value is string => value !== null);
+  }
+
+  const answer = readNonEmptyString(rawAnswer);
+  if (!answer) {
+    return [];
+  }
+
+  if (!optionLabels || !answer.includes(",")) {
+    return [answer];
+  }
+
+  const splitAnswers = answer
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (splitAnswers.length > 1 && splitAnswers.every((entry) => optionLabels.has(entry))) {
+    return splitAnswers;
+  }
+
+  return [answer];
+}
+
 export function translateOpenCodeEvent(
   event: OpenCodeEvent,
   state: OpenCodeEventTranslationState,
@@ -1313,7 +1382,8 @@ export function translateOpenCodeEvent(
   switch (event.type) {
     case "session.created":
     case "session.updated": {
-      if (event.properties.info.id === state.sessionId) {
+      if (event.properties.info.id === state.sessionId && !state.threadStartedEmitted) {
+        state.threadStartedEmitted = true;
         events.push({
           type: "thread_started",
           sessionId: state.sessionId,
@@ -1382,7 +1452,7 @@ export function translateOpenCodeEvent(
         }
       } else if (part.type === "reasoning") {
         const partKey = resolvePartDedupeKey(part, "reasoning");
-        if (part.time.end) {
+        if (part.time?.end) {
           if (partKey && state.streamedPartKeys.delete(partKey)) {
             break;
           }
@@ -1508,6 +1578,21 @@ export function translateOpenCodeEvent(
       break;
     }
 
+    case "permission.replied": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "permission_resolved",
+        provider: "opencode",
+        requestId: event.properties.requestID,
+        resolution:
+          event.properties.reply === "reject" ? { behavior: "deny" } : { behavior: "allow" },
+      });
+      break;
+    }
+
     case "question.asked": {
       if (event.properties.sessionID !== state.sessionId) {
         break;
@@ -1568,6 +1653,20 @@ export function translateOpenCodeEvent(
       break;
     }
 
+    case "question.replied": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "permission_resolved",
+        provider: "opencode",
+        requestId: event.properties.requestID,
+        resolution: { behavior: "allow" },
+      });
+      break;
+    }
+
     case "session.compacted": {
       if (event.properties.sessionID !== state.sessionId) {
         break;
@@ -1577,6 +1676,20 @@ export function translateOpenCodeEvent(
         type: "timeline",
         provider: "opencode",
         item: createCompactionTimelineItem("completed"),
+      });
+      break;
+    }
+
+    case "question.rejected": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "permission_resolved",
+        provider: "opencode",
+        requestId: event.properties.requestID,
+        resolution: { behavior: "deny", message: "Question rejected" },
       });
       break;
     }
@@ -1664,6 +1777,7 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
+  private threadStartedEmitted = false;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private selectedModelContextWindowMaxTokens: number | undefined;
   constructor(
@@ -1735,7 +1849,9 @@ class OpenCodeAgentSession implements AgentSession {
       if (event.type === "timeline") {
         timeline.push(event.item);
         if (event.item.type === "assistant_message") {
-          finalText = event.item.text;
+          finalText = event.item.text.startsWith(finalText)
+            ? event.item.text
+            : `${finalText}${event.item.text}`;
         }
         return;
       }
@@ -2228,15 +2344,21 @@ class OpenCodeAgentSession implements AgentSession {
         const answersRecord = readOpenCodeRecord(response.updatedInput?.answers);
         const questions = Array.isArray(pending.input?.questions) ? pending.input.questions : [];
         const answers = questions.map((item) => {
-          const header = readNonEmptyString(readOpenCodeRecord(item)?.header);
-          const rawAnswer = header ? readNonEmptyString(answersRecord?.[header]) : null;
-          if (!rawAnswer) {
-            return [];
-          }
-          return rawAnswer
-            .split(",")
-            .map((entry) => entry.trim())
-            .filter((entry) => entry.length > 0);
+          const question = readOpenCodeRecord(item);
+          const header = readNonEmptyString(question?.header);
+          const optionLabels = new Set(
+            Array.isArray(question?.options)
+              ? question.options.flatMap((option) => {
+                  const label = readNonEmptyString(readOpenCodeRecord(option)?.label);
+                  return label ? [label] : [];
+                })
+              : [],
+          );
+          const rawAnswer = header ? answersRecord?.[header] : undefined;
+          return normalizeOpenCodeQuestionAnswer(
+            rawAnswer,
+            optionLabels.size > 0 ? optionLabels : undefined,
+          );
         });
 
         await this.client.question.reply({
@@ -2267,13 +2389,37 @@ class OpenCodeAgentSession implements AgentSession {
       sessionId: this.sessionId,
       nativeHandle: this.sessionId,
       metadata: {
+        ...this.config,
+        provider: "opencode",
         cwd: this.config.cwd,
+        modeId: this.currentMode,
       },
     };
   }
 
   async close(): Promise<void> {
-    this.abortController?.abort();
+    const activeTurnId = this.activeForegroundTurnId;
+    if (activeTurnId) {
+      this.finishForegroundTurn(
+        { type: "turn_canceled", provider: "opencode", reason: "session_closed" },
+        activeTurnId,
+      );
+    } else {
+      this.abortController?.abort();
+      this.abortController = null;
+      this.runningToolCalls.clear();
+    }
+
+    for (const requestId of this.pendingPermissions.keys()) {
+      this.notifySubscribers({
+        type: "permission_resolved",
+        provider: "opencode",
+        requestId,
+        resolution: { behavior: "deny", message: "Session closed" },
+      });
+    }
+    this.pendingPermissions.clear();
+
     await reconcileOpenCodeSessionClose({
       client: this.client,
       sessionId: this.sessionId,
@@ -2304,10 +2450,11 @@ class OpenCodeAgentSession implements AgentSession {
   private async resolveSlashCommandInvocation(
     prompt: AgentPromptInput,
   ): Promise<{ commandName: string; args?: string } | null> {
-    if (typeof prompt !== "string") {
+    const slashCandidate = this.extractSlashCommandCandidate(prompt);
+    if (!slashCandidate) {
       return null;
     }
-    const parsed = this.parseSlashCommandInput(prompt);
+    const parsed = this.parseSlashCommandInput(slashCandidate);
     if (!parsed) {
       return null;
     }
@@ -2321,6 +2468,24 @@ class OpenCodeAgentSession implements AgentSession {
       );
       return null;
     }
+  }
+
+  private extractSlashCommandCandidate(prompt: AgentPromptInput): string | null {
+    if (typeof prompt === "string") {
+      return prompt;
+    }
+
+    for (const part of prompt) {
+      if (part.type !== "text") {
+        continue;
+      }
+
+      if (part.text.trim().length > 0) {
+        return part.text;
+      }
+    }
+
+    return null;
   }
 
   private parseModel(model?: string): { providerID: string; modelID: string } | undefined {
@@ -2402,8 +2567,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private translateEvent(event: OpenCodeEvent): AgentStreamEvent[] {
-    const translated = translateOpenCodeEvent(event, {
+    const translationState: OpenCodeEventTranslationState = {
       sessionId: this.sessionId,
+      threadStartedEmitted: this.threadStartedEmitted,
       messageRoles: this.messageRoles,
       accumulatedUsage: this.accumulatedUsage,
       streamedPartKeys: this.streamedPartKeys,
@@ -2416,11 +2582,16 @@ class OpenCodeAgentSession implements AgentSession {
           this.selectedModelContextWindowMaxTokens = contextWindowMaxTokens;
         }
       },
-    });
+    };
+    const translated = translateOpenCodeEvent(event, translationState);
+    this.threadStartedEmitted = translationState.threadStartedEmitted;
 
     for (const translatedEvent of translated) {
       if (translatedEvent.type === "permission_requested") {
         this.pendingPermissions.set(translatedEvent.request.id, translatedEvent.request);
+      }
+      if (translatedEvent.type === "permission_resolved") {
+        this.pendingPermissions.delete(translatedEvent.requestId);
       }
       if (translatedEvent.type === "turn_completed") {
         if (hasNormalizedOpenCodeUsage(this.accumulatedUsage)) {
