@@ -39,6 +39,7 @@ export interface CreateAgentWorktreeOptions {
   branchName: string;
   baseBranch: string;
   worktreeSlug: string;
+  copyFromRepoPaths?: string[];
   paseoHome?: string;
 }
 
@@ -176,6 +177,7 @@ export async function createAgentWorktree(
     cwd: options.cwd,
     baseBranch: options.baseBranch,
     worktreeSlug: options.worktreeSlug,
+    copyFromRepoPaths: options.copyFromRepoPaths,
     runSetup: false,
     paseoHome: options.paseoHome,
   });

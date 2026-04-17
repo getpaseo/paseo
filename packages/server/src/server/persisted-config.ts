@@ -250,6 +250,12 @@ export const PersistedConfigSchema = z
           })
           .strict()
           .optional(),
+        worktree: z
+          .object({
+            copyFromRepoPaths: z.array(z.string()).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

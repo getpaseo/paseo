@@ -164,6 +164,7 @@ export type PaseoDaemonConfig = {
   allowedHosts?: AllowedHostsConfig;
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
+  worktreeCopyFromRepoPaths?: string[];
   staticDir: string;
   mcpDebug: boolean;
   agentClients: Partial<Record<AgentProvider, AgentClient>>;
@@ -206,6 +207,9 @@ export async function createPaseoDaemon(
     config.paseoHome,
     {
       mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
+      worktree: {
+        copyFromRepoPaths: config.worktreeCopyFromRepoPaths ?? [],
+      },
     },
     logger,
   );

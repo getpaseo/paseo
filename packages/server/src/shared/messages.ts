@@ -58,12 +58,19 @@ export const MutableDaemonConfigSchema = z
         injectIntoAgents: z.boolean(),
       })
       .passthrough(),
+    worktree: z
+      .object({
+        copyFromRepoPaths: z.array(z.string()).optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough();
 
 export const MutableDaemonConfigPatchSchema = z
   .object({
     mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
+    worktree: MutableDaemonConfigSchema.shape.worktree.unwrap().partial().optional(),
   })
   .partial()
   .passthrough();

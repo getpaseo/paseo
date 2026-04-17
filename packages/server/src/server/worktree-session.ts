@@ -51,6 +51,7 @@ type EmitSessionMessage = (message: SessionOutboundMessage) => void;
 type BuildAgentSessionConfigDependencies = {
   paseoHome?: string;
   sessionLogger: Logger;
+  worktreeCopyFromRepoPaths?: string[];
   checkoutExistingBranch: (cwd: string, branch: string) => Promise<void>;
   createBranchFromBase: (params: {
     cwd: string;
@@ -173,6 +174,7 @@ export async function buildAgentSessionConfig(
       cwd,
       baseBranch,
       worktreeSlug: normalized.worktreeSlug ?? targetBranch,
+      copyFromRepoPaths: dependencies.worktreeCopyFromRepoPaths,
       paseoHome: dependencies.paseoHome,
     });
     cwd = createdWorktree.worktreePath;

@@ -1,7 +1,7 @@
 import { exec } from "child_process";
 import { promisify } from "util";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "fs";
-import { join, basename, dirname, resolve, sep } from "path";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "fs";
+import { isAbsolute, join, basename, dirname, relative, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
 import { createNameId } from "mnemonic-id";
@@ -127,8 +127,64 @@ interface CreateWorktreeOptions {
   cwd: string;
   baseBranch: string;
   worktreeSlug?: string;
+  copyFromRepoPaths?: string[];
   runSetup?: boolean;
   paseoHome?: string;
+}
+
+function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
+  const relativePath = relative(rootPath, candidatePath);
+  return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+}
+
+function normalizeWorktreeCopyPath(path: string): string | null {
+  const trimmedPath = path.trim();
+  if (!trimmedPath) {
+    return null;
+  }
+  const normalizedPath = trimmedPath.replace(/\\/g, "/");
+  return normalizedPath;
+}
+
+export function copyConfiguredPathsIntoWorktree(options: {
+  repoRoot: string;
+  worktreePath: string;
+  copyFromRepoPaths?: string[];
+}): void {
+  const copyPaths = options.copyFromRepoPaths ?? [];
+  for (const rawPath of copyPaths) {
+    const normalizedPath = normalizeWorktreeCopyPath(rawPath);
+    if (!normalizedPath) {
+      continue;
+    }
+
+    if (isAbsolute(normalizedPath)) {
+      throw new Error(`Worktree copy path must be relative: ${rawPath}`);
+    }
+
+    if (normalizedPath === ".git" || normalizedPath.startsWith(".git/")) {
+      throw new Error(`Worktree copy path cannot target .git: ${rawPath}`);
+    }
+
+    const sourcePath = resolve(options.repoRoot, normalizedPath);
+    if (!isPathWithinRoot(options.repoRoot, sourcePath)) {
+      throw new Error(`Worktree copy path escapes repository root: ${rawPath}`);
+    }
+    if (!existsSync(sourcePath)) {
+      continue;
+    }
+
+    const destinationPath = resolve(options.worktreePath, normalizedPath);
+    if (!isPathWithinRoot(options.worktreePath, destinationPath)) {
+      throw new Error(`Worktree copy path escapes worktree root: ${rawPath}`);
+    }
+
+    mkdirSync(dirname(destinationPath), { recursive: true });
+    cpSync(sourcePath, destinationPath, {
+      recursive: true,
+      force: true,
+    });
+  }
 }
 
 function readPaseoConfig(repoRoot: string): PaseoConfig | null {
@@ -921,6 +977,7 @@ export async function createWorktree({
   cwd,
   baseBranch,
   worktreeSlug,
+  copyFromRepoPaths,
   runSetup = true,
   paseoHome,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> {
@@ -1005,6 +1062,12 @@ export async function createWorktree({
   worktreePath = normalizePathForOwnership(finalWorktreePath);
 
   writePaseoWorktreeMetadata(worktreePath, { baseRefName: normalizedBaseBranch });
+
+  copyConfiguredPathsIntoWorktree({
+    repoRoot: cwd,
+    worktreePath,
+    copyFromRepoPaths,
+  });
 
   if (runSetup) {
     await runWorktreeSetupCommands({

@@ -337,6 +337,42 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     expect(existsSync(join(result.worktreePath, "setup.log"))).toBe(false);
   });
 
+  it("copies configured repo-relative paths into new worktrees", async () => {
+    writeFileSync(join(repoDir, ".gitignore"), "AGENTS.md\n");
+    execSync('git add .gitignore && git -c commit.gpgsign=false commit -m "ignore agents"', {
+      cwd: repoDir,
+    });
+    writeFileSync(join(repoDir, "AGENTS.md"), "local-only instructions\n");
+
+    const result = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "copy-paths-test",
+      copyFromRepoPaths: ["AGENTS.md"],
+      runSetup: false,
+      paseoHome,
+    });
+
+    expect(readFileSync(join(result.worktreePath, "AGENTS.md"), "utf8")).toBe(
+      "local-only instructions\n",
+    );
+  });
+
+  it("rejects copy paths that escape the repository root", async () => {
+    await expect(
+      createWorktree({
+        branchName: "main",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "copy-paths-invalid",
+        copyFromRepoPaths: ["../outside.txt"],
+        runSetup: false,
+        paseoHome,
+      }),
+    ).rejects.toThrow("escapes repository root");
+  });
+
   it("streams setup command progress events while commands are executing", async () => {
     const paseoConfig = {
       worktree: {

@@ -27,6 +27,8 @@ Projects are grouped in the sidebar, detected automatically from your filesystem
 
 Each project opens as a workspace. For git projects, the default workspace is the main checkout. Users can create additional workspaces, which are isolated copies (git worktrees) where agents work without affecting main.
 
+Global settings can define repo-relative "worktree copy paths" (for example `AGENTS.md` or `.env.local`) so git-ignored local files are copied from the main checkout into each newly created worktree.
+
 ### Inside a workspace
 
 A workspace is a flexible canvas:

@@ -342,6 +342,20 @@ describe("provider overrides (new format)", () => {
   });
 });
 
+describe("PersistedConfigSchema daemon worktree config", () => {
+  test("accepts worktree copy path settings", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        worktree: {
+          copyFromRepoPaths: ["AGENTS.md", ".env.local"],
+        },
+      },
+    });
+
+    expect(parsed.daemon?.worktree?.copyFromRepoPaths).toEqual(["AGENTS.md", ".env.local"]);
+  });
+});
+
 describe("PersistedConfigSchema logging config", () => {
   test("accepts destination-specific logging config", () => {
     const parsed = PersistedConfigSchema.parse({

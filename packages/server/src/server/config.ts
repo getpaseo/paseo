@@ -142,6 +142,7 @@ export function loadConfig(
   const mcpEnabled = options?.cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true;
   const mcpInjectIntoAgents =
     options?.cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false;
+  const worktreeCopyFromRepoPaths = persisted.daemon?.worktree?.copyFromRepoPaths ?? [];
 
   const relayEnabled =
     options?.cli?.relayEnabled ??
@@ -184,6 +185,7 @@ export function loadConfig(
     allowedHosts,
     mcpEnabled,
     mcpInjectIntoAgents,
+    worktreeCopyFromRepoPaths,
     mcpDebug: env.MCP_DEBUG === "1",
     agentStoragePath: path.join(paseoHome, "agents"),
     staticDir: "public",

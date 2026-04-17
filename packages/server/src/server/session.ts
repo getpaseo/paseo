@@ -3173,6 +3173,7 @@ export class Session {
       {
         paseoHome: this.paseoHome,
         sessionLogger: this.sessionLogger,
+        worktreeCopyFromRepoPaths: this.daemonConfigStore.get().worktree?.copyFromRepoPaths,
         checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
         createBranchFromBase: (params) => this.createBranchFromBase(params),
       },

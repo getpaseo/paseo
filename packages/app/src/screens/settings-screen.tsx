@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { MutableRefObject, ComponentType } from "react";
 import { View, Text, ScrollView, Alert, Pressable } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
@@ -414,6 +414,54 @@ const THEME_LABELS: Record<AppSettings["theme"], string> = {
   auto: "System",
 };
 
+function parseWorktreeCopyPathsInput(input: string): string[] {
+  const seen = new Set<string>();
+  const parsedPaths: string[] = [];
+  for (const line of input.split(/\r?\n/)) {
+    const path = line.trim();
+    if (!path || seen.has(path)) {
+      continue;
+    }
+    seen.add(path);
+    parsedPaths.push(path);
+  }
+  return parsedPaths;
+}
+
+type WorktreeCopyPathValidationResult = {
+  copyFromRepoPaths: string[];
+  errors: string[];
+};
+
+function validateWorktreeCopyPathsInput(input: string): WorktreeCopyPathValidationResult {
+  const copyFromRepoPaths = parseWorktreeCopyPathsInput(input);
+  const errors: string[] = [];
+
+  for (const path of copyFromRepoPaths) {
+    const normalizedPath = path.replace(/\\/g, "/");
+
+    const isWindowsAbsolutePath = /^[A-Za-z]:\//.test(normalizedPath);
+    if (normalizedPath.startsWith("/") || isWindowsAbsolutePath) {
+      errors.push(`\`${path}\` must be relative`);
+      continue;
+    }
+
+    if (normalizedPath === "." || normalizedPath === ".git" || normalizedPath.startsWith(".git/")) {
+      errors.push(`\`${path}\` cannot target .git or repository root`);
+      continue;
+    }
+
+    if (normalizedPath.split("/").includes("..")) {
+      errors.push(`\`${path}\` cannot include '..' segments`);
+    }
+  }
+
+  return {
+    copyFromRepoPaths,
+    errors,
+  };
+}
+
 function GeneralSection({
   routeServerId,
   settings,
@@ -423,8 +471,22 @@ function GeneralSection({
   const { theme } = useUnistyles();
   const isConnected = useHostRuntimeIsConnected(routeServerId);
   const { config, patchConfig } = useDaemonConfig(routeServerId);
+  const [isWorktreePathsModalVisible, setIsWorktreePathsModalVisible] = useState(false);
+  const [worktreePathsDraft, setWorktreePathsDraft] = useState("");
   const iconSize = theme.iconSize.md;
   const iconColor = theme.colors.foregroundMuted;
+  const configuredWorktreeCopyPaths = config?.worktree?.copyFromRepoPaths ?? [];
+  const worktreePathValidation = useMemo(
+    () => validateWorktreeCopyPathsInput(worktreePathsDraft),
+    [worktreePathsDraft],
+  );
+
+  useEffect(() => {
+    if (!isWorktreePathsModalVisible) {
+      return;
+    }
+    setWorktreePathsDraft(configuredWorktreeCopyPaths.join("\n"));
+  }, [configuredWorktreeCopyPaths, isWorktreePathsModalVisible]);
 
   return (
     <View style={settingsStyles.section}>
@@ -509,7 +571,84 @@ function GeneralSection({
             />
           </View>
         ) : null}
+        {routeServerId.length > 0 && isConnected ? (
+          <View style={[styles.audioRow, styles.audioRowBorder]}>
+            <View style={styles.audioRowContent}>
+              <Text style={styles.audioRowTitle}>Worktree copy paths</Text>
+              <Text style={styles.audioRowSubtitle}>
+                One relative path per line. These paths are copied from your repo root into new
+                worktrees.
+              </Text>
+              {configuredWorktreeCopyPaths.length > 0 ? (
+                <Text style={styles.worktreePathsPreview} numberOfLines={2}>
+                  {configuredWorktreeCopyPaths.join(", ")}
+                </Text>
+              ) : null}
+            </View>
+            <Button
+              variant="outline"
+              size="sm"
+              onPress={() => {
+                setIsWorktreePathsModalVisible(true);
+              }}
+            >
+              Edit
+            </Button>
+          </View>
+        ) : null}
       </View>
+      <AdaptiveModalSheet
+        title="Worktree copy paths"
+        visible={isWorktreePathsModalVisible}
+        onClose={() => {
+          setIsWorktreePathsModalVisible(false);
+        }}
+      >
+        <View style={styles.formField}>
+          <Text style={styles.label}>Paths</Text>
+          <AdaptiveTextInput
+            style={[styles.input, styles.multilineInput]}
+            value={worktreePathsDraft}
+            onChangeText={setWorktreePathsDraft}
+            multiline
+            placeholder={`AGENTS.md\n.env.local`}
+            placeholderTextColor={theme.colors.foregroundMuted}
+          />
+          <Text style={styles.audioRowSubtitle}>
+            Paths must be relative to the repository root (for example: AGENTS.md or .env.local).
+          </Text>
+          {worktreePathValidation.errors.length > 0 ? (
+            <Text style={styles.worktreePathsError}>
+              {worktreePathValidation.errors.join("\n")}
+            </Text>
+          ) : null}
+        </View>
+        <View style={styles.formActionsRow}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onPress={() => {
+              setIsWorktreePathsModalVisible(false);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            disabled={worktreePathValidation.errors.length > 0}
+            onPress={() => {
+              void patchConfig({
+                worktree: {
+                  copyFromRepoPaths: worktreePathValidation.copyFromRepoPaths,
+                },
+              });
+              setIsWorktreePathsModalVisible(false);
+            }}
+          >
+            Save
+          </Button>
+        </View>
+      </AdaptiveModalSheet>
     </View>
   );
 }
@@ -1770,6 +1909,10 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     fontSize: theme.fontSize.base,
   },
+  multilineInput: {
+    minHeight: 120,
+    textAlignVertical: "top",
+  },
   // Host card styles
   hostCard: {
     marginBottom: theme.spacing[3],
@@ -1979,6 +2122,15 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
+  },
+  worktreePathsPreview: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    marginTop: theme.spacing[2],
+  },
+  worktreePathsError: {
+    color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.xs,
   },
   providerActions: {
     flexDirection: "row",

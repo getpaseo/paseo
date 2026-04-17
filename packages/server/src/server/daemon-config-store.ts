@@ -156,6 +156,10 @@ function mergeMutableConfigIntoPersistedConfig(params: {
         ...persisted.daemon?.mcp,
         injectIntoAgents: mutable.mcp.injectIntoAgents,
       },
+      worktree: {
+        ...persisted.daemon?.worktree,
+        copyFromRepoPaths: mutable.worktree?.copyFromRepoPaths ?? [],
+      },
     },
   };
 }
