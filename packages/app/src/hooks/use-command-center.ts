@@ -16,11 +16,16 @@ import {
 import {
   buildHostAgentDetailRoute,
   buildSettingsRoute,
+  parseHostAgentRouteFromPathname,
+  parseHostWorkspaceRouteFromPathname,
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { chordStringToShortcutKeys } from "@/keyboard/shortcut-string";
-import { getBindingIdForAction, getDefaultKeysForAction } from "@/keyboard/keyboard-shortcuts";
+import {
+  getBindingIdForAction,
+  getDefaultKeysForAction,
+} from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
@@ -28,13 +33,91 @@ import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execut
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { focusWithRetries } from "@/utils/web-focus";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
-import { useWorkspaceLayoutStore, collectAllTabs } from "@/stores/workspace-layout-store";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import {
-  mapDirectorySuggestionsToCommandCenterFiles,
-  resolveCommandCenterWorkspaceScope,
-} from "@/utils/command-center-file-search";
+  useWorkspaceLayoutStore,
+  collectAllTabs,
+} from "@/stores/workspace-layout-store";
+import {
+  useHostRuntimeClient,
+  useHostRuntimeIsConnected,
+} from "@/runtime/host-runtime";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import type { DirectorySuggestionsResponse } from "@server/shared/messages";
+
+interface CommandCenterFileMatch {
+  path: string;
+  name: string;
+  directory: string;
+}
+
+function normalizeSuggestionPath(
+  path: string | null | undefined,
+): string | null {
+  if (typeof path !== "string") {
+    return null;
+  }
+  const trimmed = path.trim().replace(/\\/g, "/");
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function buildCommandCenterFileMatch(path: string): CommandCenterFileMatch {
+  const segments = path.split("/");
+  const name = segments[segments.length - 1] ?? path;
+  const directory = segments.length > 1 ? segments.slice(0, -1).join("/") : ".";
+
+  return {
+    path,
+    name,
+    directory,
+  };
+}
+
+function resolveCommandCenterWorkspaceScope(input: {
+  pathname: string;
+  agents: Array<{ id: string; cwd: string; serverId: string }>;
+}): { serverId: string; workspaceId: string } | null {
+  const workspaceRoute = parseHostWorkspaceRouteFromPathname(input.pathname);
+  if (workspaceRoute) {
+    return workspaceRoute;
+  }
+
+  const agentRoute = parseHostAgentRouteFromPathname(input.pathname);
+  if (!agentRoute) {
+    return null;
+  }
+
+  const agent = input.agents.find(
+    (entry) =>
+      entry.serverId === agentRoute.serverId && entry.id === agentRoute.agentId,
+  );
+  const workspaceId = normalizeSuggestionPath(agent?.cwd);
+  if (!workspaceId) {
+    return null;
+  }
+
+  return {
+    serverId: agentRoute.serverId,
+    workspaceId,
+  };
+}
+
+function mapDirectorySuggestionsToCommandCenterFiles(
+  payload: DirectorySuggestionsResponse["payload"],
+): CommandCenterFileMatch[] {
+  const entries = Array.isArray(payload.entries) ? payload.entries : [];
+  return entries.flatMap((entry) => {
+    if (!entry || entry.kind !== "file") {
+      return [];
+    }
+
+    const normalizedPath = normalizeSuggestionPath(entry.path);
+    if (!normalizedPath) {
+      return [];
+    }
+
+    return [buildCommandCenterFileMatch(normalizedPath)];
+  });
+}
 
 const EMPTY_AGENTS: AggregatedAgent[] = [];
 const EMPTY_ACTION_ITEMS: CommandCenterActionItem[] = [];
@@ -52,7 +135,8 @@ function isMatch(agent: AggregatedAgent, query: string): boolean {
 function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
   const leftNeedsInput = (left.pendingPermissionCount ?? 0) > 0 ? 1 : 0;
   const rightNeedsInput = (right.pendingPermissionCount ?? 0) > 0 ? 1 : 0;
-  if (leftNeedsInput !== rightNeedsInput) return rightNeedsInput - leftNeedsInput;
+  if (leftNeedsInput !== rightNeedsInput)
+    return rightNeedsInput - leftNeedsInput;
 
   const leftAttention = left.requiresAttention ? 1 : 0;
   const rightAttention = right.requiresAttention ? 1 : 0;
@@ -92,7 +176,10 @@ const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
   },
 ];
 
-function matchesActionQuery(query: string, action: CommandCenterActionDefinition): boolean {
+function matchesActionQuery(
+  query: string,
+  action: CommandCenterActionDefinition,
+): boolean {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
   if (action.title.toLowerCase().includes(normalized)) {
@@ -110,10 +197,7 @@ export type CommandCenterActionItem = {
   shortcutKeys?: ShortcutKey[][];
 };
 
-export type CommandCenterFileItem = {
-  path: string;
-  name: string;
-  directory: string;
+type CommandCenterFileItem = CommandCenterFileMatch & {
   workspaceId: string;
   serverId: string;
 };
@@ -160,7 +244,9 @@ export function useCommandCenter() {
   const activeIndexRef = useRef(0);
   const itemsRef = useRef<CommandCenterItem[]>([]);
   const handleCloseRef = useRef<() => void>(() => undefined);
-  const handleSelectItemRef = useRef<(item: CommandCenterItem) => void>(() => undefined);
+  const handleSelectItemRef = useRef<(item: CommandCenterItem) => void>(
+    () => undefined,
+  );
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
 
@@ -170,7 +256,9 @@ export function useCommandCenter() {
     }
     const serverIdFromPath = parseServerIdFromPathname(pathname);
     if (serverIdFromPath) {
-      const routeMatch = daemons.find((entry) => entry.serverId === serverIdFromPath);
+      const routeMatch = daemons.find(
+        (entry) => entry.serverId === serverIdFromPath,
+      );
       if (routeMatch) {
         return routeMatch.serverId;
       }
@@ -225,11 +313,13 @@ export function useCommandCenter() {
       if (response.error) {
         throw new Error(response.error);
       }
-      return mapDirectorySuggestionsToCommandCenterFiles(response).map((entry) => ({
-        ...entry,
-        serverId: searchWorkspace.serverId,
-        workspaceId: searchWorkspace.workspaceId,
-      }));
+      return mapDirectorySuggestionsToCommandCenterFiles(response).map(
+        (entry) => ({
+          ...entry,
+          serverId: searchWorkspace.serverId,
+          workspaceId: searchWorkspace.workspaceId,
+        }),
+      );
     },
     enabled:
       open &&
@@ -249,8 +339,10 @@ export function useCommandCenter() {
       })
     : null;
 
-  const workspaceLayout = useWorkspaceLayoutStore(
-    (state) => (workspaceTabsKey ? (state.layoutByWorkspace[workspaceTabsKey] ?? null) : null),
+  const workspaceLayout = useWorkspaceLayoutStore((state) =>
+    workspaceTabsKey
+      ? (state.layoutByWorkspace[workspaceTabsKey] ?? null)
+      : null,
   );
 
   const openFileTabs = useMemo(() => {
@@ -263,14 +355,8 @@ export function useCommandCenter() {
       if (tab.target.kind !== "file") {
         continue;
       }
-      const path = tab.target.path;
-      const segments = path.split("/");
-      const name = segments[segments.length - 1] ?? path;
-      const directory = segments.length > 1 ? segments.slice(0, -1).join("/") : ".";
       fileTabs.push({
-        path,
-        name,
-        directory,
+        ...buildCommandCenterFileMatch(tab.target.path),
         serverId: searchWorkspace.serverId,
         workspaceId: searchWorkspace.workspaceId,
       });
@@ -343,11 +429,15 @@ export function useCommandCenter() {
       clearCommandCenterFocusRestoreElement();
       setOpen(false);
       const workspaceId = resolveWorkspaceIdByExecutionDirectory({
-        workspaces: useSessionStore.getState().sessions[agent.serverId]?.workspaces?.values(),
+        workspaces: useSessionStore
+          .getState()
+          .sessions[agent.serverId]?.workspaces?.values(),
         workspaceDirectory: agent.cwd,
       });
       if (!workspaceId) {
-        router.navigate(buildHostAgentDetailRoute(agent.serverId, agent.id) as any);
+        router.navigate(
+          buildHostAgentDetailRoute(agent.serverId, agent.id) as any,
+        );
         return;
       }
       const route = prepareWorkspaceTab({
@@ -436,7 +526,9 @@ export function useCommandCenter() {
       if (prevOpen && !didNavigateRef.current) {
         const el = takeCommandCenterFocusRestoreElement();
         const isFocused = () =>
-          Boolean(el) && typeof document !== "undefined" && document.activeElement === el;
+          Boolean(el) &&
+          typeof document !== "undefined" &&
+          document.activeElement === el;
 
         const cancel = focusWithRetries({
           focus: () => el?.focus(),
@@ -475,7 +567,12 @@ export function useCommandCenter() {
     const handler = (event: KeyboardEvent) => {
       const currentItems = itemsRef.current;
       const key = event.key;
-      if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Enter" && key !== "Escape") {
+      if (
+        key !== "ArrowDown" &&
+        key !== "ArrowUp" &&
+        key !== "Enter" &&
+        key !== "Escape"
+      ) {
         return;
       }
 
@@ -488,7 +585,10 @@ export function useCommandCenter() {
       if (key === "Enter") {
         if (currentItems.length === 0) return;
         event.preventDefault();
-        const index = Math.max(0, Math.min(activeIndexRef.current, currentItems.length - 1));
+        const index = Math.max(
+          0,
+          Math.min(activeIndexRef.current, currentItems.length - 1),
+        );
         handleSelectItemRef.current(currentItems[index]!);
         return;
       }
