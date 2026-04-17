@@ -9,4 +9,3 @@ export function resolveLegacySettingsTargetRoute(serverId: string | null | undef
   }
   return buildHostSettingsRoute(normalizedServerId);
 }
-

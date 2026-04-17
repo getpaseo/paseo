@@ -19,4 +19,3 @@ describe("settings routing", () => {
     expect(resolveLegacySettingsTargetRoute("   ")).toBe(LEGACY_SETTINGS_FALLBACK_ROUTE);
   });
 });
-
