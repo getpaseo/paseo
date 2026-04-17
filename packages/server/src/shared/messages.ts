@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "../server/agent/agent-title-limits.js";
-import { AgentProviderSchema } from "../server/agent/provider-manifest.js";
+import { AgentProviderSchema as ImportedAgentProviderSchema } from "../server/agent/provider-manifest.js";
+// COMPAT(rn-dev-client): Metro can evaluate this import path as undefined during circular init.
+const AgentProviderValueSchema: z.ZodType<string> = (ImportedAgentProviderSchema ??
+  z.string()) as z.ZodType<string>;
 import { TOOL_CALL_ICON_NAMES } from "../server/agent/agent-sdk-types.js";
 import {
   ChatCreateRequestSchema,
@@ -139,7 +142,7 @@ export const AgentFeatureSchema = z.discriminatedUnion("type", [
 ]);
 
 const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   id: z.string(),
   label: z.string(),
   description: z.string().optional(),
@@ -150,7 +153,7 @@ const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
 });
 
 const ProviderSnapshotEntrySchema: z.ZodType<ProviderSnapshotEntry> = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   status: ProviderStatusSchema,
   error: z.string().optional(),
   models: z.array(AgentModelDefinitionSchema).optional(),
@@ -205,7 +208,7 @@ const McpServerConfigSchema = z.discriminatedUnion("type", [
 ]);
 
 const AgentSessionConfigSchema = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
@@ -253,7 +256,7 @@ export const AgentPermissionResponseSchema: z.ZodType<AgentPermissionResponse> =
 
 export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionRequest> = z.object({
   id: z.string(),
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   name: z.string(),
   kind: z.enum(["tool", "plan", "question", "mode", "other"]),
   title: z.string().optional(),
@@ -467,48 +470,48 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("thread_started"),
     sessionId: z.string(),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
   }),
   z.object({
     type: z.literal("turn_started"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
   }),
   z.object({
     type: z.literal("turn_completed"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     usage: AgentUsageSchema.optional(),
   }),
   z.object({
     type: z.literal("turn_failed"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     error: z.string(),
     code: z.string().optional(),
     diagnostic: z.string().optional(),
   }),
   z.object({
     type: z.literal("turn_canceled"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     reason: z.string(),
   }),
   z.object({
     type: z.literal("timeline"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     item: AgentTimelineItemPayloadSchema,
   }),
   z.object({
     type: z.literal("permission_requested"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     request: AgentPermissionRequestPayloadSchema,
   }),
   z.object({
     type: z.literal("permission_resolved"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     requestId: z.string(),
     resolution: AgentPermissionResponseSchema,
   }),
   z.object({
     type: z.literal("attention_required"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     reason: z.enum(["finished", "error", "permission"]),
     timestamp: z.string(),
     shouldNotify: z.boolean(),
@@ -528,7 +531,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
 
 const AgentPersistenceHandleSchema: z.ZodType<AgentPersistenceHandle | null> = z
   .object({
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     sessionId: z.string(),
     nativeHandle: z.string().optional(),
     metadata: z.record(z.unknown()).optional(),
@@ -536,7 +539,7 @@ const AgentPersistenceHandleSchema: z.ZodType<AgentPersistenceHandle | null> = z
   .nullable();
 
 const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   sessionId: z.string().nullable(),
   model: z.string().nullable().optional(),
   thinkingOptionId: z.string().nullable().optional(),
@@ -546,7 +549,7 @@ const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
 
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   cwd: z.string(),
   model: z.string().nullable(),
   features: z.array(AgentFeatureSchema).optional(),
@@ -826,14 +829,14 @@ export const CreateAgentRequestMessageSchema = z.object({
 
 export const ListProviderModelsRequestMessageSchema = z.object({
   type: z.literal("list_provider_models_request"),
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   cwd: z.string().optional(),
   requestId: z.string(),
 });
 
 export const ListProviderModesRequestMessageSchema = z.object({
   type: z.literal("list_provider_modes_request"),
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   cwd: z.string().optional(),
   requestId: z.string(),
 });
@@ -852,13 +855,13 @@ export const GetProvidersSnapshotRequestMessageSchema = z.object({
 export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
   type: z.literal("refresh_providers_snapshot_request"),
   cwd: z.string().optional(),
-  providers: z.array(AgentProviderSchema).optional(),
+  providers: z.array(AgentProviderValueSchema).optional(),
   requestId: z.string(),
 });
 
 export const ProviderDiagnosticRequestMessageSchema = z.object({
   type: z.literal("provider_diagnostic_request"),
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   requestId: z.string(),
 });
 
@@ -1329,7 +1332,7 @@ export const PingMessageSchema = z.object({
 });
 
 const ListCommandsDraftConfigSchema = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
@@ -2071,7 +2074,7 @@ const AgentTimelineSeqRangeSchema = z.object({
 });
 
 export const AgentTimelineEntryPayloadSchema = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   item: AgentTimelineItemPayloadSchema,
   timestamp: z.string(),
   seqStart: z.number().int().nonnegative(),
@@ -2548,7 +2551,7 @@ export const FileDownloadTokenResponseSchema = z.object({
 export const ListProviderModelsResponseMessageSchema = z.object({
   type: z.literal("list_provider_models_response"),
   payload: z.object({
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     models: z.array(AgentModelDefinitionSchema).optional(),
     error: z.string().nullable().optional(),
     fetchedAt: z.string(),
@@ -2559,7 +2562,7 @@ export const ListProviderModelsResponseMessageSchema = z.object({
 export const ListProviderModesResponseMessageSchema = z.object({
   type: z.literal("list_provider_modes_response"),
   payload: z.object({
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     modes: z.array(AgentModeSchema).optional(),
     error: z.string().nullable().optional(),
     fetchedAt: z.string(),
@@ -2570,7 +2573,7 @@ export const ListProviderModesResponseMessageSchema = z.object({
 export const ListProviderFeaturesResponseMessageSchema = z.object({
   type: z.literal("list_provider_features_response"),
   payload: z.object({
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     features: z.array(AgentFeatureSchema).optional(),
     error: z.string().nullable().optional(),
     fetchedAt: z.string(),
@@ -2579,7 +2582,7 @@ export const ListProviderFeaturesResponseMessageSchema = z.object({
 });
 
 const ProviderAvailabilitySchema = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   available: z.boolean(),
   error: z.string().nullable().optional(),
 });
@@ -2627,7 +2630,7 @@ export const RefreshProvidersSnapshotResponseMessageSchema = z.object({
 export const ProviderDiagnosticResponseMessageSchema = z.object({
   type: z.literal("provider_diagnostic_response"),
   payload: z.object({
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     diagnostic: z.string(),
     requestId: z.string(),
   }),

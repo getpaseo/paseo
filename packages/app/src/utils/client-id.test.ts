@@ -42,4 +42,28 @@ describe("client-id", () => {
       "cid_123456781234123412341234567890ab",
     );
   });
+
+  it("falls back to getRandomValues when randomUUID throws", async () => {
+    asyncStorageMock.getItem.mockResolvedValue(null);
+    asyncStorageMock.setItem.mockResolvedValue();
+    vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(() => {
+      throw new RangeError("Maximum call stack size exceeded");
+    });
+    vi.spyOn(globalThis.crypto, "getRandomValues").mockImplementation(
+      <T extends ArrayBufferView>(array: T): T => {
+        const view = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+        view.set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        return array;
+      },
+    );
+
+    const mod = await import("./client-id");
+    const key = await mod.getOrCreateClientId();
+
+    expect(key).toBe("cid_000102030405060708090a0b0c0d0e0f");
+    expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
+      "@paseo:client-id-v1",
+      "cid_000102030405060708090a0b0c0d0e0f",
+    );
+  });
 });

@@ -4,18 +4,18 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/website/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'patches/**'
-      - '.github/workflows/deploy-website.yml'
+      - "packages/website/**"
+      - "package.json"
+      - "package-lock.json"
+      - "patches/**"
+      - ".github/workflows/deploy-website.yml"
   release:
     types: [published, edited]
   workflow_dispatch:
 
 jobs:
   deploy:
-    if: ${{ github.event_name != 'release' || (!github.event.release.prerelease && !github.event.release.draft) }}
+    if: ${{ github.repository == 'getpaseo/paseo' && (github.event_name != 'release' || (!github.event.release.prerelease && !github.event.release.draft)) }}
     runs-on: ubuntu-latest
 
     steps:
@@ -23,8 +23,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install --workspace=@getpaseo/website --include-workspace-root
