@@ -646,9 +646,7 @@ function AgentPanelBody({
   );
 
   const handleMessageFocusRequestHandled = useCallback((requestKey: string) => {
-    setMessageFocusRequest((current) =>
-      current?.requestKey === requestKey ? null : current,
-    );
+    setMessageFocusRequest((current) => (current?.requestKey === requestKey ? null : current));
   }, []);
 
   useEffect(() => {
@@ -785,14 +783,14 @@ function AgentPanelBody({
                 agentId={effectiveAgent.id}
                 serverId={serverId}
                 agent={effectiveAgent}
-              streamItems={shouldUseOptimisticStream ? mergedStreamItems : streamItems}
-              pendingPermissions={pendingPermissions}
-              routeBottomAnchorRequest={routeBottomAnchorRequest}
-              focusRequest={messageFocusRequest}
-              isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-              onFocusRequestHandled={handleMessageFocusRequestHandled}
-            />
+                streamItems={shouldUseOptimisticStream ? mergedStreamItems : streamItems}
+                pendingPermissions={pendingPermissions}
+                routeBottomAnchorRequest={routeBottomAnchorRequest}
+                focusRequest={messageFocusRequest}
+                isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onFocusRequestHandled={handleMessageFocusRequestHandled}
+              />
             </ReanimatedAnimated.View>
           </View>
 
