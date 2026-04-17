@@ -87,7 +87,9 @@ export function ExternalSessionCallout({
             <View style={styles.copyBlock}>
               <Text style={styles.calloutTitle}>Closed external session</Text>
               <Text style={styles.calloutText}>
-                {isRecovering ? "Restarting terminal and reattaching session..." : descriptor.summary}
+                {isRecovering
+                  ? "Restarting terminal and reattaching session..."
+                  : descriptor.summary}
               </Text>
               {recoveryError ? <Text style={styles.errorText}>{recoveryError}</Text> : null}
             </View>

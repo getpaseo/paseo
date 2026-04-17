@@ -1,7 +1,9 @@
+import { basename } from "node:path";
 import type { Logger } from "pino";
 
 import type { AgentPersistenceHandle, AgentSessionConfig } from "./agent/agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent/agent-manager.js";
+import type { ProjectPlacementPayload } from "./messages.js";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
@@ -175,7 +177,10 @@ export class CodexProcessBridgeService {
 
     for (const descriptor of descriptors) {
       seenAgentIds.add(descriptor.agentId);
-      if (this.trackedByAgentId.has(descriptor.agentId) || this.agentManager.getAgent(descriptor.agentId)) {
+      if (
+        this.trackedByAgentId.has(descriptor.agentId) ||
+        this.agentManager.getAgent(descriptor.agentId)
+      ) {
         const tracked = this.trackedByAgentId.get(descriptor.agentId);
         if (tracked) {
           tracked.missingScans = 0;
@@ -237,8 +242,7 @@ export class CodexProcessBridgeService {
         sessionId: descriptor.sessionId,
       },
       loadTimeline: descriptor.sessionId
-        ? async () =>
-            loadCodexPersistedTimeline(descriptor.sessionId!, undefined, this.logger)
+        ? async () => loadCodexPersistedTimeline(descriptor.sessionId!, undefined, this.logger)
         : undefined,
       capturePane: async () => this.bridge.capture(descriptor.logPath),
       sendKeys: async (_target, keys) => this.sendKeys(descriptor.tty, keys),
@@ -263,10 +267,24 @@ export class CodexProcessBridgeService {
 
   private async ensureWorkspaceProjection(descriptor: CodexProcessDescriptor): Promise<void> {
     const normalizedCwd = normalizeWorkspaceId(descriptor.cwd);
-    const placement = await buildProjectPlacementForCwd({
-      cwd: normalizedCwd,
-      workspaceGitService: this.workspaceGitService,
-    });
+    const placement: ProjectPlacementPayload = this.workspaceGitService
+      ? await buildProjectPlacementForCwd({
+          cwd: normalizedCwd,
+          workspaceGitService: this.workspaceGitService,
+        })
+      : {
+          projectKey: normalizedCwd,
+          projectName: basename(normalizedCwd),
+          checkout: {
+            cwd: normalizedCwd,
+            isGit: false,
+            currentBranch: null,
+            remoteUrl: null,
+            worktreeRoot: null,
+            isPaseoOwnedWorktree: false,
+            mainRepoRoot: null,
+          },
+        };
     const workspaceId = deriveWorkspaceId(normalizedCwd, placement.checkout);
     const now = new Date().toISOString();
 
@@ -302,10 +320,7 @@ export class CodexProcessBridgeService {
 
   private async sendKeys(tty: string, keys: string[]): Promise<void> {
     for (const key of keys) {
-      const data =
-        key === "Enter" ? "\n" :
-        key === "C-c" ? "\u0003" :
-        key;
+      const data = key === "Enter" ? "\n" : key === "C-c" ? "\u0003" : key;
       await this.bridge.sendInput(tty, data);
     }
   }

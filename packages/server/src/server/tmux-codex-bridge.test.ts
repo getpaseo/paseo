@@ -113,11 +113,13 @@ describe("tmux codex bridge discovery", () => {
         }),
       } as any,
       runner: {
-        execFile: vi.fn().mockRejectedValue(
-          new Error(
-            "Command failed: tmux list-panes -a -F ...\nerror connecting to /tmp/tmux-0/paseo-e2e (No such file or directory)\n",
+        execFile: vi
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              "Command failed: tmux list-panes -a -F ...\nerror connecting to /tmp/tmux-0/paseo-e2e (No such file or directory)\n",
+            ),
           ),
-        ),
       },
     });
 

@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import type { AgentPersistenceHandle, AgentSessionConfig } from "./agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManager, ManagedAgent } from "./agent/agent-manager.js";
+import type { ProjectPlacementPayload } from "./messages.js";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
@@ -263,7 +264,9 @@ export class TmuxCodexBridgeService {
 
     const paneId = readTmuxCodexPaneId(input.handle);
     const snapshots = await this.discoveryBridge.discover();
-    const snapshot = snapshots.find((entry) => entry.agentId === input.agentId || entry.paneId === paneId);
+    const snapshot = snapshots.find(
+      (entry) => entry.agentId === input.agentId || entry.paneId === paneId,
+    );
     if (!snapshot) {
       throw new Error(`tmux codex session not found for pane ${paneId}`);
     }
@@ -297,7 +300,8 @@ export class TmuxCodexBridgeService {
     const title =
       (typeof input.config.title === "string" && input.config.title.trim()) ||
       (typeof input.handle.metadata?.title === "string" && input.handle.metadata.title.trim()) ||
-      (typeof input.handle.metadata?.paneTitle === "string" && input.handle.metadata.paneTitle.trim()) ||
+      (typeof input.handle.metadata?.paneTitle === "string" &&
+        input.handle.metadata.paneTitle.trim()) ||
       null;
 
     const codexSessionId = this.resolveRecoverableCodexSessionId(input.handle);
@@ -474,13 +478,14 @@ export class TmuxCodexBridgeService {
     const agentId = options?.forcedAgentId ?? snapshot.agentId;
     const preferredTitle = normalizePreferredTitle(options?.preferredTitle);
     const effectiveTitle =
-      preferredTitle && isGeneratedTmuxFallbackTitle({
+      preferredTitle &&
+      isGeneratedTmuxFallbackTitle({
         title: preferredTitle,
         paneId: snapshot.paneId,
         cwd: snapshot.cwd,
       })
         ? snapshot.title
-        : preferredTitle ?? snapshot.title;
+        : (preferredTitle ?? snapshot.title);
     const sessionConfig =
       effectiveTitle === snapshot.config.title
         ? snapshot.config
@@ -514,8 +519,7 @@ export class TmuxCodexBridgeService {
         windowId: snapshot.windowId,
       },
       loadTimeline: snapshot.codexSessionId
-        ? async () =>
-            loadCodexPersistedTimeline(snapshot.codexSessionId!, undefined, this.logger)
+        ? async () => loadCodexPersistedTimeline(snapshot.codexSessionId!, undefined, this.logger)
         : undefined,
       capturePane: async (paneId) => this.capturePane(paneId),
       sendKeys: async (paneId, keys) => this.sendKeys(paneId, keys),
@@ -610,7 +614,7 @@ export class TmuxCodexBridgeService {
     const candidatePool = nonGenerated.length > 0 ? nonGenerated : records;
     const fallback =
       options?.fallbackAgentId != null
-        ? candidatePool.find((record) => record.id === options.fallbackAgentId) ?? null
+        ? (candidatePool.find((record) => record.id === options.fallbackAgentId) ?? null)
         : null;
     const canonical = fallback ?? [...candidatePool].sort(compareStoredRecordAge)[0]!;
     return {
@@ -797,10 +801,24 @@ export class TmuxCodexBridgeService {
 
   private async ensureWorkspaceProjection(snapshot: TmuxCodexPaneSnapshot): Promise<void> {
     const normalizedCwd = normalizeWorkspaceId(snapshot.cwd);
-    const placement = await buildProjectPlacementForCwd({
-      cwd: normalizedCwd,
-      workspaceGitService: this.workspaceGitService,
-    });
+    const placement: ProjectPlacementPayload = this.workspaceGitService
+      ? await buildProjectPlacementForCwd({
+          cwd: normalizedCwd,
+          workspaceGitService: this.workspaceGitService,
+        })
+      : {
+          projectKey: normalizedCwd,
+          projectName: basename(normalizedCwd),
+          checkout: {
+            cwd: normalizedCwd,
+            isGit: false,
+            currentBranch: null,
+            remoteUrl: null,
+            worktreeRoot: null,
+            isPaseoOwnedWorktree: false,
+            mainRepoRoot: null,
+          },
+        };
     const workspaceId = deriveWorkspaceId(normalizedCwd, placement.checkout);
     const now = new Date().toISOString();
 

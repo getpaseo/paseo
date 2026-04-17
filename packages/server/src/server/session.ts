@@ -3120,7 +3120,10 @@ export class Session {
       if (existing) {
         await this.interruptAgentIfRunning(agentId);
         const bridgedHandle = existing.persistence ?? null;
-        if (bridgedHandle && (isTmuxCodexHandle(bridgedHandle) || isCodexProcessHandle(bridgedHandle))) {
+        if (
+          bridgedHandle &&
+          (isTmuxCodexHandle(bridgedHandle) || isCodexProcessHandle(bridgedHandle))
+        ) {
           await this.agentManager.closeAgent(agentId);
           const bridgedSnapshot = await this.resumeAgentThroughExternalBridge({
             handle: bridgedHandle,
@@ -5094,7 +5097,9 @@ export class Session {
       };
     }
 
-    const titleMatches = storedRecords.filter((record) => resolveStoredAgentTitle(record) === trimmed);
+    const titleMatches = storedRecords.filter(
+      (record) => resolveStoredAgentTitle(record) === trimmed,
+    );
     if (titleMatches.length === 1) {
       return { ok: true, agentId: titleMatches[0].id };
     }

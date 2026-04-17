@@ -174,7 +174,10 @@ export function deriveAgentScreenViewState({
     sync = { status: "reconnecting" };
   } else if (input.missingAgentState.kind === "error") {
     sync = { status: "sync_error" };
-  } else if (!input.deferAuthoritativeSync && (input.needsAuthoritativeSync || input.isHistorySyncing)) {
+  } else if (
+    !input.deferAuthoritativeSync &&
+    (input.needsAuthoritativeSync || input.isHistorySyncing)
+  ) {
     let ui: "overlay" | "silent";
     if (input.shouldUseOptimisticStream) {
       ui = "silent";

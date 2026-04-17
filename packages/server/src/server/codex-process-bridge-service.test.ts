@@ -166,14 +166,12 @@ describe("CodexProcessBridgeService", () => {
   it("treats a tty-reused no-session codex process as a new external session", async () => {
     const { service, state, adoptSession, closeAgent } = createService({ missingScanGrace: 1 });
 
-    state.psOutput =
-      "1831379 621663 pts/14 /opt/codex/codex --no-alt-screen\n";
+    state.psOutput = "1831379 621663 pts/14 /opt/codex/codex --no-alt-screen\n";
     await service.syncNow();
 
     const firstAgentId = adoptSession.mock.calls[0]?.[2];
 
-    state.psOutput =
-      "1832000 621663 pts/14 /opt/codex/codex --no-alt-screen\n";
+    state.psOutput = "1832000 621663 pts/14 /opt/codex/codex --no-alt-screen\n";
     await service.syncNow();
 
     const secondAgentId = adoptSession.mock.calls[1]?.[2];
@@ -186,8 +184,7 @@ describe("CodexProcessBridgeService", () => {
   it("does not resume a different no-session codex process only because the tty matches", async () => {
     const { service, adoptSession, state } = createService();
 
-    state.psOutput =
-      "1832000 621663 pts/14 /opt/codex/codex --no-alt-screen\n";
+    state.psOutput = "1832000 621663 pts/14 /opt/codex/codex --no-alt-screen\n";
 
     await expect(
       service.resumeFromPersistence({

@@ -29,7 +29,9 @@ function normalizeStoredTitle(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function readTmuxRuntimeExtra(record: Pick<StoredAgentRecord, "runtimeInfo">): Record<string, unknown> {
+function readTmuxRuntimeExtra(
+  record: Pick<StoredAgentRecord, "runtimeInfo">,
+): Record<string, unknown> {
   const extra = record.runtimeInfo?.extra;
   return extra && typeof extra === "object" ? (extra as Record<string, unknown>) : {};
 }
@@ -43,7 +45,9 @@ function readTmuxConfigExtra(record: Pick<StoredAgentRecord, "config">): Record<
   return codex && typeof codex === "object" ? (codex as Record<string, unknown>) : {};
 }
 
-function readTmuxPaneId(record: Pick<StoredAgentRecord, "config" | "runtimeInfo" | "persistence">): string | null {
+function readTmuxPaneId(
+  record: Pick<StoredAgentRecord, "config" | "runtimeInfo" | "persistence">,
+): string | null {
   const runtimeExtra = readTmuxRuntimeExtra(record);
   const configExtra = readTmuxConfigExtra(record);
   const candidates = [

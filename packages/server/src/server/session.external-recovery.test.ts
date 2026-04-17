@@ -334,7 +334,9 @@ describe("external bridged session recovery", () => {
     const response = emitted.find((message) => message.type === "fetch_agent_timeline_response");
     expect(response?.payload.error).toBeNull();
     expect(response?.payload.agent?.id).toBe(storedRecord.id);
-    expect(response?.payload.agent?.persistence?.metadata?.externalSessionSource).toBe("tmux_codex");
+    expect(response?.payload.agent?.persistence?.metadata?.externalSessionSource).toBe(
+      "tmux_codex",
+    );
   });
 
   test("refresh_agent_request relaunches a closed external codex session through tmux", async () => {
@@ -507,7 +509,9 @@ describe("external bridged session recovery", () => {
     const codexProcessBridge = {
       resumeFromPersistence: vi
         .fn()
-        .mockRejectedValue(new Error("codex process session not found for agent-external-refresh-no-tmux")),
+        .mockRejectedValue(
+          new Error("codex process session not found for agent-external-refresh-no-tmux"),
+        ),
     };
 
     const emitted: any[] = [];

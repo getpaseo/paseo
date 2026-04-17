@@ -257,7 +257,7 @@ function AgentPanelBody({
 
   const agentState = useSessionStore(
     useShallow((state) => {
-      const agent = agentId ? state.sessions[serverId]?.agents?.get(agentId) ?? null : null;
+      const agent = agentId ? (state.sessions[serverId]?.agents?.get(agentId) ?? null) : null;
       return {
         serverId: agent?.serverId ?? null,
         id: agent?.id ?? null,
@@ -270,7 +270,7 @@ function AgentPanelBody({
     }),
   );
   const agentRecord = useSessionStore((state) =>
-    agentId ? state.sessions[serverId]?.agents?.get(agentId) ?? null : null,
+    agentId ? (state.sessions[serverId]?.agents?.get(agentId) ?? null) : null,
   );
   const projectPlacement = useStoreWithEqualityFn(
     useSessionStore,
@@ -730,7 +730,6 @@ function AgentPanelBody({
     shouldUseOptimisticStream,
   ]);
 
-
   if (viewState.tag === "not_found") {
     return (
       <View style={styles.container} testID="agent-not-found">
@@ -793,34 +792,34 @@ function AgentPanelBody({
                 }}
               />
             ) : (
-            <AgentInputArea
-              agentId={agentId}
-              serverId={serverId}
-              isPaneFocused={isPaneFocused}
-              value={agentInputDraft.text}
-              onChangeText={agentInputDraft.setText}
-              images={agentInputDraft.images}
-              onChangeImages={agentInputDraft.setImages}
-              clearDraft={agentInputDraft.clear}
-              autoFocus={isPaneFocused}
-              isSubmitLoading={showPendingCreateSubmitLoading}
-              onAttentionInputFocus={attentionController.clearOnInputFocus}
-              onAttentionPromptSend={attentionController.clearOnPromptSend}
-              onAddImages={handleAddImagesCallback}
-              onComposerHeightChange={(height) => {
-                logWebStickyBottom("screen_composer_height_change", {
-                  agentId,
-                  height,
-                });
-                streamViewRef.current?.prepareForViewportChange();
-              }}
-              onMessageSent={() => {
-                logWebStickyBottom("screen_message_sent_scroll_to_bottom", {
-                  agentId,
-                });
-                streamViewRef.current?.scrollToBottom("message-sent");
-              }}
-            />
+              <AgentInputArea
+                agentId={agentId}
+                serverId={serverId}
+                isPaneFocused={isPaneFocused}
+                value={agentInputDraft.text}
+                onChangeText={agentInputDraft.setText}
+                images={agentInputDraft.images}
+                onChangeImages={agentInputDraft.setImages}
+                clearDraft={agentInputDraft.clear}
+                autoFocus={isPaneFocused}
+                isSubmitLoading={showPendingCreateSubmitLoading}
+                onAttentionInputFocus={attentionController.clearOnInputFocus}
+                onAttentionPromptSend={attentionController.clearOnPromptSend}
+                onAddImages={handleAddImagesCallback}
+                onComposerHeightChange={(height) => {
+                  logWebStickyBottom("screen_composer_height_change", {
+                    agentId,
+                    height,
+                  });
+                  streamViewRef.current?.prepareForViewportChange();
+                }}
+                onMessageSent={() => {
+                  logWebStickyBottom("screen_message_sent_scroll_to_bottom", {
+                    agentId,
+                  });
+                  streamViewRef.current?.scrollToBottom("message-sent");
+                }}
+              />
             )
           ) : agentId && agentState.archivedAt ? (
             <ArchivedAgentCallout serverId={serverId} agentId={agentId} />

@@ -75,8 +75,9 @@ function WorkspaceTabPresentationResolverInner({
 }: WorkspaceTabPresentationResolverInnerProps): ReactElement {
   const agentId = tab.target.kind === "agent" ? tab.target.agentId : null;
   const agent =
-    useSessionStore((state) => (agentId ? (state.sessions[serverId]?.agents?.get(agentId) ?? null) : null)) ??
-    null;
+    useSessionStore((state) =>
+      agentId ? (state.sessions[serverId]?.agents?.get(agentId) ?? null) : null,
+    ) ?? null;
   const descriptor = registration.useDescriptor(tab.target as never, {
     serverId,
     workspaceId,
@@ -220,10 +221,7 @@ export function WorkspaceTabOptionRow({
             {presentation.badges.map((badge) => (
               <View
                 key={badge.key}
-                style={[
-                  styles.optionBadge,
-                  badge.tone === "warning" && styles.optionBadgeWarning,
-                ]}
+                style={[styles.optionBadge, badge.tone === "warning" && styles.optionBadgeWarning]}
               >
                 <Text
                   style={[

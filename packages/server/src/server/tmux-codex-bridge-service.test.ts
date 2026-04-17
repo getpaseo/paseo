@@ -100,8 +100,7 @@ function createRunnerMock(params: {
   const title = params.title ?? "";
   const state = {
     listPanesOutput:
-      params.listPanesOutput ??
-      `${paneId}\tworkspace-a\t@1\t${title}\t1001\t/dev/pts/21\t${cwd}\n`,
+      params.listPanesOutput ?? `${paneId}\tworkspace-a\t@1\t${title}\t1001\t/dev/pts/21\t${cwd}\n`,
     psOutput:
       params.psOutput ??
       `1001 1 tmux: server\n1002 1001 ${params.processArgs ?? "/usr/local/bin/codex-root-wrapper resume 019d7f5b-1d2c-76c2-96e9-0a6496559b68"}\n1003 1002 /opt/codex/codex resume 019d7f5b-1d2c-76c2-96e9-0a6496559b68\n`,
