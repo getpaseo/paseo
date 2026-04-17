@@ -34,7 +34,12 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { router, usePathname } from "expo-router";
 import { usePanelStore, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from "@/stores/panel-store";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+import { SidebarSessionList } from "./sidebar-session-list";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { FolderGit2 } from "lucide-react-native";
+import { useAllAgentsList } from "@/hooks/use-all-agents-list";
+import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
 import {
   useSidebarWorkspacesList,
@@ -52,7 +57,6 @@ import {
   useIsCompactFormFactor,
 } from "@/constants/layout";
 import {
-  buildHostSessionsRoute,
   buildHostSettingsRoute,
   mapPathnameToServer,
   parseServerIdFromPathname,
@@ -68,6 +72,8 @@ type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 interface LeftSidebarProps {
   selectedAgentId?: string;
 }
+
+type SidebarTab = "projects" | "sessions";
 
 interface SidebarSharedProps {
   theme: SidebarTheme;
@@ -102,20 +108,30 @@ interface MobileSidebarProps extends SidebarSharedProps {
   insetsBottom: number;
   isOpen: boolean;
   closeToAgent: () => void;
-  handleViewMoreNavigate: () => void;
+  activeTab: SidebarTab;
+  setActiveTab: Dispatch<SetStateAction<SidebarTab>>;
+  sessions: AggregatedAgent[];
+  isSessionsInitialLoad: boolean;
+  isSessionsRevalidating: boolean;
+  handleSessionsRefresh: () => void;
+  isSessionsManualRefresh: boolean;
+  selectedAgentId?: string;
 }
 
 interface DesktopSidebarProps extends SidebarSharedProps {
   insetsTop: number;
   isOpen: boolean;
-  handleViewMore: () => void;
+  activeTab: SidebarTab;
+  setActiveTab: Dispatch<SetStateAction<SidebarTab>>;
+  sessions: AggregatedAgent[];
+  isSessionsInitialLoad: boolean;
+  isSessionsRevalidating: boolean;
+  handleSessionsRefresh: () => void;
+  isSessionsManualRefresh: boolean;
+  selectedAgentId?: string;
 }
 
-export const LeftSidebar = memo(function LeftSidebar({
-  selectedAgentId: _selectedAgentId,
-}: LeftSidebarProps) {
-  void _selectedAgentId;
-
+export const LeftSidebar = memo(function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isCompactLayout = useIsCompactFormFactor();
@@ -188,10 +204,34 @@ export const LeftSidebar = memo(function LeftSidebar({
 
   const isOpen = isCompactLayout ? mobileView === "agent-list" : desktopAgentListOpen;
 
+  const [activeTab, setActiveTab] = useState<SidebarTab>("projects");
+
   const { projects, isInitialLoad, isRevalidating, refreshAll } = useSidebarWorkspacesList({
     serverId: activeServerId,
     enabled: isOpen,
   });
+
+  // Sessions data for desktop Sessions tab. Hook always runs for stable hook order;
+  // the data only renders when the Sessions tab is active on desktop.
+  const {
+    agents: sessions,
+    isInitialLoad: isSessionsInitialLoad,
+    isRevalidating: isSessionsRevalidating,
+    refreshAll: refreshSessions,
+  } = useAllAgentsList({ serverId: activeServerId, includeArchived: false });
+
+  const [isSessionsManualRefresh, setIsSessionsManualRefresh] = useState(false);
+
+  const handleSessionsRefresh = useCallback(() => {
+    setIsSessionsManualRefresh(true);
+    refreshSessions();
+  }, [refreshSessions]);
+
+  useEffect(() => {
+    if (!isSessionsRevalidating && isSessionsManualRefresh) {
+      setIsSessionsManualRefresh(false);
+    }
+  }, [isSessionsRevalidating, isSessionsManualRefresh]);
   const { collapsedProjectKeys, shortcutIndexByWorkspaceKey, toggleProjectCollapsed } =
     useSidebarShortcutModel(projects);
 
@@ -232,13 +272,6 @@ export const LeftSidebar = memo(function LeftSidebar({
       return;
     }
     router.push(buildHostSettingsRoute(activeServerId));
-  }, [activeServerId]);
-
-  const handleViewMoreNavigate = useCallback(() => {
-    if (!activeServerId) {
-      return;
-    }
-    router.push(buildHostSessionsRoute(activeServerId));
   }, [activeServerId]);
 
   const handleHostSelect = useCallback(
@@ -284,7 +317,14 @@ export const LeftSidebar = memo(function LeftSidebar({
         closeToAgent={closeToAgent}
         handleOpenProject={handleOpenProjectMobile}
         handleSettings={handleSettingsMobile}
-        handleViewMoreNavigate={handleViewMoreNavigate}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        sessions={sessions}
+        isSessionsInitialLoad={isSessionsInitialLoad}
+        isSessionsRevalidating={isSessionsRevalidating}
+        handleSessionsRefresh={handleSessionsRefresh}
+        isSessionsManualRefresh={isSessionsManualRefresh}
+        selectedAgentId={selectedAgentId}
       />
     );
   }
@@ -296,7 +336,14 @@ export const LeftSidebar = memo(function LeftSidebar({
       isOpen={isOpen}
       handleOpenProject={handleOpenProjectDesktop}
       handleSettings={handleSettingsDesktop}
-      handleViewMore={handleViewMoreNavigate}
+      activeTab={activeTab}
+      setActiveTab={setActiveTab}
+      sessions={sessions}
+      isSessionsInitialLoad={isSessionsInitialLoad}
+      isSessionsRevalidating={isSessionsRevalidating}
+      handleSessionsRefresh={handleSessionsRefresh}
+      isSessionsManualRefresh={isSessionsManualRefresh}
+      selectedAgentId={selectedAgentId}
     />
   );
 });
@@ -328,44 +375,6 @@ function HostSwitchOption({
   );
 }
 
-function SessionsButton({ onPress }: { onPress: () => void }) {
-  const { theme } = useUnistyles();
-  const pathname = usePathname();
-  const isActive = pathname.includes("/sessions");
-
-  return (
-    <Pressable
-      style={({ hovered }) => [
-        styles.newAgentButton,
-        hovered && styles.newAgentButtonHovered,
-        isActive && styles.newAgentButtonActive,
-      ]}
-      testID="sidebar-sessions"
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel="Sessions"
-      onPress={onPress}
-    >
-      {({ hovered }) => (
-        <>
-          <MessagesSquare
-            size={theme.iconSize.md}
-            color={hovered || isActive ? theme.colors.foreground : theme.colors.foregroundMuted}
-          />
-          <Text
-            style={[
-              styles.newAgentButtonText,
-              (hovered || isActive) && styles.newAgentButtonTextHovered,
-            ]}
-          >
-            Sessions
-          </Text>
-        </>
-      )}
-    </Pressable>
-  );
-}
-
 function MobileSidebar({
   theme,
   activeServerId,
@@ -391,7 +400,14 @@ function MobileSidebar({
   insetsBottom,
   isOpen,
   closeToAgent,
-  handleViewMoreNavigate,
+  activeTab,
+  setActiveTab,
+  sessions,
+  isSessionsInitialLoad,
+  isSessionsRevalidating,
+  handleSessionsRefresh,
+  isSessionsManualRefresh,
+  selectedAgentId,
 }: MobileSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const {
@@ -411,23 +427,6 @@ function MobileSidebar({
     gestureAnimatingRef.current = true;
     closeToAgent();
   }, [closeToAgent, gestureAnimatingRef]);
-
-  const handleViewMore = useCallback(() => {
-    if (!activeServerId) {
-      return;
-    }
-    translateX.value = -windowWidth;
-    backdropOpacity.value = 0;
-    closeToAgent();
-    handleViewMoreNavigate();
-  }, [
-    activeServerId,
-    backdropOpacity,
-    closeToAgent,
-    handleViewMoreNavigate,
-    translateX,
-    windowWidth,
-  ]);
 
   const closeGesture = useMemo(
     () =>
@@ -546,24 +545,56 @@ function MobileSidebar({
           <View style={styles.sidebarContent} pointerEvents="auto">
             <View style={styles.sidebarHeader}>
               <View style={styles.sidebarHeaderRow}>
-                <SessionsButton onPress={handleViewMore} />
+                <SegmentedControl<SidebarTab>
+                  testID="sidebar-tab-switcher"
+                  options={[
+                    {
+                      value: "projects",
+                      label: "Projects",
+                      icon: ({ color, size }) => <FolderGit2 color={color} size={size} />,
+                      testID: "sidebar-tab-projects",
+                    },
+                    {
+                      value: "sessions",
+                      label: "Sessions",
+                      icon: ({ color, size }) => <MessagesSquare color={color} size={size} />,
+                      testID: "sidebar-tab-sessions",
+                    },
+                  ]}
+                  value={activeTab}
+                  onValueChange={setActiveTab}
+                  size="sm"
+                  style={styles.tabSwitcher}
+                />
               </View>
             </View>
 
-            {isInitialLoad ? (
+            {activeTab === "projects" ? (
+              isInitialLoad ? (
+                <SidebarAgentListSkeleton />
+              ) : (
+                <SidebarWorkspaceList
+                  serverId={activeServerId}
+                  collapsedProjectKeys={collapsedProjectKeys}
+                  onToggleProjectCollapsed={toggleProjectCollapsed}
+                  shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+                  projects={projects}
+                  isRefreshing={isManualRefresh && isRevalidating}
+                  onRefresh={handleRefresh}
+                  onWorkspacePress={() => closeToAgent()}
+                  onAddProject={handleOpenProject}
+                  parentGestureRef={closeGestureRef}
+                />
+              )
+            ) : isSessionsInitialLoad ? (
               <SidebarAgentListSkeleton />
             ) : (
-              <SidebarWorkspaceList
-                serverId={activeServerId}
-                collapsedProjectKeys={collapsedProjectKeys}
-                onToggleProjectCollapsed={toggleProjectCollapsed}
-                shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-                projects={projects}
-                isRefreshing={isManualRefresh && isRevalidating}
-                onRefresh={handleRefresh}
-                onWorkspacePress={() => closeToAgent()}
-                onAddProject={handleOpenProject}
-                parentGestureRef={closeGestureRef}
+              <SidebarSessionList
+                agents={sessions}
+                isRefreshing={isSessionsManualRefresh && isSessionsRevalidating}
+                onRefresh={handleSessionsRefresh}
+                selectedAgentId={selectedAgentId}
+                onAgentPress={() => closeToAgent()}
               />
             )}
 
@@ -673,7 +704,14 @@ function DesktopSidebar({
   handleSettings,
   insetsTop,
   isOpen,
-  handleViewMore,
+  activeTab,
+  setActiveTab,
+  sessions,
+  isSessionsInitialLoad,
+  isSessionsRevalidating,
+  handleSessionsRefresh,
+  isSessionsManualRefresh,
+  selectedAgentId,
 }: DesktopSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const padding = useWindowControlsPadding("sidebar");
@@ -734,23 +772,54 @@ function DesktopSidebar({
           {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
           <View style={styles.sidebarHeader}>
             <View style={styles.sidebarHeaderRow}>
-              <SessionsButton onPress={handleViewMore} />
+              <SegmentedControl<SidebarTab>
+                testID="sidebar-tab-switcher"
+                options={[
+                  {
+                    value: "projects",
+                    label: "Projects",
+                    icon: ({ color, size }) => <FolderGit2 color={color} size={size} />,
+                    testID: "sidebar-tab-projects",
+                  },
+                  {
+                    value: "sessions",
+                    label: "Sessions",
+                    icon: ({ color, size }) => <MessagesSquare color={color} size={size} />,
+                    testID: "sidebar-tab-sessions",
+                  },
+                ]}
+                value={activeTab}
+                onValueChange={setActiveTab}
+                size="sm"
+                style={styles.tabSwitcher}
+              />
             </View>
           </View>
         </View>
 
-        {isInitialLoad ? (
+        {activeTab === "projects" ? (
+          isInitialLoad ? (
+            <SidebarAgentListSkeleton />
+          ) : (
+            <SidebarWorkspaceList
+              serverId={activeServerId}
+              collapsedProjectKeys={collapsedProjectKeys}
+              onToggleProjectCollapsed={toggleProjectCollapsed}
+              shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+              projects={projects}
+              isRefreshing={isManualRefresh && isRevalidating}
+              onRefresh={handleRefresh}
+              onAddProject={handleOpenProject}
+            />
+          )
+        ) : isSessionsInitialLoad ? (
           <SidebarAgentListSkeleton />
         ) : (
-          <SidebarWorkspaceList
-            serverId={activeServerId}
-            collapsedProjectKeys={collapsedProjectKeys}
-            onToggleProjectCollapsed={toggleProjectCollapsed}
-            shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-            projects={projects}
-            isRefreshing={isManualRefresh && isRevalidating}
-            onRefresh={handleRefresh}
-            onAddProject={handleOpenProject}
+          <SidebarSessionList
+            agents={sessions}
+            isRefreshing={isSessionsManualRefresh && isSessionsRevalidating}
+            onRefresh={handleSessionsRefresh}
+            selectedAgentId={selectedAgentId}
           />
         )}
 
@@ -898,28 +967,9 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     gap: theme.spacing[2],
   },
-  newAgentButton: {
+  tabSwitcher: {
     flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-  },
-  newAgentButtonText: {
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.foregroundMuted,
-  },
-  newAgentButtonTextHovered: {
-    color: theme.colors.foreground,
-  },
-  newAgentButtonHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
-  newAgentButtonActive: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
+    justifyContent: "center",
   },
   hostTrigger: {
     flexDirection: "row",
