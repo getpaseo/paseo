@@ -659,7 +659,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     }
 
     const serverInfo = client.getLastServerInfoMessage();
-    if (!serverInfo?.features?.providersSnapshot) {
+    if (serverInfo?.features?.providersSnapshot === false) {
       return;
     }
 
