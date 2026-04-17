@@ -15,6 +15,7 @@ import {
   type LocalSttModelId,
   type LocalTtsModelId,
 } from "./models.js";
+import { isSherpaOnnxModelReady } from "./sherpa/model-downloader.js";
 import { SherpaOfflineRecognizerEngine } from "./sherpa/sherpa-offline-recognizer.js";
 import { SherpaOnlineRecognizerEngine } from "./sherpa/sherpa-online-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa/sherpa-parakeet-stt.js";
@@ -116,6 +117,9 @@ async function createLocalSttEngine(params: {
   logger: Logger;
 }): Promise<LocalSttEngine> {
   const { modelId, modelsDir, logger } = params;
+  if (!(await isSherpaOnnxModelReady({ modelsDir, modelId }))) {
+    throw new Error(`Local STT model '${modelId}' is not fully initialized in ${modelsDir}`);
+  }
 
   if (modelId === "parakeet-tdt-0.6b-v3-int8" || modelId === "parakeet-tdt-0.6b-v2-int8") {
     const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
@@ -302,6 +306,16 @@ export async function initializeLocalSpeechServices(params: {
     } else {
       try {
         if (localModels.voiceLocalTtsModel === "pocket-tts-onnx-int8") {
+          if (
+            !(await isSherpaOnnxModelReady({
+              modelsDir: localConfig.modelsDir,
+              modelId: localModels.voiceLocalTtsModel,
+            }))
+          ) {
+            throw new Error(
+              `Local TTS model '${localModels.voiceLocalTtsModel}' is not fully initialized in ${localConfig.modelsDir}`,
+            );
+          }
           const modelDir = getLocalSpeechModelDir(
             localConfig.modelsDir,
             localModels.voiceLocalTtsModel,
@@ -315,6 +329,16 @@ export async function initializeLocalSpeechServices(params: {
             logger,
           );
         } else {
+          if (
+            !(await isSherpaOnnxModelReady({
+              modelsDir: localConfig.modelsDir,
+              modelId: localModels.voiceLocalTtsModel,
+            }))
+          ) {
+            throw new Error(
+              `Local TTS model '${localModels.voiceLocalTtsModel}' is not fully initialized in ${localConfig.modelsDir}`,
+            );
+          }
           const modelDir = getLocalSpeechModelDir(
             localConfig.modelsDir,
             localModels.voiceLocalTtsModel,
