@@ -1,17 +1,18 @@
 import type { ChildProcess } from "node:child_process";
+import net from "node:net";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
   type Event as OpenCodeEvent,
   type FilePartInput as OpenCodeFilePartInput,
-  type OpencodeClient,
   type Part as OpenCodePart,
   type TextPartInput as OpenCodeTextPartInput,
+  type OpencodeClient,
 } from "@opencode-ai/sdk/v2/client";
-import net from "node:net";
 import type { Logger } from "pino";
 import { z } from "zod";
-
+import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { spawnProcess } from "../../../utils/spawn.js";
 import type {
   AgentCapabilityFlags,
   AgentClient,
@@ -41,12 +42,9 @@ import type {
 } from "../agent-sdk-types.js";
 import {
   applyProviderEnv,
-  resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
+  resolveProviderCommandPrefix,
 } from "../provider-launch-config.js";
-import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
-import { spawnProcess } from "../../../utils/spawn.js";
-import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
@@ -54,6 +52,7 @@ import {
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
