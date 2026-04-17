@@ -307,6 +307,30 @@ export function resolveCreateAgentTitles(options: {
   };
 }
 
+type StructuredHelperMcpCandidate = Pick<ManagedAgent, "cwd" | "lifecycle" | "updatedAt" | "config">;
+
+export function resolveStructuredHelperMcpServers(options: {
+  cwd: string;
+  agents: ReadonlyArray<StructuredHelperMcpCandidate>;
+}): AgentSessionConfig["mcpServers"] | undefined {
+  const candidates = options.agents
+    .filter((agent) => agent.cwd === options.cwd)
+    .filter((agent) => {
+      const mcpServers = agent.config.mcpServers;
+      return Boolean(mcpServers && Object.keys(mcpServers).length > 0);
+    })
+    .sort((left, right) => {
+      const leftPriority = left.lifecycle === "running" ? 0 : 1;
+      const rightPriority = right.lifecycle === "running" ? 0 : 1;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+      return right.updatedAt.getTime() - left.updatedAt.getTime();
+    });
+
+  return candidates[0]?.config.mcpServers;
+}
+
 export function resolveWaitForFinishError(options: {
   status: "permission" | "error" | "idle";
   final: AgentSnapshotPayload | null;
@@ -3524,6 +3548,10 @@ export class Session {
   }
 
   private async generateCommitMessage(cwd: string): Promise<string> {
+    const helperMcpServers = resolveStructuredHelperMcpServers({
+      cwd,
+      agents: this.agentManager.listAgents(),
+    });
     const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
       mode: "uncommitted",
       includeStructured: true,
@@ -3571,6 +3599,7 @@ export class Session {
         agentConfigOverrides: {
           title: "Commit generator",
           internal: true,
+          ...(helperMcpServers ? { mcpServers: helperMcpServers } : {}),
         },
       });
       return result.message;
@@ -3592,6 +3621,10 @@ export class Session {
     title: string;
     body: string;
   }> {
+    const helperMcpServers = resolveStructuredHelperMcpServers({
+      cwd,
+      agents: this.agentManager.listAgents(),
+    });
     const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
       mode: "base",
       baseRef,
@@ -3637,6 +3670,7 @@ export class Session {
         agentConfigOverrides: {
           title: "PR generator",
           internal: true,
+          ...(helperMcpServers ? { mcpServers: helperMcpServers } : {}),
         },
       });
     } catch (error) {

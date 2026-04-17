@@ -1,0 +1,82 @@
+import { describe, expect, test } from "vitest";
+
+import { resolveStructuredHelperMcpServers } from "./session.js";
+
+describe("resolveStructuredHelperMcpServers", () => {
+  test("prefers a running agent in the same cwd when it has MCP servers", () => {
+    const expected = {
+      task_board_mcp: { type: "http", url: "http://127.0.0.1:6767/mcp/task-board" },
+    };
+
+    const result = resolveStructuredHelperMcpServers({
+      cwd: "C:/workspace/app",
+      agents: [
+        {
+          cwd: "C:/workspace/app",
+          lifecycle: "idle",
+          updatedAt: new Date("2026-04-17T09:00:00.000Z"),
+          config: {
+            provider: "codex",
+            cwd: "C:/workspace/app",
+            mcpServers: {
+              paseo: { type: "http", url: "http://127.0.0.1:6767/mcp" },
+            },
+          },
+        },
+        {
+          cwd: "C:/workspace/app",
+          lifecycle: "running",
+          updatedAt: new Date("2026-04-17T08:00:00.000Z"),
+          config: {
+            provider: "codex",
+            cwd: "C:/workspace/app",
+            mcpServers: expected,
+          },
+        },
+      ],
+    });
+
+    expect(result).toEqual(expected);
+  });
+
+  test("ignores agents from other working directories", () => {
+    const result = resolveStructuredHelperMcpServers({
+      cwd: "C:/workspace/app",
+      agents: [
+        {
+          cwd: "C:/workspace/other",
+          lifecycle: "running",
+          updatedAt: new Date("2026-04-17T08:00:00.000Z"),
+          config: {
+            provider: "codex",
+            cwd: "C:/workspace/other",
+            mcpServers: {
+              task_board_mcp: { type: "http", url: "http://127.0.0.1:6767/mcp/task-board" },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(result).toBeUndefined();
+  });
+
+  test("returns undefined when no matching agent exposes MCP servers", () => {
+    const result = resolveStructuredHelperMcpServers({
+      cwd: "C:/workspace/app",
+      agents: [
+        {
+          cwd: "C:/workspace/app",
+          lifecycle: "running",
+          updatedAt: new Date("2026-04-17T08:00:00.000Z"),
+          config: {
+            provider: "codex",
+            cwd: "C:/workspace/app",
+          },
+        },
+      ],
+    });
+
+    expect(result).toBeUndefined();
+  });
+});
