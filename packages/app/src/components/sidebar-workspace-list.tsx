@@ -135,6 +135,7 @@ interface ProjectHeaderRowProps {
   displayName: string;
   iconDataUri: string | null;
   workspace: SidebarWorkspaceEntry | null;
+  projectStatusBucket?: SidebarProjectEntry["statusBucket"];
   selected?: boolean;
   chevron: "expand" | "collapse" | null;
   onPress: () => void;
@@ -288,6 +289,7 @@ function ProjectLeadingVisual({
   displayName,
   iconDataUri,
   workspace,
+  projectStatusBucket,
   chevron = null,
   showChevron = false,
   isArchiving = false,
@@ -295,6 +297,7 @@ function ProjectLeadingVisual({
   displayName: string;
   iconDataUri: string | null;
   workspace: SidebarWorkspaceEntry | null;
+  projectStatusBucket?: SidebarProjectEntry["statusBucket"];
   chevron?: "expand" | "collapse" | null;
   showChevron?: boolean;
   isArchiving?: boolean;
@@ -324,9 +327,26 @@ function ProjectLeadingVisual({
       <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
     </View>
   );
+  const showCollapsedNeedsInputDot =
+    activeWorkspace === null && chevron === "expand" && projectStatusBucket === "needs_input";
 
   if (!shouldShowWorkspaceStatus || !activeWorkspace) {
-    return <View style={styles.projectLeadingVisualSlot}>{projectIcon}</View>;
+    return (
+      <View style={styles.projectLeadingVisualSlot}>
+        {projectIcon}
+        {showCollapsedNeedsInputDot ? (
+          <View
+            style={[
+              styles.statusDotOverlay,
+              {
+                backgroundColor: theme.colors.palette.amber[500],
+                borderColor: theme.colors.surface0,
+              },
+            ]}
+          />
+        ) : null}
+      </View>
+    );
   }
 
   if (isArchiving) {
@@ -684,6 +704,7 @@ function ProjectHeaderRow({
   displayName,
   iconDataUri,
   workspace,
+  projectStatusBucket,
   selected = false,
   chevron,
   onPress,
@@ -778,6 +799,7 @@ function ProjectHeaderRow({
           displayName={displayName}
           iconDataUri={iconDataUri}
           workspace={workspace}
+          projectStatusBucket={projectStatusBucket}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
@@ -1289,6 +1311,7 @@ function FlattenedProjectRow({
       displayName={displayName}
       iconDataUri={iconDataUri}
       workspace={rowModel.workspace}
+      projectStatusBucket={project.statusBucket}
       selected={rowModel.selected}
       chevron={rowModel.chevron}
       onPress={onPress}
@@ -1550,6 +1573,7 @@ function ProjectBlock({
             displayName={displayName}
             iconDataUri={iconDataUri}
             workspace={null}
+            projectStatusBucket={project.statusBucket}
             selected={false}
             chevron={rowModel.chevron}
             onPress={onToggleCollapsed}
