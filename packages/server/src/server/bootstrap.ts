@@ -8,6 +8,7 @@ import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
+import { isOriginAllowed } from "./origin-policy.js";
 
 export type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -256,7 +257,15 @@ export async function createPaseoDaemon(
 
     app.use((req, res, next) => {
       const origin = req.headers.origin;
-      if (origin && (allowedOrigins.has("*") || allowedOrigins.has(origin))) {
+      const requestHost = typeof req.headers.host === "string" ? req.headers.host : null;
+      if (
+        origin &&
+        isOriginAllowed({
+          origin,
+          requestHost,
+          allowedOrigins,
+        })
+      ) {
         res.setHeader("Access-Control-Allow-Origin", origin);
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");

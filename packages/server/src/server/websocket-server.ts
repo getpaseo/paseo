@@ -38,6 +38,7 @@ import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
+import { isOriginAllowed } from "./origin-policy.js";
 import {
   computeShouldNotifyClient,
   computeShouldSendPush,
@@ -450,12 +451,13 @@ export class VoiceAssistantWebSocketServer {
           callback(false, 403, "Host not allowed");
           return;
         }
-        const sameOrigin =
-          !!origin &&
-          !!requestHost &&
-          (origin === `http://${requestHost}` || origin === `https://${requestHost}`);
-
-        if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin) || sameOrigin) {
+        if (
+          isOriginAllowed({
+            origin,
+            requestHost,
+            allowedOrigins,
+          })
+        ) {
           callback(true);
         } else {
           this.incrementRuntimeCounter("originRejected");
