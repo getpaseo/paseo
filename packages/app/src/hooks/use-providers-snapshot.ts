@@ -25,16 +25,17 @@ export function useProvidersSnapshot(serverId: string | null): UseProvidersSnaps
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
-  const supportsSnapshot = useSessionForServer(
+  const serverSupportsSnapshot = useSessionForServer(
     serverId,
-    (session) => session?.serverInfo?.features?.providersSnapshot === true,
+    (session) => session?.serverInfo?.features?.providersSnapshot,
   );
+  const supportsSnapshot = serverSupportsSnapshot !== false;
 
   const queryKey = useMemo(() => providersSnapshotQueryKey(serverId), [serverId]);
 
   const snapshotQuery = useQuery({
     queryKey,
-    enabled: Boolean(supportsSnapshot && serverId && client && isConnected),
+    enabled: Boolean(serverId && client && isConnected && supportsSnapshot),
     staleTime: 60_000,
     queryFn: async () => {
       if (!client) {
@@ -55,7 +56,7 @@ export function useProvidersSnapshot(serverId: string | null): UseProvidersSnaps
   const { mutateAsync: refreshSnapshot, isPending: isRefreshing } = refreshMutation;
 
   useEffect(() => {
-    if (!supportsSnapshot || !client || !isConnected || !serverId) {
+    if (!client || !isConnected || !serverId || !supportsSnapshot) {
       return;
     }
 

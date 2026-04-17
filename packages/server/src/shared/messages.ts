@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "../server/agent/agent-title-limits.js";
-import { AgentProviderSchema } from "../server/agent/provider-manifest.js";
+import { AgentProviderSchema as ImportedAgentProviderSchema } from "../server/agent/provider-manifest.js";
+// COMPAT(rn-dev-client): Metro can evaluate this import path as undefined during circular init.
+const AgentProviderValueSchema: z.ZodType<string> = (ImportedAgentProviderSchema ??
+  z.string()) as z.ZodType<string>;
 import { TOOL_CALL_ICON_NAMES } from "../server/agent/agent-sdk-types.js";
 import {
   ChatCreateRequestSchema,
@@ -109,7 +112,7 @@ const AgentSelectOptionSchema = z.object({
   label: z.string(),
   description: z.string().optional(),
   isDefault: z.boolean().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const AgentFeatureToggleSchema = z.object({
@@ -139,18 +142,18 @@ export const AgentFeatureSchema = z.discriminatedUnion("type", [
 ]);
 
 const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   id: z.string(),
   label: z.string(),
   description: z.string().optional(),
   isDefault: z.boolean().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
   defaultThinkingOptionId: z.string().optional(),
 });
 
 const ProviderSnapshotEntrySchema: z.ZodType<ProviderSnapshotEntry> = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   status: ProviderStatusSchema,
   error: z.string().optional(),
   models: z.array(AgentModelDefinitionSchema).optional(),
@@ -183,19 +186,19 @@ const McpStdioServerConfigSchema = z.object({
   type: z.literal("stdio"),
   command: z.string(),
   args: z.array(z.string()).optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
 });
 
 const McpHttpServerConfigSchema = z.object({
   type: z.literal("http"),
   url: z.string(),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
 });
 
 const McpSseServerConfigSchema = z.object({
   type: z.literal("sse"),
   url: z.string(),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
 });
 
 const McpServerConfigSchema = z.discriminatedUnion("type", [
@@ -205,12 +208,12 @@ const McpServerConfigSchema = z.discriminatedUnion("type", [
 ]);
 
 const AgentSessionConfigSchema = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
-  featureValues: z.record(z.unknown()).optional(),
+  featureValues: z.record(z.string(), z.unknown()).optional(),
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
   approvalPolicy: z.string().optional(),
   sandboxMode: z.string().optional(),
@@ -218,16 +221,16 @@ const AgentSessionConfigSchema = z.object({
   webSearch: z.boolean().optional(),
   extra: z
     .object({
-      codex: z.record(z.unknown()).optional(),
-      claude: z.record(z.unknown()).optional(),
+      codex: z.record(z.string(), z.unknown()).optional(),
+      claude: z.record(z.string(), z.unknown()).optional(),
     })
     .partial()
     .optional(),
   systemPrompt: z.string().optional(),
-  mcpServers: z.record(McpServerConfigSchema).optional(),
+  mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
 });
 
-const AgentPermissionUpdateSchema = z.record(z.unknown());
+const AgentPermissionUpdateSchema = z.record(z.string(), z.unknown());
 const AgentPermissionActionSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -240,7 +243,7 @@ export const AgentPermissionResponseSchema: z.ZodType<AgentPermissionResponse> =
   z.object({
     behavior: z.literal("allow"),
     selectedActionId: z.string().optional(),
-    updatedInput: z.record(z.unknown()).optional(),
+    updatedInput: z.record(z.string(), z.unknown()).optional(),
     updatedPermissions: z.array(AgentPermissionUpdateSchema).optional(),
   }),
   z.object({
@@ -253,16 +256,16 @@ export const AgentPermissionResponseSchema: z.ZodType<AgentPermissionResponse> =
 
 export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionRequest> = z.object({
   id: z.string(),
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   name: z.string(),
   kind: z.enum(["tool", "plan", "question", "mode", "other"]),
   title: z.string().optional(),
   description: z.string().optional(),
-  input: z.record(z.unknown()).optional(),
+  input: z.record(z.string(), z.unknown()).optional(),
   detail: z.lazy(() => ToolCallDetailPayloadSchema).optional(),
   suggestions: z.array(AgentPermissionUpdateSchema).optional(),
   actions: z.array(AgentPermissionActionSchema).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const UnknownValueSchema = z.union([
@@ -394,7 +397,7 @@ const ToolCallBasePayloadSchema = z
     callId: z.string(),
     name: z.string(),
     detail: ToolCallDetailPayloadSchema,
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -467,48 +470,48 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("thread_started"),
     sessionId: z.string(),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
   }),
   z.object({
     type: z.literal("turn_started"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
   }),
   z.object({
     type: z.literal("turn_completed"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     usage: AgentUsageSchema.optional(),
   }),
   z.object({
     type: z.literal("turn_failed"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     error: z.string(),
     code: z.string().optional(),
     diagnostic: z.string().optional(),
   }),
   z.object({
     type: z.literal("turn_canceled"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     reason: z.string(),
   }),
   z.object({
     type: z.literal("timeline"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     item: AgentTimelineItemPayloadSchema,
   }),
   z.object({
     type: z.literal("permission_requested"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     request: AgentPermissionRequestPayloadSchema,
   }),
   z.object({
     type: z.literal("permission_resolved"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     requestId: z.string(),
     resolution: AgentPermissionResponseSchema,
   }),
   z.object({
     type: z.literal("attention_required"),
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     reason: z.enum(["finished", "error", "permission"]),
     timestamp: z.string(),
     shouldNotify: z.boolean(),
@@ -528,25 +531,25 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
 
 const AgentPersistenceHandleSchema: z.ZodType<AgentPersistenceHandle | null> = z
   .object({
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     sessionId: z.string(),
     nativeHandle: z.string().optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .nullable();
 
 const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   sessionId: z.string().nullable(),
   model: z.string().nullable().optional(),
   thinkingOptionId: z.string().nullable().optional(),
   modeId: z.string().nullable().optional(),
-  extra: z.record(z.unknown()).optional(),
+  extra: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   cwd: z.string(),
   model: z.string().nullable(),
   features: z.array(AgentFeatureSchema).optional(),
@@ -565,7 +568,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
-  labels: z.record(z.string()).default({}),
+  labels: z.record(z.string(), z.string()).default({}),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -597,7 +600,7 @@ export const AudioPlayedMessageSchema = z.object({
 });
 
 const AgentDirectoryFilterSchema = z.object({
-  labels: z.record(z.string()).optional(),
+  labels: z.record(z.string(), z.string()).optional(),
   projectKeys: z.array(z.string()).optional(),
   statuses: z.array(AgentStatusSchema).optional(),
   includeArchived: z.boolean().optional(),
@@ -628,7 +631,7 @@ export const UpdateAgentRequestMessageSchema = z.object({
   type: z.literal("update_agent_request"),
   agentId: z.string(),
   name: z.string().optional(),
-  labels: z.record(z.string()).optional(),
+  labels: z.record(z.string(), z.string()).optional(),
   requestId: z.string(),
 });
 
@@ -679,6 +682,25 @@ export const FetchAgentsRequestMessageSchema = z.object({
   subscribe: z
     .object({
       subscriptionId: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const FetchRecoverableAgentsRequestMessageSchema = z.object({
+  type: z.literal("fetch_recoverable_agents_request"),
+  requestId: z.string(),
+  sort: z
+    .array(
+      z.object({
+        key: z.enum(["status_priority", "created_at", "updated_at", "title"]),
+        direction: z.enum(["asc", "desc"]),
+      }),
+    )
+    .optional(),
+  page: z
+    .object({
+      limit: z.number().int().positive().max(200),
+      cursor: z.string().min(1).optional(),
     })
     .optional(),
 });
@@ -810,7 +832,7 @@ export const CreateAgentRequestMessageSchema = z.object({
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
   clientMessageId: z.string().optional(),
-  outputSchema: z.record(z.unknown()).optional(),
+  outputSchema: z.record(z.string(), z.unknown()).optional(),
   images: z
     .array(
       z.object({
@@ -820,20 +842,20 @@ export const CreateAgentRequestMessageSchema = z.object({
     )
     .optional(),
   git: GitSetupOptionsSchema.optional(),
-  labels: z.record(z.string()).default({}),
+  labels: z.record(z.string(), z.string()).default({}),
   requestId: z.string(),
 });
 
 export const ListProviderModelsRequestMessageSchema = z.object({
   type: z.literal("list_provider_models_request"),
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   cwd: z.string().optional(),
   requestId: z.string(),
 });
 
 export const ListProviderModesRequestMessageSchema = z.object({
   type: z.literal("list_provider_modes_request"),
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   cwd: z.string().optional(),
   requestId: z.string(),
 });
@@ -852,13 +874,13 @@ export const GetProvidersSnapshotRequestMessageSchema = z.object({
 export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
   type: z.literal("refresh_providers_snapshot_request"),
   cwd: z.string().optional(),
-  providers: z.array(AgentProviderSchema).optional(),
+  providers: z.array(AgentProviderValueSchema).optional(),
   requestId: z.string(),
 });
 
 export const ProviderDiagnosticRequestMessageSchema = z.object({
   type: z.literal("provider_diagnostic_request"),
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   requestId: z.string(),
 });
 
@@ -1329,12 +1351,12 @@ export const PingMessageSchema = z.object({
 });
 
 const ListCommandsDraftConfigSchema = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
-  featureValues: z.record(z.unknown()).optional(),
+  featureValues: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const ListProviderFeaturesRequestMessageSchema = z.object({
@@ -1431,6 +1453,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
+  FetchRecoverableAgentsRequestMessageSchema,
   FetchWorkspacesRequestMessageSchema,
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
@@ -1538,7 +1561,7 @@ export const ActivityLogPayloadSchema = z.object({
   timestamp: z.coerce.date(),
   type: z.enum(["transcript", "assistant", "tool_call", "tool_result", "error", "system"]),
   content: z.string(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const ActivityLogMessageSchema = z.object({
@@ -1991,6 +2014,24 @@ export const FetchAgentsResponseMessageSchema = z.object({
   }),
 });
 
+export const FetchRecoverableAgentsResponseMessageSchema = z.object({
+  type: z.literal("fetch_recoverable_agents_response"),
+  payload: z.object({
+    requestId: z.string(),
+    entries: z.array(
+      z.object({
+        agent: AgentSnapshotPayloadSchema,
+        project: ProjectPlacementPayloadSchema,
+      }),
+    ),
+    pageInfo: z.object({
+      nextCursor: z.string().nullable(),
+      prevCursor: z.string().nullable(),
+      hasMore: z.boolean(),
+    }),
+  }),
+});
+
 export const FetchWorkspacesResponseMessageSchema = z.object({
   type: z.literal("fetch_workspaces_response"),
   payload: z.object({
@@ -2071,7 +2112,7 @@ const AgentTimelineSeqRangeSchema = z.object({
 });
 
 export const AgentTimelineEntryPayloadSchema = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   item: AgentTimelineItemPayloadSchema,
   timestamp: z.string(),
   seqStart: z.number().int().nonnegative(),
@@ -2548,7 +2589,7 @@ export const FileDownloadTokenResponseSchema = z.object({
 export const ListProviderModelsResponseMessageSchema = z.object({
   type: z.literal("list_provider_models_response"),
   payload: z.object({
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     models: z.array(AgentModelDefinitionSchema).optional(),
     error: z.string().nullable().optional(),
     fetchedAt: z.string(),
@@ -2559,7 +2600,7 @@ export const ListProviderModelsResponseMessageSchema = z.object({
 export const ListProviderModesResponseMessageSchema = z.object({
   type: z.literal("list_provider_modes_response"),
   payload: z.object({
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     modes: z.array(AgentModeSchema).optional(),
     error: z.string().nullable().optional(),
     fetchedAt: z.string(),
@@ -2570,7 +2611,7 @@ export const ListProviderModesResponseMessageSchema = z.object({
 export const ListProviderFeaturesResponseMessageSchema = z.object({
   type: z.literal("list_provider_features_response"),
   payload: z.object({
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     features: z.array(AgentFeatureSchema).optional(),
     error: z.string().nullable().optional(),
     fetchedAt: z.string(),
@@ -2579,7 +2620,7 @@ export const ListProviderFeaturesResponseMessageSchema = z.object({
 });
 
 const ProviderAvailabilitySchema = z.object({
-  provider: AgentProviderSchema,
+  provider: AgentProviderValueSchema,
   available: z.boolean(),
   error: z.string().nullable().optional(),
 });
@@ -2627,7 +2668,7 @@ export const RefreshProvidersSnapshotResponseMessageSchema = z.object({
 export const ProviderDiagnosticResponseMessageSchema = z.object({
   type: z.literal("provider_diagnostic_response"),
   payload: z.object({
-    provider: AgentProviderSchema,
+    provider: AgentProviderValueSchema,
     diagnostic: z.string(),
     requestId: z.string(),
   }),
@@ -2786,6 +2827,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentStreamMessageSchema,
   AgentStatusMessageSchema,
   FetchAgentsResponseMessageSchema,
+  FetchRecoverableAgentsResponseMessageSchema,
   FetchWorkspacesResponseMessageSchema,
   OpenProjectResponseMessageSchema,
   ListAvailableEditorsResponseMessageSchema,
@@ -2896,6 +2938,9 @@ export type LegacyEditorTargetId = z.infer<typeof LegacyEditorTargetIdSchema>;
 export type EditorTargetId = LiteralUnion<KnownEditorTargetId, string>;
 export type EditorTargetDescriptorPayload = z.infer<typeof EditorTargetDescriptorPayloadSchema>;
 export type FetchAgentsResponseMessage = z.infer<typeof FetchAgentsResponseMessageSchema>;
+export type FetchRecoverableAgentsResponseMessage = z.infer<
+  typeof FetchRecoverableAgentsResponseMessageSchema
+>;
 export type FetchWorkspacesResponseMessage = z.infer<typeof FetchWorkspacesResponseMessageSchema>;
 export type OpenProjectResponseMessage = z.infer<typeof OpenProjectResponseMessageSchema>;
 export type ListAvailableEditorsResponseMessage = z.infer<
@@ -2965,6 +3010,9 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 // Type exports for inbound message types
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
+export type FetchRecoverableAgentsRequestMessage = z.infer<
+  typeof FetchRecoverableAgentsRequestMessageSchema
+>;
 export type FetchWorkspacesRequestMessage = z.infer<typeof FetchWorkspacesRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;

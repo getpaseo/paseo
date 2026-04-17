@@ -95,6 +95,29 @@ Two reusable flows handle Expo dev client screens after launch:
 - `flows/launch.yaml` — handles dev launcher, dismisses dev menu, asserts "Welcome to Paseo"
 - `flows/dev-client.yaml` — same but without asserting a particular app route
 
+### Windows Android dev-client bootstrap
+
+Real-device Windows validation has a specific false-positive trap: detached Metro processes can leave the port briefly open and then die before the device completes the first request. Treat `ECONNREFUSED` and "port is listening" as insufficient evidence on their own.
+
+Use the foreground bootstrap script instead:
+
+```powershell
+cd packages/app
+npm run validate:windows-dev-client -- `
+  --device-id f66d9150 `
+  --port 8097 `
+  --host lan
+```
+
+The script is intentionally evidence-first:
+
+- it writes artifacts to a temp directory outside the checkout by default
+- it captures `expo.log`, an HTTP probe, `adb start` output, screenshot, UI XML, top activity, and logcat
+- it clears proxy env for the Expo child by default so proxy noise is explicit rather than ambient
+- it classifies the result as `app_loaded`, `dev_client_read_timeout`, `launch_failed`, or `unknown`
+
+This is a bootstrap verifier, not a full product oracle. A `dev_client_read_timeout` result means the device reached the dev client but did not finish the first HTTP exchange. That is materially different from a dead Expo process and should be debugged separately from app-level reconnect logic.
+
 ## Self-verification loops
 
 Maestro can only interact with the app UI — it can't toggle iOS appearance, change locale, or simulate network conditions. For bugs that depend on system-level state, wrap Maestro in a bash script that handles the system changes between Maestro runs.
@@ -165,7 +188,7 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-<Animated.View style={[styles.sidebar, animatedStyle]} />
+<Animated.View style={[styles.sidebar, animatedStyle]} />;
 ```
 
 ```tsx
@@ -185,8 +208,12 @@ const staticStyles = RNStyleSheet.create({
 const { theme } = useUnistyles();
 
 <Animated.View
-  style={[staticStyles.sidebar, animatedStyle, { backgroundColor: theme.colors.surfaceSidebar }]}
-/>
+  style={[
+    staticStyles.sidebar,
+    animatedStyle,
+    { backgroundColor: theme.colors.surfaceSidebar },
+  ]}
+/>;
 ```
 
 Regular `View` components can safely use Unistyles dynamic styles — the conflict is specific to `Animated.View`.
