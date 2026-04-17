@@ -159,6 +159,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
       worktree: {
         ...persisted.daemon?.worktree,
         copyFromRepoPaths: mutable.worktree?.copyFromRepoPaths ?? [],
+        disableGitHooks: mutable.worktree?.disableGitHooks ?? false,
       },
     },
   };

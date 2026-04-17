@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
+  buildWorktreeAddCommand,
   createWorktree,
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
@@ -371,6 +372,36 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
         paseoHome,
       }),
     ).rejects.toThrow("escapes repository root");
+  });
+
+  it("builds worktree add command with git hooks disabled when configured", () => {
+    const command = buildWorktreeAddCommand({
+      worktreePath: "/tmp/worktree",
+      branchName: "feature/test",
+      baseRef: "main",
+      disableGitHooks: true,
+    });
+
+    expect(command).toEqual([
+      "-c",
+      "core.hooksPath=/dev/null",
+      "worktree",
+      "add",
+      "/tmp/worktree",
+      "-b",
+      "feature/test",
+      "main",
+    ]);
+  });
+
+  it("builds worktree add command without hook override by default", () => {
+    const command = buildWorktreeAddCommand({
+      worktreePath: "/tmp/worktree",
+      branchName: "feature/test",
+      baseRef: "main",
+    });
+
+    expect(command).toEqual(["worktree", "add", "/tmp/worktree", "-b", "feature/test", "main"]);
   });
 
   it("streams setup command progress events while commands are executing", async () => {

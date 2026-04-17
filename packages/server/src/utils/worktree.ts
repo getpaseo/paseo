@@ -128,8 +128,22 @@ interface CreateWorktreeOptions {
   baseBranch: string;
   worktreeSlug?: string;
   copyFromRepoPaths?: string[];
+  disableGitHooks?: boolean;
   runSetup?: boolean;
   paseoHome?: string;
+}
+
+export function buildWorktreeAddCommand(options: {
+  worktreePath: string;
+  branchName: string;
+  baseRef: string;
+  disableGitHooks?: boolean;
+}): string[] {
+  const args = ["worktree", "add", options.worktreePath, "-b", options.branchName, options.baseRef];
+  if (!options.disableGitHooks) {
+    return args;
+  }
+  return ["-c", "core.hooksPath=/dev/null", ...args];
 }
 
 function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
@@ -978,6 +992,7 @@ export async function createWorktree({
   baseBranch,
   worktreeSlug,
   copyFromRepoPaths,
+  disableGitHooks,
   runSetup = true,
   paseoHome,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> {
@@ -1055,7 +1070,13 @@ export async function createWorktree({
     pathSuffix++;
   }
 
-  await runGitCommand(["worktree", "add", finalWorktreePath, "-b", newBranchName, base], {
+  const worktreeAddCommand = buildWorktreeAddCommand({
+    worktreePath: finalWorktreePath,
+    branchName: newBranchName,
+    baseRef: base,
+    disableGitHooks,
+  });
+  await runGitCommand(worktreeAddCommand, {
     cwd,
     timeout: 120_000,
   });

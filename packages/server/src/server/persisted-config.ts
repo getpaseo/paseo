@@ -253,6 +253,7 @@ export const PersistedConfigSchema = z
         worktree: z
           .object({
             copyFromRepoPaths: z.array(z.string()).optional(),
+            disableGitHooks: z.boolean().optional(),
           })
           .strict()
           .optional(),

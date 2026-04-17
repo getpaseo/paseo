@@ -61,6 +61,7 @@ export const MutableDaemonConfigSchema = z
     worktree: z
       .object({
         copyFromRepoPaths: z.array(z.string()).optional(),
+        disableGitHooks: z.boolean().optional(),
       })
       .passthrough()
       .optional(),

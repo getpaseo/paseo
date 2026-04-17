@@ -40,6 +40,7 @@ export interface CreateAgentWorktreeOptions {
   baseBranch: string;
   worktreeSlug: string;
   copyFromRepoPaths?: string[];
+  disableGitHooks?: boolean;
   paseoHome?: string;
 }
 
@@ -178,6 +179,7 @@ export async function createAgentWorktree(
     baseBranch: options.baseBranch,
     worktreeSlug: options.worktreeSlug,
     copyFromRepoPaths: options.copyFromRepoPaths,
+    disableGitHooks: options.disableGitHooks,
     runSetup: false,
     paseoHome: options.paseoHome,
   });

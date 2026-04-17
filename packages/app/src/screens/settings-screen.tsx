@@ -476,6 +476,7 @@ function GeneralSection({
   const iconSize = theme.iconSize.md;
   const iconColor = theme.colors.foregroundMuted;
   const configuredWorktreeCopyPaths = config?.worktree?.copyFromRepoPaths ?? [];
+  const worktreeDisableGitHooks = config?.worktree?.disableGitHooks === true;
   const worktreePathValidation = useMemo(
     () => validateWorktreeCopyPathsInput(worktreePathsDraft),
     [worktreePathsDraft],
@@ -567,6 +568,31 @@ function GeneralSection({
               options={[
                 { value: "on", label: "On" },
                 { value: "off", label: "Off" },
+              ]}
+            />
+          </View>
+        ) : null}
+        {routeServerId.length > 0 && isConnected ? (
+          <View style={[styles.audioRow, styles.audioRowBorder]}>
+            <View style={styles.audioRowContent}>
+              <Text style={styles.audioRowTitle}>Disable git hooks for worktree creation</Text>
+              <Text style={styles.audioRowSubtitle}>
+                Skip repository git hooks when creating new Paseo worktrees
+              </Text>
+            </View>
+            <SegmentedControl
+              size="sm"
+              value={worktreeDisableGitHooks ? "on" : "off"}
+              onValueChange={(value) => {
+                void patchConfig({
+                  worktree: {
+                    disableGitHooks: value === "on",
+                  },
+                });
+              }}
+              options={[
+                { value: "off", label: "Off" },
+                { value: "on", label: "On" },
               ]}
             />
           </View>

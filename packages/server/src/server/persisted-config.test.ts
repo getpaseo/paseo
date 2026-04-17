@@ -343,16 +343,18 @@ describe("provider overrides (new format)", () => {
 });
 
 describe("PersistedConfigSchema daemon worktree config", () => {
-  test("accepts worktree copy path settings", () => {
+  test("accepts worktree copy path and hook settings", () => {
     const parsed = PersistedConfigSchema.parse({
       daemon: {
         worktree: {
           copyFromRepoPaths: ["AGENTS.md", ".env.local"],
+          disableGitHooks: true,
         },
       },
     });
 
     expect(parsed.daemon?.worktree?.copyFromRepoPaths).toEqual(["AGENTS.md", ".env.local"]);
+    expect(parsed.daemon?.worktree?.disableGitHooks).toBe(true);
   });
 });
 

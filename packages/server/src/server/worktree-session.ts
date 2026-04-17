@@ -52,6 +52,7 @@ type BuildAgentSessionConfigDependencies = {
   paseoHome?: string;
   sessionLogger: Logger;
   worktreeCopyFromRepoPaths?: string[];
+  worktreeDisableGitHooks?: boolean;
   checkoutExistingBranch: (cwd: string, branch: string) => Promise<void>;
   createBranchFromBase: (params: {
     cwd: string;
@@ -175,6 +176,7 @@ export async function buildAgentSessionConfig(
       baseBranch,
       worktreeSlug: normalized.worktreeSlug ?? targetBranch,
       copyFromRepoPaths: dependencies.worktreeCopyFromRepoPaths,
+      disableGitHooks: dependencies.worktreeDisableGitHooks,
       paseoHome: dependencies.paseoHome,
     });
     cwd = createdWorktree.worktreePath;
