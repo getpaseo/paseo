@@ -366,7 +366,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     error: snapshotError,
     refresh: refreshSnapshot,
     invalidate: invalidateSnapshot,
-  } = useProvidersSnapshot(formState.serverId);
+  } = useProvidersSnapshot(formState.serverId, formState.workingDir);
 
   const allProviderEntries = useMemo(() => snapshotEntries ?? [], [snapshotEntries]);
   const snapshotProviderDefinitions = useMemo(
