@@ -411,8 +411,10 @@ export async function createE2ETestContext(options?: { timeout?: number }): Prom
 > {
   const ctx = await startTestDaemon({ timeout: options?.timeout });
 
-  const paseo = (args: string[], opts?: { timeout?: number; cwd?: string; env?: NodeJS.ProcessEnv }) =>
-    runPaseoCli(ctx, args, opts);
+  const paseo = (
+    args: string[],
+    opts?: { timeout?: number; cwd?: string; env?: NodeJS.ProcessEnv },
+  ) => runPaseoCli(ctx, args, opts);
 
   return {
     ...ctx,

@@ -233,6 +233,7 @@ export async function generateAndApplyAgentMetadata(
     try {
       await renameCurrentBranchImpl(options.cwd, normalizedBranch);
       options.agentManager.notifyAgentState(options.agentId);
+      await options.agentManager.flush();
     } catch (error) {
       options.logger.warn(
         { err: error, agentId: options.agentId, branch: normalizedBranch },

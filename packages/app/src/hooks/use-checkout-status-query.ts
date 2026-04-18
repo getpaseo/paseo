@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
-import { UnistylesRuntime } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePanelStore } from "@/stores/panel-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { CheckoutStatusResponse } from "@server/shared/messages";
@@ -32,7 +32,7 @@ function fetchCheckoutStatus(
 export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQueryOptions) {
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
   const explorerTab = usePanelStore((state) => state.explorerTab);

@@ -2,6 +2,7 @@ import { View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Check } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
+import { settingsStyles } from "@/styles/settings";
 import type { DesktopPermissionStatus } from "@/desktop/permissions/desktop-permissions";
 
 export interface DesktopPermissionRowProps {
@@ -38,9 +39,9 @@ export function DesktopPermissionRow({
     state !== "not-granted";
 
   return (
-    <View style={[styles.audioRow, showBorder && styles.audioRowBorder]}>
-      <View style={styles.audioRowContent}>
-        <Text style={styles.audioRowTitle}>{title}</Text>
+    <View style={[settingsStyles.row, showBorder && settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{title}</Text>
       </View>
       <View style={styles.permissionRowActions}>
         {isGranted ? (
@@ -74,25 +75,6 @@ export function DesktopPermissionRow({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  audioRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: theme.spacing[4],
-    paddingHorizontal: theme.spacing[4],
-  },
-  audioRowBorder: {
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  audioRowContent: {
-    flex: 1,
-    marginRight: theme.spacing[3],
-  },
-  audioRowTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
   permissionRowActions: {
     alignItems: "flex-end",
     gap: theme.spacing[1],
@@ -117,7 +99,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   permissionStatusText: {
     fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },
   permissionDetailText: {

@@ -1,7 +1,7 @@
 {
   "name": "@getpaseo/app",
   "main": "index.ts",
-  "version": "0.1.48",
+  "version": "0.1.60-rc.1",
   "private": true,
   "scripts": {
     "start": "expo start",
@@ -31,9 +31,9 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@expo/vector-icons": "^15.0.2",
     "@floating-ui/react-native": "^0.10.7",
-    "@getpaseo/expo-two-way-audio": "0.1.48",
-    "@getpaseo/highlight": "0.1.48",
-    "@getpaseo/server": "0.1.48",
+    "@getpaseo/expo-two-way-audio": "0.1.60-rc.1",
+    "@getpaseo/highlight": "0.1.60-rc.1",
+    "@getpaseo/server": "0.1.60-rc.1",
     "@gorhom/bottom-sheet": "^5.2.6",
     "@gorhom/portal": "^1.0.14",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -81,8 +81,8 @@
     "expo-web-browser": "~15.0.8",
     "lucide-react-native": "^0.546.0",
     "mnemonic-id": "^3.2.7",
-    "react": "19.1.4",
-    "react-dom": "19.1.4",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
     "react-native": "^0.81.5",
     "react-native-css": "^3.0.1",
     "react-native-draggable-flatlist": "^4.0.3",
@@ -108,6 +108,7 @@
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "@types/react": "~19.2.0",
+    "@types/ws": "^8.18.1",
     "eas-cli": "^16.24.1",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
@@ -115,6 +116,7 @@
     "playwright": "^1.56.1",
     "typescript": "~5.9.2",
     "vitest": "^3.2.4",
-    "wrangler": "^4.59.1"
+    "wrangler": "^4.59.1",
+    "ws": "^8.20.0"
   }
 }

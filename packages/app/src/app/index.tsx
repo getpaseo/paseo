@@ -1,16 +1,10 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "expo-router";
 import { StartupSplashScreen } from "@/screens/startup-splash-screen";
-import {
-  useHostRuntimeBootstrapState,
-  useStoreReady,
-} from "@/app/_layout";
-import {
-  getHostRuntimeStore,
-  isHostRuntimeConnected,
-  useHosts,
-} from "@/runtime/host-runtime";
+import { useHostRuntimeBootstrapState, useStoreReady } from "@/app/_layout";
+import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
 import { buildHostRootRoute } from "@/utils/host-routes";
+import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 
 const WELCOME_ROUTE = "/welcome";
 
@@ -39,6 +33,8 @@ function useAnyOnlineHostServerId(serverIds: string[]): string | null {
   );
 }
 
+const isDesktop = shouldUseDesktopDaemon();
+
 export default function Index() {
   const router = useRouter();
   const pathname = usePathname();
@@ -55,11 +51,9 @@ export default function Index() {
       return;
     }
 
-    const targetRoute = anyOnlineServerId
-      ? buildHostRootRoute(anyOnlineServerId)
-      : WELCOME_ROUTE;
-    router.replace(targetRoute as any);
+    const targetRoute = anyOnlineServerId ? buildHostRootRoute(anyOnlineServerId) : WELCOME_ROUTE;
+    router.replace(targetRoute);
   }, [anyOnlineServerId, pathname, router, storeReady]);
 
-  return <StartupSplashScreen bootstrapState={bootstrapState} />;
+  return <StartupSplashScreen bootstrapState={isDesktop ? bootstrapState : undefined} />;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   checkDesktopAppUpdate,
   formatVersionWithPrefix,
@@ -11,11 +11,14 @@ import {
 export type DesktopAppUpdateStatus =
   | "idle"
   | "checking"
+  | "pending"
   | "up-to-date"
   | "available"
   | "installing"
   | "installed"
   | "error";
+
+const PENDING_RECHECK_MS = 10_000;
 
 export interface UseDesktopAppUpdaterReturn {
   isDesktopApp: boolean;
@@ -56,11 +59,15 @@ function formatStatusText(input: {
     return "App is up to date.";
   }
 
+  if (status === "pending") {
+    return "We'll let you know when the update is ready.";
+  }
+
   if (status === "available") {
     if (availableUpdate?.latestVersion) {
-      return `Update available: ${formatVersionWithPrefix(availableUpdate.latestVersion)}`;
+      return `Update ready: ${formatVersionWithPrefix(availableUpdate.latestVersion)}`;
     }
-    return "An app update is available.";
+    return "An app update is ready to install.";
   }
 
   if (status === "installed") {
@@ -106,9 +113,12 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
         setInstallMessage(null);
         setLastCheckedAt(Date.now());
 
-        if (result.hasUpdate) {
+        if (result.readyToInstall) {
           setAvailableUpdate(result);
           setStatus("available");
+        } else if (result.hasUpdate) {
+          setAvailableUpdate(null);
+          setStatus("pending");
         } else {
           setAvailableUpdate(null);
           setStatus("up-to-date");
@@ -132,6 +142,20 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     },
     [isDesktopApp],
   );
+
+  useEffect(() => {
+    if (!isDesktopApp || status !== "pending") {
+      return undefined;
+    }
+
+    const intervalId = setInterval(() => {
+      void checkForUpdates({ silent: true });
+    }, PENDING_RECHECK_MS);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [checkForUpdates, isDesktopApp, status]);
 
   const installUpdate = useCallback(async () => {
     if (!isDesktopApp) {

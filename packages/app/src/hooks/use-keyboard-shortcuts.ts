@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
-import { Platform } from "react-native";
-import { usePathname } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import {
+  buildSettingsRoute,
   parseHostAgentRouteFromPathname,
   parseServerIdFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -15,7 +15,6 @@ import {
   type MessageInputKeyboardActionKind,
   type KeyboardShortcutPayload,
 } from "@/keyboard/actions";
-import { canToggleFileExplorerShortcut } from "@/keyboard/keyboard-shortcut-routing";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import {
   type ChordState,
@@ -26,25 +25,28 @@ import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
+import { isNative } from "@/constants/platform";
+import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 
 export function useKeyboardShortcuts({
   enabled,
   isMobile,
   toggleAgentList,
-  selectedAgentId,
   toggleFileExplorer,
   toggleBothSidebars,
   toggleFocusMode,
+  cycleTheme,
 }: {
   enabled: boolean;
   isMobile: boolean;
   toggleAgentList: () => void;
-  selectedAgentId?: string;
   toggleFileExplorer?: () => void;
   toggleBothSidebars?: () => void;
   toggleFocusMode?: () => void;
+  cycleTheme?: () => void;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const hosts = useHosts();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
@@ -63,7 +65,7 @@ export function useKeyboardShortcuts({
 
   useEffect(() => {
     if (!enabled) return;
-    if (Platform.OS !== "web") return;
+    if (isNative) return;
     if (isMobile) return;
 
     const isDesktopApp = getIsElectronRuntime();
@@ -242,29 +244,31 @@ export function useKeyboardShortcuts({
         case "sidebar.toggle.left":
           toggleAgentList();
           return true;
+        case "settings.toggle":
+          if (pathname.startsWith("/settings")) {
+            router.back();
+            return true;
+          }
+          router.push(buildSettingsRoute());
+          return true;
         case "sidebar.toggle.both":
           if (toggleBothSidebars) {
             toggleBothSidebars();
           }
           return true;
         case "sidebar.toggle.right":
-          if (!toggleFileExplorer) {
-            return false;
+          if (toggleFileExplorer) {
+            toggleFileExplorer();
           }
-          if (
-            !canToggleFileExplorerShortcut({
-              selectedAgentId,
-              pathname,
-              toggleFileExplorer,
-            })
-          ) {
-            return false;
-          }
-          toggleFileExplorer();
           return true;
         case "view.toggle.focus":
           if (toggleFocusMode) {
             toggleFocusMode();
+          }
+          return true;
+        case "theme.cycle":
+          if (cycleTheme) {
+            cycleTheme();
           }
           return true;
         case "command-center.toggle": {
@@ -304,6 +308,12 @@ export function useKeyboardShortcuts({
         return;
       }
 
+      // During IME composition, Enter confirms the candidate selection and must
+      // not route through global shortcuts like message send.
+      if (isImeComposingKeyboardEvent(event)) {
+        return;
+      }
+
       const store = useKeyboardShortcutsStore.getState();
       if (store.capturingShortcut) {
         return;
@@ -334,11 +344,6 @@ export function useKeyboardShortcuts({
           isDesktop: isDesktopApp,
           focusScope,
           commandCenterOpen: store.commandCenterOpen,
-          hasSelectedAgent: canToggleFileExplorerShortcut({
-            selectedAgentId,
-            pathname,
-            toggleFileExplorer,
-          }),
         },
         chordState: chordStateRef.current,
         onChordReset: () => {
@@ -413,12 +418,12 @@ export function useKeyboardShortcuts({
     };
   }, [
     bindings,
+    cycleTheme,
     enabled,
     isMobile,
     openProjectPickerAction,
     pathname,
     resetModifiers,
-    selectedAgentId,
     toggleAgentList,
     toggleFileExplorer,
     toggleFocusMode,

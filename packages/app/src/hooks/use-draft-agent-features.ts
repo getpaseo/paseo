@@ -1,50 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type {
-  AgentFeature,
-  AgentProvider,
-  AgentSessionConfig,
-} from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider, AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-
-function pruneFeatureValues(
-  featureValues: Record<string, unknown>,
-  features: AgentFeature[],
-): Record<string, unknown> {
-  const allowedFeatureIds = new Set(features.map((feature) => feature.id));
-  let changed = false;
-  const next: Record<string, unknown> = {};
-
-  for (const [featureId, value] of Object.entries(featureValues)) {
-    if (!allowedFeatureIds.has(featureId)) {
-      changed = true;
-      continue;
-    }
-    next[featureId] = value;
-  }
-
-  return changed ? next : featureValues;
-}
-
-function applyFeatureValues(
-  features: AgentFeature[],
-  featureValues: Record<string, unknown>,
-): AgentFeature[] {
-  if (Object.keys(featureValues).length === 0) {
-    return features;
-  }
-
-  return features.map((feature) => {
-    if (!Object.prototype.hasOwnProperty.call(featureValues, feature.id)) {
-      return feature;
-    }
-
-    return {
-      ...feature,
-      value: featureValues[feature.id],
-    } as AgentFeature;
-  });
-}
+import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
+import {
+  applyFeatureValues,
+  pruneFeatureValues,
+  resolveFeatureValues,
+} from "./feature-preferences";
 
 type DraftFeatureConfig = Pick<
   AgentSessionConfig,
@@ -60,10 +23,15 @@ export function useDraftAgentFeatures(input: {
   thinkingOptionId: string | null | undefined;
 }) {
   const { serverId, provider, cwd, modeId, modelId, thinkingOptionId } = input;
-  const [featureValues, setFeatureValues] = useState<Record<string, unknown>>({});
+  const [localFeatureValues, setLocalFeatureValues] = useState<Record<string, unknown>>({});
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
+  const { preferences, updatePreferences } = useFormPreferences();
   const normalizedCwd = cwd?.trim() || "";
+  const persistedFeatureValues = useMemo(
+    () => preferences.providerPreferences?.[provider]?.featureValues ?? {},
+    [preferences.providerPreferences, provider],
+  );
 
   const draftConfig = useMemo<DraftFeatureConfig | null>(() => {
     if (!normalizedCwd) {
@@ -102,28 +70,58 @@ export function useDraftAgentFeatures(input: {
       return payload.features ?? [];
     },
   });
+  const availableFeatures = featuresQuery.data ?? [];
+  const featureValues = useMemo(
+    () =>
+      resolveFeatureValues({
+        features: availableFeatures,
+        persistedFeatureValues,
+        localFeatureValues,
+      }),
+    [availableFeatures, localFeatureValues, persistedFeatureValues],
+  );
 
   const features = useMemo(() => {
-    return applyFeatureValues(featuresQuery.data ?? [], featureValues);
-  }, [featureValues, featuresQuery.data]);
+    return applyFeatureValues(availableFeatures, featureValues);
+  }, [availableFeatures, featureValues]);
 
   useEffect(() => {
-    const next = pruneFeatureValues(featureValues, features);
-    if (next !== featureValues) {
-      setFeatureValues(next);
+    setLocalFeatureValues({});
+  }, [provider]);
+
+  useEffect(() => {
+    const next = pruneFeatureValues(localFeatureValues, availableFeatures);
+    if (next !== localFeatureValues) {
+      setLocalFeatureValues(next);
     }
-  }, [featureValues, features]);
+  }, [availableFeatures, localFeatureValues]);
 
   const effectiveFeatureValues = Object.keys(featureValues).length > 0 ? featureValues : undefined;
-  const setFeatureValue = useCallback((featureId: string, value: unknown) => {
-    setFeatureValues((current) => {
-      if (Object.is(current[featureId], value)) {
-        return current;
-      }
+  const setFeatureValue = useCallback(
+    (featureId: string, value: unknown) => {
+      setLocalFeatureValues((current) => {
+        if (Object.is(current[featureId], value)) {
+          return current;
+        }
 
-      return { ...current, [featureId]: value };
-    });
-  }, []);
+        return { ...current, [featureId]: value };
+      });
+      void updatePreferences((current) =>
+        mergeProviderPreferences({
+          preferences: current,
+          provider,
+          updates: {
+            featureValues: {
+              [featureId]: value,
+            },
+          },
+        }),
+      ).catch((error) => {
+        console.warn("[useDraftAgentFeatures] persist feature preference failed", error);
+      });
+    },
+    [provider, updatePreferences],
+  );
 
   return {
     features,

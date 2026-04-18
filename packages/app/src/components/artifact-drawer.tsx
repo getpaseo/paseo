@@ -2,6 +2,7 @@ import { View, Text, ScrollView, Pressable, Modal } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
 export interface Artifact {
   id: string;
@@ -147,6 +148,8 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export function ArtifactDrawer({ artifact, onClose }: ArtifactDrawerProps) {
+  const webScrollbarStyle = useWebScrollbarStyle();
+
   if (!artifact) {
     return null;
   }
@@ -190,7 +193,7 @@ export function ArtifactDrawer({ artifact, onClose }: ArtifactDrawerProps) {
         </View>
         {/* Content */}
         <ScrollView
-          style={styles.contentScroll}
+          style={[styles.contentScroll, webScrollbarStyle]}
           contentContainerStyle={styles.contentScrollContainer}
         >
           {artifact.type === "image" ? (
@@ -200,7 +203,11 @@ export function ArtifactDrawer({ artifact, onClose }: ArtifactDrawerProps) {
             </View>
           ) : (
             <View style={styles.codeContainer}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={true}
+                style={webScrollbarStyle}
+              >
                 <Text style={styles.codeText}>{content}</Text>
               </ScrollView>
             </View>

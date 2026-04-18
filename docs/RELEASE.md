@@ -11,6 +11,12 @@ There are two supported ways to ship from `main`:
 
 ## Standard release (patch)
 
+Before running any stable patch release command:
+
+- Make sure the intended release commit is already committed to `main` and the working tree is clean.
+- Make sure local `npm run typecheck` passes on that commit.
+- Do not use `npm run release:patch` as a substitute for checking whether the current commit is actually ready.
+
 ```bash
 npm run release:patch
 ```
@@ -24,6 +30,7 @@ Use the direct stable path when the current `main` changes are ready to become t
 ## Manual step-by-step
 
 ```bash
+npm run typecheck            # Verify the exact commit you intend to release
 npm run release:check        # Typecheck, build, dry-run pack
 npm run version:all:patch    # Bump version, create commit + tag
 npm run release:publish      # Publish to npm
@@ -122,6 +129,53 @@ No prefix (`v`), no extra text. The parser matches the first `## X.Y.Z` line to 
 - **Only Claude should write changelog entries.**
 - If you are Codex and a stable release needs a changelog entry, launch a Claude agent with Paseo to draft it, then review and commit the result.
 
+## Changelog voice
+
+The changelog is shown on the Paseo homepage. Write it for **end users**, not developers.
+
+- **Frame everything from the user's perspective.** Describe what changed in the app, not what changed in the code. Users care that "workspaces load instantly" — not that a component no longer remounts.
+- **Never mention component names, internal modules, or implementation details.** No `WorkingIndicator`, no `accumulatedUsage`, no `reconcileAndEmitWorkspaceUpdates`.
+- **Collapse internal iterations.** If a feature was added and then fixed within the same release, just list the feature as working. Users never saw the broken version.
+- **Only list changes relative to the previous stable release.** The diff is `v(previous)..HEAD`. If something was introduced and fixed between those two tags, it never shipped — don't mention the fix.
+- **Cut low-signal entries.** "Toolbar buttons have consistent sizing" is too granular. Combine small polish items or drop them.
+
+## Changelog conciseness
+
+Every bullet must be scannable at a glance. The changelog is not release documentation — it's a list.
+
+- **One line per bullet.** If a bullet wraps to three lines in a narrow column, it's too long.
+- **Split bullets that pack multiple distinct changes.** If a bullet uses "and", "plus", a comma list, or an em-dash to chain several independent improvements, break them into separate bullets — even when they share a theme or author. One bullet = one user-facing change.
+- **Trim qualifying clauses.** Drop "with a hint shown when…", "matching the CLI's behaviour", "across common install shapes". If the detail doesn't change whether a user cares, cut it.
+- **Lead with the outcome.** "Windows: agents launch reliably from npm `.cmd` shims…" is better than "Windows: agents launch reliably across common install shapes. Claude, Codex, and OpenCode now start correctly…".
+- **Attribution follows the split.** When you split a dense bullet, move each PR/author to the bullet it belongs to. Never duplicate the same PR across multiple bullets.
+
+## Changelog attribution
+
+Every changelog bullet must credit contributors and link to the PR(s) that delivered the change. This is not one-PR-per-line — a single bullet describes a user-facing change and may reference multiple PRs.
+
+Format: append `([#123](https://github.com/getpaseo/paseo/pull/123) by [@user](https://github.com/user))` at the end of each bullet. For changes spanning multiple PRs or contributors:
+
+```markdown
+- Voice mode now works on tablets with proper microphone permissions. ([#210](https://github.com/getpaseo/paseo/pull/210), [#215](https://github.com/getpaseo/paseo/pull/215) by [@alice](https://github.com/alice), [@bob](https://github.com/bob))
+```
+
+Rules:
+
+- **Always link the PR number** as `[#N](https://github.com/getpaseo/paseo/pull/N)`.
+- **Always link the contributor's GitHub profile** as `[@user](https://github.com/user)`.
+- **One bullet = one user-facing change**, regardless of how many PRs went into it. Group related PRs on the same bullet.
+- **De-duplicate contributors.** If the same person authored multiple PRs in one bullet, list them once.
+- **Only credit external contributors.** Skip attribution for [@boudra](https://github.com/boudra). The changelog credits community contributions — core team work is the default.
+- **Use `git log` to find PR numbers and authors.** PR numbers are typically in the commit message as `(#N)`. Use `gh pr view N --json author` if the commit doesn't include the GitHub username.
+
+## Changelog ordering
+
+Entries within each section (Added, Improved, Fixed) are ordered by user impact:
+
+1. **User-facing features and changes first** — things users will notice, want to try, or that change their workflow.
+2. **Quality-of-life improvements** — polish, performance, smoother interactions.
+3. **Internal/infra changes last** — only include if they have a tangible user benefit (e.g. "faster startup" is user-facing even if the fix was internal).
+
 ## Pre-release sanity check
 
 Before cutting any release (RC or stable), run a Codex review of the diff as a last line of defence against shipping bugs.
@@ -131,7 +185,7 @@ Load the `paseo` skill and launch a **Codex 5.4** agent with a prompt like:
 > Review the diff between the latest release tag and HEAD. Focus on:
 >
 > 1. **Breaking changes** — especially in the WebSocket protocol, agent lifecycle, and any server↔client contract.
-> 2. **Backward compatibility** — mobile apps lag behind desktop/daemon updates by days. Users will update desktop and daemon immediately but keep running the old app. Flag anything that requires both sides to update in lockstep.
+> 2. **Backward compatibility** — the important direction is old app clients talking to newly updated daemons. Users update desktop and daemon first, then keep running the old app for a while. Flag anything that breaks old clients against new daemons or requires both sides to update in lockstep.
 > 3. **Regressions** — anything that looks like it could break existing functionality.
 >
 > Diff: `git diff <latest-release-tag>..HEAD`
@@ -150,6 +204,8 @@ In other words, RCs are checkpoints along the way; the changelog only records th
 ## Completion checklist
 
 - [ ] Run the pre-release sanity check (see above) and address any findings
+- [ ] Ensure the intended release commit is already committed and the git worktree is clean before running any `release:*` patch/promote command
+- [ ] Ensure local `npm run typecheck` passes on that exact commit before running any `release:*` patch/promote command
 - [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors)
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] `npm run release:patch` or `npm run release:promote` completes successfully

@@ -14,6 +14,14 @@ import {
 } from "./test-utils/index.js";
 import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-configs.js";
 import { chunkPcm16, parsePcm16MonoWav, wordSimilarity } from "./test-utils/dictation-e2e.js";
+import type {
+  AgentClient,
+  AgentPersistenceHandle,
+  AgentRunResult,
+  AgentSession,
+  AgentSessionConfig,
+  AgentStreamEvent,
+} from "./agent/agent-sdk-types.js";
 
 const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
 
@@ -92,6 +100,116 @@ function waitForSignal<T>(
       },
     );
   });
+}
+
+class NonPersistentReloadSession implements AgentSession {
+  readonly provider = "claude" as const;
+  readonly id = null;
+  readonly capabilities = {
+    supportsStreaming: false,
+    supportsSessionPersistence: true,
+    supportsDynamicModes: false,
+    supportsMcpServers: false,
+    supportsReasoningStream: false,
+    supportsToolInvocations: false,
+  } as const;
+
+  constructor(private readonly onClose: () => void) {}
+
+  async run(): Promise<AgentRunResult> {
+    return {
+      sessionId: "non-persistent",
+      finalText: "",
+      timeline: [],
+    };
+  }
+
+  async startTurn(): Promise<{ turnId: string }> {
+    return { turnId: "non-persistent-turn" };
+  }
+
+  subscribe(_callback: (event: AgentStreamEvent) => void): () => void {
+    return () => undefined;
+  }
+
+  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    return;
+  }
+
+  async getRuntimeInfo() {
+    return {
+      provider: "claude" as const,
+      sessionId: null,
+      model: null,
+      modeId: null,
+    };
+  }
+
+  async getAvailableModes(): Promise<[]> {
+    return [];
+  }
+
+  async getCurrentMode(): Promise<string | null> {
+    return null;
+  }
+
+  async setMode(_modeId: string): Promise<void> {}
+
+  getPendingPermissions() {
+    return [];
+  }
+
+  async respondToPermission(): Promise<void> {}
+
+  describePersistence(): AgentPersistenceHandle | null {
+    return null;
+  }
+
+  async interrupt(): Promise<void> {}
+
+  async close(): Promise<void> {
+    this.onClose();
+  }
+}
+
+class NonPersistentReloadClient implements AgentClient {
+  readonly provider = "claude" as const;
+  readonly capabilities = {
+    supportsStreaming: false,
+    supportsSessionPersistence: true,
+    supportsDynamicModes: false,
+    supportsMcpServers: false,
+    supportsReasoningStream: false,
+    supportsToolInvocations: false,
+  } as const;
+  createSessionCalls = 0;
+  resumeSessionCalls = 0;
+  closeCalls = 0;
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
+    this.createSessionCalls += 1;
+    return new NonPersistentReloadSession(() => {
+      this.closeCalls += 1;
+    });
+  }
+
+  async resumeSession(
+    _handle: AgentPersistenceHandle,
+    _overrides?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.resumeSessionCalls += 1;
+    return new NonPersistentReloadSession(() => {
+      this.closeCalls += 1;
+    });
+  }
+
+  async listModels() {
+    return [];
+  }
 }
 
 describe("daemon client E2E", () => {
@@ -224,6 +342,8 @@ describe("daemon client E2E", () => {
       expect(archivedResult).not.toBeNull();
       expect(archivedResult?.agent.archivedAt).toBeTruthy();
       expect(archivedResult?.agent.status).not.toBe("running");
+      expect(archivedResult?.agent.requiresAttention).toBe(false);
+      expect(archivedResult?.agent.attentionReason).toBeNull();
       expect(archivedResult?.project).not.toBeNull();
       expect(archivedResult?.project?.checkout.cwd).toBe(cwd);
 
@@ -279,6 +399,38 @@ describe("daemon client E2E", () => {
     }
   }, 120000);
 
+  test("refresh_agent rebuilds a live agent even when it has no persistence handle", async () => {
+    const cwd = tmpCwd();
+    const client = new NonPersistentReloadClient();
+    const localCtx = await createDaemonTestContext({
+      agentClients: {
+        claude: client,
+      },
+    });
+
+    try {
+      const created = await localCtx.client.createAgent({
+        config: {
+          provider: "claude",
+          cwd,
+        },
+      });
+
+      expect(client.createSessionCalls).toBe(1);
+      expect(client.resumeSessionCalls).toBe(0);
+      expect(client.closeCalls).toBe(0);
+
+      await localCtx.client.refreshAgent(created.id);
+
+      expect(client.createSessionCalls).toBe(2);
+      expect(client.resumeSessionCalls).toBe(0);
+      expect(client.closeCalls).toBe(1);
+    } finally {
+      await localCtx.cleanup();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("resume_agent auto-unarchives archived agents", async () => {
     const cwd = tmpCwd();
     try {
@@ -304,6 +456,42 @@ describe("daemon client E2E", () => {
       if (resumed.id !== created.id) {
         await ctx.client.deleteAgent(resumed.id);
       }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  test("update_agent persists unloaded title and labels across auto-unarchive", async () => {
+    const cwd = tmpCwd();
+    try {
+      const created = await ctx.client.createAgent({
+        config: {
+          ...getFullAccessConfig("codex"),
+          cwd,
+        },
+      });
+
+      await ctx.client.archiveAgent(created.id);
+      await ctx.client.updateAgent(created.id, {
+        name: "Pinned Title",
+        labels: { lane: "phase-1a" },
+      });
+
+      const archived = await ctx.client.fetchAgent(created.id);
+      expect(archived).not.toBeNull();
+      expect(archived?.agent.archivedAt).toBeTruthy();
+      expect(archived?.agent.title).toBe("Pinned Title");
+      expect(archived?.agent.labels).toMatchObject({ lane: "phase-1a" });
+
+      await ctx.client.sendMessage(created.id, "Say hello and nothing else");
+      const finalState = await ctx.client.waitForFinish(created.id, 120000);
+      expect(finalState.status).toBe("idle");
+
+      const unarchived = await ctx.client.fetchAgent(created.id);
+      expect(unarchived).not.toBeNull();
+      expect(unarchived?.agent.archivedAt).toBeNull();
+      expect(unarchived?.agent.title).toBe("Pinned Title");
+      expect(unarchived?.agent.labels).toMatchObject({ lane: "phase-1a" });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -529,7 +717,6 @@ describe("daemon client E2E", () => {
     const timelineResult = await ctx.client.fetchAgentTimeline(agent.id, {
       direction: "tail",
       limit: 1,
-      projection: "projected",
     });
     expect(timelineResult.agentId).toBe(agent.id);
 
@@ -756,7 +943,6 @@ describe("daemon client E2E", () => {
     const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
       direction: "tail",
       limit: 0,
-      projection: "projected",
     });
     expect(timeline.entries.length).toBeGreaterThan(0);
 

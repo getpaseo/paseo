@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ToolCallTimelineItem } from "../../agent-sdk-types.js";
 import { extractCodexShellOutput, truncateDiffText } from "../tool-call-mapper-utils.js";
 import { deriveCodexToolDetail, normalizeCodexFilePath } from "./tool-call-detail-parser.js";
+import { isSpeakToolName } from "../../tool-name-normalization.js";
 
 type CodexMapperOptions = { cwd?: string | null };
 
@@ -67,7 +68,10 @@ const CodexEditToolNameSchema = z.union([
   z.literal("apply_diff"),
 ]);
 const CodexSearchToolNameSchema = z.union([z.literal("search"), z.literal("web_search")]);
-const CodexSpeakToolNameSchema = z.literal("paseo.speak");
+const CodexSpeakToolNameSchema = z
+  .string()
+  .min(1)
+  .refine((name) => isSpeakToolName(name.trim()));
 
 const CodexToolKindSchema = z.enum([
   "shell",
@@ -733,9 +737,10 @@ function parseFileChangeEntries(
     .filter((entry): entry is CodexFileChangeEntry => entry !== null);
 }
 
-function resolveFileChangeTextFields(
-  file: CodexFileChangeEntry | undefined,
-): { unifiedDiff?: string; newString?: string } {
+function resolveFileChangeTextFields(file: CodexFileChangeEntry | undefined): {
+  unifiedDiff?: string;
+  newString?: string;
+} {
   if (!file) {
     return {};
   }

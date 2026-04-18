@@ -77,8 +77,8 @@ function UpdatesDocs() {
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Mobile apps</h2>
         <p className="text-white/60">
-          Mobile apps are not yet publicly available in the App Store or Play Store. We are working
-          on public store availability.
+          Mobile apps are available on the App Store and Play Store. Update through your respective
+          store. Store versions may lag behind the latest release due to review processes.
         </p>
       </section>
     </div>

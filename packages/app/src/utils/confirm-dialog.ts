@@ -1,5 +1,6 @@
-import { Alert, Platform } from "react-native";
+import { Alert } from "react-native";
 import { getDesktopHost, type DesktopDialogAskOptions } from "@/desktop/host";
+import { isNative } from "@/constants/platform";
 
 export interface ConfirmDialogInput {
   title: string;
@@ -49,7 +50,7 @@ async function showNativeConfirmDialog(input: ConfirmDialogInput): Promise<boole
 }
 
 function getDesktopApi() {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return null;
   }
   return getDesktopHost();
@@ -67,7 +68,7 @@ function buildDesktopAskOptions(input: ConfirmDialogInput): DesktopDialogAskOpti
 }
 
 function blurActiveWebElement(): void {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return;
   }
   const activeElement = (globalThis as { document?: Document }).document?.activeElement;
@@ -103,7 +104,7 @@ function showWebConfirmDialog(input: ConfirmDialogInput): boolean {
 }
 
 export async function confirmDialog(input: ConfirmDialogInput): Promise<boolean> {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return showNativeConfirmDialog(input);
   }
 

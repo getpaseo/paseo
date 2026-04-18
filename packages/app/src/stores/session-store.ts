@@ -4,7 +4,7 @@ import type { DaemonClient } from "@server/client/daemon-client";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
-import type { AttachmentMetadata } from "@/attachments/types";
+import type { ComposerAttachment } from "@/attachments/types";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type {
   AgentPermissionResponse,
@@ -24,9 +24,10 @@ import type {
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
+  AgentSnapshotPayload,
   WorkspaceDescriptorPayload,
 } from "@server/shared/messages";
-import { normalizeWorkspaceIdentity } from "@/utils/workspace-identity";
+import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import {
   createAgentLastActivityCoalescer,
   type AgentLastActivityCommitter,
@@ -116,29 +117,45 @@ export interface WorkspaceDescriptor {
   projectId: string;
   projectDisplayName: string;
   projectRootPath: string;
+  workspaceDirectory: string;
   projectKind: WorkspaceDescriptorPayload["projectKind"];
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   name: string;
   status: WorkspaceDescriptorPayload["status"];
-  activityAt: Date | null;
   diffStat: { additions: number; deletions: number } | null;
+  scripts: WorkspaceDescriptorPayload["scripts"];
 }
 
 export function normalizeWorkspaceDescriptor(
   payload: WorkspaceDescriptorPayload,
 ): WorkspaceDescriptor {
-  const activityAt = payload.activityAt ? new Date(payload.activityAt) : null;
   return {
-    id: normalizeWorkspaceIdentity(payload.id) ?? payload.id,
-    projectId: payload.projectId,
+    id: normalizeWorkspaceOpaqueId(String(payload.id)) ?? String(payload.id),
+    projectId: String(payload.projectId),
     projectDisplayName: payload.projectDisplayName,
     projectRootPath: payload.projectRootPath,
+    workspaceDirectory: payload.workspaceDirectory,
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     name: payload.name,
     status: payload.status,
-    activityAt: activityAt && !Number.isNaN(activityAt.getTime()) ? activityAt : null,
     diffStat: payload.diffStat ?? null,
+    scripts: (payload.scripts ?? []).map((s) => ({ ...s })),
+  };
+}
+
+export function mergeWorkspaceSnapshotWithExisting(input: {
+  incoming: WorkspaceDescriptor;
+  existing?: WorkspaceDescriptor | null;
+}): WorkspaceDescriptor {
+  const { incoming, existing } = input;
+  if (!existing || existing.id !== incoming.id) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    diffStat: incoming.diffStat ?? existing.diffStat,
   };
 }
 
@@ -246,7 +263,10 @@ export interface SessionState {
   fileExplorer: Map<string, AgentFileExplorerState>;
 
   // Queued messages
-  queuedMessages: Map<string, Array<{ id: string; text: string; images?: AttachmentMetadata[] }>>;
+  queuedMessages: Map<
+    string,
+    Array<{ id: string; text: string; attachments: ComposerAttachment[] }>
+  >;
 }
 
 // Global store state
@@ -362,10 +382,10 @@ interface SessionStoreActions {
   setQueuedMessages: (
     serverId: string,
     value:
-      | Map<string, Array<{ id: string; text: string; images?: AttachmentMetadata[] }>>
+      | Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>
       | ((
-          prev: Map<string, Array<{ id: string; text: string; images?: AttachmentMetadata[] }>>,
-        ) => Map<string, Array<{ id: string; text: string; images?: AttachmentMetadata[] }>>),
+          prev: Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>,
+        ) => Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>),
   ) => void;
 
   // Hydration
@@ -945,7 +965,10 @@ export const useSessionStore = create<SessionStore>()(
             if (existing === workspace) {
               continue;
             }
-            next.set(workspace.id, workspace);
+            next.set(
+              workspace.id,
+              mergeWorkspaceSnapshotWithExisting({ incoming: workspace, existing }),
+            );
             changed = true;
           }
           if (!changed) {

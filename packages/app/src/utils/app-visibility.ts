@@ -1,11 +1,12 @@
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
+import { isNative } from "@/constants/platform";
 
 export function getIsAppActivelyVisible(appState: string = AppState.currentState): boolean {
   if (appState !== "active") {
     return false;
   }
 
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return true;
   }
 

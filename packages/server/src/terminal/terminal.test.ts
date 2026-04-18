@@ -1,13 +1,27 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
+  buildTerminalEnvironment,
   createTerminal,
   ensureNodePtySpawnHelperExecutableForCurrentPlatform,
   resolveDefaultTerminalShell,
+  humanizeProcessTitle,
+  normalizeProcessTitle,
+  resolveZshShellIntegrationDir,
   type TerminalSession,
 } from "./terminal.js";
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+const hasZsh = existsSync("/bin/zsh");
 
 // Extract text from a single row
 function getRowText(state: ReturnType<TerminalSession["getState"]>, rowIndex: number): string {
@@ -71,6 +85,23 @@ async function waitForState(
   throw new Error("Timeout waiting for terminal state predicate to match");
 }
 
+async function waitForTitle(
+  session: TerminalSession,
+  predicate: (title: string | undefined) => boolean,
+  timeoutMs = 5000,
+): Promise<string | undefined> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const title = session.getTitle();
+    if (predicate(title)) {
+      return title;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error("Timeout waiting for terminal title predicate to match");
+}
+
 describe("Terminal", () => {
   const sessions: TerminalSession[] = [];
   const temporaryDirs: string[] = [];
@@ -94,6 +125,32 @@ describe("Terminal", () => {
   }
 
   describe("createTerminal", () => {
+    it("keeps full process titles while stripping path prefixes", () => {
+      expect(normalizeProcessTitle("   /usr/local/bin/npm   run   dev   ")).toBe("npm run dev");
+      expect(normalizeProcessTitle("/opt/homebrew/bin/node /tmp/work/npm-cli.js run dev")).toBe(
+        "node npm-cli.js run dev",
+      );
+      expect(normalizeProcessTitle("")).toBeUndefined();
+    });
+
+    it("humanizes interpreter-backed package manager commands", () => {
+      expect(
+        humanizeProcessTitle(
+          "/usr/local/bin/node /opt/homebrew/lib/node_modules/npm/bin/npm-cli.js run dev",
+        ),
+      ).toBe("npm run dev");
+      expect(
+        humanizeProcessTitle("/usr/bin/env FOO=bar /opt/homebrew/bin/node /tmp/npm-cli.js test"),
+      ).toBe("npm test");
+    });
+
+    it("drops common interpreter prefixes for direct scripts", () => {
+      expect(humanizeProcessTitle("/usr/bin/python3 /tmp/server.py --port 3000")).toBe(
+        "server.py --port 3000",
+      );
+      expect(humanizeProcessTitle("/bin/bash /tmp/dev.sh")).toBe("dev.sh");
+    });
+
     it("ensures darwin prebuild spawn-helper is executable", () => {
       const packageRoot = mkdtempSync(join(tmpdir(), "terminal-node-pty-helper-"));
       temporaryDirs.push(packageRoot);
@@ -138,6 +195,20 @@ describe("Terminal", () => {
       expect(session.id.length).toBeGreaterThan(0);
       expect(session.name).toBe("Terminal");
       expect(session.cwd).toBe("/tmp");
+    });
+
+    it("sets zsh wrapper env when spawning zsh", () => {
+      const resolvedEnv = buildTerminalEnvironment({
+        shell: "/bin/zsh",
+        env: {
+          HOME: "/tmp/paseo-home",
+          ZDOTDIR: "/tmp/paseo-zdotdir",
+        },
+      });
+
+      expect(resolvedEnv.TERM).toBe("xterm-256color");
+      expect(resolvedEnv.PASEO_ZSH_ZDOTDIR).toBe("/tmp/paseo-zdotdir");
+      expect(resolvedEnv.ZDOTDIR).toBe(resolveZshShellIntegrationDir());
     });
 
     it("uses custom name when provided", async () => {
@@ -191,6 +262,28 @@ describe("Terminal", () => {
       const state = session.getState();
       expect(state.rows).toBe(40);
       expect(state.cols).toBe(120);
+    });
+
+    it("captures exit diagnostics from the terminal buffer", async () => {
+      const session = trackSession(
+        await createTerminal({
+          cwd: "/tmp",
+          command: "/bin/sh",
+          args: ["-lc", "printf 'launch failed\\ncommand missing\\n'; exit 127"],
+        }),
+      );
+
+      const exitInfo = await new Promise<NonNullable<ReturnType<TerminalSession["getExitInfo"]>>>(
+        (resolve) => {
+          session.onExit((info) => resolve(info));
+        },
+      );
+
+      expect(exitInfo.exitCode).toBe(127);
+      expect(exitInfo.signal).toBeNull();
+      // lastOutputLines may be empty if the process exits before xterm processes the data write
+      expect(Array.isArray(exitInfo.lastOutputLines)).toBe(true);
+      expect(session.getExitInfo()).toEqual(exitInfo);
     });
   });
 
@@ -265,6 +358,153 @@ describe("Terminal", () => {
       expect(getRowText(state, 0)).toBe("$ pwd");
       expect(getRowText(state, 1)).toBe("/tmp");
       expect(getRowText(state, 2)).toBe("$");
+    });
+  });
+
+  describe("terminal title", () => {
+    it.skipIf(!hasZsh)("restores the user's ZDOTDIR through the zsh wrapper", async () => {
+      const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-home-"));
+      temporaryDirs.push(homeDir);
+      const realZdotdir = join(homeDir, ".config", "zsh");
+      mkdirSync(realZdotdir, { recursive: true });
+      writeFileSync(join(realZdotdir, ".zshenv"), "export PASEO_TEST_REAL_ZDOTDIR=1\n");
+
+      const session = trackSession(
+        await createTerminal({
+          cwd: homeDir,
+          command: "/bin/zsh",
+          args: ["-c", 'printf \'%s\\n%s\\n\' "${ZDOTDIR-}" "${PASEO_TEST_REAL_ZDOTDIR-}"'],
+          env: {
+            HOME: homeDir,
+            ZDOTDIR: realZdotdir,
+          },
+        }),
+      );
+
+      const exitInfo = await new Promise<NonNullable<ReturnType<TerminalSession["getExitInfo"]>>>(
+        (resolve) => {
+          session.onExit((info) => resolve(info));
+        },
+      );
+
+      expect(exitInfo.lastOutputLines).toEqual([realZdotdir, "1"]);
+    });
+
+    it("emits the initial title from command args to title listeners", async () => {
+      const packageRoot = mkdtempSync(join(tmpdir(), "terminal-title-script-"));
+      temporaryDirs.push(packageRoot);
+      const scriptPath = join(packageRoot, "npm-cli.js");
+      writeFileSync(scriptPath, "setTimeout(() => process.exit(0), 1000);\n");
+
+      const session = trackSession(
+        await createTerminal({
+          cwd: packageRoot,
+          command: process.execPath,
+          args: [scriptPath, "run", "dev"],
+        }),
+      );
+      const seenTitles: Array<string | undefined> = [];
+      const unsubscribeTitle = session.onTitleChange((title) => {
+        seenTitles.push(title);
+      });
+
+      await waitForTitle(session, (title) => title === "npm run dev");
+      await waitForState(session, (state) => state.title === "npm run dev");
+
+      expect(seenTitles).toContain("npm run dev");
+      expect(session.getTitle()).toBe("npm run dev");
+      expect(session.getState().title).toBe("npm run dev");
+
+      unsubscribeTitle();
+    });
+
+    it("emits OSC title updates to title listeners", async () => {
+      const session = trackSession(
+        await createTerminal({
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+      const seenTitles: Array<string | undefined> = [];
+      const unsubscribeTitle = session.onTitleChange((title) => {
+        seenTitles.push(title);
+      });
+
+      await waitForLines(session, ["$"]);
+      session.send({ type: "input", data: "printf '\\033]0;Build Log\\007'\r" });
+
+      await waitForTitle(session, (title) => title === "Build Log");
+
+      expect(seenTitles).toContain("Build Log");
+      expect(session.getTitle()).toBe("Build Log");
+      expect(session.getState().title).toBe("Build Log");
+
+      unsubscribeTitle();
+    });
+
+    it("debounces rapid title changes and emits only the final title", async () => {
+      const session = trackSession(
+        await createTerminal({
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+      const seenTitles: Array<string | undefined> = [];
+      const seenMessages: Array<string | undefined> = [];
+      const unsubscribeTitle = session.onTitleChange((title) => {
+        seenTitles.push(title);
+      });
+      const unsubscribeMessages = session.subscribe((message) => {
+        if (message.type === "titleChange") {
+          seenMessages.push(message.title);
+        }
+      });
+
+      await waitForLines(session, ["$"]);
+      session.send({
+        type: "input",
+        data: "printf '\\033]0;First\\007\\033]0;Second\\007\\033]0;Final\\007'\r",
+      });
+
+      await waitForTitle(session, (title) => title === "Final");
+
+      expect(seenTitles).toEqual(["Final"]);
+      expect(seenMessages).toEqual(["Final"]);
+
+      unsubscribeMessages();
+      unsubscribeTitle();
+    });
+
+    it.skipIf(!hasZsh)("emits zsh shell integration titles for commands and prompts", async () => {
+      const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-integration-home-"));
+      temporaryDirs.push(homeDir);
+      const realZdotdir = join(homeDir, ".config", "zsh");
+      const workingDir = join(homeDir, "dev", "faro");
+      mkdirSync(realZdotdir, { recursive: true });
+      mkdirSync(workingDir, { recursive: true });
+      writeFileSync(join(realZdotdir, ".zshenv"), "");
+      writeFileSync(join(realZdotdir, ".zshrc"), "PS1='$ '\n");
+
+      const session = trackSession(
+        await createTerminal({
+          cwd: workingDir,
+          shell: "/bin/zsh",
+          env: {
+            HOME: homeDir,
+            ZDOTDIR: realZdotdir,
+          },
+        }),
+      );
+
+      await waitForLines(session, ["$"]);
+      await waitForTitle(session, (title) => title === "~/dev/faro");
+
+      session.send({ type: "input", data: "sleep 1\r" });
+
+      await waitForTitle(session, (title) => title === "sleep 1");
+      await waitForTitle(session, (title) => title === "~/dev/faro", 4000);
     });
   });
 

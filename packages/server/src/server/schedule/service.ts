@@ -2,14 +2,10 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { AgentManager } from "../agent/agent-manager.js";
-import type { ManagedAgent } from "../agent/agent-manager.js";
-import { AgentStorage } from "../agent/agent-storage.js";
-import type {
-  AgentPromptInput,
-  AgentSessionConfig,
-} from "../agent/agent-sdk-types.js";
+import type { AgentStorage } from "../agent/agent-storage.js";
+import type { AgentPromptInput, AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
-import { buildConfigOverrides, buildSessionConfig, extractTimestamps } from "../persistence-hooks.js";
+import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
@@ -20,7 +16,6 @@ import type {
 } from "./types.js";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
-const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 
 function trimOptionalName(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -250,23 +245,41 @@ export class ScheduleService {
     const schedules = await this.store.list();
     const now = this.now();
     for (const schedule of schedules) {
-      const runningIndex = schedule.runs.findIndex((run) => run.status === "running");
-      if (runningIndex === -1) {
-        continue;
+      let updated = { ...schedule };
+      let dirty = false;
+
+      // Mark any in-flight runs as failed
+      const runningIndex = updated.runs.findIndex((run) => run.status === "running");
+      if (runningIndex !== -1) {
+        const runs = [...updated.runs];
+        runs[runningIndex] = {
+          ...runs[runningIndex],
+          status: "failed",
+          endedAt: now.toISOString(),
+          error: "Daemon restarted before the scheduled run completed",
+        };
+        updated = { ...updated, runs };
+        dirty = true;
       }
-      const runs = [...schedule.runs];
-      runs[runningIndex] = {
-        ...runs[runningIndex],
-        status: "failed",
-        endedAt: now.toISOString(),
-        error: "Daemon restarted before the scheduled run completed",
-      };
-      const nextSchedule = {
-        ...schedule,
-        runs,
-        updatedAt: now.toISOString(),
-      };
-      await this.store.put(nextSchedule);
+
+      // Advance stale nextRunAt for active schedules
+      if (
+        updated.status === "active" &&
+        updated.nextRunAt &&
+        new Date(updated.nextRunAt).getTime() <= now.getTime()
+      ) {
+        let nextRunAt = computeNextRunAt(updated.cadence, new Date(updated.nextRunAt));
+        while (nextRunAt.getTime() <= now.getTime()) {
+          nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
+        }
+        updated = { ...updated, nextRunAt: nextRunAt.toISOString() };
+        dirty = true;
+      }
+
+      if (dirty) {
+        updated = { ...updated, updatedAt: now.toISOString() };
+        await this.store.put(updated);
+      }
     }
   }
 
@@ -367,7 +380,16 @@ export class ScheduleService {
 
   private async executeSchedule(schedule: StoredSchedule): Promise<ScheduleExecutionResult> {
     if (schedule.target.type === "agent") {
-      const agent = await this.ensureAgentLoaded(schedule.target.agentId);
+      const record = await this.agentStorage.get(schedule.target.agentId);
+      if (record?.archivedAt) {
+        throw new Error(`Agent ${schedule.target.agentId} is archived`);
+      }
+
+      const agent = await ensureAgentLoaded(schedule.target.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.logger,
+      });
       if (this.agentManager.hasInFlightRun(agent.id)) {
         throw new Error(`Agent ${agent.id} already has an active run`);
       }
@@ -415,58 +437,5 @@ export class ScheduleService {
         finalText: result.finalText,
       }),
     };
-  }
-
-  private async ensureAgentLoaded(agentId: string): Promise<ManagedAgent> {
-    const existing = this.agentManager.getAgent(agentId);
-    if (existing) {
-      return existing;
-    }
-
-    const inflight = pendingAgentInitializations.get(agentId);
-    if (inflight) {
-      return inflight;
-    }
-
-    const initPromise = (async () => {
-      const record = await this.agentStorage.get(agentId);
-      if (!record) {
-        throw new Error(`Agent not found: ${agentId}`);
-      }
-      if (record.archivedAt) {
-        throw new Error(`Agent ${agentId} is archived`);
-      }
-
-      let snapshot: ManagedAgent;
-      if (record.persistence?.provider && record.persistence?.sessionId) {
-        snapshot = await this.agentManager.resumeAgentFromPersistence(
-          {
-            provider: record.persistence.provider as AgentSessionConfig["provider"],
-            sessionId: record.persistence.sessionId,
-            nativeHandle: record.persistence.nativeHandle,
-            metadata: record.persistence.metadata,
-          },
-          buildConfigOverrides(record),
-          agentId,
-          extractTimestamps(record),
-        );
-      } else {
-        snapshot = await this.agentManager.createAgent(buildSessionConfig(record), agentId, {
-          labels: record.labels,
-        });
-      }
-
-      await this.agentManager.hydrateTimelineFromProvider(agentId);
-      return this.agentManager.getAgent(agentId) ?? snapshot;
-    })();
-
-    pendingAgentInitializations.set(agentId, initPromise);
-    try {
-      return await initPromise;
-    } finally {
-      if (pendingAgentInitializations.get(agentId) === initPromise) {
-        pendingAgentInitializations.delete(agentId);
-      }
-    }
   }
 }

@@ -29,6 +29,16 @@ interface AgentsListQueryData {
   entries?: Array<{ agent?: { id?: string | null } | null } | null>;
 }
 
+interface ArchivedAgentListCacheSnapshot {
+  sidebarAgentsList: AgentsListQueryData | undefined;
+  allAgents: AgentsListQueryData | undefined;
+}
+
+interface ArchiveAgentMutationContext {
+  agent: ReturnType<typeof getStoredAgentSnapshot>;
+  lists: ArchivedAgentListCacheSnapshot;
+}
+
 function toArchiveKey(input: ArchiveAgentInput): string {
   const serverId = input.serverId.trim();
   const agentId = input.agentId.trim();
@@ -111,6 +121,74 @@ function removeAgentFromCachedLists(queryClient: QueryClient, input: ArchiveAgen
   );
 }
 
+function getStoredAgentSnapshot(input: ArchiveAgentInput) {
+  return useSessionStore.getState().sessions[input.serverId]?.agents.get(input.agentId);
+}
+
+function restoreAgentSnapshot(
+  input: ArchiveAgentInput & { agent: ReturnType<typeof getStoredAgentSnapshot> },
+): void {
+  const setAgents = useSessionStore.getState().setAgents;
+  setAgents(input.serverId, (prev) => {
+    const hasAgent = prev.has(input.agentId);
+    if (!input.agent) {
+      if (!hasAgent) {
+        return prev;
+      }
+      const next = new Map(prev);
+      next.delete(input.agentId);
+      return next;
+    }
+
+    const current = prev.get(input.agentId);
+    if (current === input.agent) {
+      return prev;
+    }
+
+    const next = new Map(prev);
+    next.set(input.agentId, input.agent);
+    return next;
+  });
+}
+
+function getArchivedAgentListCacheSnapshot(
+  queryClient: QueryClient,
+  serverId: string,
+): ArchivedAgentListCacheSnapshot {
+  return {
+    sidebarAgentsList: queryClient.getQueryData<AgentsListQueryData | undefined>([
+      "sidebarAgentsList",
+      serverId,
+    ]),
+    allAgents: queryClient.getQueryData<AgentsListQueryData | undefined>(["allAgents", serverId]),
+  };
+}
+
+function restoreCachedListSnapshot(
+  queryClient: QueryClient,
+  queryKey: readonly [string, string],
+  snapshot: AgentsListQueryData | undefined,
+): void {
+  if (snapshot === undefined) {
+    queryClient.removeQueries({ queryKey, exact: true });
+    return;
+  }
+  queryClient.setQueryData(queryKey, snapshot);
+}
+
+function restoreArchivedAgentListCacheSnapshot(
+  queryClient: QueryClient,
+  serverId: string,
+  snapshot: ArchivedAgentListCacheSnapshot,
+): void {
+  restoreCachedListSnapshot(
+    queryClient,
+    ["sidebarAgentsList", serverId],
+    snapshot.sidebarAgentsList,
+  );
+  restoreCachedListSnapshot(queryClient, ["allAgents", serverId], snapshot.allAgents);
+}
+
 function markAgentArchivedInStore(input: ArchiveAgentInput & { archivedAt: string }): void {
   const archivedAt = new Date(input.archivedAt);
   if (Number.isNaN(archivedAt.getTime())) {
@@ -139,11 +217,10 @@ interface ApplyArchivedAgentCloseResultsInput {
   queryClient: QueryClient;
   serverId: string;
   results: ArchivedAgentCloseResult[];
+  invalidateQueries?: boolean;
 }
 
-export function applyArchivedAgentCloseResults(
-  input: ApplyArchivedAgentCloseResultsInput,
-): void {
+export function applyArchivedAgentCloseResults(input: ApplyArchivedAgentCloseResultsInput): void {
   if (input.results.length === 0) {
     return;
   }
@@ -160,12 +237,14 @@ export function applyArchivedAgentCloseResults(
     });
   }
 
-  void input.queryClient.invalidateQueries({
-    queryKey: ["sidebarAgentsList", input.serverId],
-  });
-  void input.queryClient.invalidateQueries({
-    queryKey: ["allAgents", input.serverId],
-  });
+  if (input.invalidateQueries ?? true) {
+    void input.queryClient.invalidateQueries({
+      queryKey: ["sidebarAgentsList", input.serverId],
+    });
+    void input.queryClient.invalidateQueries({
+      queryKey: ["allAgents", input.serverId],
+    });
+  }
 }
 
 export function clearArchiveAgentPending(input: IsAgentArchivingInput): void {
@@ -195,25 +274,55 @@ export function useArchiveAgent() {
       return await client.archiveAgent(input.agentId);
     },
     onMutate: (input) => {
+      const context: ArchiveAgentMutationContext = {
+        agent: getStoredAgentSnapshot(input),
+        lists: getArchivedAgentListCacheSnapshot(queryClient, input.serverId),
+      };
+      const archivedAt = new Date().toISOString();
+
+      applyArchivedAgentCloseResults({
+        queryClient,
+        serverId: input.serverId,
+        results: [{ agentId: input.agentId, archivedAt }],
+        invalidateQueries: false,
+      });
       setAgentArchiving({
         queryClient,
         serverId: input.serverId,
         agentId: input.agentId,
         isArchiving: true,
       });
+      return context;
     },
     onSuccess: (result, input) => {
-      applyArchivedAgentCloseResults({
-        queryClient,
+      markAgentArchivedInStore({
         serverId: input.serverId,
-        results: [{ agentId: input.agentId, archivedAt: result.archivedAt }],
+        agentId: input.agentId,
+        archivedAt: result.archivedAt,
       });
+    },
+    onError: (_error, input, context) => {
+      if (!context) {
+        return;
+      }
+      restoreAgentSnapshot({
+        serverId: input.serverId,
+        agentId: input.agentId,
+        agent: context.agent,
+      });
+      restoreArchivedAgentListCacheSnapshot(queryClient, input.serverId, context.lists);
     },
     onSettled: (_result, _error, input) => {
       clearArchiveAgentPending({
         queryClient,
         serverId: input.serverId,
         agentId: input.agentId,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["sidebarAgentsList", input.serverId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["allAgents", input.serverId],
       });
     },
   });

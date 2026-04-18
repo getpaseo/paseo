@@ -23,21 +23,21 @@ export function resolveNotificationTarget(data: NotificationData): {
   return {
     serverId: readNonEmptyString(data, "serverId"),
     agentId: readNonEmptyString(data, "agentId"),
-    workspaceId: readNonEmptyString(data, "workspaceId") ?? readNonEmptyString(data, "cwd"),
+    workspaceId: readNonEmptyString(data, "workspaceId"),
   };
 }
 
-export function buildNotificationRoute(data: NotificationData): string {
+export function buildNotificationRoute(data: NotificationData) {
   const { serverId, agentId, workspaceId } = resolveNotificationTarget(data);
   if (serverId && agentId) {
     if (workspaceId) {
       const base = buildHostWorkspaceRoute(serverId, workspaceId);
-      return `${base}?open=${encodeURIComponent(`agent:${agentId}`)}`;
+      return `${base}?open=${encodeURIComponent(`agent:${agentId}`)}` as const;
     }
     return buildHostAgentDetailRoute(serverId, agentId);
   }
   if (serverId) {
     return buildHostRootRoute(serverId);
   }
-  return "/";
+  return "/" as const;
 }

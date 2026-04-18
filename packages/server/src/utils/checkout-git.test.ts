@@ -1,40 +1,74 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execSync } from "child_process";
-import {
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-  readFileSync,
-  realpathSync,
-  mkdirSync,
-  symlinkSync,
-} from "fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync, realpathSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
-  __resetGhPathCacheForTests,
+  __resetCheckoutShortstatCacheForTests,
   __resetPullRequestStatusCacheForTests,
-  __setGhPathForTests,
   __setPullRequestStatusCacheTtlForTests,
   commitAll,
+  getCachedCheckoutShortstat,
+  getCurrentBranch,
   getCheckoutDiff,
   getCheckoutShortstat,
   getPullRequestStatus,
   getCheckoutStatus,
-  getCheckoutStatusLite,
   listBranchSuggestions,
   mergeToBase,
   mergeFromBase,
   MergeConflictError,
   MergeFromBaseConflictError,
   NotGitRepoError,
+  pullCurrentBranch,
   pushCurrentBranch,
   resolveRepositoryDefaultBranch,
   parseWorktreeList,
+  parseStatusCheckRollup,
   isPaseoWorktreePath,
   isDescendantPath,
+  searchGitHubIssuesAndPrs,
+  warmCheckoutShortstatInBackground,
 } from "./checkout-git.js";
-import { createWorktree } from "./worktree.js";
+import {
+  GitHubCliMissingError,
+  type GitHubCurrentPullRequestStatus,
+  type GitHubService,
+} from "../services/github-service.js";
+import {
+  createWorktree as createWorktreePrimitive,
+  type CreateWorktreeOptions,
+  type WorktreeConfig,
+} from "./worktree.js";
+
+interface LegacyCreateWorktreeTestOptions {
+  branchName: string;
+  cwd: string;
+  baseBranch: string;
+  worktreeSlug: string;
+  runSetup?: boolean;
+  paseoHome?: string;
+}
+
+function createLegacyWorktreeForTest(
+  options: CreateWorktreeOptions | LegacyCreateWorktreeTestOptions,
+): Promise<WorktreeConfig> {
+  if ("source" in options) {
+    return createWorktreePrimitive(options);
+  }
+
+  return createWorktreePrimitive({
+    cwd: options.cwd,
+    worktreeSlug: options.worktreeSlug,
+    source: {
+      kind: "branch-off",
+      baseBranch: options.baseBranch,
+      newBranchName: options.branchName,
+    },
+    runSetup: options.runSetup ?? true,
+    paseoHome: options.paseoHome,
+  });
+}
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 
 function initRepo(): { tempDir: string; repoDir: string } {
@@ -54,6 +88,52 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function createGitHubServiceForStatus(
+  status: GitHubCurrentPullRequestStatus | null,
+  options?: { onStatus?: () => void },
+): GitHubService {
+  return {
+    listPullRequests: async () => [],
+    listIssues: async () => [],
+    getPullRequest: async () => ({
+      number: 1,
+      title: "PR",
+      url: "https://github.com/getpaseo/paseo/pull/1",
+      state: "OPEN",
+      body: null,
+      baseRefName: "main",
+      headRefName: "feature",
+      labels: [],
+    }),
+    getPullRequestHeadRef: async () => "feature",
+    getCurrentPullRequestStatus: async () => {
+      options?.onStatus?.();
+      return status;
+    },
+    createPullRequest: async () => ({
+      url: "https://github.com/getpaseo/paseo/pull/1",
+      number: 1,
+    }),
+    isAuthenticated: async () => true,
+    invalidate: () => {},
+  };
+}
+
+function createPullRequestStatus(overrides?: Partial<GitHubCurrentPullRequestStatus>) {
+  return {
+    url: "https://github.com/getpaseo/paseo/pull/123",
+    title: "Ship feature",
+    state: "open",
+    baseRefName: "main",
+    headRefName: "feature",
+    isMerged: false,
+    checks: [],
+    checksStatus: "none" as const,
+    reviewDecision: null,
+    ...overrides,
+  };
+}
+
 describe("checkout git utilities", () => {
   let tempDir: string;
   let repoDir: string;
@@ -64,12 +144,12 @@ describe("checkout git utilities", () => {
     tempDir = setup.tempDir;
     repoDir = setup.repoDir;
     paseoHome = join(tempDir, "paseo-home");
-    __resetGhPathCacheForTests();
+    __resetCheckoutShortstatCacheForTests();
     __resetPullRequestStatusCacheForTests();
   });
 
   afterEach(() => {
-    __resetGhPathCacheForTests();
+    __resetCheckoutShortstatCacheForTests();
     __resetPullRequestStatusCacheForTests();
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -81,6 +161,15 @@ describe("checkout git utilities", () => {
     await expect(getCheckoutDiff(nonGitDir, { mode: "uncommitted" })).rejects.toBeInstanceOf(
       NotGitRepoError,
     );
+  });
+
+  it("returns null for getCurrentBranch in a repo with no commits", async () => {
+    const emptyRepo = join(tempDir, "empty-repo");
+    execSync(`mkdir -p ${emptyRepo}`);
+    execSync("git init -b main", { cwd: emptyRepo });
+
+    const branch = await getCurrentBranch(emptyRepo);
+    expect(branch).toBeNull();
   });
 
   it("handles status/diff/commit in a normal repo", async () => {
@@ -102,6 +191,21 @@ describe("checkout git utilities", () => {
     expect(cleanStatus.isDirty).toBe(false);
     const message = execSync("git log -1 --pretty=%B", { cwd: repoDir }).toString().trim();
     expect(message).toBe("update file");
+  });
+
+  it("hides whitespace-only changes when requested", async () => {
+    writeFileSync(join(repoDir, "file.txt"), "hello  \n");
+
+    const visibleDiff = await getCheckoutDiff(repoDir, { mode: "uncommitted" });
+    expect(visibleDiff.diff).toContain("file.txt");
+
+    const hiddenDiff = await getCheckoutDiff(repoDir, {
+      mode: "uncommitted",
+      ignoreWhitespace: true,
+      includeStructured: true,
+    });
+    expect(hiddenDiff.diff).toBe("");
+    expect(hiddenDiff.structured).toEqual([]);
   });
 
   it("preserves removed-line syntax highlighting with structured diffs", async () => {
@@ -147,13 +251,16 @@ const x = 1;
     expect(removedLine?.tokens).toEqual([{ text: "old comment line", style: "comment" }]);
   });
 
-  it("returns lightweight checkout status for normal repos", async () => {
-    const status = await getCheckoutStatusLite(repoDir);
+  it("returns checkout root metadata for normal repos", async () => {
+    const status = await getCheckoutStatus(repoDir);
     expect(status.isGit).toBe(true);
+    if (!status.isGit) {
+      return;
+    }
     expect(status.currentBranch).toBe("main");
-    expect(status.worktreeRoot).toBe(repoDir);
+    expect(status.repoRoot).toBe(repoDir);
     expect(status.isPaseoOwnedWorktree).toBe(false);
-    expect(status.mainRepoRoot).toBeNull();
+    expect(status.mainRepoRoot ?? null).toBeNull();
   });
 
   it("exposes hasRemote when origin is configured", async () => {
@@ -236,6 +343,24 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
     expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it("warms shortstat cache in the background without blocking listing callers", async () => {
+    expect(getCachedCheckoutShortstat(repoDir)).toBeUndefined();
+
+    warmCheckoutShortstatInBackground(repoDir);
+
+    // A repo with no origin/main computes to null, but null should still be cached.
+    for (let attempts = 0; attempts < 20; attempts += 1) {
+      const cached = getCachedCheckoutShortstat(repoDir);
+      if (cached !== undefined) {
+        expect(cached).toBeNull();
+        return;
+      }
+      await sleep(25);
+    }
+
+    throw new Error("shortstat background warm did not populate cache in time");
   });
 
   it("commits messages with quotes safely", async () => {
@@ -330,7 +455,7 @@ const x = 1;
   });
 
   it("handles status/diff/commit in a .paseo worktree", async () => {
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -363,8 +488,8 @@ const x = 1;
     expect(message).toBe("worktree update");
   });
 
-  it("returns lightweight checkout status for .paseo worktrees", async () => {
-    const result = await createWorktree({
+  it("returns checkout root metadata for .paseo worktrees", async () => {
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -372,9 +497,12 @@ const x = 1;
       paseoHome,
     });
 
-    const status = await getCheckoutStatusLite(result.worktreePath, { paseoHome });
+    const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
     expect(status.isGit).toBe(true);
-    expect(status.worktreeRoot).toBe(result.worktreePath);
+    if (!status.isGit) {
+      return;
+    }
+    expect(status.repoRoot).toBe(result.worktreePath);
     expect(status.isPaseoOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(repoDir);
   });
@@ -388,7 +516,7 @@ const x = 1;
     execSync("git config user.email 'test@test.com'", { cwd: mainCheckoutDir });
     execSync("git config user.name 'Test'", { cwd: mainCheckoutDir });
 
-    const worktree = await createWorktree({
+    const worktree = await createLegacyWorktreeForTest({
       branchName: "feature",
       cwd: mainCheckoutDir,
       baseBranch: "main",
@@ -403,7 +531,7 @@ const x = 1;
   });
 
   it("merges the current branch into base from a worktree checkout", async () => {
-    const worktree = await createWorktree({
+    const worktree = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -519,6 +647,87 @@ const x = 1;
     expect(() => execSync("git rev-parse -q --verify MERGE_HEAD", { cwd: repoDir })).toThrow();
   });
 
+  it("pulls the current branch from origin", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    const otherClone = join(tempDir, "other-clone");
+    execSync(`git clone ${remoteDir} ${otherClone}`);
+    execSync("git config user.email 'test@test.com'", { cwd: otherClone });
+    execSync("git config user.name 'Test'", { cwd: otherClone });
+    writeFileSync(join(otherClone, "pulled.txt"), "remote\n");
+    execSync("git add pulled.txt", { cwd: otherClone });
+    execSync("git -c commit.gpgsign=false commit -m 'remote pull commit'", { cwd: otherClone });
+    const remoteCommit = execSync("git rev-parse HEAD", { cwd: otherClone }).toString().trim();
+    execSync("git push", { cwd: otherClone });
+
+    await pullCurrentBranch(repoDir);
+
+    execSync(`git merge-base --is-ancestor ${remoteCommit} HEAD`, { cwd: repoDir });
+    expect(readFileSync(join(repoDir, "pulled.txt"), "utf8")).toBe("remote\n");
+  });
+
+  it("aborts pull on merge conflicts and leaves no merge in progress", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    writeFileSync(join(repoDir, "conflict.txt"), "local\n");
+    execSync("git add conflict.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'local conflict commit'", { cwd: repoDir });
+
+    const otherClone = join(tempDir, "other-clone");
+    execSync(`git clone ${remoteDir} ${otherClone}`);
+    execSync("git config user.email 'test@test.com'", { cwd: otherClone });
+    execSync("git config user.name 'Test'", { cwd: otherClone });
+    writeFileSync(join(otherClone, "conflict.txt"), "remote\n");
+    execSync("git add conflict.txt", { cwd: otherClone });
+    execSync("git -c commit.gpgsign=false commit -m 'remote conflict commit'", { cwd: otherClone });
+    execSync("git push", { cwd: otherClone });
+
+    await expect(pullCurrentBranch(repoDir)).rejects.toBeInstanceOf(Error);
+
+    const porcelain = execSync("git status --porcelain", { cwd: repoDir }).toString().trim();
+    expect(porcelain).toBe("");
+    expect(() => execSync("git rev-parse -q --verify MERGE_HEAD", { cwd: repoDir })).toThrow();
+  });
+
+  it("aborts pull on rebase conflicts and leaves no rebase in progress", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+    execSync("git config pull.rebase true", { cwd: repoDir });
+
+    writeFileSync(join(repoDir, "conflict.txt"), "local\n");
+    execSync("git add conflict.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'local rebase conflict commit'", {
+      cwd: repoDir,
+    });
+
+    const otherClone = join(tempDir, "other-clone");
+    execSync(`git clone ${remoteDir} ${otherClone}`);
+    execSync("git config user.email 'test@test.com'", { cwd: otherClone });
+    execSync("git config user.name 'Test'", { cwd: otherClone });
+    writeFileSync(join(otherClone, "conflict.txt"), "remote\n");
+    execSync("git add conflict.txt", { cwd: otherClone });
+    execSync("git -c commit.gpgsign=false commit -m 'remote rebase conflict commit'", {
+      cwd: otherClone,
+    });
+    execSync("git push", { cwd: otherClone });
+
+    await expect(pullCurrentBranch(repoDir)).rejects.toBeInstanceOf(Error);
+
+    const gitDir = execSync("git rev-parse --absolute-git-dir", { cwd: repoDir }).toString().trim();
+    const porcelain = execSync("git status --porcelain", { cwd: repoDir }).toString().trim();
+    expect(porcelain).toBe("");
+    expect(existsSync(join(gitDir, "rebase-merge"))).toBe(false);
+    expect(existsSync(join(gitDir, "rebase-apply"))).toBe(false);
+  });
+
   it("pushes the current branch to origin", async () => {
     const remoteDir = join(tempDir, "remote.git");
     execSync(`git init --bare -b main ${remoteDir}`);
@@ -583,209 +792,314 @@ const x = 1;
   it("disables GitHub features when gh is unavailable", async () => {
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
+    const github = createGitHubServiceForStatus(null);
+    github.getCurrentPullRequestStatus = async () => {
+      throw new GitHubCliMissingError();
+    };
+    const status = await getPullRequestStatus(repoDir, github);
+    expect(status.githubFeaturesEnabled).toBe(false);
+    expect(status.status).toBeNull();
+  });
 
-    try {
-      __setGhPathForTests(null);
-      const status = await getPullRequestStatus(repoDir);
-      expect(status.githubFeaturesEnabled).toBe(false);
-      expect(status.status).toBeNull();
-    } finally {
-      __resetGhPathCacheForTests();
-      __resetPullRequestStatusCacheForTests();
-    }
+  it("searches GitHub issues and PRs through the GitHub service", async () => {
+    let issueCalls = 0;
+    let pullRequestCalls = 0;
+    const github = createGitHubServiceForStatus(null);
+    github.listIssues = async (options) => {
+      issueCalls += 1;
+      expect(options).toEqual({ cwd: repoDir, query: "cache", limit: 5 });
+      return [
+        {
+          number: 55,
+          title: "Issue title",
+          url: "https://github.com/getpaseo/paseo/issues/55",
+          state: "OPEN",
+          body: "issue body",
+          labels: ["bug"],
+        },
+      ];
+    };
+    github.listPullRequests = async (options) => {
+      pullRequestCalls += 1;
+      expect(options).toEqual({ cwd: repoDir, query: "cache", limit: 5 });
+      return [
+        {
+          number: 123,
+          title: "PR title",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+          state: "OPEN",
+          body: "pr body",
+          baseRefName: "main",
+          headRefName: "feature",
+          labels: ["enhancement"],
+        },
+      ];
+    };
+
+    const result = await searchGitHubIssuesAndPrs(repoDir, "cache", 5, github);
+
+    expect(issueCalls).toBe(1);
+    expect(pullRequestCalls).toBe(1);
+    expect(result).toEqual({
+      githubFeaturesEnabled: true,
+      items: [
+        {
+          kind: "issue",
+          number: 55,
+          title: "Issue title",
+          url: "https://github.com/getpaseo/paseo/issues/55",
+          state: "OPEN",
+          body: "issue body",
+          labels: ["bug"],
+          baseRefName: null,
+          headRefName: null,
+        },
+        {
+          kind: "pr",
+          number: 123,
+          title: "PR title",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+          state: "OPEN",
+          body: "pr body",
+          labels: ["enhancement"],
+          baseRefName: "main",
+          headRefName: "feature",
+        },
+      ],
+    });
+  });
+
+  it("searches only GitHub PRs when the search kinds request excludes issues", async () => {
+    let issueCalls = 0;
+    let pullRequestCalls = 0;
+    const github = createGitHubServiceForStatus(null);
+    github.listIssues = async () => {
+      issueCalls += 1;
+      return [];
+    };
+    github.listPullRequests = async (options) => {
+      pullRequestCalls += 1;
+      expect(options).toEqual({ cwd: repoDir, query: "cache", limit: 5 });
+      return [
+        {
+          number: 123,
+          title: "PR title",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+          state: "OPEN",
+          body: "pr body",
+          baseRefName: "main",
+          headRefName: "feature",
+          labels: ["enhancement"],
+        },
+      ];
+    };
+
+    const result = await searchGitHubIssuesAndPrs(repoDir, "cache", 5, github, {
+      kinds: ["github-pr"],
+    });
+
+    expect(issueCalls).toBe(0);
+    expect(pullRequestCalls).toBe(1);
+    expect(result).toEqual({
+      githubFeaturesEnabled: true,
+      items: [
+        {
+          kind: "pr",
+          number: 123,
+          title: "PR title",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+          state: "OPEN",
+          body: "pr body",
+          labels: ["enhancement"],
+          baseRefName: "main",
+          headRefName: "feature",
+        },
+      ],
+    });
+  });
+
+  it("parses real gh status check rollup output and dedupes by latest check run", () => {
+    expect(
+      parseStatusCheckRollup([
+        {
+          __typename: "CheckRun",
+          completedAt: "2026-04-02T13:53:59Z",
+          conclusion: "SUCCESS",
+          detailsUrl: "https://github.com/org/repo/actions/runs/123",
+          name: "review_app",
+          startedAt: "2026-04-02T13:49:31Z",
+          status: "COMPLETED",
+          workflowName: "Deploy PR Preview",
+        },
+        {
+          __typename: "CheckRun",
+          completedAt: "2026-04-02T13:58:59Z",
+          conclusion: "FAILURE",
+          detailsUrl: "https://github.com/org/repo/actions/runs/124",
+          name: "review_app",
+          startedAt: "2026-04-02T13:55:31Z",
+          status: "COMPLETED",
+        },
+      ]),
+    ).toEqual([
+      {
+        name: "review_app",
+        status: "failure",
+        url: "https://github.com/org/repo/actions/runs/124",
+      },
+    ]);
+  });
+
+  it("parses mixed check run and status context entries", () => {
+    expect(
+      parseStatusCheckRollup([
+        {
+          __typename: "CheckRun",
+          name: "unit-tests",
+          status: "IN_PROGRESS",
+          conclusion: null,
+          detailsUrl: "https://github.com/org/repo/actions/runs/200",
+          startedAt: "2026-04-02T13:49:31Z",
+        },
+        {
+          __typename: "StatusContext",
+          context: "lint",
+          state: "SUCCESS",
+          targetUrl: "https://github.com/org/repo/status/300",
+          createdAt: "2026-04-02T13:48:00Z",
+        },
+      ]),
+    ).toEqual([
+      {
+        name: "unit-tests",
+        status: "pending",
+        url: "https://github.com/org/repo/actions/runs/200",
+      },
+      {
+        name: "lint",
+        status: "success",
+        url: "https://github.com/org/repo/status/300",
+      },
+    ]);
+  });
+
+  it("returns an empty list for nullish or empty status check rollups", () => {
+    expect(parseStatusCheckRollup(undefined)).toEqual([]);
+    expect(parseStatusCheckRollup(null)).toEqual([]);
+    expect(parseStatusCheckRollup([])).toEqual([]);
+  });
+
+  it("ignores unknown status check rollup node types", () => {
+    expect(
+      parseStatusCheckRollup([
+        {
+          __typename: "Commit",
+          oid: "abc123",
+        },
+        {
+          __typename: "CheckRun",
+          name: "build",
+          status: "COMPLETED",
+          conclusion: "SUCCESS",
+          detailsUrl: "https://github.com/org/repo/actions/runs/500",
+        },
+      ]),
+    ).toEqual([
+      {
+        name: "build",
+        status: "success",
+        url: "https://github.com/org/repo/actions/runs/500",
+      },
+    ]);
   });
 
   it("returns merged PR status when no open PR exists for the current branch", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin-gh-merged");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-    writeFileSync(
-      join(fakeBinDir, "gh"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        'if [[ "${1-}" == "--version" ]]; then',
-        '  echo "gh version 2.0.0"',
-        "  exit 0",
-        "fi",
-        'args="$*"',
-        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
-        '  echo \'{"url":"https://github.com/getpaseo/paseo/pull/123","title":"Ship feature","state":"closed","baseRefName":"main","headRefName":"feature","mergedAt":"2026-02-18T00:00:00Z"}\'',
-        "  exit 0",
-        "fi",
-        'echo "unexpected gh args: $args" >&2',
-        "exit 1",
-        "",
-      ].join("\n"),
-      "utf8",
+    const status = await getPullRequestStatus(
+      repoDir,
+      createGitHubServiceForStatus(
+        createPullRequestStatus({
+          state: "merged",
+          isMerged: true,
+        }),
+      ),
     );
-    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
-
-    try {
-      __setGhPathForTests(join(fakeBinDir, "gh"));
-      const status = await getPullRequestStatus(repoDir);
-      expect(status.githubFeaturesEnabled).toBe(true);
-      expect(status.status).not.toBeNull();
-      expect(status.status?.url).toContain("/pull/123");
-      expect(status.status?.baseRefName).toBe("main");
-      expect(status.status?.headRefName).toBe("feature");
-      expect(status.status?.isMerged).toBe(true);
-      expect(status.status?.state).toBe("merged");
-    } finally {
-      __resetGhPathCacheForTests();
-      __resetPullRequestStatusCacheForTests();
-    }
+    expect(status.githubFeaturesEnabled).toBe(true);
+    expect(status.status).not.toBeNull();
+    expect(status.status?.url).toContain("/pull/123");
+    expect(status.status?.baseRefName).toBe("main");
+    expect(status.status?.headRefName).toBe("feature");
+    expect(status.status?.isMerged).toBe(true);
+    expect(status.status?.state).toBe("merged");
   });
 
   it("returns closed-unmerged PR status without marking it as merged", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin-gh-closed");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-    writeFileSync(
-      join(fakeBinDir, "gh"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        'if [[ "${1-}" == "--version" ]]; then',
-        '  echo "gh version 2.0.0"',
-        "  exit 0",
-        "fi",
-        'args="$*"',
-        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
-        '  echo \'{"url":"https://github.com/getpaseo/paseo/pull/999","title":"Closed without merge","state":"closed","baseRefName":"main","headRefName":"feature","mergedAt":null}\'',
-        "  exit 0",
-        "fi",
-        'echo "unexpected gh args: $args" >&2',
-        "exit 1",
-        "",
-      ].join("\n"),
-      "utf8",
+    const status = await getPullRequestStatus(
+      repoDir,
+      createGitHubServiceForStatus(
+        createPullRequestStatus({
+          url: "https://github.com/getpaseo/paseo/pull/999",
+          title: "Closed without merge",
+          state: "closed",
+        }),
+      ),
     );
-    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
-
-    try {
-      __setGhPathForTests(join(fakeBinDir, "gh"));
-      const status = await getPullRequestStatus(repoDir);
-      expect(status.githubFeaturesEnabled).toBe(true);
-      expect(status.status).not.toBeNull();
-      expect(status.status?.url).toContain("/pull/999");
-      expect(status.status?.baseRefName).toBe("main");
-      expect(status.status?.headRefName).toBe("feature");
-      expect(status.status?.isMerged).toBe(false);
-      expect(status.status?.state).toBe("closed");
-    } finally {
-      __resetGhPathCacheForTests();
-      __resetPullRequestStatusCacheForTests();
-    }
+    expect(status.githubFeaturesEnabled).toBe(true);
+    expect(status.status).not.toBeNull();
+    expect(status.status?.url).toContain("/pull/999");
+    expect(status.status?.baseRefName).toBe("main");
+    expect(status.status?.headRefName).toBe("feature");
+    expect(status.status?.isMerged).toBe(false);
+    expect(status.status?.state).toBe("closed");
   });
 
   it("caches PR status results for duplicate lookups", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin-gh-cache-hit");
-    const callCountPath = join(tempDir, "gh-call-count.txt");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-    writeFileSync(callCountPath, "0\n");
-    writeFileSync(
-      join(fakeBinDir, "gh"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        `count_file=${JSON.stringify(callCountPath)}`,
-        'if [[ "${1-}" == "--version" ]]; then',
-        '  echo "gh version 2.0.0"',
-        "  exit 0",
-        "fi",
-        'args="$*"',
-        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
-        '  count="$(cat "$count_file")"',
-        '  printf "%s\\n" "$((count + 1))" > "$count_file"',
-        '  echo \'{"url":"https://github.com/getpaseo/paseo/pull/123","title":"Ship feature","state":"OPEN","baseRefName":"main","headRefName":"feature","mergedAt":null}\'',
-        "  exit 0",
-        "fi",
-        'echo "unexpected gh args: $args" >&2',
-        "exit 1",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
-
-    try {
-      __setGhPathForTests(join(fakeBinDir, "gh"));
-      const first = await getPullRequestStatus(repoDir);
-      const second = await getPullRequestStatus(repoDir);
-      expect(first).toEqual(second);
-      expect(first.status?.url).toContain("/pull/123");
-      expect(readFileSync(callCountPath, "utf8").trim()).toBe("1");
-    } finally {
-      __resetGhPathCacheForTests();
-      __resetPullRequestStatusCacheForTests();
-    }
+    let callCount = 0;
+    const github = createGitHubServiceForStatus(createPullRequestStatus(), {
+      onStatus: () => {
+        callCount += 1;
+      },
+    });
+    const first = await getPullRequestStatus(repoDir, github);
+    const second = await getPullRequestStatus(repoDir, github);
+    expect(first).toEqual(second);
+    expect(first.status?.url).toContain("/pull/123");
+    expect(callCount).toBe(1);
   });
 
   it("expires cached PR status after the TTL", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin-gh-cache-expiry");
-    const callCountPath = join(tempDir, "gh-call-count-expiry.txt");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-    writeFileSync(callCountPath, "0\n");
-    writeFileSync(
-      join(fakeBinDir, "gh"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        `count_file=${JSON.stringify(callCountPath)}`,
-        'if [[ "${1-}" == "--version" ]]; then',
-        '  echo "gh version 2.0.0"',
-        "  exit 0",
-        "fi",
-        'args="$*"',
-        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
-        '  count="$(cat "$count_file")"',
-        '  next="$((count + 1))"',
-        '  printf "%s\\n" "$next" > "$count_file"',
-        '  printf \'{"url":"https://github.com/getpaseo/paseo/pull/%s","title":"Ship feature","state":"OPEN","baseRefName":"main","headRefName":"feature","mergedAt":null}\\n\' "$next"',
-        "  exit 0",
-        "fi",
-        'echo "unexpected gh args: $args" >&2',
-        "exit 1",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
-
     __setPullRequestStatusCacheTtlForTests(50);
     try {
-      __setGhPathForTests(join(fakeBinDir, "gh"));
-      const first = await getPullRequestStatus(repoDir);
+      let callCount = 0;
+      const github = createGitHubServiceForStatus(null, {
+        onStatus: () => {
+          callCount += 1;
+        },
+      });
+      github.getCurrentPullRequestStatus = async () => {
+        callCount += 1;
+        return createPullRequestStatus({
+          url: `https://github.com/getpaseo/paseo/pull/${callCount}`,
+        });
+      };
+      const first = await getPullRequestStatus(repoDir, github);
       await sleep(80);
-      const second = await getPullRequestStatus(repoDir);
+      const second = await getPullRequestStatus(repoDir, github);
       expect(first.status?.url).toContain("/pull/1");
       expect(second.status?.url).toContain("/pull/2");
-      expect(readFileSync(callCountPath, "utf8").trim()).toBe("2");
+      expect(callCount).toBe(2);
     } finally {
-      __resetGhPathCacheForTests();
       __resetPullRequestStatusCacheForTests();
     }
   });
@@ -794,50 +1108,18 @@ const x = 1;
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin-gh-cache-concurrent");
-    const callCountPath = join(tempDir, "gh-call-count-concurrent.txt");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-    writeFileSync(callCountPath, "0\n");
-    writeFileSync(
-      join(fakeBinDir, "gh"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        `count_file=${JSON.stringify(callCountPath)}`,
-        'if [[ "${1-}" == "--version" ]]; then',
-        '  echo "gh version 2.0.0"',
-        "  exit 0",
-        "fi",
-        'args="$*"',
-        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
-        '  count="$(cat "$count_file")"',
-        '  printf "%s\\n" "$((count + 1))" > "$count_file"',
-        "  sleep 0.2",
-        '  echo \'{"url":"https://github.com/getpaseo/paseo/pull/123","title":"Ship feature","state":"OPEN","baseRefName":"main","headRefName":"feature","mergedAt":null}\'',
-        "  exit 0",
-        "fi",
-        'echo "unexpected gh args: $args" >&2',
-        "exit 1",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
-
-    try {
-      __setGhPathForTests(join(fakeBinDir, "gh"));
-      const [first, second] = await Promise.all([
-        getPullRequestStatus(repoDir),
-        getPullRequestStatus(repoDir),
-      ]);
-      expect(first).toEqual(second);
-      expect(readFileSync(callCountPath, "utf8").trim()).toBe("1");
-    } finally {
-      __resetGhPathCacheForTests();
-      __resetPullRequestStatusCacheForTests();
-    }
+    let callCount = 0;
+    const github = createGitHubServiceForStatus(createPullRequestStatus(), {
+      onStatus: () => {
+        callCount += 1;
+      },
+    });
+    const [first, second] = await Promise.all([
+      getPullRequestStatus(repoDir, github),
+      getPullRequestStatus(repoDir, github),
+    ]);
+    expect(first).toEqual(second);
+    expect(callCount).toBe(1);
   });
 
   it("returns typed MergeConflictError on merge conflicts", async () => {
@@ -878,7 +1160,7 @@ const x = 1;
     execSync("git checkout main", { cwd: repoDir });
 
     // Create a worktree/branch based on develop, but keep main as the repo default.
-    const worktree = await createWorktree({
+    const worktree = await createLegacyWorktreeForTest({
       branchName: "feature",
       cwd: repoDir,
       baseBranch: "develop",
@@ -924,7 +1206,7 @@ const x = 1;
     execSync("git checkout main", { cwd: repoDir });
 
     // Create a Paseo worktree configured to use develop as base.
-    const worktree = await createWorktree({
+    const worktree = await createLegacyWorktreeForTest({
       branchName: "feature",
       cwd: repoDir,
       baseBranch: "develop",
@@ -957,7 +1239,7 @@ const x = 1;
   });
 
   it("throws if Paseo worktree base metadata is missing", async () => {
-    const worktree = await createWorktree({
+    const worktree = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",

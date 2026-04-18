@@ -57,6 +57,7 @@ describe("use-settings", () => {
     expect(result).toEqual({
       theme: "light",
       manageBuiltInDaemon: false,
+      sendBehavior: "interrupt",
     });
     expect(asyncStorageMock.setItem).not.toHaveBeenCalled();
   });

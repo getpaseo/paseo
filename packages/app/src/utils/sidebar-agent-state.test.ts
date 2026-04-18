@@ -35,7 +35,7 @@ describe("deriveSidebarStateBucket", () => {
     ).toBe("attention");
   });
 
-  it("treats initializing agents as running", () => {
+  it("treats initializing agents as done", () => {
     expect(
       deriveSidebarStateBucket({
         status: "initializing",
@@ -43,6 +43,6 @@ describe("deriveSidebarStateBucket", () => {
         requiresAttention: false,
         attentionReason: null,
       }),
-    ).toBe("running");
+    ).toBe("done");
   });
 });

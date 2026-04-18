@@ -7,6 +7,7 @@ import { autoUpdater, type UpdateInfo } from "electron-updater";
 
 export type AppUpdateCheckResult = {
   hasUpdate: boolean;
+  readyToInstall: boolean;
   currentVersion: string;
   latestVersion: string;
   body: string | null;
@@ -24,19 +25,84 @@ export type AppUpdateInstallResult = {
 // ---------------------------------------------------------------------------
 
 let cachedUpdateInfo: UpdateInfo | null = null;
+let downloadedUpdateVersion: string | null = null;
 let downloading = false;
+let autoUpdaterConfigured = false;
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
 function configureAutoUpdater(): void {
-  // Don't auto-download — the user triggers install explicitly.
-  autoUpdater.autoDownload = false;
+  // Download updates in the background and only prompt once they are ready to install.
+  autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
   // Suppress built-in dialogs; the renderer handles UI.
   autoUpdater.autoRunAppAfterInstall = true;
+
+  if (autoUpdaterConfigured) {
+    return;
+  }
+
+  autoUpdaterConfigured = true;
+
+  autoUpdater.on("update-available", (info) => {
+    cachedUpdateInfo = info;
+    downloadedUpdateVersion = null;
+    downloading = true;
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    cachedUpdateInfo = info;
+    downloadedUpdateVersion = info.version;
+    downloading = false;
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    cachedUpdateInfo = null;
+    downloadedUpdateVersion = null;
+    downloading = false;
+  });
+
+  autoUpdater.on("error", (error) => {
+    downloading = false;
+    console.error("[auto-updater] Updater event failed:", error);
+  });
+}
+
+function isReadyToInstallVersion(version: string): boolean {
+  return downloadedUpdateVersion === version;
+}
+
+function buildCheckResult(input: {
+  currentVersion: string;
+  hasUpdate: boolean;
+  readyToInstall: boolean;
+  info?: UpdateInfo | null;
+}): AppUpdateCheckResult {
+  const { currentVersion, hasUpdate, readyToInstall, info } = input;
+
+  return {
+    hasUpdate,
+    readyToInstall,
+    currentVersion,
+    latestVersion: info?.version ?? currentVersion,
+    body: typeof info?.releaseNotes === "string" ? info.releaseNotes : null,
+    date: typeof info?.releaseDate === "string" ? info.releaseDate : null,
+  };
+}
+
+function scheduleQuitAndInstall(onBeforeQuit?: () => Promise<void>): void {
+  // Use a short delay to allow the renderer to receive the response.
+  setTimeout(async () => {
+    try {
+      if (onBeforeQuit) await onBeforeQuit();
+      autoUpdater.quitAndInstall(/* isSilent */ false, /* isForceRunAfter */ true);
+    } catch (error) {
+      console.error("[auto-updater] quitAndInstall failed:", error);
+    }
+  }, 1500);
 }
 
 // ---------------------------------------------------------------------------
@@ -45,28 +111,34 @@ function configureAutoUpdater(): void {
 
 export async function checkForAppUpdate(currentVersion: string): Promise<AppUpdateCheckResult> {
   if (!app.isPackaged) {
-    return {
-      hasUpdate: false,
+    return buildCheckResult({
       currentVersion,
-      latestVersion: currentVersion,
-      body: null,
-      date: null,
-    };
+      hasUpdate: false,
+      readyToInstall: false,
+    });
   }
 
   configureAutoUpdater();
+
+  const cachedVersion = cachedUpdateInfo?.version ?? null;
+  if (cachedVersion && cachedVersion !== currentVersion) {
+    return buildCheckResult({
+      currentVersion,
+      hasUpdate: true,
+      readyToInstall: isReadyToInstallVersion(cachedVersion),
+      info: cachedUpdateInfo,
+    });
+  }
 
   try {
     const result = await autoUpdater.checkForUpdates();
 
     if (!result || !result.updateInfo) {
-      return {
-        hasUpdate: false,
+      return buildCheckResult({
         currentVersion,
-        latestVersion: currentVersion,
-        body: null,
-        date: null,
-      };
+        hasUpdate: false,
+        readyToInstall: false,
+      });
     }
 
     const info = result.updateInfo;
@@ -75,24 +147,31 @@ export async function checkForAppUpdate(currentVersion: string): Promise<AppUpda
 
     if (hasUpdate) {
       cachedUpdateInfo = info;
+      downloading = !isReadyToInstallVersion(latestVersion);
+      return buildCheckResult({
+        currentVersion,
+        hasUpdate: true,
+        readyToInstall: isReadyToInstallVersion(latestVersion),
+        info,
+      });
     }
 
-    return {
-      hasUpdate,
+    cachedUpdateInfo = null;
+    downloadedUpdateVersion = null;
+    downloading = false;
+
+    return buildCheckResult({
       currentVersion,
-      latestVersion,
-      body: typeof info.releaseNotes === "string" ? info.releaseNotes : null,
-      date: typeof info.releaseDate === "string" ? info.releaseDate : null,
-    };
+      hasUpdate: false,
+      readyToInstall: false,
+    });
   } catch (error) {
     console.error("[auto-updater] Failed to check for updates:", error);
-    return {
-      hasUpdate: false,
+    return buildCheckResult({
       currentVersion,
-      latestVersion: currentVersion,
-      body: null,
-      date: null,
-    };
+      hasUpdate: false,
+      readyToInstall: false,
+    });
   }
 }
 
@@ -108,14 +187,6 @@ export async function downloadAndInstallUpdate(
     };
   }
 
-  if (downloading) {
-    return {
-      installed: false,
-      version: currentVersion,
-      message: "Update already in progress.",
-    };
-  }
-
   if (!cachedUpdateInfo) {
     return {
       installed: false,
@@ -126,24 +197,35 @@ export async function downloadAndInstallUpdate(
 
   configureAutoUpdater();
 
+  const readyVersion = cachedUpdateInfo.version;
+  if (isReadyToInstallVersion(readyVersion)) {
+    scheduleQuitAndInstall(onBeforeQuit);
+    return {
+      installed: true,
+      version: readyVersion,
+      message: "Update downloaded. The app will restart shortly.",
+    };
+  }
+
+  if (downloading) {
+    return {
+      installed: false,
+      version: currentVersion,
+      message: "Update is still being prepared. Try again in a moment.",
+    };
+  }
+
   downloading = true;
 
   try {
     await autoUpdater.downloadUpdate();
-    // quitAndInstall restarts the app with the new version.
-    // Use a short delay to allow the renderer to receive the response.
-    setTimeout(async () => {
-      try {
-        if (onBeforeQuit) await onBeforeQuit();
-        autoUpdater.quitAndInstall(/* isSilent */ false, /* isForceRunAfter */ true);
-      } catch (error) {
-        console.error("[auto-updater] quitAndInstall failed:", error);
-      }
-    }, 1500);
+    downloadedUpdateVersion = readyVersion;
+    downloading = false;
+    scheduleQuitAndInstall(onBeforeQuit);
 
     return {
       installed: true,
-      version: cachedUpdateInfo.version,
+      version: readyVersion,
       message: "Update downloaded. The app will restart shortly.",
     };
   } catch (error) {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
-import { View, Text, Pressable, TextInput, ActivityIndicator, Platform } from "react-native";
+import { View, Text, Pressable, TextInput, ActivityIndicator } from "react-native";
 import type { StyleProp, ViewStyle, TextProps } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
@@ -22,7 +22,6 @@ import {
   ShieldAlert,
   ShieldOff,
 } from "lucide-react-native";
-import { theme as defaultTheme } from "@/styles/theme";
 import type {
   AgentMode,
   AgentModelDefinition,
@@ -32,6 +31,7 @@ import type { AgentProviderDefinition } from "@server/server/agent/provider-mani
 import { getModeVisuals, type AgentModeIcon } from "@server/server/agent/provider-manifest";
 import { Combobox, ComboboxItem, ComboboxEmpty } from "@/components/ui/combobox";
 import { baseColors } from "@/styles/theme";
+import { isNative } from "@/constants/platform";
 
 const MODE_ICON_MAP: Record<AgentModeIcon, typeof ShieldCheck> = {
   ShieldCheck,
@@ -85,6 +85,8 @@ export function DropdownField({
   renderTrigger,
   testID,
 }: DropdownFieldProps): ReactElement {
+  const { theme } = useUnistyles();
+
   if (renderTrigger) {
     return (
       <>
@@ -114,7 +116,7 @@ export function DropdownField({
         <Text style={value ? styles.dropdownValue : styles.dropdownPlaceholder} numberOfLines={1}>
           {value || placeholder}
         </Text>
-        <ChevronDown size={defaultTheme.iconSize.md} color={defaultTheme.colors.foregroundMuted} />
+        <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
       </Pressable>
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
       {warningMessage ? <Text style={styles.warningText}>{warningMessage}</Text> : null}
@@ -150,6 +152,8 @@ export function SelectField({
   valueEllipsizeMode,
   testID,
 }: SelectFieldProps): ReactElement {
+  const { theme } = useUnistyles();
+
   const getWebKey = useCallback((event: unknown): string | null => {
     if (!event || typeof event !== "object") return null;
     const eventWithNative = event as { nativeEvent?: unknown; key?: unknown };
@@ -168,7 +172,7 @@ export function SelectField({
 
   const handleKeyDown = useCallback(
     (event: unknown) => {
-      if (Platform.OS !== "web") return;
+      if (isNative) return;
       const key = getWebKey(event);
       if (key === "Enter" || key === " ") {
         preventWebDefault(event);
@@ -209,7 +213,7 @@ export function SelectField({
             {value || placeholder || "Select..."}
           </Text>
         </View>
-        <ChevronRight size={defaultTheme.iconSize.lg} color={defaultTheme.colors.foregroundMuted} />
+        <ChevronRight size={theme.iconSize.lg} color={theme.colors.foregroundMuted} />
       </Pressable>
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
       {warningMessage ? <Text style={styles.warningText}>{warningMessage}</Text> : null}
@@ -228,7 +232,21 @@ interface DropdownSheetProps {
 }
 
 function DropdownSheetBackground({ style }: BottomSheetBackgroundProps) {
-  return <Animated.View pointerEvents="none" style={[style, styles.bottomSheetBackground]} />;
+  const { theme } = useUnistyles();
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        style,
+        {
+          backgroundColor: theme.colors.surface2,
+          borderTopLeftRadius: theme.borderRadius["2xl"],
+          borderTopRightRadius: theme.borderRadius["2xl"],
+        },
+      ]}
+    />
+  );
 }
 
 export function DropdownSheet({
@@ -237,6 +255,7 @@ export function DropdownSheet({
   onClose,
   children,
 }: DropdownSheetProps): ReactElement {
+  const { theme } = useUnistyles();
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ["60%", "90%"], []);
 
@@ -279,12 +298,12 @@ export function DropdownSheet({
       backdropComponent={renderBackdrop}
       enablePanDownToClose
       backgroundComponent={DropdownSheetBackground}
-      handleIndicatorStyle={styles.bottomSheetHandle}
+      handleIndicatorStyle={{ backgroundColor: theme.colors.palette.zinc[600] }}
       keyboardBehavior="extend"
       keyboardBlurBehavior="restore"
     >
       <View style={styles.bottomSheetHeader}>
-        <Text style={styles.dropdownSheetTitle}>{title}</Text>
+        <Text style={[styles.dropdownSheetTitle, { color: theme.colors.foreground }]}>{title}</Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close sheet"
@@ -292,7 +311,7 @@ export function DropdownSheet({
           hitSlop={10}
           testID="dropdown-sheet-close"
         >
-          <X size={defaultTheme.iconSize.md} color={defaultTheme.colors.foregroundMuted} />
+          <X size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
         </Pressable>
       </View>
       <BottomSheetScrollView
@@ -412,6 +431,8 @@ export function FormSelectTrigger({
   valueEllipsizeMode,
   testID,
 }: CompactSelectFieldProps): ReactElement {
+  const { theme } = useUnistyles();
+
   const getWebKey = useCallback((event: unknown): string | null => {
     if (!event || typeof event !== "object") return null;
     const eventWithNative = event as { nativeEvent?: unknown; key?: unknown };
@@ -430,7 +451,7 @@ export function FormSelectTrigger({
 
   const handleKeyDown = useCallback(
     (event: unknown) => {
-      if (Platform.OS !== "web") return;
+      if (isNative) return;
       const key = getWebKey(event);
       if (key === "Enter" || key === " ") {
         preventWebDefault(event);
@@ -468,7 +489,7 @@ export function FormSelectTrigger({
       <View style={styles.compactSelectValueContainer}>
         {showLabel ? <Text style={styles.compactSelectLabel}>{label}</Text> : null}
         {isLoading ? (
-          <ActivityIndicator size="small" color={defaultTheme.colors.foregroundMuted} />
+          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
         ) : (
           <Text
             style={hasConcreteValue ? styles.compactSelectValue : styles.compactSelectPlaceholder}
@@ -479,7 +500,7 @@ export function FormSelectTrigger({
           </Text>
         )}
       </View>
-      <ChevronDown size={defaultTheme.iconSize.md} color={defaultTheme.colors.foregroundMuted} />
+      <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
     </Pressable>
   );
 }
@@ -517,6 +538,8 @@ export function AgentConfigRow({
   onSelectThinkingOption,
   disabled,
 }: AgentConfigRowProps): ReactElement {
+  const { theme } = useUnistyles();
+
   const providerOptions: ComboSelectOption[] = useMemo(
     () =>
       providerDefinitions.map((def) => ({
@@ -556,7 +579,11 @@ export function AgentConfigRow({
   const effectiveSelectedThinkingOption =
     selectedThinkingOptionId || thinkingSelectOptions[0]?.id || "";
 
-  const selectedModeVisuals = getModeVisuals(selectedProvider, effectiveSelectedMode);
+  const selectedModeVisuals = getModeVisuals(
+    selectedProvider,
+    effectiveSelectedMode,
+    providerDefinitions,
+  );
   const ModeIcon = MODE_ICON_MAP[selectedModeVisuals?.icon ?? "ShieldCheck"];
   const modeIconColor = MODE_COLOR_MAP[selectedModeVisuals?.colorTier ?? "safe"];
 
@@ -571,7 +598,7 @@ export function AgentConfigRow({
           placeholder={providerOptions.length > 0 ? "Select..." : "No providers available"}
           disabled={disabled || providerOptions.length === 0}
           onSelect={onSelectProvider}
-          icon={<Bot size={defaultTheme.iconSize.md} color={defaultTheme.colors.foregroundMuted} />}
+          icon={<Bot size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
           showLabel={false}
           testID="draft-provider-select"
         />
@@ -586,9 +613,7 @@ export function AgentConfigRow({
           disabled={disabled}
           isLoading={isModelLoading}
           onSelect={onSelectModel}
-          icon={
-            <Brain size={defaultTheme.iconSize.md} color={defaultTheme.colors.foregroundMuted} />
-          }
+          icon={<Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
           showLabel={false}
           testID="draft-model-select"
         />
@@ -602,7 +627,7 @@ export function AgentConfigRow({
           placeholder="Default"
           disabled={disabled || modeOptions.length === 0}
           onSelect={onSelectMode}
-          icon={<ModeIcon size={defaultTheme.iconSize.md} color={modeIconColor} />}
+          icon={<ModeIcon size={theme.iconSize.md} color={modeIconColor} />}
           showLabel={false}
           testID="draft-mode-select"
         />
@@ -617,9 +642,7 @@ export function AgentConfigRow({
             placeholder="Select..."
             disabled={disabled}
             onSelect={onSelectThinkingOption}
-            icon={
-              <Brain size={defaultTheme.iconSize.md} color={defaultTheme.colors.foregroundMuted} />
-            }
+            icon={<Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
             showLabel={false}
           />
         </View>
@@ -773,7 +796,8 @@ export function ModelDropdown({
   const [isOpen, setIsOpen] = useState(false);
   const anchorRef = useRef<View>(null);
 
-  const selectedLabel = models.find((model) => model.id === selectedModel)?.label ?? selectedModel ?? "Select model";
+  const selectedLabel =
+    models.find((model) => model.id === selectedModel)?.label ?? selectedModel ?? "Select model";
   const placeholder = isLoading && models.length === 0 ? "Loading..." : "Select model";
   const helperText = error
     ? undefined
@@ -963,6 +987,8 @@ export function GitOptionsSection({
   attachWorktreeError,
   onSelectWorktreePath,
 }: GitOptionsSectionProps): ReactElement {
+  const { theme } = useUnistyles();
+
   const isLoading = status === "loading";
   const isCreateMode = worktreeMode === "create";
   const isAttachMode = worktreeMode === "attach";
@@ -1097,7 +1123,7 @@ export function GitOptionsSection({
                 autoCapitalize="none"
                 autoCorrect={false}
                 placeholder="branch name"
-                placeholderTextColor={defaultTheme.colors.foregroundMuted}
+                placeholderTextColor={theme.colors.foregroundMuted}
                 onSubmitEditing={handleConfirmEdit}
               />
               <Pressable
@@ -1105,19 +1131,16 @@ export function GitOptionsSection({
                 hitSlop={8}
                 style={styles.baseBranchIconButton}
               >
-                <Check
-                  size={defaultTheme.iconSize.md}
-                  color={defaultTheme.colors.palette.green[500]}
-                />
+                <Check size={theme.iconSize.md} color={theme.colors.palette.green[500]} />
               </Pressable>
               <Pressable onPress={handleCancelEdit} hitSlop={8} style={styles.baseBranchIconButton}>
-                <X size={defaultTheme.iconSize.md} color={defaultTheme.colors.foregroundMuted} />
+                <X size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
               </Pressable>
             </View>
           ) : (
             <Pressable onPress={handleStartEdit} style={styles.baseBranchValueRow}>
               <Text style={styles.baseBranchValue}>{displayBranch}</Text>
-              <Pencil size={defaultTheme.iconSize.sm} color={defaultTheme.colors.foregroundMuted} />
+              <Pencil size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
             </Pressable>
           )}
         </View>
@@ -1164,14 +1187,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
-  },
-  bottomSheetBackground: {
-    backgroundColor: theme.colors.surface2,
-    borderTopLeftRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius["2xl"],
-  },
-  bottomSheetHandle: {
-    backgroundColor: theme.colors.palette.zinc[600],
   },
   bottomSheetHeader: {
     flexDirection: "row",

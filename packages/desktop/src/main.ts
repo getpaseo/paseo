@@ -1,4 +1,5 @@
 import log from "electron-log/main";
+log.transports.console.level = "info";
 log.initialize({ spyRendererConsole: true });
 
 import { inheritLoginShellEnv } from "./login-shell-env.js";
@@ -7,6 +8,7 @@ inheritLoginShellEnv();
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { app, BrowserWindow, ipcMain, nativeImage, net, protocol } from "electron";
 import { registerDaemonManager } from "./daemon/daemon-manager.js";
 import {
@@ -36,6 +38,49 @@ const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
 const OPEN_PROJECT_EVENT = "paseo:event:open-project";
 app.setName("Paseo");
+
+// In dev mode, detect git worktrees and isolate each instance so multiple
+// Electron windows can run side-by-side (separate userData = separate lock).
+let devWorktreeName: string | null = null;
+if (!app.isPackaged) {
+  try {
+    const topLevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      encoding: "utf-8",
+      timeout: 3000,
+    }).trim();
+    devWorktreeName = path.basename(topLevel);
+    // Main checkout (e.g. "paseo") gets default userData — only worktrees diverge.
+    const commonDir = path.resolve(
+      topLevel,
+      execFileSync("git", ["rev-parse", "--git-common-dir"], {
+        cwd: topLevel,
+        encoding: "utf-8",
+        timeout: 3000,
+      }).trim(),
+    );
+    const isWorktree = path.resolve(topLevel, ".git") !== commonDir;
+    if (isWorktree) {
+      app.setPath("userData", path.join(app.getPath("appData"), `Paseo-${devWorktreeName}`));
+      log.info("[worktree] isolated userData for worktree:", devWorktreeName);
+    } else {
+      devWorktreeName = null;
+    }
+  } catch {
+    devWorktreeName = null;
+  }
+}
+
+// Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
+// rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
+// Must run before app.whenReady().
+const electronFlags = process.env.PASEO_ELECTRON_FLAGS?.trim();
+if (electronFlags) {
+  for (const token of electronFlags.split(/\s+/)) {
+    const [key, ...rest] = token.replace(/^--/, "").split("=");
+    app.commandLine.appendSwitch(key, rest.join("=") || undefined);
+  }
+  log.info("[electron-flags]", electronFlags);
+}
 
 let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   argv: process.argv,
@@ -114,7 +159,9 @@ async function createMainWindow(): Promise<void> {
   const iconPath = getWindowIconPath();
   const systemTheme = resolveSystemWindowTheme();
 
+  const title = devWorktreeName ? `Paseo (${devWorktreeName})` : "Paseo";
   const mainWindow = new BrowserWindow({
+    title,
     width: 1200,
     height: 800,
     show: false,
@@ -131,9 +178,14 @@ async function createMainWindow(): Promise<void> {
     },
   });
 
+  if (devWorktreeName) {
+    app.dock?.setBadge(devWorktreeName);
+  }
+
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
+
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
   });

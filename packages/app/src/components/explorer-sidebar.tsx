@@ -3,7 +3,6 @@ import {
   View,
   Text,
   Pressable,
-  Platform,
   useWindowDimensions,
   StyleSheet as RNStyleSheet,
 } from "react-native";
@@ -20,12 +19,13 @@ import {
   type ExplorerTab,
 } from "@/stores/panel-store";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
-import { HEADER_INNER_HEIGHT, isCompactFormFactor } from "@/constants/layout";
+import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
 import { GitDiffPane } from "./git-diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { isWeb } from "@/constants/platform";
 
 const MIN_CHAT_WIDTH = 400;
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
@@ -48,7 +48,7 @@ export function ExplorerSidebar({
   const { theme } = useUnistyles();
   const isScreenFocused = useIsFocused();
   const insets = useSafeAreaInsets();
-  const isMobile = isCompactFormFactor();
+  const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
   const closeToAgent = usePanelStore((state) => state.closeToAgent);
@@ -252,7 +252,7 @@ export function ExplorerSidebar({
 
   // Mobile: full-screen overlay with gesture.
   // On web, keep it interactive only while open so closed sidebars don't eat taps.
-  const overlayPointerEvents = Platform.OS === "web" ? (isOpen ? "auto" : "none") : "box-none";
+  const overlayPointerEvents = isWeb ? (isOpen ? "auto" : "none") : "box-none";
 
   // Navigation stacks can keep previous screens mounted; hide sidebars for unfocused
   // screens so only the active screen exposes explorer/terminal surfaces.
@@ -270,7 +270,11 @@ export function ExplorerSidebar({
           <Animated.View
             style={[
               explorerStaticStyles.mobileSidebar,
-              { width: windowWidth, paddingTop: insets.top, backgroundColor: theme.colors.surfaceSidebar },
+              {
+                width: windowWidth,
+                paddingTop: insets.top,
+                backgroundColor: theme.colors.surfaceSidebar,
+              },
               sidebarAnimatedStyle,
               mobileKeyboardInsetStyle,
             ]}
@@ -299,13 +303,13 @@ export function ExplorerSidebar({
   }
 
   return (
-    <Animated.View style={[explorerStaticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }]}>
+    <Animated.View
+      style={[explorerStaticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }]}
+    >
       <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
         {/* Resize handle - absolutely positioned over left border */}
         <GestureDetector gesture={resizeGesture}>
-          <View
-            style={[styles.resizeHandle, Platform.OS === "web" && ({ cursor: "col-resize" } as any)]}
-          />
+          <View style={[styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as any)]} />
         </GestureDetector>
 
         <SidebarContent
@@ -472,7 +476,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   tabActive: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   tabText: {
     fontSize: theme.fontSize.sm,

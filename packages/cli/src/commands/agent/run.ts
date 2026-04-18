@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import {
   getStructuredAgentResponse,
   StructuredAgentResponseError,
@@ -16,13 +16,17 @@ import { resolve } from "node:path";
 import { lookup } from "mime-types";
 import { parseDuration } from "../../utils/duration.js";
 import { collectMultiple } from "../../utils/command-options.js";
+import { resolveProviderAndModel } from "../../utils/provider-model.js";
+
+export { resolveProviderAndModel } from "../../utils/provider-model.js";
 
 export function addRunOptions(cmd: Command): Command {
   return cmd
     .description("Create and start an agent with a task")
     .argument("<prompt>", "The task/prompt for the agent")
     .option("-d, --detach", "Run in background (detached)")
-    .option("--name <name>", "Assign a name/title to the agent")
+    .option("--title <title>", "Assign a title to the agent")
+    .addOption(new Option("--name <name>", "Hidden alias for --title").hideHelp())
     .option(
       "--provider <provider>",
       "Agent provider, or provider/model (e.g. codex or codex/gpt-5.4)",
@@ -82,6 +86,7 @@ export const agentRunSchema: OutputSchema<AgentRunResult> = {
 
 export interface AgentRunOptions extends CommandOptions {
   detach?: boolean;
+  title?: string;
   name?: string;
   provider?: string;
   model?: string;
@@ -94,11 +99,6 @@ export interface AgentRunOptions extends CommandOptions {
   label?: string[];
   waitTimeout?: string;
   outputSchema?: string;
-}
-
-interface ResolvedProviderModel {
-  provider: string;
-  model: string | undefined;
 }
 
 function toRunResult(
@@ -193,7 +193,6 @@ export async function resolveStructuredResponseMessage(options: {
   try {
     const timeline = await options.client.fetchAgentTimeline(options.agentId, {
       direction: "tail",
-      projection: "projected",
       limit: 200,
     });
     for (let index = timeline.entries.length - 1; index >= 0; index -= 1) {
@@ -217,54 +216,6 @@ function structuredRunSchema(output: Record<string, unknown>): OutputSchema<Agen
   return {
     ...agentRunSchema,
     serialize: () => output,
-  };
-}
-
-export function resolveProviderAndModel(
-  options: Pick<AgentRunOptions, "provider" | "model">,
-): ResolvedProviderModel {
-  const providerInput = options.provider?.trim() || "claude";
-  const modelInput = options.model?.trim();
-
-  if (options.model !== undefined && !modelInput) {
-    const error: CommandError = {
-      code: "INVALID_MODEL",
-      message: "--model cannot be empty",
-    };
-    throw error;
-  }
-
-  const slashIndex = providerInput.indexOf("/");
-  if (slashIndex === -1) {
-    return {
-      provider: providerInput,
-      model: modelInput,
-    };
-  }
-
-  const provider = providerInput.slice(0, slashIndex).trim();
-  const modelFromProvider = providerInput.slice(slashIndex + 1).trim();
-  if (!provider || !modelFromProvider) {
-    const error: CommandError = {
-      code: "INVALID_PROVIDER",
-      message: "Invalid --provider value",
-      details: "Use --provider <provider> or --provider <provider>/<model>",
-    };
-    throw error;
-  }
-
-  if (modelInput && modelInput !== modelFromProvider) {
-    const error: CommandError = {
-      code: "CONFLICTING_MODEL_OPTIONS",
-      message: "Conflicting model values provided",
-      details: `--provider specifies model ${modelFromProvider}, but --model specifies ${modelInput}`,
-    };
-    throw error;
-  }
-
-  return {
-    provider,
-    model: modelInput ?? modelFromProvider,
   };
 }
 
@@ -325,6 +276,7 @@ export async function runRunCommand(
   }
 
   const resolvedProviderModel = resolveProviderAndModel(options);
+  const resolvedTitle = options.title ?? options.name;
 
   let client;
   try {
@@ -414,7 +366,7 @@ export async function runRunCommand(
           structuredAgent = await client.createAgent({
             provider: resolvedProviderModel.provider,
             cwd,
-            title: options.name,
+            title: resolvedTitle,
             modeId: options.mode,
             model: resolvedProviderModel.model,
             thinkingOptionId,
@@ -513,7 +465,7 @@ export async function runRunCommand(
     const agent = await client.createAgent({
       provider: resolvedProviderModel.provider,
       cwd,
-      title: options.name,
+      title: resolvedTitle,
       modeId: options.mode,
       model: resolvedProviderModel.model,
       thinkingOptionId,

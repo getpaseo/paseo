@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import { Animated, Easing, Platform, Text, ToastAndroid, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb } from "@/constants/platform";
 import { AlertTriangle, CheckCircle2 } from "lucide-react-native";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import {
@@ -46,6 +48,7 @@ export function useToastHost(): {
   toast: ToastState | null;
   dismiss: () => void;
 } {
+  const { theme } = useUnistyles();
   const [toast, setToast] = useState<ToastState | null>(null);
   const idRef = useRef(0);
 
@@ -83,11 +86,11 @@ export function useToastHost(): {
       copied: (label?: string) =>
         show(label ? `Copied ${label}` : "Copied", {
           variant: "success",
-          icon: <CheckCircle2 size={18} />,
+          icon: <CheckCircle2 size={18} color={theme.colors.foreground} />,
         }),
       error: (message: string) => show(message, { variant: "error", durationMs: 3200 }),
     }),
-    [show],
+    [show, theme.colors.foreground],
   );
 
   const dismiss = useCallback(() => {
@@ -108,9 +111,12 @@ export function ToastViewport({
 }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const isMobile = useIsCompactFormFactor();
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-8)).current;
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dismissDeadlineRef = useRef<number | null>(null);
+  const remainingDurationRef = useRef(0);
 
   const clearTimer = useCallback(() => {
     if (timeoutRef.current) {
@@ -141,9 +147,39 @@ export function ToastViewport({
     });
   }, [clearTimer, onDismiss, opacity, translateY]);
 
+  const scheduleDismiss = useCallback(
+    (durationMs: number) => {
+      clearTimer();
+      const nextDurationMs = Math.max(0, durationMs);
+      remainingDurationRef.current = nextDurationMs;
+      dismissDeadlineRef.current = Date.now() + nextDurationMs;
+      timeoutRef.current = setTimeout(() => {
+        animateOut();
+      }, nextDurationMs);
+    },
+    [animateOut, clearTimer],
+  );
+
+  const pauseDismiss = useCallback(() => {
+    if (dismissDeadlineRef.current !== null) {
+      remainingDurationRef.current = Math.max(0, dismissDeadlineRef.current - Date.now());
+    }
+    dismissDeadlineRef.current = null;
+    clearTimer();
+  }, [clearTimer]);
+
+  const resumeDismiss = useCallback(() => {
+    if (!toast) {
+      return;
+    }
+    scheduleDismiss(remainingDurationRef.current || toast.durationMs);
+  }, [scheduleDismiss, toast]);
+
   useEffect(() => {
     if (!toast) {
       clearTimer();
+      dismissDeadlineRef.current = null;
+      remainingDurationRef.current = 0;
       opacity.setValue(0);
       translateY.setValue(-8);
       return;
@@ -168,20 +204,18 @@ export function ToastViewport({
       }),
     ]).start();
 
-    timeoutRef.current = setTimeout(() => {
-      animateOut();
-    }, toast.durationMs);
+    remainingDurationRef.current = toast.durationMs;
+    scheduleDismiss(toast.durationMs);
 
     return () => {
       clearTimer();
     };
-  }, [animateOut, clearTimer, opacity, toast, translateY]);
+  }, [clearTimer, opacity, scheduleDismiss, toast, translateY]);
 
   if (!toast) {
     return null;
   }
 
-  const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
   const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const topOffset =
@@ -201,6 +235,8 @@ export function ToastViewport({
     <View style={styles.container} pointerEvents="box-none">
       <Animated.View
         testID={toast.testID ?? "app-toast"}
+        onPointerEnter={isWeb ? pauseDismiss : undefined}
+        onPointerLeave={isWeb ? resumeDismiss : undefined}
         style={[
           styles.toast,
           toast.variant === "success" ? styles.toastSuccess : null,
@@ -218,7 +254,6 @@ export function ToastViewport({
           <Text
             testID="app-toast-message"
             style={[styles.message, toast.variant === "error" ? styles.messageError : null]}
-            numberOfLines={2}
           >
             {toast.content}
           </Text>
@@ -231,7 +266,7 @@ export function ToastViewport({
     </View>
   );
 
-  if (placement === "app-shell" && Platform.OS === "web" && typeof document !== "undefined") {
+  if (placement === "app-shell" && isWeb && typeof document !== "undefined") {
     return createPortal(content, getOverlayRoot());
   }
 
@@ -254,7 +289,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     backgroundColor: theme.colors.surface0,
-    borderRadius: theme.borderRadius.full,
+    borderRadius: theme.borderRadius["2xl"],
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     paddingVertical: theme.spacing[2],

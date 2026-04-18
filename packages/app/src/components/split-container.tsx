@@ -27,7 +27,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { Platform, View, Text } from "react-native";
+import { View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
 import { shouldFocusPaneFromEventTarget } from "@/components/split-container-pane-focus";
@@ -69,6 +69,7 @@ import {
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
 import { workspaceTabTargetsEqual } from "@/utils/workspace-tab-identity";
+import { isNative } from "@/constants/platform";
 
 interface SplitContainerProps {
   layout: WorkspaceLayout;
@@ -88,12 +89,8 @@ interface SplitContainerProps {
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
-  onSelectNewTabOption: (selection: {
-    optionId: "__new_tab_agent__" | "__new_tab_terminal__";
-    paneId?: string;
-  }) => void;
-  onNewTerminalTab: (input: { paneId?: string }) => void;
-  newTabAgentOptionId?: "__new_tab_agent__" | "__new_tab_terminal__";
+  onCreateDraftTab: (input: { paneId?: string }) => void;
+  onCreateTerminalTab: (input: { paneId?: string }) => void;
   buildPaneContentModel: (input: {
     paneId: string;
     isPaneFocused: boolean;
@@ -177,7 +174,6 @@ const MountedTabSlot = memo(function MountedTabSlot({
   paneId,
   buildPaneContentModel,
 }: MountedTabSlotProps) {
-
   const content = useMemo(
     () =>
       buildPaneContentModel({
@@ -258,9 +254,8 @@ export function SplitContainer({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onSelectNewTabOption,
-  onNewTerminalTab,
-  newTabAgentOptionId = "__new_tab_agent__",
+  onCreateDraftTab,
+  onCreateTerminalTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -528,9 +523,8 @@ export function SplitContainer({
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
         onCloseOtherTabs={onCloseOtherTabs}
-        onSelectNewTabOption={onSelectNewTabOption}
-        onNewTerminalTab={onNewTerminalTab}
-        newTabAgentOptionId={newTabAgentOptionId}
+        onCreateDraftTab={onCreateDraftTab}
+        onCreateTerminalTab={onCreateTerminalTab}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
         onSplitPane={onSplitPane}
@@ -651,9 +645,8 @@ function SplitNodeView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onSelectNewTabOption,
-  onNewTerminalTab,
-  newTabAgentOptionId,
+  onCreateDraftTab,
+  onCreateTerminalTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -687,9 +680,8 @@ function SplitNodeView({
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
         onCloseOtherTabs={onCloseOtherTabs}
-        onSelectNewTabOption={onSelectNewTabOption}
-        onNewTerminalTab={onNewTerminalTab}
-        newTabAgentOptionId={newTabAgentOptionId}
+        onCreateDraftTab={onCreateDraftTab}
+        onCreateTerminalTab={onCreateTerminalTab}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
         onSplitPane={onSplitPane}
@@ -738,9 +730,8 @@ function SplitNodeView({
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
               onCloseOtherTabs={onCloseOtherTabs}
-              onSelectNewTabOption={onSelectNewTabOption}
-              onNewTerminalTab={onNewTerminalTab}
-              newTabAgentOptionId={newTabAgentOptionId}
+              onCreateDraftTab={onCreateDraftTab}
+              onCreateTerminalTab={onCreateTerminalTab}
               buildPaneContentModel={buildPaneContentModel}
               onFocusPane={onFocusPane}
               onSplitPane={onSplitPane}
@@ -788,9 +779,8 @@ function SplitPaneView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onSelectNewTabOption,
-  onNewTerminalTab,
-  newTabAgentOptionId,
+  onCreateDraftTab,
+  onCreateTerminalTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -839,7 +829,7 @@ function SplitPaneView({
   );
 
   useEffect(() => {
-    if (Platform.OS !== "web") {
+    if (isNative) {
       return;
     }
 
@@ -877,12 +867,7 @@ function SplitPaneView({
 
   return (
     <View ref={paneRef} collapsable={false} style={styles.pane}>
-      <View
-        style={[
-          styles.paneTabs,
-          { paddingLeft: padding.left, paddingRight: padding.right },
-        ]}
-      >
+      <View style={[styles.paneTabs, { paddingLeft: padding.left, paddingRight: padding.right }]}>
         <TitlebarDragRegion />
         <WorkspaceDesktopTabsRow
           paneId={pane.id}
@@ -900,9 +885,8 @@ function SplitPaneView({
           onCloseTabsToLeft={(tabId) => onCloseTabsToLeft(tabId, paneTabs)}
           onCloseTabsToRight={(tabId) => onCloseTabsToRight(tabId, paneTabs)}
           onCloseOtherTabs={(tabId) => onCloseOtherTabs(tabId, paneTabs)}
-          onSelectNewTabOption={onSelectNewTabOption}
-          onNewTerminalTab={onNewTerminalTab}
-          newTabAgentOptionId={newTabAgentOptionId ?? "__new_tab_agent__"}
+          onCreateDraftTab={onCreateDraftTab}
+          onCreateTerminalTab={onCreateTerminalTab}
           onReorderTabs={(nextTabs) => {
             onReorderTabsInPane(
               pane.id,
@@ -920,27 +904,25 @@ function SplitPaneView({
       </View>
 
       <View style={styles.paneContent}>
-        {mountedPaneTabIds.length > 0 ? (
-          mountedPaneTabIds.map((tabId) => {
-            const tabDescriptor = tabDescriptorMap.get(tabId);
-            if (!tabDescriptor) {
-              return null;
-            }
+        {mountedPaneTabIds.length > 0
+          ? mountedPaneTabIds.map((tabId) => {
+              const tabDescriptor = tabDescriptorMap.get(tabId);
+              if (!tabDescriptor) {
+                return null;
+              }
 
-            return (
-              <MountedTabSlot
-                key={tabId}
-                tabDescriptor={tabDescriptor}
-                isVisible={tabId === activeTabDescriptor?.tabId}
-                isPaneFocused={isFocused && tabId === activeTabDescriptor?.tabId}
-                paneId={pane.id}
-                buildPaneContentModel={buildPaneContentModel}
-              />
-            );
-          })
-        ) : (
-          (renderPaneEmptyState?.() ?? null)
-        )}
+              return (
+                <MountedTabSlot
+                  key={tabId}
+                  tabDescriptor={tabDescriptor}
+                  isVisible={tabId === activeTabDescriptor?.tabId}
+                  isPaneFocused={isFocused && tabId === activeTabDescriptor?.tabId}
+                  paneId={pane.id}
+                  buildPaneContentModel={buildPaneContentModel}
+                />
+              );
+            })
+          : (renderPaneEmptyState?.() ?? null)}
         <SplitDropZone paneId={pane.id} active={showDropZones} preview={dropPreview} />
       </View>
     </View>

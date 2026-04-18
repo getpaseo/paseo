@@ -33,8 +33,7 @@ function parseField(
     }
 
     const [base, stepSource] = part.split("/");
-    const step =
-      stepSource === undefined ? 1 : Number.parseInt(stepSource, 10);
+    const step = stepSource === undefined ? 1 : Number.parseInt(stepSource, 10);
     if (!Number.isInteger(step) || step <= 0) {
       throw new Error(`Invalid cron ${bounds.name} step`);
     }

@@ -28,6 +28,8 @@ import { Portal } from "@gorhom/portal";
 import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb } from "@/constants/platform";
 
 type Side = "top" | "bottom" | "left" | "right";
 type Align = "start" | "center" | "end";
@@ -44,6 +46,7 @@ type TooltipContextValue = {
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<View | null>;
   enabled: boolean;
+  openOnPress: boolean;
   delayDuration: number;
 };
 
@@ -55,6 +58,28 @@ function useTooltipContext(componentName: string): TooltipContextValue {
     throw new Error(`${componentName} must be used within <Tooltip />`);
   }
   return ctx;
+}
+
+// Tooltips should open on hover or keyboard focus, not when focus is restored
+// programmatically (e.g. when a Modal closes and returns focus to its opener).
+// Track the last input modality on web so TooltipTrigger can ignore focus
+// events that weren't keyboard-driven. Native has no equivalent scenario.
+let lastInputWasKeyboard = false;
+if (isWeb && typeof window !== "undefined") {
+  const markKeyboard = () => {
+    lastInputWasKeyboard = true;
+  };
+  const markPointer = () => {
+    lastInputWasKeyboard = false;
+  };
+  window.addEventListener("keydown", markKeyboard, true);
+  window.addEventListener("mousedown", markPointer, true);
+  window.addEventListener("pointerdown", markPointer, true);
+  window.addEventListener("touchstart", markPointer, true);
+}
+
+function shouldOpenOnFocus(): boolean {
+  return !isWeb || lastInputWasKeyboard;
 }
 
 function composeEventHandlers<E>(
@@ -214,12 +239,8 @@ export function Tooltip({
     onOpenChange,
   });
 
-  const isWeb = Platform.OS === "web";
-  const isMobileWeb =
-    isWeb &&
-    typeof navigator !== "undefined" &&
-    /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent ?? "");
-  const enabled = isWeb ? (isMobileWeb ? enabledOnMobile : enabledOnDesktop) : enabledOnMobile;
+  const isCompact = useIsCompactFormFactor();
+  const enabled = isCompact ? enabledOnMobile : enabledOnDesktop;
 
   const value = useMemo<TooltipContextValue>(
     () => ({
@@ -227,9 +248,10 @@ export function Tooltip({
       setOpen: setIsOpen,
       triggerRef,
       enabled,
+      openOnPress: isCompact,
       delayDuration,
     }),
-    [isOpen, setIsOpen, enabled, delayDuration],
+    [isOpen, setIsOpen, enabled, isCompact, delayDuration],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -246,12 +268,10 @@ export function TooltipTrigger({
   asChild = false,
   triggerRefProp = "ref",
   ...props
-}: PropsWithChildren<
-  PressableProps & {
-    asChild?: boolean;
-    triggerRefProp?: string;
-  }
->): ReactElement {
+}: PressableProps & {
+  asChild?: boolean;
+  triggerRefProp?: string;
+}): ReactElement {
   const ctx = useTooltipContext("TooltipTrigger");
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -306,6 +326,7 @@ export function TooltipTrigger({
     (e: any) => {
       onFocus?.(e);
       if (!ctx.enabled || disabled) return;
+      if (!shouldOpenOnFocus()) return;
       clearOpenTimer();
       ctx.setOpen(true);
     },
@@ -323,9 +344,17 @@ export function TooltipTrigger({
   const handlePress = useCallback(
     (e: any) => {
       onPress?.(e);
+      if (!ctx.enabled || disabled) {
+        return;
+      }
+      if (ctx.openOnPress) {
+        clearOpenTimer();
+        ctx.setOpen(true);
+        return;
+      }
       close();
     },
-    [close, onPress],
+    [clearOpenTimer, close, ctx, disabled, onPress],
   );
 
   const triggerProps = {
@@ -336,7 +365,7 @@ export function TooltipTrigger({
     onFocus: handleFocus,
     onBlur: handleBlur,
     onPress: handlePress,
-    ...(Platform.OS === "web"
+    ...(isWeb
       ? ({
           // RN Web's hover handling can vary across environments; pointer events are the most reliable.
           onPointerEnter: handleHoverIn,
@@ -357,6 +386,7 @@ export function TooltipTrigger({
     const mergedProps = {
       ...childProps,
       ...triggerProps,
+      disabled: childProps.disabled || disabled,
       onHoverIn: composeEventHandlers(childProps.onHoverIn, handleHoverIn),
       onHoverOut: composeEventHandlers(childProps.onHoverOut, handleHoverOut),
       onFocus: composeEventHandlers(childProps.onFocus, handleFocus),
@@ -455,7 +485,7 @@ export function TooltipContent({
   // On web, avoid React Native's <Modal/> implementation (it uses <dialog> and can
   // steal focus / disrupt hover). Rendering via Portal + position:fixed keeps the
   // exact same positioning math as DropdownMenu, without hover feedback loops.
-  if (Platform.OS === "web") {
+  if (isWeb) {
     return (
       <Portal hostName={bottomSheetInternal?.hostName}>
         <View pointerEvents="none" style={styles.portalOverlay}>
@@ -492,7 +522,7 @@ export function TooltipContent({
       statusBarTranslucent={Platform.OS === "android"}
       onRequestClose={() => ctx.setOpen(false)}
     >
-      <View pointerEvents="box-none" style={styles.overlay}>
+      <Pressable style={styles.overlay} onPress={() => ctx.setOpen(false)}>
         <Animated.View
           pointerEvents="none"
           entering={FadeIn.duration(80)}
@@ -513,7 +543,7 @@ export function TooltipContent({
         >
           {children}
         </Animated.View>
-      </View>
+      </Pressable>
     </Modal>
   );
 }
@@ -533,9 +563,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.xl,
     backgroundColor: theme.colors.popover,
-    borderWidth: theme.borderWidth[2],
-    borderColor: theme.colors.border,
-    ...theme.shadow.sm,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.borderAccent,
+    ...theme.shadow.md,
     zIndex: 1000,
   },
 }));

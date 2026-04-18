@@ -35,18 +35,33 @@ export function shouldShowCustomComboboxOption(input: {
   );
 }
 
+export function filterAndRankComboboxOptions(
+  options: ComboboxOptionModel[],
+  search: string,
+): ComboboxOptionModel[] {
+  if (!search) return options;
+  return options
+    .filter(
+      (opt) =>
+        opt.label.toLowerCase().includes(search) ||
+        opt.id.toLowerCase().includes(search) ||
+        opt.description?.toLowerCase().includes(search),
+    )
+    .sort((a, b) => {
+      const aPrefix =
+        a.label.toLowerCase().startsWith(search) || a.id.toLowerCase().startsWith(search);
+      const bPrefix =
+        b.label.toLowerCase().startsWith(search) || b.id.toLowerCase().startsWith(search);
+      if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
+      return 0;
+    });
+}
+
 export function buildVisibleComboboxOptions(
   input: BuildVisibleComboboxOptionsInput,
 ): ComboboxOptionModel[] {
   const normalizedSearch = input.searchable ? input.searchQuery.trim().toLowerCase() : "";
-  const filteredOptions = normalizedSearch
-    ? input.options.filter(
-        (opt) =>
-          opt.label.toLowerCase().includes(normalizedSearch) ||
-          opt.id.toLowerCase().includes(normalizedSearch) ||
-          opt.description?.toLowerCase().includes(normalizedSearch),
-      )
-    : input.options;
+  const filteredOptions = filterAndRankComboboxOptions(input.options, normalizedSearch);
 
   const sanitizedSearchValue = input.searchQuery.trim();
   const showCustomOption = shouldShowCustomComboboxOption({

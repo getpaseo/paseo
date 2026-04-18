@@ -11,6 +11,7 @@ import {
   closeTabInLayout,
   collectAllPanes,
   collectAllTabs,
+  convertDraftToAgentInLayout,
   createDefaultLayout,
   findPaneById,
   findPaneContainingTab,
@@ -20,7 +21,9 @@ import {
   insertSplit,
   moveTabToPaneInLayout,
   normalizeLayout,
-  openTabInLayout,
+  openTabInLayoutBackground,
+  openTabInLayoutFocused,
+  reconcileWorkspaceTabs,
   removePaneFromTree,
   removeTabFromTree,
   reorderFocusedPaneTabsInLayout,
@@ -31,6 +34,8 @@ import {
   type SplitGroup,
   type SplitNode,
   type SplitPane,
+  type WorkspaceTabReconcileState,
+  type WorkspaceTabSnapshot,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-actions";
 import { normalizeWorkspaceTabTarget } from "@/utils/workspace-tab-identity";
@@ -48,16 +53,27 @@ export {
   removePaneFromTree,
   removeTabFromTree,
 };
-export type { SplitGroup, SplitNode, SplitPane, WorkspaceLayout };
+export type {
+  SplitGroup,
+  SplitNode,
+  SplitPane,
+  WorkspaceLayout,
+  WorkspaceTabReconcileState,
+  WorkspaceTabSnapshot,
+};
 
 interface WorkspaceLayoutStore {
   layoutByWorkspace: Record<string, WorkspaceLayout>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
-  openTab: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
+  openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openTabInBackground: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
   retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
+  convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
+  reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
   reorderTabs: (workspaceKey: string, tabIds: string[]) => void;
   getWorkspaceTabs: (workspaceKey: string) => WorkspaceTab[];
   splitPane: (
@@ -81,6 +97,9 @@ interface WorkspaceLayoutStore {
   reorderTabsInPane: (workspaceKey: string, paneId: string, tabIds: string[]) => void;
   pinAgent: (workspaceKey: string, agentId: string) => void;
   unpinAgent: (workspaceKey: string, agentId: string) => void;
+  hideAgent: (workspaceKey: string, agentId: string) => void;
+  unhideAgent: (workspaceKey: string, agentId: string) => void;
+  purgeWorkspace: (workspaceKey: string) => void;
 }
 
 const MAX_TREE_DEPTH = 4;
@@ -91,6 +110,48 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function addAgentIdToWorkspaceSet(
+  state: Record<string, Set<string>>,
+  workspaceKey: string,
+  agentId: string,
+): Record<string, Set<string>> {
+  const currentAgentIds = state[workspaceKey] ?? null;
+  if (currentAgentIds?.has(agentId)) {
+    return state;
+  }
+
+  const nextAgentIds = new Set(currentAgentIds ?? []);
+  nextAgentIds.add(agentId);
+  return {
+    ...state,
+    [workspaceKey]: nextAgentIds,
+  };
+}
+
+function removeAgentIdFromWorkspaceSet(
+  state: Record<string, Set<string>>,
+  workspaceKey: string,
+  agentId: string,
+): Record<string, Set<string>> {
+  const currentAgentIds = state[workspaceKey] ?? null;
+  if (!currentAgentIds?.has(agentId)) {
+    return state;
+  }
+
+  if (currentAgentIds.size === 1) {
+    const nextState = { ...state };
+    delete nextState[workspaceKey];
+    return nextState;
+  }
+
+  const nextAgentIds = new Set(currentAgentIds);
+  nextAgentIds.delete(agentId);
+  return {
+    ...state,
+    [workspaceKey]: nextAgentIds,
+  };
 }
 
 function getWorkspaceLayout(
@@ -106,20 +167,59 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
-      openTab: (workspaceKey, target) => {
+      hiddenAgentIdsByWorkspace: {},
+      openTabFocused: (workspaceKey, target) => {
         const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
         const normalizedTarget = normalizeWorkspaceTabTarget(target);
         if (!normalizedWorkspaceKey || !normalizedTarget) {
           return null;
         }
 
-        const result = openTabInLayout({
+        const result = openTabInLayoutFocused({
           layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
           target: normalizedTarget,
           now: Date.now(),
         });
 
         set((state) => ({
+          hiddenAgentIdsByWorkspace:
+            normalizedTarget.kind !== "agent"
+              ? state.hiddenAgentIdsByWorkspace
+              : removeAgentIdFromWorkspaceSet(
+                  state.hiddenAgentIdsByWorkspace,
+                  normalizedWorkspaceKey,
+                  normalizedTarget.agentId,
+                ),
+          layoutByWorkspace: {
+            ...state.layoutByWorkspace,
+            [normalizedWorkspaceKey]: result.layout,
+          },
+        }));
+
+        return result.tabId;
+      },
+      openTabInBackground: (workspaceKey, target) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        const normalizedTarget = normalizeWorkspaceTabTarget(target);
+        if (!normalizedWorkspaceKey || !normalizedTarget) {
+          return null;
+        }
+
+        const result = openTabInLayoutBackground({
+          layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+          target: normalizedTarget,
+          now: Date.now(),
+        });
+
+        set((state) => ({
+          hiddenAgentIdsByWorkspace:
+            normalizedTarget.kind !== "agent"
+              ? state.hiddenAgentIdsByWorkspace
+              : removeAgentIdFromWorkspaceSet(
+                  state.hiddenAgentIdsByWorkspace,
+                  normalizedWorkspaceKey,
+                  normalizedTarget.agentId,
+                ),
           layoutByWorkspace: {
             ...state.layoutByWorkspace,
             [normalizedWorkspaceKey]: result.layout,
@@ -194,6 +294,14 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
         }
 
         set((state) => ({
+          hiddenAgentIdsByWorkspace:
+            normalizedTarget.kind !== "agent"
+              ? state.hiddenAgentIdsByWorkspace
+              : removeAgentIdFromWorkspaceSet(
+                  state.hiddenAgentIdsByWorkspace,
+                  normalizedWorkspaceKey,
+                  normalizedTarget.agentId,
+                ),
           layoutByWorkspace: {
             ...state.layoutByWorkspace,
             [normalizedWorkspaceKey]: result.layout,
@@ -201,6 +309,65 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
         }));
 
         return result.tabId;
+      },
+      convertDraftToAgent: (workspaceKey, tabId, agentId) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        const normalizedTabId = trimNonEmpty(tabId);
+        const normalizedAgentId = trimNonEmpty(agentId);
+        if (!normalizedWorkspaceKey || !normalizedTabId || !normalizedAgentId) {
+          return null;
+        }
+
+        const result = convertDraftToAgentInLayout({
+          layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+          tabId: normalizedTabId,
+          agentId: normalizedAgentId,
+        });
+        if (!result) {
+          return null;
+        }
+
+        set((state) => ({
+          hiddenAgentIdsByWorkspace: removeAgentIdFromWorkspaceSet(
+            state.hiddenAgentIdsByWorkspace,
+            normalizedWorkspaceKey,
+            normalizedAgentId,
+          ),
+          layoutByWorkspace: {
+            ...state.layoutByWorkspace,
+            [normalizedWorkspaceKey]: result.layout,
+          },
+        }));
+
+        return result.tabId;
+      },
+      reconcileTabs: (workspaceKey, snapshot) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        if (!normalizedWorkspaceKey) {
+          return;
+        }
+
+        set((state) => {
+          const currentLayout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+          const nextState = reconcileWorkspaceTabs(
+            {
+              layout: currentLayout,
+              pinnedAgentIds: state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
+              hiddenAgentIds: state.hiddenAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
+            },
+            snapshot,
+          );
+          if (nextState.layout === currentLayout) {
+            return state;
+          }
+
+          return {
+            layoutByWorkspace: {
+              ...state.layoutByWorkspace,
+              [normalizedWorkspaceKey]: nextState.layout,
+            },
+          };
+        });
       },
       reorderTabs: (workspaceKey, tabIds) => {
         const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
@@ -412,6 +579,11 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
           nextPinnedAgentIds.add(normalizedAgentId);
 
           return {
+            hiddenAgentIdsByWorkspace: removeAgentIdFromWorkspaceSet(
+              state.hiddenAgentIdsByWorkspace,
+              normalizedWorkspaceKey,
+              normalizedAgentId,
+            ),
             pinnedAgentIdsByWorkspace: {
               ...state.pinnedAgentIdsByWorkspace,
               [normalizedWorkspaceKey]: nextPinnedAgentIds,
@@ -451,6 +623,81 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
               ...state.pinnedAgentIdsByWorkspace,
               [normalizedWorkspaceKey]: nextPinnedAgentIds,
             },
+          };
+        });
+      },
+      hideAgent: (workspaceKey, agentId) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        const normalizedAgentId = trimNonEmpty(agentId);
+        if (!normalizedWorkspaceKey || !normalizedAgentId) {
+          return;
+        }
+
+        set((state) => {
+          const nextHiddenAgentIdsByWorkspace = addAgentIdToWorkspaceSet(
+            state.hiddenAgentIdsByWorkspace,
+            normalizedWorkspaceKey,
+            normalizedAgentId,
+          );
+          if (nextHiddenAgentIdsByWorkspace === state.hiddenAgentIdsByWorkspace) {
+            return state;
+          }
+
+          return {
+            hiddenAgentIdsByWorkspace: nextHiddenAgentIdsByWorkspace,
+          };
+        });
+      },
+      unhideAgent: (workspaceKey, agentId) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        const normalizedAgentId = trimNonEmpty(agentId);
+        if (!normalizedWorkspaceKey || !normalizedAgentId) {
+          return;
+        }
+
+        set((state) => {
+          const nextHiddenAgentIdsByWorkspace = removeAgentIdFromWorkspaceSet(
+            state.hiddenAgentIdsByWorkspace,
+            normalizedWorkspaceKey,
+            normalizedAgentId,
+          );
+          if (nextHiddenAgentIdsByWorkspace === state.hiddenAgentIdsByWorkspace) {
+            return state;
+          }
+
+          return {
+            hiddenAgentIdsByWorkspace: nextHiddenAgentIdsByWorkspace,
+          };
+        });
+      },
+      purgeWorkspace: (workspaceKey) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        if (!normalizedWorkspaceKey) {
+          return;
+        }
+
+        set((state) => {
+          const hasAny =
+            normalizedWorkspaceKey in state.layoutByWorkspace ||
+            normalizedWorkspaceKey in state.splitSizesByWorkspace ||
+            normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
+            normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace;
+          if (!hasAny) {
+            return state;
+          }
+          const { [normalizedWorkspaceKey]: _layout, ...layoutByWorkspace } =
+            state.layoutByWorkspace;
+          const { [normalizedWorkspaceKey]: _splits, ...splitSizesByWorkspace } =
+            state.splitSizesByWorkspace;
+          const { [normalizedWorkspaceKey]: _pinned, ...pinnedAgentIdsByWorkspace } =
+            state.pinnedAgentIdsByWorkspace;
+          const { [normalizedWorkspaceKey]: _hidden, ...hiddenAgentIdsByWorkspace } =
+            state.hiddenAgentIdsByWorkspace;
+          return {
+            layoutByWorkspace,
+            splitSizesByWorkspace,
+            pinnedAgentIdsByWorkspace,
+            hiddenAgentIdsByWorkspace,
           };
         });
       },

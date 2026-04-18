@@ -41,6 +41,10 @@ export default defineConfig((): UserConfig => {
       cloudflare({ viteEnvironment: { name: "ssr" } }),
       tsConfigPaths(),
       tanstackStart({
+        router: {
+          quoteStyle: "double",
+          semicolons: true,
+        },
         pages: sitemapPages,
         sitemap: {
           host: siteHost,

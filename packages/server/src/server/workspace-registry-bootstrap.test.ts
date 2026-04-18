@@ -6,8 +6,69 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
+
+function createNoopWorkspaceGitService(): WorkspaceGitService {
+  return {
+    subscribe: async (params) => ({
+      initial: {
+        cwd: params.cwd,
+        git: {
+          isGit: false,
+          repoRoot: null,
+          mainRepoRoot: null,
+          currentBranch: null,
+          remoteUrl: null,
+          isPaseoOwnedWorktree: false,
+          isDirty: null,
+          aheadBehind: null,
+          aheadOfOrigin: null,
+          behindOfOrigin: null,
+          diffStat: null,
+        },
+        github: {
+          featuresEnabled: false,
+          pullRequest: null,
+          error: null,
+          refreshedAt: null,
+        },
+      },
+      unsubscribe: () => {},
+    }),
+    peekSnapshot: () => null,
+    getSnapshot: async (cwd) => ({
+      cwd,
+      git: {
+        isGit: false,
+        repoRoot: null,
+        mainRepoRoot: null,
+        currentBranch: null,
+        remoteUrl: null,
+        isPaseoOwnedWorktree: false,
+        isDirty: null,
+        aheadBehind: null,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        diffStat: null,
+      },
+      github: {
+        featuresEnabled: false,
+        pullRequest: null,
+        error: null,
+        refreshedAt: null,
+      },
+    }),
+    refresh: async () => {},
+    requestWorkingTreeWatch: async () => ({
+      repoRoot: null,
+      unsubscribe: () => {},
+    }),
+    scheduleRefreshForCwd: () => {},
+    dispose: () => {},
+  };
+}
 
 describe("bootstrapWorkspaceRegistries", () => {
   let tmpDir: string;
@@ -15,6 +76,7 @@ describe("bootstrapWorkspaceRegistries", () => {
   let agentStorage: AgentStorage;
   let projectRegistry: FileBackedProjectRegistry;
   let workspaceRegistry: FileBackedWorkspaceRegistry;
+  let workspaceGitService: WorkspaceGitService;
   const logger = createTestLogger();
 
   beforeEach(() => {
@@ -29,6 +91,7 @@ describe("bootstrapWorkspaceRegistries", () => {
       path.join(paseoHome, "projects", "workspaces.json"),
       logger,
     );
+    workspaceGitService = createNoopWorkspaceGitService();
   });
 
   afterEach(() => {
@@ -94,6 +157,7 @@ describe("bootstrapWorkspaceRegistries", () => {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      workspaceGitService,
       logger,
     });
 
@@ -157,6 +221,7 @@ describe("bootstrapWorkspaceRegistries", () => {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      workspaceGitService,
       logger,
     });
 

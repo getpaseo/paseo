@@ -1,0 +1,227 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check formatting
+        run: npx biome format .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build highlight dependency
+        run: npm run build --workspace=@getpaseo/highlight
+
+      - name: Build relay dependency
+        run: npm run build --workspace=@getpaseo/relay
+
+      - name: Build server dependency
+        run: npm run build --workspace=@getpaseo/server
+
+      - name: Typecheck all packages
+        run: npm run typecheck
+
+  server-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Fetch origin/main (worktree tests)
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build highlight dependency
+        run: npm run build --workspace=@getpaseo/highlight
+
+      - name: Build relay dependency
+        run: npm run build --workspace=@getpaseo/relay
+
+      - name: Run server tests
+        run: npm run test --workspace=@getpaseo/server
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+  server-tests-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build highlight dependency
+        run: npm run build --workspace=@getpaseo/highlight
+
+      - name: Build relay dependency
+        run: npm run build --workspace=@getpaseo/relay
+
+      - name: Run Windows-critical server tests
+        working-directory: packages/server
+        run: >
+          npx vitest run
+          src/utils/executable.test.ts
+          src/utils/spawn.launch-regression.test.ts
+          src/utils/spawn.test.ts
+          src/utils/run-git-command.test.ts
+          src/utils/checkout-git-rev-parse.test.ts
+          src/server/agent/provider-registry.test.ts
+          src/server/agent/provider-launch-config.test.ts
+          src/server/agent/provider-snapshot-manager.test.ts
+          src/server/agent/providers/claude-agent.spawn.test.ts
+          src/server/agent/providers/provider-windows-launch.test.ts
+          src/server/agent/providers/provider-availability.test.ts
+          src/server/workspace-registry-model.test.ts
+          src/server/persisted-config.test.ts
+          src/server/bootstrap-provider-availability.test.ts
+
+  app-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build highlight dependency
+        run: npm run build --workspace=@getpaseo/highlight
+
+      - name: Run app unit tests
+        run: npm run test --workspace=@getpaseo/app
+
+  playwright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build highlight dependency
+        run: npm run build --workspace=@getpaseo/highlight
+
+      - name: Build relay dependency
+        run: npm run build --workspace=@getpaseo/relay
+
+      - name: Build server dependency
+        run: npm run build --workspace=@getpaseo/server
+
+      - name: Install agent CLIs for provider tests
+        run: npm install -g @openai/codex@0.105.0 opencode-ai
+
+      - name: Run Playwright E2E tests
+        run: npm run test:e2e --workspace=@getpaseo/app
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: |
+            packages/app/test-results/
+            packages/app/playwright-report/
+          retention-days: 7
+
+  relay-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build relay
+        run: npm run build --workspace=@getpaseo/relay
+
+      - name: Run relay tests
+        run: npm run test --workspace=@getpaseo/relay
+
+  cli-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install agent CLIs for provider tests
+        run: npm install -g @openai/codex@0.105.0 opencode-ai
+
+      - name: Build highlight dependency
+        run: npm run build --workspace=@getpaseo/highlight
+
+      - name: Run CLI tests
+        run: npm run test --workspace=@getpaseo/cli
+        env:
+          PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: '0'
+          PASEO_DICTATION_ENABLED: '0'
+          PASEO_VOICE_MODE_ENABLED: '0'

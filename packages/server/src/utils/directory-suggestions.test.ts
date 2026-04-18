@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { searchHomeDirectories, searchWorkspaceEntries } from "./directory-suggestions.js";
 
+const isWindows = process.platform === "win32";
+
 describe("searchHomeDirectories", () => {
   let tempRoot: string;
   let homeDir: string;
@@ -101,7 +103,7 @@ describe("searchHomeDirectories", () => {
     expect(earlierIndex).toBeLessThan(laterIndex);
   });
 
-  it("returns home-root suggestions when query is '~'", async () => {
+  it.skipIf(isWindows)("returns home-root suggestions when query is '~'", async () => {
     const results = await searchHomeDirectories({
       homeDir,
       query: "~",

@@ -1,7 +1,12 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 
-import type { AgentLaunchContext, AgentSession, AgentSessionConfig, AgentStreamEvent } from "../agent-sdk-types.js";
+import type {
+  AgentLaunchContext,
+  AgentSession,
+  AgentSessionConfig,
+  AgentStreamEvent,
+} from "../agent-sdk-types.js";
 import {
   __codexAppServerInternals,
   codexAppServerTurnInputFromPrompt,
@@ -40,6 +45,183 @@ function createSession(configOverrides: Partial<AgentSessionConfig> = {}) {
 describe("Codex app-server provider", () => {
   const logger = createTestLogger();
 
+  test("extracts context window usage from snake_case token payloads", () => {
+    expect(
+      __codexAppServerInternals.toAgentUsage({
+        model_context_window: 200000,
+        last: {
+          total_tokens: 50000,
+          inputTokens: 30000,
+          cachedInputTokens: 5000,
+          outputTokens: 15000,
+        },
+      }),
+    ).toEqual({
+      inputTokens: 30000,
+      cachedInputTokens: 5000,
+      outputTokens: 15000,
+      contextWindowMaxTokens: 200000,
+      contextWindowUsedTokens: 50000,
+    });
+  });
+
+  test("extracts context window usage from camelCase token payloads", () => {
+    expect(
+      __codexAppServerInternals.toAgentUsage({
+        modelContextWindow: 200000,
+        last: {
+          totalTokens: 50000,
+          inputTokens: 30000,
+          cachedInputTokens: 5000,
+          outputTokens: 15000,
+        },
+      }),
+    ).toEqual({
+      inputTokens: 30000,
+      cachedInputTokens: 5000,
+      outputTokens: 15000,
+      contextWindowMaxTokens: 200000,
+      contextWindowUsedTokens: 50000,
+    });
+  });
+
+  test("keeps existing usage behavior when context window fields are missing", () => {
+    expect(
+      __codexAppServerInternals.toAgentUsage({
+        last: {
+          inputTokens: 30000,
+          cachedInputTokens: 5000,
+          outputTokens: 15000,
+        },
+      }),
+    ).toEqual({
+      inputTokens: 30000,
+      cachedInputTokens: 5000,
+      outputTokens: 15000,
+    });
+  });
+
+  test("excludes invalid context window values", () => {
+    expect(
+      __codexAppServerInternals.toAgentUsage({
+        model_context_window: Number.NaN,
+        modelContextWindow: "200000",
+        last: {
+          total_tokens: Number.NaN,
+          totalTokens: "50000",
+          inputTokens: 30000,
+          cachedInputTokens: 5000,
+          outputTokens: 15000,
+        },
+      }),
+    ).toEqual({
+      inputTokens: 30000,
+      cachedInputTokens: 5000,
+      outputTokens: 15000,
+    });
+  });
+
+  test("normalizes raw output schemas for Codex structured outputs", () => {
+    const input = {
+      type: "object",
+      properties: {
+        findings: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              severity: { type: "string" },
+              summary: { type: "string" },
+            },
+            required: ["severity"],
+          },
+        },
+        overall: { type: "string" },
+      },
+      required: ["overall"],
+    };
+
+    const normalized = __codexAppServerInternals.normalizeCodexOutputSchema(input);
+
+    expect(normalized).toEqual({
+      type: "object",
+      properties: {
+        findings: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              severity: { type: "string" },
+              summary: { type: "string" },
+            },
+            required: ["severity", "summary"],
+            additionalProperties: false,
+          },
+        },
+        overall: { type: "string" },
+      },
+      required: ["overall", "findings"],
+      additionalProperties: false,
+    });
+    expect(input).toEqual({
+      type: "object",
+      properties: {
+        findings: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              severity: { type: "string" },
+              summary: { type: "string" },
+            },
+            required: ["severity"],
+          },
+        },
+        overall: { type: "string" },
+      },
+      required: ["overall"],
+    });
+  });
+
+  test("passes a normalized output schema to turn/start", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.activeForegroundTurnId = null;
+    session.client = { request } as any;
+
+    await session.startTurn("Return JSON", {
+      outputSchema: {
+        type: "object",
+        properties: {
+          summary: { type: "string" },
+        },
+      },
+    });
+
+    const turnStartCall = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStartCall?.[1]).toEqual(
+      expect.objectContaining({
+        outputSchema: {
+          type: "object",
+          properties: {
+            summary: { type: "string" },
+          },
+          required: ["summary"],
+          additionalProperties: false,
+        },
+      }),
+    );
+  });
+
   test("maps image prompt blocks to Codex localImage input", async () => {
     const input = await codexAppServerTurnInputFromPrompt(
       [
@@ -56,6 +238,31 @@ describe("Codex app-server provider", () => {
       expect(existsSync(localImage.path)).toBe(true);
       rmSync(localImage.path, { force: true });
     }
+  });
+
+  test("maps github_pr prompt attachments to Codex text input", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        {
+          type: "github_pr",
+          mimeType: "application/github-pr",
+          number: 123,
+          title: "Fix race in worktree setup",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+          body: "Review body",
+          baseRefName: "main",
+          headRefName: "fix/worktree-race",
+        },
+      ],
+      logger,
+    );
+
+    expect(input).toEqual([
+      {
+        type: "text",
+        text: expect.stringContaining("GitHub PR #123: Fix race in worktree setup"),
+      },
+    ]);
   });
 
   test("maps patch notifications with array-style changes and alias diff keys", () => {
@@ -179,10 +386,7 @@ describe("Codex app-server provider", () => {
           id: "favorite_drink",
           header: "Drink",
           question: "Which drink do you want?",
-          options: [
-            { label: "Coffee", description: "Default" },
-            { label: "Tea" },
-          ],
+          options: [{ label: "Coffee", description: "Default" }, { label: "Tea" }],
         },
       ],
     });
@@ -209,10 +413,7 @@ describe("Codex app-server provider", () => {
                 id: "favorite_drink",
                 header: "Drink",
                 question: "Which drink do you want?",
-                options: [
-                  { label: "Coffee", description: "Default" },
-                  { label: "Tea" },
-                ],
+                options: [{ label: "Coffee", description: "Default" }, { label: "Tea" }],
               },
             ],
           },
@@ -239,10 +440,7 @@ describe("Codex app-server provider", () => {
                 id: "favorite_drink",
                 header: "Drink",
                 question: "Which drink do you want?",
-                options: [
-                  { label: "Coffee", description: "Default" },
-                  { label: "Tea" },
-                ],
+                options: [{ label: "Coffee", description: "Default" }, { label: "Tea" }],
               },
             ],
           },
@@ -255,10 +453,7 @@ describe("Codex app-server provider", () => {
                 id: "favorite_drink",
                 header: "Drink",
                 question: "Which drink do you want?",
-                options: [
-                  { label: "Coffee", description: "Default" },
-                  { label: "Tea" },
-                ],
+                options: [{ label: "Coffee", description: "Default" }, { label: "Tea" }],
               },
             ],
           },
@@ -342,6 +537,160 @@ describe("Codex app-server provider", () => {
             favorite_drink: ["Tea"],
           },
         },
+      },
+    });
+  });
+
+  test("emits a synthetic plan approval permission after a successful Codex plan turn", () => {
+    const session = createSession({
+      featureValues: { plan_mode: true, fast_mode: true },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    (session as any).handleNotification("turn/started", {
+      turn: { id: "turn-plan-1" },
+    });
+    (session as any).handleNotification("turn/plan/updated", {
+      plan: [
+        { step: "Inspect the existing auth flow", status: "completed" },
+        { step: "Implement the button behavior", status: "pending" },
+      ],
+    });
+    (session as any).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    expect(events.at(-2)).toEqual({
+      type: "permission_requested",
+      provider: "codex",
+      turnId: "test-turn",
+      request: expect.objectContaining({
+        provider: "codex",
+        name: "CodexPlanApproval",
+        kind: "plan",
+        title: "Plan",
+        input: {
+          plan: "- Inspect the existing auth flow\n- Implement the button behavior",
+        },
+        actions: [
+          expect.objectContaining({
+            id: "reject",
+            label: "Reject",
+            behavior: "deny",
+          }),
+          expect.objectContaining({
+            id: "implement",
+            label: "Implement",
+            behavior: "allow",
+          }),
+        ],
+      }),
+    });
+    expect(events.at(-1)).toEqual({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "test-turn",
+      usage: undefined,
+    });
+  });
+
+  test("emits usage_updated on token usage updates and keeps usage on turn completion", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    (session as any).handleNotification("thread/tokenUsage/updated", {
+      tokenUsage: {
+        model_context_window: 200000,
+        last: {
+          total_tokens: 50000,
+          inputTokens: 30000,
+          cachedInputTokens: 5000,
+          outputTokens: 15000,
+        },
+      },
+    });
+    (session as any).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "codex",
+      turnId: "test-turn",
+      usage: {
+        inputTokens: 30000,
+        cachedInputTokens: 5000,
+        outputTokens: 15000,
+        contextWindowMaxTokens: 200000,
+        contextWindowUsedTokens: 50000,
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "test-turn",
+      usage: {
+        inputTokens: 30000,
+        cachedInputTokens: 5000,
+        outputTokens: 15000,
+        contextWindowMaxTokens: 200000,
+        contextWindowUsedTokens: 50000,
+      },
+    });
+  });
+
+  test("approving a synthetic Codex plan permission disables plan and fast mode and returns follow-up prompt", async () => {
+    const session = createSession({
+      featureValues: { plan_mode: true, fast_mode: true },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    (session as any).handleNotification("turn/started", {
+      turn: { id: "turn-plan-2" },
+    });
+    (session as any).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the new flow", status: "pending" }],
+    });
+    (session as any).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    const request = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested" && event.request.kind === "plan",
+    );
+    expect(request).toBeDefined();
+    if (!request) {
+      throw new Error("Expected synthetic plan approval permission");
+    }
+
+    const result = await session.respondToPermission(request.request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+
+    expect((session as any).serviceTier).toBeNull();
+    expect((session as any).planModeEnabled).toBe(false);
+    expect((session as any).config.featureValues).toEqual({
+      plan_mode: false,
+      fast_mode: false,
+    });
+    // The session returns the follow-up prompt instead of calling startTurn directly.
+    // The caller (session/agent-manager) is responsible for sending it through streamAgent.
+    expect(result).toBeDefined();
+    expect(result!.followUpPrompt).toEqual(
+      expect.stringContaining("The user approved the plan. Implement it now."),
+    );
+    expect(events.at(-1)).toEqual({
+      type: "permission_resolved",
+      provider: "codex",
+      requestId: request.request.id,
+      resolution: {
+        behavior: "allow",
+        selectedActionId: "implement",
       },
     });
   });

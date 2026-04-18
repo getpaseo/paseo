@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeAll } from "vitest";
+import { describe, expect, test, beforeAll, beforeEach } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -174,15 +174,22 @@ async function cleanupSession(handle: { cwd: string; session: AgentSession }): P
 }
 
 describe("ClaudeAgentSession integration", () => {
-  const canRunClaudeIntegration = isCommandAvailable("claude") && hasClaudeCredentials;
+  let canRunClaudeIntegration = false;
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    canRunClaudeIntegration = (await isCommandAvailable("claude")) && hasClaudeCredentials;
     if (canRunClaudeIntegration) {
-      expect(isCommandAvailable("claude")).toBe(true);
+      expect(await isCommandAvailable("claude")).toBe(true);
     }
   });
 
-  test.runIf(canRunClaudeIntegration)("streams a basic response turn end-to-end", async () => {
+  beforeEach((context) => {
+    if (!canRunClaudeIntegration) {
+      context.skip();
+    }
+  });
+
+  test("streams a basic response turn end-to-end", async () => {
     const handle = await createSession({
       cwdPrefix: "claude-agent-basic-response-",
     });
@@ -213,18 +220,95 @@ describe("ClaudeAgentSession integration", () => {
     }
   }, 60_000);
 
+  test("keeps bypassPermissions available after a thinking-option restart", async () => {
+    const handle = await createSession({
+      cwdPrefix: "claude-agent-bypass-restart-",
+      modeId: "bypassPermissions",
+    });
+
+    try {
+      await handle.session.setMode("acceptEdits");
+      await handle.session.setThinkingOption("high");
+      await expect(handle.session.setMode("bypassPermissions")).resolves.toBeUndefined();
+    } finally {
+      await cleanupSession(handle);
+    }
+  }, 60_000);
+
+  test("supportedModels returns the current abstract Claude SDK model shape", async () => {
+    const claudeQuery = query({
+      prompt: createEmptyPrompt(),
+      options: {
+        cwd: process.cwd(),
+        permissionMode: "plan",
+        includePartialMessages: false,
+        settingSources: ["user", "project"],
+      },
+    });
+
+    try {
+      const models = await claudeQuery.supportedModels();
+
+      expect(models.length).toBeGreaterThanOrEqual(3);
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          value: "default",
+          displayName: "Default (recommended)",
+          supportedEffortLevels: ["low", "medium", "high", "max"],
+        }),
+      );
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          value: "haiku",
+          displayName: "Haiku",
+          description: expect.stringContaining("Haiku 4.5"),
+        }),
+      );
+      expect(
+        models.some(
+          (model) =>
+            model.description.includes("Opus 4.6") || model.description.includes("Sonnet 4.6"),
+        ),
+      ).toBe(true);
+    } finally {
+      await claudeQuery.return?.();
+    }
+  }, 60_000);
+
   test.runIf(canRunClaudeIntegration)(
-    "keeps bypassPermissions available after a thinking-option restart",
+    "runs a real Bash tool call and completes it",
     async () => {
       const handle = await createSession({
-        cwdPrefix: "claude-agent-bypass-restart-",
-        modeId: "bypassPermissions",
+        cwdPrefix: "claude-agent-basic-tool-",
       });
 
       try {
-        await handle.session.setMode("acceptEdits");
-        await handle.session.setThinkingOption("high");
-        await expect(handle.session.setMode("bypassPermissions")).resolves.toBeUndefined();
+        const events = await collectUntilTerminal(
+          streamSession(
+            handle.session,
+            [
+              "Use the Bash tool.",
+              "Run exactly: echo TOOL_TEST_OUTPUT",
+              "After the command completes, reply with exactly: TOOL_DONE",
+            ].join(" "),
+          ),
+        );
+
+        const bashCalls = getToolCalls(events).filter((item) => item.name.toLowerCase() === "bash");
+        const completedBashCall = getLatestCompletedBashCall(events);
+
+        expect(bashCalls.length).toBeGreaterThan(0);
+        expect(completedBashCall).toBeDefined();
+        expect(completedBashCall?.detail.type).toBe("shell");
+        expect(
+          completedBashCall?.detail.type === "shell" &&
+            completedBashCall.detail.output?.includes("TOOL_TEST_OUTPUT"),
+        ).toBe(true);
+        expect(compactText(getAssistantText(events))).toContain("tool_done");
+        expect(events.at(-1)).toMatchObject({
+          type: "turn_completed",
+          provider: "claude",
+        });
       } finally {
         await cleanupSession(handle);
       }
@@ -233,143 +317,62 @@ describe("ClaudeAgentSession integration", () => {
   );
 
   test.runIf(canRunClaudeIntegration)(
-    "supportedModels returns the current abstract Claude SDK model shape",
+    "interrupts a running Bash turn and continues on the same query",
     async () => {
-      const claudeQuery = query({
-        prompt: createEmptyPrompt(),
-        options: {
-          cwd: process.cwd(),
-          permissionMode: "plan",
-          includePartialMessages: false,
-          settingSources: ["user", "project"],
-        },
+      const handle = await createSession({
+        cwdPrefix: "claude-agent-interrupt-continue-",
       });
 
       try {
-        const models = await claudeQuery.supportedModels();
-
-        expect(models.length).toBeGreaterThanOrEqual(3);
-        expect(models).toContainEqual(
-          expect.objectContaining({
-            value: "default",
-            displayName: "Default (recommended)",
-            supportedEffortLevels: ["low", "medium", "high", "max"],
-          }),
-        );
-        expect(models).toContainEqual(
-          expect.objectContaining({
-            value: "haiku",
-            displayName: "Haiku",
-            description: expect.stringContaining("Haiku 4.5"),
-          }),
-        );
-        expect(
-          models.some(
-            (model) =>
-              model.description.includes("Opus 4.6") || model.description.includes("Sonnet 4.6"),
-          ),
-        ).toBe(true);
-      } finally {
-        await claudeQuery.return?.();
-      }
-    },
-    60_000,
-  );
-
-  test.runIf(canRunClaudeIntegration)("runs a real Bash tool call and completes it", async () => {
-    const handle = await createSession({
-      cwdPrefix: "claude-agent-basic-tool-",
-    });
-
-    try {
-      const events = await collectUntilTerminal(
-        streamSession(
+        const firstStream = streamSession(
           handle.session,
           [
             "Use the Bash tool.",
-            "Run exactly: echo TOOL_TEST_OUTPUT",
-            "After the command completes, reply with exactly: TOOL_DONE",
+            "Run exactly: sleep 10",
+            "Do not use a background task.",
+            "Do not do anything after starting the command.",
           ].join(" "),
-        ),
-      );
+        );
 
-      const bashCalls = getToolCalls(events).filter((item) => item.name.toLowerCase() === "bash");
-      const completedBashCall = getLatestCompletedBashCall(events);
+        const initialEvents = await collectUntil(
+          firstStream,
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.name.toLowerCase() === "bash",
+          45_000,
+        );
+        const firstQuery = getInternalQuery(handle.session);
 
-      expect(bashCalls.length).toBeGreaterThan(0);
-      expect(completedBashCall).toBeDefined();
-      expect(completedBashCall?.detail.type).toBe("shell");
-      expect(
-        completedBashCall?.detail.type === "shell" &&
-          completedBashCall.detail.output?.includes("TOOL_TEST_OUTPUT"),
-      ).toBe(true);
-      expect(compactText(getAssistantText(events))).toContain("tool_done");
-      expect(events.at(-1)).toMatchObject({
-        type: "turn_completed",
-        provider: "claude",
-      });
-    } finally {
-      await cleanupSession(handle);
-    }
-  }, 60_000);
+        expect(firstQuery).toBeTruthy();
 
-  test.runIf(canRunClaudeIntegration)(
-    "interrupts a running Bash turn and continues on the same query",
-    async () => {
-    const handle = await createSession({
-      cwdPrefix: "claude-agent-interrupt-continue-",
-    });
+        await handle.session.interrupt();
 
-    try {
-      const firstStream = streamSession(
-        handle.session,
-        [
-          "Use the Bash tool.",
-          "Run exactly: sleep 10",
-          "Do not use a background task.",
-          "Do not do anything after starting the command.",
-        ].join(" "),
-      );
+        const canceledEvents = await collectUntilTerminal(firstStream, {
+          timeoutMs: 20_000,
+        });
+        const allFirstTurnEvents = [...initialEvents, ...canceledEvents];
 
-      const initialEvents = await collectUntil(
-        firstStream,
-        (event) =>
-          event.type === "timeline" &&
-          event.item.type === "tool_call" &&
-          event.item.name.toLowerCase() === "bash",
-        45_000,
-      );
-      const firstQuery = getInternalQuery(handle.session);
+        expect(
+          allFirstTurnEvents.some(
+            (event) => event.type === "turn_canceled" && event.provider === "claude",
+          ),
+        ).toBe(true);
 
-      expect(firstQuery).toBeTruthy();
+        const followUpEvents = await collectUntilTerminal(
+          streamSession(handle.session, "Respond with exactly: AFTER_INTERRUPT_OK"),
+        );
+        const secondQuery = getInternalQuery(handle.session);
 
-      await handle.session.interrupt();
-
-      const canceledEvents = await collectUntilTerminal(firstStream, {
-        timeoutMs: 20_000,
-      });
-      const allFirstTurnEvents = [...initialEvents, ...canceledEvents];
-
-      expect(
-        allFirstTurnEvents.some(
-          (event) => event.type === "turn_canceled" && event.provider === "claude",
-        ),
-      ).toBe(true);
-
-      const followUpEvents = await collectUntilTerminal(
-        streamSession(handle.session, "Respond with exactly: AFTER_INTERRUPT_OK"),
-      );
-      const secondQuery = getInternalQuery(handle.session);
-
-      expect(secondQuery).toBe(firstQuery);
-      expect(compactText(getAssistantText(followUpEvents))).toContain("after_interrupt_ok");
-      expect(followUpEvents.at(-1)).toMatchObject({
-        type: "turn_completed",
-        provider: "claude",
-      });
-    } finally {
-      await cleanupSession(handle);
-    }
+        expect(secondQuery).toBe(firstQuery);
+        expect(compactText(getAssistantText(followUpEvents))).toContain("after_interrupt_ok");
+        expect(followUpEvents.at(-1)).toMatchObject({
+          type: "turn_completed",
+          provider: "claude",
+        });
+      } finally {
+        await cleanupSession(handle);
+      }
     },
     60_000,
   );
@@ -377,106 +380,110 @@ describe("ClaudeAgentSession integration", () => {
   test.runIf(canRunClaudeIntegration)(
     "creates an autonomous live turn when a background task completes",
     async () => {
-    const handle = await createSession({
-      cwdPrefix: "claude-agent-autonomous-",
-    });
-    const autonomousWakeToken = `AUTONOMOUS_WAKE_${Date.now().toString(36)}`;
-
-    try {
-      const foregroundEvents = await collectUntilTerminal(
-        streamSession(
-          handle.session,
-          [
-            "Use the Task tool to start a background sub-agent.",
-            "In that task, run the Bash command exactly: sleep 3 && echo BACKGROUND_DONE",
-            "Do not wait for task completion.",
-            "Reply immediately with exactly: SPAWNED",
-            `When the background task completes later, reply with exactly: ${autonomousWakeToken}`,
-          ].join(" "),
-        ),
-        { timeoutMs: 45_000 },
-      );
-
-      expect(compactText(getAssistantText(foregroundEvents))).toContain("spawned");
-
-      const liveEvents = await collectSubscribedUntil(
-        handle.session,
-        (event) => isTerminalEvent(event),
-        45_000,
-      );
-
-      expect(
-        liveEvents.some((event) => event.type === "turn_started" && event.provider === "claude"),
-      ).toBe(true);
-      expect(compactText(getAssistantText(liveEvents))).toContain(
-        autonomousWakeToken.toLowerCase(),
-      );
-      expect(liveEvents.at(-1)).toMatchObject({
-        type: "turn_completed",
-        provider: "claude",
+      const handle = await createSession({
+        cwdPrefix: "claude-agent-autonomous-",
       });
-    } finally {
-      await cleanupSession(handle);
-    }
+      const autonomousWakeToken = `AUTONOMOUS_WAKE_${Date.now().toString(36)}`;
+
+      try {
+        const foregroundEvents = await collectUntilTerminal(
+          streamSession(
+            handle.session,
+            [
+              "Use the Task tool to start a background sub-agent.",
+              "In that task, run the Bash command exactly: sleep 3 && echo BACKGROUND_DONE",
+              "Do not wait for task completion.",
+              "Reply immediately with exactly: SPAWNED",
+              `When the background task completes later, reply with exactly: ${autonomousWakeToken}`,
+            ].join(" "),
+          ),
+          { timeoutMs: 45_000 },
+        );
+
+        expect(compactText(getAssistantText(foregroundEvents))).toContain("spawned");
+
+        const liveEvents = await collectSubscribedUntil(
+          handle.session,
+          (event) => isTerminalEvent(event),
+          45_000,
+        );
+
+        expect(
+          liveEvents.some((event) => event.type === "turn_started" && event.provider === "claude"),
+        ).toBe(true);
+        expect(compactText(getAssistantText(liveEvents))).toContain(
+          autonomousWakeToken.toLowerCase(),
+        );
+        expect(liveEvents.at(-1)).toMatchObject({
+          type: "turn_completed",
+          provider: "claude",
+        });
+      } finally {
+        await cleanupSession(handle);
+      }
     },
     60_000,
   );
 
-  test.runIf(canRunClaudeIntegration)("surfaces permission requests and resumes after approval", async () => {
-    const handle = await createSession({
-      cwdPrefix: "claude-agent-permission-",
-      modeId: "default",
-    });
-    const permissionFile = path.join(handle.cwd, "permission.txt");
+  test.runIf(canRunClaudeIntegration)(
+    "surfaces permission requests and resumes after approval",
+    async () => {
+      const handle = await createSession({
+        cwdPrefix: "claude-agent-permission-",
+        modeId: "default",
+      });
+      const permissionFile = path.join(handle.cwd, "permission.txt");
 
-    try {
-      const events = await collectUntilTerminal(
-        streamSession(
-          handle.session,
-          [
-            "Use the Bash tool to run exactly: printf 'PERM_TEST' > permission.txt",
-            "If approval is required, wait for approval.",
-            "After the command succeeds, reply with exactly: PERM_DONE",
-          ].join(" "),
-        ),
-        {
-          timeoutMs: 45_000,
-          onEvent: async (event) => {
-            if (event.type !== "permission_requested") {
-              return;
-            }
-            await handle.session.respondToPermission(event.request.id, {
-              behavior: "allow",
-            });
+      try {
+        const events = await collectUntilTerminal(
+          streamSession(
+            handle.session,
+            [
+              "Use the Bash tool to run exactly: printf 'PERM_TEST' > permission.txt",
+              "If approval is required, wait for approval.",
+              "After the command succeeds, reply with exactly: PERM_DONE",
+            ].join(" "),
+          ),
+          {
+            timeoutMs: 45_000,
+            onEvent: async (event) => {
+              if (event.type !== "permission_requested") {
+                return;
+              }
+              await handle.session.respondToPermission(event.request.id, {
+                behavior: "allow",
+              });
+            },
           },
-        },
-      );
+        );
 
-      const permissionRequest = events.find(
-        (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
-          event.type === "permission_requested",
-      );
-      const permissionResolved = events.find(
-        (event): event is Extract<AgentStreamEvent, { type: "permission_resolved" }> =>
-          event.type === "permission_resolved",
-      );
-      const completedBashCall = getLatestCompletedBashCall(events);
+        const permissionRequest = events.find(
+          (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+            event.type === "permission_requested",
+        );
+        const permissionResolved = events.find(
+          (event): event is Extract<AgentStreamEvent, { type: "permission_resolved" }> =>
+            event.type === "permission_resolved",
+        );
+        const completedBashCall = getLatestCompletedBashCall(events);
 
-      expect(permissionRequest?.request.kind).toBe("tool");
-      expect(permissionResolved).toMatchObject({
-        type: "permission_resolved",
-        provider: "claude",
-        resolution: { behavior: "allow" },
-      });
-      expect(completedBashCall).toBeDefined();
-      expect(readFileSync(permissionFile, "utf8")).toBe("PERM_TEST");
-      expect(compactText(getAssistantText(events))).toContain("perm_done");
-      expect(events.at(-1)).toMatchObject({
-        type: "turn_completed",
-        provider: "claude",
-      });
-    } finally {
-      await cleanupSession(handle);
-    }
-  }, 60_000);
+        expect(permissionRequest?.request.kind).toBe("tool");
+        expect(permissionResolved).toMatchObject({
+          type: "permission_resolved",
+          provider: "claude",
+          resolution: { behavior: "allow" },
+        });
+        expect(completedBashCall).toBeDefined();
+        expect(readFileSync(permissionFile, "utf8")).toBe("PERM_TEST");
+        expect(compactText(getAssistantText(events))).toContain("perm_done");
+        expect(events.at(-1)).toMatchObject({
+          type: "turn_completed",
+          provider: "claude",
+        });
+      } finally {
+        await cleanupSession(handle);
+      }
+    },
+    60_000,
+  );
 });

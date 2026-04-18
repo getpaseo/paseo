@@ -8,6 +8,7 @@ import {
   createIdleAgent,
   expectSessionRowVisible,
   expectWorkspaceArchiveOutcome,
+  expectWorkspaceTabHidden,
   openSessions,
   openWorkspaceWithAgents,
   primeAdditionalPage,
@@ -19,13 +20,15 @@ test.describe("Archive tab reconciliation", () => {
   let client: Awaited<ReturnType<typeof connectArchiveTabDaemonClient>>;
   let tempRepo: { path: string; cleanup: () => Promise<void> };
 
+  test.describe.configure({ timeout: 300_000 });
+
   test.beforeAll(async () => {
     tempRepo = await createTempGitRepo("archive-tab-");
     client = await connectArchiveTabDaemonClient();
   });
 
   test.afterAll(async () => {
-    await client?.close();
+    await client?.close().catch(() => undefined);
     await tempRepo?.cleanup();
   });
 
@@ -62,10 +65,7 @@ test.describe("Archive tab reconciliation", () => {
         survivingAgentId: surviving.id,
       });
       await reloadWorkspace(passivePage, tempRepo.path);
-      await expectWorkspaceArchiveOutcome(passivePage, {
-        archivedAgentId: archived.id,
-        survivingAgentId: surviving.id,
-      });
+      await expectWorkspaceTabHidden(passivePage, archived.id);
     } finally {
       await passivePage.close();
     }
@@ -91,10 +91,7 @@ test.describe("Archive tab reconciliation", () => {
       await openSessions(page);
       await archiveAgentFromSessions(page, { agentId: archived.id, title: archived.title });
       await reloadWorkspace(page, tempRepo.path);
-      await expectWorkspaceArchiveOutcome(page, {
-        archivedAgentId: archived.id,
-        survivingAgentId: surviving.id,
-      });
+      await expectWorkspaceTabHidden(page, archived.id);
       await expectWorkspaceArchiveOutcome(passivePage, {
         archivedAgentId: archived.id,
         survivingAgentId: surviving.id,

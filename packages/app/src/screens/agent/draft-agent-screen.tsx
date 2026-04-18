@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createNameId } from "mnemonic-id";
 import type { ImageAttachment } from "@/components/message-input";
-import { View, Text, Pressable, ScrollView, Keyboard, Platform } from "react-native";
+import { View, Text, Pressable, ScrollView, Keyboard } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -11,15 +11,14 @@ import Animated from "react-native-reanimated";
 import { Folder, GitBranch, PanelRight } from "lucide-react-native";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
-import { AgentInputArea } from "@/components/agent-input-area";
+import { Composer } from "@/components/composer";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { FormSelectTrigger } from "@/components/agent-form/agent-form-dropdowns";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
 import { Combobox } from "@/components/ui/combobox";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { useQuery } from "@tanstack/react-query";
-import { useAgentFormState, type CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
-import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
+import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import {
   CHECKOUT_STATUS_STALE_TIME,
   checkoutStatusQueryKey,
@@ -27,6 +26,7 @@ import {
 import { useAllAgentsList } from "@/hooks/use-all-agents-list";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildBranchComboOptions, normalizeBranchOptionName } from "@/utils/branch-suggestions";
+import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { shortenPath } from "@/utils/shorten-path";
 import { collectAgentWorkingDirectorySuggestions } from "@/utils/agent-working-directory-suggestions";
 import { buildWorkingDirectorySuggestions } from "@/utils/working-directory-suggestions";
@@ -40,7 +40,7 @@ import {
 } from "@/runtime/host-runtime";
 import { ExplorerSidebarAnimationProvider } from "@/contexts/explorer-sidebar-animation-context";
 import { usePanelStore, type ExplorerCheckoutContext } from "@/stores/panel-store";
-import { MAX_CONTENT_WIDTH, isCompactFormFactor } from "@/constants/layout";
+import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { WelcomeScreen } from "@/components/welcome-screen";
 import type { Agent } from "@/contexts/session-context";
 import { encodeImages } from "@/utils/encode-images";
@@ -50,6 +50,7 @@ import type {
   AgentSessionConfig,
 } from "@server/server/agent/agent-sdk-types";
 import { AGENT_PROVIDER_DEFINITIONS } from "@server/server/agent/provider-manifest";
+import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
@@ -57,6 +58,7 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
 import { useDraftAgentCreateFlow } from "@/hooks/use-draft-agent-create-flow";
 import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
+import { isWeb } from "@/constants/platform";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
@@ -67,10 +69,6 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsReasoningStream: false,
   supportsToolInvocations: false,
 };
-const PROVIDER_DEFINITION_MAP = new Map(
-  AGENT_PROVIDER_DEFINITIONS.map((definition) => [definition.id, definition]),
-);
-
 function getParamValue(value: string | string[] | undefined) {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -91,16 +89,14 @@ function getValidProvider(value: string | undefined) {
   if (!value) {
     return undefined;
   }
-  return PROVIDER_DEFINITION_MAP.has(value as AgentProvider) ? (value as AgentProvider) : undefined;
+  return value as AgentProvider;
 }
 
 function getValidMode(provider: AgentProvider | undefined, value: string | undefined) {
   if (!provider || !value) {
     return undefined;
   }
-  const definition = PROVIDER_DEFINITION_MAP.get(provider);
-  const modes = definition?.modes ?? [];
-  return modes.some((mode) => mode.id === value) ? value : undefined;
+  return value;
 }
 
 type DraftAgentParams = {
@@ -203,39 +199,45 @@ function DraftAgentScreenContent({
     return values;
   }, [resolvedMode, resolvedModel, resolvedProvider, resolvedThinkingOptionId, resolvedWorkingDir]);
 
+  const draftIdRef = useRef(generateDraftId());
+  const draftAgentIdRef = useRef(generateDraftId());
+  const draftInput = useAgentInputDraft({
+    draftKey: ({ selectedServerId }) =>
+      buildDraftStoreKey({
+        serverId: selectedServerId ?? "",
+        agentId: draftAgentIdRef.current,
+        draftId: draftIdRef.current,
+      }),
+    initialCwd: resolvedWorkingDir ?? "",
+    composer: {
+      initialServerId: resolvedServerId ?? null,
+      initialValues,
+      isVisible,
+      onlineServerIds,
+    },
+  });
+  const composerState = draftInput.composerState;
+  if (!composerState) {
+    throw new Error("Draft agent composer state is required");
+  }
+
   const {
     selectedServerId,
     setSelectedServerIdFromUser,
-    selectedProvider,
-    setProviderFromUser,
-    selectedMode,
-    setModeFromUser,
-    selectedModel,
-    setModelFromUser,
-    selectedThinkingOptionId,
-    setThinkingOptionFromUser,
+    providerDefinitions,
     workingDir,
     setWorkingDirFromUser,
-    providerDefinitions,
     modeOptions,
-    availableModels,
-    allProviderModels,
-    allProviderEntries,
-    isAllModelsLoading,
-    availableThinkingOptions,
     isModelLoading,
     modelError,
     refreshProviderModels,
-    setProviderAndModelFromUser,
     persistFormPreferences,
-  } = useAgentFormState({
-    initialServerId: resolvedServerId ?? null,
-    initialValues,
-    isVisible,
-    isCreateFlow: true,
-    onlineServerIds,
-  });
-  const isMobile = isCompactFormFactor();
+    effectiveModelId,
+    effectiveThinkingOptionId,
+    commandDraftConfig,
+    statusControls,
+  } = composerState;
+  const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
   const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
@@ -246,15 +248,6 @@ function DraftAgentScreenContent({
     (state) => state.activateExplorerTabForCheckout,
   );
   const isExplorerOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
-  const draftIdRef = useRef(generateDraftId());
-  const draftAgentIdRef = useRef(generateDraftId());
-  const draftInput = useAgentInputDraft(
-    buildDraftStoreKey({
-      serverId: selectedServerId ?? "",
-      agentId: draftAgentIdRef.current,
-      draftId: draftIdRef.current,
-    }),
-  );
 
   const [worktreeMode, setWorktreeMode] = useState<"none" | "create" | "attach">(
     initialWorktreeMode,
@@ -634,6 +627,18 @@ function DraftAgentScreenContent({
       isGit: isAttachWorktree && selectedWorktreePath ? true : checkout?.isGit === true,
     };
   }, [selectedServerId, explorerCwd, isAttachWorktree, selectedWorktreePath, checkout?.isGit]);
+  const draftExplorerWorkspaceId = useSessionStore(
+    useCallback(
+      (state) =>
+        resolveWorkspaceIdByExecutionDirectory({
+          workspaces: selectedServerId
+            ? state.sessions[selectedServerId]?.workspaces?.values()
+            : null,
+          workspaceDirectory: explorerCwd,
+        }),
+      [explorerCwd, selectedServerId],
+    ),
+  );
   const canOpenExplorer = draftExplorerCheckout !== null;
   const openExplorerForDraftCheckout = useCallback(() => {
     if (!draftExplorerCheckout) {
@@ -745,61 +750,6 @@ function DraftAgentScreenContent({
   }, [baseBranch, branchSearchQuery, branchSuggestionsQuery.data, checkout, worktreeOptions]);
 
   const createAgentClient = sessionClient;
-  const effectiveDraftModelId = useMemo(() => {
-    if (selectedModel.trim()) {
-      return selectedModel.trim();
-    }
-    return availableModels.find((model) => model.isDefault)?.id ?? availableModels[0]?.id ?? "";
-  }, [availableModels, selectedModel]);
-  const effectiveDraftThinkingOptionId = useMemo(() => {
-    if (selectedThinkingOptionId.trim()) {
-      return selectedThinkingOptionId.trim();
-    }
-    const selectedModelDefinition =
-      availableModels.find((model) => model.id === effectiveDraftModelId) ?? null;
-    return selectedModelDefinition?.defaultThinkingOptionId ?? "";
-  }, [availableModels, effectiveDraftModelId, selectedThinkingOptionId]);
-  const {
-    features: draftFeatures,
-    featureValues: draftFeatureValues,
-    setFeatureValue: setDraftFeatureValue,
-  } = useDraftAgentFeatures({
-    serverId: selectedServerId,
-    provider: selectedProvider,
-    cwd: workingDir,
-    modeId: selectedMode,
-    modelId: effectiveDraftModelId,
-    thinkingOptionId: effectiveDraftThinkingOptionId,
-  });
-  const draftCommandConfig = useMemo<DraftCommandConfig | undefined>(() => {
-    const cwd = (
-      isAttachWorktree && selectedWorktreePath ? selectedWorktreePath : workingDir
-    ).trim();
-    if (!cwd) {
-      return undefined;
-    }
-
-    return {
-      provider: selectedProvider,
-      cwd,
-      ...(modeOptions.length > 0 && selectedMode !== "" ? { modeId: selectedMode } : {}),
-      ...(effectiveDraftModelId ? { model: effectiveDraftModelId } : {}),
-      ...(effectiveDraftThinkingOptionId
-        ? { thinkingOptionId: effectiveDraftThinkingOptionId }
-        : {}),
-      ...(draftFeatureValues ? { featureValues: draftFeatureValues } : {}),
-    };
-  }, [
-    draftFeatureValues,
-    effectiveDraftModelId,
-    effectiveDraftThinkingOptionId,
-    isAttachWorktree,
-    modeOptions.length,
-    selectedMode,
-    selectedProvider,
-    selectedWorktreePath,
-    workingDir,
-  ]);
 
   const {
     formErrorMessage,
@@ -807,7 +757,7 @@ function DraftAgentScreenContent({
     optimisticStreamItems,
     draftAgent,
     handleCreateFromInput,
-  } = useDraftAgentCreateFlow<Agent, { id: string; cwd: string }>({
+  } = useDraftAgentCreateFlow<Agent, { id: string; workspaceId: string | null }>({
     draftId: draftIdRef.current,
     getPendingServerId: () => selectedServerId,
     validateBeforeSubmit: ({ text }) => {
@@ -833,7 +783,7 @@ function DraftAgentScreenContent({
       if (isModelLoading) {
         return "Model defaults are still loading";
       }
-      if (!effectiveDraftModelId) {
+      if (!effectiveModelId) {
         return "No model is available for the selected provider";
       }
       if (isAttachWorktree && !selectedWorktreePath) {
@@ -849,7 +799,7 @@ function DraftAgentScreenContent({
     },
     onBeforeSubmit: () => {
       void persistFormPreferences();
-      if (Platform.OS === "web") {
+      if (isWeb) {
         (document.activeElement as HTMLElement | null)?.blur?.();
       }
       Keyboard.dismiss();
@@ -866,10 +816,13 @@ function DraftAgentScreenContent({
       const cwd =
         (isAttachWorktree && selectedWorktreePath ? selectedWorktreePath : workingDir).trim() ||
         ".";
-      const provider = selectedProvider;
-      const model = effectiveDraftModelId || null;
-      const thinkingOptionId = effectiveDraftThinkingOptionId || null;
-      const modeId = modeOptions.length > 0 && selectedMode !== "" ? selectedMode : null;
+      const provider = composerState.selectedProvider;
+      const model = effectiveModelId || null;
+      const thinkingOptionId = effectiveThinkingOptionId || null;
+      const modeId =
+        composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
+          ? composerState.selectedMode
+          : null;
 
       return {
         serverId,
@@ -894,26 +847,25 @@ function DraftAgentScreenContent({
         title: "New agent",
         cwd,
         model,
-        features: draftFeatures,
         thinkingOptionId,
         labels: {},
       };
     },
-    createRequest: async ({ attempt, text, images }) => {
+    createRequest: async ({ attempt, text, images, attachments }) => {
       const trimmedPath = workingDir.trim();
       const resolvedWorkingDir =
         isAttachWorktree && selectedWorktreePath ? selectedWorktreePath : trimmedPath;
 
-      const modeId = modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
+      const modeId =
+        composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
+          ? composerState.selectedMode
+          : undefined;
       const config: AgentSessionConfig = {
-        provider: selectedProvider,
+        provider: composerState.selectedProvider,
         cwd: resolvedWorkingDir,
         ...(modeId ? { modeId } : {}),
-        ...(effectiveDraftModelId ? { model: effectiveDraftModelId } : {}),
-        ...(effectiveDraftThinkingOptionId
-          ? { thinkingOptionId: effectiveDraftThinkingOptionId }
-          : {}),
-        ...(draftFeatureValues ? { featureValues: draftFeatureValues } : {}),
+        ...(effectiveModelId ? { model: effectiveModelId } : {}),
+        ...(effectiveThinkingOptionId ? { thinkingOptionId: effectiveThinkingOptionId } : {}),
       };
 
       const effectiveBaseBranch = baseBranch.trim();
@@ -945,6 +897,7 @@ function DraftAgentScreenContent({
         initialPrompt: text,
         clientMessageId: attempt.clientMessageId,
         ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
         git: gitOptions,
       });
 
@@ -960,20 +913,27 @@ function DraftAgentScreenContent({
 
       const createdWorkingDir = typeof result.cwd === "string" ? result.cwd.trim() : "";
       const configuredWorkingDir = config.cwd.trim();
-      const workspaceId = createdWorkingDir.length > 0 ? createdWorkingDir : configuredWorkingDir;
+      const workspaceId = resolveWorkspaceIdByExecutionDirectory({
+        workspaces: useSessionStore.getState().sessions[selectedServerId]?.workspaces?.values(),
+        workspaceDirectory: createdWorkingDir.length > 0 ? createdWorkingDir : configuredWorkingDir,
+      });
 
       return {
         agentId: result.id,
         result: {
           id: result.id,
-          cwd: workspaceId,
+          workspaceId,
         },
       };
     },
     onCreateSuccess: ({ result }) => {
+      if (!result.workspaceId) {
+        router.replace(buildHostAgentDetailRoute(selectedServerId as string, result.id) as any);
+        return;
+      }
       const route = prepareWorkspaceTab({
         serverId: selectedServerId as string,
-        workspaceId: result.cwd,
+        workspaceId: result.workspaceId,
         target: { kind: "agent", agentId: result.id },
       });
       router.replace(route as any);
@@ -1234,40 +1194,24 @@ function DraftAgentScreenContent({
             )}
           </Animated.View>
           <View style={styles.inputAreaWrapper}>
-            <AgentInputArea
+            <Composer
               agentId={draftAgentIdRef.current}
               serverId={selectedServerId ?? ""}
-              isInputActive={isFocused}
+              isPaneFocused={isFocused}
               onSubmitMessage={handleCreateFromInput}
               isSubmitLoading={isSubmitting}
               blurOnSubmit={true}
               value={draftInput.text}
               onChangeText={draftInput.setText}
-              images={draftInput.images}
-              onChangeImages={draftInput.setImages}
+              attachments={draftInput.attachments}
+              onChangeAttachments={draftInput.setAttachments}
+              cwd={draftInput.cwd}
               clearDraft={draftInput.clear}
               autoFocus={!isSubmitting}
               onAddImages={handleAddImagesCallback}
-              commandDraftConfig={draftCommandConfig}
+              commandDraftConfig={commandDraftConfig}
               statusControls={{
-                providerDefinitions,
-                selectedProvider,
-                onSelectProvider: setProviderFromUser,
-                modeOptions,
-                selectedMode,
-                onSelectMode: setModeFromUser,
-                models: availableModels,
-                selectedModel,
-                onSelectModel: setModelFromUser,
-                isModelLoading,
-                allProviderModels,
-                isAllModelsLoading,
-                onSelectProviderAndModel: setProviderAndModelFromUser,
-                thinkingOptions: availableThinkingOptions,
-                selectedThinkingOptionId,
-                onSelectThinkingOption: setThinkingOptionFromUser,
-                features: draftFeatures,
-                onSetFeature: setDraftFeatureValue,
+                ...statusControls,
                 disabled: isSubmitting,
               }}
             />
@@ -1277,7 +1221,7 @@ function DraftAgentScreenContent({
         {!isMobile && isExplorerOpen && explorerServerId && draftExplorerCheckout ? (
           <ExplorerSidebar
             serverId={explorerServerId}
-            workspaceId={draftExplorerCheckout.cwd}
+            workspaceId={draftExplorerWorkspaceId}
             workspaceRoot={draftExplorerCheckout.cwd}
             isGit={explorerIsGit}
           />
@@ -1300,7 +1244,7 @@ function DraftAgentScreenContent({
         {isMobile && explorerServerId && draftExplorerCheckout ? (
           <ExplorerSidebar
             serverId={explorerServerId}
-            workspaceId={draftExplorerCheckout.cwd}
+            workspaceId={draftExplorerWorkspaceId}
             workspaceRoot={draftExplorerCheckout.cwd}
             isGit={explorerIsGit}
           />

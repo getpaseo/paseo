@@ -63,12 +63,6 @@ if (args.print) {
 
 execFileSync(
   "npm",
-  [
-    "version",
-    nextVersion,
-    "--include-workspace-root",
-    "--message",
-    "chore(release): cut %s",
-  ],
+  ["version", nextVersion, "--include-workspace-root", "--message", "chore(release): cut %s"],
   { cwd: rootDir, stdio: "inherit" },
 );

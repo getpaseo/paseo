@@ -62,7 +62,7 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
 }
 
 type DaemonStatus = {
-  status: string | null;
+  localDaemon: string | null;
   pid: number | null;
 };
 
@@ -70,19 +70,19 @@ async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
   const result =
     await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon status --home ${paseoHome} --json`.nothrow();
   if (result.exitCode !== 0) {
-    return { status: null, pid: null };
+    return { localDaemon: null, pid: null };
   }
 
   try {
-    const parsed = JSON.parse(result.stdout) as { status?: unknown; pid?: unknown };
-    const status = typeof parsed.status === "string" ? parsed.status : null;
+    const parsed = JSON.parse(result.stdout) as { localDaemon?: unknown; pid?: unknown };
+    const localDaemon = typeof parsed.localDaemon === "string" ? parsed.localDaemon : null;
     const pid =
       typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0
         ? parsed.pid
         : null;
-    return { status, pid };
+    return { localDaemon, pid };
   } catch {
-    return { status: null, pid: null };
+    return { localDaemon: null, pid: null };
   }
 }
 
@@ -134,8 +134,8 @@ try {
   console.log("Test 1: start supervisor-entrypoint in dev mode with isolated PASEO_HOME");
 
   supervisorProcess = spawn(
-    "npx",
-    ["tsx", "../server/scripts/supervisor-entrypoint.ts", "--dev"],
+    process.execPath,
+    ["--import", "tsx", "../server/scripts/supervisor-entrypoint.ts", "--dev"],
     {
       cwd: cliRoot,
       env: {
@@ -161,7 +161,9 @@ try {
   await waitFor(
     async () => {
       const status = await readDaemonStatus(paseoHome);
-      return status.status === "running" && status.pid !== null && isProcessRunning(status.pid);
+      return (
+        status.localDaemon === "running" && status.pid !== null && isProcessRunning(status.pid)
+      );
     },
     120000,
     "daemon did not become running in time",
@@ -187,7 +189,7 @@ try {
   await waitFor(
     async () => {
       const status = await readDaemonStatus(paseoHome);
-      return status.status === "stopped";
+      return status.localDaemon === "stopped";
     },
     15000,
     "daemon status did not transition to stopped after SIGINT",

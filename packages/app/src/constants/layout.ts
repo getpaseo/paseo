@@ -1,6 +1,5 @@
-import { Platform } from "react-native";
-import { UnistylesRuntime } from "react-native-unistyles";
-import { isElectronRuntime, isElectronRuntimeMac } from "@/desktop/host";
+import { useUnistyles } from "react-native-unistyles";
+import { isWeb } from "@/constants/platform";
 
 export const FOOTER_HEIGHT = 75;
 
@@ -24,59 +23,23 @@ export const DESKTOP_TRAFFIC_LIGHT_HEIGHT = 45;
 export const DESKTOP_WINDOW_CONTROLS_WIDTH = 140;
 export const DESKTOP_WINDOW_CONTROLS_HEIGHT = 48;
 
-// Check if running in the Electron desktop runtime (any OS)
-function isElectronDesktopRuntime(): boolean {
-  if (Platform.OS !== "web") return false;
-  return isElectronRuntime();
-}
+export {
+  getIsElectron as getIsElectronRuntime,
+  getIsElectronMac as getIsElectronRuntimeMac,
+} from "./platform";
 
-// Check if running in the Electron desktop runtime on macOS
-function isElectronDesktopRuntimeMac(): boolean {
-  if (Platform.OS !== "web") return false;
-  return isElectronRuntimeMac();
-}
-
-// Cached result - only cache true, keep checking if false (in case desktop globals load later)
-let _isElectronRuntimeMacCached: boolean | null = null;
-let _isElectronRuntimeCached: boolean | null = null;
-
-export function getIsElectronRuntimeMac(): boolean {
-  if (_isElectronRuntimeMacCached === true) {
-    return true;
-  }
-  const result = isElectronDesktopRuntimeMac();
-  if (result) {
-    _isElectronRuntimeMacCached = true;
-  }
-  return result;
-}
-
-export function getIsElectronRuntime(): boolean {
-  if (_isElectronRuntimeCached === true) {
-    return true;
-  }
-  const result = isElectronDesktopRuntime();
-  if (result) {
-    _isElectronRuntimeCached = true;
-  }
-  return result;
-}
-
-export function isCompactFormFactor(): boolean {
-  return UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
-}
-
-export function isDesktopFormFactor(): boolean {
-  return !isCompactFormFactor();
-}
-
-export function isTouchDesktopFormFactor(): boolean {
-  return Platform.OS !== "web" && isDesktopFormFactor();
+/**
+ * Reactive hook — re-renders the component when the breakpoint changes.
+ * Always use this instead of reading UnistylesRuntime.breakpoint directly.
+ */
+export function useIsCompactFormFactor(): boolean {
+  const { rt } = useUnistyles();
+  return rt.breakpoint === "xs" || rt.breakpoint === "sm";
 }
 
 // SplitContainer relies on dnd-kit and DOM-backed accessibility helpers.
 // Keep that capability distinct from desktop-width layout so touch tablets
 // can use the desktop shell without entering web-only code paths.
 export function supportsDesktopPaneSplits(): boolean {
-  return Platform.OS === "web";
+  return isWeb;
 }

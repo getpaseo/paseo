@@ -1,14 +1,8 @@
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
 import type { AgentPersistenceHandle, AgentTimelineItem } from "../agent/agent-sdk-types.js";
@@ -44,9 +38,7 @@ function createPiToolDaemon() {
 function extractAssistantText(items: AgentTimelineItem[]): string {
   return items
     .filter(
-      (
-        item,
-      ): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
+      (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
         item.type === "assistant_message",
     )
     .map((item) => item.text)
@@ -66,7 +58,10 @@ function findCompletedToolCall(
   return extractCompletedToolCalls(items).find(predicate);
 }
 
-async function fetchCanonicalTimeline(client: DaemonClient, agentId: string): Promise<AgentTimelineItem[]> {
+async function fetchCanonicalTimeline(
+  client: DaemonClient,
+  agentId: string,
+): Promise<AgentTimelineItem[]> {
   const timeline = await client.fetchAgentTimeline(agentId, {
     direction: "tail",
     limit: 0,
@@ -93,12 +88,22 @@ async function withConnectedPiDaemon(
   }
 }
 
-const runIfPi = test.runIf(isProviderAvailable("pi"));
-
 describe(
   "daemon E2E (real pi)",
   () => {
-    runIfPi(
+    let canRun = false;
+
+    beforeAll(async () => {
+      canRun = await isProviderAvailable("pi");
+    });
+
+    beforeEach((context) => {
+      if (!canRun) {
+        context.skip();
+      }
+    });
+
+    test(
       "bash tool call records completed shell detail and output",
       async () => {
         const cwd = tmpCwd();
@@ -124,8 +129,7 @@ describe(
             const toolCall = findCompletedToolCall(
               items,
               (item) =>
-                item.detail.type === "shell" &&
-                item.detail.command.includes("echo HELLO_PI_TEST"),
+                item.detail.type === "shell" && item.detail.command.includes("echo HELLO_PI_TEST"),
             );
 
             expect(toolCall).toBeDefined();
@@ -143,7 +147,7 @@ describe(
       PI_TEST_TIMEOUT_MS,
     );
 
-    runIfPi(
+    test(
       "file read tool call captures read detail and content",
       async () => {
         const cwd = tmpCwd();
@@ -192,7 +196,7 @@ describe(
       PI_TEST_TIMEOUT_MS,
     );
 
-    runIfPi(
+    test(
       "file write tool call captures write detail and writes to disk",
       async () => {
         const cwd = tmpCwd();
@@ -219,8 +223,7 @@ describe(
             const items = await fetchCanonicalTimeline(client, agent.id);
             const toolCall = findCompletedToolCall(
               items,
-              (item) =>
-                item.detail.type === "write" && item.detail.filePath.includes(filename),
+              (item) => item.detail.type === "write" && item.detail.filePath.includes(filename),
             );
 
             expect(toolCall).toBeDefined();
@@ -235,7 +238,7 @@ describe(
       PI_TEST_TIMEOUT_MS,
     );
 
-    runIfPi(
+    test(
       "file edit tool call captures edit detail and updates the file on disk",
       async () => {
         const cwd = tmpCwd();
@@ -264,8 +267,7 @@ describe(
             const items = await fetchCanonicalTimeline(client, agent.id);
             const toolCall = findCompletedToolCall(
               items,
-              (item) =>
-                item.detail.type === "edit" && item.detail.filePath.includes(filename),
+              (item) => item.detail.type === "edit" && item.detail.filePath.includes(filename),
             );
 
             expect(toolCall).toBeDefined();
@@ -279,7 +281,7 @@ describe(
       PI_TEST_TIMEOUT_MS,
     );
 
-    runIfPi(
+    test(
       "thinking-enabled runs emit reasoning timeline chunks",
       async () => {
         const cwd = tmpCwd();
@@ -304,9 +306,7 @@ describe(
 
             const items = await fetchCanonicalTimeline(client, agent.id);
             const reasoningItems = items.filter(
-              (
-                item,
-              ): item is Extract<AgentTimelineItem, { type: "reasoning" }> =>
+              (item): item is Extract<AgentTimelineItem, { type: "reasoning" }> =>
                 item.type === "reasoning" && item.text.trim().length > 0,
             );
 
@@ -319,7 +319,7 @@ describe(
       PI_TEST_TIMEOUT_MS,
     );
 
-    runIfPi(
+    test(
       "session persistence survives delete and resume",
       async () => {
         const cwd = tmpCwd();
@@ -351,9 +351,9 @@ describe(
 
             const items = await fetchCanonicalTimeline(client, resumed.id);
             const assistantText = extractAssistantText(items).toUpperCase();
-            expect(
-              assistantText.includes(rememberedToken) || assistantText.includes("42"),
-            ).toBe(true);
+            expect(assistantText.includes(rememberedToken) || assistantText.includes("42")).toBe(
+              true,
+            );
           });
         } finally {
           rmSync(cwd, { recursive: true, force: true });
@@ -362,7 +362,7 @@ describe(
       PI_TEST_TIMEOUT_MS,
     );
 
-    runIfPi(
+    test(
       "PiDirectAgentClient.listModels returns non-empty Pi model definitions",
       async () => {
         const client = createPiClient();
@@ -380,7 +380,7 @@ describe(
       PI_TEST_TIMEOUT_MS,
     );
 
-    runIfPi(
+    test(
       "session getRuntimeInfo reflects configured high thinking level",
       async () => {
         const cwd = tmpCwd("pi-runtime-info-");
@@ -406,7 +406,7 @@ describe(
       PI_TEST_TIMEOUT_MS,
     );
 
-    runIfPi(
+    test(
       "session setThinkingOption('low') updates runtime thinking level",
       async () => {
         const cwd = tmpCwd("pi-feature-");

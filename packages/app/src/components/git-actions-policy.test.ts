@@ -15,12 +15,18 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
     baseRefAvailable: true,
     baseRefLabel: "main",
     aheadCount: 0,
+    behindBaseCount: 0,
     aheadOfOrigin: 0,
     behindOfOrigin: 0,
     shouldPromoteArchive: false,
     shipDefault: "merge",
     runtime: {
       commit: {
+        disabled: false,
+        status: "idle",
+        handler: () => undefined,
+      },
+      pull: {
         disabled: false,
         status: "idle",
         handler: () => undefined,
@@ -56,87 +62,100 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
 }
 
 describe("git-actions-policy", () => {
-  it("keeps the secondary menu order stable while the primary action changes", () => {
-    const noPrActions = buildGitActions(createInput());
-    const withPrActions = buildGitActions(
-      createInput({
-        hasRemote: true,
-        hasPullRequest: true,
-        pullRequestUrl: "https://example.com/pr/123",
-        aheadCount: 3,
-        aheadOfOrigin: 2,
-        shipDefault: "pr",
-      }),
-    );
+  it("shows only remote sync actions on the base branch", () => {
+    const actions = buildGitActions(createInput({ hasRemote: true }));
 
-    expect(noPrActions.primary).toBeNull();
-    expect(withPrActions.primary?.id).toBe("push");
-    expect(noPrActions.secondary.map((action) => action.id)).toEqual([
-      "merge-branch",
-      "pr",
-      "merge-from-base",
-      "push",
-    ]);
-    expect(withPrActions.secondary.map((action) => action.id)).toEqual([
-      "merge-branch",
-      "pr",
-      "merge-from-base",
-      "push",
-    ]);
+    expect(actions.secondary.map((action) => action.id)).toEqual(["pull", "push"]);
   });
 
-  it("disables hidden-before actions with explanations instead", () => {
-    const actions = buildGitActions(createInput());
-    const actionById = new Map(actions.secondary.map((action) => [action.id, action]));
-
-    expect(actionById.get("push")).toMatchObject({
-      disabled: true,
-      description: "No remote configured",
-    });
-    expect(actionById.get("pr")).toMatchObject({
-      label: "Create PR",
-      disabled: true,
-      description: "Branch has no commits ahead of main",
-    });
-    expect(actionById.get("merge-branch")).toMatchObject({
-      disabled: true,
-      description: "No commits to merge into main",
-    });
-    expect(actionById.get("merge-from-base")).toMatchObject({
-      disabled: true,
-      description: "No remote configured",
-    });
-    expect(actionById.has("archive-worktree")).toBe(false);
-  });
-
-  it("keeps the current primary action visible in the menu", () => {
+  it("prioritizes pull when the branch is behind origin", () => {
     const actions = buildGitActions(
       createInput({
         hasRemote: true,
+        behindOfOrigin: 2,
+      }),
+    );
+
+    expect(actions.primary).toMatchObject({ id: "pull", label: "Pull" });
+  });
+
+  it("keeps push clickable with a clearer message when the branch diverged", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        aheadOfOrigin: 1,
+        behindOfOrigin: 1,
+      }),
+    );
+    const pushAction = actions.secondary.find((action) => action.id === "push");
+
+    expect(pushAction).toMatchObject({
+      disabled: false,
+      unavailableMessage:
+        "Push isn't available yet because there are newer changes to bring in first",
+    });
+  });
+
+  it("shows update-from-base only on feature branches that are behind the base branch", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        behindBaseCount: 3,
+      }),
+    );
+    const updateAction = actions.secondary.find((action) => action.id === "merge-from-base");
+
+    expect(updateAction).toMatchObject({
+      label: "Update from main",
+      disabled: false,
+      unavailableMessage: undefined,
+    });
+  });
+
+  it("uses a clear sentence when pull is unavailable", () => {
+    const actions = buildGitActions(createInput({ hasRemote: true }));
+    const pullAction = actions.secondary.find((action) => action.id === "pull");
+
+    expect(pullAction).toMatchObject({
+      disabled: false,
+      unavailableMessage: "Pull isn't available because this branch is already up to date",
+    });
+  });
+
+  it("keeps update-from-base off the base branch entirely", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        behindOfOrigin: 2,
+      }),
+    );
+
+    expect(actions.secondary.some((action) => action.id === "merge-from-base")).toBe(false);
+  });
+
+  it("keeps feature branch actions available off the base branch", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        behindBaseCount: 1,
         hasPullRequest: true,
         pullRequestUrl: "https://example.com/pr/456",
       }),
     );
 
-    expect(actions.primary?.id).toBe("pr");
+    expect(actions.secondary.map((action) => action.id)).toEqual([
+      "pull",
+      "push",
+      "merge-from-base",
+      "merge-branch",
+      "pr",
+    ]);
     expect(
       actions.secondary.some((action) => action.id === "pr" && action.label === "View PR"),
     ).toBe(true);
-  });
-
-  it("disables sync on the base branch when already up to date", () => {
-    const actions = buildGitActions(
-      createInput({
-        hasRemote: true,
-      }),
-    );
-    const syncAction = actions.secondary.find((action) => action.id === "merge-from-base");
-
-    expect(syncAction).toMatchObject({
-      label: "Sync",
-      disabled: true,
-      description: "Already up to date",
-    });
   });
 
   it("only shows archive worktree for paseo worktrees", () => {

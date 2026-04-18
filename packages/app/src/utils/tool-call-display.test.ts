@@ -96,6 +96,7 @@ describe("tool-call-display", () => {
             index: 1,
             command: "npm install",
             cwd: "/tmp/repo/.paseo/worktrees/repo/branch",
+            log: "",
             status: "running",
             exitCode: null,
           },
@@ -153,7 +154,7 @@ describe("tool-call-display", () => {
     });
 
     expect(display).toEqual({
-      displayName: "Interacted with terminal",
+      displayName: "Terminal",
     });
   });
 
@@ -170,7 +171,7 @@ describe("tool-call-display", () => {
     });
 
     expect(display).toEqual({
-      displayName: "Interacted with terminal",
+      displayName: "Terminal",
       summary: "npm run test",
     });
   });

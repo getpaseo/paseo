@@ -10,7 +10,7 @@
  * CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment.
  * They are skipped automatically when credentials are unavailable.
  */
-import { describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -28,7 +28,6 @@ const logger = pino({ level: "silent" });
 const client = new ClaudeAgentClient({ logger });
 const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
-const canRun = isCommandAvailable("claude") && hasClaudeCredentials;
 
 function tmpCwd(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
@@ -55,10 +54,7 @@ function eventsForTurn(events: AgentStreamEvent[], turnId: string): AgentStreamE
 
 function userMessagesWithText(events: AgentStreamEvent[], text: string): AgentStreamEvent[] {
   return events.filter(
-    (e) =>
-      e.type === "timeline" &&
-      e.item.type === "user_message" &&
-      e.item.text === text,
+    (e) => e.type === "timeline" && e.item.type === "user_message" && e.item.text === text,
   );
 }
 
@@ -185,12 +181,8 @@ function assertInvariants(events: AgentStreamEvent[], foregroundTurnIds: string[
   }
 
   // Invariant 4: Autonomous turns have distinct turnIds from foreground turns
-  const allTurnIds = new Set(
-    events.filter(hasTurnId).map((e) => e.turnId),
-  );
-  const autonomousTurnIds = [...allTurnIds].filter(
-    (id) => !foregroundTurnIds.includes(id),
-  );
+  const allTurnIds = new Set(events.filter(hasTurnId).map((e) => e.turnId));
+  const autonomousTurnIds = [...allTurnIds].filter((id) => !foregroundTurnIds.includes(id));
   for (const autoId of autonomousTurnIds) {
     expect(foregroundTurnIds).not.toContain(autoId);
   }
@@ -201,7 +193,19 @@ function assertInvariants(events: AgentStreamEvent[], foregroundTurnIds: string[
 // ---------------------------------------------------------------------------
 
 describe("Agent event stream redesign — integration", () => {
-  test.skipIf(!canRun)("Test 1: Basic foreground turn", async () => {
+  let canRun = false;
+
+  beforeAll(async () => {
+    canRun = (await isCommandAvailable("claude")) && hasClaudeCredentials;
+  });
+
+  beforeEach((context) => {
+    if (!canRun) {
+      context.skip();
+    }
+  });
+
+  test("Test 1: Basic foreground turn", async () => {
     const handle = await createSession({ cwdPrefix: "event-stream-basic-" });
 
     try {
@@ -226,7 +230,7 @@ describe("Agent event stream redesign — integration", () => {
     }
   }, 60_000);
 
-  test.skipIf(!canRun)("Test 2: No duplicate user_messages — THE BUG", async () => {
+  test("Test 2: No duplicate user_messages — THE BUG", async () => {
     const handle = await createSession({ cwdPrefix: "event-stream-dedup-" });
 
     try {
@@ -240,9 +244,9 @@ describe("Agent event stream redesign — integration", () => {
       const terminalIdx = events.findIndex(
         (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === turnId,
       );
-      const staleTurnStarted = events.slice(terminalIdx + 1).filter(
-        (e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId,
-      );
+      const staleTurnStarted = events
+        .slice(terminalIdx + 1)
+        .filter((e) => e.type === "turn_started" && hasTurnId(e) && e.turnId === turnId);
       expect(staleTurnStarted.length).toBe(0);
 
       assertInvariants(events, [turnId]);
@@ -251,7 +255,7 @@ describe("Agent event stream redesign — integration", () => {
     }
   }, 60_000);
 
-  test.skipIf(!canRun)("Test 3: Lifecycle doesn't get stuck in running", async () => {
+  test("Test 3: Lifecycle doesn't get stuck in running", async () => {
     const handle = await createSession({ cwdPrefix: "event-stream-lifecycle-" });
 
     try {
@@ -282,7 +286,7 @@ describe("Agent event stream redesign — integration", () => {
     }
   }, 60_000);
 
-  test.skipIf(!canRun)("Test 4: Autonomous run", async () => {
+  test("Test 4: Autonomous run", async () => {
     const handle = await createSession({ cwdPrefix: "event-stream-autonomous-" });
     const autonomousWakeToken = `AUTONOMOUS_WAKE_${Date.now().toString(36)}`;
 
@@ -321,9 +325,7 @@ describe("Agent event stream redesign — integration", () => {
 
       // Autonomous turn reaches terminal
       expect(
-        afterForeground.find(
-          (e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === autoTurnId,
-        ),
+        afterForeground.find((e) => isTerminalEvent(e) && hasTurnId(e) && e.turnId === autoTurnId),
       ).toBeDefined();
 
       assertInvariants(events, [fgTurnId]);
@@ -332,7 +334,7 @@ describe("Agent event stream redesign — integration", () => {
     }
   }, 90_000);
 
-  test.skipIf(!canRun)("Test 5: Interruption", async () => {
+  test("Test 5: Interruption", async () => {
     const handle = await createSession({ cwdPrefix: "event-stream-interrupt-" });
 
     try {
@@ -417,7 +419,7 @@ describe("Agent event stream redesign — integration", () => {
     }
   }, 60_000);
 
-  test.skipIf(!canRun)("Test 6: Sequential foreground turns", async () => {
+  test("Test 6: Sequential foreground turns", async () => {
     const handle = await createSession({ cwdPrefix: "event-stream-sequential-" });
 
     try {
@@ -450,7 +452,7 @@ describe("Agent event stream redesign — integration", () => {
     }
   }, 90_000);
 
-  test.skipIf(!canRun)("Test 7: Fast-fail", async () => {
+  test("Test 7: Fast-fail", async () => {
     const handle = await createSession({ cwdPrefix: "event-stream-fast-fail-" });
 
     try {
@@ -472,9 +474,7 @@ describe("Agent event stream redesign — integration", () => {
 
       // No stale turn_started after terminal
       const terminalIdx = events.indexOf(terminal!);
-      expect(
-        events.slice(terminalIdx + 1).filter((e) => e.type === "turn_started").length,
-      ).toBe(0);
+      expect(events.slice(terminalIdx + 1).filter((e) => e.type === "turn_started").length).toBe(0);
 
       assertInvariants(events, [turnId]);
     } finally {
@@ -482,7 +482,7 @@ describe("Agent event stream redesign — integration", () => {
     }
   }, 60_000);
 
-  test.skipIf(!canRun)("Test 8: User message dedup by text", async () => {
+  test("Test 8: User message dedup by text", async () => {
     const handle = await createSession({ cwdPrefix: "event-stream-user-dedup-" });
 
     try {

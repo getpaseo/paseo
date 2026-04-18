@@ -21,7 +21,7 @@ import {
 import { usePanelStore } from "@/stores/panel-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
-import { isCompactFormFactor } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 
 interface TerminalPaneProps {
   serverId: string;
@@ -82,17 +82,12 @@ function terminalScopeKey(input: { serverId: string; cwd: string }): string {
   return `${input.serverId}:${input.cwd}`;
 }
 
-export function TerminalPane({
-  serverId,
-  cwd,
-  terminalId,
-  isPaneFocused,
-}: TerminalPaneProps) {
+export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: TerminalPaneProps) {
   const isScreenFocused = useIsFocused();
   const isAppVisible = useAppVisible();
   const { theme } = useUnistyles();
-  const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme.colors.terminal]);
-  const isMobile = isCompactFormFactor();
+  const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
+  const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const openAgentList = usePanelStore((state) => state.openAgentList);
   const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
@@ -108,7 +103,10 @@ export function TerminalPane({
   const scopeKey = useMemo(() => terminalScopeKey({ serverId, cwd }), [serverId, cwd]);
   const lastReportedSizeRef = useRef<{ rows: number; cols: number } | null>(null);
   const streamControllerRef = useRef<TerminalStreamController | null>(null);
-  const workspaceTerminalSession = useMemo(() => getWorkspaceTerminalSession({ scopeKey }), [scopeKey]);
+  const workspaceTerminalSession = useMemo(
+    () => getWorkspaceTerminalSession({ scopeKey }),
+    [scopeKey],
+  );
   const [isAttaching, setIsAttaching] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [modifiers, setModifiers] = useState<ModifierState>(EMPTY_MODIFIERS);
@@ -473,26 +471,32 @@ export function TerminalPane({
     ],
   );
 
-  const handleTerminalResize = useStableEvent(
-    (input: { rows: number; cols: number }) => {
-      const { rows, cols } = input;
-      if (!client || !terminalId || !isPaneFocused || !isScreenFocused || !isAppVisible || rows <= 0 || cols <= 0) {
-        return;
-      }
-      const normalizedRows = Math.floor(rows);
-      const normalizedCols = Math.floor(cols);
-      const previous = lastReportedSizeRef.current;
-      if (previous && previous.rows === normalizedRows && previous.cols === normalizedCols) {
-        return;
-      }
-      lastReportedSizeRef.current = { rows: normalizedRows, cols: normalizedCols };
-      client.sendTerminalInput(terminalId, {
-        type: "resize",
-        rows: normalizedRows,
-        cols: normalizedCols,
-      });
-    },
-  );
+  const handleTerminalResize = useStableEvent((input: { rows: number; cols: number }) => {
+    const { rows, cols } = input;
+    if (
+      !client ||
+      !terminalId ||
+      !isPaneFocused ||
+      !isScreenFocused ||
+      !isAppVisible ||
+      rows <= 0 ||
+      cols <= 0
+    ) {
+      return;
+    }
+    const normalizedRows = Math.floor(rows);
+    const normalizedCols = Math.floor(cols);
+    const previous = lastReportedSizeRef.current;
+    if (previous && previous.rows === normalizedRows && previous.cols === normalizedCols) {
+      return;
+    }
+    lastReportedSizeRef.current = { rows: normalizedRows, cols: normalizedCols };
+    client.sendTerminalInput(terminalId, {
+      type: "resize",
+      rows: normalizedRows,
+      cols: normalizedCols,
+    });
+  });
 
   const handleTerminalKey = useCallback(
     async (input: { key: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean }) => {

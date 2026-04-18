@@ -243,7 +243,10 @@ class FakeAgentSession implements AgentSession {
   private async resolveSlashCommandInput(
     prompt: AgentPromptInput,
   ): Promise<{ commandName: string; args?: string } | null> {
-    if ((this.providerName !== "codex" && this.providerName !== "opencode") || typeof prompt !== "string") {
+    if (
+      (this.providerName !== "codex" && this.providerName !== "opencode") ||
+      typeof prompt !== "string"
+    ) {
       return null;
     }
     const parsed = this.parseSlashCommandInput(prompt);
@@ -502,13 +505,16 @@ class FakeAgentSession implements AgentSession {
       await this.appendHistoryEvent(assistantChunkA);
       this.notifySubscribers(assistantChunkA);
 
-      const assistantChunkB: AgentStreamEvent = {
-        type: "timeline",
-        provider: this.providerName,
-        item: { type: "assistant_message", text: assistantText.slice(6) },
-      };
-      await this.appendHistoryEvent(assistantChunkB);
-      this.notifySubscribers(assistantChunkB);
+      const assistantChunkBText = assistantText.slice(6);
+      if (assistantChunkBText.length > 0) {
+        const assistantChunkB: AgentStreamEvent = {
+          type: "timeline",
+          provider: this.providerName,
+          item: { type: "assistant_message", text: assistantChunkBText },
+        };
+        await this.appendHistoryEvent(assistantChunkB);
+        this.notifySubscribers(assistantChunkB);
+      }
 
       const completed: AgentStreamEvent = {
         type: "turn_completed",
@@ -911,8 +917,8 @@ class FakeAgentClient implements AgentClient {
       return [
         {
           provider: this.provider,
-          id: "gpt-5.1-codex-mini",
-          label: "gpt-5.1-codex-mini",
+          id: "gpt-5.4-mini",
+          label: "gpt-5.4-mini",
           isDefault: true,
         },
       ];

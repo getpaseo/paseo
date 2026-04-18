@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 
-import { getCheckoutStatusLite } from "../utils/checkout-git.js";
 import type { ProjectCheckoutLitePayload, ProjectPlacementPayload } from "../shared/messages.js";
+import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 
 export type PersistedProjectKind = "git" | "non_git";
@@ -20,7 +21,8 @@ export function normalizeWorkspaceId(cwd: string): string {
 }
 
 export function deriveWorkspaceId(cwd: string, checkout: ProjectCheckoutLitePayload): string {
-  return checkout.worktreeRoot ?? normalizeWorkspaceId(cwd);
+  const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
+  return worktreeRoot ?? normalizeWorkspaceId(cwd);
 }
 
 function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
@@ -137,6 +139,50 @@ export function deriveWorkspaceKind(checkout: ProjectCheckoutLitePayload): Persi
   return checkout.isPaseoOwnedWorktree ? "worktree" : "local_checkout";
 }
 
+export function checkoutLiteFromGitSnapshot(
+  cwd: string,
+  git: {
+    isGit: boolean;
+    currentBranch: string | null;
+    remoteUrl: string | null;
+    repoRoot: string | null;
+    isPaseoOwnedWorktree: boolean;
+    mainRepoRoot: string | null;
+  },
+): ProjectCheckoutLitePayload {
+  if (!git.isGit) {
+    return {
+      cwd,
+      isGit: false,
+      currentBranch: null,
+      remoteUrl: null,
+      worktreeRoot: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    };
+  }
+  if (git.isPaseoOwnedWorktree && git.mainRepoRoot) {
+    return {
+      cwd,
+      isGit: true,
+      currentBranch: git.currentBranch,
+      remoteUrl: git.remoteUrl,
+      worktreeRoot: git.repoRoot ?? cwd,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: git.mainRepoRoot,
+    };
+  }
+  return {
+    cwd,
+    isGit: true,
+    currentBranch: git.currentBranch,
+    remoteUrl: git.remoteUrl,
+    worktreeRoot: git.repoRoot ?? cwd,
+    isPaseoOwnedWorktree: false,
+    mainRepoRoot: null,
+  };
+}
+
 export async function detectStaleWorkspaces(
   input: DetectStaleWorkspacesInput,
 ): Promise<Set<string>> {
@@ -154,45 +200,15 @@ export async function detectStaleWorkspaces(
 
 export async function buildProjectPlacementForCwd(input: {
   cwd: string;
-  paseoHome: string;
+  workspaceGitService: WorkspaceGitService;
 }): Promise<ProjectPlacementPayload> {
   const normalizedCwd = normalizeWorkspaceId(input.cwd);
-  const checkout = await getCheckoutStatusLite(normalizedCwd, { paseoHome: input.paseoHome })
-    .then((status): ProjectCheckoutLitePayload => {
-      if (!status.isGit) {
-        return {
-          cwd: normalizedCwd,
-          isGit: false,
-          currentBranch: null,
-          remoteUrl: null,
-          worktreeRoot: null,
-          isPaseoOwnedWorktree: false,
-          mainRepoRoot: null,
-        };
-      }
-
-      if (status.isPaseoOwnedWorktree && status.mainRepoRoot) {
-        return {
-          cwd: normalizedCwd,
-          isGit: true,
-          currentBranch: status.currentBranch,
-          remoteUrl: status.remoteUrl,
-          worktreeRoot: status.worktreeRoot,
-          isPaseoOwnedWorktree: true,
-          mainRepoRoot: status.mainRepoRoot,
-        };
-      }
-
-      return {
-        cwd: normalizedCwd,
-        isGit: true,
-        currentBranch: status.currentBranch,
-        remoteUrl: status.remoteUrl,
-        worktreeRoot: status.worktreeRoot,
-        isPaseoOwnedWorktree: false,
-        mainRepoRoot: null,
-      };
-    })
+  const checkout = await input.workspaceGitService
+    .getSnapshot(normalizedCwd)
+    .then(
+      (snapshot): ProjectCheckoutLitePayload =>
+        checkoutLiteFromGitSnapshot(normalizedCwd, snapshot.git),
+    )
     .catch(
       (): ProjectCheckoutLitePayload => ({
         cwd: normalizedCwd,

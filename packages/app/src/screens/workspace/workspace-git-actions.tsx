@@ -1,6 +1,13 @@
 import { useMemo } from "react";
 import { useUnistyles } from "react-native-unistyles";
-import { Archive, GitCommitHorizontal, GitMerge, RefreshCcw, Upload } from "lucide-react-native";
+import {
+  Archive,
+  Download,
+  GitCommitHorizontal,
+  GitMerge,
+  RefreshCcw,
+  Upload,
+} from "lucide-react-native";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { GitActionsSplitButton } from "@/components/git-actions-split-button";
 import { useGitActions } from "@/hooks/use-git-actions";
@@ -16,6 +23,7 @@ export function WorkspaceGitActions({ serverId, cwd }: WorkspaceGitActionsProps)
   const icons = useMemo(
     () => ({
       commit: <GitCommitHorizontal size={16} color={theme.colors.foregroundMuted} />,
+      pull: <Download size={16} color={theme.colors.foregroundMuted} />,
       push: <Upload size={16} color={theme.colors.foregroundMuted} />,
       viewPr: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
       createPr: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,

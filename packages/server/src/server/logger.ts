@@ -50,7 +50,7 @@ const LOG_LEVEL_PRIORITIES: Record<LogLevel, number> = {
 
 const DEFAULT_CONSOLE_LEVEL: LogLevel = "info";
 const DEFAULT_CONSOLE_FORMAT: LogFormat = "pretty";
-const DEFAULT_FILE_LEVEL: LogLevel = "trace";
+const DEFAULT_FILE_LEVEL: LogLevel = "debug";
 const DEFAULT_FILE_ROTATE_SIZE = "10m";
 const DEFAULT_FILE_ROTATE_MAX_FILES = 2;
 const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";

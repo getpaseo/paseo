@@ -1,26 +1,66 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  createWorktree,
+  BranchAlreadyCheckedOutError,
+  createWorktree as createWorktreePrimitive,
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
+  getScriptConfigs,
   getWorktreeTerminalSpecs,
+  isServiceScript,
   isPaseoOwnedWorktreeCwd,
   listPaseoWorktrees,
   resolveWorktreeRuntimeEnv,
   type WorktreeSetupCommandProgressEvent,
   runWorktreeSetupCommands,
   slugify,
+  type CreateWorktreeOptions,
+  type WorktreeConfig,
 } from "./worktree";
-import {
-  getPaseoWorktreeMetadataPath,
-} from "./worktree-metadata.js";
+import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execSync } from "child_process";
-import { mkdtempSync, rmSync, existsSync, realpathSync, writeFileSync, readFileSync } from "fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  realpathSync,
+  writeFileSync,
+  readFileSync,
+} from "fs";
 import { dirname, join } from "path";
 import { tmpdir } from "os";
 import net from "node:net";
 
-describe("createWorktree", () => {
+interface LegacyCreateWorktreeTestOptions {
+  branchName: string;
+  cwd: string;
+  baseBranch: string;
+  worktreeSlug: string;
+  runSetup?: boolean;
+  paseoHome?: string;
+}
+
+function createLegacyWorktreeForTest(
+  options: CreateWorktreeOptions | LegacyCreateWorktreeTestOptions,
+): Promise<WorktreeConfig> {
+  if ("source" in options) {
+    return createWorktreePrimitive(options);
+  }
+
+  return createWorktreePrimitive({
+    cwd: options.cwd,
+    worktreeSlug: options.worktreeSlug,
+    source: {
+      kind: "branch-off",
+      baseBranch: options.baseBranch,
+      newBranchName: options.branchName,
+    },
+    runSetup: options.runSetup ?? true,
+    paseoHome: options.paseoHome,
+  });
+}
+
+describe.skipIf(process.platform === "win32")("createWorktree", () => {
   let tempDir: string;
   let repoDir: string;
   let paseoHome: string;
@@ -32,13 +72,13 @@ describe("createWorktree", () => {
     paseoHome = join(tempDir, "paseo-home");
 
     // Create a git repo with an initial commit
-    execSync(`mkdir -p ${repoDir}`);
+    mkdirSync(repoDir, { recursive: true });
     execSync("git init -b main", { cwd: repoDir });
-    execSync("git config user.email 'test@test.com'", { cwd: repoDir });
-    execSync("git config user.name 'Test'", { cwd: repoDir });
-    execSync("echo 'hello' > file.txt", { cwd: repoDir });
+    execSync('git config user.email "test@test.com"', { cwd: repoDir });
+    execSync('git config user.name "Test"', { cwd: repoDir });
+    execSync('echo "hello" > file.txt', { cwd: repoDir });
     execSync("git add .", { cwd: repoDir });
-    execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir });
+    execSync('git -c commit.gpgsign=false commit -m "initial"', { cwd: repoDir });
   });
 
   afterEach(() => {
@@ -47,7 +87,7 @@ describe("createWorktree", () => {
 
   it("creates a worktree for the current branch (main)", async () => {
     const projectHash = await deriveWorktreeProjectHash(repoDir);
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -70,15 +110,15 @@ describe("createWorktree", () => {
     const privateTempDir = realpathSync(varTempDir);
     const varRepoDir = join(varTempDir, "test-repo");
     const varPaseoHome = join(varTempDir, "paseo-home");
-    execSync(`mkdir -p ${varRepoDir}`);
+    mkdirSync(varRepoDir, { recursive: true });
     execSync("git init -b main", { cwd: varRepoDir });
-    execSync("git config user.email 'test@test.com'", { cwd: varRepoDir });
-    execSync("git config user.name 'Test'", { cwd: varRepoDir });
-    execSync("echo 'hello' > file.txt", { cwd: varRepoDir });
+    execSync('git config user.email "test@test.com"', { cwd: varRepoDir });
+    execSync('git config user.name "Test"', { cwd: varRepoDir });
+    execSync('echo "hello" > file.txt', { cwd: varRepoDir });
     execSync("git add .", { cwd: varRepoDir });
-    execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: varRepoDir });
+    execSync('git -c commit.gpgsign=false commit -m "initial"', { cwd: varRepoDir });
 
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: varRepoDir,
       baseBranch: "main",
@@ -105,7 +145,7 @@ describe("createWorktree", () => {
   });
 
   it("reports repoRoot as the repository root for paseo-owned worktrees", async () => {
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -120,7 +160,7 @@ describe("createWorktree", () => {
 
   it("treats non-git directories as non-worktrees without throwing", async () => {
     const nonGitDir = join(tempDir, "not-a-repo");
-    execSync(`mkdir -p ${nonGitDir}`);
+    mkdirSync(nonGitDir, { recursive: true });
 
     const ownership = await isPaseoOwnedWorktreeCwd(nonGitDir, { paseoHome });
 
@@ -130,28 +170,189 @@ describe("createWorktree", () => {
 
   it("creates a worktree with a new branch", async () => {
     const projectHash = await deriveWorktreeProjectHash(repoDir);
-    const result = await createWorktree({
-      branchName: "feature-branch",
+    const result = await createLegacyWorktreeForTest({
       cwd: repoDir,
-      baseBranch: "main",
       worktreeSlug: "my-feature",
+      source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/x" },
+      runSetup: true,
       paseoHome,
     });
 
     expect(result.worktreePath).toBe(join(paseoHome, "worktrees", projectHash, "my-feature"));
     expect(existsSync(result.worktreePath)).toBe(true);
 
-    // Verify branch was created
-    const branches = execSync("git branch", { cwd: repoDir }).toString();
-    expect(branches).toContain("feature-branch");
+    const currentBranch = execSync("git branch --show-current", {
+      cwd: result.worktreePath,
+    })
+      .toString()
+      .trim();
+    expect(currentBranch).toBe("feature/x");
+    execSync("git merge-base --is-ancestor main HEAD", { cwd: result.worktreePath });
+
     const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
     expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
   });
 
+  it("checks out an existing local branch that is not checked out elsewhere", async () => {
+    execSync("git branch dev", { cwd: repoDir });
+
+    const result = await createLegacyWorktreeForTest({
+      cwd: repoDir,
+      worktreeSlug: "dev-worktree",
+      source: { kind: "checkout-branch", branchName: "dev" },
+      runSetup: true,
+      paseoHome,
+    });
+
+    expect(existsSync(result.worktreePath)).toBe(true);
+    const currentBranch = execSync("git branch --show-current", {
+      cwd: result.worktreePath,
+    })
+      .toString()
+      .trim();
+    expect(currentBranch).toBe("dev");
+
+    const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+    expect(metadata).toMatchObject({ version: 1, baseRefName: "dev" });
+  });
+
+  it("throws a typed error when checking out a branch already checked out in the main repo", async () => {
+    let caughtError: unknown;
+    try {
+      await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "dev-worktree",
+        source: { kind: "checkout-branch", branchName: "main" },
+        runSetup: true,
+        paseoHome,
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(BranchAlreadyCheckedOutError);
+    expect((caughtError as BranchAlreadyCheckedOutError).branchName).toBe("main");
+  });
+
+  it("fetches a GitHub PR branch, checks it out, writes metadata, and runs setup", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    const remoteCloneDir = join(tempDir, "remote-clone");
+    execSync(`git clone --bare ${repoDir} ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+
+    execSync(`git clone ${remoteDir} ${remoteCloneDir}`);
+    execSync('git config user.email "test@test.com"', { cwd: remoteCloneDir });
+    execSync('git config user.name "Test"', { cwd: remoteCloneDir });
+    execSync("git checkout -b contributor/feature", { cwd: remoteCloneDir });
+    writeFileSync(join(remoteCloneDir, "file.txt"), "from-pr\n");
+    writeFileSync(
+      join(remoteCloneDir, "paseo.json"),
+      JSON.stringify({ worktree: { setup: ['echo "setup ran" > setup.log'] } }),
+    );
+    execSync("git add .", { cwd: remoteCloneDir });
+    execSync('git -c commit.gpgsign=false commit -m "pr branch"', { cwd: remoteCloneDir });
+    const prHead = execSync("git rev-parse HEAD", { cwd: remoteCloneDir }).toString().trim();
+    execSync("git push origin contributor/feature", { cwd: remoteCloneDir });
+    execSync(`git --git-dir=${remoteDir} update-ref refs/pull/42/head ${prHead}`);
+
+    const result = await createLegacyWorktreeForTest({
+      cwd: repoDir,
+      worktreeSlug: "pr-42",
+      source: {
+        kind: "checkout-github-pr",
+        githubPrNumber: 42,
+        headRef: "user/feature",
+        baseRefName: "main",
+      },
+      runSetup: true,
+      paseoHome,
+    });
+
+    expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-pr\n");
+    expect(readFileSync(join(result.worktreePath, "setup.log"), "utf8")).toBe("setup ran\n");
+    const currentBranch = execSync("git branch --show-current", {
+      cwd: result.worktreePath,
+    })
+      .toString()
+      .trim();
+    expect(currentBranch).toBe("user/feature");
+
+    const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+    expect(metadata).toMatchObject({ baseRefName: "main" });
+  });
+
+  it("prefers origin/{branch} over local {branch} when both exist", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    const remoteCloneDir = join(tempDir, "remote-clone");
+    execSync(`git init --bare ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    execSync(`git clone ${remoteDir} ${remoteCloneDir}`);
+    execSync('git config user.email "test@test.com"', { cwd: remoteCloneDir });
+    execSync('git config user.name "Test"', { cwd: remoteCloneDir });
+    execSync("git checkout -B main origin/main", { cwd: remoteCloneDir });
+    writeFileSync(join(remoteCloneDir, "file.txt"), "from-origin\n");
+    execSync("git add file.txt", { cwd: remoteCloneDir });
+    execSync('git -c commit.gpgsign=false commit -m "advance origin main"', {
+      cwd: remoteCloneDir,
+    });
+    execSync("git push origin main", { cwd: remoteCloneDir });
+
+    writeFileSync(join(repoDir, "file.txt"), "from-local\n");
+    execSync("git add file.txt", { cwd: repoDir });
+    execSync('git -c commit.gpgsign=false commit -m "advance local main"', { cwd: repoDir });
+
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const result = await createLegacyWorktreeForTest({
+      branchName: "prefer-origin-feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "prefer-origin-feature",
+      runSetup: false,
+      paseoHome,
+    });
+
+    expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-origin\n");
+  });
+
+  it("falls back to local {branch} when origin/{branch} does not exist", async () => {
+    writeFileSync(join(repoDir, "file.txt"), "from-local-only\n");
+    execSync("git add file.txt", { cwd: repoDir });
+    execSync('git -c commit.gpgsign=false commit -m "advance local main only"', { cwd: repoDir });
+
+    const result = await createLegacyWorktreeForTest({
+      branchName: "prefer-local-fallback-feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "prefer-local-fallback-feature",
+      runSetup: false,
+      paseoHome,
+    });
+
+    expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-local-only\n");
+  });
+
+  it("throws when neither origin/{branch} nor local {branch} exists", async () => {
+    await expect(
+      createLegacyWorktreeForTest({
+        branchName: "missing-base-feature",
+        cwd: repoDir,
+        baseBranch: "does-not-exist",
+        worktreeSlug: "missing-base-feature",
+        runSetup: false,
+        paseoHome,
+      }),
+    ).rejects.toThrow("Base branch not found: does-not-exist");
+  });
+
   it("fails with invalid branch name", async () => {
     await expect(
-      createWorktree({
+      createLegacyWorktreeForTest({
         branchName: "INVALID_UPPERCASE",
         cwd: repoDir,
         baseBranch: "main",
@@ -165,7 +366,7 @@ describe("createWorktree", () => {
     // Create a branch named "hello" first
     execSync("git branch hello", { cwd: repoDir });
 
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -186,7 +387,7 @@ describe("createWorktree", () => {
     execSync("git branch hello", { cwd: repoDir });
     execSync("git branch hello-1", { cwd: repoDir });
 
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -214,11 +415,11 @@ describe("createWorktree", () => {
       },
     };
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync("git add paseo.json && git -c commit.gpgsign=false commit -m 'add paseo.json'", {
+    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add paseo.json"', {
       cwd: repoDir,
     });
 
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -248,11 +449,11 @@ describe("createWorktree", () => {
       },
     };
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync("git add paseo.json && git -c commit.gpgsign=false commit -m 'add paseo.json'", {
+    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add paseo.json"', {
       cwd: repoDir,
     });
 
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -272,7 +473,7 @@ describe("createWorktree", () => {
       },
     };
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync("git add paseo.json && git -c commit.gpgsign=false commit -m 'add streaming setup'", {
+    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add streaming setup"', {
       cwd: repoDir,
     });
 
@@ -293,7 +494,7 @@ describe("createWorktree", () => {
   });
 
   it("reuses persisted worktree runtime port across resolutions", async () => {
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -315,7 +516,7 @@ describe("createWorktree", () => {
   });
 
   it("fails runtime env resolution when persisted port is in use", async () => {
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -362,14 +563,14 @@ describe("createWorktree", () => {
       },
     };
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync("git add paseo.json && git -c commit.gpgsign=false commit -m 'add paseo.json'", {
+    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add paseo.json"', {
       cwd: repoDir,
     });
 
     const expectedWorktreePath = join(paseoHome, "worktrees", "test-repo", "fail-test");
 
     await expect(
-      createWorktree({
+      createLegacyWorktreeForTest({
         branchName: "main",
         cwd: repoDir,
         baseBranch: "main",
@@ -418,6 +619,91 @@ describe("createWorktree", () => {
       { command: "npm run test" },
     ]);
   });
+
+  it("parses omitted script type as a plain script", async () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        scripts: {
+          typecheck: {
+            command: " npm run typecheck ",
+          },
+        },
+      }),
+    );
+
+    const scriptConfigs = getScriptConfigs(repoDir);
+    const typecheck = scriptConfigs.get("typecheck");
+
+    expect(typecheck).toEqual({
+      command: "npm run typecheck",
+    });
+    expect(typecheck).toBeDefined();
+    expect(isServiceScript(typecheck!)).toBe(false);
+  });
+
+  it("parses service scripts and preserves optional port", async () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        scripts: {
+          server: {
+            type: "service",
+            command: "npm run dev",
+            port: 4321,
+          },
+        },
+      }),
+    );
+
+    const scriptConfigs = getScriptConfigs(repoDir);
+    const server = scriptConfigs.get("server");
+
+    expect(server).toEqual({
+      type: "service",
+      command: "npm run dev",
+      port: 4321,
+    });
+    expect(server).toBeDefined();
+    expect(isServiceScript(server!)).toBe(true);
+  });
+
+  it("ignores invalid script entries gracefully", async () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        scripts: {
+          valid: {
+            command: "npm run valid",
+          },
+          invalidType: {
+            type: "worker",
+            command: "npm run worker",
+          },
+          missingCommand: {
+            type: "service",
+          },
+          blankCommand: {
+            command: "   ",
+          },
+          nonObject: "npm run nope",
+          invalidPort: {
+            type: "service",
+            command: "npm run dev",
+            port: "3000",
+          },
+        },
+      }),
+    );
+
+    expect(getScriptConfigs(repoDir)).toEqual(
+      new Map([
+        ["valid", { command: "npm run valid" }],
+        ["invalidType", { command: "npm run worker" }],
+        ["invalidPort", { type: "service", command: "npm run dev" }],
+      ]),
+    );
+  });
 });
 
 describe("paseo worktree manager", () => {
@@ -430,13 +716,13 @@ describe("paseo worktree manager", () => {
     repoDir = join(tempDir, "test-repo");
     paseoHome = join(tempDir, "paseo-home");
 
-    execSync(`mkdir -p ${repoDir}`);
+    mkdirSync(repoDir, { recursive: true });
     execSync("git init -b main", { cwd: repoDir });
-    execSync("git config user.email 'test@test.com'", { cwd: repoDir });
-    execSync("git config user.name 'Test'", { cwd: repoDir });
-    execSync("echo 'hello' > file.txt", { cwd: repoDir });
+    execSync('git config user.email "test@test.com"', { cwd: repoDir });
+    execSync('git config user.name "Test"', { cwd: repoDir });
+    execSync('echo "hello" > file.txt', { cwd: repoDir });
     execSync("git add .", { cwd: repoDir });
-    execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir });
+    execSync('git -c commit.gpgsign=false commit -m "initial"', { cwd: repoDir });
   });
 
   afterEach(() => {
@@ -448,23 +734,23 @@ describe("paseo worktree manager", () => {
     const repoB = join(tempDir, "team-b", "test-repo");
 
     for (const repo of [repoA, repoB]) {
-      execSync(`mkdir -p ${repo}`);
+      mkdirSync(repo, { recursive: true });
       execSync("git init -b main", { cwd: repo });
-      execSync("git config user.email 'test@test.com'", { cwd: repo });
-      execSync("git config user.name 'Test'", { cwd: repo });
-      execSync("echo 'hello' > file.txt", { cwd: repo });
+      execSync('git config user.email "test@test.com"', { cwd: repo });
+      execSync('git config user.name "Test"', { cwd: repo });
+      execSync('echo "hello" > file.txt', { cwd: repo });
       execSync("git add .", { cwd: repo });
-      execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repo });
+      execSync('git -c commit.gpgsign=false commit -m "initial"', { cwd: repo });
     }
 
-    const fromRepoA = await createWorktree({
+    const fromRepoA = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoA,
       baseBranch: "main",
       worktreeSlug: "alpha",
       paseoHome,
     });
-    const fromRepoB = await createWorktree({
+    const fromRepoB = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoB,
       baseBranch: "main",
@@ -484,14 +770,14 @@ describe("paseo worktree manager", () => {
   });
 
   it("lists and deletes paseo worktrees under ~/.paseo/worktrees/{hash}", async () => {
-    const first = await createWorktree({
+    const first = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "alpha",
       paseoHome,
     });
-    const second = await createWorktree({
+    const second = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -511,7 +797,7 @@ describe("paseo worktree manager", () => {
   });
 
   it("deletes a paseo worktree even when given a subdirectory path", async () => {
-    const created = await createWorktree({
+    const created = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -520,7 +806,7 @@ describe("paseo worktree manager", () => {
     });
 
     const nestedDir = join(created.worktreePath, "nested", "dir");
-    execSync(`mkdir -p ${nestedDir}`);
+    mkdirSync(nestedDir, { recursive: true });
 
     await deletePaseoWorktree({ cwd: repoDir, worktreePath: nestedDir, paseoHome });
     expect(existsSync(created.worktreePath)).toBe(false);
@@ -543,13 +829,13 @@ describe("paseo worktree manager", () => {
     };
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
     execSync(
-      "git add paseo.json && git -c commit.gpgsign=false commit -m 'add teardown commands'",
+      'git add paseo.json && git -c commit.gpgsign=false commit -m "add teardown commands"',
       {
         cwd: repoDir,
       },
     );
 
-    const created = await createWorktree({
+    const created = await createLegacyWorktreeForTest({
       branchName: "teardown-branch",
       cwd: repoDir,
       baseBranch: "main",
@@ -582,11 +868,11 @@ describe("paseo worktree manager", () => {
     };
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
     execSync(
-      "git add paseo.json && git -c commit.gpgsign=false commit -m 'add teardown port logging'",
+      'git add paseo.json && git -c commit.gpgsign=false commit -m "add teardown port logging"',
       { cwd: repoDir },
     );
 
-    const created = await createWorktree({
+    const created = await createLegacyWorktreeForTest({
       branchName: "teardown-port-missing-branch",
       cwd: repoDir,
       baseBranch: "main",
@@ -611,11 +897,11 @@ describe("paseo worktree manager", () => {
     };
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
     execSync(
-      "git add paseo.json && git -c commit.gpgsign=false commit -m 'add failing teardown commands'",
+      'git add paseo.json && git -c commit.gpgsign=false commit -m "add failing teardown commands"',
       { cwd: repoDir },
     );
 
-    const created = await createWorktree({
+    const created = await createLegacyWorktreeForTest({
       branchName: "teardown-failure-branch",
       cwd: repoDir,
       baseBranch: "main",
@@ -630,12 +916,159 @@ describe("paseo worktree manager", () => {
     expect(existsSync(created.worktreePath)).toBe(true);
     expect(existsSync(join(repoDir, "teardown-start.log"))).toBe(true);
   });
+
+  it("treats a worktree as paseo-owned even when its .git admin is missing", async () => {
+    const created = await createLegacyWorktreeForTest({
+      branchName: "orphan-admin-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "orphan-admin",
+      paseoHome,
+    });
+
+    // Simulate a previous archive attempt that removed git's admin dir but left
+    // the working tree on disk (e.g. because file churn prevented full cleanup).
+    rmSync(join(repoDir, ".git", "worktrees", "orphan-admin"), {
+      recursive: true,
+      force: true,
+    });
+    expect(existsSync(created.worktreePath)).toBe(true);
+
+    const ownership = await isPaseoOwnedWorktreeCwd(created.worktreePath, { paseoHome });
+    expect(ownership.allowed).toBe(true);
+  });
+
+  it("rejects paths that are not under the paseo worktrees root", async () => {
+    const outsidePath = join(tempDir, "outside-paseo-home");
+    mkdirSync(outsidePath, { recursive: true });
+
+    const ownership = await isPaseoOwnedWorktreeCwd(outsidePath, { paseoHome });
+
+    expect(ownership.allowed).toBe(false);
+  });
+
+  it("rejects the worktrees root itself and the per-repo hash dir", async () => {
+    const projectHash = await deriveWorktreeProjectHash(repoDir);
+    const worktreesRoot = join(paseoHome, "worktrees");
+    const projectHashDir = join(worktreesRoot, projectHash);
+    mkdirSync(projectHashDir, { recursive: true });
+
+    await expect(isPaseoOwnedWorktreeCwd(worktreesRoot, { paseoHome })).resolves.toMatchObject({
+      allowed: false,
+    });
+    await expect(isPaseoOwnedWorktreeCwd(projectHashDir, { paseoHome })).resolves.toMatchObject({
+      allowed: false,
+    });
+  });
+
+  it("deletes a worktree whose .git admin dir has already been removed", async () => {
+    const created = await createLegacyWorktreeForTest({
+      branchName: "orphan-delete-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "orphan-delete",
+      paseoHome,
+    });
+
+    rmSync(join(repoDir, ".git", "worktrees", "orphan-delete"), {
+      recursive: true,
+      force: true,
+    });
+    expect(existsSync(created.worktreePath)).toBe(true);
+
+    await deletePaseoWorktree({
+      cwd: repoDir,
+      worktreePath: created.worktreePath,
+      paseoHome,
+    });
+
+    expect(existsSync(created.worktreePath)).toBe(false);
+  });
+
+  it("is idempotent: deleting an already-absent worktree succeeds", async () => {
+    const created = await createLegacyWorktreeForTest({
+      branchName: "idempotent-delete-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "idempotent-delete",
+      paseoHome,
+    });
+
+    await deletePaseoWorktree({
+      cwd: repoDir,
+      worktreePath: created.worktreePath,
+      paseoHome,
+    });
+    expect(existsSync(created.worktreePath)).toBe(false);
+
+    // Second call — nothing left on disk and no admin entry — must not throw.
+    await expect(
+      deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("deletes a worktree when the parent repo root is not available", async () => {
+    const created = await createLegacyWorktreeForTest({
+      branchName: "no-cwd-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "no-cwd",
+      paseoHome,
+    });
+
+    const ownership = await isPaseoOwnedWorktreeCwd(created.worktreePath, { paseoHome });
+    expect(ownership.allowed).toBe(true);
+    expect(ownership.worktreeRoot).toBeTruthy();
+
+    // Simulate the handler path when git has forgotten about the worktree:
+    // caller forwards the path-derived worktreesRoot from the ownership check.
+    await deletePaseoWorktree({
+      cwd: null,
+      worktreePath: created.worktreePath,
+      worktreesRoot: ownership.worktreeRoot,
+      paseoHome,
+    });
+
+    expect(existsSync(created.worktreePath)).toBe(false);
+  });
 });
 
 describe("slugify", () => {
+  function expectValidHostnameLabel(label: string): void {
+    expect(label.length).toBeGreaterThan(0);
+    expect(label.length).toBeLessThanOrEqual(63);
+    expect(label).toMatch(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
+  }
+
   it("converts to lowercase kebab-case", () => {
     expect(slugify("Hello World")).toBe("hello-world");
     expect(slugify("FOO_BAR")).toBe("foo-bar");
+    expect(slugify("My GREAT App")).toBe("my-great-app");
+  });
+
+  it("replaces dots with hyphens", () => {
+    expect(slugify("my.app")).toBe("my-app");
+    expect(slugify("v1.2.3")).toBe("v1-2-3");
+  });
+
+  it("collapses multiple consecutive spaces to one hyphen", () => {
+    expect(slugify("feature   cool    stuff")).toBe("feature-cool-stuff");
+  });
+
+  it("replaces slashes with hyphens", () => {
+    expect(slugify("feature/cool stuff")).toBe("feature-cool-stuff");
+    expect(slugify("owner/repo")).toBe("owner-repo");
+  });
+
+  it("strips unsupported unicode characters", () => {
+    expect(slugify("café")).toBe("caf");
+    expect(slugify("日本語")).toBe("");
+  });
+
+  it("removes leading and trailing punctuation", () => {
+    expect(slugify("-foo-")).toBe("foo");
+    expect(slugify("__bar__")).toBe("bar");
+    expect(slugify(".baz.")).toBe("baz");
   });
 
   it("truncates long strings at word boundary", () => {
@@ -643,6 +1076,7 @@ describe("slugify", () => {
       "https-stackoverflow-com-questions-68349031-only-run-actions-on-non-draft-pull-request";
     const result = slugify(longInput);
     expect(result.length).toBeLessThanOrEqual(50);
+    expectValidHostnameLabel(result);
     expect(result).toBe("https-stackoverflow-com-questions-68349031-only");
   });
 
@@ -651,5 +1085,35 @@ describe("slugify", () => {
     const result = slugify(longInput);
     expect(result.length).toBe(50);
     expect(result.endsWith("-")).toBe(false);
+    expectValidHostnameLabel(result);
+  });
+
+  it("keeps very long names within the hostname label length limit", () => {
+    const result = slugify("Release Candidate ".repeat(12));
+
+    expect(result.length).toBeLessThanOrEqual(63);
+    expectValidHostnameLabel(result);
+  });
+
+  it("returns empty when names collapse to empty", () => {
+    expect(slugify("---")).toBe("");
+    expect(slugify("***")).toBe("");
+    expect(slugify("日本語")).toBe("");
+  });
+
+  it("is idempotent for representative inputs", () => {
+    const inputs = [
+      "my.app",
+      "feature/cool stuff",
+      "  Café Launch  ",
+      "__bar__",
+      "Release Candidate ".repeat(12),
+      "release***candidate",
+    ];
+
+    for (const input of inputs) {
+      const slug = slugify(input);
+      expect(slugify(slug)).toBe(slug);
+    }
   });
 });

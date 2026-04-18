@@ -1,7 +1,14 @@
-import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   ActivityIndicator,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -22,6 +29,7 @@ import {
 } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { SortableInlineList } from "@/components/sortable-inline-list";
+import { isNative, isWeb } from "@/constants/platform";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -47,11 +55,6 @@ import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-
 
 const DROPDOWN_WIDTH = 220;
 const LOADING_TAB_LABEL_SKELETON_WIDTH = 80;
-type NewTabOptionId = "__new_tab_agent__" | "__new_tab_terminal__";
-type NewTabSelection = {
-  optionId: NewTabOptionId;
-  paneId?: string;
-};
 
 export interface WorkspaceDesktopTabRowItem {
   tab: WorkspaceTabDescriptor;
@@ -76,10 +79,11 @@ type WorkspaceDesktopTabsRowProps = {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
-  onSelectNewTabOption: (selection: NewTabSelection) => void;
-  newTabAgentOptionId: NewTabOptionId;
+  onCreateDraftTab: (input: { paneId?: string }) => void;
+  onCreateTerminalTab: (input: { paneId?: string }) => void;
+  disableCreateTerminal?: boolean;
+  isWaitingOnTerminalReadiness?: boolean;
   onReorderTabs: (nextTabs: WorkspaceTabDescriptor[]) => void;
-  onNewTerminalTab: (input: { paneId?: string }) => void;
   onSplitRight: () => void;
   onSplitDown: () => void;
   externalDndContext?: boolean;
@@ -92,6 +96,9 @@ function getFallbackTabLabel(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "draft") {
     return "New Agent";
   }
+  if (tab.target.kind === "setup") {
+    return "Setup";
+  }
   if (tab.target.kind === "terminal") {
     return "Terminal";
   }
@@ -99,6 +106,28 @@ function getFallbackTabLabel(tab: WorkspaceTabDescriptor): string {
     return tab.target.path.split("/").filter(Boolean).pop() ?? tab.target.path;
   }
   return "Agent";
+}
+
+function useMiddleClickClose(onClose: () => void) {
+  const ref = useRef<View>(null);
+
+  useEffect(() => {
+    if (isNative) return;
+    const node = ref.current as unknown as HTMLElement | null;
+    if (!node) return;
+
+    function handleAuxClick(event: MouseEvent) {
+      if (event.button === 1) {
+        event.preventDefault();
+        onClose();
+      }
+    }
+
+    node.addEventListener("auxclick", handleAuxClick);
+    return () => node.removeEventListener("auxclick", handleAuxClick);
+  }, [onClose]);
+
+  return ref;
 }
 
 function TabChip({
@@ -140,191 +169,200 @@ function TabChip({
 }) {
   const { theme } = useUnistyles();
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
+  const middleClickRef = useMiddleClickClose(
+    useCallback(() => void onCloseTab(tab.tabId), [onCloseTab, tab.tabId]),
+  );
   const [hovered, setHovered] = useState(false);
   const isHighlighted = isActive || hovered || isCloseHovered;
-  const closeButtonDragBlockers =
-    Platform.OS === "web"
-      ? ({
-          onPointerDown: (event: { stopPropagation?: () => void }) => {
-            event.stopPropagation?.();
-          },
-          onMouseDown: (event: { stopPropagation?: () => void }) => {
-            event.stopPropagation?.();
-          },
-        } as const)
-      : undefined;
+  const closeButtonDragBlockers = isWeb
+    ? ({
+        onPointerDown: (event: { stopPropagation?: () => void }) => {
+          event.stopPropagation?.();
+        },
+        onMouseDown: (event: { stopPropagation?: () => void }) => {
+          event.stopPropagation?.();
+        },
+      } as const)
+    : undefined;
 
   return (
-    <ContextMenu key={tab.key}>
-      <Tooltip delayDuration={400} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger asChild triggerRefProp="triggerRef">
-          <ContextMenuTrigger
-            {...(dragHandleProps?.attributes as any)}
-            {...(dragHandleProps?.listeners as any)}
-            testID={`workspace-tab-${tab.key}`}
-            triggerRef={dragHandleProps?.setActivatorNodeRef as any}
-            enabledOnMobile={false}
-            style={({ hovered, pressed }) => [
-              styles.tab,
-              Platform.OS === "web" && isDragging && ({ cursor: "grabbing" } as const),
-              {
-                minWidth: resolvedTabWidth,
-                width: resolvedTabWidth,
-                maxWidth: resolvedTabWidth,
-              },
-            ]}
-            onHoverIn={() => {
-              setHovered(true);
-              setHoveredTabKey(tab.key);
-            }}
-            onHoverOut={() => {
-              setHovered(false);
-              setHoveredTabKey((current) => (current === tab.key ? null : current));
-            }}
-            onPressIn={() => {
-              onNavigateTab(tab.tabId);
-            }}
-            onPress={() => {
-              onNavigateTab(tab.tabId);
-            }}
-            accessibilityLabel={tooltipLabel}
-          >
-            {isActive && (
-              <View
-                style={[styles.tabFocusIndicator, !isFocused && styles.tabFocusIndicatorUnfocused]}
-              />
-            )}
-            <View style={styles.tabHandle}>
-              <View style={styles.tabIcon}>
-                <WorkspaceTabIcon presentation={presentation} active={isHighlighted} />
-              </View>
-              {showLabel ? (
-                presentation.titleState === "loading" ? (
-                  <View
-                    style={[
-                      styles.tabLabelSkeleton,
-                      showCloseButton && styles.tabLabelSkeletonWithCloseButton,
-                    ]}
-                  />
-                ) : (
-                  <Text
-                    style={[
-                      styles.tabLabel,
-                      isHighlighted && styles.tabLabelActive,
-                      showCloseButton && styles.tabLabelWithCloseButton,
-                    ]}
-                    selectable={false}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    {presentation.label}
-                  </Text>
-                )
-              ) : null}
-            </View>
-
-            {showCloseButton ? (
-              <Pressable
-                {...(closeButtonDragBlockers as any)}
-                testID={closeButtonTestId}
-                disabled={isClosingTab}
-                onPressIn={(event) => {
-                  event.stopPropagation?.();
-                }}
-                onHoverIn={() => {
-                  setHoveredTabKey(tab.key);
-                  setHoveredCloseTabKey(tab.key);
-                }}
-                onHoverOut={() => {
-                  setHoveredTabKey((current) => (current === tab.key ? null : current));
-                  setHoveredCloseTabKey((current) => (current === tab.key ? null : current));
-                }}
-                onPress={(event) => {
-                  event.stopPropagation?.();
-                  void onCloseTab(tab.tabId);
-                }}
-                style={({ hovered, pressed }) => [
-                  styles.tabCloseButton,
-                  styles.tabCloseButtonShown,
-                  (hovered || pressed) && styles.tabCloseButtonActive,
-                ]}
-              >
-                {({ hovered, pressed }) =>
-                  isClosingTab ? (
-                    <ActivityIndicator
-                      size={12}
-                      color={
-                        hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
-                      }
+    <View ref={middleClickRef}>
+      <ContextMenu key={tab.key}>
+        <Tooltip delayDuration={400} enabledOnDesktop enabledOnMobile={false}>
+          <TooltipTrigger asChild triggerRefProp="triggerRef">
+            <ContextMenuTrigger
+              {...(dragHandleProps?.attributes as any)}
+              {...(dragHandleProps?.listeners as any)}
+              testID={`workspace-tab-${tab.key}`}
+              triggerRef={dragHandleProps?.setActivatorNodeRef as any}
+              enabledOnMobile={false}
+              style={({ hovered, pressed }) => [
+                styles.tab,
+                isWeb && isDragging && ({ cursor: "grabbing" } as const),
+                {
+                  minWidth: resolvedTabWidth,
+                  width: resolvedTabWidth,
+                  maxWidth: resolvedTabWidth,
+                },
+              ]}
+              onHoverIn={() => {
+                setHovered(true);
+                setHoveredTabKey(tab.key);
+              }}
+              onHoverOut={() => {
+                setHovered(false);
+                setHoveredTabKey((current) => (current === tab.key ? null : current));
+              }}
+              onPressIn={() => {
+                onNavigateTab(tab.tabId);
+              }}
+              onPress={() => {
+                onNavigateTab(tab.tabId);
+              }}
+              accessibilityLabel={tooltipLabel}
+            >
+              {isActive && (
+                <View
+                  style={[
+                    styles.tabFocusIndicator,
+                    !isFocused && styles.tabFocusIndicatorUnfocused,
+                  ]}
+                />
+              )}
+              <View style={styles.tabHandle}>
+                <View style={styles.tabIcon}>
+                  <WorkspaceTabIcon presentation={presentation} active={isHighlighted} />
+                </View>
+                {showLabel ? (
+                  presentation.titleState === "loading" ? (
+                    <View
+                      style={[
+                        styles.tabLabelSkeleton,
+                        showCloseButton && styles.tabLabelSkeletonWithCloseButton,
+                      ]}
                     />
                   ) : (
-                    <X
-                      size={12}
-                      color={
-                        hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
-                      }
-                    />
+                    <Text
+                      style={[
+                        styles.tabLabel,
+                        isHighlighted && styles.tabLabelActive,
+                        showCloseButton && styles.tabLabelWithCloseButton,
+                      ]}
+                      selectable={false}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {presentation.label}
+                    </Text>
                   )
-                }
-              </Pressable>
-            ) : null}
-          </ContextMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center" offset={8}>
-          {tab.target.kind === "agent" ? (
-            <View style={styles.tooltipAgentRow}>
-              <Text style={styles.newTabTooltipText}>{tooltipLabel}</Text>
-              <Text style={styles.tooltipAgentId}>{tab.target.agentId.slice(0, 7)}</Text>
-            </View>
-          ) : (
-            <Text style={styles.newTabTooltipText}>{tooltipLabel}</Text>
-          )}
-        </TooltipContent>
-      </Tooltip>
+                ) : null}
+              </View>
 
-      <ContextMenuContent align="start" width={DROPDOWN_WIDTH} testID={contextMenuTestId}>
-        {menuEntries.map((entry) =>
-          entry.kind === "separator" ? (
-            <ContextMenuSeparator key={entry.key} />
-          ) : (
-            <ContextMenuItem
-              key={entry.key}
-              testID={entry.testID}
-              disabled={entry.disabled}
-              destructive={entry.destructive}
-              onSelect={entry.onSelect}
-              tooltip={entry.tooltip}
-              leading={(() => {
-                const iconColor = theme.colors.foregroundMuted;
-                switch (entry.icon) {
-                  case "copy":
-                    return <Copy size={16} color={iconColor} />;
-                  case "rotate-cw":
-                    return <RotateCw size={16} color={iconColor} />;
-                  case "arrow-left-to-line":
-                    return <ArrowLeftToLine size={16} color={iconColor} />;
-                  case "arrow-right-to-line":
-                    return <ArrowRightToLine size={16} color={iconColor} />;
-                  case "copy-x":
-                    return <CopyX size={16} color={iconColor} />;
-                  case "x":
-                    return <X size={16} color={iconColor} />;
-                  default:
-                    return undefined;
+              {showCloseButton ? (
+                <Pressable
+                  {...(closeButtonDragBlockers as any)}
+                  testID={closeButtonTestId}
+                  disabled={isClosingTab}
+                  onPressIn={(event) => {
+                    event.stopPropagation?.();
+                  }}
+                  onHoverIn={() => {
+                    setHoveredTabKey(tab.key);
+                    setHoveredCloseTabKey(tab.key);
+                  }}
+                  onHoverOut={() => {
+                    setHoveredTabKey((current) => (current === tab.key ? null : current));
+                    setHoveredCloseTabKey((current) => (current === tab.key ? null : current));
+                  }}
+                  onPress={(event) => {
+                    event.stopPropagation?.();
+                    void onCloseTab(tab.tabId);
+                  }}
+                  style={({ hovered, pressed }) => [
+                    styles.tabCloseButton,
+                    styles.tabCloseButtonShown,
+                    (hovered || pressed) && styles.tabCloseButtonActive,
+                  ]}
+                >
+                  {({ hovered, pressed }) =>
+                    isClosingTab ? (
+                      <ActivityIndicator
+                        size={12}
+                        color={
+                          hovered || pressed
+                            ? theme.colors.foreground
+                            : theme.colors.foregroundMuted
+                        }
+                      />
+                    ) : (
+                      <X
+                        size={12}
+                        color={
+                          hovered || pressed
+                            ? theme.colors.foreground
+                            : theme.colors.foregroundMuted
+                        }
+                      />
+                    )
+                  }
+                </Pressable>
+              ) : null}
+            </ContextMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            {tab.target.kind === "agent" ? (
+              <View style={styles.tooltipAgentRow}>
+                <Text style={styles.newTabTooltipText}>{tooltipLabel}</Text>
+                <Text style={styles.tooltipAgentId}>{tab.target.agentId.slice(0, 7)}</Text>
+              </View>
+            ) : (
+              <Text style={styles.newTabTooltipText}>{tooltipLabel}</Text>
+            )}
+          </TooltipContent>
+        </Tooltip>
+
+        <ContextMenuContent align="start" width={DROPDOWN_WIDTH} testID={contextMenuTestId}>
+          {menuEntries.map((entry) =>
+            entry.kind === "separator" ? (
+              <ContextMenuSeparator key={entry.key} />
+            ) : (
+              <ContextMenuItem
+                key={entry.key}
+                testID={entry.testID}
+                disabled={entry.disabled}
+                destructive={entry.destructive}
+                onSelect={entry.onSelect}
+                tooltip={entry.tooltip}
+                leading={(() => {
+                  const iconColor = theme.colors.foregroundMuted;
+                  switch (entry.icon) {
+                    case "copy":
+                      return <Copy size={16} color={iconColor} />;
+                    case "rotate-cw":
+                      return <RotateCw size={16} color={iconColor} />;
+                    case "arrow-left-to-line":
+                      return <ArrowLeftToLine size={16} color={iconColor} />;
+                    case "arrow-right-to-line":
+                      return <ArrowRightToLine size={16} color={iconColor} />;
+                    case "copy-x":
+                      return <CopyX size={16} color={iconColor} />;
+                    case "x":
+                      return <X size={16} color={iconColor} />;
+                    default:
+                      return undefined;
+                  }
+                })()}
+                trailing={
+                  entry.hint ? <Text style={styles.menuItemHint}>{entry.hint}</Text> : undefined
                 }
-              })()}
-              trailing={
-                entry.hint ? (
-                  <Text style={styles.menuItemHint}>{entry.hint}</Text>
-                ) : undefined
-              }
-            >
-              {entry.label}
-            </ContextMenuItem>
-          ),
-        )}
-      </ContextMenuContent>
-    </ContextMenu>
+              >
+                {entry.label}
+              </ContextMenuItem>
+            ),
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+    </View>
   );
 }
 
@@ -344,10 +382,11 @@ export function WorkspaceDesktopTabsRow({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onSelectNewTabOption,
-  newTabAgentOptionId,
+  onCreateDraftTab,
+  onCreateTerminalTab,
+  disableCreateTerminal = false,
+  isWaitingOnTerminalReadiness = false,
   onReorderTabs,
-  onNewTerminalTab,
   onSplitRight,
   onSplitDown,
   externalDndContext = false,
@@ -356,8 +395,8 @@ export function WorkspaceDesktopTabsRow({
   showPaneSplitActions = true,
 }: WorkspaceDesktopTabsRowProps) {
   const { theme } = useUnistyles();
-  const newAgentTabKeys = useShortcutKeys("workspace-tab-new");
-  const newTerminalTabKeys = useShortcutKeys("workspace-terminal-new");
+  const newTabKeys = useShortcutKeys("workspace-tab-new");
+  const newTerminalKeys = useShortcutKeys("workspace-terminal-new");
   const splitRightKeys = useShortcutKeys("workspace-pane-split-right");
   const splitDownKeys = useShortcutKeys("workspace-pane-split-down");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
@@ -486,12 +525,7 @@ export function WorkspaceDesktopTabsRow({
         <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger
             testID="workspace-new-agent-tab"
-            onPress={() =>
-              onSelectNewTabOption({
-                optionId: newTabAgentOptionId,
-                paneId,
-              })
-            }
+            onPress={() => onCreateDraftTab({ paneId })}
             accessibilityRole="button"
             accessibilityLabel="New agent tab"
             style={({ hovered, pressed }) => [
@@ -504,19 +538,25 @@ export function WorkspaceDesktopTabsRow({
           <TooltipContent side="bottom" align="center" offset={8}>
             <View style={styles.newTabTooltipRow}>
               <Text style={styles.newTabTooltipText}>New agent tab</Text>
-              {newAgentTabKeys ? (
-                <Shortcut chord={newAgentTabKeys} style={styles.newTabTooltipShortcut} />
+              {newTabKeys ? (
+                <Shortcut chord={newTabKeys} style={styles.newTabTooltipShortcut} />
               ) : null}
             </View>
           </TooltipContent>
         </Tooltip>
         <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger
-            onPress={() => onNewTerminalTab({ paneId })}
+            testID="workspace-new-terminal"
+            onPress={() => onCreateTerminalTab({ paneId })}
+            disabled={disableCreateTerminal || isWaitingOnTerminalReadiness}
             accessibilityRole="button"
-            accessibilityLabel="New terminal tab"
+            accessibilityLabel={
+              isWaitingOnTerminalReadiness ? "Preparing terminal tab" : "New terminal tab"
+            }
             style={({ hovered, pressed }) => [
               styles.newTabActionButton,
+              (disableCreateTerminal || isWaitingOnTerminalReadiness) &&
+                styles.newTabActionButtonDisabled,
               (hovered || pressed) && styles.newTabActionButtonHovered,
             ]}
           >
@@ -524,9 +564,11 @@ export function WorkspaceDesktopTabsRow({
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center" offset={8}>
             <View style={styles.newTabTooltipRow}>
-              <Text style={styles.newTabTooltipText}>New terminal tab</Text>
-              {newTerminalTabKeys ? (
-                <Shortcut chord={newTerminalTabKeys} style={styles.newTabTooltipShortcut} />
+              <Text style={styles.newTabTooltipText}>
+                {isWaitingOnTerminalReadiness ? "Preparing terminal..." : "New terminal tab"}
+              </Text>
+              {newTerminalKeys ? (
+                <Shortcut chord={newTerminalKeys} style={styles.newTabTooltipShortcut} />
               ) : null}
             </View>
           </TooltipContent>
@@ -831,6 +873,9 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",
+  },
+  newTabActionButtonDisabled: {
+    opacity: 0.5,
   },
   newTabActionButtonHovered: {
     backgroundColor: theme.colors.surface2,

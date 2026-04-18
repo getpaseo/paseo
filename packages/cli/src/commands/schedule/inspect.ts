@@ -5,7 +5,11 @@ import {
   createScheduleInspectSchema,
   type ScheduleInspectRow,
 } from "./schema.js";
-import { connectScheduleClient, toScheduleCommandError, type ScheduleCommandOptions } from "./shared.js";
+import {
+  connectScheduleClient,
+  toScheduleCommandError,
+  type ScheduleCommandOptions,
+} from "./shared.js";
 
 export async function runInspectCommand(
   id: string,

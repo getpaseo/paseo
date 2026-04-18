@@ -26,7 +26,7 @@ export const archiveSchema: OutputSchema<AgentArchiveResult> = {
 
 export function addArchiveOptions(cmd: Command): Command {
   return cmd
-    .description('Archive an agent (soft-delete)')
+    .description("Archive an agent (soft-delete)")
     .argument("<id>", "Agent ID, prefix, or name")
     .option("--force", "Force archive running agent (interrupts active run first)");
 }

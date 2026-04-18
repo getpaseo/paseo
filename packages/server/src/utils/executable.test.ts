@@ -1,110 +1,169 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
 
 import {
+  executableExists,
   findExecutable,
   quoteWindowsArgument,
   quoteWindowsCommand,
 } from "./executable.js";
 
-type FindExecutableDependencies = NonNullable<Parameters<typeof findExecutable>[1]>;
+const originalEnv = {
+  PATH: process.env.PATH,
+  PATHEXT: process.env.PATHEXT,
+};
+const tempDirs: string[] = [];
 
-function createFindExecutableDependencies(): FindExecutableDependencies {
-  return {
-    execFileSync: vi.fn(),
-    existsSync: vi.fn(),
-    platform: vi.fn(() => "darwin"),
-  };
+function makeTempDir(): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "paseo-executable-test-"));
+  tempDirs.push(dir);
+  return dir;
 }
 
-let findExecutableDependencies: FindExecutableDependencies;
+function prependPath(...dirs: string[]): void {
+  process.env.PATH = [...dirs, originalEnv.PATH].filter(Boolean).join(path.delimiter);
+}
 
-beforeEach(() => {
-  findExecutableDependencies = createFindExecutableDependencies();
+function writeExecutable(filePath: string, content: string): string {
+  writeFileSync(filePath, content);
+  if (process.platform !== "win32") {
+    chmodSync(filePath, 0o755);
+  }
+  return filePath;
+}
+
+function writeInvokableFixture(dir: string, name: string): string {
+  if (process.platform === "win32") {
+    return writeExecutable(path.join(dir, `${name}.cmd`), "@echo off\r\necho 0.1\r\n");
+  }
+  return writeExecutable(path.join(dir, name), "#!/bin/sh\necho 0.1\n");
+}
+
+function writeBrokenAbsoluteFixture(dir: string): string {
+  const filePath =
+    process.platform === "win32" ? path.join(dir, "broken.exe") : path.join(dir, "broken");
+  writeFileSync(filePath, "not executable");
+  if (process.platform !== "win32") {
+    chmodSync(filePath, 0o644);
+  }
+  return filePath;
+}
+
+function expectWindowsPathsEqual(actual: string | null, expected: string): void {
+  expect(actual?.toLowerCase()).toBe(expected.toLowerCase());
+}
+
+afterEach(() => {
+  process.env.PATH = originalEnv.PATH;
+  process.env.PATHEXT = originalEnv.PATHEXT;
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 describe("findExecutable", () => {
-  test("on Windows, resolves executables using current machine and user PATH entries", () => {
-    findExecutableDependencies.platform = vi.fn(() => "win32");
-    process.env.Path = "C:\\Windows\\System32";
-    findExecutableDependencies.execFileSync.mockImplementation(
-      ((command: string, args?: string[]) => {
-        if (command === "powershell") {
-          return "C:\\Windows\\System32\r\nC:\\Users\\boudr\\.local\\bin\r\n";
-        }
-        if (command === "where.exe") {
-          return "C:\\Users\\boudr\\.local\\bin\\claude.exe\r\n";
-        }
-        throw new Error(`unexpected command ${command}`);
-      }) as any,
-    );
+  describe.skipIf(process.platform === "win32")("POSIX", () => {
+    test("finds an extensionless executable and skips an earlier non-executable candidate", async () => {
+      const executableDir = makeTempDir();
+      const nonExecutableDir = makeTempDir();
+      const executable = writeExecutable(path.join(executableDir, "foo"), "#!/bin/sh\necho 0.1\n");
+      const nonExecutable = path.join(nonExecutableDir, "foo");
+      writeFileSync(nonExecutable, "#!/bin/sh\necho broken\n");
+      chmodSync(nonExecutable, 0o644);
+      prependPath(nonExecutableDir, executableDir);
 
-    expect(findExecutable("claude", findExecutableDependencies)).toBe(
-      "C:\\Users\\boudr\\.local\\bin\\claude.exe",
-    );
-    const powershellCall = findExecutableDependencies.execFileSync.mock.calls[0];
-    expect(powershellCall?.[0]).toBe("powershell");
-    expect(powershellCall?.[1]).toContain("-NoProfile");
-    expect(powershellCall?.[1]).toContain("-NonInteractive");
-    expect(powershellCall?.[1]).toContain(
-      '$machine = [Environment]::GetEnvironmentVariable("Path", "Machine"); $user = [Environment]::GetEnvironmentVariable("Path", "User"); if ($machine) { Write-Output $machine }; if ($user) { Write-Output $user }',
-    );
-    const whereCall = findExecutableDependencies.execFileSync.mock.calls[1];
-    expect(whereCall?.[0]).toBe("where.exe");
-    expect(whereCall?.[1]).toEqual(["claude"]);
-    expect(whereCall?.[2]?.encoding).toBe("utf8");
-    const env = whereCall?.[2]?.env as Record<string, string | undefined>;
-    expect(env.PATH).toContain("C:\\Users\\boudr\\.local\\bin");
-    expect(env.Path).toContain("C:\\Users\\boudr\\.local\\bin");
+      await expect(findExecutable("foo")).resolves.toBe(executable);
+    });
   });
 
-  test("on Windows, preserves the first where.exe match", () => {
-    findExecutableDependencies.platform = vi.fn(() => "win32");
-    process.env.Path = "C:\\Windows\\System32";
-    findExecutableDependencies.execFileSync.mockImplementation(
-      ((command: string) => {
-        if (command === "powershell") {
-          return "C:\\Windows\\System32\r\nC:\\nvm4w\\nodejs\r\n";
-        }
-        if (command === "where.exe") {
-          return "C:\\nvm4w\\nodejs\\codex\r\nC:\\nvm4w\\nodejs\\codex.cmd\r\n";
-        }
-        throw new Error(`unexpected command ${command}`);
-      }) as any,
-    );
+  describe.runIf(process.platform === "win32")("Windows", () => {
+    test("returns a working .cmd when an invalid .exe candidate appears first", async () => {
+      const dir = makeTempDir();
+      process.env.PATHEXT = [".EXE", ".CMD"].join(path.delimiter);
+      const brokenExe = path.join(dir, "foo.exe");
+      const cmd = writeExecutable(path.join(dir, "foo.cmd"), "@echo off\r\necho 0.1\r\n");
+      writeFileSync(brokenExe, "");
+      prependPath(dir);
 
-    expect(findExecutable("codex", findExecutableDependencies)).toBe("C:\\nvm4w\\nodejs\\codex");
+      expectWindowsPathsEqual(await findExecutable("foo"), cmd);
+    });
+
+    test("returns null when the only candidate is a broken .exe", async () => {
+      const dir = makeTempDir();
+      process.env.PATHEXT = ".EXE";
+      writeFileSync(path.join(dir, "foo.exe"), "");
+      prependPath(dir);
+
+      await expect(findExecutable("foo")).resolves.toBeNull();
+    });
+
+    test("returns a .cmd when it is the only candidate", async () => {
+      const dir = makeTempDir();
+      process.env.PATHEXT = ".CMD";
+      const cmd = writeExecutable(path.join(dir, "foo.cmd"), "@echo off\r\necho 0.1\r\n");
+      prependPath(dir);
+
+      expectWindowsPathsEqual(await findExecutable("foo"), cmd);
+    });
   });
 
-  test("on Unix, uses the last line from which output", () => {
-    findExecutableDependencies.execFileSync.mockReturnValue(
-      "/usr/local/bin/codex\n",
-    );
+  test("returns an invokable absolute path", async () => {
+    const dir = makeTempDir();
+    const fixture = writeInvokableFixture(dir, "absolute-ok");
 
-    expect(findExecutable("codex", findExecutableDependencies)).toBe("/usr/local/bin/codex");
-    expect(findExecutableDependencies.execFileSync).toHaveBeenCalledWith(
-      "which",
-      ["codex"],
-      { encoding: "utf8" },
-    );
+    await expect(findExecutable(fixture)).resolves.toBe(fixture);
   });
 
-  test("warns and returns null when the final which line is not an absolute path", () => {
-    findExecutableDependencies.execFileSync.mockReturnValue("codex\n");
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  test("returns null for an absolute path that cannot spawn", async () => {
+    const dir = makeTempDir();
+    const fixture = writeBrokenAbsoluteFixture(dir);
 
-    expect(findExecutable("codex", findExecutableDependencies)).toBeNull();
-    expect(warnSpy).toHaveBeenCalledOnce();
-
-    warnSpy.mockRestore();
+    await expect(findExecutable(fixture)).resolves.toBeNull();
   });
 
-  test("returns direct paths when they exist", () => {
-    findExecutableDependencies.existsSync.mockReturnValue(true);
+  test("returns null when the command is not on PATH", async () => {
+    const dir = makeTempDir();
+    prependPath(dir);
 
-    expect(findExecutable("/usr/local/bin/codex", findExecutableDependencies)).toBe(
-      "/usr/local/bin/codex",
-    );
-    expect(findExecutableDependencies.existsSync).toHaveBeenCalledWith("/usr/local/bin/codex");
+    await expect(findExecutable("paseo-definitely-missing-command")).resolves.toBeNull();
+  });
+});
+
+describe("executableExists", () => {
+  test("returns the path when it already exists", () => {
+    const exists = (candidate: string) => candidate === "/usr/local/bin/codex";
+
+    expect(executableExists("/usr/local/bin/codex", exists)).toBe("/usr/local/bin/codex");
+  });
+
+  test("on Windows, falls back to .exe, then .cmd for extensionless paths", () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", writable: true });
+    try {
+      const exists = (candidate: string) => candidate === "C:\\tools\\codex.cmd";
+
+      expect(executableExists("C:\\tools\\codex", exists)).toBe("C:\\tools\\codex.cmd");
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+    }
+  });
+
+  test("on Windows, ignores PowerShell scripts for extensionless paths", () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", writable: true });
+    try {
+      const exists = (candidate: string) => candidate === "C:\\tools\\codex.ps1";
+
+      expect(executableExists("C:\\tools\\codex", exists)).toBeNull();
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+    }
+  });
+
+  test("returns null when no matching path exists", () => {
+    expect(executableExists("/missing/codex", () => false)).toBeNull();
   });
 });
 
@@ -136,6 +195,40 @@ describe("quoteWindowsCommand", () => {
   test("returns the command unchanged when there are no spaces", () => {
     setPlatform("win32");
     expect(quoteWindowsCommand("C:\\nvm4w\\nodejs\\codex")).toBe("C:\\nvm4w\\nodejs\\codex");
+  });
+
+  test("escapes ampersands", () => {
+    setPlatform("win32");
+    expect(quoteWindowsCommand("feature&bugfix")).toBe("feature^&bugfix");
+  });
+
+  test("escapes pipes", () => {
+    setPlatform("win32");
+    expect(quoteWindowsCommand("feature|bugfix")).toBe("feature^|bugfix");
+  });
+
+  test("doubles percent signs", () => {
+    setPlatform("win32");
+    expect(quoteWindowsCommand("100%")).toBe("100%%");
+  });
+
+  test("escapes carets", () => {
+    setPlatform("win32");
+    expect(quoteWindowsCommand("feature^bugfix")).toBe("feature^^bugfix");
+  });
+
+  test("escapes multiple metacharacters", () => {
+    setPlatform("win32");
+    expect(quoteWindowsCommand("build&(test|deploy)!<output>")).toBe(
+      "build^&^(test^|deploy^)^!^<output^>",
+    );
+  });
+
+  test("quotes commands with spaces after escaping metacharacters", () => {
+    setPlatform("win32");
+    expect(quoteWindowsCommand("C:\\Program Files\\My Tool&Stuff\\run 100%.cmd")).toBe(
+      '"C:\\Program Files\\My Tool^&Stuff\\run 100%%.cmd"',
+    );
   });
 
   test("returns the command unchanged on non-Windows platforms", () => {

@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { View, Text, Platform, Pressable, Keyboard } from "react-native";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { View, Text, Pressable, Keyboard } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
@@ -15,8 +15,9 @@ import {
 } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
-import { useQuery } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/session-store";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import {
   buildFavoriteModelKey,
   mergeProviderPreferences,
@@ -40,7 +41,6 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import {
-  AGENT_PROVIDER_DEFINITIONS,
   getModeVisuals,
   type AgentModeColorTier,
   type AgentModeIcon,
@@ -51,7 +51,7 @@ import {
   getStatusSelectorHint,
   resolveAgentModelSelection,
 } from "@/components/agent-status-bar.utils";
-import { isProviderModelsQueryLoading } from "@/components/agent-status-bar.model-loading";
+import { isWeb as platformIsWeb } from "@/constants/platform";
 
 type StatusOption = {
   id: string;
@@ -59,10 +59,6 @@ type StatusOption = {
 };
 
 type StatusSelector = "provider" | "mode" | "model" | "thinking" | `feature-${string}`;
-
-const PROVIDER_DEFINITION_MAP = new Map(
-  AGENT_PROVIDER_DEFINITIONS.map((definition) => [definition.id, definition]),
-);
 
 type ControlledAgentStatusBarProps = {
   provider: string;
@@ -75,12 +71,13 @@ type ControlledAgentStatusBarProps = {
   modelOptions?: StatusOption[];
   selectedModelId?: string;
   onSelectModel?: (modelId: string) => void;
+  onSelectProviderAndModel?: (provider: string, modelId: string) => void;
   thinkingOptions?: StatusOption[];
   selectedThinkingOptionId?: string;
   onSelectThinkingOption?: (thinkingOptionId: string) => void;
   disabled?: boolean;
   isModelLoading?: boolean;
-  providerDefinitions?: AgentProviderDefinition[];
+  providerDefinitions: AgentProviderDefinition[];
   allProviderModels?: Map<string, AgentModelDefinition[]>;
   canSelectModelProvider?: (providerId: string) => boolean;
   favoriteKeys?: Set<string>;
@@ -88,6 +85,7 @@ type ControlledAgentStatusBarProps = {
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
+  onModelSelectorOpen?: () => void;
 };
 
 export interface DraftAgentStatusBarProps {
@@ -110,6 +108,7 @@ export interface DraftAgentStatusBarProps {
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
+  onModelSelectorOpen?: () => void;
   disabled?: boolean;
 }
 
@@ -203,6 +202,7 @@ function ControlledStatusBar({
   modelOptions,
   selectedModelId,
   onSelectModel,
+  onSelectProviderAndModel,
   thinkingOptions,
   selectedThinkingOptionId,
   onSelectThinkingOption,
@@ -216,9 +216,9 @@ function ControlledStatusBar({
   features,
   onSetFeature,
   onDropdownClose,
+  onModelSelectorOpen,
 }: ControlledAgentStatusBarProps) {
   const { theme } = useUnistyles();
-  const isWeb = Platform.OS === "web";
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [openSelector, setOpenSelector] = useState<StatusSelector | null>(null);
 
@@ -248,7 +248,9 @@ function ControlledStatusBar({
     thinkingOptions?.[0]?.label ?? "Unknown",
   );
 
-  const modeVisuals = selectedModeId ? getModeVisuals(provider, selectedModeId) : undefined;
+  const modeVisuals = selectedModeId
+    ? getModeVisuals(provider, selectedModeId, providerDefinitions)
+    : undefined;
   const ModeIconComponent = modeVisuals?.icon ? MODE_ICONS[modeVisuals.icon] : null;
   const modeIconColor = getModeIconColor(modeVisuals?.colorTier, theme.colors.palette);
   const ProviderIcon = getProviderIcon(provider);
@@ -264,7 +266,7 @@ function ControlledStatusBar({
     return null;
   }
 
-  const modelDisabled = disabled || isModelLoading || !modelOptions || modelOptions.length === 0;
+  const modelDisabled = disabled;
 
   const SEARCH_THRESHOLD = 6;
 
@@ -296,8 +298,7 @@ function ControlledStatusBar({
     );
     return map;
   }, [modelOptions, provider]);
-  const effectiveProviderDefinitions = providerDefinitions ??
-    (PROVIDER_DEFINITION_MAP.has(provider) ? [PROVIDER_DEFINITION_MAP.get(provider)!] : []);
+  const effectiveProviderDefinitions = providerDefinitions;
   const effectiveAllProviderModels = allProviderModels ?? fallbackAllProviderModels;
   const canSelectProviderInModelMenu = canSelectModelProvider ?? (() => true);
   const comboboxThinkingOptions = useMemo<ComboboxOption[]>(
@@ -317,7 +318,7 @@ function ControlledStatusBar({
       active: boolean;
       onPress: () => void;
     }) => {
-      const visuals = getModeVisuals(provider, option.id);
+      const visuals = getModeVisuals(provider, option.id, providerDefinitions);
       const IconComponent = visuals?.icon ? MODE_ICONS[visuals.icon] : ShieldCheck;
       return (
         <ComboboxItem
@@ -329,7 +330,7 @@ function ControlledStatusBar({
         />
       );
     },
-    [provider, theme.colors.foreground],
+    [provider, providerDefinitions, theme.colors.foreground],
   );
 
   const handleOpenChange = useCallback(
@@ -351,7 +352,7 @@ function ControlledStatusBar({
 
   return (
     <View style={styles.container}>
-      {isWeb ? (
+      {platformIsWeb ? (
         <>
           {providerOptions && providerOptions.length > 0 ? (
             <>
@@ -410,6 +411,7 @@ function ControlledStatusBar({
                     onToggleFavorite={onToggleFavoriteModel}
                     isLoading={isModelLoading}
                     disabled={modelDisabled}
+                    onOpen={onModelSelectorOpen}
                     onClose={onDropdownClose}
                   />
                 </View>
@@ -422,12 +424,7 @@ function ControlledStatusBar({
 
           {thinkingOptions && thinkingOptions.length > 0 ? (
             <>
-              <Tooltip
-                key={`thinking-${openSelector === "thinking" ? "open" : "closed"}`}
-                delayDuration={0}
-                enabledOnDesktop
-                enabledOnMobile={false}
-              >
+              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger asChild triggerRefProp="ref">
                   <Pressable
                     ref={thinkingAnchorRef}
@@ -468,12 +465,7 @@ function ControlledStatusBar({
 
           {modeOptions && modeOptions.length > 0 ? (
             <>
-              <Tooltip
-                key={`mode-${openSelector === "mode" ? "open" : "closed"}`}
-                delayDuration={0}
-                enabledOnDesktop
-                enabledOnMobile={false}
-              >
+              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger asChild triggerRefProp="ref">
                   <Pressable
                     ref={modeAnchorRef}
@@ -648,25 +640,28 @@ function ControlledStatusBar({
                   selectedModel={selectedModelId ?? ""}
                   canSelectProvider={canSelectProviderInModelMenu}
                   onSelect={(selectedProviderId, modelId) => {
-                    if (selectedProviderId !== provider) {
-                      onSelectProvider?.(selectedProviderId);
+                    if (onSelectProviderAndModel) {
+                      onSelectProviderAndModel(selectedProviderId, modelId);
+                    } else {
+                      if (selectedProviderId !== provider) {
+                        onSelectProvider?.(selectedProviderId);
+                      }
+                      onSelectModel?.(modelId);
                     }
-                    onSelectModel?.(modelId);
                   }}
                   favoriteKeys={favoriteKeys}
                   onToggleFavorite={onToggleFavoriteModel}
                   isLoading={isModelLoading}
                   disabled={modelDisabled}
+                  onOpen={onModelSelectorOpen}
                   onClose={onDropdownClose}
                   renderTrigger={({ selectedModelLabel }) => (
                     <View
-                      style={[
-                        styles.sheetSelect,
-                        modelDisabled && styles.disabledSheetSelect,
-                      ]}
+                      style={[styles.sheetSelect, modelDisabled && styles.disabledSheetSelect]}
                       pointerEvents="none"
                       testID="agent-preferences-model"
                     >
+                      <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
                       <Text style={styles.sheetSelectText}>{selectedModelLabel}</Text>
                       <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
                     </View>
@@ -692,6 +687,7 @@ function ControlledStatusBar({
                     accessibilityLabel="Select thinking option"
                     testID="agent-preferences-thinking"
                   >
+                    <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
                     <Text style={styles.sheetSelectText}>{displayThinking}</Text>
                     <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
                   </DropdownMenuTrigger>
@@ -735,7 +731,7 @@ function ControlledStatusBar({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent side="top" align="start">
                     {modeOptions.map((mode) => {
-                      const visuals = getModeVisuals(provider, mode.id);
+                      const visuals = getModeVisuals(provider, mode.id, providerDefinitions);
                       const Icon = visuals?.icon ? MODE_ICONS[visuals.icon] : ShieldCheck;
                       return (
                         <DropdownMenuItem
@@ -838,7 +834,11 @@ function ControlledStatusBar({
 
 const EMPTY_MODES: AgentMode[] = [];
 
-export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStatusBarProps) {
+export const AgentStatusBar = memo(function AgentStatusBar({
+  agentId,
+  serverId,
+  onDropdownClose,
+}: AgentStatusBarProps) {
   const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
     useShallow((state) => {
@@ -852,6 +852,7 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
             model: currentAgent.model,
             features: currentAgent.features,
             thinkingOptionId: currentAgent.thinkingOptionId,
+            lastUsage: currentAgent.lastUsage,
           }
         : null;
     }),
@@ -863,52 +864,36 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
 
-  const modelsQuery = useQuery({
-    queryKey: ["providerModels", serverId, agent?.provider ?? "__missing_provider__"],
-    enabled: Boolean(client && agent?.provider),
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      if (!client || !agent) {
-        throw new Error("Daemon client unavailable");
-      }
-      const payload = await client.listProviderModels(agent.provider, { cwd: agent.cwd });
-      if (payload.error) {
-        throw new Error(payload.error);
-      }
-      return payload.models ?? [];
-    },
-  });
+  const {
+    entries: snapshotEntries,
+    isLoading: snapshotIsLoading,
+    refetchIfStale: refetchSnapshotIfStale,
+  } = useProvidersSnapshot(serverId, agent?.cwd);
+
+  const snapshotModels = useMemo(() => {
+    if (!snapshotEntries || !agent?.provider) {
+      return null;
+    }
+    const entry = snapshotEntries.find((e) => e.provider === agent.provider);
+    return entry?.models ?? null;
+  }, [snapshotEntries, agent?.provider]);
+
+  const models = snapshotModels;
 
   const agentProviderDefinitions = useMemo(() => {
-    const definition = AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === agent?.provider);
+    const definition = agent?.provider
+      ? resolveProviderDefinition(agent.provider, snapshotEntries)
+      : undefined;
     return definition ? [definition] : [];
-  }, [agent?.provider]);
-
-  const agentProviderModelQuery = useQuery({
-    queryKey: ["providerModels", serverId, agent?.provider, agent?.cwd ?? ""],
-    enabled: Boolean(client && agent?.cwd && agent?.provider),
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      if (!client || !agent) {
-        throw new Error("Daemon client unavailable");
-      }
-      const payload = await client.listProviderModels(agent.provider, { cwd: agent.cwd });
-      if (payload.error) {
-        throw new Error(payload.error);
-      }
-      return payload.models ?? [];
-    },
-  });
+  }, [agent?.provider, snapshotEntries]);
 
   const agentProviderModels = useMemo(() => {
     const map = new Map<string, AgentModelDefinition[]>();
-    if (agent?.provider && agentProviderModelQuery.data) {
-      map.set(agent.provider, agentProviderModelQuery.data);
+    if (agent?.provider && snapshotModels) {
+      map.set(agent.provider, snapshotModels);
     }
     return map;
-  }, [agent?.provider, agentProviderModelQuery.data]);
-
-  const models = modelsQuery.data ?? null;
+  }, [agent?.provider, snapshotModels]);
 
   const displayMode =
     availableModes.find((mode) => mode.id === agent?.currentModeId)?.label ||
@@ -933,7 +918,10 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
     return (models ?? []).map((model) => ({ id: model.id, label: model.label }));
   }, [models]);
   const favoriteKeys = useMemo(
-    () => new Set((preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite))),
+    () =>
+      new Set(
+        (preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite)),
+      ),
     [preferences.favoriteModels],
   );
 
@@ -952,7 +940,9 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
     <ControlledStatusBar
       provider={agent.provider}
       modeOptions={
-        modeOptions.length > 0 ? modeOptions : [{ id: agent.currentModeId ?? "", label: displayMode }]
+        modeOptions.length > 0
+          ? modeOptions
+          : [{ id: agent.currentModeId ?? "", label: displayMode }]
       }
       selectedModeId={agent.currentModeId ?? undefined}
       providerDefinitions={agentProviderDefinitions}
@@ -971,9 +961,9 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
         if (!client) {
           return;
         }
-        void updatePreferences(
+        void updatePreferences((current) =>
           mergeProviderPreferences({
-            preferences,
+            preferences: current,
             provider: agent.provider,
             updates: {
               model: modelId,
@@ -988,7 +978,9 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
       }}
       favoriteKeys={favoriteKeys}
       onToggleFavoriteModel={(provider, modelId) => {
-        void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
+        void updatePreferences((current) =>
+          toggleFavoriteModel({ preferences: current, provider, modelId }),
+        ).catch((error) => {
           console.warn("[AgentStatusBar] toggle favorite model failed", error);
         });
       }}
@@ -1000,9 +992,9 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
         }
         const activeModelId = modelSelection.activeModelId;
         if (activeModelId) {
-          void updatePreferences(
+          void updatePreferences((current) =>
             mergeProviderPreferences({
-              preferences,
+              preferences: current,
               provider: agent.provider,
               updates: {
                 model: activeModelId,
@@ -1024,16 +1016,30 @@ export function AgentStatusBar({ agentId, serverId, onDropdownClose }: AgentStat
         if (!client) {
           return;
         }
+        void updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: agent.provider,
+            updates: {
+              featureValues: {
+                [featureId]: value,
+              },
+            },
+          }),
+        ).catch((error) => {
+          console.warn("[AgentStatusBar] persist feature preference failed", error);
+        });
         void client.setAgentFeature(agentId, featureId, value).catch((error) => {
           console.warn("[AgentStatusBar] setAgentFeature failed", error);
         });
       }}
-      isModelLoading={isProviderModelsQueryLoading(modelsQuery)}
+      isModelLoading={snapshotIsLoading}
+      onModelSelectorOpen={refetchSnapshotIfStale}
       onDropdownClose={onDropdownClose}
       disabled={!client}
     />
   );
-}
+});
 
 export function DraftAgentStatusBar({
   providerDefinitions,
@@ -1055,9 +1061,9 @@ export function DraftAgentStatusBar({
   features,
   onSetFeature,
   onDropdownClose,
+  onModelSelectorOpen,
   disabled = false,
 }: DraftAgentStatusBarProps) {
-  const isWeb = Platform.OS === "web";
   const { preferences, updatePreferences } = useFormPreferences();
 
   const mappedModeOptions = useMemo<StatusOption[]>(() => {
@@ -1074,7 +1080,10 @@ export function DraftAgentStatusBar({
     return thinkingOptions.map((option) => ({ id: option.id, label: option.label }));
   }, [thinkingOptions]);
   const favoriteKeys = useMemo(
-    () => new Set((preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite))),
+    () =>
+      new Set(
+        (preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite)),
+      ),
     [preferences.favoriteModels],
   );
 
@@ -1082,7 +1091,7 @@ export function DraftAgentStatusBar({
   const effectiveSelectedThinkingOption =
     selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
 
-  if (isWeb) {
+  if (platformIsWeb) {
     return (
       <View style={styles.container}>
         <CombinedModelSelector
@@ -1093,16 +1102,20 @@ export function DraftAgentStatusBar({
           onSelect={onSelectProviderAndModel}
           favoriteKeys={favoriteKeys}
           onToggleFavorite={(provider, modelId) => {
-            void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
+            void updatePreferences((current) =>
+              toggleFavoriteModel({ preferences: current, provider, modelId }),
+            ).catch((error) => {
               console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
             });
           }}
           isLoading={isAllModelsLoading}
           disabled={disabled}
+          onOpen={onModelSelectorOpen}
           onClose={onDropdownClose}
         />
         <ControlledStatusBar
           provider={selectedProvider}
+          providerDefinitions={providerDefinitions}
           modeOptions={mappedModeOptions}
           selectedModeId={effectiveSelectedMode}
           onSelectMode={onSelectMode}
@@ -1135,10 +1148,13 @@ export function DraftAgentStatusBar({
         modelOptions={modelOptions}
         selectedModelId={selectedModel}
         onSelectModel={(modelId) => onSelectModel(modelId)}
+        onSelectProviderAndModel={onSelectProviderAndModel}
         isModelLoading={isAllModelsLoading}
         favoriteKeys={favoriteKeys}
         onToggleFavoriteModel={(provider, modelId) => {
-          void updatePreferences(toggleFavoriteModel({ preferences, provider, modelId })).catch((error) => {
+          void updatePreferences((current) =>
+            toggleFavoriteModel({ preferences: current, provider, modelId }),
+          ).catch((error) => {
             console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
           });
         }}
@@ -1147,6 +1163,7 @@ export function DraftAgentStatusBar({
         onSelectThinkingOption={onSelectThinkingOption}
         features={features}
         onSetFeature={onSetFeature}
+        onModelSelectorOpen={onModelSelectorOpen}
         disabled={disabled}
       />
     </>
@@ -1197,6 +1214,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   prefsButton: {
     height: 28,
+    minWidth: 0,
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],

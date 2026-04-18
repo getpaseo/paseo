@@ -200,7 +200,20 @@ export async function installCli(): Promise<InstallStatus> {
     if (await pathOrSymlinkExists(targetPath)) {
       await fs.unlink(targetPath);
     }
-    await fs.copyFile(installSourcePath, targetPath);
+    // Generate a thin .cmd trampoline that delegates to the bundled shim.
+    // Only the app install path is baked in — internal details (asar layout,
+    // entrypoint scripts) live in the bundled shim and update with the app.
+    const cmdContent = [
+      "@echo off",
+      `set "BUNDLED_CLI=${shimPath}"`,
+      `if not exist "%BUNDLED_CLI%" (`,
+      `  echo Paseo CLI not found at %BUNDLED_CLI% — is Paseo installed? 1>&2`,
+      `  exit /b 1`,
+      `)`,
+      `call "%BUNDLED_CLI%" %*`,
+      `exit /b %errorlevel%`,
+    ].join("\r\n");
+    await fs.writeFile(targetPath, cmdContent, "utf-8");
   } else {
     if (await pathOrSymlinkExists(targetPath)) {
       await fs.unlink(targetPath);
@@ -225,13 +238,21 @@ export async function getCliInstallStatus(): Promise<InstallStatus> {
 // Skills Installation
 // ---------------------------------------------------------------------------
 
-async function copySkillFile(sourceFile: string, destDir: string, skillName: string): Promise<void> {
+async function copySkillFile(
+  sourceFile: string,
+  destDir: string,
+  skillName: string,
+): Promise<void> {
   const destSkillDir = path.join(destDir, skillName);
   await fs.mkdir(destSkillDir, { recursive: true });
   await fs.copyFile(sourceFile, path.join(destSkillDir, "SKILL.md"));
 }
 
-async function symlinkSkillDir(skillName: string, targetDir: string, linkParentDir: string): Promise<void> {
+async function symlinkSkillDir(
+  skillName: string,
+  targetDir: string,
+  linkParentDir: string,
+): Promise<void> {
   await fs.mkdir(linkParentDir, { recursive: true });
   const target = path.join(targetDir, skillName);
   const linkPath = path.join(linkParentDir, skillName);

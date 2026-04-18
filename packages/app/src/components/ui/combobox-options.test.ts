@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildVisibleComboboxOptions,
+  filterAndRankComboboxOptions,
   getComboboxFallbackIndex,
   orderVisibleComboboxOptions,
 } from "./combobox-options";
@@ -44,6 +45,48 @@ describe("buildVisibleComboboxOptions", () => {
     expect(visible).toEqual([
       { id: "/Users/me/project-a", label: "/Users/me/project-a", kind: "directory" },
     ]);
+  });
+});
+
+describe("filterAndRankComboboxOptions", () => {
+  const options = [
+    { id: "feat/login", label: "feat/login" },
+    { id: "main", label: "main" },
+    { id: "feat/main-nav", label: "feat/main-nav" },
+    { id: "fix/logout", label: "fix/logout", description: "fixes main logout bug" },
+  ];
+
+  it("returns all options when search is empty", () => {
+    expect(filterAndRankComboboxOptions(options, "")).toEqual(options);
+  });
+
+  it("filters by label substring", () => {
+    const result = filterAndRankComboboxOptions(options, "login");
+    expect(result.map((o) => o.id)).toEqual(["feat/login"]);
+  });
+
+  it("filters by id substring", () => {
+    const result = filterAndRankComboboxOptions(options, "fix/");
+    expect(result.map((o) => o.id)).toEqual(["fix/logout"]);
+  });
+
+  it("filters by description substring", () => {
+    const result = filterAndRankComboboxOptions(options, "logout bug");
+    expect(result.map((o) => o.id)).toEqual(["fix/logout"]);
+  });
+
+  it("ranks prefix matches above substring matches", () => {
+    const result = filterAndRankComboboxOptions(options, "main");
+    expect(result.map((o) => o.id)).toEqual(["main", "feat/main-nav", "fix/logout"]);
+  });
+
+  it("is case-insensitive", () => {
+    const items = [{ id: "Alpha", label: "Alpha" }];
+    expect(filterAndRankComboboxOptions(items, "alpha")).toHaveLength(1);
+  });
+
+  it("returns empty when nothing matches", () => {
+    expect(filterAndRankComboboxOptions(options, "zzz")).toEqual([]);
   });
 });
 

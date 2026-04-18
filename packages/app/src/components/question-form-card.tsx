@@ -1,9 +1,11 @@
 import { useState, useCallback } from "react";
-import { View, Text, TextInput, Pressable, ActivityIndicator, Platform } from "react-native";
-import { StyleSheet, useUnistyles, UnistylesRuntime } from "react-native-unistyles";
+import { View, Text, TextInput, Pressable, ActivityIndicator } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, CircleHelp, X } from "lucide-react-native";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
+import { isWeb } from "@/constants/platform";
 
 interface QuestionOption {
   label: string;
@@ -59,11 +61,11 @@ interface QuestionFormCardProps {
   isResponding: boolean;
 }
 
-const IS_WEB = Platform.OS === "web";
+const IS_WEB = isWeb;
 
 export function QuestionFormCard({ permission, onRespond, isResponding }: QuestionFormCardProps) {
   const { theme } = useUnistyles();
-  const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const isMobile = useIsCompactFormFactor();
   const questions = parseQuestions(permission.request.input);
 
   const [selections, setSelections] = useState<Record<number, Set<number>>>({});

@@ -69,7 +69,7 @@ export function resolveNewAgentWorkingDir(
   return inferMainRepoRootFromPaseoWorktreePath(cwd) ?? cwd;
 }
 
-export function buildNewAgentRoute(serverId: string, workingDir?: string | null): string {
+export function buildNewAgentRoute(serverId: string, workingDir?: string | null) {
   const trimmedWorkingDir = workingDir?.trim();
   return buildHostWorkspaceRoute(serverId, trimmedWorkingDir || ".");
 }

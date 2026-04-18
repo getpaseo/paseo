@@ -8,10 +8,12 @@ export function resolveProviderLabel(
   providerDefinitions: AgentProviderDefinition[],
   providerId: string,
 ): string {
-  return providerDefinitions.find((definition) => definition.id === providerId)?.label ?? providerId;
+  return (
+    providerDefinitions.find((definition) => definition.id === providerId)?.label ?? providerId
+  );
 }
 
-export function buildSelectedTriggerLabel(providerLabel: string, modelLabel: string): string {
+export function buildSelectedTriggerLabel(modelLabel: string): string {
   return modelLabel;
 }
 
@@ -19,7 +21,9 @@ export function buildModelRows(
   providerDefinitions: AgentProviderDefinition[],
   allProviderModels: Map<string, AgentModelDefinition[]>,
 ): SelectorModelRow[] {
-  const providerLabelMap = new Map(providerDefinitions.map((definition) => [definition.id, definition.label]));
+  const providerLabelMap = new Map(
+    providerDefinitions.map((definition) => [definition.id, definition.label]),
+  );
   const rows: SelectorModelRow[] = [];
 
   for (const definition of providerDefinitions) {

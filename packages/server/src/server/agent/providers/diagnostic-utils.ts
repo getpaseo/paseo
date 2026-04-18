@@ -1,23 +1,16 @@
-import { execFileSync } from "node:child_process";
-
 import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
+import { execCommand } from "../../../utils/spawn.js";
 
 type DiagnosticEntry = {
   label: string;
   value: string;
 };
 
-export function formatProviderDiagnostic(
-  providerName: string,
-  entries: DiagnosticEntry[],
-): string {
+export function formatProviderDiagnostic(providerName: string, entries: DiagnosticEntry[]): string {
   return [providerName, ...entries.map((entry) => `  ${entry.label}: ${entry.value}`)].join("\n");
 }
 
-export function formatProviderDiagnosticError(
-  providerName: string,
-  error: unknown,
-): string {
+export function formatProviderDiagnosticError(providerName: string, error: unknown): string {
   return formatProviderDiagnostic(providerName, [
     {
       label: "Error",
@@ -50,14 +43,10 @@ export function toDiagnosticErrorMessage(error: unknown): string {
   return "Unknown error";
 }
 
-export function resolveBinaryVersion(binaryPath: string): string {
+export async function resolveBinaryVersion(binaryPath: string): Promise<string> {
   try {
-    return (
-      execFileSync(binaryPath, ["--version"], {
-        encoding: "utf8",
-        timeout: 5_000,
-      }).trim() || "unknown"
-    );
+    const { stdout } = await execCommand(binaryPath, ["--version"], { timeout: 5_000 });
+    return stdout.trim() || "unknown";
   } catch {
     return "unknown";
   }

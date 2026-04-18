@@ -1,6 +1,10 @@
 import { describe, expect, test, vi } from "vitest";
 
-import { deriveWorkspaceId, detectStaleWorkspaces } from "./workspace-registry-model.js";
+import {
+  deriveWorkspaceId,
+  detectStaleWorkspaces,
+  normalizeWorkspaceId,
+} from "./workspace-registry-model.js";
 import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 
 function createWorkspaceRecord(workspaceId: string) {
@@ -68,10 +72,28 @@ describe("deriveWorkspaceId", () => {
     ).toBe("/tmp/repo");
   });
 
-  test("falls back to normalized cwd for non-git directories", () => {
+  test("falls back to normalized cwd when git worktree root contains multiple lines", () => {
+    const cwd = String.raw`E:\project\node-ai`;
+
     expect(
-      deriveWorkspaceId("/tmp/repo/../repo/scratch", {
-        cwd: "/tmp/repo/../repo/scratch",
+      deriveWorkspaceId(cwd, {
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: null,
+        worktreeRoot: `--path-format=absolute\n${cwd}`,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+    ).toBe(normalizeWorkspaceId(cwd));
+  });
+
+  test("falls back to normalized cwd for non-git directories", () => {
+    const cwd = "/tmp/repo/../repo/scratch";
+
+    expect(
+      deriveWorkspaceId(cwd, {
+        cwd,
         isGit: false,
         currentBranch: null,
         remoteUrl: null,
@@ -79,6 +101,6 @@ describe("deriveWorkspaceId", () => {
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       }),
-    ).toBe("/tmp/repo/scratch");
+    ).toBe(normalizeWorkspaceId("/tmp/repo/scratch"));
   });
 });

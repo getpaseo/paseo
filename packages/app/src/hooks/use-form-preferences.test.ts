@@ -59,6 +59,41 @@ describe("mergeProviderPreferences", () => {
       },
     });
   });
+
+  it("merges feature values without dropping existing entries", () => {
+    expect(
+      mergeProviderPreferences({
+        preferences: {
+          provider: "codex",
+          providerPreferences: {
+            codex: {
+              model: "gpt-5.4",
+              featureValues: {
+                fast_mode: true,
+              },
+            },
+          },
+        },
+        provider: "codex",
+        updates: {
+          featureValues: {
+            plan_mode: true,
+          },
+        },
+      }),
+    ).toEqual({
+      provider: "codex",
+      providerPreferences: {
+        codex: {
+          model: "gpt-5.4",
+          featureValues: {
+            fast_mode: true,
+            plan_mode: true,
+          },
+        },
+      },
+    });
+  });
 });
 
 describe("favorite model preferences", () => {

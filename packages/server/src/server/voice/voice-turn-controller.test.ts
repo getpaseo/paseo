@@ -19,6 +19,7 @@ class FakeTurnDetectionSession extends EventEmitter implements TurnDetectionSess
   }
 
   flush(): void {}
+  reset(): void {}
   close(): void {}
 }
 

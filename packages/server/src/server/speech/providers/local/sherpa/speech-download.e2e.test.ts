@@ -202,7 +202,7 @@ describe("speech models (download E2E)", () => {
             provider: "codex",
             cwd: voiceCwd,
             modeId: "full-access",
-            model: "gpt-5.1-codex-mini",
+            model: "gpt-5.4-mini",
             thinkingOptionId: "low",
           },
         });

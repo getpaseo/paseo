@@ -2,6 +2,7 @@ import type { AgentSnapshotPayload } from "../messages.js";
 import type { SerializableAgentConfig, StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentCapabilityFlags,
+  AgentFeature,
   AgentMetadata,
   AgentMode,
   AgentPermissionRequest,
@@ -12,6 +13,9 @@ import type {
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
+import type { Logger } from "pino";
+import { buildProviderRegistry } from "./provider-registry.js";
+import { coerceAgentProvider, toAgentPersistenceHandle } from "../persistence-hooks.js";
 
 export type { ManagedAgent };
 
@@ -61,7 +65,9 @@ export function toStoredAgentRecord(
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
     config: config ?? null,
     runtimeInfo,
+    features: normalizeFeatures(agent.features),
     persistence,
+    lastError: agent.lastError ?? undefined,
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention ? agent.attention.attentionReason : null,
     attentionTimestamp: agent.attention.requiresAttention
@@ -89,7 +95,7 @@ export function toAgentPayload(
     model: agent.config.model ?? null,
     thinkingOptionId,
     effectiveThinkingOptionId,
-    runtimeInfo,
+    ...(runtimeInfo ? { runtimeInfo } : {}),
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
@@ -97,7 +103,7 @@ export function toAgentPayload(
     capabilities: cloneCapabilities(agent.capabilities),
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),
-    features: agent.features,
+    features: normalizeFeatures(agent.features),
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
     persistence: sanitizePersistenceHandle(agent.persistence),
     title: options?.title ?? null,
@@ -124,6 +130,93 @@ export function toAgentPayload(
   }
 
   return payload;
+}
+
+export function buildStoredAgentPayload(
+  record: StoredAgentRecord,
+  providerRegistry: ReturnType<typeof buildProviderRegistry>,
+  logger: Logger,
+): AgentSnapshotPayload {
+  const defaultCapabilities = {
+    supportsStreaming: false,
+    supportsSessionPersistence: true,
+    supportsDynamicModes: false,
+    supportsMcpServers: false,
+    supportsReasoningStream: false,
+    supportsToolInvocations: true,
+  } as const;
+
+  const createdAt = new Date(record.createdAt);
+  const updatedAt = new Date(resolveStoredAgentPayloadUpdatedAt(record));
+  const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
+
+  const provider = coerceAgentProvider(logger, providerRegistry, record.provider, record.id);
+  const runtimeInfo = record.runtimeInfo
+    ? {
+        provider: coerceAgentProvider(
+          logger,
+          providerRegistry,
+          record.runtimeInfo.provider,
+          record.id,
+        ),
+        sessionId: record.runtimeInfo.sessionId,
+        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "model")
+          ? { model: record.runtimeInfo.model ?? null }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "thinkingOptionId")
+          ? { thinkingOptionId: record.runtimeInfo.thinkingOptionId ?? null }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "modeId")
+          ? { modeId: record.runtimeInfo.modeId ?? null }
+          : {}),
+        ...(record.runtimeInfo.extra ? { extra: record.runtimeInfo.extra } : {}),
+      }
+    : undefined;
+
+  return {
+    id: record.id,
+    provider,
+    cwd: record.cwd,
+    model: record.config?.model ?? null,
+    thinkingOptionId: record.config?.thinkingOptionId ?? null,
+    effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
+      runtimeInfo,
+      configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
+    }),
+    ...(runtimeInfo ? { runtimeInfo } : {}),
+    createdAt: createdAt.toISOString(),
+    updatedAt: updatedAt.toISOString(),
+    lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
+    status: record.lastStatus,
+    capabilities: defaultCapabilities,
+    currentModeId: record.lastModeId ?? null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: toAgentPersistenceHandle(logger, providerRegistry, record.persistence),
+    title: record.title ?? record.config?.title ?? null,
+    requiresAttention: record.requiresAttention ?? false,
+    attentionReason: record.attentionReason ?? null,
+    attentionTimestamp: record.attentionTimestamp ?? null,
+    archivedAt: record.archivedAt ?? null,
+    labels: record.labels,
+  };
+}
+
+export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): string {
+  const timestamps = [record.updatedAt, record.lastActivityAt]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .map((value) => ({
+      raw: value,
+      parsed: Date.parse(value),
+    }))
+    .filter((value) => !Number.isNaN(value.parsed));
+
+  if (timestamps.length === 0) {
+    return record.updatedAt;
+  }
+
+  timestamps.sort((a, b) => b.parsed - a.parsed);
+  return timestamps[0].raw;
 }
 
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
@@ -166,6 +259,7 @@ function sanitizePendingPermissions(
     ...request,
     input: sanitizeMetadata(request.input),
     suggestions: sanitizeMetadataArray(request.suggestions),
+    actions: request.actions?.map((action) => ({ ...action })),
     metadata: sanitizeMetadata(request.metadata),
   }));
 }
@@ -196,6 +290,10 @@ function cloneCapabilities(capabilities: AgentCapabilityFlags): AgentCapabilityF
 
 function cloneAvailableModes(modes: AgentMode[]): AgentMode[] {
   return modes.map((mode) => ({ ...mode }));
+}
+
+function normalizeFeatures(features: AgentFeature[] | null | undefined): AgentFeature[] {
+  return Array.isArray(features) ? features.map((feature) => ({ ...feature })) : [];
 }
 
 function sanitizeOptionalJson(value: unknown): JsonValue | undefined {
@@ -259,27 +357,39 @@ function sanitizeUsage(value: unknown): AgentUsage | undefined {
   }
   const result: AgentUsage = {};
   const inputTokens = sanitized.inputTokens;
-  if (typeof inputTokens === "number") {
+  if (typeof inputTokens === "number" && Number.isFinite(inputTokens)) {
     result.inputTokens = inputTokens;
   } else if (inputTokens !== undefined && inputTokens !== null) {
     return undefined;
   }
   const cachedInputTokens = sanitized.cachedInputTokens;
-  if (typeof cachedInputTokens === "number") {
+  if (typeof cachedInputTokens === "number" && Number.isFinite(cachedInputTokens)) {
     result.cachedInputTokens = cachedInputTokens;
   } else if (cachedInputTokens !== undefined && cachedInputTokens !== null) {
     return undefined;
   }
   const outputTokens = sanitized.outputTokens;
-  if (typeof outputTokens === "number") {
+  if (typeof outputTokens === "number" && Number.isFinite(outputTokens)) {
     result.outputTokens = outputTokens;
   } else if (outputTokens !== undefined && outputTokens !== null) {
     return undefined;
   }
   const totalCostUsd = sanitized.totalCostUsd;
-  if (typeof totalCostUsd === "number") {
+  if (typeof totalCostUsd === "number" && Number.isFinite(totalCostUsd)) {
     result.totalCostUsd = totalCostUsd;
   } else if (totalCostUsd !== undefined && totalCostUsd !== null) {
+    return undefined;
+  }
+  const contextWindowMaxTokens = sanitized.contextWindowMaxTokens;
+  if (typeof contextWindowMaxTokens === "number" && Number.isFinite(contextWindowMaxTokens)) {
+    result.contextWindowMaxTokens = contextWindowMaxTokens;
+  } else if (contextWindowMaxTokens !== undefined && contextWindowMaxTokens !== null) {
+    return undefined;
+  }
+  const contextWindowUsedTokens = sanitized.contextWindowUsedTokens;
+  if (typeof contextWindowUsedTokens === "number" && Number.isFinite(contextWindowUsedTokens)) {
+    result.contextWindowUsedTokens = contextWindowUsedTokens;
+  } else if (contextWindowUsedTokens !== undefined && contextWindowUsedTokens !== null) {
     return undefined;
   }
   return Object.keys(result).length ? result : undefined;

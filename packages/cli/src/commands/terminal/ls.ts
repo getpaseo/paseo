@@ -20,7 +20,8 @@ export async function runLsCommand(
   const cwd = options.all ? undefined : (options.cwd ?? process.cwd());
 
   try {
-    const payload = cwd === undefined ? await client.listTerminals() : await client.listTerminals(cwd);
+    const payload =
+      cwd === undefined ? await client.listTerminals() : await client.listTerminals(cwd);
     return {
       type: "list",
       data: payload.terminals.map((terminal) => toTerminalRow(terminal, payload.cwd ?? cwd)),

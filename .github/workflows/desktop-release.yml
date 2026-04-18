@@ -35,8 +35,43 @@ env:
   DESKTOP_PACKAGE_PATH: 'packages/desktop'
 
 jobs:
+  create-release:
+    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all') }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Resolve release metadata
+        shell: bash
+        run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
+
+      - name: Create GitHub release
+        if: env.IS_SMOKE_TAG != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists, skipping creation"
+          else
+            prerelease_flag=""
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              prerelease_flag="--prerelease"
+            fi
+            gh release create "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              --title "Paseo $RELEASE_TAG" \
+              --generate-notes \
+              $prerelease_flag
+          fi
+
   publish-macos:
-    if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'macos')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-macos-v'))) }}
+    needs: [create-release]
+    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'macos')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-macos-v')))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -219,7 +254,8 @@ jobs:
         run: gh release upload "$RELEASE_TAG" latest-mac.yml --clobber --repo "${{ github.repository }}"
 
   publish-linux:
-    if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-linux-v'))) }}
+    needs: [create-release]
+    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-linux-v')))) }}
     permissions:
       contents: write
       packages: read
@@ -285,7 +321,8 @@ jobs:
           npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --linux --x64 "${publish_args[@]}"
 
   publish-windows:
-    if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'windows')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-windows-v'))) }}
+    needs: [create-release]
+    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'windows')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-windows-v')))) }}
     permissions:
       contents: write
       packages: read

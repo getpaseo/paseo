@@ -12,7 +12,8 @@ export interface DaemonStartOptions {
   foreground?: boolean;
   relay?: boolean;
   mcp?: boolean;
-  allowedHosts?: string;
+  injectMcp?: boolean;
+  hostnames?: string;
 }
 
 export interface LocalDaemonPidInfo {
@@ -95,6 +96,9 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   if (options.mcp === false) {
     args.push("--no-mcp");
   }
+  if (options.injectMcp === false) {
+    args.push("--no-inject-mcp");
+  }
 
   return args;
 }
@@ -109,8 +113,8 @@ function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   } else if (options.port) {
     childEnv.PASEO_LISTEN = `127.0.0.1:${options.port}`;
   }
-  if (options.allowedHosts) {
-    childEnv.PASEO_ALLOWED_HOSTS = options.allowedHosts;
+  if (options.hostnames) {
+    childEnv.PASEO_HOSTNAMES = options.hostnames;
   }
   return childEnv;
 }
@@ -125,12 +129,7 @@ function resolveDaemonRunnerEntry(): string {
       try {
         const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: string };
         if (packageJson.name === "@getpaseo/server") {
-          const distRunner = path.join(
-            currentDir,
-            "dist",
-            "scripts",
-            "supervisor-entrypoint.js",
-          );
+          const distRunner = path.join(currentDir, "dist", "scripts", "supervisor-entrypoint.js");
           if (existsSync(distRunner)) {
             return distRunner;
           }
@@ -323,6 +322,7 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
     ...envWithHome(options.home),
     // Status should reflect local persisted config + pid file, not inherited daemon env overrides.
     PASEO_LISTEN: undefined,
+    PASEO_HOSTNAMES: undefined,
     PASEO_ALLOWED_HOSTS: undefined,
   };
   const home = resolvePaseoHome(env);

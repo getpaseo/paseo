@@ -1,4 +1,5 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { AgentAttachment } from "../../shared/messages.js";
 
 export type AgentProvider = string;
 
@@ -43,6 +44,8 @@ export type AgentMode = {
   id: string;
   label: string;
   description?: string;
+  icon?: string;
+  colorTier?: string;
 };
 
 export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";
@@ -73,6 +76,9 @@ export interface ProviderSnapshotEntry {
   models?: AgentModelDefinition[];
   modes?: AgentMode[];
   fetchedAt?: string;
+  label?: string;
+  description?: string;
+  defaultModeId?: string | null;
 }
 
 export type AgentFeatureToggle = {
@@ -117,7 +123,8 @@ export type AgentPersistenceHandle = {
 
 export type AgentPromptContentBlock =
   | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string };
+  | { type: "image"; data: string; mimeType: string }
+  | AgentAttachment;
 
 export type AgentPromptInput = string | AgentPromptContentBlock[];
 
@@ -132,6 +139,8 @@ export type AgentUsage = {
   cachedInputTokens?: number;
   outputTokens?: number;
   totalCostUsd?: number;
+  contextWindowMaxTokens?: number;
+  contextWindowUsedTokens?: number;
 };
 
 export const TOOL_CALL_ICON_NAMES = [
@@ -212,6 +221,7 @@ export type ToolCallDetail =
         index: number;
         command: string;
         cwd: string;
+        log: string;
         status: "running" | "completed" | "failed";
         exitCode: number | null;
         durationMs?: number;
@@ -299,6 +309,7 @@ export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
+  | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | {
       type: "turn_failed";
       provider: AgentProvider;
@@ -309,7 +320,12 @@ export type AgentStreamEvent =
     }
   | { type: "turn_canceled"; provider: AgentProvider; reason: string; turnId?: string }
   | { type: "timeline"; item: AgentTimelineItem; provider: AgentProvider; turnId?: string }
-  | { type: "permission_requested"; provider: AgentProvider; request: AgentPermissionRequest; turnId?: string }
+  | {
+      type: "permission_requested";
+      provider: AgentProvider;
+      request: AgentPermissionRequest;
+      turnId?: string;
+    }
   | {
       type: "permission_resolved";
       provider: AgentProvider;
@@ -328,6 +344,14 @@ export type AgentPermissionRequestKind = "tool" | "plan" | "question" | "mode" |
 
 export type AgentPermissionUpdate = AgentMetadata;
 
+export type AgentPermissionAction = {
+  id: string;
+  label: string;
+  behavior: "allow" | "deny";
+  variant?: "primary" | "secondary" | "danger";
+  intent?: "implement" | "implement_resume" | "dismiss";
+};
+
 export type AgentPermissionRequest = {
   id: string;
   provider: AgentProvider;
@@ -338,17 +362,20 @@ export type AgentPermissionRequest = {
   input?: AgentMetadata;
   detail?: ToolCallDetail;
   suggestions?: AgentPermissionUpdate[];
+  actions?: AgentPermissionAction[];
   metadata?: AgentMetadata;
 };
 
 export type AgentPermissionResponse =
   | {
       behavior: "allow";
+      selectedActionId?: string;
       updatedInput?: AgentMetadata;
       updatedPermissions?: AgentPermissionUpdate[];
     }
   | {
       behavior: "deny";
+      selectedActionId?: string;
       message?: string;
       interrupt?: boolean;
     };
@@ -427,6 +454,14 @@ export interface AgentLaunchContext {
   env?: Record<string, string>;
 }
 
+/**
+ * Returned by respondToPermission when the permission resolution requires
+ * a follow-up turn (e.g. Codex plan approval → implementation).
+ */
+export interface AgentPermissionResult {
+  followUpPrompt?: AgentPromptInput;
+}
+
 export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
@@ -441,7 +476,10 @@ export interface AgentSession {
   getCurrentMode(): Promise<string | null>;
   setMode(modeId: string): Promise<void>;
   getPendingPermissions(): AgentPermissionRequest[];
-  respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void>;
+  respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+  ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
   interrupt(): Promise<void>;
   close(): Promise<void>;

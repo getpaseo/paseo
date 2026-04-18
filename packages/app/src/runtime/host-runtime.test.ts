@@ -5,6 +5,7 @@ import type {
   FetchAgentsEntry,
   FetchAgentsOptions,
 } from "@server/client/daemon-client";
+import type { ConnectionOffer } from "@server/shared/connection-offer";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import {
@@ -186,6 +187,17 @@ function makeHost(input?: Partial<HostProfile>): HostProfile {
     preferredConnectionId: input?.preferredConnectionId ?? direct.id,
     createdAt: input?.createdAt ?? new Date(0).toISOString(),
     updatedAt: input?.updatedAt ?? new Date(0).toISOString(),
+  };
+}
+
+function makeOffer(input?: Partial<ConnectionOffer>): ConnectionOffer {
+  return {
+    v: 2,
+    serverId: input?.serverId ?? "srv_offer",
+    daemonPublicKeyB64: input?.daemonPublicKeyB64 ?? "pk_test_offer",
+    relay: {
+      endpoint: input?.relay?.endpoint ?? "relay.paseo.sh:443",
+    },
   };
 }
 
@@ -540,7 +552,40 @@ describe("HostRuntimeController", () => {
     unsubscribe();
   });
 
-  it("logs typed reason codes for connection transitions", async () => {
+  it("preserves transport disconnect reasons on the runtime snapshot", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const clients: FakeDaemonClient[] = [];
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(
+        {
+          "direct:lan:6767": 12,
+        },
+        clients,
+      ),
+    });
+
+    await controller.start({ autoProbe: false });
+    clients[0]?.setConnectionState({
+      status: "disconnected",
+      reason: "transport closed",
+    });
+
+    expect(controller.getSnapshot()).toMatchObject({
+      connectionStatus: "error",
+      lastError: "transport closed",
+    });
+  });
+
+  it("does not emit legacy typed reason-code transition logs", async () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
       const host = makeHost({
@@ -574,7 +619,7 @@ describe("HostRuntimeController", () => {
         .map((call) => call[1] as { reasonCode?: string | null });
       const lastTransition = transitionPayloads[transitionPayloads.length - 1] ?? null;
 
-      expect(lastTransition?.reasonCode).toBe("transport_error");
+      expect(lastTransition?.reasonCode).toBeUndefined();
     } finally {
       infoSpy.mockRestore();
     }
@@ -1196,12 +1241,7 @@ describe("HostRuntimeStore", () => {
         archivedAt: stale.archivedAt ? new Date(stale.archivedAt) : null,
         attentionTimestamp: stale.attentionTimestamp ? new Date(stale.attentionTimestamp) : null,
       };
-      return new Map([
-        [
-          stale.id,
-          staleAgent,
-        ],
-      ]);
+      return new Map([[stale.id, staleAgent]]);
     });
 
     store.syncHosts([host]);
@@ -1292,6 +1332,55 @@ describe("HostRuntimeStore", () => {
 
     const renamed = store.getHosts().find((h) => h.serverId === "srv_rename");
     expect(renamed?.label).toBe("new name");
+
+    store.syncHosts([]);
+  });
+
+  it("uses the advertised hostname when adding a relay host from a pairing offer", async () => {
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await store.upsertConnectionFromOffer(makeOffer(), "mbp");
+
+    const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
+    expect(pairedHost?.label).toBe("mbp");
+
+    store.syncHosts([]);
+  });
+
+  it("uses the latest advertised hostname when re-pairing an existing relay host", async () => {
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await store.upsertRelayConnection({
+      serverId: "srv_offer",
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pk_test_offer",
+      label: "Custom name",
+    });
+
+    await store.upsertConnectionFromOffer(makeOffer(), "mbp");
+
+    const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
+    expect(pairedHost?.label).toBe("mbp");
 
     store.syncHosts([]);
   });

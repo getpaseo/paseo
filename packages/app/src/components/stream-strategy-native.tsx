@@ -313,7 +313,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       keyExtractor={(item) => item.id}
       testID="agent-chat-scroll"
       nativeID="agent-chat-scroll-native-virtualized"
-      ListHeaderComponent={liveHeaderContent ? () => liveHeaderContent : undefined}
+      ListHeaderComponent={liveHeaderContent ?? undefined}
       contentContainerStyle={baseListContentContainerStyle}
       style={listStyle}
       onLayout={handleListLayout}

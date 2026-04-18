@@ -1,6 +1,13 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
+import type { ChildProcess } from "node:child_process";
+import {
+  createOpencodeClient,
+  type AssistantMessage as OpenCodeAssistantMessage,
+  type Event as OpenCodeEvent,
+  type FilePartInput as OpenCodeFilePartInput,
+  type OpencodeClient,
+  type Part as OpenCodePart,
+  type TextPartInput as OpenCodeTextPartInput,
+} from "@opencode-ai/sdk/v2/client";
 import net from "node:net";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -9,7 +16,6 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentLaunchContext,
-  AgentMetadata,
   AgentMode,
   AgentModelDefinition,
   AgentPermissionRequest,
@@ -30,6 +36,7 @@ import type {
   ListPersistedAgentsOptions,
   McpServerConfig,
   PersistedAgentDescriptor,
+  ToolCallDetail,
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
@@ -37,11 +44,8 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
-import {
-  findExecutable,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "../../../utils/executable.js";
+import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { spawnProcess } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   formatDiagnosticStatus,
@@ -50,6 +54,7 @@ import {
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -91,6 +96,25 @@ type OpenCodeMcpConfig =
     };
 
 const MCP_ALREADY_PRESENT_ERROR_TOKENS = ["already", "exists", "connected"] as const;
+const OPENCODE_PROVIDER_LIST_TIMEOUT_MS = 30_000;
+const OPENCODE_FATAL_RETRY_MESSAGE_TOKENS = [
+  "insufficient balance",
+  "no resource package",
+  "please recharge",
+  "invalid api key",
+  "unauthorized",
+  "authentication",
+  "model not found",
+  "unknown model",
+  "does not exist",
+  "unsupported model",
+] as const;
+const OPENCODE_HEADERS_TIMEOUT_TOKENS = [
+  "headers timeout",
+  "headers timeout error",
+  "headers_timeout",
+  "und_err_headers_timeout",
+] as const;
 
 const OpencodeToolStateSchema = z
   .object({
@@ -171,8 +195,8 @@ const OpencodeToolPartToTimelineItemSchema = OpencodeToolPartTimelineEnvelopeSch
     }),
 );
 
-function resolveOpenCodeBinary(): string {
-  const found = findExecutable("opencode");
+async function resolveOpenCodeBinary(): Promise<string> {
+  const found = await findExecutable("opencode");
   if (found) {
     return found;
   }
@@ -215,6 +239,124 @@ function normalizeTurnFailureError(error: unknown): string {
   return normalized.length > 0 ? normalized : "Unknown error";
 }
 
+function isOpenCodeNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "NotFoundError"
+  );
+}
+
+async function reconcileOpenCodeSessionClose(params: {
+  client: Pick<OpencodeClient, "session">;
+  sessionId: string;
+  directory: string;
+  logger: Logger;
+}): Promise<void> {
+  const { client, sessionId, directory, logger } = params;
+
+  try {
+    const response = await client.session.abort({
+      sessionID: sessionId,
+      directory,
+    });
+    if (response.error && !isOpenCodeNotFoundError(response.error)) {
+      logger.warn(
+        {
+          sessionId,
+          error: normalizeTurnFailureError(response.error),
+        },
+        "Failed to abort OpenCode session during close",
+      );
+    }
+  } catch (error) {
+    logger.warn(
+      {
+        sessionId,
+        error: normalizeTurnFailureError(error),
+      },
+      "Failed to abort OpenCode session during close",
+    );
+  }
+
+  try {
+    const response = await client.session.update({
+      sessionID: sessionId,
+      directory,
+      time: { archived: Date.now() },
+    });
+    if (response.error && !isOpenCodeNotFoundError(response.error)) {
+      logger.warn(
+        {
+          sessionId,
+          error: normalizeTurnFailureError(response.error),
+        },
+        "Failed to archive OpenCode session during close",
+      );
+    }
+  } catch (error) {
+    logger.warn(
+      {
+        sessionId,
+        error: normalizeTurnFailureError(error),
+      },
+      "Failed to archive OpenCode session during close",
+    );
+  }
+}
+
+function isFatalOpenCodeRetryMessage(message: string | null | undefined): boolean {
+  const normalized = typeof message === "string" ? message.trim().toLowerCase() : "";
+  if (!normalized) {
+    return false;
+  }
+  return OPENCODE_FATAL_RETRY_MESSAGE_TOKENS.some((token) => normalized.includes(token));
+}
+
+function isOpenCodeHeadersTimeoutFailure(error: unknown): boolean {
+  const diagnostics = new Set<string>();
+  const queue: unknown[] = [error];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+
+    const normalized = stringifyUnknownError(current).trim().toLowerCase();
+    if (normalized) {
+      diagnostics.add(normalized);
+    }
+
+    if (typeof current === "object") {
+      const record = current as {
+        message?: unknown;
+        code?: unknown;
+        name?: unknown;
+        cause?: unknown;
+      };
+
+      for (const value of [record.message, record.code, record.name]) {
+        if (typeof value === "string") {
+          const diagnostic = value.trim().toLowerCase();
+          if (diagnostic) {
+            diagnostics.add(diagnostic);
+          }
+        }
+      }
+
+      if (record.cause) {
+        queue.push(record.cause);
+      }
+    }
+  }
+
+  return [...diagnostics].some((diagnostic) =>
+    OPENCODE_HEADERS_TIMEOUT_TOKENS.some((token) => diagnostic.includes(token)),
+  );
+}
+
 function isAlreadyPresentMcpError(error: unknown): boolean {
   const normalized = stringifyUnknownError(error).toLowerCase();
   return MCP_ALREADY_PRESENT_ERROR_TOKENS.some((token) => normalized.includes(token));
@@ -236,14 +378,15 @@ async function findAvailablePort(): Promise<number> {
   });
 }
 
-function resolvePartDedupeKey(part: AgentMetadata, partType: "text" | "reasoning"): string | null {
-  const partId = part.id;
-  if (typeof partId === "string" && partId.trim().length > 0) {
-    return `${partType}:${partId}`;
+function resolvePartDedupeKey(
+  part: { id: string; messageID: string },
+  partType: "text" | "reasoning",
+): string | null {
+  if (part.id.trim().length > 0) {
+    return `${partType}:${part.id}`;
   }
-  const messageId = part.messageID;
-  if (typeof messageId === "string" && messageId.trim().length > 0) {
-    return `${partType}:message:${messageId}`;
+  if (part.messageID.trim().length > 0) {
+    return `${partType}:message:${part.messageID}`;
   }
   return null;
 }
@@ -267,6 +410,292 @@ function sortOpenCodeModes(modes: AgentMode[]): AgentMode[] {
     return left.label.localeCompare(right.label);
   });
 }
+
+function readPositiveFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function buildOpenCodeModelLookupKey(providerId: string, modelId: string): string {
+  return `${providerId}/${modelId}`;
+}
+
+function parseOpenCodeModelLookupKey(modelId: string | null | undefined): string | undefined {
+  if (typeof modelId !== "string" || modelId.trim().length === 0) {
+    return undefined;
+  }
+
+  const slashIndex = modelId.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === modelId.length - 1) {
+    return undefined;
+  }
+
+  const providerId = modelId.slice(0, slashIndex).trim();
+  const providerModelId = modelId.slice(slashIndex + 1).trim();
+  if (!providerId || !providerModelId) {
+    return undefined;
+  }
+
+  return buildOpenCodeModelLookupKey(providerId, providerModelId);
+}
+
+function extractOpenCodeModelContextWindow(model: unknown): number | undefined {
+  if (!model || typeof model !== "object") {
+    return undefined;
+  }
+  const limit = (model as { limit?: { context?: unknown } }).limit;
+  return readPositiveFiniteNumber(limit?.context);
+}
+
+function buildOpenCodeModelDefinition(
+  provider: {
+    id: string;
+    name: string;
+  },
+  modelId: string,
+  model: {
+    name: string;
+    family?: string;
+    release_date?: string;
+    attachment?: boolean;
+    reasoning?: boolean;
+    tool_call?: boolean;
+    cost?: unknown;
+    limit?: { context?: number; input?: number; output?: number };
+    variants?: Record<string, unknown>;
+  },
+): AgentModelDefinition {
+  const rawVariants = model.variants ? Object.keys(model.variants) : [];
+  const thinkingOptions = rawVariants.map((id, index) => ({
+    id,
+    label: id,
+    isDefault: index === 0,
+  }));
+
+  return {
+    provider: "opencode",
+    id: `${provider.id}/${modelId}`,
+    label: model.name,
+    description: `${provider.name} - ${model.family ?? ""}`.trim(),
+    thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
+    defaultThinkingOptionId: thinkingOptions[0]?.id,
+    metadata: {
+      providerId: provider.id,
+      providerName: provider.name,
+      modelId,
+      family: model.family,
+      releaseDate: model.release_date,
+      supportsAttachments: model.attachment,
+      supportsReasoning: model.reasoning,
+      supportsToolCall: model.tool_call,
+      cost: model.cost,
+      contextWindowMaxTokens: extractOpenCodeModelContextWindow(model),
+      ...(model.limit ? { limit: model.limit } : {}),
+    },
+  };
+}
+
+function resolveOpenCodeSelectedModelContextWindow(
+  providers:
+    | {
+        connected?: string[];
+        all?: Array<{
+          id: string;
+          models?: Record<string, unknown>;
+        }>;
+      }
+    | null
+    | undefined,
+  modelId: string | null | undefined,
+): number | undefined {
+  if (!providers) {
+    return undefined;
+  }
+  const modelLookupKey = parseOpenCodeModelLookupKey(modelId);
+  if (!modelLookupKey) {
+    return undefined;
+  }
+  const lookup = buildOpenCodeModelContextWindowLookup(providers);
+  return lookup.get(modelLookupKey);
+}
+
+function buildOpenCodeModelContextWindowLookup(
+  providers:
+    | {
+        connected?: string[];
+        all?: Array<{
+          id: string;
+          models?: Record<string, unknown>;
+        }>;
+      }
+    | null
+    | undefined,
+): Map<string, number> {
+  const lookup = new Map<string, number>();
+  if (!providers) {
+    return lookup;
+  }
+
+  const connectedProviderIds = new Set(providers.connected ?? []);
+  for (const provider of providers.all ?? []) {
+    if (!connectedProviderIds.has(provider.id)) {
+      continue;
+    }
+    for (const [modelId, modelDefinition] of Object.entries(provider.models ?? {})) {
+      const contextWindow = extractOpenCodeModelContextWindow(modelDefinition);
+      if (contextWindow === undefined) {
+        continue;
+      }
+      lookup.set(buildOpenCodeModelLookupKey(provider.id, modelId), contextWindow);
+    }
+  }
+
+  return lookup;
+}
+
+function resolveOpenCodeModelLookupKeyFromAssistantMessage(
+  info: OpenCodeAssistantMessage,
+): string | undefined {
+  const providerId = info.providerID;
+  const modelId = info.modelID;
+  if (!providerId || !modelId) {
+    return undefined;
+  }
+
+  return buildOpenCodeModelLookupKey(providerId, modelId);
+}
+
+function mergeOpenCodeStepFinishUsage(
+  usage: AgentUsage,
+  part: {
+    cost?: unknown;
+    tokens?: {
+      input?: unknown;
+      output?: unknown;
+      reasoning?: unknown;
+      total?: unknown;
+      cache?: {
+        read?: unknown;
+        write?: unknown;
+      };
+    };
+  },
+): void {
+  const inputTokens = readPositiveFiniteNumber(part.tokens?.input);
+  const outputTokens = readPositiveFiniteNumber(part.tokens?.output);
+  const reasoningTokens = readPositiveFiniteNumber(part.tokens?.reasoning);
+  const cacheReadTokens = readPositiveFiniteNumber(part.tokens?.cache?.read);
+  const cacheWriteTokens = readPositiveFiniteNumber(part.tokens?.cache?.write);
+  const totalTokens =
+    (inputTokens ?? 0) +
+    (outputTokens ?? 0) +
+    (reasoningTokens ?? 0) +
+    (cacheReadTokens ?? 0) +
+    (cacheWriteTokens ?? 0);
+  const cost = readPositiveFiniteNumber(part.cost);
+
+  if (inputTokens !== undefined) {
+    usage.inputTokens = inputTokens;
+  }
+  if (cacheReadTokens !== undefined) {
+    usage.cachedInputTokens = cacheReadTokens;
+  }
+  if (outputTokens !== undefined) {
+    usage.outputTokens = outputTokens;
+  }
+  if (totalTokens > 0) {
+    usage.contextWindowUsedTokens = totalTokens;
+  }
+  if (cost !== undefined) {
+    usage.totalCostUsd = (usage.totalCostUsd ?? 0) + cost;
+  }
+}
+
+function hasNormalizedOpenCodeUsage(usage: AgentUsage): boolean {
+  return [
+    usage.inputTokens,
+    usage.cachedInputTokens,
+    usage.outputTokens,
+    usage.totalCostUsd,
+    usage.contextWindowMaxTokens,
+    usage.contextWindowUsedTokens,
+  ].some((value) => typeof value === "number" && Number.isFinite(value));
+}
+
+function getOpenCodeAttachmentExtension(mimeType: string): string {
+  switch (mimeType) {
+    case "image/png":
+      return "png";
+    case "image/jpeg":
+      return "jpg";
+    case "image/webp":
+      return "webp";
+    case "image/gif":
+      return "gif";
+    case "image/svg+xml":
+      return "svg";
+    default:
+      return "bin";
+  }
+}
+
+function toOpenCodeDataUrl(mimeType: string, data: string): { mimeType: string; url: string } {
+  const match = data.match(/^data:([^;,]+);base64,(.+)$/);
+  if (match) {
+    return {
+      mimeType: match[1] ?? mimeType,
+      url: data,
+    };
+  }
+  return {
+    mimeType,
+    url: `data:${mimeType};base64,${data}`,
+  };
+}
+
+function buildOpenCodePromptParts(
+  prompt: AgentPromptInput,
+): Array<OpenCodeTextPartInput | OpenCodeFilePartInput> {
+  if (typeof prompt === "string") {
+    return [{ type: "text", text: prompt }];
+  }
+  let attachmentOrdinal = 0;
+  const output: Array<OpenCodeTextPartInput | OpenCodeFilePartInput> = [];
+  for (const part of prompt) {
+    if (part.type === "text") {
+      output.push({ type: "text", text: part.text });
+      continue;
+    }
+    if (part.type === "github_pr" || part.type === "github_issue") {
+      output.push({ type: "text", text: renderPromptAttachmentAsText(part) });
+      continue;
+    }
+    attachmentOrdinal += 1;
+    const normalized = toOpenCodeDataUrl(part.mimeType, part.data);
+    output.push({
+      type: "file",
+      mime: normalized.mimeType,
+      filename: `attachment-${attachmentOrdinal}.${getOpenCodeAttachmentExtension(
+        normalized.mimeType,
+      )}`,
+      url: normalized.url,
+    });
+  }
+  return output;
+}
+
+export const __openCodeInternals = {
+  buildOpenCodePromptParts,
+  buildOpenCodeModelContextWindowLookup,
+  buildOpenCodeModelDefinition,
+  buildOpenCodeModelLookupKey,
+  extractOpenCodeModelContextWindow,
+  hasNormalizedOpenCodeUsage,
+  mergeOpenCodeStepFinishUsage,
+  parseOpenCodeModelLookupKey,
+  reconcileOpenCodeSessionClose,
+  resolveOpenCodeModelLookupKeyFromAssistantMessage,
+  resolveOpenCodeSelectedModelContextWindow,
+};
 
 export class OpenCodeServerManager {
   private static instance: OpenCodeServerManager | null = null;
@@ -343,19 +772,16 @@ export class OpenCodeServerManager {
   private async startServer(): Promise<{ port: number; url: string }> {
     this.port = await findAvailablePort();
     const url = `http://127.0.0.1:${this.port}`;
-    const launchPrefix = resolveProviderCommandPrefix(
+    const launchPrefix = await resolveProviderCommandPrefix(
       this.runtimeSettings?.command,
       resolveOpenCodeBinary,
     );
 
     return new Promise((resolve, reject) => {
-      this.server = spawn(
-        quoteWindowsCommand(launchPrefix.command),
-        [...launchPrefix.args, "serve", "--port", String(this.port)].map((argument) =>
-          quoteWindowsArgument(argument),
-        ),
+      this.server = spawnProcess(
+        launchPrefix.command,
+        [...launchPrefix.args, "serve", "--port", String(this.port)],
         {
-          shell: process.platform === "win32",
           stdio: ["ignore", "pipe", "pipe"],
           env: applyProviderEnv(process.env, this.runtimeSettings),
         },
@@ -423,6 +849,7 @@ export class OpenCodeAgentClient implements AgentClient {
   private readonly serverManager: OpenCodeServerManager;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
+  private readonly modelContextWindows = new Map<string, number>();
 
   constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
     this.logger = logger.child({ module: "agent", provider: "opencode" });
@@ -460,7 +887,15 @@ export class OpenCodeAgentClient implements AgentClient {
       throw new Error("OpenCode session creation returned no data");
     }
 
-    return new OpenCodeAgentSession(openCodeConfig, client, session.id, this.logger);
+    await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+
+    return new OpenCodeAgentSession(
+      openCodeConfig,
+      client,
+      session.id,
+      this.logger,
+      new Map(this.modelContextWindows),
+    );
   }
 
   async resumeSession(
@@ -485,7 +920,15 @@ export class OpenCodeAgentClient implements AgentClient {
       directory: openCodeConfig.cwd,
     });
 
-    return new OpenCodeAgentSession(openCodeConfig, client, handle.sessionId, this.logger);
+    await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+
+    return new OpenCodeAgentSession(
+      openCodeConfig,
+      client,
+      handle.sessionId,
+      this.logger,
+      new Map(this.modelContextWindows),
+    );
   }
 
   async listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
@@ -495,16 +938,17 @@ export class OpenCodeAgentClient implements AgentClient {
       directory: options?.cwd ?? process.cwd(),
     });
 
-    // Set a timeout for the API call to fail fast if OpenCode isn't responding
+    // Background model discovery can be legitimately slow while OpenCode refreshes
+    // provider state, so allow longer than turn execution paths.
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(
         () =>
           reject(
             new Error(
-              "OpenCode provider.list timed out after 10s - server may not be authenticated or connected to any providers",
+              `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
             ),
           ),
-        10_000,
+        OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
       );
     });
 
@@ -533,6 +977,7 @@ export class OpenCodeAgentClient implements AgentClient {
     }
 
     const models: AgentModelDefinition[] = [];
+    this.modelContextWindows.clear();
     for (const provider of providers.all) {
       // Skip providers that aren't connected/configured
       if (!connectedProviderIds.has(provider.id)) {
@@ -540,32 +985,15 @@ export class OpenCodeAgentClient implements AgentClient {
       }
 
       for (const [modelId, model] of Object.entries(provider.models)) {
-        const rawVariants = model.variants ? Object.keys(model.variants) : [];
-        const thinkingOptions = rawVariants.map((id, index) => ({
-          id,
-          label: id,
-          isDefault: index === 0,
-        }));
-
-        models.push({
-          provider: "opencode",
-          id: `${provider.id}/${modelId}`,
-          label: model.name,
-          description: `${provider.name} - ${model.family ?? ""}`.trim(),
-          thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
-          defaultThinkingOptionId: thinkingOptions[0]?.id,
-          metadata: {
-            providerId: provider.id,
-            providerName: provider.name,
-            modelId,
-            family: model.family,
-            releaseDate: model.release_date,
-            supportsAttachments: model.attachment,
-            supportsReasoning: model.reasoning,
-            supportsToolCall: model.tool_call,
-            cost: model.cost,
-          },
-        });
+        const definition = buildOpenCodeModelDefinition(provider, modelId, model);
+        const contextWindowMaxTokens = extractOpenCodeModelContextWindow(model);
+        if (contextWindowMaxTokens !== undefined) {
+          this.modelContextWindows.set(
+            buildOpenCodeModelLookupKey(provider.id, modelId),
+            contextWindowMaxTokens,
+          );
+        }
+        models.push(definition);
       }
     }
 
@@ -578,16 +1006,10 @@ export class OpenCodeAgentClient implements AgentClient {
     const client = createOpencodeClient({ baseUrl: url, directory });
 
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error("OpenCode app.agents timed out after 10s")),
-        10_000,
-      );
+      setTimeout(() => reject(new Error("OpenCode app.agents timed out after 10s")), 10_000);
     });
 
-    const response = await Promise.race([
-      client.app.agents({ directory }),
-      timeoutPromise,
-    ]);
+    const response = await Promise.race([client.app.agents({ directory }), timeoutPromise]);
 
     if (response.error || !response.data) {
       return DEFAULT_MODES;
@@ -617,15 +1039,15 @@ export class OpenCodeAgentClient implements AgentClient {
   async isAvailable(): Promise<boolean> {
     const command = this.runtimeSettings?.command;
     if (command?.mode === "replace") {
-      return existsSync(command.argv[0]);
+      return await isCommandAvailable(command.argv[0]);
     }
-    return true;
+    return await isCommandAvailable("opencode");
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
       const available = await this.isAvailable();
-      const resolvedBinary = findExecutable("opencode");
+      const resolvedBinary = await findExecutable("opencode");
       let serverStatus = "Not running";
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
@@ -667,7 +1089,10 @@ export class OpenCodeAgentClient implements AgentClient {
             label: "Binary",
             value: resolvedBinary ?? "not found",
           },
-          { label: "Version", value: resolvedBinary ? resolveBinaryVersion(resolvedBinary) : "unknown" },
+          {
+            label: "Version",
+            value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown",
+          },
           { label: "Server", value: serverStatus },
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
@@ -685,6 +1110,22 @@ export class OpenCodeAgentClient implements AgentClient {
     }
     return { ...config, provider: "opencode" };
   }
+
+  private async populateModelContextWindowCache(
+    client: OpencodeClient,
+    cwd: string,
+  ): Promise<void> {
+    const response = await client.provider.list({ directory: cwd });
+    if (response.error || !response.data) {
+      return;
+    }
+
+    const lookup = buildOpenCodeModelContextWindowLookup(response.data);
+    this.modelContextWindows.clear();
+    for (const [modelLookupKey, contextWindowMaxTokens] of lookup.entries()) {
+      this.modelContextWindows.set(modelLookupKey, contextWindowMaxTokens);
+    }
+  }
 }
 
 export type OpenCodeEventTranslationState = {
@@ -695,6 +1136,8 @@ export type OpenCodeEventTranslationState = {
   emittedStructuredMessageIds: Set<string>;
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
   partTypes: Map<string, string>;
+  modelContextWindowsByModelKey?: ReadonlyMap<string, number>;
+  onAssistantModelContextWindowResolved?: (contextWindowMaxTokens: number) => void;
 };
 
 function stringifyStructuredAssistantMessage(value: unknown): string | null {
@@ -722,51 +1165,160 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function normalizeQuestionOptions(
-  value: unknown,
-): Array<{ label: string; description?: string }> | null {
-  if (!Array.isArray(value)) {
+function mapOpenCodeTodosToTimelineItems(
+  todos: Array<{ content?: string | null; status?: string | null }>,
+): Extract<AgentTimelineItem, { type: "todo" }> {
+  return {
+    type: "todo",
+    items: todos.flatMap((todo) => {
+      const text = readNonEmptyString(todo.content);
+      if (!text) {
+        return [];
+      }
+
+      return [
+        {
+          text,
+          completed: todo.status === "completed",
+        },
+      ];
+    }),
+  };
+}
+
+function createCompactionTimelineItem(
+  status: Extract<AgentTimelineItem, { type: "compaction" }>["status"],
+  trigger?: Extract<AgentTimelineItem, { type: "compaction" }>["trigger"],
+): Extract<AgentTimelineItem, { type: "compaction" }> {
+  return {
+    type: "compaction",
+    status,
+    ...(trigger ? { trigger } : {}),
+  };
+}
+
+const PERMISSION_COMMAND_KEYS = ["command", "cmd", "shellCommand"] as const;
+const PERMISSION_CWD_KEYS = ["cwd", "directory", "path", "workdir"] as const;
+const PERMISSION_REASON_KEYS = ["reason", "purpose", "description", "message"] as const;
+const PERMISSION_TITLE_BY_NAME: Record<string, string> = {
+  external_directory: "Access external directory",
+  bash: "Run shell command",
+  read: "Read files",
+  read_file: "Read files",
+  write: "Write files",
+  write_file: "Write files",
+  create_file: "Write files",
+  edit: "Edit files",
+  apply_patch: "Edit files",
+  apply_diff: "Edit files",
+};
+
+function toHumanReadablePermissionTitle(permission: string): string {
+  const mapped = PERMISSION_TITLE_BY_NAME[permission];
+  if (mapped) {
+    return mapped;
+  }
+
+  const normalized = permission
+    .split(/[\s_-]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+  return normalized.length > 0 ? normalized : "Permission request";
+}
+
+function readFirstStringFromRecord(
+  record: Record<string, unknown> | null,
+  keys: readonly string[],
+): string | null {
+  if (!record) {
     return null;
   }
-
-  const options: Array<{ label: string; description?: string }> = [];
-  for (const item of value) {
-    if (typeof item === "string" && item.trim().length > 0) {
-      options.push({ label: item.trim() });
-      continue;
+  for (const key of keys) {
+    const value = readNonEmptyString(record[key]);
+    if (value) {
+      return value;
     }
+  }
+  return null;
+}
 
-    const record = readOpenCodeRecord(item);
-    const label = readNonEmptyString(record?.label);
-    if (!label) {
-      continue;
-    }
-    const description = readNonEmptyString(record?.description);
-    options.push(description ? { label, description } : { label });
+function readPermissionField(
+  metadata: Record<string, unknown> | null,
+  keys: readonly string[],
+): string | null {
+  const direct = readFirstStringFromRecord(metadata, keys);
+  if (direct) {
+    return direct;
   }
 
-  return options;
+  const nestedInput = readOpenCodeRecord(metadata?.input);
+  return readFirstStringFromRecord(nestedInput, keys);
+}
+
+function buildOpenCodePermissionInput(params: {
+  patterns: string[];
+  metadata: Record<string, unknown> | null;
+  tool: Record<string, unknown> | null;
+  command: string | null;
+}): Record<string, unknown> {
+  return {
+    ...(params.patterns.length > 0 ? { patterns: params.patterns } : {}),
+    ...(params.metadata ? { metadata: params.metadata } : {}),
+    ...(params.tool ? { tool: params.tool } : {}),
+    ...(params.command ? { command: params.command } : {}),
+  };
+}
+
+function buildOpenCodePermissionDetail(params: {
+  permission: string;
+  input: Record<string, unknown>;
+  command: string | null;
+  cwd: string | null;
+}): ToolCallDetail {
+  if (params.command) {
+    return {
+      type: "shell",
+      command: params.command,
+      ...(params.cwd ? { cwd: params.cwd } : {}),
+    };
+  }
+
+  return {
+    type: "unknown",
+    input: {
+      permission: params.permission,
+      ...params.input,
+    },
+    output: null,
+  };
+}
+
+function buildOpenCodePermissionDescription(params: {
+  reason: string | null;
+  patterns: string[];
+}): string | undefined {
+  const parts: string[] = [];
+  if (params.reason) {
+    parts.push(params.reason);
+  }
+  if (params.patterns.length > 0) {
+    parts.push(`Scope: ${params.patterns.join(", ")}`);
+  }
+  return parts.length > 0 ? parts.join(" - ") : undefined;
 }
 
 export function translateOpenCodeEvent(
-  event: unknown,
+  event: OpenCodeEvent,
   state: OpenCodeEventTranslationState,
 ): AgentStreamEvent[] {
   const events: AgentStreamEvent[] = [];
 
-  if (!event || typeof event !== "object") {
-    return events;
-  }
-
-  const e = event as { type?: string; properties?: AgentMetadata };
-  const type = e.type;
-  const props = e.properties ?? {};
-
-  switch (type) {
+  switch (event.type) {
     case "session.created":
     case "session.updated": {
-      const sessionId = props.id as string | undefined;
-      if (sessionId === state.sessionId) {
+      if (event.properties.info.id === state.sessionId) {
         events.push({
           type: "thread_started",
           sessionId: state.sessionId,
@@ -777,26 +1329,25 @@ export function translateOpenCodeEvent(
     }
 
     case "message.updated": {
-      const info = props.info as AgentMetadata | undefined;
-      if (!info) {
+      const info = event.properties.info;
+      if (info.sessionID !== state.sessionId) {
         break;
       }
-      const messageId = info.id as string | undefined;
-      const messageSessionId = info.sessionID as string | undefined;
-      const role = info.role as OpenCodeMessageRole | undefined;
 
-      if (messageId && messageSessionId === state.sessionId && role) {
-        state.messageRoles.set(messageId, role);
-        if (
-          role === "assistant" &&
-          !state.emittedStructuredMessageIds.has(messageId) &&
-          typeof info.time === "object" &&
-          info.time !== null &&
-          "completed" in info.time
-        ) {
+      state.messageRoles.set(info.id, info.role);
+      if (info.role === "assistant") {
+        const modelLookupKey = resolveOpenCodeModelLookupKeyFromAssistantMessage(info);
+        if (modelLookupKey) {
+          const contextWindowMaxTokens = state.modelContextWindowsByModelKey?.get(modelLookupKey);
+          if (contextWindowMaxTokens !== undefined) {
+            state.onAssistantModelContextWindowResolved?.(contextWindowMaxTokens);
+          }
+        }
+
+        if (!state.emittedStructuredMessageIds.has(info.id) && info.time?.completed !== undefined) {
           const text = stringifyStructuredAssistantMessage(info.structured);
           if (text) {
-            state.emittedStructuredMessageIds.add(messageId);
+            state.emittedStructuredMessageIds.add(info.id);
             events.push({
               type: "timeline",
               provider: "opencode",
@@ -809,82 +1360,46 @@ export function translateOpenCodeEvent(
     }
 
     case "message.part.updated": {
-      const part = props.part as AgentMetadata | undefined;
-      const delta = props.delta as string | undefined;
-      if (!part) {
+      const part = event.properties.part;
+      if (part.sessionID !== state.sessionId) {
         break;
       }
 
-      const partSessionId = part.sessionID as string | undefined;
-      if (partSessionId !== state.sessionId) {
-        break;
-      }
+      const messageRole = state.messageRoles.get(part.messageID);
+      state.partTypes.set(part.id, part.type);
 
-      const partId = part.id as string | undefined;
-      const messageId = part.messageID as string | undefined;
-      const messageRole = messageId ? state.messageRoles.get(messageId) : undefined;
-      const partType = part.type as string | undefined;
-      const partTime = part.time as { start?: number; end?: number } | undefined;
-
-      if (partId && partType) {
-        state.partTypes.set(partId, partType);
-      }
-
-      if (partType === "text") {
+      if (part.type === "text") {
         const partKey = resolvePartDedupeKey(part, "text");
         if (messageRole === "user") {
           break;
         }
-        if (!messageRole && !delta) {
-          break;
-        }
-        if (delta) {
-          if (partKey) {
-            state.streamedPartKeys.add(partKey);
-          }
-          events.push({
-            type: "timeline",
-            provider: "opencode",
-            item: { type: "assistant_message", text: delta },
-          });
-        } else if (partTime?.end) {
+        if (part.time?.end) {
           if (partKey && state.streamedPartKeys.delete(partKey)) {
             break;
           }
-          const text = part.text as string | undefined;
-          if (text) {
+          if (part.text) {
             events.push({
               type: "timeline",
               provider: "opencode",
-              item: { type: "assistant_message", text },
+              item: { type: "assistant_message", text: part.text },
             });
           }
         }
-      } else if (partType === "reasoning") {
+      } else if (part.type === "reasoning") {
         const partKey = resolvePartDedupeKey(part, "reasoning");
-        if (delta) {
-          if (partKey) {
-            state.streamedPartKeys.add(partKey);
-          }
-          events.push({
-            type: "timeline",
-            provider: "opencode",
-            item: { type: "reasoning", text: delta },
-          });
-        } else if (partTime?.end) {
+        if (part.time.end) {
           if (partKey && state.streamedPartKeys.delete(partKey)) {
             break;
           }
-          const text = part.text as string | undefined;
-          if (text) {
+          if (part.text) {
             events.push({
               type: "timeline",
               provider: "opencode",
-              item: { type: "reasoning", text },
+              item: { type: "reasoning", text: part.text },
             });
           }
         }
-      } else if (partType === "tool") {
+      } else if (part.type === "tool") {
         const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
         if (parsedToolPart.success && parsedToolPart.data) {
           events.push({
@@ -893,129 +1408,131 @@ export function translateOpenCodeEvent(
             item: parsedToolPart.data,
           });
         }
-      } else if (partType === "step-finish") {
-        const tokens = part.tokens as
-          | { input?: number; output?: number; reasoning?: number }
-          | undefined;
-        const cost = part.cost as number | undefined;
-
-        if (tokens) {
-          state.accumulatedUsage.inputTokens =
-            (state.accumulatedUsage.inputTokens ?? 0) + (tokens.input ?? 0);
-          state.accumulatedUsage.outputTokens =
-            (state.accumulatedUsage.outputTokens ?? 0) + (tokens.output ?? 0);
-        }
-        if (cost !== undefined) {
-          state.accumulatedUsage.totalCostUsd = (state.accumulatedUsage.totalCostUsd ?? 0) + cost;
+      } else if (part.type === "compaction") {
+        events.push({
+          type: "timeline",
+          provider: "opencode",
+          item: createCompactionTimelineItem("loading", part.auto ? "auto" : "manual"),
+        });
+      } else if (part.type === "step-finish") {
+        mergeOpenCodeStepFinishUsage(state.accumulatedUsage, part);
+        if (hasNormalizedOpenCodeUsage(state.accumulatedUsage)) {
+          events.push({
+            type: "usage_updated",
+            provider: "opencode",
+            usage: { ...state.accumulatedUsage },
+          });
         }
       }
       break;
     }
 
     case "message.part.delta": {
-      const deltaSessionId = props.sessionID as string | undefined;
-      if (deltaSessionId !== state.sessionId) {
+      const { sessionID, messageID, partID, field, delta } = event.properties;
+      if (sessionID !== state.sessionId) {
         break;
       }
 
-      const deltaMessageId = props.messageID as string | undefined;
-      const deltaMessageRole = deltaMessageId
-        ? state.messageRoles.get(deltaMessageId)
-        : undefined;
-      const deltaField = props.field as string | undefined;
-      const deltaText = props.delta as string | undefined;
-
-      if (!deltaText || !deltaField) {
+      if (!delta || !field) {
         break;
       }
 
-      const partId = props.partID as string | undefined;
-      const knownPartType = partId ? state.partTypes.get(partId) : undefined;
-      const isReasoning = knownPartType === "reasoning" || deltaField === "reasoning";
+      const messageRole = messageID ? state.messageRoles.get(messageID) : undefined;
+      const knownPartType = partID ? state.partTypes.get(partID) : undefined;
+      const isReasoning = knownPartType === "reasoning" || field === "reasoning";
 
       if (isReasoning) {
-        const partKey = partId ? `reasoning:${partId}` : null;
-        if (partKey) {
-          state.streamedPartKeys.add(partKey);
+        if (partID) {
+          state.streamedPartKeys.add(`reasoning:${partID}`);
         }
         events.push({
           type: "timeline",
           provider: "opencode",
-          item: { type: "reasoning", text: deltaText },
+          item: { type: "reasoning", text: delta },
         });
-      } else if (deltaField === "text") {
-        if (deltaMessageRole === "user") {
+      } else if (field === "text") {
+        if (messageRole === "user") {
           break;
         }
-        const partKey = partId ? `text:${partId}` : null;
-        if (partKey) {
-          state.streamedPartKeys.add(partKey);
+        if (partID) {
+          state.streamedPartKeys.add(`text:${partID}`);
         }
         events.push({
           type: "timeline",
           provider: "opencode",
-          item: { type: "assistant_message", text: deltaText },
+          item: { type: "assistant_message", text: delta },
         });
       }
       break;
     }
 
     case "permission.asked": {
-      const sessionId = props.sessionID as string | undefined;
-      if (sessionId !== state.sessionId) {
+      if (event.properties.sessionID !== state.sessionId) {
         break;
       }
 
-      const requestId = props.id as string;
-      const permission = props.permission as string;
-      const metadata = props.metadata as AgentMetadata | undefined;
-      const patterns = props.patterns as string[] | undefined;
-
-      const permRequest: AgentPermissionRequest = {
-        id: requestId,
-        provider: "opencode",
-        name: permission,
-        kind: "tool",
-        title: permission,
-        description: patterns?.join(", "),
-        input: metadata,
-      };
+      const metadata = readOpenCodeRecord(event.properties.metadata);
+      const tool = readOpenCodeRecord(event.properties.tool);
+      const patterns = Array.isArray(event.properties.patterns)
+        ? event.properties.patterns.filter((value): value is string => typeof value === "string")
+        : [];
+      const command = readPermissionField(metadata, PERMISSION_COMMAND_KEYS);
+      const cwd = readPermissionField(metadata, PERMISSION_CWD_KEYS);
+      const reason = readPermissionField(metadata, PERMISSION_REASON_KEYS);
+      const input = buildOpenCodePermissionInput({
+        patterns,
+        metadata,
+        tool,
+        command,
+      });
+      const detail = buildOpenCodePermissionDetail({
+        permission: event.properties.permission,
+        input,
+        command,
+        cwd,
+      });
+      const description = buildOpenCodePermissionDescription({
+        reason,
+        patterns,
+      });
 
       events.push({
         type: "permission_requested",
         provider: "opencode",
-        request: permRequest,
+        request: {
+          id: event.properties.id,
+          provider: "opencode",
+          name: event.properties.permission,
+          kind: "tool",
+          title: toHumanReadablePermissionTitle(event.properties.permission),
+          ...(description ? { description } : {}),
+          input,
+          detail,
+        },
       });
       break;
     }
 
     case "question.asked": {
-      const sessionId = props.sessionID as string | undefined;
-      if (sessionId !== state.sessionId) {
+      if (event.properties.sessionID !== state.sessionId) {
         break;
       }
 
-      const requestId = props.id as string | undefined;
-      const rawQuestions = Array.isArray(props.questions) ? props.questions : [];
-      if (!requestId || rawQuestions.length === 0) {
-        break;
-      }
-
-      const questions = rawQuestions.flatMap((item) => {
-        const questionRecord = readOpenCodeRecord(item);
-        const question = readNonEmptyString(questionRecord?.question);
-        const header = readNonEmptyString(questionRecord?.header);
-        if (!question || !header) {
+      const questions = event.properties.questions.flatMap((q) => {
+        if (!q.question || !q.header) {
           return [];
         }
-
-        const options = normalizeQuestionOptions(questionRecord?.options) ?? [];
+        const options =
+          q.options?.map((o) => ({
+            label: o.label,
+            ...(o.description ? { description: o.description } : {}),
+          })) ?? [];
         return [
           {
-            question,
-            header,
+            question: q.question,
+            header: q.header,
             options,
-            ...(questionRecord?.multiple === true ? { multiSelect: true } : {}),
+            ...(q.multiple === true ? { multiSelect: true } : {}),
           },
         ];
       });
@@ -1028,7 +1545,7 @@ export function translateOpenCodeEvent(
         type: "permission_requested",
         provider: "opencode",
         request: {
-          id: requestId,
+          id: event.properties.id,
           provider: "opencode",
           name: "question",
           kind: "question",
@@ -1036,16 +1553,41 @@ export function translateOpenCodeEvent(
           input: { questions },
           metadata: {
             source: "opencode_question",
-            ...(readOpenCodeRecord(props.tool) ?? {}),
+            ...(event.properties.tool ?? {}),
           },
         },
       });
       break;
     }
 
+    case "todo.updated": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "timeline",
+        provider: "opencode",
+        item: mapOpenCodeTodosToTimelineItems(event.properties.todos),
+      });
+      break;
+    }
+
+    case "session.compacted": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "timeline",
+        provider: "opencode",
+        item: createCompactionTimelineItem("completed"),
+      });
+      break;
+    }
+
     case "session.idle": {
-      const sessionId = props.sessionID as string | undefined;
-      if (sessionId === state.sessionId) {
+      if (event.properties.sessionID === state.sessionId) {
         state.streamedPartKeys.clear();
         state.partTypes.clear();
         events.push({
@@ -1058,16 +1600,41 @@ export function translateOpenCodeEvent(
     }
 
     case "session.error": {
-      const sessionId = props.sessionID as string | undefined;
-      if (sessionId === state.sessionId) {
+      if (event.properties.sessionID === state.sessionId) {
         state.streamedPartKeys.clear();
         state.partTypes.clear();
         events.push({
           type: "turn_failed",
           provider: "opencode",
-          error: normalizeTurnFailureError(props.error),
+          error: normalizeTurnFailureError(event.properties.error),
         });
       }
+      break;
+    }
+
+    case "session.status": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+      const { status } = event.properties;
+      if (status.type === "idle") {
+        state.streamedPartKeys.clear();
+        state.partTypes.clear();
+        events.push({
+          type: "turn_completed",
+          provider: "opencode",
+          usage: undefined,
+        });
+      } else if (status.type === "retry" && isFatalOpenCodeRetryMessage(status.message)) {
+        state.streamedPartKeys.clear();
+        state.partTypes.clear();
+        events.push({
+          type: "turn_failed",
+          provider: "opencode",
+          error: normalizeTurnFailureError(status.message),
+        });
+      }
+      // "retry" and "busy" are transient — no terminal event.
       break;
     }
   }
@@ -1083,6 +1650,7 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly client: OpencodeClient;
   private readonly sessionId: string;
   private readonly logger: Logger;
+  private readonly modelContextWindowsByModelKey: ReadonlyMap<string, number>;
   private currentMode: string = "default";
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private abortController: AbortController | null = null;
@@ -1102,18 +1670,23 @@ class OpenCodeAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
-
+  private selectedModelContextWindowMaxTokens: number | undefined;
   constructor(
     config: OpenCodeAgentConfig,
     client: OpencodeClient,
     sessionId: string,
     logger: Logger,
+    modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
   ) {
     this.config = config;
     this.client = client;
     this.sessionId = sessionId;
     this.logger = logger;
+    this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
+    this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
+      config.model,
+    );
   }
 
   get id(): string | null {
@@ -1133,6 +1706,9 @@ class OpenCodeAgentSession implements AgentSession {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
     this.config.model = normalizedModelId ?? undefined;
+    this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
+      this.config.model,
+    );
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -1246,8 +1822,10 @@ class OpenCodeAgentSession implements AgentSession {
     const turnAbortController = new AbortController();
     this.abortController = turnAbortController;
     await this.ensureMcpServersConfigured();
+    const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
+    this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
 
-    const parts = this.buildPromptParts(prompt);
+    const parts = buildOpenCodePromptParts(prompt);
     const model = this.parseModel(this.config.model);
     const thinkingOptionId = this.config.thinkingOptionId;
     const effectiveVariant = thinkingOptionId ?? undefined;
@@ -1259,53 +1837,105 @@ class OpenCodeAgentSession implements AgentSession {
 
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
     if (slashCommand) {
-      // command() blocks until completion, but events stream via SSE in the
-      // background — fire without awaiting so the event stream isn't starved.
-      void this.client.session.command({
-        sessionID: this.sessionId,
-        directory: this.config.cwd,
-        command: slashCommand.commandName,
-        arguments: slashCommand.args ?? "",
-        ...(this.config.model ? { model: this.config.model } : {}),
-        ...(effectiveMode ? { agent: effectiveMode } : {}),
-        ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-      }).then((response) => {
-        if (response.error) {
-          const errorMsg = normalizeTurnFailureError(response.error);
+      // command() blocks until the server finishes processing. OpenCode's SSE
+      // endpoint does NOT replay past events, so if the command completes before
+      // our SSE reader connects, we miss `session.idle` and the turn hangs.
+      // Handle both success and error in the response handler as a fallback —
+      // finishForegroundTurn's guard prevents duplicate terminal events if the
+      // SSE stream already delivered the event.
+      void this.client.session
+        .command({
+          sessionID: this.sessionId,
+          directory: this.config.cwd,
+          command: slashCommand.commandName,
+          arguments: slashCommand.args ?? "",
+          ...(this.config.model ? { model: this.config.model } : {}),
+          ...(effectiveMode ? { agent: effectiveMode } : {}),
+          ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+        })
+        .then((response) => {
+          if (response.error) {
+            if (isOpenCodeHeadersTimeoutFailure(response.error)) {
+              this.logger.warn(
+                {
+                  err: response.error,
+                  commandName: slashCommand.commandName,
+                  turnId,
+                },
+                "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+              );
+              return;
+            }
+            const errorMsg = normalizeTurnFailureError(response.error);
+            this.finishForegroundTurn(
+              { type: "turn_failed", provider: "opencode", error: errorMsg },
+              turnId,
+            );
+          } else {
+            this.finishForegroundTurn(
+              { type: "turn_completed", provider: "opencode", usage: undefined },
+              turnId,
+            );
+          }
+        })
+        .catch((err) => {
+          if (isOpenCodeHeadersTimeoutFailure(err)) {
+            this.logger.warn(
+              {
+                err,
+                commandName: slashCommand.commandName,
+                turnId,
+              },
+              "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+            );
+            return;
+          }
           this.finishForegroundTurn(
-            { type: "turn_failed", provider: "opencode", error: errorMsg },
+            { type: "turn_failed", provider: "opencode", error: normalizeTurnFailureError(err) },
             turnId,
           );
-        }
-      });
-    } else {
-      const promptResponse = await this.client.session.promptAsync({
-        sessionID: this.sessionId,
-        directory: this.config.cwd,
-        parts,
-        ...(options?.outputSchema
-          ? {
-              format: {
-                type: "json_schema" as const,
-                schema: options.outputSchema as Record<string, unknown>,
-              },
-            }
-          : {}),
-        ...(this.config.systemPrompt ? { system: this.config.systemPrompt } : {}),
-        ...(model ? { model } : {}),
-        ...(effectiveMode ? { agent: effectiveMode } : {}),
-        ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-      });
-
-      if (promptResponse.error) {
-        const errorMsg = normalizeTurnFailureError(promptResponse.error);
-        this.notifySubscribers({
-          type: "turn_failed",
-          provider: "opencode",
-          error: errorMsg,
         });
-        throw new Error(errorMsg);
-      }
+    } else {
+      void this.client.session
+        .promptAsync({
+          sessionID: this.sessionId,
+          directory: this.config.cwd,
+          parts,
+          ...(options?.outputSchema
+            ? {
+                format: {
+                  type: "json_schema" as const,
+                  schema: options.outputSchema as Record<string, unknown>,
+                },
+              }
+            : {}),
+          ...(this.config.systemPrompt ? { system: this.config.systemPrompt } : {}),
+          ...(model ? { model } : {}),
+          ...(effectiveMode ? { agent: effectiveMode } : {}),
+          ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+        })
+        .then((promptResponse) => {
+          if (promptResponse.error) {
+            this.finishForegroundTurn(
+              {
+                type: "turn_failed",
+                provider: "opencode",
+                error: normalizeTurnFailureError(promptResponse.error),
+              },
+              turnId,
+            );
+          }
+        })
+        .catch((error) => {
+          this.finishForegroundTurn(
+            {
+              type: "turn_failed",
+              provider: "opencode",
+              error: normalizeTurnFailureError(error),
+            },
+            turnId,
+          );
+        });
     }
 
     return { turnId };
@@ -1322,12 +1952,13 @@ class OpenCodeAgentSession implements AgentSession {
     turnId: string,
     turnAbortController: AbortController,
   ): Promise<void> {
-    const eventsResult = await this.client.event.subscribe({
-      directory: this.config.cwd,
-    });
-
     try {
-      for await (const event of eventsResult.stream) {
+      const result = await this.client.event.subscribe(
+        { directory: this.config.cwd },
+        { signal: turnAbortController.signal, sseMaxRetryAttempts: 0 },
+      );
+
+      for await (const event of result.stream) {
         if (turnAbortController.signal.aborted || this.activeForegroundTurnId !== turnId) {
           break;
         }
@@ -1340,7 +1971,11 @@ class OpenCodeAgentSession implements AgentSession {
           if (e.type === "timeline" && e.item.type === "tool_call") {
             this.trackToolCall(e.item);
           }
-          if (e.type === "turn_completed" || e.type === "turn_failed" || e.type === "turn_canceled") {
+          if (
+            e.type === "turn_completed" ||
+            e.type === "turn_failed" ||
+            e.type === "turn_canceled"
+          ) {
             if (e.type === "turn_failed") {
               this.finishForegroundTurn(
                 {
@@ -1357,6 +1992,17 @@ class OpenCodeAgentSession implements AgentSession {
           }
           this.notifySubscribers(e, turnId);
         }
+      }
+
+      if (!turnAbortController.signal.aborted && this.activeForegroundTurnId === turnId) {
+        this.finishForegroundTurn(
+          {
+            type: "turn_failed",
+            provider: "opencode",
+            error: "OpenCode event stream ended before the turn reached a terminal state",
+          },
+          turnId,
+        );
       }
     } catch (error) {
       if (!turnAbortController.signal.aborted && this.activeForegroundTurnId === turnId) {
@@ -1399,6 +2045,9 @@ class OpenCodeAgentSession implements AgentSession {
       this.runningToolCalls.clear();
     }
     this.activeForegroundTurnId = null;
+    // Abort the SSE connection so the SDK tears down the underlying fetch.
+    this.abortController?.abort();
+    this.abortController = null;
     this.notifySubscribers(event, turnId);
   }
 
@@ -1454,16 +2103,12 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
 
-    const messages = response.data;
-
-    for (const message of messages) {
-      const { info, parts } = message;
-      const role = info.role as "user" | "assistant";
-
-      if (role === "user") {
-        // Extract user message text from parts
-        const textParts = parts.filter((p) => (p as { type?: string }).type === "text");
-        const text = textParts.map((p) => (p as { text?: string }).text ?? "").join("");
+    for (const { info, parts } of response.data) {
+      if (info.role === "user") {
+        const text = parts
+          .filter((p): p is Extract<OpenCodePart, { type: "text" }> => p.type === "text")
+          .map((p) => p.text)
+          .join("");
 
         if (text) {
           yield {
@@ -1472,49 +2117,40 @@ class OpenCodeAgentSession implements AgentSession {
             item: { type: "user_message", text },
           };
         }
-      } else if (role === "assistant") {
+      } else {
         let emittedAssistantText = false;
-        // Process each part
         for (const part of parts) {
-          const partType = (part as { type?: string }).type;
-
-          if (partType === "text") {
-            const text = (part as { text?: string }).text;
-            if (text) {
+          if (part.type === "text") {
+            if (part.text) {
               emittedAssistantText = true;
               yield {
                 type: "timeline",
                 provider: "opencode",
-                item: { type: "assistant_message", text },
+                item: { type: "assistant_message", text: part.text },
               };
             }
-          } else if (partType === "reasoning") {
-            const text = (part as { text?: string }).text;
-            if (text) {
+          } else if (part.type === "reasoning") {
+            if (part.text) {
               yield {
                 type: "timeline",
                 provider: "opencode",
-                item: { type: "reasoning", text },
+                item: { type: "reasoning", text: part.text },
               };
             }
-          } else if (partType === "tool") {
+          } else if (part.type === "tool") {
             const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
-            if (parsedToolPart.success) {
-              if (parsedToolPart.data) {
-                yield {
-                  type: "timeline",
-                  provider: "opencode",
-                  item: parsedToolPart.data,
-                };
-              }
+            if (parsedToolPart.success && parsedToolPart.data) {
+              yield {
+                type: "timeline",
+                provider: "opencode",
+                item: parsedToolPart.data,
+              };
             }
           }
         }
 
         if (!emittedAssistantText) {
-          const text = stringifyStructuredAssistantMessage(
-            (info as { structured?: unknown }).structured,
-          );
+          const text = stringifyStructuredAssistantMessage(info.structured);
           if (text) {
             yield {
               type: "timeline",
@@ -1643,17 +2279,14 @@ class OpenCodeAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     this.abortController?.abort();
+    await reconcileOpenCodeSessionClose({
+      client: this.client,
+      sessionId: this.sessionId,
+      directory: this.config.cwd,
+      logger: this.logger,
+    });
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
-  }
-
-  private buildPromptParts(prompt: AgentPromptInput): Array<{ type: "text"; text: string }> {
-    if (typeof prompt === "string") {
-      return [{ type: "text", text: prompt }];
-    }
-    return prompt
-      .filter((p): p is { type: "text"; text: string } => p.type === "text")
-      .map((p) => ({ type: "text", text: p.text }));
   }
 
   private parseSlashCommandInput(text: string): { commandName: string; args?: string } | null {
@@ -1773,7 +2406,7 @@ class OpenCodeAgentSession implements AgentSession {
     );
   }
 
-  private translateEvent(event: unknown): AgentStreamEvent[] {
+  private translateEvent(event: OpenCodeEvent): AgentStreamEvent[] {
     const translated = translateOpenCodeEvent(event, {
       sessionId: this.sessionId,
       messageRoles: this.messageRoles,
@@ -1781,6 +2414,13 @@ class OpenCodeAgentSession implements AgentSession {
       streamedPartKeys: this.streamedPartKeys,
       emittedStructuredMessageIds: this.emittedStructuredMessageIds,
       partTypes: this.partTypes,
+      modelContextWindowsByModelKey: this.modelContextWindowsByModelKey,
+      onAssistantModelContextWindowResolved: (contextWindowMaxTokens) => {
+        this.accumulatedUsage.contextWindowMaxTokens = contextWindowMaxTokens;
+        if (!this.config.model) {
+          this.selectedModelContextWindowMaxTokens = contextWindowMaxTokens;
+        }
+      },
     });
 
     for (const translatedEvent of translated) {
@@ -1788,21 +2428,29 @@ class OpenCodeAgentSession implements AgentSession {
         this.pendingPermissions.set(translatedEvent.request.id, translatedEvent.request);
       }
       if (translatedEvent.type === "turn_completed") {
-        translatedEvent.usage = this.extractAndResetUsage();
+        if (hasNormalizedOpenCodeUsage(this.accumulatedUsage)) {
+          translatedEvent.usage = this.accumulatedUsage;
+        }
+        const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
+        this.accumulatedUsage =
+          contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
       }
     }
 
     return translated;
   }
 
-  private extractAndResetUsage(): AgentUsage | undefined {
-    const usage = this.accumulatedUsage;
-    this.accumulatedUsage = {};
+  private resolveSelectedModelContextWindowMaxTokens(): number | undefined {
+    return this.selectedModelContextWindowMaxTokens;
+  }
 
-    if (!usage.inputTokens && !usage.outputTokens && !usage.totalCostUsd) {
+  private resolveConfiguredModelContextWindowMaxTokens(
+    modelId: string | undefined,
+  ): number | undefined {
+    const modelLookupKey = parseOpenCodeModelLookupKey(modelId);
+    if (!modelLookupKey) {
       return undefined;
     }
-
-    return usage;
+    return this.modelContextWindowsByModelKey.get(modelLookupKey);
   }
 }

@@ -4,28 +4,19 @@ import {
   Text,
   TextInput,
   Pressable,
-  Platform,
   ActivityIndicator,
   type GestureResponderEvent,
 } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import {
-  ArrowLeft,
-  ChevronDown,
-  ChevronRight,
-  Search,
-  Star,
-} from "lucide-react-native";
-import type {
-  AgentModelDefinition,
-  AgentProvider,
-} from "@server/server/agent/agent-sdk-types";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb as platformIsWeb } from "@/constants/platform";
+import { ArrowLeft, ChevronDown, ChevronRight, Search, Star } from "lucide-react-native";
+import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
-const IS_WEB = Platform.OS === "web";
+const IS_WEB = platformIsWeb;
 
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { getProviderIcon } from "@/components/provider-icons";
 import type { FavoriteModelRow } from "@/hooks/use-form-preferences";
 import {
@@ -35,6 +26,9 @@ import {
   resolveProviderLabel,
   type SelectorModelRow,
 } from "./combined-model-selector.utils";
+
+// TODO: this should be configured per provider in the provider manifest
+const PROVIDERS_WITH_MODEL_DESCRIPTIONS = new Set(["opencode", "pi"]);
 
 type SelectorView =
   | { kind: "all" }
@@ -56,6 +50,7 @@ interface CombinedModelSelectorProps {
     disabled: boolean;
     isOpen: boolean;
   }) => React.ReactNode;
+  onOpen?: () => void;
   onClose?: () => void;
   disabled?: boolean;
 }
@@ -123,7 +118,10 @@ function sortFavoritesFirst(
 function groupRowsByProvider(
   rows: SelectorModelRow[],
 ): Array<{ providerId: string; providerLabel: string; rows: SelectorModelRow[] }> {
-  const grouped = new Map<string, { providerId: string; providerLabel: string; rows: SelectorModelRow[] }>();
+  const grouped = new Map<
+    string,
+    { providerId: string; providerLabel: string; rows: SelectorModelRow[] }
+  >();
 
   for (const row of rows) {
     const existing = grouped.get(row.provider);
@@ -161,7 +159,6 @@ function ModelRow({
 }) {
   const { theme } = useUnistyles();
   const ProviderIcon = getProviderIcon(row.provider);
-  const isWeb = Platform.OS === "web";
 
   const handleToggleFavorite = useCallback(
     (event: GestureResponderEvent) => {
@@ -171,9 +168,12 @@ function ModelRow({
     [onToggleFavorite, row.modelId, row.provider],
   );
 
-  const item = (
+  const showDescription = row.description && PROVIDERS_WITH_MODEL_DESCRIPTIONS.has(row.provider);
+
+  return (
     <ComboboxItem
       label={row.modelLabel}
+      description={showDescription ? row.description : undefined}
       selected={isSelected}
       disabled={disabled}
       elevated={elevated}
@@ -210,21 +210,6 @@ function ModelRow({
         ) : null
       }
     />
-  );
-
-  if (!isWeb || !row.description) {
-    return item;
-  }
-
-  return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild triggerRefProp="ref">
-        <View>{item}</View>
-      </TooltipTrigger>
-      <TooltipContent side="right" align="center" offset={4}>
-        <Text style={styles.tooltipText}>{row.description}</Text>
-      </TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -300,7 +285,9 @@ function GroupedProviderRows({
   return (
     <View>
       {groupedRows.map((group, index) => {
-        const providerDefinition = providerDefinitions.find((definition) => definition.id === group.providerId);
+        const providerDefinition = providerDefinitions.find(
+          (definition) => definition.id === group.providerId,
+        );
         const ProvIcon = getProviderIcon(group.providerId);
         const isInline = viewKind === "provider";
 
@@ -358,10 +345,11 @@ function ProviderSearchInput({
 }) {
   const { theme } = useUnistyles();
   const inputRef = useRef<TextInput>(null);
-  const InputComponent = Platform.OS === "web" ? TextInput : BottomSheetTextInput;
+  const isMobile = useIsCompactFormFactor();
+  const InputComponent = isMobile ? BottomSheetTextInput : TextInput;
 
   useEffect(() => {
-    if (autoFocus && Platform.OS === "web" && inputRef.current) {
+    if (autoFocus && platformIsWeb && inputRef.current) {
       const timer = setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
@@ -375,7 +363,7 @@ function ProviderSearchInput({
       <InputComponent
         ref={inputRef as any}
         // @ts-expect-error - outlineStyle is web-only
-        style={[styles.providerSearchInput, Platform.OS === "web" && { outlineStyle: "none" }]}
+        style={[styles.providerSearchInput, platformIsWeb && { outlineStyle: "none" }]}
         placeholder="Search models..."
         placeholderTextColor={theme.colors.foregroundMuted}
         value={value}
@@ -525,14 +513,14 @@ export function CombinedModelSelector({
   favoriteKeys = new Set<string>(),
   onToggleFavorite,
   renderTrigger,
+  onOpen,
   onClose,
   disabled = false,
 }: CombinedModelSelectorProps) {
   const { theme } = useUnistyles();
-  const isWeb = Platform.OS === "web";
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [isContentReady, setIsContentReady] = useState(isWeb);
+  const [isContentReady, setIsContentReady] = useState(platformIsWeb);
   const [view, setView] = useState<SelectorView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -545,35 +533,47 @@ export function CombinedModelSelector({
     return { kind: "provider", providerId, providerLabel: label };
   }, [allProviderModels, providerDefinitions]);
 
+  const computeInitialView = useCallback((): SelectorView => {
+    if (singleProviderView) return singleProviderView;
+
+    const selectedFavoriteKey = `${selectedProvider}:${selectedModel}`;
+    if (selectedProvider && selectedModel && !favoriteKeys.has(selectedFavoriteKey)) {
+      const label = resolveProviderLabel(providerDefinitions, selectedProvider);
+      return { kind: "provider", providerId: selectedProvider, providerLabel: label };
+    }
+
+    return { kind: "all" };
+  }, [singleProviderView, selectedProvider, selectedModel, favoriteKeys, providerDefinitions]);
+
   const handleOpenChange = useCallback(
     (open: boolean) => {
       setIsOpen(open);
-      setView(singleProviderView ?? { kind: "all" });
-      if (!open) {
+      setView(computeInitialView());
+      if (open) {
+        onOpen?.();
+      } else {
         setSearchQuery("");
         onClose?.();
       }
     },
-    [onClose, singleProviderView],
+    [onOpen, onClose, computeInitialView],
   );
 
   const handleSelect = useCallback(
     (provider: string, modelId: string) => {
       onSelect(provider as AgentProvider, modelId);
       setIsOpen(false);
-      setView(singleProviderView ?? { kind: "all" });
       setSearchQuery("");
     },
-    [onSelect, singleProviderView],
+    [onSelect],
   );
 
   const ProviderIcon = getProviderIcon(selectedProvider);
-  const selectedProviderLabel = useMemo(
-    () => resolveProviderLabel(providerDefinitions, selectedProvider),
-    [providerDefinitions, selectedProvider],
-  );
 
   const selectedModelLabel = useMemo(() => {
+    if (!selectedModel) {
+      return isLoading ? "Loading..." : "Select model";
+    }
     const models = allProviderModels.get(selectedProvider);
     if (!models) {
       return isLoading ? "Loading..." : "Select model";
@@ -596,11 +596,11 @@ export function CombinedModelSelector({
       return selectedModelLabel;
     }
 
-    return buildSelectedTriggerLabel(selectedProviderLabel, selectedModelLabel);
-  }, [selectedModelLabel, selectedProviderLabel]);
+    return buildSelectedTriggerLabel(selectedModelLabel);
+  }, [selectedModelLabel]);
 
   useEffect(() => {
-    if (isWeb) {
+    if (platformIsWeb) {
       return;
     }
 
@@ -614,7 +614,7 @@ export function CombinedModelSelector({
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [isOpen, isWeb]);
+  }, [isOpen, platformIsWeb]);
 
   return (
     <>
@@ -644,7 +644,9 @@ export function CombinedModelSelector({
         ) : (
           <>
             <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-            <Text style={styles.triggerText}>{triggerLabel}</Text>
+            <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+              {triggerLabel}
+            </Text>
             <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
           </>
         )}
@@ -677,7 +679,7 @@ export function CombinedModelSelector({
               <ProviderSearchInput
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                autoFocus={Platform.OS === "web"}
+                autoFocus={platformIsWeb}
               />
             </View>
           ) : undefined
@@ -714,6 +716,8 @@ export function CombinedModelSelector({
 const styles = StyleSheet.create((theme) => ({
   trigger: {
     height: 28,
+    minWidth: 0,
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
@@ -731,6 +735,8 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.5,
   },
   triggerText: {
+    minWidth: 0,
+    flexShrink: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
@@ -792,11 +798,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
-  level2Header: {
-    backgroundColor: theme.colors.surface1,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
+  level2Header: {},
   backButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -838,10 +840,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   favoriteButtonPressed: {
     backgroundColor: theme.colors.surface1,
-  },
-  tooltipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
   },
   sheetLoadingState: {
     minHeight: 160,

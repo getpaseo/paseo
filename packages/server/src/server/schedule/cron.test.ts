@@ -21,8 +21,8 @@ describe("schedule cron cadence", () => {
   });
 
   test("rejects invalid cron expressions", () => {
-    expect(() =>
-      validateScheduleCadence({ type: "cron", expression: "not-a-valid-cron" }),
-    ).toThrow("Cron expressions must have 5 fields");
+    expect(() => validateScheduleCadence({ type: "cron", expression: "not-a-valid-cron" })).toThrow(
+      "Cron expressions must have 5 fields",
+    );
   });
 });

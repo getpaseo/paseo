@@ -22,6 +22,28 @@ export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {
   });
 }
 
+export async function getVisibleWorkspaceAgentTabIds(page: Page): Promise<string[]> {
+  const allTabIds = await getWorkspaceTabTestIds(page);
+  return allTabIds.filter((id) => id.startsWith("workspace-tab-agent_"));
+}
+
+export async function expectOnlyWorkspaceAgentTabsVisible(
+  page: Page,
+  expectedAgentIds: string[],
+): Promise<void> {
+  const expected = new Set(expectedAgentIds.map((id) => `workspace-tab-agent_${id}`));
+  const visible = await getVisibleWorkspaceAgentTabIds(page);
+  const unexpected = visible.filter((id) => !expected.has(id));
+
+  expect(unexpected).toEqual([]);
+  expect(visible.length).toBe(expected.size);
+  for (const expectedId of expectedAgentIds) {
+    await expect(page.getByTestId(`workspace-tab-agent_${expectedId}`)).toBeVisible({
+      timeout: 30_000,
+    });
+  }
+}
+
 export async function ensureWorkspaceAgentPaneVisible(page: Page): Promise<void> {
   const toggle = page.getByTestId("workspace-explorer-toggle").first();
   if (!(await toggle.isVisible().catch(() => false))) {

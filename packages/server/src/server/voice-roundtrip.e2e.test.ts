@@ -32,7 +32,7 @@ function getVoiceRoundtripConfig(provider: VoiceRoundtripProvider): {
     case "codex":
       return {
         provider: "codex",
-        model: "gpt-5.1-codex-mini",
+        model: "gpt-5.4-mini",
         modeId: "full-access",
         thinkingOptionId: "low",
       };

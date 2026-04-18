@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 import type { DaemonClient } from "@server/client/daemon-client";
+import { isWeb, isNative } from "@/constants/platform";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const ACTIVITY_HEARTBEAT_THROTTLE_MS = 5_000;
@@ -32,7 +33,7 @@ export function useClientActivity({
   const prevFocusedAgentIdRef = useRef<string | null>(focusedAgentId);
   const lastImmediateHeartbeatAtRef = useRef<number>(0);
 
-  const deviceType = Platform.OS === "web" ? "web" : "mobile";
+  const deviceType = isWeb ? "web" : "mobile";
 
   const recordUserActivity = useCallback(() => {
     lastActivityAtRef.current = new Date();
@@ -96,7 +97,7 @@ export function useClientActivity({
 
   // Track user activity on web for accurate staleness.
   useEffect(() => {
-    if (Platform.OS !== "web") return;
+    if (isNative) return;
     if (typeof document === "undefined") return;
 
     const handleUserActivity = () => {

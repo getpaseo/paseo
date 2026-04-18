@@ -1,12 +1,117 @@
 import { describe, expect, it } from "vitest";
 import { __private__ } from "./use-agent-form-state";
-import {
-  AGENT_PROVIDER_DEFINITIONS,
-  type AgentProviderDefinition,
-} from "@server/server/agent/provider-manifest";
-import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
+import { buildProviderDefinitions } from "@/utils/provider-definitions";
+import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
+import type {
+  AgentModelDefinition,
+  AgentProvider,
+  ProviderSnapshotEntry,
+} from "@server/server/agent/agent-sdk-types";
+
+const TEST_CODEX_DEFINITION: AgentProviderDefinition = {
+  id: "codex",
+  label: "Codex",
+  description: "Codex test provider",
+  defaultModeId: "auto",
+  modes: [
+    { id: "auto", label: "Auto", icon: "ShieldAlert", colorTier: "moderate" },
+    { id: "full-access", label: "Full Access", icon: "ShieldAlert", colorTier: "dangerous" },
+  ],
+};
+
+const TEST_CLAUDE_DEFINITION: AgentProviderDefinition = {
+  id: "claude",
+  label: "Claude",
+  description: "Claude test provider",
+  defaultModeId: "default",
+  modes: [
+    { id: "default", label: "Always Ask", icon: "ShieldCheck", colorTier: "safe" },
+    { id: "acceptEdits", label: "Accept File Edits", icon: "ShieldAlert", colorTier: "moderate" },
+    { id: "plan", label: "Plan Mode", icon: "ShieldCheck", colorTier: "planning" },
+    { id: "bypassPermissions", label: "Bypass", icon: "ShieldAlert", colorTier: "dangerous" },
+  ],
+};
+
+function makeProviderMap(
+  ...definitions: AgentProviderDefinition[]
+): Map<AgentProvider, AgentProviderDefinition> {
+  return new Map(definitions.map((d) => [d.id as AgentProvider, d]));
+}
+
+const codexProviderMap = makeProviderMap(TEST_CODEX_DEFINITION);
+const claudeProviderMap = makeProviderMap(TEST_CLAUDE_DEFINITION);
 
 describe("useAgentFormState", () => {
+  describe("buildProviderDefinitions", () => {
+    it("returns empty array when snapshot data is unavailable", () => {
+      expect(buildProviderDefinitions(undefined)).toEqual([]);
+      expect(buildProviderDefinitions([])).toEqual([]);
+    });
+
+    it("builds custom provider definitions from snapshot metadata", () => {
+      const entries: ProviderSnapshotEntry[] = [
+        {
+          provider: "zai",
+          status: "ready",
+          label: "ZAI",
+          description: "Claude with ZAI config",
+          defaultModeId: "default",
+          modes: [
+            {
+              id: "default",
+              label: "Default",
+              description: "Safe mode",
+              icon: "ShieldCheck",
+              colorTier: "safe",
+            },
+          ],
+        },
+        {
+          provider: "claude",
+          status: "ready",
+          label: "Claude",
+          description: "Anthropic Claude",
+          defaultModeId: "default",
+          modes: [{ id: "default", label: "Always Ask", icon: "ShieldCheck", colorTier: "safe" }],
+        },
+      ];
+
+      const definitions = buildProviderDefinitions(entries);
+
+      expect(definitions).toEqual([
+        {
+          id: "zai",
+          label: "ZAI",
+          description: "Claude with ZAI config",
+          defaultModeId: "default",
+          modes: [
+            {
+              id: "default",
+              label: "Default",
+              description: "Safe mode",
+              icon: "ShieldCheck",
+              colorTier: "safe",
+            },
+          ],
+        },
+        {
+          id: "claude",
+          label: "Claude",
+          description: "Anthropic Claude",
+          defaultModeId: "default",
+          modes: [
+            {
+              id: "default",
+              label: "Always Ask",
+              icon: "ShieldCheck",
+              colorTier: "safe",
+            },
+          ],
+        },
+      ]);
+    });
+  });
+
   describe("__private__.combineInitialValues", () => {
     it("returns undefined when no initial values and no initial server id", () => {
       expect(__private__.combineInitialValues(undefined, null)).toBeUndefined();
@@ -56,7 +161,7 @@ describe("useAgentFormState", () => {
       },
     ];
 
-    it("auto-selects the model's default thinking option when none is configured", () => {
+    it("does not auto-select a model on fresh drafts without preferences", () => {
       const resolved = __private__.resolveFormState(
         undefined,
         { provider: "codex" },
@@ -78,16 +183,17 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
-      expect(resolved.model).toBe("gpt-5.3-codex");
-      expect(resolved.thinkingOptionId).toBe("xhigh");
+      expect(resolved.model).toBe("");
+      expect(resolved.thinkingOptionId).toBe("");
     });
 
-    it("prefers provider defaults on fresh drafts", () => {
+    it("auto-selects the model's default thinking option when model is preferred but thinking is not", () => {
       const resolved = __private__.resolveFormState(
         undefined,
-        { provider: "codex" },
+        { provider: "codex", providerPreferences: { codex: { model: "gpt-5.3-codex" } } },
         codexModels,
         {
           serverId: false,
@@ -106,6 +212,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.model).toBe("gpt-5.3-codex");
@@ -115,7 +222,7 @@ describe("useAgentFormState", () => {
     it("falls back to model default when saved thinking preference is invalid", () => {
       const resolved = __private__.resolveFormState(
         undefined,
-        { provider: "codex" },
+        { provider: "codex", providerPreferences: { codex: { model: "gpt-5.3-codex" } } },
         codexModels,
         {
           serverId: false,
@@ -134,6 +241,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.thinkingOptionId).toBe("xhigh");
@@ -161,6 +269,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.model).toBe("gpt-5.3-codex");
@@ -188,6 +297,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.model).toBe("gpt-5.3-codex");
@@ -195,7 +305,7 @@ describe("useAgentFormState", () => {
 
     it("keeps an explicit initial thinking option when it is valid", () => {
       const resolved = __private__.resolveFormState(
-        { thinkingOptionId: "low" },
+        { model: "gpt-5.3-codex", thinkingOptionId: "low" },
         { provider: "codex" },
         codexModels,
         {
@@ -215,13 +325,14 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        codexProviderMap,
       );
 
       expect(resolved.model).toBe("gpt-5.3-codex");
       expect(resolved.thinkingOptionId).toBe("low");
     });
 
-    it("leaves thinking unset when the model exposes options without a provider default", () => {
+    it("falls back to the first thinking option when the model exposes options without a provider default", () => {
       const claudeModels: AgentModelDefinition[] = [
         {
           provider: "claude",
@@ -237,7 +348,7 @@ describe("useAgentFormState", () => {
 
       const resolved = __private__.resolveFormState(
         undefined,
-        { provider: "claude" },
+        { provider: "claude", providerPreferences: { claude: { model: "default" } } },
         claudeModels,
         {
           serverId: false,
@@ -256,18 +367,14 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
+        claudeProviderMap,
       );
 
       expect(resolved.model).toBe("default");
-      expect(resolved.thinkingOptionId).toBe("");
+      expect(resolved.thinkingOptionId).toBe("low");
     });
 
     it("resolves provider only from allowed provider map", () => {
-      const allowedProviderMap = new Map<AgentProvider, AgentProviderDefinition>(
-        AGENT_PROVIDER_DEFINITIONS.filter((definition) => definition.id === "claude").map(
-          (definition) => [definition.id as AgentProvider, definition],
-        ),
-      );
       const resolved = __private__.resolveFormState(
         undefined,
         { provider: "codex" },
@@ -289,7 +396,7 @@ describe("useAgentFormState", () => {
           workingDir: "",
         },
         new Set<string>(),
-        allowedProviderMap,
+        claudeProviderMap,
       );
 
       expect(resolved.provider).toBe("claude");

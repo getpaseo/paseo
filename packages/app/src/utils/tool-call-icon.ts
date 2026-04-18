@@ -11,6 +11,8 @@ import {
   Wrench,
 } from "lucide-react-native";
 import type { ToolCallDetail, ToolCallIconName } from "@server/server/agent/agent-sdk-types";
+import { isPaseoToolName } from "@server/server/agent/tool-name-normalization";
+import { PaseoLogo } from "@/components/icons/paseo-logo";
 
 export type ToolCallIconComponent = ComponentType<{ size?: number; color?: string }>;
 
@@ -56,6 +58,9 @@ export function resolveToolCallIcon(
   }
   if (lowerName === "speak") {
     return MicVocal;
+  }
+  if (isPaseoToolName(lowerName)) {
+    return PaseoLogo;
   }
   if (lowerName === "task") {
     return Bot;

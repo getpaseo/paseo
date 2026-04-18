@@ -729,7 +729,7 @@ function finalizeHeadItems(head: StreamItem[]): StreamItem[] {
 /**
  * Flush head items to tail, avoiding duplicates.
  */
-function flushHeadToTail(tail: StreamItem[], head: StreamItem[]): StreamItem[] {
+export function flushHeadToTail(tail: StreamItem[], head: StreamItem[]): StreamItem[] {
   if (head.length === 0) {
     return tail;
   }

@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { useSessionStore } from "@/stores/session-store";
 import { queryClient } from "@/query/query-client";
+import {
+  buildWorkspaceTabPersistenceKey,
+  useWorkspaceLayoutStore,
+} from "@/stores/workspace-layout-store";
+import { useWorkspaceTabsStore } from "@/stores/workspace-tabs-store";
 
 const SUCCESS_DISPLAY_MS = 1000;
 
@@ -8,6 +13,7 @@ export type CheckoutGitActionStatus = "idle" | "pending" | "success";
 
 export type CheckoutGitAsyncActionId =
   | "commit"
+  | "pull"
   | "push"
   | "create-pr"
   | "merge-branch"
@@ -122,6 +128,19 @@ function removeWorktreeFromCachedLists(input: { serverId: string; worktreePath: 
   );
 }
 
+function purgeArchivedWorkspaceState(input: { serverId: string; worktreePath: string }): void {
+  const serverId = input.serverId.trim();
+  const workspaceId = input.worktreePath.trim();
+  if (!serverId || !workspaceId) {
+    return;
+  }
+  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+  if (workspaceKey) {
+    useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
+  }
+  useWorkspaceTabsStore.getState().purgeWorkspace({ serverId, workspaceId });
+}
+
 const successTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const inFlight = new Map<string, Promise<unknown>>();
 
@@ -139,6 +158,7 @@ interface CheckoutGitActionsStoreState {
   }) => CheckoutGitActionStatus;
 
   commit: (params: { serverId: string; cwd: string }) => Promise<void>;
+  pull: (params: { serverId: string; cwd: string }) => Promise<void>;
   push: (params: { serverId: string; cwd: string }) => Promise<void>;
   createPr: (params: { serverId: string; cwd: string }) => Promise<void>;
   mergeBranch: (params: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
@@ -216,6 +236,21 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
       run: async () => {
         const client = resolveClient(serverId);
         const payload = await client.checkoutCommit(cwd, { addAll: true });
+        if (payload.error) {
+          throw new Error(payload.error.message);
+        }
+      },
+    });
+  },
+
+  pull: async ({ serverId, cwd }) => {
+    await runCheckoutAction({
+      serverId,
+      cwd,
+      actionId: "pull",
+      run: async () => {
+        const client = resolveClient(serverId);
+        const payload = await client.checkoutPull(cwd);
         if (payload.error) {
           throw new Error(payload.error.message);
         }
@@ -303,6 +338,7 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
         }
         removeWorktreeFromCachedLists({ serverId, worktreePath });
         invalidateWorktreeList();
+        purgeArchivedWorkspaceState({ serverId, worktreePath });
       },
     });
   },

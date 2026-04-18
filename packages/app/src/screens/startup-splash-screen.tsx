@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Platform, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { BookOpen, Check, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
@@ -7,11 +7,10 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
 import { Fonts } from "@/constants/theme";
-import {
-  getDesktopDaemonLogs,
-  type DesktopDaemonLogs,
-} from "@/desktop/daemon/desktop-daemon";
+import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { isWeb } from "@/constants/platform";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
 type StartupSplashScreenProps = {
   bootstrapState?: {
@@ -36,6 +35,29 @@ const styles = StyleSheet.create((theme) => ({
   },
   containerError: {
     justifyContent: "flex-start",
+    paddingTop: theme.spacing[16],
+  },
+  errorScreen: {
+    position: "relative",
+    flex: 1,
+    backgroundColor: theme.colors.surface0,
+  },
+  errorScrollView: {
+    flex: 1,
+    ...(isWeb
+      ? {
+          overflowX: "auto",
+          overflowY: "auto",
+          WebkitAppRegion: "no-drag",
+        }
+      : null),
+  },
+  errorScrollContent: {
+    flexGrow: 1,
+    alignItems: "center",
+    justifyContent: "flex-start",
+    paddingHorizontal: theme.spacing[8],
+    paddingVertical: theme.spacing[8],
     paddingTop: theme.spacing[16],
   },
   centeredContent: {
@@ -125,7 +147,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
     lineHeight: 18,
-    ...(Platform.OS === "web"
+    ...(isWeb
       ? {
           whiteSpace: "pre",
           overflowWrap: "normal",
@@ -141,6 +163,7 @@ const styles = StyleSheet.create((theme) => ({
 
 export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps) {
   const { theme } = useUnistyles();
+  const webScrollbarStyle = useWebScrollbarStyle();
   const [daemonLogs, setDaemonLogs] = useState<DesktopDaemonLogs | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -193,7 +216,11 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
       : phase === "connecting"
         ? [
             { key: "starting-daemon", label: "Started local server", status: "complete" as const },
-            { key: "connecting", label: "Connecting to local server...", status: "active" as const },
+            {
+              key: "connecting",
+              label: "Connecting to local server...",
+              status: "active" as const,
+            },
           ]
         : [
             { key: "starting-daemon", label: "Started local server", status: "complete" as const },
@@ -255,67 +282,72 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
   }
 
   return (
-    <View style={[styles.container, styles.containerError]}>
+    <View style={styles.errorScreen}>
       <TitlebarDragRegion />
-      <View style={styles.errorContent}>
-        <View style={styles.errorHeader}>
-          <PaseoLogo size={64} />
-          <Text style={[styles.title, styles.titleError]}>Something went wrong</Text>
+      <ScrollView
+        style={[styles.errorScrollView, webScrollbarStyle]}
+        contentContainerStyle={styles.errorScrollContent}
+        showsVerticalScrollIndicator
+      >
+        <View style={styles.errorContent}>
+          <View style={styles.errorHeader}>
+            <PaseoLogo size={64} />
+            <Text style={[styles.title, styles.titleError]}>Something went wrong</Text>
+          </View>
+
+          <Text style={styles.errorDescription}>
+            The local server failed to start. If this keeps happening, please report the issue on
+            GitHub and include the logs below.
+          </Text>
+
+          <Text style={styles.errorMessage}>{bootstrapState.error}</Text>
+
+          {daemonLogs?.logPath ? <Text style={styles.logsMeta}>{daemonLogs.logPath}</Text> : null}
+
+          <View style={styles.logsContainer}>
+            <ScrollView
+              style={[styles.logsScroll, webScrollbarStyle]}
+              contentContainerStyle={styles.logsContent}
+              showsVerticalScrollIndicator
+            >
+              <Text selectable style={styles.logsText}>
+                {logsText}
+              </Text>
+            </ScrollView>
+          </View>
+
+          <View style={styles.actionRow}>
+            <Button
+              variant="secondary"
+              leftIcon={<Copy size={16} color={theme.colors.foreground} />}
+              onPress={handleCopyLogs}
+            >
+              Copy logs
+            </Button>
+            <Button
+              variant="outline"
+              leftIcon={<TriangleAlert size={16} color={theme.colors.foreground} />}
+              onPress={() => void openExternalUrl(GITHUB_ISSUE_URL)}
+            >
+              Open GitHub issue
+            </Button>
+            <Button
+              variant="outline"
+              leftIcon={<BookOpen size={16} color={theme.colors.foreground} />}
+              onPress={() => void openExternalUrl(DOCS_URL)}
+            >
+              Docs
+            </Button>
+            <Button
+              variant="default"
+              leftIcon={<RotateCw size={16} color={theme.colors.palette.white} />}
+              onPress={bootstrapState.retry}
+            >
+              Retry
+            </Button>
+          </View>
         </View>
-
-        <Text style={styles.errorDescription}>
-          The local server failed to start. If this keeps happening, please report the issue on GitHub and include the logs below.
-        </Text>
-
-        <Text style={styles.errorMessage}>
-          {bootstrapState.error}
-        </Text>
-
-        {daemonLogs?.logPath ? <Text style={styles.logsMeta}>{daemonLogs.logPath}</Text> : null}
-
-        <View style={styles.logsContainer}>
-          <ScrollView
-            style={styles.logsScroll}
-            contentContainerStyle={styles.logsContent}
-            showsVerticalScrollIndicator
-          >
-            <Text selectable style={styles.logsText}>
-              {logsText}
-            </Text>
-          </ScrollView>
-        </View>
-
-        <View style={styles.actionRow}>
-          <Button
-            variant="secondary"
-            leftIcon={<Copy size={16} color={theme.colors.foreground} />}
-            onPress={handleCopyLogs}
-          >
-            Copy logs
-          </Button>
-          <Button
-            variant="outline"
-            leftIcon={<TriangleAlert size={16} color={theme.colors.foreground} />}
-            onPress={() => void openExternalUrl(GITHUB_ISSUE_URL)}
-          >
-            Open GitHub issue
-          </Button>
-          <Button
-            variant="outline"
-            leftIcon={<BookOpen size={16} color={theme.colors.foreground} />}
-            onPress={() => void openExternalUrl(DOCS_URL)}
-          >
-            Docs
-          </Button>
-          <Button
-            variant="default"
-            leftIcon={<RotateCw size={16} color={theme.colors.palette.white} />}
-            onPress={bootstrapState.retry}
-          >
-            Retry
-          </Button>
-        </View>
-      </View>
+      </ScrollView>
     </View>
   );
 }

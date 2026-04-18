@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useId, useMemo } from "react";
-import { UnistylesRuntime } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePanelStore } from "@/stores/panel-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { SubscribeCheckoutDiffResponse } from "@server/shared/messages";
@@ -13,8 +13,9 @@ function checkoutDiffQueryKey(
   cwd: string,
   mode: "uncommitted" | "base",
   baseRef?: string,
+  ignoreWhitespace?: boolean,
 ) {
-  return ["checkoutDiff", serverId, cwd, mode, baseRef ?? ""] as const;
+  return ["checkoutDiff", serverId, cwd, mode, baseRef ?? "", ignoreWhitespace === true] as const;
 }
 
 interface UseCheckoutDiffQueryOptions {
@@ -22,6 +23,7 @@ interface UseCheckoutDiffQueryOptions {
   cwd: string;
   mode: "uncommitted" | "base";
   baseRef?: string;
+  ignoreWhitespace?: boolean;
   enabled?: boolean;
 }
 
@@ -35,12 +37,16 @@ export type HighlightToken = NonNullable<DiffLine["tokens"]>[number];
 function normalizeCheckoutDiffCompare(compare: {
   mode: "uncommitted" | "base";
   baseRef?: string;
-}): { mode: "uncommitted" | "base"; baseRef?: string } {
+  ignoreWhitespace?: boolean;
+}): { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean } {
+  const ignoreWhitespace = compare.ignoreWhitespace === true;
   if (compare.mode === "uncommitted") {
-    return { mode: "uncommitted" };
+    return { mode: "uncommitted", ignoreWhitespace };
   }
   const trimmedBaseRef = compare.baseRef?.trim();
-  return trimmedBaseRef ? { mode: "base", baseRef: trimmedBaseRef } : { mode: "base" };
+  return trimmedBaseRef
+    ? { mode: "base", baseRef: trimmedBaseRef, ignoreWhitespace }
+    : { mode: "base", ignoreWhitespace };
 }
 
 export function useCheckoutDiffQuery({
@@ -48,26 +54,28 @@ export function useCheckoutDiffQuery({
   cwd,
   mode,
   baseRef,
+  ignoreWhitespace,
   enabled = true,
 }: UseCheckoutDiffQueryOptions) {
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
   const explorerTab = usePanelStore((state) => state.explorerTab);
   const isOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
   const hookInstanceId = useId();
   const normalizedCompare = useMemo(
-    () => normalizeCheckoutDiffCompare({ mode, baseRef }),
-    [mode, baseRef],
+    () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace }),
+    [mode, baseRef, ignoreWhitespace],
   );
   const compareMode = normalizedCompare.mode;
   const compareBaseRef = normalizedCompare.baseRef;
+  const compareIgnoreWhitespace = normalizedCompare.ignoreWhitespace;
   const queryKey = useMemo(
-    () => checkoutDiffQueryKey(serverId, cwd, mode, baseRef),
-    [serverId, cwd, mode, baseRef],
+    () => checkoutDiffQueryKey(serverId, cwd, mode, baseRef, compareIgnoreWhitespace),
+    [serverId, cwd, mode, baseRef, compareIgnoreWhitespace],
   );
 
   const query = useQuery({
@@ -79,6 +87,7 @@ export function useCheckoutDiffQuery({
       const payload = await client.getCheckoutDiff(cwd, {
         mode: compareMode,
         baseRef: compareBaseRef,
+        ignoreWhitespace: compareIgnoreWhitespace,
       });
       return {
         ...payload,
@@ -104,6 +113,7 @@ export function useCheckoutDiffQuery({
       cwd,
       compareMode,
       compareBaseRef ?? "",
+      compareIgnoreWhitespace ? "ignore-ws" : "keep-ws",
     ].join(":");
     let cancelled = false;
 
@@ -145,6 +155,7 @@ export function useCheckoutDiffQuery({
         {
           mode: compareMode,
           baseRef: compareBaseRef,
+          ignoreWhitespace: compareIgnoreWhitespace,
         },
         { subscriptionId },
       )
@@ -191,6 +202,7 @@ export function useCheckoutDiffQuery({
     serverId,
     compareMode,
     compareBaseRef,
+    compareIgnoreWhitespace,
     queryKey,
     queryClient,
   ]);

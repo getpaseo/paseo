@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { SidebarShortcutWorkspaceTarget } from "@/utils/sidebar-shortcuts";
 
+const SHORTCUT_BADGE_DELAY_MS = 150;
+
 interface KeyboardShortcutsState {
   commandCenterOpen: boolean;
   projectPickerOpen: boolean;
@@ -8,6 +10,7 @@ interface KeyboardShortcutsState {
   capturingShortcut: boolean;
   altDown: boolean;
   cmdOrCtrlDown: boolean;
+  showShortcutBadges: boolean;
   /** Sidebar-visible workspace targets (up to 9), in top-to-bottom visual order. */
   sidebarShortcutWorkspaceTargets: SidebarShortcutWorkspaceTarget[];
   /** All visible workspace targets in top-to-bottom visual order. */
@@ -24,13 +27,37 @@ interface KeyboardShortcutsState {
   resetModifiers: () => void;
 }
 
-export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set) => ({
+let badgeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function updateBadgeTimer(
+  set: (partial: Partial<KeyboardShortcutsState>) => void,
+  get: () => KeyboardShortcutsState,
+) {
+  const { altDown, cmdOrCtrlDown } = get();
+  const modifierDown = altDown || cmdOrCtrlDown;
+
+  if (badgeTimer) {
+    clearTimeout(badgeTimer);
+    badgeTimer = null;
+  }
+
+  if (modifierDown) {
+    badgeTimer = setTimeout(() => {
+      set({ showShortcutBadges: true });
+    }, SHORTCUT_BADGE_DELAY_MS);
+  } else {
+    set({ showShortcutBadges: false });
+  }
+}
+
+export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, get) => ({
   commandCenterOpen: false,
   projectPickerOpen: false,
   shortcutsDialogOpen: false,
   capturingShortcut: false,
   altDown: false,
   cmdOrCtrlDown: false,
+  showShortcutBadges: false,
   sidebarShortcutWorkspaceTargets: [],
   visibleWorkspaceTargets: [],
 
@@ -38,10 +65,19 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set) =>
   setProjectPickerOpen: (open) => set({ projectPickerOpen: open }),
   setShortcutsDialogOpen: (open) => set({ shortcutsDialogOpen: open }),
   setCapturingShortcut: (capturing) => set({ capturingShortcut: capturing }),
-  setAltDown: (down) => set({ altDown: down }),
-  setCmdOrCtrlDown: (down) => set({ cmdOrCtrlDown: down }),
+  setAltDown: (down) => {
+    set({ altDown: down });
+    updateBadgeTimer(set, get);
+  },
+  setCmdOrCtrlDown: (down) => {
+    set({ cmdOrCtrlDown: down });
+    updateBadgeTimer(set, get);
+  },
   setSidebarShortcutWorkspaceTargets: (targets) =>
     set({ sidebarShortcutWorkspaceTargets: targets }),
   setVisibleWorkspaceTargets: (targets) => set({ visibleWorkspaceTargets: targets }),
-  resetModifiers: () => set({ altDown: false, cmdOrCtrlDown: false }),
+  resetModifiers: () => {
+    set({ altDown: false, cmdOrCtrlDown: false });
+    updateBadgeTimer(set, get);
+  },
 }));

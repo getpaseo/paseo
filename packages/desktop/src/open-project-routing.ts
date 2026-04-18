@@ -22,9 +22,7 @@ export function parseOpenProjectPathFromArgv(input: {
 }): string | null {
   const effectiveArgs = input.argv
     .slice(input.isDefaultApp ? 2 : 1)
-    .filter(
-      (arg) => !OPEN_PROJECT_IGNORED_ARG_PREFIXES.some((prefix) => arg.startsWith(prefix)),
-    );
+    .filter((arg) => !OPEN_PROJECT_IGNORED_ARG_PREFIXES.some((prefix) => arg.startsWith(prefix)));
 
   const positionalProjectPath = effectiveArgs.find(
     (arg) => !arg.startsWith("-") && isExistingDirectoryAbsolutePath(arg),

@@ -60,9 +60,7 @@ function extractState(terminal: ClientTerminal | HeadlessTerminal): SnapshotStat
   };
 }
 
-function extractCursorState(
-  terminal: ClientTerminal | HeadlessTerminal,
-): SnapshotState["cursor"] {
+function extractCursorState(terminal: ClientTerminal | HeadlessTerminal): SnapshotState["cursor"] {
   const buffer = terminal.buffer.active;
   const coreService = (terminal as any)._core?.coreService;
   const cursorStyle = coreService?.decPrivateModes?.cursorStyle;

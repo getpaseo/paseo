@@ -22,7 +22,14 @@ import {
   type WriteToolInput,
 } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import type { Api, ImageContent, Model, TextContent, ThinkingContent, ToolCall } from "@mariozechner/pi-ai";
+import type {
+  Api,
+  ImageContent,
+  Model,
+  TextContent,
+  ThinkingContent,
+  ToolCall,
+} from "@mariozechner/pi-ai";
 import { z } from "zod";
 
 import type {
@@ -49,6 +56,7 @@ import type {
   ToolCallDetail,
 } from "../agent-sdk-types.js";
 import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
+import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
 import {
   formatDiagnosticStatus,
@@ -207,38 +215,42 @@ const PiToolResultTextContentSchema = z.object({
   text: z.string(),
 });
 
-const PiToolResultUnknownContentSchema = z.object({
-  type: z.string(),
-}).passthrough();
+const PiToolResultUnknownContentSchema = z
+  .object({
+    type: z.string(),
+  })
+  .passthrough();
 
 const PiToolResultContentSchema = z.union([
   PiToolResultTextContentSchema,
   PiToolResultUnknownContentSchema,
 ]);
 
-const PiToolResultDetailsSchema = z.object({
-  diff: z.string().optional(),
-}).passthrough();
+const PiToolResultDetailsSchema = z
+  .object({
+    diff: z.string().optional(),
+  })
+  .passthrough();
 
-const PiToolResultObjectSchema = z.object({
-  output: z.string().optional(),
-  stdout: z.string().optional(),
-  text: z.string().optional(),
-  content: z.array(PiToolResultContentSchema).optional(),
-  exitCode: z.number().optional(),
-  code: z.number().optional(),
-  details: PiToolResultDetailsSchema.optional(),
-}).passthrough();
+const PiToolResultObjectSchema = z
+  .object({
+    output: z.string().optional(),
+    stdout: z.string().optional(),
+    text: z.string().optional(),
+    content: z.array(PiToolResultContentSchema).optional(),
+    exitCode: z.number().optional(),
+    code: z.number().optional(),
+    details: PiToolResultDetailsSchema.optional(),
+  })
+  .passthrough();
 
-const PiToolResultSchema = z.union([
-  z.string(),
-  PiToolResultObjectSchema,
-  z.null(),
-]);
+const PiToolResultSchema = z.union([z.string(), PiToolResultObjectSchema, z.null()]);
 
-const PiPersistenceMetadataSchema = z.object({
-  cwd: z.string().optional(),
-}).passthrough();
+const PiPersistenceMetadataSchema = z
+  .object({
+    cwd: z.string().optional(),
+  })
+  .passthrough();
 
 const BashToolInputSchema: z.ZodType<BashToolInput> = z.object({
   command: z.string(),
@@ -337,18 +349,15 @@ function normalizePiThinkingOption(value: string | null | undefined): ThinkingLe
   return isPiThinkingLevel(value) ? value : null;
 }
 
-function toAgentUsage(stats: ReturnType<PiAgentSession["getSessionStats"]>): AgentUsage | undefined {
+function toAgentUsage(
+  stats: ReturnType<PiAgentSession["getSessionStats"]>,
+): AgentUsage | undefined {
   const inputTokens = stats.tokens.input;
   const cachedInputTokens = stats.tokens.cacheRead;
   const outputTokens = stats.tokens.output;
   const totalCostUsd = stats.cost;
 
-  if (
-    inputTokens === 0 &&
-    cachedInputTokens === 0 &&
-    outputTokens === 0 &&
-    totalCostUsd === 0
-  ) {
+  if (inputTokens === 0 && cachedInputTokens === 0 && outputTokens === 0 && totalCostUsd === 0) {
     return undefined;
   }
 
@@ -374,11 +383,16 @@ function convertPromptInput(prompt: AgentPromptInput): PiPromptPayload {
       continue;
     }
 
-    images.push({
-      type: "image",
-      data: block.data,
-      mimeType: block.mimeType,
-    });
+    if (block.type === "image") {
+      images.push({
+        type: "image",
+        data: block.data,
+        mimeType: block.mimeType,
+      });
+      continue;
+    }
+
+    textParts.push(renderPromptAttachmentAsText(block));
   }
 
   const payload: PiPromptPayload = {
@@ -583,9 +597,8 @@ function mapToolDetail(toolCall: PiTrackedToolCall, result?: PiToolResult): Tool
       };
     case "edit": {
       const firstEdit = toolCall.args.edits[0];
-      const unifiedDiff = parsedResult && typeof parsedResult !== "string"
-        ? parsedResult.details?.diff
-        : undefined;
+      const unifiedDiff =
+        parsedResult && typeof parsedResult !== "string" ? parsedResult.details?.diff : undefined;
 
       return {
         type: "edit",
@@ -934,7 +947,8 @@ export class PiDirectAgentSession implements AgentSession {
         return;
       }
       case "tool_execution_end": {
-        const toolCall = this.activeToolCalls.get(event.toolCallId) ?? parseToolArgs(event.toolName, null);
+        const toolCall =
+          this.activeToolCalls.get(event.toolCallId) ?? parseToolArgs(event.toolName, null);
         this.activeToolCalls.delete(event.toolCallId);
 
         const result = parseToolResult(event.result);
@@ -1074,16 +1088,18 @@ export class PiDirectAgentSession implements AgentSession {
     const turnId = randomUUID();
     this.activeTurnId = turnId;
 
-    void this.session.prompt(payload.text, payload.images ? { images: payload.images } : undefined).catch((error) => {
-      const failedTurnId = this.activeTurnId ?? turnId;
-      this.activeTurnId = null;
-      this.emit({
-        type: "turn_failed",
-        provider: PI_PROVIDER,
-        turnId: failedTurnId,
-        error: stringifyUnknownError(error),
+    void this.session
+      .prompt(payload.text, payload.images ? { images: payload.images } : undefined)
+      .catch((error) => {
+        const failedTurnId = this.activeTurnId ?? turnId;
+        this.activeTurnId = null;
+        this.emit({
+          type: "turn_failed",
+          provider: PI_PROVIDER,
+          turnId: failedTurnId,
+          error: stringifyUnknownError(error),
+        });
       });
-    });
 
     return { turnId };
   }
@@ -1171,10 +1187,7 @@ export class PiDirectAgentSession implements AgentSession {
     return [];
   }
 
-  async respondToPermission(
-    requestId: string,
-    response: AgentPermissionResponse,
-  ): Promise<void> {
+  async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
     void requestId;
     void response;
   }
@@ -1218,8 +1231,7 @@ export class PiDirectAgentSession implements AgentSession {
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
-    const thinkingLevel =
-      normalizePiThinkingOption(thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL;
+    const thinkingLevel = normalizePiThinkingOption(thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL;
     this.session.setThinkingLevel(thinkingLevel);
     this.lastKnownThinkingOptionId = thinkingLevel;
     this.config.thinkingOptionId = thinkingLevel;
@@ -1330,18 +1342,20 @@ export class PiDirectAgentClient implements AgentClient {
   }
 
   async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const models = this.getModelRegistry().getAll().map((model) => ({
-      provider: PI_PROVIDER,
-      id: `${model.provider}/${model.id}`,
-      label: `${model.provider}/${model.name}`,
-      description: `${model.provider}/${model.id}`,
-      metadata: {
-        provider: model.provider,
-        modelId: model.id,
-      } satisfies AgentMetadata,
-      thinkingOptions: model.reasoning ? PI_THINKING_OPTIONS.map(mapThinkingOption) : undefined,
-      defaultThinkingOptionId: model.reasoning ? DEFAULT_PI_THINKING_LEVEL : undefined,
-    }));
+    const models = this.getModelRegistry()
+      .getAll()
+      .map((model) => ({
+        provider: PI_PROVIDER,
+        id: `${model.provider}/${model.id}`,
+        label: `${model.provider}/${model.name}`,
+        description: `${model.provider}/${model.id}`,
+        metadata: {
+          provider: model.provider,
+          modelId: model.id,
+        } satisfies AgentMetadata,
+        thinkingOptions: model.reasoning ? PI_THINKING_OPTIONS.map(mapThinkingOption) : undefined,
+        defaultThinkingOptionId: model.reasoning ? DEFAULT_PI_THINKING_LEVEL : undefined,
+      }));
 
     return transformPiModels(models);
   }
@@ -1356,7 +1370,7 @@ export class PiDirectAgentClient implements AgentClient {
       if (!existsSync(command.argv[0])) {
         return false;
       }
-    } else if (!isCommandAvailable(PI_BINARY_COMMAND)) {
+    } else if (!(await isCommandAvailable(PI_BINARY_COMMAND))) {
       return false;
     }
 
@@ -1375,8 +1389,8 @@ export class PiDirectAgentClient implements AgentClient {
       const binary =
         binaryOverride?.mode === "replace" && binaryOverride.argv[0]
           ? binaryOverride.argv[0]
-          : findExecutable(PI_BINARY_COMMAND);
-      const version = binary ? resolveBinaryVersion(binary) : "unknown";
+          : await findExecutable(PI_BINARY_COMMAND);
+      const version = binary ? await resolveBinaryVersion(binary) : "unknown";
       const authConfigPath = join(homedir(), ".pi", "agent", "auth.json");
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);

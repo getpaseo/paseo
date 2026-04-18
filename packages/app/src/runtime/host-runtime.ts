@@ -16,10 +16,7 @@ import {
 import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
 import { resolveAppVersion } from "@/utils/app-version";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@server/shared/connection-offer";
-import {
-  shouldUseDesktopDaemon,
-  startDesktopDaemon,
-} from "@/desktop/daemon/desktop-daemon";
+import { shouldUseDesktopDaemon, startDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
 import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "@/utils/daemon-endpoints";
 import { getOrCreateClientId } from "@/utils/client-id";
@@ -1078,8 +1075,7 @@ export class HostRuntimeController {
 }
 
 const REGISTRY_STORAGE_KEY = "@paseo:daemon-registry";
-const DEFAULT_LOCALHOST_ENDPOINT =
-  process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim() || "localhost:6767";
+const DEFAULT_LOCALHOST_ENDPOINT = process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim() || "localhost:6767";
 const DEFAULT_LOCALHOST_BOOTSTRAP_KEY = "@paseo:default-localhost-bootstrap-v1";
 const DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS = 2500;
 const CONNECTION_ONLINE_TIMEOUT_MS = 15_000;
@@ -1287,15 +1283,19 @@ export class HostRuntimeStore {
     });
   }
 
-  async upsertConnectionFromOffer(offer: ConnectionOffer): Promise<HostProfile> {
+  async upsertConnectionFromOffer(offer: ConnectionOffer, label?: string): Promise<HostProfile> {
     return this.upsertRelayConnection({
       serverId: offer.serverId,
       relayEndpoint: offer.relay.endpoint,
       daemonPublicKeyB64: offer.daemonPublicKeyB64,
+      label,
     });
   }
 
-  async upsertConnectionFromOfferUrl(offerUrlOrFragment: string): Promise<HostProfile> {
+  async upsertConnectionFromOfferUrl(
+    offerUrlOrFragment: string,
+    label?: string,
+  ): Promise<HostProfile> {
     const marker = "#offer=";
     const idx = offerUrlOrFragment.indexOf(marker);
     if (idx === -1) {
@@ -1307,7 +1307,7 @@ export class HostRuntimeStore {
     }
     const payload = decodeOfferFragmentPayload(encoded);
     const offer = ConnectionOfferSchema.parse(payload);
-    return this.upsertConnectionFromOffer(offer);
+    return this.upsertConnectionFromOffer(offer, label);
   }
 
   async addConnectionFromListenAndWaitForOnline(input: {
@@ -1553,10 +1553,7 @@ export class HostRuntimeStore {
           return { ok: true };
         }
 
-        if (
-          snapshot.activeConnectionId === connectionId &&
-          snapshot.connectionStatus === "error"
-        ) {
+        if (snapshot.activeConnectionId === connectionId && snapshot.connectionStatus === "error") {
           return {
             ok: false,
             error: new Error(snapshot.lastError ?? "Connection failed before coming online."),
@@ -1956,8 +1953,11 @@ export interface HostMutations {
     daemonPublicKeyB64: string;
     label?: string;
   }) => Promise<HostProfile>;
-  upsertConnectionFromOffer: (offer: ConnectionOffer) => Promise<HostProfile>;
-  upsertConnectionFromOfferUrl: (offerUrlOrFragment: string) => Promise<HostProfile>;
+  upsertConnectionFromOffer: (offer: ConnectionOffer, label?: string) => Promise<HostProfile>;
+  upsertConnectionFromOfferUrl: (
+    offerUrlOrFragment: string,
+    label?: string,
+  ) => Promise<HostProfile>;
   renameHost: (serverId: string, label: string) => Promise<void>;
   removeHost: (serverId: string) => Promise<void>;
   removeConnection: (serverId: string, connectionId: string) => Promise<void>;
@@ -1969,8 +1969,8 @@ export function useHostMutations(): HostMutations {
     () => ({
       upsertDirectConnection: (input) => store.upsertDirectConnection(input),
       upsertRelayConnection: (input) => store.upsertRelayConnection(input),
-      upsertConnectionFromOffer: (offer) => store.upsertConnectionFromOffer(offer),
-      upsertConnectionFromOfferUrl: (url) => store.upsertConnectionFromOfferUrl(url),
+      upsertConnectionFromOffer: (offer, label) => store.upsertConnectionFromOffer(offer, label),
+      upsertConnectionFromOfferUrl: (url, label) => store.upsertConnectionFromOfferUrl(url, label),
       renameHost: (serverId, label) => store.renameHost(serverId, label),
       removeHost: (serverId) => store.removeHost(serverId),
       removeConnection: (serverId, connectionId) => store.removeConnection(serverId, connectionId),

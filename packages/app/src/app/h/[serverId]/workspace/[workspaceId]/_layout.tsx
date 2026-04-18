@@ -1,5 +1,12 @@
-import { useEffect, useRef } from "react";
-import { useGlobalSearchParams, useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useRef, useState } from "react";
+import { useNavigation } from "@react-navigation/native";
+import {
+  useGlobalSearchParams,
+  useLocalSearchParams,
+  useRouter,
+  useRootNavigationState,
+} from "expo-router";
+import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import {
@@ -9,6 +16,7 @@ import {
   type WorkspaceOpenIntent,
 } from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import { isWeb } from "@/constants/platform";
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {
@@ -31,12 +39,49 @@ function getOpenIntentTarget(openIntent: WorkspaceOpenIntent): WorkspaceTabTarge
   if (openIntent.kind === "file") {
     return { kind: "file", path: openIntent.path };
   }
+  if (openIntent.kind === "setup") {
+    return { kind: "setup", workspaceId: openIntent.workspaceId };
+  }
   return { kind: "draft", draftId: openIntent.draftId };
 }
 
+function stripOpenSearchParamFromBrowserUrl() {
+  if (!isWeb || typeof window === "undefined") {
+    return;
+  }
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("open")) {
+    return;
+  }
+  url.searchParams.delete("open");
+  window.history.replaceState(null, "", url.toString());
+}
+
+function clearConsumedOpenIntent(input: {
+  navigation: { setParams: (...args: any[]) => void };
+  router: { replace: (...args: any[]) => void };
+  serverId: string;
+  workspaceId: string;
+}) {
+  input.router.replace(buildHostWorkspaceRoute(input.serverId, input.workspaceId));
+  input.navigation.setParams({ open: undefined });
+  stripOpenSearchParamFromBrowserUrl();
+}
+
 export default function HostWorkspaceLayout() {
+  return (
+    <HostRouteBootstrapBoundary>
+      <HostWorkspaceLayoutContent />
+    </HostRouteBootstrapBoundary>
+  );
+}
+
+function HostWorkspaceLayoutContent() {
+  const navigation = useNavigation();
   const router = useRouter();
+  const rootNavigationState = useRootNavigationState();
   const consumedIntentRef = useRef<string | null>(null);
+  const [intentConsumed, setIntentConsumed] = useState(false);
   const params = useLocalSearchParams<{
     serverId?: string | string[];
     workspaceId?: string | string[];
@@ -55,27 +100,47 @@ export default function HostWorkspaceLayout() {
     if (!openValue) {
       return;
     }
+    if (!rootNavigationState?.key) {
+      return;
+    }
 
     const consumptionKey = `${serverId}:${workspaceId}:${openValue}`;
     if (consumedIntentRef.current === consumptionKey) {
+      clearConsumedOpenIntent({
+        navigation,
+        router,
+        serverId,
+        workspaceId,
+      });
+      setIntentConsumed(true);
       return;
     }
     consumedIntentRef.current = consumptionKey;
 
     const openIntent = parseWorkspaceOpenIntent(openValue);
-    const route = openIntent
-      ? prepareWorkspaceTab({
-          serverId,
-          workspaceId,
-          target: getOpenIntentTarget(openIntent),
-          pin: openIntent.kind === "agent",
-        })
-      : buildHostWorkspaceRoute(serverId, workspaceId);
+    if (openIntent) {
+      prepareWorkspaceTab({
+        serverId,
+        workspaceId,
+        target: getOpenIntentTarget(openIntent),
+        pin: openIntent.kind === "agent",
+      });
+    }
 
-    router.replace(route as any);
-  }, [openValue, router, serverId, workspaceId]);
+    // Expo Router's replace ignores query-param-only changes (findDivergentState
+    // skips search params). Strip ?open from the browser URL directly so the
+    // address bar reflects the clean workspace route.
+    clearConsumedOpenIntent({
+      navigation,
+      router,
+      serverId,
+      workspaceId,
+    });
 
-  if (openValue) {
+    setIntentConsumed(true);
+  }, [navigation, openValue, rootNavigationState?.key, router, serverId, workspaceId]);
+
+  if (openValue && !intentConsumed) {
     return null;
   }
 

@@ -32,12 +32,20 @@ export {
 // Provider binary resolution
 export {
   applyProviderEnv,
+  type ProviderOverride,
+  type ProviderProfileModel,
 } from "./agent/provider-launch-config.js";
-export { findExecutable, quoteWindowsArgument, quoteWindowsCommand } from "../utils/executable.js";
+export {
+  findExecutable,
+  quoteWindowsArgument,
+  quoteWindowsCommand,
+} from "../utils/executable.js";
+export { execCommand, spawnProcess } from "../utils/spawn.js";
 
 // Provider manifest (source of truth for provider definitions)
 export {
   AGENT_PROVIDER_DEFINITIONS,
+  BUILTIN_PROVIDER_IDS,
   type AgentProviderDefinition,
 } from "./agent/provider-manifest.js";
 

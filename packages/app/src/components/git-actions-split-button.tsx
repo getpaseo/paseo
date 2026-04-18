@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { View, Text, ActivityIndicator, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronDown, MoreVertical } from "lucide-react-native";
+import { ChevronDown, Info, MoreVertical } from "lucide-react-native";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useToast } from "@/contexts/toast-context";
 import type { GitAction, GitActions } from "@/components/git-actions-policy";
 
 interface GitActionsSplitButtonProps {
@@ -19,6 +20,7 @@ interface GitActionsSplitButtonProps {
 
 export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps) {
   const { theme } = useUnistyles();
+  const toast = useToast();
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
 
   const getActionDisplayLabel = useCallback((action: GitAction): string => {
@@ -26,6 +28,20 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
     if (action.status === "success") return action.successLabel;
     return action.label;
   }, []);
+
+  const handleActionSelect = useCallback(
+    (action: GitAction) => {
+      if (action.unavailableMessage) {
+        toast.show(action.unavailableMessage, {
+          durationMs: 3200,
+          icon: <Info size={16} color={theme.colors.foreground} />,
+        });
+        return;
+      }
+      action.handler();
+    },
+    [theme.colors.foreground, toast],
+  );
 
   return (
     <View style={styles.row}>
@@ -73,7 +89,8 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" testID="changes-primary-cta-menu">
                 {gitActions.secondary.map((action, index) => {
-                  const needsSeparator = action.id === "merge-from-base" || action.id === "push";
+                  const needsSeparator =
+                    action.id === "merge-from-base" || action.id === "archive-worktree";
                   return (
                     <View key={action.id}>
                       {needsSeparator && index > 0 ? <DropdownMenuSeparator /> : null}
@@ -81,11 +98,12 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
                         testID={`changes-menu-${action.id}`}
                         leading={action.icon}
                         trailing={
-                          action.id === "archive-worktree" && archiveShortcutKeys
-                            ? <Shortcut chord={archiveShortcutKeys} />
-                            : undefined
+                          action.id === "archive-worktree" && archiveShortcutKeys ? (
+                            <Shortcut chord={archiveShortcutKeys} />
+                          ) : undefined
                         }
                         disabled={action.disabled}
+                        muted={Boolean(action.unavailableMessage)}
                         status={action.status}
                         pendingLabel={action.pendingLabel}
                         successLabel={action.successLabel}
@@ -94,8 +112,7 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
                           action.id === "pr" &&
                           action.label === "View PR"
                         }
-                        description={action.description}
-                        onSelect={action.handler}
+                        onSelect={() => handleActionSelect(action)}
                       >
                         {action.label}
                       </DropdownMenuItem>
@@ -125,11 +142,12 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
                 testID={`changes-menu-${action.id}`}
                 leading={action.icon}
                 disabled={action.disabled}
+                muted={Boolean(action.unavailableMessage)}
                 status={action.status}
                 pendingLabel={action.pendingLabel}
                 successLabel={action.successLabel}
                 closeOnSelect={false}
-                onSelect={action.handler}
+                onSelect={() => handleActionSelect(action)}
               >
                 {action.label}
               </DropdownMenuItem>

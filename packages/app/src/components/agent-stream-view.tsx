@@ -9,7 +9,8 @@ import {
   useState,
 } from "react";
 import { View, Text, Pressable, Platform, ActivityIndicator } from "react-native";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import Animated, {
@@ -26,6 +27,7 @@ import { Check, ChevronDown, X } from "lucide-react-native";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   AssistantMessage,
+  SpeakMessage,
   UserMessage,
   ActivityLog,
   ToolCall,
@@ -38,7 +40,10 @@ import {
 import { PlanCard } from "./plan-card";
 import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
-import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
+import type {
+  AgentPermissionAction,
+  AgentPermissionResponse,
+} from "@server/server/agent/agent-sdk-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { useSessionStore } from "@/stores/session-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
@@ -61,6 +66,7 @@ import {
 } from "./use-bottom-anchor-controller";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { normalizeInlinePathTarget } from "@/utils/inline-path";
+import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import {
@@ -68,6 +74,7 @@ import {
   WORKING_INDICATOR_CYCLE_MS,
   WORKING_INDICATOR_OFFSETS,
 } from "@/utils/working-indicator";
+import { isWeb } from "@/constants/platform";
 
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
@@ -105,7 +112,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const { theme } = useUnistyles();
     const router = useRouter();
-    const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+    const isMobile = useIsCompactFormFactor();
     const streamRenderStrategy = useMemo(
       () =>
         resolveStreamRenderStrategy({
@@ -130,10 +137,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const workspaceRoot = agent.cwd?.trim() || "";
-    const workspaceId = agent.projectPlacement?.checkout?.cwd?.trim() || workspaceRoot;
+    const workspaceId = resolveWorkspaceIdByExecutionDirectory({
+      workspaces: useSessionStore.getState().sessions[resolvedServerId]?.workspaces?.values(),
+      workspaceDirectory: workspaceRoot,
+    });
     const { requestDirectoryListing } = useFileExplorerActions({
       serverId: resolvedServerId,
-      workspaceId,
+      workspaceId: workspaceId ?? undefined,
       workspaceRoot,
     });
     const openWorkspaceFile = useStableEvent(function openWorkspaceFile(input: {
@@ -173,12 +183,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return;
           }
 
-          const route = prepareWorkspaceTab({
-            serverId: resolvedServerId,
-            workspaceId,
-            target: { kind: "file", path: normalized.file },
-          });
-          router.navigate(route as any);
+          if (workspaceId) {
+            const route = prepareWorkspaceTab({
+              serverId: resolvedServerId,
+              workspaceId,
+              target: { kind: "file", path: normalized.file },
+            });
+            router.navigate(route);
+          }
           return;
         }
 
@@ -211,7 +223,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return buildAgentStreamRenderModel({
         tail: streamItems,
         head: streamHead ?? [],
-        platform: Platform.OS === "web" ? "web" : "native",
+        platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
       });
     }, [isMobile, streamHead, streamItems]);
@@ -250,7 +262,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         if (item.kind === "user_message" && isToolSequenceItem(belowItem)) {
           return looseGap;
         }
-        if ((item.kind === "user_message" || item.kind === "assistant_message") && isToolSequenceItem(belowItem)) {
+        if (
+          (item.kind === "user_message" || item.kind === "assistant_message") &&
+          isToolSequenceItem(belowItem)
+        ) {
           return tightGap;
         }
         if (item.kind === "todo_list" && isToolSequenceItem(belowItem)) {
@@ -323,6 +338,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 timestamp={item.timestamp.getTime()}
                 onInlinePathPress={handleInlinePathPress}
                 workspaceRoot={workspaceRoot}
+                serverId={serverId}
+                client={client}
               />
             );
           case "thought": {
@@ -356,6 +373,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
             if (payload.source === "agent") {
               const data = payload.data;
+
+              if (
+                data.name === "speak" &&
+                data.detail.type === "unknown" &&
+                typeof data.detail.input === "string" &&
+                data.detail.input.trim()
+              ) {
+                return (
+                  <SpeakMessage message={data.detail.input} timestamp={item.timestamp.getTime()} />
+                );
+              }
+
               return (
                 <ToolCall
                   toolName={data.name}
@@ -688,12 +717,35 @@ function PermissionRequestCard({
   client: DaemonClient | null;
 }) {
   const { theme } = useUnistyles();
-  const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const isMobile = useIsCompactFormFactor();
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";
   const title = isPlanRequest ? "Plan" : (request.title ?? request.name ?? "Permission Required");
   const description = request.description ?? "";
+  const resolvedActions = useMemo((): AgentPermissionAction[] => {
+    if (request.kind === "question") {
+      return [];
+    }
+    if (Array.isArray(request.actions) && request.actions.length > 0) {
+      return request.actions;
+    }
+    return [
+      {
+        id: "reject",
+        label: "Deny",
+        behavior: "deny",
+        variant: "danger",
+        intent: "dismiss",
+      },
+      {
+        id: "accept",
+        label: isPlanRequest ? "Implement" : "Accept",
+        behavior: "allow",
+        variant: "primary",
+      },
+    ];
+  }, [isPlanRequest, request]);
 
   const planMarkdown = useMemo(() => {
     if (!request) {
@@ -734,11 +786,11 @@ function PermissionRequestCard({
     isPending: isResponding,
   } = permissionMutation;
 
-  const [respondingAction, setRespondingAction] = useState<"accept" | "deny" | null>(null);
+  const [respondingActionId, setRespondingActionId] = useState<string | null>(null);
 
   useEffect(() => {
     resetPermissionMutation();
-    setRespondingAction(null);
+    setRespondingActionId(null);
   }, [permission.request.id, resetPermissionMutation]);
   const handleResponse = useCallback(
     (response: AgentPermissionResponse) => {
@@ -751,6 +803,24 @@ function PermissionRequestCard({
       });
     },
     [permission.agentId, permission.request.id, respondToPermission],
+  );
+  const handleActionPress = useCallback(
+    (action: AgentPermissionAction) => {
+      setRespondingActionId(action.id);
+      if (action.behavior === "allow") {
+        handleResponse({
+          behavior: "allow",
+          selectedActionId: action.id,
+        });
+        return;
+      }
+      handleResponse({
+        behavior: "deny",
+        selectedActionId: action.id,
+        message: "Denied by user",
+      });
+    },
+    [handleResponse],
   );
 
   if (request.kind === "question") {
@@ -778,64 +848,48 @@ function PermissionRequestCard({
           !isMobile && permissionStyles.optionsContainerDesktop,
         ]}
       >
-        <Pressable
-          testID="permission-request-deny"
-          style={({ pressed, hovered = false }) => [
-            permissionStyles.optionButton,
-            {
-              backgroundColor: hovered ? theme.colors.surface2 : theme.colors.surface1,
-              borderColor: theme.colors.borderAccent,
-            },
-            pressed ? permissionStyles.optionButtonPressed : null,
-          ]}
-          onPress={() => {
-            setRespondingAction("deny");
-            handleResponse({
-              behavior: "deny",
-              message: "Denied by user",
-            });
-          }}
-          disabled={isResponding}
-        >
-          {respondingAction === "deny" ? (
-            <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
-          ) : (
-            <View style={permissionStyles.optionContent}>
-              <X size={14} color={theme.colors.foregroundMuted} />
-              <Text style={[permissionStyles.optionText, { color: theme.colors.foregroundMuted }]}>
-                Deny
-              </Text>
-            </View>
-          )}
-        </Pressable>
+        {resolvedActions.map((action) => {
+          const isDanger = action.variant === "danger" || action.behavior === "deny";
+          const isPrimary = action.variant === "primary";
+          const isRespondingAction = respondingActionId === action.id;
+          const textColor = isPrimary ? theme.colors.foreground : theme.colors.foregroundMuted;
+          const iconColor = textColor;
+          const Icon = action.behavior === "allow" ? Check : X;
+          const testID =
+            action.behavior === "deny"
+              ? "permission-request-deny"
+              : action.id === "accept" || action.id === "implement"
+                ? "permission-request-accept"
+                : `permission-request-action-${action.id}`;
 
-        <Pressable
-          testID="permission-request-accept"
-          style={({ pressed, hovered = false }) => [
-            permissionStyles.optionButton,
-            {
-              backgroundColor: hovered ? theme.colors.surface2 : theme.colors.surface1,
-              borderColor: theme.colors.borderAccent,
-            },
-            pressed ? permissionStyles.optionButtonPressed : null,
-          ]}
-          onPress={() => {
-            setRespondingAction("accept");
-            handleResponse({ behavior: "allow" });
-          }}
-          disabled={isResponding}
-        >
-          {respondingAction === "accept" ? (
-            <ActivityIndicator size="small" color={theme.colors.foreground} />
-          ) : (
-            <View style={permissionStyles.optionContent}>
-              <Check size={14} color={theme.colors.foreground} />
-              <Text style={[permissionStyles.optionText, { color: theme.colors.foreground }]}>
-                Accept
-              </Text>
-            </View>
-          )}
-        </Pressable>
+          return (
+            <Pressable
+              key={action.id}
+              testID={testID}
+              style={({ pressed, hovered = false }) => [
+                permissionStyles.optionButton,
+                {
+                  backgroundColor: hovered ? theme.colors.surface2 : theme.colors.surface1,
+                  borderColor: isDanger ? theme.colors.borderAccent : theme.colors.borderAccent,
+                },
+                pressed ? permissionStyles.optionButtonPressed : null,
+              ]}
+              onPress={() => handleActionPress(action)}
+              disabled={isResponding}
+            >
+              {isRespondingAction ? (
+                <ActivityIndicator size="small" color={textColor} />
+              ) : (
+                <View style={permissionStyles.optionContent}>
+                  <Icon size={14} color={iconColor} />
+                  <Text style={[permissionStyles.optionText, { color: textColor }]}>
+                    {action.label}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+          );
+        })}
       </View>
     </>
   );
@@ -870,7 +924,9 @@ function PermissionRequestCard({
         </Text>
       ) : null}
 
-      {planMarkdown ? <PlanCard title="Proposed plan" text={planMarkdown} disableOuterSpacing /> : null}
+      {planMarkdown ? (
+        <PlanCard title="Proposed plan" text={planMarkdown} disableOuterSpacing />
+      ) : null}
 
       {!isPlanRequest ? (
         <ToolCallDetailsContent

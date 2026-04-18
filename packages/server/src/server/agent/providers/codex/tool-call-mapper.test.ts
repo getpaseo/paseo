@@ -539,6 +539,26 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("normalizes codex paseo_voice.speak mcp calls and extracts spoken text", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "mcpToolCall",
+      id: "codex-speak-thread-2",
+      status: "completed",
+      server: "paseo_voice",
+      tool: "speak",
+      arguments: { text: "Voice response from Codex via paseo_voice." },
+      result: { ok: true },
+    });
+
+    expect(item).toBeTruthy();
+    expect(item?.name).toBe("speak");
+    expect(item?.detail).toEqual({
+      type: "unknown",
+      input: "Voice response from Codex via paseo_voice.",
+      output: null,
+    });
+  });
+
   it("normalizes codex paseo speak rollout names and extracts spoken text", () => {
     const item = expectMapped(
       mapCodexRolloutToolCall({

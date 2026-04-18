@@ -5,6 +5,7 @@ export interface AgentScreenAgent {
   id: string;
   status: "initializing" | "idle" | "running" | "error" | "closed";
   cwd: string;
+  lastError?: string | null;
   projectPlacement?: {
     checkout?: {
       cwd?: string;

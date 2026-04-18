@@ -63,7 +63,7 @@ export class CopilotACPAgentClient extends ACPAgentClient {
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
       const available = await this.isAvailable();
-      const resolvedBinary = findExecutable("copilot");
+      const resolvedBinary = await findExecutable("copilot");
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
@@ -97,7 +97,10 @@ export class CopilotACPAgentClient extends ACPAgentClient {
             label: "Binary",
             value: resolvedBinary ?? "not found",
           },
-          { label: "Version", value: resolvedBinary ? resolveBinaryVersion(resolvedBinary) : "unknown" },
+          {
+            label: "Version",
+            value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown",
+          },
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
         ]),

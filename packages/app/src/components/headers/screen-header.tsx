@@ -6,7 +6,7 @@ import {
   HEADER_INNER_HEIGHT,
   HEADER_INNER_HEIGHT_MOBILE,
   HEADER_TOP_PADDING_MOBILE,
-  isCompactFormFactor,
+  useIsCompactFormFactor,
 } from "@/constants/layout";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
@@ -23,10 +23,16 @@ interface ScreenHeaderProps {
  * Shared frame for the home/back headers so we only maintain padding, border,
  * and safe-area logic in one place.
  */
-export function ScreenHeader({ left, right, leftStyle, rightStyle, borderless }: ScreenHeaderProps) {
+export function ScreenHeader({
+  left,
+  right,
+  leftStyle,
+  rightStyle,
+  borderless,
+}: ScreenHeaderProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const isMobile = isCompactFormFactor();
+  const isMobile = useIsCompactFormFactor();
   const padding = useWindowControlsPadding("header");
   // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;

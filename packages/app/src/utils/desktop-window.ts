@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Platform } from "react-native";
 import {
   getIsElectronRuntimeMac,
   getIsElectronRuntime,
@@ -10,6 +9,7 @@ import {
 } from "@/constants/layout";
 import { getDesktopWindow } from "@/desktop/electron/window";
 import { usePanelStore } from "@/stores/panel-store";
+import { isNative } from "@/constants/platform";
 
 type RawWindowControlsPadding = {
   left: number;
@@ -23,7 +23,7 @@ function useRawWindowControlsPadding(): RawWindowControlsPadding {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
-    if (Platform.OS !== "web" || !getIsElectronRuntime()) return;
+    if (isNative || !getIsElectronRuntime()) return;
 
     let disposed = false;
     let cleanup: (() => void) | undefined;
@@ -95,9 +95,11 @@ function useRawWindowControlsPadding(): RawWindowControlsPadding {
   }, [isFullscreen]);
 }
 
-export function useWindowControlsPadding(
-  role: WindowControlsPaddingRole,
-): { left: number; right: number; top: number } {
+export function useWindowControlsPadding(role: WindowControlsPaddingRole): {
+  left: number;
+  right: number;
+  top: number;
+} {
   const sidebarOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const explorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
   const focusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);

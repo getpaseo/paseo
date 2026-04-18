@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, type ReactNode } from "re
 import { useWindowDimensions } from "react-native";
 import { useSharedValue, withTiming, Easing, type SharedValue } from "react-native-reanimated";
 import { type GestureType } from "react-native-gesture-handler";
-import { isCompactFormFactor } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   getRightSidebarAnimationTargets,
@@ -29,7 +29,7 @@ const ExplorerSidebarAnimationContext = createContext<ExplorerSidebarAnimationCo
 
 export function ExplorerSidebarAnimationProvider({ children }: { children: ReactNode }) {
   const { width: windowWidth } = useWindowDimensions();
-  const isCompactLayout = isCompactFormFactor();
+  const isCompactLayout = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
 
@@ -91,13 +91,7 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
 
     translateX.value = targets.translateX;
     backdropOpacity.value = targets.backdropOpacity;
-  }, [
-    isOpen,
-    translateX,
-    backdropOpacity,
-    windowWidth,
-    isGesturing,
-  ]);
+  }, [isOpen, translateX, backdropOpacity, windowWidth, isGesturing]);
 
   const animateToOpen = () => {
     "worklet";

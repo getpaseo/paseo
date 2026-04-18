@@ -1,26 +1,27 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { Pressable, Text, View, Platform, ScrollView } from "react-native";
+import { Pressable, Text, View, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { QrCode, Link2, ClipboardPaste, ExternalLink } from "lucide-react-native";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { QrCode, Link2, ClipboardPaste, ExternalLink, Settings } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { HostProfile } from "@/types/host-connection";
 import {
   getHostRuntimeStore,
   isHostRuntimeConnected,
-  useHostMutations,
   useHostRuntimeSnapshot,
   useHosts,
 } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
 import { AddHostModal } from "./add-host-modal";
 import { PairLinkModal } from "./pair-link-modal";
-import { NameHostModal } from "./name-host-modal";
+import { Button } from "@/components/ui/button";
 import { resolveAppVersion } from "@/utils/app-version";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { buildHostRootRoute } from "@/utils/host-routes";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { isWeb, isNative } from "@/constants/platform";
+
+const ThemedScrollView = withUnistyles(ScrollView);
 
 type WelcomeAction = {
   key: "scan-qr" | "direct-connection" | "paste-pairing-link";
@@ -32,6 +33,10 @@ type WelcomeAction = {
 };
 
 const styles = StyleSheet.create((theme) => ({
+  scrollView: {
+    flex: 1,
+    backgroundColor: theme.colors.surface0,
+  },
   container: {
     flexGrow: 1,
     backgroundColor: theme.colors.surface0,
@@ -49,14 +54,17 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xl,
     fontWeight: theme.fontWeight.medium,
-    marginBottom: theme.spacing[3],
     textAlign: "center",
   },
   subtitle: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
     textAlign: "center",
-    marginBottom: theme.spacing[8],
+  },
+  copyBlock: {
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[12],
   },
   actions: {
     width: "100%",
@@ -119,19 +127,11 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.destructive,
     fontSize: theme.fontSize.sm,
   },
-  setupHint: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    textAlign: "center",
-    marginBottom: theme.spacing[6],
-    lineHeight: theme.fontSize.sm * 1.5,
-  },
   setupLink: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    marginBottom: theme.spacing[6],
   },
   setupLinkText: {
     color: theme.colors.accent,
@@ -142,6 +142,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     textAlign: "center",
+    marginTop: theme.spacing[6],
+  },
+  settingsButton: {
+    alignSelf: "center",
     marginTop: theme.spacing[6],
   },
 }));
@@ -237,101 +241,76 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { renameHost } = useHostMutations();
   const appVersion = resolveAppVersion();
   const appVersionText = formatVersionWithPrefix(appVersion);
   const [isDirectOpen, setIsDirectOpen] = useState(false);
   const [isPasteLinkOpen, setIsPasteLinkOpen] = useState(false);
-  const [pendingNameHost, setPendingNameHost] = useState<{
-    serverId: string;
-    hostname: string | null;
-  } | null>(null);
-  const [pendingRedirectServerId, setPendingRedirectServerId] = useState<string | null>(null);
   const hosts = useHosts();
   const anyOnlineServerId = useAnyHostOnline(hosts.map((h) => h.serverId));
-  const pendingNameHostname = useSessionStore(
-    useCallback(
-      (state) => {
-        if (!pendingNameHost) return null;
-        return (
-          state.sessions[pendingNameHost.serverId]?.serverInfo?.hostname ??
-          pendingNameHost.hostname ??
-          null
-        );
-      },
-      [pendingNameHost],
-    ),
-  );
 
   useEffect(() => {
-    if (!anyOnlineServerId) {
-      return;
-    }
-    if (pendingNameHost) {
-      return;
-    }
-    router.replace(buildHostRootRoute(anyOnlineServerId) as any);
-  }, [anyOnlineServerId, pendingNameHost, router]);
+    if (!anyOnlineServerId) return;
+    router.replace(buildHostRootRoute(anyOnlineServerId));
+  }, [anyOnlineServerId, router]);
 
   const finishOnboarding = useCallback(
     (serverId: string) => {
-      router.replace(buildHostRootRoute(serverId) as any);
+      router.replace(buildHostRootRoute(serverId));
     },
     [router],
   );
 
-  const actions: WelcomeAction[] =
-    Platform.OS === "web"
-      ? [
-          {
-            key: "direct-connection",
-            label: "Direct connection",
-            testID: "welcome-direct-connection",
-            primary: true,
-            icon: Link2,
-            onPress: () => setIsDirectOpen(true),
-          },
-          {
-            key: "paste-pairing-link",
-            label: "Paste pairing link",
-            testID: "welcome-paste-pairing-link",
-            primary: false,
-            icon: ClipboardPaste,
-            onPress: () => setIsPasteLinkOpen(true),
-          },
-        ]
-      : [
-          {
-            key: "scan-qr",
-            label: "Scan QR code",
-            testID: "welcome-scan-qr",
-            primary: true,
-            icon: QrCode,
-            onPress: () => router.push("/pair-scan?source=onboarding"),
-          },
-          {
-            key: "direct-connection",
-            label: "Direct connection",
-            testID: "welcome-direct-connection",
-            primary: false,
-            icon: Link2,
-            onPress: () => setIsDirectOpen(true),
-          },
-          {
-            key: "paste-pairing-link",
-            label: "Paste pairing link",
-            testID: "welcome-paste-pairing-link",
-            primary: false,
-            icon: ClipboardPaste,
-            onPress: () => setIsPasteLinkOpen(true),
-          },
-        ];
+  const actions: WelcomeAction[] = isWeb
+    ? [
+        {
+          key: "direct-connection",
+          label: "Direct connection",
+          testID: "welcome-direct-connection",
+          primary: true,
+          icon: Link2,
+          onPress: () => setIsDirectOpen(true),
+        },
+        {
+          key: "paste-pairing-link",
+          label: "Paste pairing link",
+          testID: "welcome-paste-pairing-link",
+          primary: false,
+          icon: ClipboardPaste,
+          onPress: () => setIsPasteLinkOpen(true),
+        },
+      ]
+    : [
+        {
+          key: "scan-qr",
+          label: "Scan QR code",
+          testID: "welcome-scan-qr",
+          primary: true,
+          icon: QrCode,
+          onPress: () => router.push("/pair-scan?source=onboarding"),
+        },
+        {
+          key: "direct-connection",
+          label: "Direct connection",
+          testID: "welcome-direct-connection",
+          primary: false,
+          icon: Link2,
+          onPress: () => setIsDirectOpen(true),
+        },
+        {
+          key: "paste-pairing-link",
+          label: "Paste pairing link",
+          testID: "welcome-paste-pairing-link",
+          primary: false,
+          icon: ClipboardPaste,
+          onPress: () => setIsPasteLinkOpen(true),
+        },
+      ];
 
   const showHostList = hosts.length > 0 && !anyOnlineServerId;
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: theme.colors.surface0 }}
+    <ThemedScrollView
+      style={styles.scrollView}
       contentContainerStyle={[
         styles.container,
         { paddingBottom: theme.spacing[6] + insets.bottom },
@@ -341,25 +320,25 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
     >
       <View style={styles.content}>
         <PaseoLogo size={96} />
-        <Text style={styles.title}>Welcome to Paseo</Text>
-        <Text style={styles.subtitle}>
-          {showHostList ? "Connecting to your hosts…" : "Connect to your host to start"}
-        </Text>
-
-        {!showHostList && Platform.OS !== "web" && (
-          <>
-            <Text style={styles.setupHint}>
-              You need the Paseo desktop app or server running on your computer first.
-            </Text>
-            <Pressable
-              style={styles.setupLink}
-              onPress={() => openExternalUrl("https://paseo.sh")}
-            >
-              <Text style={styles.setupLinkText}>Get started at paseo.sh</Text>
-              <ExternalLink size={14} color={theme.colors.accent} />
-            </Pressable>
-          </>
-        )}
+        <View style={styles.copyBlock}>
+          <Text style={styles.title}>Welcome to Paseo</Text>
+          {showHostList ? (
+            <Text style={styles.subtitle}>Connecting to your hosts…</Text>
+          ) : (
+            <>
+              <Text style={styles.subtitle}>Connect your computer to get started</Text>
+              {isNative ? (
+                <Pressable
+                  style={styles.setupLink}
+                  onPress={() => openExternalUrl("https://paseo.sh")}
+                >
+                  <Text style={styles.setupLinkText}>paseo.sh</Text>
+                  <ExternalLink size={14} color={theme.colors.accent} />
+                </Pressable>
+              ) : null}
+            </>
+          )}
+        </View>
 
         <View style={styles.actions}>
           {actions.map((action) => {
@@ -390,19 +369,25 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
             ))}
           </View>
         )}
+
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={Settings}
+          onPress={() => router.push("/settings")}
+          style={styles.settingsButton}
+          testID="welcome-open-settings"
+        >
+          Settings
+        </Button>
       </View>
       <Text style={styles.versionLabel}>{appVersionText}</Text>
 
       <AddHostModal
         visible={isDirectOpen}
         onClose={() => setIsDirectOpen(false)}
-        onSaved={({ profile, serverId, hostname, isNewHost }) => {
+        onSaved={({ profile, serverId }) => {
           onHostAdded?.(profile);
-          setPendingRedirectServerId(serverId);
-          if (isNewHost) {
-            setPendingNameHost({ serverId, hostname });
-            return;
-          }
           finishOnboarding(serverId);
         }}
       />
@@ -410,38 +395,11 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
       <PairLinkModal
         visible={isPasteLinkOpen}
         onClose={() => setIsPasteLinkOpen(false)}
-        onSaved={({ profile, serverId, hostname, isNewHost }) => {
+        onSaved={({ profile, serverId }) => {
           onHostAdded?.(profile);
-          setPendingRedirectServerId(serverId);
-          if (isNewHost) {
-            setPendingNameHost({ serverId, hostname });
-            return;
-          }
           finishOnboarding(serverId);
         }}
       />
-
-      {pendingNameHost && pendingRedirectServerId ? (
-        <NameHostModal
-          visible
-          serverId={pendingNameHost.serverId}
-          hostname={pendingNameHostname}
-          onSkip={() => {
-            const serverId = pendingRedirectServerId;
-            setPendingNameHost(null);
-            setPendingRedirectServerId(null);
-            finishOnboarding(serverId);
-          }}
-          onSave={(label) => {
-            const serverId = pendingRedirectServerId;
-            void renameHost(pendingNameHost.serverId, label).finally(() => {
-              setPendingNameHost(null);
-              setPendingRedirectServerId(null);
-              finishOnboarding(serverId);
-            });
-          }}
-        />
-      ) : null}
-    </ScrollView>
+    </ThemedScrollView>
   );
 }

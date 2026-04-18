@@ -2,20 +2,31 @@ import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
 import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { getLatestRelease } from "~/release";
+import { getStarCount } from "~/stars";
 
 interface ReleaseContext {
   version: string;
 }
 
+interface StarsContext {
+  stars: string;
+}
+
 const ReleaseCtx = createContext<ReleaseContext>({ version: "" });
+const StarsCtx = createContext<StarsContext>({ stars: "" });
 
 export function useRelease(): ReleaseContext {
   return useContext(ReleaseCtx);
 }
 
+export function useStars(): StarsContext {
+  return useContext(StarsCtx);
+}
+
 export const Route = createRootRoute({
   loader: async () => {
-    return getLatestRelease();
+    const [release, stars] = await Promise.all([getLatestRelease(), getStarCount()]);
+    return { ...release, ...stars };
   },
   head: () => ({
     meta: [
@@ -38,12 +49,14 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
-  const release = Route.useLoaderData();
+  const data = Route.useLoaderData();
   return (
-    <ReleaseCtx value={release}>
-      <RootDocument>
-        <Outlet />
-      </RootDocument>
+    <ReleaseCtx value={data}>
+      <StarsCtx value={data}>
+        <RootDocument>
+          <Outlet />
+        </RootDocument>
+      </StarsCtx>
     </ReleaseCtx>
   );
 }
@@ -53,6 +66,12 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
     <html lang="en">
       <head>
         <HeadContent />
+        <script async src="https://plausible.io/js/pa-cKNUoWbeH_Iksb2fh82s3.js" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};plausible.init()`,
+          }}
+        />
       </head>
       <body className="antialiased bg-background text-foreground">
         {children}

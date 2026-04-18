@@ -1,34 +1,32 @@
-import {
-  useState,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  memo,
-  type ReactElement,
-} from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, memo, type ReactElement } from "react";
 import { useRouter } from "expo-router";
+import { DiffStat } from "@/components/diff-stat";
 import {
   View,
   Text,
   ActivityIndicator,
   Pressable,
   FlatList,
-  Platform,
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
+  TextStyle,
 } from "react-native";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import {
+  AlignJustify,
   Archive,
   ChevronDown,
+  Columns2,
+  Download,
   GitBranch,
   GitCommitHorizontal,
   GitMerge,
   ListChevronsDownUp,
   ListChevronsUpDown,
+  Pilcrow,
   RefreshCcw,
   Upload,
   WrapText,
@@ -42,6 +40,7 @@ import {
 } from "@/hooks/use-checkout-diff-query";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { useCheckoutPrStatusQuery } from "@/hooks/use-checkout-pr-status-query";
+import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { DiffScroll } from "./diff-scroll";
 import {
   darkHighlightColors,
@@ -51,6 +50,12 @@ import {
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
 import { shouldAnchorHeaderBeforeCollapse } from "@/utils/git-diff-scroll";
+import {
+  buildSplitDiffRows,
+  buildUnifiedDiffLines,
+  type SplitDiffDisplayLine,
+  type SplitDiffRow,
+} from "@/utils/diff-layout";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,6 +71,15 @@ import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { buildNewAgentRoute, resolveNewAgentWorkingDir } from "@/utils/new-agent-routing";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { GitActionsSplitButton } from "@/components/git-actions-split-button";
+import { usePanelStore } from "@/stores/panel-store";
+import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
+import { useToast } from "@/contexts/toast-context";
+import {
+  formatDiffContentText,
+  formatDiffGutterText,
+  hasVisibleDiffTokens,
+} from "@/utils/diff-rendering";
+import { isWeb, isNative } from "@/constants/platform";
 
 export type { GitActionId, GitAction, GitActions } from "@/components/git-actions-policy";
 
@@ -77,13 +91,27 @@ type HighlightStyle = NonNullable<HighlightToken["style"]>;
 
 interface HighlightedTextProps {
   tokens: HighlightToken[];
-  baseStyle: HighlightStyle | null;
-  lineType: "add" | "remove" | "context" | "header";
+  wrapLines?: boolean;
 }
 
-function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
+type WrappedWebTextStyle = TextStyle & {
+  whiteSpace?: "pre" | "pre-wrap";
+  overflowWrap?: "normal" | "anywhere";
+};
+
+function getWrappedTextStyle(wrapLines: boolean): WrappedWebTextStyle | undefined {
+  if (isNative) {
+    return undefined;
+  }
+  return wrapLines
+    ? { whiteSpace: "pre-wrap", overflowWrap: "anywhere" }
+    : { whiteSpace: "pre", overflowWrap: "normal" };
+}
+
+function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
   const { theme } = useUnistyles();
   const isDark = theme.colorScheme === "dark";
+  const lineHeight = theme.lineHeight.diff;
 
   const getTokenColor = (style: HighlightStyle | null): string => {
     const baseColor = isDark ? "#c9d1d9" : "#24292f";
@@ -93,9 +121,9 @@ function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
   };
 
   return (
-    <Text style={styles.diffLineText}>
+    <Text style={[styles.diffLineText, { lineHeight, ...getWrappedTextStyle(wrapLines) }]}>
       {tokens.map((token, index) => (
-        <Text key={index} style={{ color: getTokenColor(token.style) }}>
+        <Text key={index} style={{ color: getTokenColor(token.style), lineHeight }}>
           {token.text}
         </Text>
       ))}
@@ -111,25 +139,109 @@ interface DiffFileSectionProps {
   testID?: string;
 }
 
+function lineTypeBackground(type: DiffLine["type"] | undefined | null) {
+  if (!type) return styles.emptySplitCell;
+  if (type === "add") return styles.addLineContainer;
+  if (type === "remove") return styles.removeLineContainer;
+  if (type === "header") return styles.headerLineContainer;
+  return styles.contextLineContainer;
+}
+
+function DiffGutterCell({
+  lineNumber,
+  type,
+  gutterWidth,
+}: {
+  lineNumber: number | null;
+  type: DiffLine["type"] | undefined | null;
+  gutterWidth: number;
+}) {
+  return (
+    <View style={[styles.gutterCell, lineTypeBackground(type), { width: gutterWidth }]}>
+      <Text
+        style={[
+          styles.lineNumberText,
+          type === "add" && styles.addLineNumberText,
+          type === "remove" && styles.removeLineNumberText,
+        ]}
+      >
+        {formatDiffGutterText(lineNumber)}
+      </Text>
+    </View>
+  );
+}
+
+function DiffTextLine({ line, wrapLines }: { line: DiffLine; wrapLines: boolean }) {
+  const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+
+  return (
+    <View style={[styles.textLineContainer, lineTypeBackground(line.type)]}>
+      {line.type !== "header" && visibleTokens ? (
+        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
+      ) : (
+        <Text
+          style={[
+            styles.diffLineText,
+            getWrappedTextStyle(wrapLines),
+            line.type === "add" && styles.addLineText,
+            line.type === "remove" && styles.removeLineText,
+            line.type === "header" && styles.headerLineText,
+            line.type === "context" && styles.contextLineText,
+          ]}
+        >
+          {formatDiffContentText(line.content)}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function SplitTextLine({
+  line,
+  wrapLines,
+}: {
+  line: SplitDiffDisplayLine | null;
+  wrapLines: boolean;
+}) {
+  const visibleTokens = line && hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+
+  return (
+    <View style={[styles.textLineContainer, lineTypeBackground(line?.type)]}>
+      {visibleTokens ? (
+        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
+      ) : (
+        <Text
+          style={[
+            styles.diffLineText,
+            getWrappedTextStyle(wrapLines),
+            line?.type === "add" && styles.addLineText,
+            line?.type === "remove" && styles.removeLineText,
+            line?.type === "context" && styles.contextLineText,
+            !line && styles.emptySplitCellText,
+          ]}
+        >
+          {formatDiffContentText(line?.content)}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function DiffLineView({
   line,
   lineNumber,
   gutterWidth,
+  wrapLines,
 }: {
   line: DiffLine;
   lineNumber: number | null;
   gutterWidth: number;
+  wrapLines: boolean;
 }) {
+  const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+
   return (
-    <View
-      style={[
-        styles.diffLineContainer,
-        line.type === "add" && styles.addLineContainer,
-        line.type === "remove" && styles.removeLineContainer,
-        line.type === "header" && styles.headerLineContainer,
-        line.type === "context" && styles.contextLineContainer,
-      ]}
-    >
+    <View style={[styles.diffLineContainer, lineTypeBackground(line.type)]}>
       <View style={[styles.lineNumberGutter, { width: gutterWidth }]}>
         <Text
           style={[
@@ -138,24 +250,166 @@ function DiffLineView({
             line.type === "remove" && styles.removeLineNumberText,
           ]}
         >
-          {lineNumber != null ? String(lineNumber) : ""}
+          {formatDiffGutterText(lineNumber)}
         </Text>
       </View>
-      {line.tokens && line.type !== "header" ? (
-        <HighlightedText tokens={line.tokens} baseStyle={null} lineType={line.type} />
+      {line.type !== "header" && visibleTokens ? (
+        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
       ) : (
         <Text
           style={[
             styles.diffLineText,
+            getWrappedTextStyle(wrapLines),
             line.type === "add" && styles.addLineText,
             line.type === "remove" && styles.removeLineText,
             line.type === "header" && styles.headerLineText,
             line.type === "context" && styles.contextLineText,
           ]}
         >
-          {line.content || " "}
+          {formatDiffContentText(line.content)}
         </Text>
       )}
+    </View>
+  );
+}
+
+function SplitDiffLine({
+  line,
+  gutterWidth,
+  wrapLines,
+}: {
+  line: SplitDiffDisplayLine | null;
+  gutterWidth: number;
+  wrapLines: boolean;
+}) {
+  const visibleTokens = line && hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+
+  return (
+    <View style={[styles.diffLineContainer, lineTypeBackground(line?.type)]}>
+      <View style={[styles.lineNumberGutter, { width: gutterWidth }]}>
+        <Text
+          style={[
+            styles.lineNumberText,
+            line?.type === "add" && styles.addLineNumberText,
+            line?.type === "remove" && styles.removeLineNumberText,
+          ]}
+        >
+          {formatDiffGutterText(line?.lineNumber ?? null)}
+        </Text>
+      </View>
+      {visibleTokens ? (
+        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
+      ) : (
+        <Text
+          style={[
+            styles.diffLineText,
+            getWrappedTextStyle(wrapLines),
+            line?.type === "add" && styles.addLineText,
+            line?.type === "remove" && styles.removeLineText,
+            line?.type === "context" && styles.contextLineText,
+            !line && styles.emptySplitCellText,
+          ]}
+        >
+          {formatDiffContentText(line?.content)}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function SplitDiffColumn({
+  rows,
+  side,
+  gutterWidth,
+  wrapLines,
+  showDivider = false,
+}: {
+  rows: SplitDiffRow[];
+  side: "left" | "right";
+  gutterWidth: number;
+  wrapLines: boolean;
+  showDivider?: boolean;
+}) {
+  const [scrollWidth, setScrollWidth] = useState(0);
+
+  if (wrapLines) {
+    return (
+      <View style={[styles.splitCell, showDivider && styles.splitCellWithDivider]}>
+        <View style={styles.linesContainer}>
+          {rows.map((row, i) => {
+            if (row.kind === "header") {
+              return (
+                <View key={`header-${i}`} style={styles.splitHeaderRow}>
+                  <Text style={[styles.diffLineText, styles.headerLineText]}>{row.content}</Text>
+                </View>
+              );
+            }
+            return (
+              <SplitDiffLine
+                key={`line-${i}`}
+                line={side === "left" ? row.left : row.right}
+                gutterWidth={gutterWidth}
+                wrapLines={wrapLines}
+              />
+            );
+          })}
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View
+      style={[styles.splitCell, showDivider && styles.splitCellWithDivider, styles.splitCellRow]}
+    >
+      <View style={styles.gutterColumn}>
+        {rows.map((row, i) => {
+          if (row.kind === "header") {
+            return (
+              <DiffGutterCell
+                key={`g-${i}`}
+                lineNumber={null}
+                type="header"
+                gutterWidth={gutterWidth}
+              />
+            );
+          }
+          const line = side === "left" ? row.left : row.right;
+          return (
+            <DiffGutterCell
+              key={`g-${i}`}
+              lineNumber={line?.lineNumber ?? null}
+              type={line?.type}
+              gutterWidth={gutterWidth}
+            />
+          );
+        })}
+      </View>
+      <DiffScroll
+        scrollViewWidth={scrollWidth}
+        onScrollViewWidthChange={setScrollWidth}
+        style={styles.splitColumnScroll}
+        contentContainerStyle={styles.diffContentInner}
+      >
+        <View style={[styles.linesContainer, scrollWidth > 0 && { minWidth: scrollWidth }]}>
+          {rows.map((row, i) => {
+            if (row.kind === "header") {
+              return (
+                <View key={`t-${i}`} style={styles.splitHeaderRow}>
+                  <Text style={[styles.diffLineText, styles.headerLineText]}>{row.content}</Text>
+                </View>
+              );
+            }
+            return (
+              <SplitTextLine
+                key={`t-${i}`}
+                line={side === "left" ? row.left : row.right}
+                wrapLines={false}
+              />
+            );
+          })}
+        </View>
+      </DiffScroll>
     </View>
   );
 }
@@ -200,7 +454,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
         }}
         onPressOut={(event) => {
           if (
-            Platform.OS !== "web" &&
+            isNative &&
             !pressHandledRef.current &&
             layoutYRef.current === 0 &&
             pressInRef.current
@@ -235,8 +489,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
           )}
         </View>
         <View style={styles.fileHeaderRight}>
-          <Text style={styles.additions}>+{file.additions}</Text>
-          <Text style={styles.deletions}>-{file.deletions}</Text>
+          <DiffStat additions={file.additions} deletions={file.deletions} />
         </View>
       </Pressable>
     </View>
@@ -245,21 +498,25 @@ const DiffFileHeader = memo(function DiffFileHeader({
 
 function DiffFileBody({
   file,
+  layout,
   wrapLines,
   onBodyHeightChange,
   testID,
 }: {
   file: ParsedDiffFile;
+  layout: "unified" | "split";
   wrapLines: boolean;
   onBodyHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }) {
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
+  const [bodyWidth, setBodyWidth] = useState(0);
 
   return (
     <View
       style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]}
       onLayout={(event) => {
+        setBodyWidth(event.nativeEvent.layout.width);
         onBodyHeightChange?.(file.path, event.nativeEvent.layout.height);
       }}
       testID={testID}
@@ -275,65 +532,85 @@ function DiffFileBody({
           );
         }
 
-        const linesContent = (() => {
-          let maxLineNo = 0;
-          for (const hunk of file.hunks) {
-            maxLineNo = Math.max(
-              maxLineNo,
-              hunk.oldStart + hunk.oldCount,
-              hunk.newStart + hunk.newCount,
-            );
-          }
-          const gutterWidth = lineNumberGutterWidth(maxLineNo);
-          return file.hunks.map((hunk, hunkIndex) => {
-            let oldLineNo = hunk.oldStart;
-            let newLineNo = hunk.newStart;
-            return hunk.lines.map((line, lineIndex) => {
-              let lineNumber: number | null = null;
-              if (line.type === "remove") {
-                lineNumber = oldLineNo;
-                oldLineNo++;
-              } else if (line.type === "add") {
-                lineNumber = newLineNo;
-                newLineNo++;
-              } else if (line.type === "context") {
-                lineNumber = newLineNo;
-                oldLineNo++;
-                newLineNo++;
-              }
-              return (
-                <DiffLineView
-                  key={`${hunkIndex}-${lineIndex}`}
-                  line={line}
-                  lineNumber={lineNumber}
-                  gutterWidth={gutterWidth}
-                />
-              );
-            });
-          });
-        })();
+        let maxLineNo = 0;
+        for (const hunk of file.hunks) {
+          maxLineNo = Math.max(
+            maxLineNo,
+            hunk.oldStart + hunk.oldCount,
+            hunk.newStart + hunk.newCount,
+          );
+        }
+        const gutterWidth = lineNumberGutterWidth(maxLineNo);
 
-        if (wrapLines) {
+        if (layout === "split") {
+          const rows = buildSplitDiffRows(file);
           return (
-            <View style={styles.diffContent}>
-              <View style={styles.linesContainer}>{linesContent}</View>
+            <View style={[styles.diffContent, styles.splitRow]}>
+              <SplitDiffColumn
+                rows={rows}
+                side="left"
+                gutterWidth={gutterWidth}
+                wrapLines={wrapLines}
+              />
+              <SplitDiffColumn
+                rows={rows}
+                side="right"
+                gutterWidth={gutterWidth}
+                wrapLines={wrapLines}
+                showDivider
+              />
             </View>
           );
         }
 
-        return (
-          <DiffScroll
-            scrollViewWidth={scrollViewWidth}
-            onScrollViewWidthChange={setScrollViewWidth}
-            style={styles.diffContent}
-            contentContainerStyle={styles.diffContentInner}
-          >
-            <View
-              style={[styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }]}
-            >
-              {linesContent}
+        const computedLines = buildUnifiedDiffLines(file);
+
+        if (wrapLines) {
+          return (
+            <View style={styles.diffContent}>
+              <View style={styles.linesContainer}>
+                {computedLines.map(({ line, lineNumber, key }) => (
+                  <DiffLineView
+                    key={key}
+                    line={line}
+                    lineNumber={lineNumber}
+                    gutterWidth={gutterWidth}
+                    wrapLines={wrapLines}
+                  />
+                ))}
+              </View>
             </View>
-          </DiffScroll>
+          );
+        }
+
+        const availableWidth = bodyWidth > 0 ? bodyWidth : scrollViewWidth;
+        return (
+          <View style={[styles.diffContent, styles.diffContentRow]}>
+            <View style={styles.gutterColumn}>
+              {computedLines.map(({ line, lineNumber, key }) => (
+                <DiffGutterCell
+                  key={key}
+                  lineNumber={lineNumber}
+                  type={line.type}
+                  gutterWidth={gutterWidth}
+                />
+              ))}
+            </View>
+            <DiffScroll
+              scrollViewWidth={scrollViewWidth}
+              onScrollViewWidthChange={setScrollViewWidth}
+              style={styles.splitColumnScroll}
+              contentContainerStyle={styles.diffContentInner}
+            >
+              <View
+                style={[styles.linesContainer, availableWidth > 0 && { minWidth: availableWidth }]}
+              >
+                {computedLines.map(({ line, key }) => (
+                  <DiffTextLine key={key} line={line} wrapLines={false} />
+                ))}
+              </View>
+            </DiffScroll>
+          </View>
         );
       })()}
     </View>
@@ -353,28 +630,33 @@ type DiffFlatItem =
 
 export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
-  const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
-  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
+  const toast = useToast();
+  const isMobile = useIsCompactFormFactor();
+  const showDesktopWebScrollbar = isWeb && !isMobile;
+  const canUseSplitLayout = isWeb && !isMobile;
   const router = useRouter();
   const [diffModeOverride, setDiffModeOverride] = useState<"uncommitted" | "base" | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
-  const [wrapLines, setWrapLines] = useState(false);
-
-  useEffect(() => {
-    AsyncStorage.getItem("diff-wrap-lines").then((value) => {
-      if (value === "true") setWrapLines(true);
-    });
-  }, []);
+  const { preferences: changesPreferences, updatePreferences: updateChangesPreferences } =
+    useChangesPreferences();
+  const wrapLines = changesPreferences.wrapLines;
+  const effectiveLayout = canUseSplitLayout ? changesPreferences.layout : "unified";
 
   const handleToggleWrapLines = useCallback(() => {
-    setWrapLines((prev) => {
-      const next = !prev;
-      AsyncStorage.setItem("diff-wrap-lines", String(next));
-      return next;
-    });
-  }, []);
+    void updateChangesPreferences({ wrapLines: !wrapLines });
+  }, [updateChangesPreferences, wrapLines]);
+
+  const handleLayoutChange = useCallback(
+    (nextLayout: "unified" | "split") => {
+      void updateChangesPreferences({ layout: nextLayout });
+    },
+    [updateChangesPreferences],
+  );
+
+  const handleToggleHideWhitespace = useCallback(() => {
+    void updateChangesPreferences({ hideWhitespace: !changesPreferences.hideWhitespace });
+  }, [changesPreferences.hideWhitespace, updateChangesPreferences]);
 
   const {
     status,
@@ -410,6 +692,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     cwd,
     mode: diffMode,
     baseRef,
+    ignoreWhitespace: changesPreferences.hideWhitespace,
     enabled: isGit,
   });
   const {
@@ -424,7 +707,22 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   });
   // Track user-initiated refresh to avoid iOS RefreshControl animation on background fetches
   const [isManualRefresh, setIsManualRefresh] = useState(false);
-  const [expandedByPath, setExpandedByPath] = useState<Record<string, boolean>>({});
+  const normalizedWorkspaceRoot = useMemo(() => cwd.trim(), [cwd]);
+  const workspaceStateKey = useMemo(
+    () =>
+      buildWorkspaceExplorerStateKey({
+        workspaceId,
+        workspaceRoot: normalizedWorkspaceRoot,
+      }),
+    [normalizedWorkspaceRoot, workspaceId],
+  );
+  const expandedPathsArray = usePanelStore((state) =>
+    workspaceStateKey ? state.diffExpandedPathsByWorkspace[workspaceStateKey] : undefined,
+  );
+  const setDiffExpandedPathsForWorkspace = usePanelStore(
+    (state) => state.setDiffExpandedPathsForWorkspace,
+  );
+  const expandedPaths = useMemo(() => new Set(expandedPathsArray ?? []), [expandedPathsArray]);
   const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
   const scrollbar = useWebScrollViewScrollbar(diffListRef, {
     enabled: showDesktopWebScrollbar,
@@ -484,7 +782,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     const stickyIndices: number[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const isExpanded = expandedByPath[file.path] ?? false;
+      const isExpanded = expandedPaths.has(file.path);
       items.push({ type: "header", file, fileIndex: i, isExpanded });
       if (isExpanded) {
         stickyIndices.push(items.length - 1);
@@ -494,7 +792,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       }
     }
     return { flatItems: items, stickyHeaderIndices: stickyIndices };
-  }, [files, expandedByPath]);
+  }, [expandedPaths, files]);
 
   const handleHeaderHeightChange = useCallback((path: string, height: number) => {
     if (!Number.isFinite(height) || height <= 0) {
@@ -540,18 +838,21 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
           break;
         }
         offset += headerHeightByPathRef.current[file.path] ?? defaultHeaderHeight;
-        if (expandedByPath[file.path]) {
+        if (expandedPaths.has(file.path)) {
           offset += bodyHeightByPathRef.current[file.path] ?? 0;
         }
       }
       return Math.max(0, offset);
     },
-    [expandedByPath, files],
+    [expandedPaths, files],
   );
 
   const handleToggleExpanded = useCallback(
     (path: string) => {
-      const isCurrentlyExpanded = expandedByPath[path] ?? false;
+      if (!workspaceStateKey) {
+        return;
+      }
+      const isCurrentlyExpanded = expandedPaths.has(path);
       const nextExpanded = !isCurrentlyExpanded;
       const targetOffset = isCurrentlyExpanded ? computeHeaderOffset(path) : null;
       const headerHeight = headerHeightByPathRef.current[path] ?? defaultHeaderHeightRef.current;
@@ -573,32 +874,32 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         });
       }
 
-      setExpandedByPath((prev) => ({
-        ...prev,
-        // Use a deterministic target value (instead of toggling from prev) so duplicate
-        // onPress events from sticky headers on Android can't flip back immediately.
-        [path]: nextExpanded,
-      }));
+      const nextPaths = nextExpanded
+        ? [...expandedPaths, path]
+        : Array.from(expandedPaths).filter((expandedPath) => expandedPath !== path);
+      setDiffExpandedPathsForWorkspace(workspaceStateKey, nextPaths);
     },
-    [computeHeaderOffset, expandedByPath],
+    [computeHeaderOffset, expandedPaths, setDiffExpandedPathsForWorkspace, workspaceStateKey],
   );
 
   const allExpanded = useMemo(() => {
     if (files.length === 0) return false;
-    return files.every((file) => expandedByPath[file.path]);
-  }, [files, expandedByPath]);
+    return files.every((file) => expandedPaths.has(file.path));
+  }, [expandedPaths, files]);
 
   const handleToggleExpandAll = useCallback(() => {
-    if (allExpanded) {
-      setExpandedByPath({});
-    } else {
-      const newExpanded: Record<string, boolean> = {};
-      for (const file of files) {
-        newExpanded[file.path] = true;
-      }
-      setExpandedByPath(newExpanded);
+    if (!workspaceStateKey) {
+      return;
     }
-  }, [allExpanded, files]);
+    if (allExpanded) {
+      setDiffExpandedPathsForWorkspace(workspaceStateKey, []);
+    } else {
+      setDiffExpandedPathsForWorkspace(
+        workspaceStateKey,
+        files.map((file) => file.path),
+      );
+    }
+  }, [allExpanded, files, setDiffExpandedPathsForWorkspace, workspaceStateKey]);
 
   // Reset manual refresh flag when fetch completes
   useEffect(() => {
@@ -614,6 +915,9 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
 
   const commitStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "commit" }),
+  );
+  const pullStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "pull" }),
   );
   const pushStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "push" }),
@@ -632,83 +936,123 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   );
 
   const runCommit = useCheckoutGitActionsStore((state) => state.commit);
+  const runPull = useCheckoutGitActionsStore((state) => state.pull);
   const runPush = useCheckoutGitActionsStore((state) => state.push);
   const runCreatePr = useCheckoutGitActionsStore((state) => state.createPr);
   const runMergeBranch = useCheckoutGitActionsStore((state) => state.mergeBranch);
   const runMergeFromBase = useCheckoutGitActionsStore((state) => state.mergeFromBase);
   const runArchiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
 
+  const toastActionError = useCallback(
+    (error: unknown, fallback: string) => {
+      const message = error instanceof Error ? error.message : fallback;
+      toast.error(message);
+    },
+    [toast],
+  );
+
+  const toastActionSuccess = useCallback(
+    (message: string) => {
+      toast.show(message, { variant: "success" });
+    },
+    [toast],
+  );
+
   const handleCommit = useCallback(() => {
-    setActionError(null);
-    void runCommit({ serverId, cwd }).catch((err) => {
-      const message = err instanceof Error ? err.message : "Failed to commit";
-      setActionError(message);
-    });
-  }, [runCommit, serverId, cwd]);
+    void runCommit({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess("Committed");
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to commit");
+      });
+  }, [cwd, runCommit, serverId, toastActionError, toastActionSuccess]);
+
+  const handlePull = useCallback(() => {
+    void runPull({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess("Pulled");
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to pull");
+      });
+  }, [cwd, runPull, serverId, toastActionError, toastActionSuccess]);
 
   const handlePush = useCallback(() => {
-    setActionError(null);
-    void runPush({ serverId, cwd }).catch((err) => {
-      const message = err instanceof Error ? err.message : "Failed to push";
-      setActionError(message);
-    });
-  }, [runPush, serverId, cwd]);
+    void runPush({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess("Pushed");
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to push");
+      });
+  }, [cwd, runPush, serverId, toastActionError, toastActionSuccess]);
 
   const handleCreatePr = useCallback(() => {
     void persistShipDefault("pr");
-    setActionError(null);
-    void runCreatePr({ serverId, cwd }).catch((err) => {
-      const message = err instanceof Error ? err.message : "Failed to create PR";
-      setActionError(message);
-    });
-  }, [persistShipDefault, runCreatePr, serverId, cwd]);
+    void runCreatePr({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess("PR created");
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to create PR");
+      });
+  }, [cwd, persistShipDefault, runCreatePr, serverId, toastActionError, toastActionSuccess]);
 
   const handleMergeBranch = useCallback(() => {
     if (!baseRef) {
-      setActionError("Base ref unavailable");
+      toast.error("Base ref unavailable");
       return;
     }
     void persistShipDefault("merge");
-    setActionError(null);
     void runMergeBranch({ serverId, cwd, baseRef })
       .then(() => {
         setPostShipArchiveSuggested(true);
+        toastActionSuccess("Merged");
       })
       .catch((err) => {
-        const message = err instanceof Error ? err.message : "Failed to merge";
-        setActionError(message);
+        toastActionError(err, "Failed to merge");
       });
-  }, [baseRef, persistShipDefault, runMergeBranch, serverId, cwd]);
+  }, [
+    baseRef,
+    cwd,
+    persistShipDefault,
+    runMergeBranch,
+    serverId,
+    toast,
+    toastActionError,
+    toastActionSuccess,
+  ]);
 
   const handleMergeFromBase = useCallback(() => {
     if (!baseRef) {
-      setActionError("Base ref unavailable");
+      toast.error("Base ref unavailable");
       return;
     }
-    setActionError(null);
-    void runMergeFromBase({ serverId, cwd, baseRef }).catch((err) => {
-      const message = err instanceof Error ? err.message : "Failed to merge from base";
-      setActionError(message);
-    });
-  }, [baseRef, runMergeFromBase, serverId, cwd]);
+    void runMergeFromBase({ serverId, cwd, baseRef })
+      .then(() => {
+        toastActionSuccess("Updated");
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to merge from base");
+      });
+  }, [baseRef, cwd, runMergeFromBase, serverId, toast, toastActionError, toastActionSuccess]);
 
   const handleArchiveWorktree = useCallback(() => {
     const worktreePath = status?.cwd;
     if (!worktreePath) {
-      setActionError("Worktree path unavailable");
+      toast.error("Worktree path unavailable");
       return;
     }
-    setActionError(null);
     const targetWorkingDir = resolveNewAgentWorkingDir(cwd, status ?? null);
     void runArchiveWorktree({ serverId, cwd, worktreePath })
       .then(() => {
-        router.replace(buildNewAgentRoute(serverId, targetWorkingDir) as any);
+        router.replace(buildNewAgentRoute(serverId, targetWorkingDir));
       })
       .catch((err) => {
-        const message = err instanceof Error ? err.message : "Failed to archive worktree";
-        setActionError(message);
+        toastActionError(err, "Failed to archive worktree");
       });
-  }, [runArchiveWorktree, router, serverId, cwd, status]);
+  }, [cwd, router, runArchiveWorktree, serverId, status, toast, toastActionError]);
 
   const renderFlatItem = useCallback(
     ({ item }: { item: DiffFlatItem }) => {
@@ -726,13 +1070,20 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       return (
         <DiffFileBody
           file={item.file}
+          layout={effectiveLayout}
           wrapLines={wrapLines}
           onBodyHeightChange={handleBodyHeightChange}
           testID={`diff-file-${item.fileIndex}-body`}
         />
       );
     },
-    [handleBodyHeightChange, handleHeaderHeightChange, handleToggleExpanded, wrapLines],
+    [
+      effectiveLayout,
+      handleBodyHeightChange,
+      handleHeaderHeightChange,
+      handleToggleExpanded,
+      wrapLines,
+    ],
   );
 
   const flatKeyExtractor = useCallback(
@@ -753,6 +1104,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         : "Unknown";
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
   const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
+  const behindBaseCount = gitStatus?.aheadBehind?.behind ?? 0;
   const aheadOfOrigin = gitStatus?.aheadOfOrigin ?? 0;
   const behindOfOrigin = gitStatus?.behindOfOrigin ?? 0;
   const baseRefLabel = useMemo(() => {
@@ -778,6 +1130,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     (postShipArchiveSuggested || isMergedPullRequest);
 
   const commitDisabled = actionsDisabled || commitStatus === "pending";
+  const pullDisabled = actionsDisabled || pullStatus === "pending";
   const prDisabled = actionsDisabled || prCreateStatus === "pending";
   const mergeDisabled = actionsDisabled || mergeStatus === "pending";
   const mergeFromBaseDisabled = actionsDisabled || mergeFromBaseStatus === "pending";
@@ -821,7 +1174,11 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     bodyContent = (
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyText}>
-          {diffMode === "uncommitted" ? "No uncommitted changes" : `No changes vs ${baseRefLabel}`}
+          {changesPreferences.hideWhitespace
+            ? "No visible changes after hiding whitespace"
+            : diffMode === "uncommitted"
+              ? "No uncommitted changes"
+              : `No changes vs ${baseRefLabel}`}
         </Text>
       </View>
     );
@@ -833,7 +1190,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         renderItem={renderFlatItem}
         keyExtractor={flatKeyExtractor}
         stickyHeaderIndices={stickyHeaderIndices}
-        extraData={expandedByPath}
+        extraData={{ expandedPathsArray, effectiveLayout, wrapLines }}
         style={styles.scrollView}
         contentContainerStyle={styles.contentContainer}
         testID="git-diff-scroll"
@@ -880,6 +1237,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       baseRefAvailable: Boolean(baseRef),
       baseRefLabel,
       aheadCount,
+      behindBaseCount,
       aheadOfOrigin,
       behindOfOrigin,
       shouldPromoteArchive,
@@ -890,6 +1248,12 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
           status: commitStatus,
           icon: <GitCommitHorizontal size={16} color={theme.colors.foregroundMuted} />,
           handler: handleCommit,
+        },
+        pull: {
+          disabled: pullDisabled,
+          status: pullStatus,
+          icon: <Download size={16} color={theme.colors.foregroundMuted} />,
+          handler: handlePull,
         },
         push: {
           disabled: pushDisabled,
@@ -935,6 +1299,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     hasPullRequest,
     prStatus?.url,
     aheadCount,
+    behindBaseCount,
     isPaseoOwnedWorktree,
     isOnBaseBranch,
     githubFeaturesEnabled,
@@ -945,18 +1310,21 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     baseRefLabel,
     shouldPromoteArchive,
     commitDisabled,
+    pullDisabled,
     pushDisabled,
     prDisabled,
     mergeDisabled,
     mergeFromBaseDisabled,
     archiveDisabled,
     commitStatus,
+    pullStatus,
     pushStatus,
     prCreateStatus,
     mergeStatus,
     mergeFromBaseStatus,
     archiveStatus,
     handleCommit,
+    handlePull,
     handlePush,
     handleCreatePr,
     handleMergeBranch,
@@ -1019,61 +1387,153 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            {files.length > 0 ? (
-              <View style={styles.diffStatusButtons}>
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <Pressable
-                      style={({ hovered, pressed }) => [
-                        styles.expandAllButton,
-                        (hovered || pressed) && styles.diffStatusRowHovered,
-                      ]}
-                      onPress={handleToggleWrapLines}
-                    >
-                      <WrapText size={isMobile ? 18 : 14} color={theme.colors.foregroundMuted} />
-                    </Pressable>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    <Text style={styles.tooltipText}>
-                      {wrapLines ? "Scroll long lines" : "Wrap long lines"}
-                    </Text>
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <Pressable
-                      style={({ hovered, pressed }) => [
-                        styles.expandAllButton,
-                        (hovered || pressed) && styles.diffStatusRowHovered,
-                      ]}
-                      onPress={handleToggleExpandAll}
-                    >
-                      {allExpanded ? (
-                        <ListChevronsDownUp
-                          size={isMobile ? 18 : 14}
-                          color={theme.colors.foregroundMuted}
+            <View style={styles.diffStatusButtons}>
+              {canUseSplitLayout ? (
+                <View style={styles.toggleButtonGroup}>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Unified diff"
+                        testID="changes-layout-unified"
+                        onPress={() => handleLayoutChange("unified")}
+                        style={({ hovered, pressed }) => [
+                          styles.toggleButton,
+                          styles.toggleButtonGroupStart,
+                          changesPreferences.layout === "unified" && styles.toggleButtonSelected,
+                          (hovered || pressed) && styles.diffStatusRowHovered,
+                        ]}
+                      >
+                        <AlignJustify
+                          size={14}
+                          color={
+                            changesPreferences.layout === "unified"
+                              ? theme.colors.foreground
+                              : theme.colors.foregroundMuted
+                          }
                         />
-                      ) : (
-                        <ListChevronsUpDown
-                          size={isMobile ? 18 : 14}
-                          color={theme.colors.foregroundMuted}
+                      </Pressable>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <Text style={styles.tooltipText}>Unified diff</Text>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Side-by-side diff"
+                        testID="changes-layout-split"
+                        onPress={() => handleLayoutChange("split")}
+                        style={({ hovered, pressed }) => [
+                          styles.toggleButton,
+                          styles.toggleButtonGroupEnd,
+                          changesPreferences.layout === "split" && styles.toggleButtonSelected,
+                          (hovered || pressed) && styles.diffStatusRowHovered,
+                        ]}
+                      >
+                        <Columns2
+                          size={14}
+                          color={
+                            changesPreferences.layout === "split"
+                              ? theme.colors.foreground
+                              : theme.colors.foregroundMuted
+                          }
                         />
-                      )}
-                    </Pressable>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    <Text style={styles.tooltipText}>
-                      {allExpanded ? "Collapse all files" : "Expand all files"}
-                    </Text>
-                  </TooltipContent>
-                </Tooltip>
-              </View>
-            ) : null}
+                      </Pressable>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <Text style={styles.tooltipText}>Side-by-side diff</Text>
+                    </TooltipContent>
+                  </Tooltip>
+                </View>
+              ) : null}
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Hide whitespace"
+                    testID="changes-toggle-whitespace"
+                    style={({ hovered, pressed }) => [
+                      styles.expandAllButton,
+                      changesPreferences.hideWhitespace && styles.toggleButtonSelected,
+                      (hovered || pressed) && styles.diffStatusRowHovered,
+                    ]}
+                    onPress={handleToggleHideWhitespace}
+                  >
+                    <Pilcrow
+                      size={isMobile ? 18 : 14}
+                      color={
+                        changesPreferences.hideWhitespace
+                          ? theme.colors.foreground
+                          : theme.colors.foregroundMuted
+                      }
+                    />
+                  </Pressable>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <Text style={styles.tooltipText}>Hide whitespace</Text>
+                </TooltipContent>
+              </Tooltip>
+              {files.length > 0 ? (
+                <View style={styles.diffStatusButtons}>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Pressable
+                        style={({ hovered, pressed }) => [
+                          styles.expandAllButton,
+                          wrapLines && styles.toggleButtonSelected,
+                          (hovered || pressed) && styles.diffStatusRowHovered,
+                        ]}
+                        onPress={handleToggleWrapLines}
+                      >
+                        <WrapText
+                          size={isMobile ? 18 : 14}
+                          color={wrapLines ? theme.colors.foreground : theme.colors.foregroundMuted}
+                        />
+                      </Pressable>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <Text style={styles.tooltipText}>
+                        {wrapLines ? "Scroll long lines" : "Wrap long lines"}
+                      </Text>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Pressable
+                        style={({ hovered, pressed }) => [
+                          styles.expandAllButton,
+                          (hovered || pressed) && styles.diffStatusRowHovered,
+                        ]}
+                        onPress={handleToggleExpandAll}
+                      >
+                        {allExpanded ? (
+                          <ListChevronsDownUp
+                            size={isMobile ? 18 : 14}
+                            color={theme.colors.foregroundMuted}
+                          />
+                        ) : (
+                          <ListChevronsUpDown
+                            size={isMobile ? 18 : 14}
+                            color={theme.colors.foregroundMuted}
+                          />
+                        )}
+                      </Pressable>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <Text style={styles.tooltipText}>
+                        {allExpanded ? "Collapse all files" : "Expand all files"}
+                      </Text>
+                    </TooltipContent>
+                  </Tooltip>
+                </View>
+              ) : null}
+            </View>
           </View>
         </View>
       ) : null}
 
-      {actionError ? <Text style={styles.actionErrorText}>{actionError}</Text> : null}
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
 
       <View style={styles.diffContainer}>
@@ -1160,11 +1620,42 @@ const styles = StyleSheet.create((theme) => ({
   diffStatusButtons: {
     flexDirection: "row",
     alignItems: "center",
-    gap: {
-      xs: theme.spacing[1],
-      sm: theme.spacing[1],
-      md: 0,
+    gap: theme.spacing[1],
+    flexWrap: "wrap",
+  },
+  toggleButtonGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  toggleButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: {
+      xs: 32,
+      sm: 32,
+      md: 24,
     },
+    height: {
+      xs: 32,
+      sm: 32,
+      md: 24,
+    },
+    paddingHorizontal: {
+      xs: theme.spacing[2],
+      sm: theme.spacing[2],
+      md: theme.spacing[1],
+    },
+  },
+  toggleButtonGroupStart: {
+    borderTopLeftRadius: theme.borderRadius.base,
+    borderBottomLeftRadius: theme.borderRadius.base,
+  },
+  toggleButtonGroupEnd: {
+    borderTopRightRadius: theme.borderRadius.base,
+    borderBottomRightRadius: theme.borderRadius.base,
+  },
+  toggleButtonSelected: {
+    backgroundColor: theme.colors.surface2,
   },
   expandAllButton: {
     flexDirection: "row",
@@ -1308,7 +1799,7 @@ const styles = StyleSheet.create((theme) => ({
   newBadgeText: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.palette.green[400],
+    color: theme.colors.diffAddition,
   },
   deletedBadge: {
     backgroundColor: "rgba(248, 81, 73, 0.2)",
@@ -1320,28 +1811,72 @@ const styles = StyleSheet.create((theme) => ({
   deletedBadgeText: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.palette.red[500],
+    color: theme.colors.diffDeletion,
   },
   additions: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.palette.green[400],
+    color: theme.colors.diffAddition,
   },
   deletions: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.palette.red[500],
+    color: theme.colors.diffDeletion,
   },
   diffContent: {
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
     backgroundColor: theme.colors.surface1,
   },
+  diffContentRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
   diffContentInner: {
     flexDirection: "column",
   },
   linesContainer: {
     backgroundColor: theme.colors.surface1,
+  },
+  gutterColumn: {
+    backgroundColor: theme.colors.surface1,
+  },
+  gutterCell: {
+    borderRightWidth: theme.borderWidth[1],
+    borderRightColor: theme.colors.border,
+    justifyContent: "flex-start",
+  },
+  textLineContainer: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    paddingLeft: theme.spacing[2],
+  },
+  splitRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
+  splitColumnScroll: {
+    flex: 1,
+  },
+  splitHeaderRow: {
+    backgroundColor: theme.colors.surface2,
+    paddingHorizontal: theme.spacing[3],
+  },
+  splitCell: {
+    flex: 1,
+    flexBasis: 0,
+    backgroundColor: theme.colors.surface2,
+  },
+  splitCellRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
+  emptySplitCell: {
+    backgroundColor: theme.colors.surfaceDiffEmpty,
+  },
+  splitCellWithDivider: {
+    borderLeftWidth: theme.borderWidth[1],
+    borderLeftColor: theme.colors.border,
   },
   diffLineContainer: {
     flexDirection: "row",
@@ -1352,28 +1887,28 @@ const styles = StyleSheet.create((theme) => ({
     borderRightColor: theme.colors.border,
     marginRight: theme.spacing[2],
     alignSelf: "stretch",
-    justifyContent: "center",
+    justifyContent: "flex-start",
   },
   lineNumberText: {
     textAlign: "right",
     paddingRight: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
     fontSize: theme.fontSize.xs,
+    lineHeight: theme.lineHeight.diff,
     fontFamily: Fonts.mono,
     color: theme.colors.foregroundMuted,
     userSelect: "none",
   },
   addLineNumberText: {
-    color: theme.colors.palette.green[400],
+    color: theme.colors.diffAddition,
   },
   removeLineNumberText: {
-    color: theme.colors.palette.red[500],
+    color: theme.colors.diffDeletion,
   },
   diffLineText: {
     flex: 1,
     paddingRight: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
     fontSize: theme.fontSize.xs,
+    lineHeight: theme.lineHeight.diff,
     fontFamily: Fonts.mono,
     color: theme.colors.foreground,
     userSelect: "text",
@@ -1401,6 +1936,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   contextLineText: {
     color: theme.colors.foregroundMuted,
+  },
+  emptySplitCellText: {
+    color: "transparent",
   },
   statusMessageContainer: {
     borderTopWidth: theme.borderWidth[1],

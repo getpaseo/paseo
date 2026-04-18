@@ -20,6 +20,9 @@ export interface PrHint {
   url: string;
   number: number;
   state: "open" | "merged" | "closed";
+  checks?: Array<{ name: string; status: string; url: string | null }>;
+  checksStatus?: "none" | "pending" | "success" | "failure";
+  reviewDecision?: "approved" | "changes_requested" | "pending" | null;
 }
 
 function parsePullRequestNumber(url: string): number | null {
@@ -51,11 +54,15 @@ function selectWorkspacePrHint(payload: CheckoutPrStatusPayload): PrHint | null 
   return {
     url: status.url,
     number,
-    state: status.isMerged || status.state === "merged"
-      ? "merged"
-      : status.state === "open"
-        ? "open"
-        : "closed",
+    state:
+      status.isMerged || status.state === "merged"
+        ? "merged"
+        : status.state === "open"
+          ? "open"
+          : "closed",
+    checks: status.checks,
+    checksStatus: status.checksStatus as PrHint["checksStatus"],
+    reviewDecision: status.reviewDecision as PrHint["reviewDecision"],
   };
 }
 

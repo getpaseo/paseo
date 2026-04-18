@@ -51,8 +51,7 @@ function Configuration() {
           <li>CLI flags</li>
         </ol>
         <p className="text-white/60 leading-relaxed">
-          Lists append across sources (for example, <code className="font-mono">allowedHosts</code>{" "}
-          and
+          Lists append across sources (for example, <code className="font-mono">hostnames</code> and
           <code className="font-mono">cors.allowedOrigins</code>).
         </p>
       </section>
@@ -60,7 +59,7 @@ function Configuration() {
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Example</h2>
         <p className="text-white/60 leading-relaxed">
-          Minimal example that configures listening address, host allowlist, provider keys, and MCP:
+          Minimal example that configures listening address, hostnames, provider keys, and MCP:
         </p>
         <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
           {`{
@@ -71,11 +70,16 @@ function Configuration() {
   },
   "daemon": {
     "listen": "127.0.0.1:6767",
-    "allowedHosts": ["localhost", ".localhost"],
+    "hostnames": ["localhost", ".localhost"],
     "mcp": { "enabled": true }
   }
 }`}
         </pre>
+        <p className="text-white/60 leading-relaxed">
+          <code className="font-mono">daemon.hostnames</code> is the primary field. The old{" "}
+          <code className="font-mono">daemon.allowedHosts</code> name still works as a deprecated
+          alias for backward compatibility.
+        </p>
       </section>
 
       <section className="space-y-4">
@@ -229,8 +233,12 @@ docker run --rm -i \\
             <code className="font-mono">daemon.listen</code>
           </li>
           <li>
-            <code className="font-mono">PASEO_ALLOWED_HOSTS</code> — override/extend{" "}
-            <code className="font-mono">daemon.allowedHosts</code>
+            <code className="font-mono">PASEO_HOSTNAMES</code> — override/extend{" "}
+            <code className="font-mono">daemon.hostnames</code>
+          </li>
+          <li>
+            <code className="font-mono">PASEO_ALLOWED_HOSTS</code> — deprecated alias for{" "}
+            <code className="font-mono">PASEO_HOSTNAMES</code>
           </li>
           <li>
             <code className="font-mono">PASEO_LOG_CONSOLE_LEVEL</code> — override{" "}

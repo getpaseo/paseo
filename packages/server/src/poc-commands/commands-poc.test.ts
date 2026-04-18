@@ -15,16 +15,12 @@
  * This pattern is used in claude-agent.ts listModels().
  */
 
-import { describe, expect, test } from "vitest";
-import {
-  query,
-  type SDKUserMessage,
-} from "@anthropic-ai/claude-agent-sdk";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { isCommandAvailable } from "../utils/executable.js";
 
 const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
-const canRunClaudeIntegration = isCommandAvailable("claude") && hasClaudeCredentials;
 
 // Pattern from claude-agent.ts listModels():
 // Use an empty async generator when you just need control methods
@@ -33,8 +29,20 @@ function createEmptyPrompt(): AsyncGenerator<SDKUserMessage, void, undefined> {
 }
 
 describe("Claude Agent SDK Commands POC", () => {
+  let canRunClaudeIntegration = false;
+
+  beforeAll(async () => {
+    canRunClaudeIntegration = (await isCommandAvailable("claude")) && hasClaudeCredentials;
+  });
+
+  beforeEach((context) => {
+    if (!canRunClaudeIntegration) {
+      context.skip();
+    }
+  });
+
   describe("supportedCommands() API", () => {
-    test.runIf(canRunClaudeIntegration)("should return an array of SlashCommand objects", async () => {
+    test("should return an array of SlashCommand objects", async () => {
       // Use the pattern from claude-agent.ts:
       // Create a query with empty prompt generator for control methods
       const emptyPrompt = createEmptyPrompt();
@@ -75,7 +83,7 @@ describe("Claude Agent SDK Commands POC", () => {
       }
     }, 30000);
 
-    test.runIf(canRunClaudeIntegration)("should have valid SlashCommand structure for all commands", async () => {
+    test("should have valid SlashCommand structure for all commands", async () => {
       const emptyPrompt = createEmptyPrompt();
 
       const claudeQuery = query({
