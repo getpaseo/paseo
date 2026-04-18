@@ -1,0 +1,40 @@
+# Dependencies & build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Environment & secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.crt
+secrets.json
+credentials.json
+.secrets/
+.credentials/
+
+# Logs & runtime
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local config overrides
+.local/
+*.local.json
+config.local.*

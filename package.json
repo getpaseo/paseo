@@ -10,7 +10,8 @@
     "packages/relay",
     "packages/website",
     "packages/desktop",
-    "packages/cli"
+    "packages/cli",
+    "packages/openrouter-agent"
   ],
   "scripts": {
     "dev": "./scripts/dev.sh",

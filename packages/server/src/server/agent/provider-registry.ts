@@ -403,6 +403,8 @@ function addDerivedProviders(
             logger,
             command: override.command!,
             env: override.env,
+            waitForInitialCommands: override.waitForInitialCommands,
+            initialCommandsWaitTimeoutMs: override.initialCommandsWaitTimeoutMs,
           }),
       });
       continue;

@@ -1,0 +1,35 @@
+{
+  "name": "@getpaseo/openrouter-agent",
+  "version": "0.1.56",
+  "description": "ACP-compatible agent that bridges Paseo to OpenRouter's chat completions API",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/getpaseo/paseo.git",
+    "directory": "packages/openrouter-agent"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "openrouter-agent": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.17.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "tsx": "^4.19.4"
+  }
+}

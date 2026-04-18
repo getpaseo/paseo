@@ -70,6 +70,13 @@ export const ProviderOverrideSchema = z
     disallowedTools: z.array(z.string()).optional(),
     enabled: z.boolean().optional(),
     order: z.number().optional(),
+    /**
+     * For `extends: "acp"` providers only. When true, listCommands() waits
+     * briefly for the agent to advertise slash commands via
+     * `available_commands_update` before returning. Default: false.
+     */
+    waitForInitialCommands: z.boolean().optional(),
+    initialCommandsWaitTimeoutMs: z.number().int().positive().optional(),
   })
   .strict();
 

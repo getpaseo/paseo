@@ -7,6 +7,13 @@ type GenericACPAgentClientOptions = {
   logger: Logger;
   command: string[];
   env?: Record<string, string>;
+  /**
+   * When true, listCommands() waits up to `initialCommandsWaitTimeoutMs` for
+   * the agent to send `available_commands_update` before returning. Useful for
+   * agents that advertise slash commands asynchronously after session setup.
+   */
+  waitForInitialCommands?: boolean;
+  initialCommandsWaitTimeoutMs?: number;
 };
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -24,6 +31,8 @@ export class GenericACPAgentClient extends ACPAgentClient {
         env: options.env,
       },
       defaultCommand: options.command as [string, ...string[]],
+      waitForInitialCommands: options.waitForInitialCommands,
+      initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
     });
 
     this.command = options.command as [string, ...string[]];
