@@ -23,7 +23,7 @@ import {
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
-import { resolveGitHubRemote } from "../utils/github-remote.js";
+import { resolveGitHubRemote, type GitHubRemoteIdentity } from "../utils/github-remote.js";
 import { listPaseoWorktrees, type PaseoWorktreeInfo } from "../utils/worktree.js";
 import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
 import {
@@ -233,7 +233,6 @@ interface WorkspaceGitServiceDependencies {
   runGitFetch: (cwd: string) => Promise<void>;
   runGitCommand: typeof runGitCommand;
   now: () => Date;
-  resolveGitHubRemote: typeof resolveGitHubRemote;
 }
 
 interface WorkspaceGitServiceOptions {
@@ -256,6 +255,7 @@ interface WorkspaceGitTarget {
   latestFingerprint: string | null;
   lastShellOutAtMs: number | null;
   repoGitRoot: string | null;
+  cachedGitHubRemote: { remoteUrl: string; identity: GitHubRemoteIdentity | null } | null;
   observationSetupPromise: Promise<void> | null;
   observationSetupComplete: boolean;
   closed: boolean;
@@ -306,7 +306,6 @@ function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies 
     runGitFetch,
     runGitCommand,
     now: () => new Date(),
-    resolveGitHubRemote,
   };
 }
 
@@ -755,10 +754,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       latestFingerprint: null,
       lastShellOutAtMs: null,
       repoGitRoot: null,
+      cachedGitHubRemote: null,
       observationSetupPromise: null,
       observationSetupComplete: false,
       closed: false,
     };
+
 
     this.workspaceTargets.set(cwd, target);
     return target;
@@ -1317,6 +1318,22 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
   }
 
+  private async resolveGitHubRemoteForTarget(
+    target: WorkspaceGitTarget,
+    remoteUrl: string | null,
+  ): Promise<GitHubRemoteIdentity | null> {
+    if (!remoteUrl) {
+      target.cachedGitHubRemote = null;
+      return null;
+    }
+    if (target.cachedGitHubRemote?.remoteUrl === remoteUrl) {
+      return target.cachedGitHubRemote.identity;
+    }
+    const identity = await resolveGitHubRemote({ remoteUrl });
+    target.cachedGitHubRemote = { remoteUrl, identity };
+    return identity;
+  }
+
   private shouldThrottleNonForcedRefresh(
     target: WorkspaceGitTarget,
   ): target is WorkspaceGitTarget & {
@@ -1389,15 +1406,42 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (forceGitHub) {
       this.deps.github.invalidate({ cwd: target.cwd });
     }
-    const snapshot = await loadWorkspaceGitRuntimeSnapshot(
-      target.cwd,
-      { paseoHome: this.paseoHome },
-      now,
-      this.deps,
-      { force: request.force, forceGitHub, reason: request.reason },
-    );
+
+    const cwd = target.cwd;
+    const context: CheckoutContext = { paseoHome: this.paseoHome };
+    const checkoutStatus = await this.deps.getCheckoutStatus(cwd, context);
+    if (!checkoutStatus.isGit) {
+      target.latestSnapshotLoadedAtMs = now.getTime();
+      return buildNotGitSnapshot(cwd);
+    }
+
+    const githubRemote = await this.resolveGitHubRemoteForTarget(target, checkoutStatus.remoteUrl);
+
+    const [diffStat, github] = await Promise.all([
+      this.deps.getCheckoutShortstat(cwd, context, { force: request.force }).catch(() => null),
+      loadGitHubSnapshot({ cwd, githubRemote, now, deps: this.deps, force: forceGitHub, reason: request.reason }),
+    ]);
+
     target.latestSnapshotLoadedAtMs = now.getTime();
-    return snapshot;
+    return {
+      cwd,
+      git: {
+        isGit: true,
+        repoRoot: checkoutStatus.repoRoot,
+        mainRepoRoot: checkoutStatus.mainRepoRoot,
+        currentBranch: checkoutStatus.currentBranch,
+        remoteUrl: checkoutStatus.remoteUrl,
+        isPaseoOwnedWorktree: checkoutStatus.isPaseoOwnedWorktree,
+        isDirty: checkoutStatus.isDirty,
+        baseRef: checkoutStatus.baseRef,
+        aheadBehind: checkoutStatus.aheadBehind,
+        aheadOfOrigin: checkoutStatus.aheadOfOrigin,
+        behindOfOrigin: checkoutStatus.behindOfOrigin,
+        hasRemote: checkoutStatus.hasRemote,
+        diffStat,
+      },
+      github,
+    };
   }
 
   private rememberSnapshot(
@@ -1545,73 +1589,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 }
 
-async function loadWorkspaceGitRuntimeSnapshot(
-  cwd: string,
-  context: CheckoutContext,
-  now: Date,
-  deps: Pick<
-    WorkspaceGitServiceDependencies,
-    | "getCheckoutStatus"
-    | "getCheckoutShortstat"
-    | "getPullRequestStatus"
-    | "github"
-    | "resolveGitHubRemote"
-  >,
-  options?: { force?: boolean; forceGitHub?: boolean; reason?: string },
-): Promise<WorkspaceGitRuntimeSnapshot> {
-  const checkoutStatus = await deps.getCheckoutStatus(cwd, context);
-  if (!checkoutStatus.isGit) {
-    return buildNotGitSnapshot(cwd);
-  }
-
-  const [diffStat, github] = await Promise.all([
-    deps.getCheckoutShortstat(cwd, context, { force: options?.force }).catch(() => null),
-    loadGitHubSnapshot({
-      cwd,
-      remoteUrl: checkoutStatus.remoteUrl,
-      now,
-      deps,
-      force: options?.forceGitHub,
-      reason: options?.reason,
-    }),
-  ]);
-
-  return {
-    cwd,
-    git: {
-      isGit: true,
-      repoRoot: checkoutStatus.repoRoot,
-      mainRepoRoot: checkoutStatus.mainRepoRoot,
-      currentBranch: checkoutStatus.currentBranch,
-      remoteUrl: checkoutStatus.remoteUrl,
-      isPaseoOwnedWorktree: checkoutStatus.isPaseoOwnedWorktree,
-      isDirty: checkoutStatus.isDirty,
-      baseRef: checkoutStatus.baseRef,
-      aheadBehind: checkoutStatus.aheadBehind,
-      aheadOfOrigin: checkoutStatus.aheadOfOrigin,
-      behindOfOrigin: checkoutStatus.behindOfOrigin,
-      hasRemote: checkoutStatus.hasRemote,
-      diffStat,
-    },
-    github,
-  };
-}
-
 async function loadGitHubSnapshot(options: {
   cwd: string;
-  remoteUrl: string | null;
+  githubRemote: GitHubRemoteIdentity | null;
   now: Date;
-  deps: Pick<
-    WorkspaceGitServiceDependencies,
-    "getPullRequestStatus" | "github" | "resolveGitHubRemote"
-  >;
+  deps: Pick<WorkspaceGitServiceDependencies, "getPullRequestStatus" | "github">;
   force?: boolean;
   reason?: string;
 }): Promise<WorkspaceGitRuntimeSnapshot["github"]> {
-  const githubRemote = options.remoteUrl
-    ? await options.deps.resolveGitHubRemote({ remoteUrl: options.remoteUrl })
-    : null;
-  if (!githubRemote) {
+  if (!options.githubRemote) {
     return {
       featuresEnabled: false,
       pullRequest: null,

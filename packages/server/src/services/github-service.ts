@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { GitHubSearchKind } from "../shared/messages.js";
 import { findExecutable } from "../utils/executable.js";
-import { resolveGitHubRemote, type SshHostnameResolver } from "../utils/github-remote.js";
+import { resolveGitHubRemote } from "../utils/github-remote.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { execCommand } from "../utils/spawn.js";
 
@@ -1867,19 +1867,13 @@ function mapReviewDecision(value: unknown): PullRequestReviewDecision {
   return null;
 }
 
-export async function resolveGitHubRepo(options: {
-  cwd: string;
-  resolveSshHostname?: SshHostnameResolver;
-}): Promise<string | null> {
+export async function resolveGitHubRepo(cwd: string): Promise<string | null> {
   try {
     const { stdout } = await runGitCommand(["config", "--get", "remote.origin.url"], {
-      cwd: options.cwd,
+      cwd,
       env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
     });
-    const remote = await resolveGitHubRemote({
-      remoteUrl: stdout.trim(),
-      resolveSshHostname: options.resolveSshHostname,
-    });
+    const remote = await resolveGitHubRemote({ remoteUrl: stdout.trim() });
     return remote?.repo ?? null;
   } catch {
     return null;

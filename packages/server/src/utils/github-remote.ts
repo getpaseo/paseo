@@ -2,10 +2,9 @@ import { findExecutable } from "./executable.js";
 import { execCommand } from "./spawn.js";
 
 const GITHUB_HOSTS = new Set(["github.com", "ssh.github.com"]);
-const SSH_ENV: NodeJS.ProcessEnv = {
-  ...process.env,
-  GIT_TERMINAL_PROMPT: "0",
-};
+function getSshEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+}
 
 let sshExecutableLookup: Promise<string | null> | null = null;
 const sshHostnameResolutionCache = new Map<string, Promise<string | null>>();
@@ -91,7 +90,7 @@ async function loadResolvedSshHostname(input: ResolveSshHostnameInput): Promise<
 
   try {
     const { stdout } = await execCommand(sshPath, ["-G", input.host], {
-      env: SSH_ENV,
+      env: getSshEnv(),
       maxBuffer: 1024 * 1024,
     });
     return parseResolvedSshHostname(stdout);

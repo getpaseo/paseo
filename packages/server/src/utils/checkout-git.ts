@@ -2279,7 +2279,7 @@ export async function createPullRequest(
   context?: CheckoutContext,
 ): Promise<{ url: string; number: number }> {
   await requireGitRepo(cwd);
-  const repo = await resolveGitHubRepo({ cwd });
+  const repo = await resolveGitHubRepo(cwd);
   if (!repo) {
     throw new Error("Unable to determine GitHub repo from git remote");
   }
