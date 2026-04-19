@@ -11,7 +11,6 @@ import {
   GitHubCommandError,
   createGitHubService,
   resolveGitHubRepo,
-  type GitHubRepoRemoteUrlResolver,
   type GitHubService,
 } from "../services/github-service.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
@@ -2277,11 +2276,10 @@ export async function createPullRequest(
   cwd: string,
   options: CreatePullRequestOptions,
   github: GitHubService = createGitHubService(),
-  workspaceGitService: GitHubRepoRemoteUrlResolver,
   context?: CheckoutContext,
 ): Promise<{ url: string; number: number }> {
   await requireGitRepo(cwd);
-  const repo = await resolveGitHubRepo(cwd, { workspaceGitService });
+  const repo = await resolveGitHubRepo({ cwd });
   if (!repo) {
     throw new Error("Unable to determine GitHub repo from git remote");
   }

@@ -5190,7 +5190,6 @@ export class Session {
           base: msg.baseRef,
         },
         this.github,
-        this.workspaceGitService,
       );
       await this.notifyGitMutation(cwd, "create-pr", { invalidateGithub: true });
 

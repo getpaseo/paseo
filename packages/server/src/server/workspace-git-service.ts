@@ -23,6 +23,7 @@ import {
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
+import { resolveGitHubRemote } from "../utils/github-remote.js";
 import { listPaseoWorktrees, type PaseoWorktreeInfo } from "../utils/worktree.js";
 import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
 import {
@@ -232,6 +233,7 @@ interface WorkspaceGitServiceDependencies {
   runGitFetch: (cwd: string) => Promise<void>;
   runGitCommand: typeof runGitCommand;
   now: () => Date;
+  resolveGitHubRemote: typeof resolveGitHubRemote;
 }
 
 interface WorkspaceGitServiceOptions {
@@ -304,6 +306,7 @@ function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies 
     runGitFetch,
     runGitCommand,
     now: () => new Date(),
+    resolveGitHubRemote,
   };
 }
 
@@ -1548,7 +1551,11 @@ async function loadWorkspaceGitRuntimeSnapshot(
   now: Date,
   deps: Pick<
     WorkspaceGitServiceDependencies,
-    "getCheckoutStatus" | "getCheckoutShortstat" | "getPullRequestStatus" | "github"
+    | "getCheckoutStatus"
+    | "getCheckoutShortstat"
+    | "getPullRequestStatus"
+    | "github"
+    | "resolveGitHubRemote"
   >,
   options?: { force?: boolean; forceGitHub?: boolean; reason?: string },
 ): Promise<WorkspaceGitRuntimeSnapshot> {
@@ -1594,11 +1601,17 @@ async function loadGitHubSnapshot(options: {
   cwd: string;
   remoteUrl: string | null;
   now: Date;
-  deps: Pick<WorkspaceGitServiceDependencies, "getPullRequestStatus" | "github">;
+  deps: Pick<
+    WorkspaceGitServiceDependencies,
+    "getPullRequestStatus" | "github" | "resolveGitHubRemote"
+  >;
   force?: boolean;
   reason?: string;
 }): Promise<WorkspaceGitRuntimeSnapshot["github"]> {
-  if (!hasGitHubRemoteUrl(options.remoteUrl)) {
+  const githubRemote = options.remoteUrl
+    ? await options.deps.resolveGitHubRemote({ remoteUrl: options.remoteUrl })
+    : null;
+  if (!githubRemote) {
     return {
       featuresEnabled: false,
       pullRequest: null,
@@ -1684,6 +1697,7 @@ function parseWorkspaceGitStashList(
 
   return entries;
 }
+
 
 function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {

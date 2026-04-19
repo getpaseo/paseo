@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { GitHubSearchKind } from "../shared/messages.js";
 import { findExecutable } from "../utils/executable.js";
+import { resolveGitHubRemote, type SshHostnameResolver } from "../utils/github-remote.js";
+import { runGitCommand } from "../utils/run-git-command.js";
 import { execCommand } from "../utils/spawn.js";
 
 const DEFAULT_GITHUB_CACHE_TTL_MS = 30_000;
@@ -1865,46 +1867,21 @@ function mapReviewDecision(value: unknown): PullRequestReviewDecision {
   return null;
 }
 
-export interface GitHubRepoRemoteUrlResolver {
-  resolveRepoRemoteUrl(cwd: string, options?: GitHubReadOptions): Promise<string | null>;
-}
-
-export async function resolveGitHubRepo(
-  cwd: string,
-  options: { workspaceGitService: GitHubRepoRemoteUrlResolver; readOptions?: GitHubReadOptions },
-): Promise<string | null> {
+export async function resolveGitHubRepo(options: {
+  cwd: string;
+  resolveSshHostname?: SshHostnameResolver;
+}): Promise<string | null> {
   try {
-    const remoteUrl = await options.workspaceGitService.resolveRepoRemoteUrl(
-      cwd,
-      options.readOptions,
-    );
-    return parseGitHubRepoFromRemote(remoteUrl?.trim() ?? "");
+    const { stdout } = await runGitCommand(["config", "--get", "remote.origin.url"], {
+      cwd: options.cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    });
+    const remote = await resolveGitHubRemote({
+      remoteUrl: stdout.trim(),
+      resolveSshHostname: options.resolveSshHostname,
+    });
+    return remote?.repo ?? null;
   } catch {
     return null;
   }
-}
-
-function parseGitHubRepoFromRemote(url: string): string | null {
-  if (!url) {
-    return null;
-  }
-  let cleaned = url;
-  if (cleaned.startsWith("git@github.com:")) {
-    cleaned = cleaned.slice("git@github.com:".length);
-  } else if (cleaned.startsWith("https://github.com/")) {
-    cleaned = cleaned.slice("https://github.com/".length);
-  } else if (cleaned.startsWith("http://github.com/")) {
-    cleaned = cleaned.slice("http://github.com/".length);
-  } else {
-    const marker = "github.com/";
-    const index = cleaned.indexOf(marker);
-    if (index === -1) {
-      return null;
-    }
-    cleaned = cleaned.slice(index + marker.length);
-  }
-  if (cleaned.endsWith(".git")) {
-    cleaned = cleaned.slice(0, -".git".length);
-  }
-  return cleaned.includes("/") ? cleaned : null;
 }

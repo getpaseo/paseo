@@ -8,6 +8,7 @@ import {
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
 } from "./workspace-git-service.js";
+import { resolveGitHubRemote } from "../utils/github-remote.js";
 
 interface ServiceInternals {
   workingTreeWatchTargets: Map<string, { fallbackRefreshInterval: unknown; repoWatchPath: string }>;
@@ -188,6 +189,7 @@ interface CreateServiceTestOptions {
   readdir?: ReturnType<typeof vi.fn>;
   watch?: ReturnType<typeof vi.fn>;
   now?: () => Date;
+  resolveGitHubRemote?: typeof resolveGitHubRemote;
 }
 
 function buildDefaultTestServiceDeps() {
@@ -212,6 +214,7 @@ function buildDefaultTestServiceDeps() {
       signal: null,
     })),
     now: () => new Date("2026-04-12T00:00:00.000Z"),
+    resolveGitHubRemote,
   };
 }
 
@@ -337,7 +340,34 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
-  test("cold getSnapshot calls share one workspace target and cache the snapshot", async () => {
+  test("getSnapshot treats SSH aliases that resolve to GitHub as GitHub remotes", async () => {
+    const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
+    const resolveViaSshAlias = vi.fn((input: { remoteUrl: string }) =>
+      resolveGitHubRemote({
+        remoteUrl: input.remoteUrl,
+        resolveSshHostname: async ({ host }) => (host === "github-work" ? "github.com" : null),
+      }),
+    );
+    const service = createService({
+      getCheckoutStatus: vi.fn(async (cwd: string) =>
+        createCheckoutStatus(cwd, {
+          remoteUrl: "git@github-work:acme/repo.git",
+        }),
+      ),
+      getPullRequestStatus,
+      resolveGitHubRemote: resolveViaSshAlias,
+    });
+
+    const snapshot = await service.getSnapshot("/tmp/repo");
+
+    expect(snapshot.github.featuresEnabled).toBe(true);
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+    expect(resolveViaSshAlias).toHaveBeenCalledWith({ remoteUrl: "git@github-work:acme/repo.git" });
+
+    service.dispose();
+  });
+
+  test("cold getSnapshot calls share one workspace target setup and cache the snapshot", async () => {
     const checkoutStatusDeferred = createDeferred<CheckoutStatusGit>();
     const getCheckoutStatus = vi.fn(async () => checkoutStatusDeferred.promise);
     const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
