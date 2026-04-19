@@ -57,6 +57,8 @@ import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachm
 import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import { isNative } from "@/constants/platform";
+import { useToast } from "@/contexts/toast-context";
+import { toErrorMessage } from "@/utils/error-messages";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -258,6 +260,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const voiceAudioEngine = useVoiceAudioEngineOptional();
   const queryClient = useQueryClient();
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const toast = useToast();
 
   // Zustand store actions
   const initializeSession = useSessionStore((state) => state.initializeSession);
@@ -1769,9 +1772,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
       void client.setAgentMode(agentId, modeId).catch((error) => {
         console.error("[Session] Failed to set agent mode:", error);
+        toast.error(toErrorMessage(error));
       });
     },
-    [client],
+    [client, toast],
   );
 
   const setAgentModel = useCallback(
@@ -1782,9 +1786,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
       void client.setAgentModel(agentId, modelId).catch((error) => {
         console.error("[Session] Failed to set agent model:", error);
+        toast.error(toErrorMessage(error));
       });
     },
-    [client],
+    [client, toast],
   );
 
   const setAgentThinkingOption = useCallback(
@@ -1795,9 +1800,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
       void client.setAgentThinkingOption(agentId, thinkingOptionId).catch((error) => {
         console.error("[Session] Failed to set agent thinking option:", error);
+        toast.error(toErrorMessage(error));
       });
     },
-    [client],
+    [client, toast],
   );
 
   const respondToPermission = useCallback(

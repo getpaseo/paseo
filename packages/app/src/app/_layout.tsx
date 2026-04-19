@@ -867,18 +867,18 @@ export default function RootLayout() {
               <BottomSheetModalProvider>
                 <HostRuntimeBootstrapProvider>
                   <PushNotificationRouter />
-                  <ProvidersWrapper>
-                    <SidebarAnimationProvider>
-                      <HorizontalScrollProvider>
-                        <ToastProvider>
+                  <ToastProvider>
+                    <ProvidersWrapper>
+                      <SidebarAnimationProvider>
+                        <HorizontalScrollProvider>
                           <OpenProjectListener />
                           <AppWithSidebar>
                             <RootStack />
                           </AppWithSidebar>
-                        </ToastProvider>
-                      </HorizontalScrollProvider>
-                    </SidebarAnimationProvider>
-                  </ProvidersWrapper>
+                        </HorizontalScrollProvider>
+                      </SidebarAnimationProvider>
+                    </ProvidersWrapper>
+                  </ToastProvider>
                 </HostRuntimeBootstrapProvider>
               </BottomSheetModalProvider>
             </QueryProvider>
