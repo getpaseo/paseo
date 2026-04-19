@@ -6,7 +6,11 @@ import {
   integer,
   jsonb,
   uniqueIndex,
+  index,
+  primaryKey,
+  foreignKey,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // ─── Better Auth Core Tables ────────────────────────────────────────────────
 
@@ -283,4 +287,152 @@ export const projectRegistry = pgTable(
       table.projectKey,
     ),
   }),
+);
+
+// ─── Chat ───────────────────────────────────────────────────────────────────
+
+export const channel = pgTable(
+  "channel",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name"), // null allowed for DMs
+    topic: text("topic"),
+    kind: text("kind").notNull(), // 'public' | 'private' | 'dm'
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    archivedAt: timestamp("archived_at"),
+  },
+  (t) => [
+    // Unique channel name per org, but only when name is set (skips DMs).
+    uniqueIndex("channel_org_name_unique")
+      .on(t.orgId, t.name)
+      .where(sql`name is not null`),
+    index("channel_org_idx").on(t.orgId),
+  ],
+);
+
+export const channelMember = pgTable(
+  "channel_member",
+  {
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channel.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"), // 'admin' | 'member'
+    joinedAt: timestamp("joined_at").notNull().defaultNow(),
+    lastReadAt: timestamp("last_read_at"),
+    muted: boolean("muted").notNull().default(false),
+    notifyPref: text("notify_pref").notNull().default("all"), // 'all' | 'mentions' | 'nothing'
+  },
+  (t) => [
+    primaryKey({ columns: [t.channelId, t.userId] }),
+    index("channel_member_user_idx").on(t.userId),
+  ],
+);
+
+export const message = pgTable(
+  "message",
+  {
+    id: text("id").primaryKey(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channel.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    parentId: text("parent_id"),
+    content: text("content").notNull().default(""), // markdown source
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    editedAt: timestamp("edited_at"),
+    deletedAt: timestamp("deleted_at"),
+  },
+  (t) => [
+    index("message_channel_created_idx").on(t.channelId, t.createdAt, t.id),
+    index("message_parent_idx").on(t.parentId),
+    foreignKey({
+      columns: [t.parentId],
+      foreignColumns: [t.id],
+      name: "message_parent_fkey",
+    }).onDelete("set null"),
+  ],
+);
+
+export const attachment = pgTable(
+  "attachment",
+  {
+    id: text("id").primaryKey(),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => message.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    mimeType: text("mime_type").notNull(),
+    filename: text("filename").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("attachment_message_idx").on(t.messageId)],
+);
+
+export const reaction = pgTable(
+  "reaction",
+  {
+    messageId: text("message_id")
+      .notNull()
+      .references(() => message.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    emoji: text("emoji").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.userId, t.emoji] }),
+    index("reaction_message_idx").on(t.messageId),
+  ],
+);
+
+export const mention = pgTable(
+  "mention",
+  {
+    messageId: text("message_id")
+      .notNull()
+      .references(() => message.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.userId] }),
+    index("mention_user_idx").on(t.userId),
+  ],
+);
+
+export const pin = pgTable(
+  "pin",
+  {
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channel.id, { onDelete: "cascade" }),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => message.id, { onDelete: "cascade" }),
+    pinnedBy: text("pinned_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    pinnedAt: timestamp("pinned_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.channelId, t.messageId] }),
+    index("pin_channel_idx").on(t.channelId),
+  ],
 );

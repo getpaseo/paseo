@@ -30,6 +30,7 @@ import {
   useIsSharedRecipient,
   useSharedSessionStore,
 } from "@/stores/shared-session-store";
+import { isNative } from "@/constants/platform";
 
 interface SidebarSharedWorkspacesProps {
   serverId: string | null;
@@ -137,9 +138,16 @@ export function SidebarSharedWorkspaces({
     return null;
   }
 
+  const [headerHovered, setHeaderHovered] = useState(false);
+  const showAdd = headerHovered || isNative;
+
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <Pressable
+        style={styles.header}
+        onHoverIn={() => setHeaderHovered(true)}
+        onHoverOut={() => setHeaderHovered(false)}
+      >
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={collapsed ? "Expand shared workspaces" : "Collapse shared workspaces"}
@@ -155,16 +163,18 @@ export function SidebarSharedWorkspaces({
           <Text style={styles.headerText}>Shared Workspaces</Text>
           {totalCount > 0 && <Text style={styles.countBadge}>{totalCount}</Text>}
         </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Share a workspace"
-          style={({ hovered = false }) => [styles.addButton, hovered && styles.headerHovered]}
-          onPress={() => setModalOpen(true)}
-          disabled={!orgId}
-        >
-          <Plus size={12} color={theme.colors.foregroundMuted} />
-        </Pressable>
-      </View>
+        {showAdd ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Share a workspace"
+            style={({ hovered = false }) => [styles.addButton, hovered && styles.headerHovered]}
+            onPress={() => setModalOpen(true)}
+            disabled={!orgId}
+          >
+            <Plus size={12} color={theme.colors.foregroundMuted} />
+          </Pressable>
+        ) : null}
+      </Pressable>
 
       {!collapsed && (
         <View style={styles.body}>
@@ -176,11 +186,6 @@ export function SidebarSharedWorkspaces({
               {mine.map((share) => {
                 const isCopied = copiedToken === share.token;
                 const isActive = activeShareToken === share.token;
-                const access = share.accessLevel === "full_access" ? "Can interact" : "Can view";
-                const audience =
-                  share.allowedUsers.length === 0
-                    ? "Anyone in org"
-                    : `${share.allowedUsers.length} member${share.allowedUsers.length === 1 ? "" : "s"}`;
                 return (
                   <Pressable
                     key={share.token}
@@ -207,50 +212,60 @@ export function SidebarSharedWorkspaces({
                       });
                     }}
                   >
-                    <Share2 size={11} color={theme.colors.foregroundMuted} />
-                    <View style={styles.rowInfo}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>
-                        {share.workspaceName}
-                      </Text>
-                      <Text style={styles.rowSubtitle} numberOfLines={1}>
-                        {access} · {audience}
-                      </Text>
-                    </View>
-                    <View style={styles.rowActions}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Copy share link"
-                        style={({ hovered = false }) => [
-                          styles.iconButton,
-                          hovered && styles.iconButtonHovered,
-                        ]}
-                        onPress={(e) => {
-                          e.stopPropagation?.();
-                          void handleCopy(share.shareUrl, share.token);
-                        }}
-                      >
-                        {isCopied ? (
-                          <Check size={12} color={theme.colors.accent} />
-                        ) : (
-                          <Copy size={12} color={theme.colors.foregroundMuted} />
-                        )}
-                      </Pressable>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Revoke share"
-                        style={({ hovered = false }) => [
-                          styles.iconButton,
-                          hovered && styles.iconButtonDestructive,
-                        ]}
-                        onPress={(e) => {
-                          e.stopPropagation?.();
-                          void handleRevoke(share.token);
-                        }}
-                        disabled={isRevoking}
-                      >
-                        <Trash2 size={12} color={theme.colors.destructive} />
-                      </Pressable>
-                    </View>
+                    {({ hovered = false }) => {
+                      const showActions = hovered || isNative || isCopied;
+                      return (
+                        <>
+                          <Share2 size={12} color={theme.colors.foregroundMuted} />
+                          <Text style={styles.rowTitle} numberOfLines={1}>
+                            {share.workspaceName}
+                          </Text>
+                          {showActions ? (
+                            <View style={styles.rowActions}>
+                              <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="Copy share link"
+                                style={({ hovered: btnHover = false }) => [
+                                  styles.iconButton,
+                                  btnHover && styles.iconButtonHovered,
+                                ]}
+                                onPress={(e) => {
+                                  e.stopPropagation?.();
+                                  void handleCopy(share.shareUrl, share.token);
+                                }}
+                              >
+                                {isCopied ? (
+                                  <Check size={12} color={theme.colors.accent} />
+                                ) : (
+                                  <Copy
+                                    size={12}
+                                    color={theme.colors.foregroundMuted}
+                                  />
+                                )}
+                              </Pressable>
+                              <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="Revoke share"
+                                style={({ hovered: btnHover = false }) => [
+                                  styles.iconButton,
+                                  btnHover && styles.iconButtonDestructive,
+                                ]}
+                                onPress={(e) => {
+                                  e.stopPropagation?.();
+                                  void handleRevoke(share.token);
+                                }}
+                                disabled={isRevoking}
+                              >
+                                <Trash2
+                                  size={12}
+                                  color={theme.colors.destructive}
+                                />
+                              </Pressable>
+                            </View>
+                          ) : null}
+                        </>
+                      );
+                    }}
                   </Pressable>
                 );
               })}
@@ -270,27 +285,36 @@ export function SidebarSharedWorkspaces({
                   style={({ hovered = false }) => [styles.row, hovered && styles.rowHovered]}
                   onPress={() => handleOpenShared(share)}
                 >
-                  <Users size={11} color={theme.colors.foregroundMuted} />
-                  <View style={styles.rowInfo}>
-                    <Text style={styles.rowTitle} numberOfLines={1}>
-                      {share.workspaceName}
-                    </Text>
-                    <Text style={styles.rowSubtitle} numberOfLines={1}>
-                      by {share.owner.name} ·{" "}
-                      {share.accessLevel === "full_access" ? "Can interact" : "Can view"}
-                    </Text>
-                  </View>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Copy share link"
-                    style={({ hovered = false }) => [
-                      styles.iconButton,
-                      hovered && styles.iconButtonHovered,
-                    ]}
-                    onPress={() => void handleOpenShareUrl(share.shareUrl)}
-                  >
-                    <ExternalLink size={12} color={theme.colors.foregroundMuted} />
-                  </Pressable>
+                  {({ hovered = false }) => {
+                    const showActions = hovered || isNative;
+                    return (
+                      <>
+                        <Users size={12} color={theme.colors.foregroundMuted} />
+                        <Text style={styles.rowTitle} numberOfLines={1}>
+                          {share.workspaceName}
+                        </Text>
+                        <Text style={styles.rowOwner} numberOfLines={1}>
+                          {share.owner.name}
+                        </Text>
+                        {showActions ? (
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Copy share link"
+                            style={({ hovered: btnHover = false }) => [
+                              styles.iconButton,
+                              btnHover && styles.iconButtonHovered,
+                            ]}
+                            onPress={() => void handleOpenShareUrl(share.shareUrl)}
+                          >
+                            <ExternalLink
+                              size={12}
+                              color={theme.colors.foregroundMuted}
+                            />
+                          </Pressable>
+                        ) : null}
+                      </>
+                    );
+                  }}
                 </Pressable>
               ))}
             </View>
@@ -385,9 +409,10 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
+    paddingVertical: 5,
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.base,
+    minHeight: 28,
   },
   rowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
@@ -398,22 +423,18 @@ const styles = StyleSheet.create((theme) => ({
     borderLeftColor: theme.colors.accent,
     paddingLeft: theme.spacing[2] - 2,
   },
-  rowInfo: {
+  rowTitle: {
     flex: 1,
     minWidth: 0,
-    gap: 0,
-  },
-  rowTitle: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
-    flexShrink: 1,
   },
-  rowSubtitle: {
+  rowOwner: {
     color: theme.colors.foregroundMuted,
-    fontSize: 10,
-    opacity: 0.75,
-    marginTop: 1,
+    fontSize: theme.fontSize.xs,
+    opacity: 0.65,
+    flexShrink: 1,
   },
   rowActions: {
     flexDirection: "row",

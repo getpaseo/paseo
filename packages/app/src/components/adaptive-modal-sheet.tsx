@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
@@ -239,14 +239,60 @@ export function AdaptiveModalSheet({
  * TextInput that automatically uses BottomSheetTextInput on mobile
  * for proper keyboard dodging in AdaptiveModalSheet.
  */
-export const AdaptiveTextInput = forwardRef<TextInput, TextInputProps>(
-  function AdaptiveTextInput(props, ref) {
+type AdaptiveTextInputProps = TextInputProps & {
+  /** When set, the input border takes this color while focused. */
+  focusBorderColor?: string;
+};
+
+export const AdaptiveTextInput = forwardRef<TextInput, AdaptiveTextInputProps>(
+  function AdaptiveTextInput(
+    { focusBorderColor, style, onFocus, onBlur, ...rest },
+    ref,
+  ) {
     const isMobile = useIsCompactFormFactor();
+    const [focused, setFocused] = useState(false);
+    const mergedStyle = useMemo(
+      () =>
+        focused && focusBorderColor
+          ? [style, { borderColor: focusBorderColor }]
+          : style,
+      [focused, focusBorderColor, style],
+    );
+    const handleFocus = useCallback<NonNullable<TextInputProps["onFocus"]>>(
+      (e) => {
+        setFocused(true);
+        onFocus?.(e);
+      },
+      [onFocus],
+    );
+    const handleBlur = useCallback<NonNullable<TextInputProps["onBlur"]>>(
+      (e) => {
+        setFocused(false);
+        onBlur?.(e);
+      },
+      [onBlur],
+    );
 
     if (isMobile) {
-      return <BottomSheetTextInput ref={ref as any} {...props} />;
+      return (
+        <BottomSheetTextInput
+          ref={ref as any}
+          style={mergedStyle as TextInputProps["style"]}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          {...rest}
+        />
+      );
     }
 
-    return <TextInput ref={ref} {...props} />;
+    return (
+      <TextInput
+        ref={ref}
+        style={mergedStyle}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        {...rest}
+      />
+    );
   },
 );

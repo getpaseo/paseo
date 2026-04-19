@@ -32,3 +32,16 @@ export async function joinSharedSession(options: JoinSharedSessionOptions): Prom
     sessionToken: options.sessionToken,
   });
 }
+
+export interface JoinOrgChatOptions {
+  orgId: string;
+  sessionToken: string;
+}
+
+export async function joinOrgChat(options: JoinOrgChatOptions): Promise<ColyseusRoom> {
+  const client = await getClient();
+  return await client.joinOrCreate("org_chat", {
+    orgId: options.orgId,
+    sessionToken: options.sessionToken,
+  });
+}

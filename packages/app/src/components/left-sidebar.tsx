@@ -27,7 +27,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { MessagesSquare, Plus, Settings, Users } from "lucide-react-native";
+import { MessageSquare, MessagesSquare, Plus, Settings, Users } from "lucide-react-native";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -339,6 +339,46 @@ function HostSwitchOption({
   );
 }
 
+function ChatTabButton() {
+  const { theme } = useUnistyles();
+  const pathname = usePathname();
+  const isActive = pathname === "/chat" || pathname.startsWith("/chat/");
+  return (
+    <Pressable
+      onPress={() => router.push("/chat")}
+      style={({ hovered }) => [
+        styles.newAgentButton,
+        hovered && styles.newAgentButtonHovered,
+        isActive && styles.newAgentButtonActive,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel="Messages"
+    >
+      {({ hovered }) => (
+        <>
+          <MessageSquare
+            size={theme.iconSize.md}
+            color={
+              hovered || isActive
+                ? theme.colors.brandMagenta
+                : theme.colors.foregroundMuted
+            }
+          />
+          <Text
+            style={[
+              styles.newAgentButtonText,
+              (hovered || isActive) && styles.newAgentButtonTextHovered,
+              isActive && { color: theme.colors.brandMagenta },
+            ]}
+          >
+            Messages
+          </Text>
+        </>
+      )}
+    </Pressable>
+  );
+}
+
 function SessionsButton({ onPress }: { onPress: () => void }) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
@@ -562,6 +602,7 @@ function MobileSidebar({
             {!isScopedRecipient && (
               <View style={styles.sidebarHeader}>
                 <View style={styles.sidebarHeaderRow}>
+                  <ChatTabButton />
                   <SessionsButton onPress={handleViewMore} />
                 </View>
               </View>
@@ -830,6 +871,7 @@ function DesktopSidebar({
           {!isScopedRecipient && (
             <View style={styles.sidebarHeader}>
               <View style={styles.sidebarHeaderRow}>
+                <ChatTabButton />
                 <SessionsButton onPress={handleViewMore} />
               </View>
             </View>

@@ -57,5 +57,21 @@ services:
       - --rtc.port_range_start=50000
       - --rtc.port_range_end=50100
 
+  # LocalStack — S3-compatible object storage for chat uploads in dev.
+  # Auth-server issues presigned PUT URLs that the client uploads to directly.
+  localstack:
+    image: localstack/localstack:3
+    container_name: hubcode-localstack
+    restart: unless-stopped
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: s3
+      DEBUG: "0"
+      PERSISTENCE: "1"
+    volumes:
+      - hubcode_localstack:/var/lib/localstack
+
 volumes:
   hubcode_pgdata:
+  hubcode_localstack:

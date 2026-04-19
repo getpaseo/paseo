@@ -10,9 +10,13 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "db:seed": "tsx src/db/seed.ts"
+    "db:seed": "tsx src/db/seed.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1032.0",
+    "@aws-sdk/s3-request-presigner": "^3.1032.0",
     "@livekit/components-react": "^2.9.20",
     "@livekit/components-styles": "^1.2.0",
     "@neondatabase/serverless": "^0.10.0",
@@ -44,6 +48,8 @@
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.0",
+    "@testcontainers/localstack": "^11.14.0",
+    "@testcontainers/postgresql": "^11.14.0",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.0.0",
@@ -53,6 +59,7 @@
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4"
   }
 }

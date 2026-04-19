@@ -825,7 +825,10 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
   const params = useGlobalSearchParams<{ open?: string | string[] }>();
   const hosts = useHosts();
   const activeServerId = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);
-  const shouldShowAppChrome = activeServerId !== null;
+  // Chat is org-scoped (not host/daemon-scoped), but should still live inside
+  // the app shell so the magenta org rail and left sidebar remain visible.
+  const isChatRoute = pathname === "/chat" || pathname.startsWith("/chat/");
+  const shouldShowAppChrome = activeServerId !== null || isChatRoute;
 
   useEffect(() => {
     if (!activeServerId || hosts.length === 0) {

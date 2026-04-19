@@ -1,0 +1,179 @@
+import { useCallback, useMemo, useRef } from "react";
+import { FlatList, View, type ListRenderItem } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import type { ChatChannel, ChatMember, ChatMessage } from "@/api/chat";
+import { selectMessageReactions, useChatStore, type ChatPresence } from "@/stores/chat-store";
+import { MessageBubble } from "./message-bubble";
+
+interface MessageListProps {
+  messages: readonly ChatMessage[];
+  members: ChatMember[];
+  channels: ChatChannel[];
+  currentUserId: string | null;
+  presenceByUser?: Record<string, ChatPresence>;
+  pinnedMessageIds?: ReadonlySet<string>;
+  replyCountsByParent?: Readonly<Record<string, number>>;
+  highlightedMessageId?: string | null;
+  onLoadMore?: () => void;
+  onOpenThread?: (message: ChatMessage) => void;
+  onToggleReaction?: (messageId: string, emoji: string, op: "add" | "remove") => void;
+  onTogglePin?: (messageId: string, nextPinned: boolean) => void;
+  onEdit?: (messageId: string, content: string) => void;
+  onDelete?: (messageId: string) => void;
+}
+
+export function MessageList({
+  messages,
+  members,
+  channels,
+  currentUserId,
+  presenceByUser,
+  pinnedMessageIds,
+  replyCountsByParent,
+  highlightedMessageId,
+  onLoadMore,
+  onOpenThread,
+  onToggleReaction,
+  onTogglePin,
+  onEdit,
+  onDelete,
+}: MessageListProps) {
+  const memberById = useMemo(() => {
+    const map = new Map<string, ChatMember>();
+    for (const m of members) map.set(m.userId, m);
+    return map;
+  }, [members]);
+
+  const channelById = useMemo(() => {
+    const map = new Map<string, ChatChannel>();
+    for (const c of channels) map.set(c.id, c);
+    return map;
+  }, [channels]);
+
+  const inverted = useMemo(() => [...messages].reverse(), [messages]);
+
+  const renderItem: ListRenderItem<ChatMessage> = useCallback(
+    ({ item }) => (
+      <MessageBubbleBridge
+        message={item}
+        author={memberById.get(item.userId) ?? null}
+        membersById={memberById}
+        channelsById={channelById}
+        currentUserId={currentUserId}
+        online={!!presenceByUser?.[item.userId]}
+        pinned={pinnedMessageIds?.has(item.id) ?? false}
+        replyCount={replyCountsByParent?.[item.id] ?? 0}
+        highlighted={highlightedMessageId === item.id}
+        onOpenThread={onOpenThread}
+        onToggleReaction={onToggleReaction}
+        onTogglePin={onTogglePin}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />
+    ),
+    [
+      memberById,
+      channelById,
+      currentUserId,
+      presenceByUser,
+      pinnedMessageIds,
+      replyCountsByParent,
+      highlightedMessageId,
+      onOpenThread,
+      onToggleReaction,
+      onTogglePin,
+      onEdit,
+      onDelete,
+    ],
+  );
+
+  const endReachedCalled = useRef(false);
+  const handleEndReached = useCallback(() => {
+    if (endReachedCalled.current) return;
+    endReachedCalled.current = true;
+    onLoadMore?.();
+    setTimeout(() => {
+      endReachedCalled.current = false;
+    }, 500);
+  }, [onLoadMore]);
+
+  return (
+    <View style={styles.container}>
+      <FlatList
+        data={inverted}
+        keyExtractor={(m: ChatMessage) => m.id}
+        renderItem={renderItem}
+        inverted
+        onEndReached={handleEndReached}
+        onEndReachedThreshold={0.6}
+        removeClippedSubviews
+        windowSize={11}
+        initialNumToRender={30}
+      />
+    </View>
+  );
+}
+
+/**
+ * Small wrapper so each row can subscribe to only its own reactions slice
+ * without causing the whole list to re-render when one message reacts.
+ */
+function MessageBubbleBridge({
+  message,
+  author,
+  membersById,
+  channelsById,
+  currentUserId,
+  online,
+  pinned,
+  replyCount,
+  highlighted,
+  onOpenThread,
+  onToggleReaction,
+  onTogglePin,
+  onEdit,
+  onDelete,
+}: {
+  message: ChatMessage;
+  author: ChatMember | null;
+  membersById: Map<string, ChatMember>;
+  channelsById: Map<string, ChatChannel>;
+  currentUserId: string | null;
+  online?: boolean;
+  pinned?: boolean;
+  replyCount?: number;
+  highlighted?: boolean;
+  onOpenThread?: (message: ChatMessage) => void;
+  onToggleReaction?: (messageId: string, emoji: string, op: "add" | "remove") => void;
+  onTogglePin?: (messageId: string, nextPinned: boolean) => void;
+  onEdit?: (messageId: string, content: string) => void;
+  onDelete?: (messageId: string) => void;
+}) {
+  const reactions = useChatStore(selectMessageReactions(message.id));
+  return (
+    <MessageBubble
+      message={message}
+      author={author}
+      membersById={membersById}
+      channelsById={channelsById}
+      reactions={reactions}
+      currentUserId={currentUserId}
+      online={online}
+      pinned={pinned}
+      replyCount={replyCount}
+      highlighted={highlighted}
+      onOpenThread={onOpenThread}
+      onToggleReaction={onToggleReaction}
+      onTogglePin={onTogglePin}
+      onEdit={onEdit}
+      onDelete={onDelete}
+    />
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.surface0,
+  },
+}));

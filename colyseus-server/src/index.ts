@@ -1,6 +1,7 @@
 import { Server } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { SharedSessionRoom } from "./rooms/shared-session-room.js";
+import { OrgChatRoom } from "./rooms/org-chat-room.js";
 import { config } from "./config.js";
 import http from "node:http";
 
@@ -12,6 +13,10 @@ async function main() {
   // Dedup rooms by shareToken so every recipient of the same share ends up in
   // the SAME Colyseus room (and therefore sees each other as participants).
   server.define("shared_session", SharedSessionRoom).filterBy(["shareToken"]);
+
+  // One OrgChatRoom per org — every user in the org joins the same instance
+  // so presence, typing, and broadcast fan-out are trivially colocated.
+  server.define("org_chat", OrgChatRoom).filterBy(["orgId"]);
 
   // Wait for transport to be ready, then add REST API routes
   const transport = await (server as any)._onTransportReady;

@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1776558120856,
+      "tag": "0000_curved_crystal",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776571200000,
+      "tag": "0001_chat_search_index",
+      "breakpoints": true
+    }
+  ]
+}
