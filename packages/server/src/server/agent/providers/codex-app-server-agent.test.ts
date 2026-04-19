@@ -222,6 +222,20 @@ describe("Codex app-server provider", () => {
     );
   });
 
+  test("loadSkills requests Codex skills for the session cwd via cwds", async () => {
+    const session = createSession({ cwd: "/tmp/codex-real-skills" });
+    const request = vi.fn().mockResolvedValue({ data: [] });
+
+    (session as any).client = { request };
+
+    await (session as any).loadSkills();
+
+    expect(request).toHaveBeenCalledWith("skills/list", {
+      cwds: ["/tmp/codex-real-skills"],
+    });
+    expect((session as any).cachedSkills).toEqual([]);
+  });
+
   test("maps image prompt blocks to Codex localImage input", async () => {
     const input = await codexAppServerTurnInputFromPrompt(
       [
