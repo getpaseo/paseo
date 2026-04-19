@@ -1,6 +1,7 @@
 import { Pressable, View, Text, Animated } from "react-native";
 import { useEffect, useRef } from "react";
 import { StyleSheet } from "react-native-unistyles";
+import { isNative } from "@/constants/platform";
 
 interface VoiceButtonProps {
   state: "idle" | "recording" | "processing" | "playing";
@@ -133,12 +134,12 @@ export function VoiceButton({ state, onPress, disabled = false }: VoiceButtonPro
           Animated.timing(pulseAnim, {
             toValue: 1.2,
             duration: 800,
-            useNativeDriver: true,
+            useNativeDriver: isNative,
           }),
           Animated.timing(pulseAnim, {
             toValue: 1,
             duration: 800,
-            useNativeDriver: true,
+            useNativeDriver: isNative,
           }),
         ]),
       ).start();

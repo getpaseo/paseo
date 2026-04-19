@@ -45,6 +45,7 @@ import type {
   ListAvailableEditorsResponseMessage,
   OpenInEditorResponseMessage,
   OpenProjectResponseMessage,
+  CloneRepositoryResponseMessage,
   ArchiveWorkspaceResponseMessage,
   ListCommandsResponse,
   ListProviderFeaturesResponseMessage,
@@ -213,6 +214,7 @@ export type DaemonClientConfig = {
 export type SendMessageOptions = {
   messageId?: string;
   images?: Array<{ data: string; mimeType: string }>;
+  author?: { userId: string; username: string; avatarUrl: string };
 };
 
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
@@ -496,6 +498,7 @@ export type InspectScheduleOptions = {
 type ListAvailableEditorsPayload = ListAvailableEditorsResponseMessage["payload"];
 type OpenInEditorPayload = OpenInEditorResponseMessage["payload"];
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
+type CloneRepositoryPayload = CloneRepositoryResponseMessage["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
 export type EditorTargetDescriptor = ListAvailableEditorsPayload["editors"][number];
 
@@ -1338,15 +1341,40 @@ export class DaemonClient {
     });
   }
 
-  async openProject(cwd: string, requestId?: string): Promise<OpenProjectPayload> {
+  async openProject(
+    cwd: string,
+    requestIdOrOptions?: string | { orgId?: string; requestId?: string },
+  ): Promise<OpenProjectPayload> {
+    const requestId =
+      typeof requestIdOrOptions === "string" ? requestIdOrOptions : requestIdOrOptions?.requestId;
+    const orgId = typeof requestIdOrOptions === "object" ? requestIdOrOptions?.orgId : undefined;
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "open_project_request",
         cwd,
+        ...(orgId ? { orgId } : {}),
       },
       responseType: "open_project_response",
       timeout: 10000,
+    });
+  }
+
+  async cloneRepository(
+    input: { remoteUrl: string; parentDir: string; directoryName?: string },
+    requestId?: string,
+  ): Promise<CloneRepositoryPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "clone_repository_request",
+        remoteUrl: input.remoteUrl,
+        parentDir: input.parentDir,
+        ...(input.directoryName ? { directoryName: input.directoryName } : {}),
+      },
+      // 5 min daemon-side timeout + small client buffer for transit.
+      timeout: 5 * 60 * 1000 + 5_000,
+      responseType: "clone_repository_response",
     });
   }
 
@@ -1698,6 +1726,7 @@ export class DaemonClient {
       text,
       ...(messageId ? { messageId } : {}),
       ...(options?.images ? { images: options.images } : {}),
+      ...(options?.author ? { author: options.author } : {}),
     });
     const payload = await this.sendRequest({
       requestId,
@@ -2586,6 +2615,7 @@ export class DaemonClient {
         autoApprove?: boolean;
         agentProvider?: string;
         agentMode?: "native" | "cli";
+        orgId?: string;
       };
     },
     requestId?: string,

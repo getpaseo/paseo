@@ -1,6 +1,6 @@
 {
   "name": "@hubtool/desktop",
-  "version": "0.1.55-rc.1",
+  "version": "2.7.0",
   "private": true,
   "description": "Hubcode desktop app (Electron wrapper)",
   "main": "dist/main.js",
@@ -19,7 +19,7 @@
     "ws": "^8.14.2"
   },
   "devDependencies": {
-    "@types/node": "24.6.0",
+    "@types/node": "^24.6.0",
     "@types/ws": "^8.5.14",
     "electron": "41.0.3",
     "electron-builder": "26.8.1",

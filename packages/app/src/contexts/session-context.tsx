@@ -3,6 +3,10 @@ import { Buffer } from "buffer";
 import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useClientActivity } from "@/hooks/use-client-activity";
+import {
+  getSharedSessionAuthor,
+  notifyChatMessageAuthored,
+} from "@/stores/shared-session-store";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -1556,12 +1560,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   const sendAgentMessage = useCallback(
     async (agentId: string, message: string, images?: AttachmentMetadata[]) => {
+      // Seed the author buffer first so the optimistic bubble renders with the
+      // sender's name from the get-go.
+      notifyChatMessageAuthored(message);
       const messageId = generateMessageId();
+      const author = getSharedSessionAuthor();
       const userMessage: StreamItem = {
         kind: "user_message",
         id: messageId,
         text: message,
         timestamp: new Date(),
+        ...(author ? { author } : {}),
       };
 
       // Append to head if streaming (keeps the user message with the current
@@ -1595,6 +1604,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         .sendAgentMessage(agentId, message, {
           messageId,
           ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
+          ...(author ? { author } : {}),
         })
         .catch((error) => {
           console.error("[Session] Failed to send agent message:", error);

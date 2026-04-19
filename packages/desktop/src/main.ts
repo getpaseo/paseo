@@ -2,6 +2,28 @@ import log from "electron-log/main";
 log.transports.console.level = "info";
 log.initialize({ spyRendererConsole: true });
 
+// Suppress harmless upstream Electron/Chromium/DevTools chatter.
+const NOISE_PATTERNS = [
+  /sandboxed_renderer\.bundle\.js script failed to run/i,
+  /object null is not iterable \(cannot read property Symbol\(Symbol\.iterator\)\)/i,
+  /Request Autofill\.(enable|setAddresses) failed/i,
+  /simulcast_encoder_adapter\.cc.*StreamContext ctor parent is null/i,
+  /stun_port\.cc.*Binding request timed out/i,
+  /p2p\/base\/port\.cc.*Role Conflict/i,
+  /Failed to resolve address for .*\.local\./i,
+];
+type WriteFnArg = { message?: { data?: unknown[] } };
+type WriteFn = (opts: WriteFnArg) => void;
+type Transport = { writeFn: WriteFn };
+for (const t of [log.transports.console, log.transports.file] as unknown as Transport[]) {
+  const original = t.writeFn;
+  t.writeFn = (opts: WriteFnArg) => {
+    const line = opts.message?.data?.map?.((d: unknown) => String(d)).join(" ") ?? "";
+    if (NOISE_PATTERNS.some((re) => re.test(line))) return;
+    original.call(t, opts);
+  };
+}
+
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 inheritLoginShellEnv();
 
@@ -33,10 +55,12 @@ import {
 import { registerOpenerHandlers } from "./features/opener.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
+import { findDeepLinkInArgv, parseDeepLinkUrl, type DeepLink } from "./deep-link-routing.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "hubcode";
 const OPEN_PROJECT_EVENT = "hubcode:event:open-project";
+const DEEP_LINK_EVENT = "hubcode:event:deep-link";
 app.setName("Hubcode");
 
 // In dev mode, detect git worktrees and isolate each instance so multiple
@@ -70,6 +94,15 @@ if (!app.isPackaged) {
   }
 }
 
+// Expose real local IPs in WebRTC candidates instead of unresolvable mDNS
+// hostnames (Electron's networking process can't resolve xxx.local.).
+app.commandLine.appendSwitch("disable-features", "WebRtcHideLocalIpsWithMdns");
+
+// Silence Chromium's native WebRTC stderr spam (simulcast encoder init,
+// IPv6 STUN binding timeouts). These bypass electron-log's writeFn filter.
+app.commandLine.appendSwitch("log-level", "3");
+app.commandLine.appendSwitch("vmodule", "*/webrtc/*=0,*/third_party/webrtc/*=0");
+
 // Allow users to pass Chromium flags via HUBCODE_ELECTRON_FLAGS for debugging
 // rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
 // Must run before app.whenReady().
@@ -87,6 +120,15 @@ let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   isDefaultApp: process.defaultApp,
 });
 
+// Hold the initial deep link (e.g. `hubcode://join-workspace/TOKEN`) until the
+// renderer signals readiness via `hubcode:get-pending-deep-link`. Also updated
+// by `second-instance` / `open-url` while the app is already running.
+let pendingDeepLink: DeepLink | null = findDeepLinkInArgv(process.argv);
+
+function sendDeepLinkEvent(win: BrowserWindow, link: DeepLink): void {
+  win.webContents.send(DEEP_LINK_EVENT, link);
+}
+
 log.info("[open-project] argv:", process.argv);
 log.info("[open-project] isDefaultApp:", process.defaultApp);
 log.info("[open-project] pendingOpenProjectPath:", pendingOpenProjectPath);
@@ -97,6 +139,13 @@ ipcMain.handle("hubcode:get-pending-open-project", () => {
   log.info("[open-project] renderer requested pending path:", pendingOpenProjectPath);
   const result = pendingOpenProjectPath;
   pendingOpenProjectPath = null;
+  return result;
+});
+
+ipcMain.handle("hubcode:get-pending-deep-link", () => {
+  log.info("[deep-link] renderer requested pending link:", pendingDeepLink);
+  const result = pendingDeepLink;
+  pendingDeepLink = null;
   return result;
 });
 
@@ -235,6 +284,8 @@ function setupSingleInstanceLock(): boolean {
       isDefaultApp: false,
     });
     log.info("[open-project] second-instance openProjectPath:", openProjectPath);
+    const deepLink = findDeepLinkInArgv(commandLine);
+    log.info("[deep-link] second-instance deepLink:", deepLink);
     const win = BrowserWindow.getAllWindows()[0];
     if (win) {
       win.show();
@@ -243,8 +294,42 @@ function setupSingleInstanceLock(): boolean {
       if (openProjectPath) {
         sendOpenProjectEvent(win, openProjectPath);
       }
+      if (deepLink) {
+        sendDeepLinkEvent(win, deepLink);
+      }
+    } else if (deepLink) {
+      pendingDeepLink = deepLink;
     }
   });
+
+  // macOS delivers `hubcode://...` clicks via open-url instead of argv.
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    const parsed = parseDeepLinkUrl(url);
+    if (!parsed) return;
+    log.info("[deep-link] open-url:", url);
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      win.show();
+      if (win.isMinimized()) win.restore();
+      win.focus();
+      sendDeepLinkEvent(win, parsed);
+    } else {
+      pendingDeepLink = parsed;
+    }
+  });
+
+  // Register the custom scheme with the OS so `hubcode://` links in external
+  // apps (browsers, chat clients) launch Hubcode Desktop.
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient(APP_SCHEME, process.execPath, [
+        path.resolve(process.argv[1] ?? ""),
+      ]);
+    }
+  } else {
+    app.setAsDefaultProtocolClient(APP_SCHEME);
+  }
 
   return true;
 }

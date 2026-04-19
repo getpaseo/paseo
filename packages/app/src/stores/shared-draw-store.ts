@@ -9,6 +9,8 @@ import { useSyncExternalStore } from "react";
 export interface DrawState {
   active: boolean;
   color: string;
+  // Local clear trigger — server broadcasts draw_clear except-to-sender.
+  clearSeq: number;
 }
 
 const PALETTE = ["#ff3b8d", "#4ade80", "#fbbf24", "#60a5fa", "#f97316", "#ffffff"];
@@ -21,6 +23,7 @@ function pickInitialColor(): string {
 let state: DrawState = {
   active: false,
   color: pickInitialColor(),
+  clearSeq: 0,
 };
 const listeners = new Set<() => void>();
 
@@ -41,6 +44,11 @@ export function toggleDrawActive(): void {
 export function setDrawColor(color: string): void {
   if (state.color === color) return;
   state = { ...state, color };
+  emit();
+}
+
+export function requestDrawClear(): void {
+  state = { ...state, clearSeq: state.clearSeq + 1 };
   emit();
 }
 

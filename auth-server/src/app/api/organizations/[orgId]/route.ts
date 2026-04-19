@@ -74,7 +74,18 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
     updates.slug = slug;
   }
-  if (logo !== undefined) updates.logo = logo;
+  if (logo !== undefined) {
+    if (logo === null || logo === "") {
+      updates.logo = null;
+    } else if (typeof logo === "string" && isValidLogoDataUrl(logo)) {
+      updates.logo = logo;
+    } else {
+      return NextResponse.json(
+        { error: "Logo must be a data URL (≤256KB, image/*)" },
+        { status: 400 },
+      );
+    }
+  }
 
   if (Object.keys(updates).length > 0) {
     await db.update(organization).set(updates).where(eq(organization.id, orgId));
@@ -104,4 +115,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   await db.delete(organization).where(eq(organization.id, orgId));
 
   return NextResponse.json({ success: true });
+}
+
+const LOGO_DATA_URL_MAX_BYTES = 256 * 1024;
+const LOGO_DATA_URL_PATTERN = /^data:image\/(png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
+
+function isValidLogoDataUrl(value: string): boolean {
+  if (value.length > LOGO_DATA_URL_MAX_BYTES) return false;
+  return LOGO_DATA_URL_PATTERN.test(value);
 }

@@ -5,6 +5,7 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { clearChatAuthors, pushChatAuthor } from "@/stores/shared-chat-authors-store";
 
 export interface SharedSessionUser {
   userId: string;
@@ -23,6 +24,13 @@ interface SharedSessionState {
   participants: Map<string, SharedParticipant>;
   enteredViaShare: boolean;
   sessionEnded: boolean;
+  /**
+   * True when the CURRENT user is the host/owner of the share (opened the
+   * session from their own "Shared by you" row). Host mode keeps the user on
+   * their local daemon — no relay, no scoped sidebar — but still joins the
+   * Colyseus room so they see participant chips + the video panel.
+   */
+  hostMode: boolean;
   /** Recipient-only scope: when set, sidebar is restricted to this workspace. */
   scopedServerId: string | null;
   scopedWorkspaceId: string | null;
@@ -65,6 +73,42 @@ function loadPersistedState(): Partial<SharedSessionState> {
 
 const persisted = loadPersistedState();
 
+/**
+ * Pure-web F5 guard: if we have persisted share credentials but no live room
+ * (in-memory only, never persisted), the recipient is reloading mid-session.
+ * Do a synchronous redirect to the auth-server pre-join page BEFORE any React
+ * mounts — otherwise the daemon UI flashes with stale credentials and the
+ * recipient could briefly interact with the workspace before being bounced.
+ *
+ * Electron keeps the silent auto-reconnect path (enteredViaShare stays true
+ * and we rejoin Colyseus in GlobalSharedSessionBar).
+ */
+(function guardStaleSharedSessionOnWebReload() {
+  try {
+    if (typeof window === "undefined") return;
+    if (typeof sessionStorage === "undefined") return;
+    // Detect Electron without importing getIsElectron (this runs at module
+    // load, before platform utils are safe to call).
+    const isElectron =
+      typeof (window as any).process?.type === "string" ||
+      Boolean((window as any).electron) ||
+      Boolean((window as any).desktop);
+    if (isElectron) return;
+    if (!persisted.enteredViaShare || !persisted.shareToken) return;
+    // Already on the pre-join or auth flow? Nothing to do.
+    const path = window.location.pathname || "";
+    if (path.startsWith("/join-workspace/")) return;
+    sessionStorage.removeItem("hubcode_shared_session");
+    const authServerUrl =
+      typeof __DEV__ !== "undefined" && __DEV__
+        ? "http://localhost:3002"
+        : "https://auth.hubcode.ai";
+    window.location.replace(`${authServerUrl}/join-workspace/${persisted.shareToken}`);
+  } catch {
+    /* ignore */
+  }
+})();
+
 let state: SharedSessionState = {
   room: null,
   shareToken: persisted.shareToken ?? null,
@@ -75,6 +119,7 @@ let state: SharedSessionState = {
   participants: new Map(),
   enteredViaShare: persisted.enteredViaShare ?? false,
   sessionEnded: false,
+  hostMode: false,
   scopedServerId: persisted.scopedServerId ?? null,
   scopedWorkspaceId: persisted.scopedWorkspaceId ?? null,
 };
@@ -193,6 +238,82 @@ export function setSharedSession(
   emit();
   wireParticipantSync(room);
   wireSessionExpiredListener(room);
+  wireChatMessageListener(room);
+}
+
+/**
+ * Snapshot of the current shared-session user suitable for stamping onto an
+ * outbound agent message. Returns null outside of a shared session — in that
+ * case the daemon stream never carries author metadata and the UI falls back
+ * to a generic user bubble.
+ */
+export function getSharedSessionAuthor(): {
+  userId: string;
+  username: string;
+  avatarUrl: string;
+} | null {
+  if (!state.enteredViaShare) return null;
+  const user = state.currentUser;
+  if (!user) return null;
+  return {
+    userId: user.userId,
+    username: user.username,
+    avatarUrl: user.avatarUrl,
+  };
+}
+
+/**
+ * Called from the agent-input send path so every client (including the sender)
+ * labels the resulting user_message bubble with the author's name + avatar.
+ * Currently agent messages bypass the Colyseus chat queue — this closes the
+ * attribution gap without re-routing the daemon send path.
+ */
+export function notifyChatMessageAuthored(content: string): void {
+  const trimmed = content.trim();
+  if (!trimmed) return;
+  if (!state.enteredViaShare) return;
+  const user = state.currentUser;
+  if (!user) return;
+  // Locally buffer so my own bubble shows my name too (the broadcast below
+  // reaches other participants; this entry covers me).
+  pushChatAuthor({
+    userId: user.userId,
+    username: user.username,
+    avatarUrl: user.avatarUrl,
+    content: trimmed,
+    ts: Date.now(),
+  });
+  try {
+    state.room?.send?.("chat_authored", { content: trimmed });
+  } catch (err) {
+    console.warn("[shared-session] failed to send chat_authored:", err);
+  }
+}
+
+function wireChatMessageListener(room: any) {
+  try {
+    room?.onMessage?.(
+      "chat_message",
+      (payload: {
+        userId?: string;
+        username?: string;
+        avatarUrl?: string;
+        content?: string;
+        ts?: number;
+      }) => {
+        if (!payload?.content) return;
+        pushChatAuthor({
+          userId: String(payload.userId ?? ""),
+          username: String(payload.username ?? ""),
+          avatarUrl: String(payload.avatarUrl ?? ""),
+          content: String(payload.content).trim(),
+          ts: typeof payload.ts === "number" ? payload.ts : Date.now(),
+        });
+      },
+    );
+  } catch (err) {
+    console.warn("[shared-session] failed to wire chat_message:", err);
+  }
 }
 
 function wireSessionExpiredListener(room: any) {
@@ -362,10 +483,9 @@ function wireParticipantSync(room: any) {
         clearInterval(pollHandle);
         pollHandle = null;
       }
-      // When the owner ends the share (room disposed server-side) we must
-      // also kick the recipient out of the scoped workspace — otherwise they
-      // keep viewing the host even though the session is gone. Mirror the
-      // logic from the explicit "Sair" button.
+      // Skip if a newer room has already replaced this one — late callbacks
+      // from a torn-down room must not nuke the fresh session.
+      if (state.room && state.room !== room) return;
       void endSharedSessionAndDisconnect();
     });
   } catch (err) {
@@ -373,7 +493,61 @@ function wireParticipantSync(room: any) {
   }
 }
 
-export function clearSharedSession() {
+/**
+ * Join the Colyseus room as the host of a share the current user owns —
+ * activates the participant bar + floating video panel so the host can watch
+ * invitees join, but keeps them on their local daemon (no relay connection,
+ * no scoped sidebar). Call after navigating to the workspace that's being
+ * shared so the room stays tied to that tab.
+ */
+export async function startSharedSessionAsHost(params: {
+  shareToken: string;
+  sessionToken: string;
+  currentUser: SharedSessionUser;
+  ownerName: string | null;
+  accessLevel: string;
+}): Promise<void> {
+  // Short-circuit: already in this share as host.
+  if (state.hostMode && state.shareToken === params.shareToken && state.room) return;
+  // Tear down any stale recipient session first — we never want both modes.
+  if (state.enteredViaShare && !state.hostMode) {
+    await endSharedSessionAndDisconnect();
+  }
+  try {
+    const { joinSharedSession } = await import("@/hooks/sharing/colyseus-client");
+    const room = await joinSharedSession({
+      shareToken: params.shareToken,
+      sessionToken: params.sessionToken,
+    });
+    state = {
+      ...state,
+      room,
+      shareToken: params.shareToken,
+      sessionToken: params.sessionToken,
+      accessLevel: params.accessLevel,
+      currentUser: params.currentUser,
+      ownerName: params.ownerName,
+      enteredViaShare: true,
+      sessionEnded: false,
+      hostMode: true,
+      // Host keeps local daemon — no scope.
+      scopedServerId: null,
+      scopedWorkspaceId: null,
+    };
+    emit();
+    wireParticipantSync(room);
+    wireSessionExpiredListener(room);
+    wireChatMessageListener(room);
+  } catch (err) {
+    console.warn("[shared-session] host-mode join failed:", err);
+  }
+}
+
+export function clearSharedSession(): void {
+  clearSharedSessionWithReason({ wasHostMode: state.hostMode });
+}
+
+function clearSharedSessionWithReason(opts: { wasHostMode: boolean }): void {
   if (state.room) {
     try {
       state.room.leave?.();
@@ -381,6 +555,7 @@ export function clearSharedSession() {
       // Ignore
     }
   }
+  clearChatAuthors();
   state = {
     room: null,
     shareToken: null,
@@ -390,7 +565,12 @@ export function clearSharedSession() {
     ownerName: null,
     participants: new Map(),
     enteredViaShare: false,
-    sessionEnded: true,
+    // `sessionEnded` triggers the recipient-eviction redirect in
+    // SharedWorkspaceRouteGuard. When the host leaves their own share, there's
+    // nothing to evict — the host stays on their local daemon — so keep the
+    // flag false to avoid a redirect loop with the index route.
+    sessionEnded: !opts.wasHostMode,
+    hostMode: false,
     scopedServerId: null,
     scopedWorkspaceId: null,
   };
@@ -408,12 +588,26 @@ export function getSharedSessionSnapshot(): SharedSessionState {
   return state;
 }
 
+/**
+ * Flip `sessionEnded` back to false after a guard has consumed it. The flag is
+ * a one-shot signal meant to trigger a single eviction redirect; keeping it
+ * true indefinitely would cause every subsequent navigation to a workspace
+ * route to bounce to `/` in an infinite loop.
+ */
+export function acknowledgeSessionEnded(): void {
+  if (!state.sessionEnded) return;
+  state = { ...state, sessionEnded: false };
+  emit();
+}
+
 // Full teardown used when the share ends (owner revokes, Colyseus room
 // disposes, or recipient clicks Sair): drops the relay-scoped host, clears
 // the session state, and navigates home. Kept async so callers can await if
 // they want to guarantee the host is gone before navigating.
 export async function endSharedSessionAndDisconnect(): Promise<void> {
   const scopedServerId = state.scopedServerId;
+  const wasHostMode = state.hostMode;
+  const shareToken = state.shareToken;
   clearSharedSession();
   if (scopedServerId) {
     try {
@@ -422,6 +616,20 @@ export async function endSharedSessionAndDisconnect(): Promise<void> {
     } catch {
       // ignore — host may already be gone
     }
+  }
+  // Host mode never scoped the daemon or navigated in, so we don't navigate
+  // out either — the user stays on whatever workspace they were viewing.
+  if (wasHostMode) return;
+  // Recipients: bounce back to the auth-server pre-join page for the share
+  // they just left, so rejoining is one click away. If we somehow don't have
+  // the share token, fall back to home.
+  if (shareToken && typeof window !== "undefined") {
+    const authServerUrl =
+      typeof __DEV__ !== "undefined" && __DEV__
+        ? "http://localhost:3002"
+        : "https://auth.hubcode.ai";
+    window.location.replace(`${authServerUrl}/join-workspace/${shareToken}`);
+    return;
   }
   try {
     const { router } = await import("expo-router");
@@ -443,6 +651,17 @@ export function useSharedSessionStore(): SharedSessionState {
 export function useIsInSharedSession(): boolean {
   const { enteredViaShare } = useSharedSessionStore();
   return enteredViaShare;
+}
+
+/**
+ * True only when the user joined as a *recipient* (not the host). Used by UI
+ * pieces that should only apply to recipients — hidden org rail, scoped
+ * sidebar, etc. Returns false when the host is in "host mode" (peeking at
+ * their own share without leaving their local daemon).
+ */
+export function useIsSharedRecipient(): boolean {
+  const { enteredViaShare, hostMode } = useSharedSessionStore();
+  return enteredViaShare && !hostMode;
 }
 
 /**

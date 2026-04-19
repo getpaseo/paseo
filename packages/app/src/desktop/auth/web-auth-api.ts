@@ -76,6 +76,34 @@ export async function webGetSession(): Promise<DesktopAuthSession | null> {
   }
 }
 
+export async function webCreateOrganization(
+  name: string,
+  slug: string,
+  logo?: string,
+): Promise<DesktopOrganization | null> {
+  const res = await webFetch("/api/organizations", {
+    method: "POST",
+    body: JSON.stringify({ name, slug, ...(logo ? { logo } : {}) }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Failed to create organization (${res.status})`);
+  }
+  const body = (await res.json()) as Record<string, unknown>;
+  return {
+    id: String(body.id ?? ""),
+    name: String(body.name ?? ""),
+    slug: String(body.slug ?? ""),
+    role: String(body.role ?? "owner"),
+    memberCount: typeof body.memberCount === "number" ? body.memberCount : 1,
+    planId: typeof body.planId === "string" ? body.planId : null,
+    subscriptionStatus:
+      typeof body.subscriptionStatus === "string" ? body.subscriptionStatus : null,
+    logo: typeof body.logo === "string" ? body.logo : null,
+    createdAt: typeof body.createdAt === "string" ? body.createdAt : "",
+  };
+}
+
 export async function webGetOrganizations(): Promise<DesktopOrganization[]> {
   try {
     const res = await webFetch("/api/organizations");

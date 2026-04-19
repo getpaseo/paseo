@@ -6,12 +6,7 @@ import http from "node:http";
 
 async function main() {
   const server = new Server({
-    transport: new WebSocketTransport({
-      // WebRTC signals (SDP offers/answers + ICE candidates) can bump against
-      // the default ws payload limit when trickle-ICE accumulates. Raise the
-      // ceiling so peer handshakes don't truncate and drop the connection.
-      maxPayload: 10 * 1024 * 1024,
-    }),
+    transport: new WebSocketTransport(),
   });
 
   // Dedup rooms by shareToken so every recipient of the same share ends up in

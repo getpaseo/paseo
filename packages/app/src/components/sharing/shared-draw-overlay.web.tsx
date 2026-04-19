@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  useIsInSharedSession,
-  useSharedSessionStore,
-} from "@/stores/shared-session-store";
+import { createPortal } from "react-dom";
+import { useSharedSessionStore } from "@/stores/shared-session-store";
 import { useSharedDrawState } from "@/stores/shared-draw-store";
 
 interface Point {
@@ -15,29 +13,23 @@ interface Stroke {
   userId: string;
   color: string;
   points: Point[];
-  /** Timestamp when the last point was added. Used to compute fade. */
   lastAt: number;
-  /** True once the remote peer signaled the stroke is finished. */
   ended: boolean;
 }
 
-// Slack-style: the stroke starts fading the moment the user lifts the
-// pen, and gently disappears over a few seconds.
 const STROKE_FADE_MS = 4000;
 const FLUSH_INTERVAL_MS = 60;
 
-// Fixed overlay spanning the viewport so every participant draws in the same
-// coordinate space (points are normalized 0..1 and resolved against each
-// viewer's viewport). Slack does the same — strokes follow the visible region.
+// Fullscreen overlay; points are normalized 0..1 so every viewer renders
+// the same stroke against their own viewport (Slack-style).
 export function SharedDrawOverlay() {
-  const isInSharedSession = useIsInSharedSession();
   const { room, currentUser } = useSharedSessionStore();
-  const { active: drawActive, color } = useSharedDrawState();
+  const isInSharedSession = !!room;
+  const { active: drawActive, color, clearSeq } = useSharedDrawState();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [, forceRender] = useState(0);
   const strokesRef = useRef<Map<string, Stroke>>(new Map());
 
-  // --- receive strokes from peers ---------------------------------------
   useEffect(() => {
     if (!room?.onMessage) return;
     const handleStroke = (msg: any) => {
@@ -64,11 +56,21 @@ export function SharedDrawOverlay() {
     const handleClear = () => {
       strokesRef.current.clear();
     };
-    room.onMessage("draw_stroke", handleStroke);
-    room.onMessage("draw_clear", handleClear);
+    const offStroke = room.onMessage("draw_stroke", handleStroke);
+    const offClear = room.onMessage("draw_clear", handleClear);
+    return () => {
+      try {
+        (offStroke as unknown as () => void)?.();
+        (offClear as unknown as () => void)?.();
+      } catch {}
+    };
   }, [room]);
 
-  // --- redraw loop ------------------------------------------------------
+  useEffect(() => {
+    if (clearSeq === 0) return;
+    strokesRef.current.clear();
+  }, [clearSeq]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -90,10 +92,8 @@ export function SharedDrawOverlay() {
       ctx.clearRect(0, 0, w, h);
 
       const now = Date.now();
-      // Slack-style group fade: while *any* stroke is still in progress,
-      // keep every drawing at full opacity. Only once all strokes are
-      // finished does the whole batch start fading together, starting
-      // from the moment the last stroke ended.
+      // Group fade: strokes stay at full opacity while any is in progress,
+      // then the whole batch fades together starting from the last end.
       let anyActive = false;
       let latestEndedAt = 0;
       for (const stroke of strokesRef.current.values()) {
@@ -112,8 +112,6 @@ export function SharedDrawOverlay() {
             expired.push(stroke.id);
             continue;
           }
-          // Ease-out curve: stays visible for a moment, then fades quicker
-          // at the tail — mirrors Slack's "temporary annotation" feel.
           const t = fadeAge / STROKE_FADE_MS;
           alpha = Math.pow(1 - t, 1.6);
         }
@@ -139,9 +137,8 @@ export function SharedDrawOverlay() {
     };
     frame = requestAnimationFrame(render);
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [isInSharedSession]);
 
-  // --- local drawing handlers ------------------------------------------
   const activeStrokeRef = useRef<{
     id: string;
     pendingPoints: Point[];
@@ -150,7 +147,7 @@ export function SharedDrawOverlay() {
 
   useEffect(() => {
     if (!drawActive) {
-      // If user turns off draw mode mid-stroke, finalize it.
+      // Finalize any in-flight stroke when draw mode turns off.
       const active = activeStrokeRef.current;
       if (active && room?.send) {
         room.send("draw_stroke", {
@@ -179,21 +176,21 @@ export function SharedDrawOverlay() {
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawActive || !currentUser) return;
+    if (!drawActive) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const now = Date.now();
-    const strokeId = `${currentUser.userId}-${now}-${Math.random().toString(36).slice(2, 7)}`;
+    const localUserId = currentUser?.userId ?? "self";
+    const strokeId = `${localUserId}-${now}-${Math.random().toString(36).slice(2, 7)}`;
     const p = normalize(e);
     activeStrokeRef.current = { id: strokeId, pendingPoints: [p], flushTimer: null };
     strokesRef.current.set(strokeId, {
       id: strokeId,
-      userId: currentUser.userId,
+      userId: localUserId,
       color,
       points: [p],
       lastAt: now,
       ended: false,
     });
-    // First flush immediately so peers see the starting point.
     flushPending(false);
   };
 
@@ -233,23 +230,37 @@ export function SharedDrawOverlay() {
   };
 
   if (!isInSharedSession) return null;
+  if (typeof document === "undefined") return null;
 
-  return (
+  // Portal to body to escape transform/filter stacking contexts in the RN
+  // tree — otherwise the canvas can sit behind sibling fixed elements.
+  return createPortal(
     <canvas
       ref={canvasRef}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 9998,
-        pointerEvents: drawActive ? "auto" : "none",
-        cursor: drawActive ? "crosshair" : "default",
-        touchAction: drawActive ? "none" : "auto",
-      }}
-    />
+      style={
+        {
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100vw",
+          height: "100vh",
+          zIndex: 9998,
+          pointerEvents: drawActive ? "auto" : "none",
+          cursor: drawActive ? "crosshair" : "default",
+          touchAction: drawActive ? "none" : "auto",
+          // Electron: when drawing is active we must shield against the
+          // sibling drag region so pointer events reach the canvas. When
+          // drawing is INACTIVE, leave app-region unset so the magenta
+          // titlebar strip underneath stays draggable.
+          ...(drawActive ? { WebkitAppRegion: "no-drag" } : null),
+        } as React.CSSProperties
+      }
+    />,
+    document.body,
   );
 }
 

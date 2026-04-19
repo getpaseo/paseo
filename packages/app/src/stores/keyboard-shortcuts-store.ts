@@ -7,6 +7,7 @@ interface KeyboardShortcutsState {
   commandCenterOpen: boolean;
   projectPickerOpen: boolean;
   addProjectModalOpen: boolean;
+  teamProjectsModalOpen: boolean;
   shortcutsDialogOpen: boolean;
   capturingShortcut: boolean;
   altDown: boolean;
@@ -20,6 +21,7 @@ interface KeyboardShortcutsState {
   setCommandCenterOpen: (open: boolean) => void;
   setProjectPickerOpen: (open: boolean) => void;
   setAddProjectModalOpen: (open: boolean) => void;
+  setTeamProjectsModalOpen: (open: boolean) => void;
   setShortcutsDialogOpen: (open: boolean) => void;
   setCapturingShortcut: (capturing: boolean) => void;
   setAltDown: (down: boolean) => void;
@@ -56,6 +58,7 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, ge
   commandCenterOpen: false,
   projectPickerOpen: false,
   addProjectModalOpen: false,
+  teamProjectsModalOpen: false,
   shortcutsDialogOpen: false,
   capturingShortcut: false,
   altDown: false,
@@ -67,6 +70,7 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, ge
   setCommandCenterOpen: (open) => set({ commandCenterOpen: open }),
   setProjectPickerOpen: (open) => set({ projectPickerOpen: open }),
   setAddProjectModalOpen: (open) => set({ addProjectModalOpen: open }),
+  setTeamProjectsModalOpen: (open) => set({ teamProjectsModalOpen: open }),
   setShortcutsDialogOpen: (open) => set({ shortcutsDialogOpen: open }),
   setCapturingShortcut: (capturing) => set({ capturingShortcut: capturing }),
   setAltDown: (down) => {

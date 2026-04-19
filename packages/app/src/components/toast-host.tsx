@@ -4,7 +4,7 @@ import { Animated, Easing, Platform, Text, ToastAndroid, View } from "react-nati
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { AlertTriangle, CheckCircle2 } from "lucide-react-native";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import {
@@ -132,13 +132,13 @@ export function ToastViewport({
         toValue: 0,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: isNative,
       }),
       Animated.timing(translateY, {
         toValue: -8,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: isNative,
       }),
     ]).start(({ finished }) => {
       if (finished) {
@@ -194,13 +194,13 @@ export function ToastViewport({
         toValue: 1,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: isNative,
       }),
       Animated.timing(translateY, {
         toValue: 0,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: isNative,
       }),
     ]).start();
 

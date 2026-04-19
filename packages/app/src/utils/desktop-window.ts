@@ -9,6 +9,7 @@ import {
 } from "@/constants/layout";
 import { getDesktopWindow } from "@/desktop/electron/window";
 import { usePanelStore } from "@/stores/panel-store";
+import { useIsInSharedSession } from "@/stores/shared-session-store";
 import { isNative } from "@/constants/platform";
 
 type RawWindowControlsPadding = {
@@ -103,6 +104,7 @@ export function useWindowControlsPadding(role: WindowControlsPaddingRole): {
   const sidebarOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const explorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
   const focusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
+  const isInSharedSession = useIsInSharedSession();
   const rawPadding = useRawWindowControlsPadding();
   const sidebarClosed = !sidebarOpen;
 
@@ -114,8 +116,17 @@ export function useWindowControlsPadding(role: WindowControlsPaddingRole): {
     left = rawPadding.left;
     top = rawPadding.top;
   } else if (role === "header") {
-    left = sidebarClosed ? rawPadding.left : 0;
+    // The sidebar (or its collapsed rail) always sits to the left of the
+    // header, so the traffic-light clearance is handled there — don't
+    // double-pad the header.
+    left = 0;
     right = explorerOpen ? 0 : rawPadding.right;
+    // Push the header below the magenta `DesktopTitlebarAccent` so it
+    // doesn't cover the branch switcher + Open + Push controls. When a
+    // shared session is active, the participant bar already sits above the
+    // header and handles the traffic-light vertical clearance — adding our
+    // own offset on top of that creates a visible gap.
+    top = isInSharedSession ? 0 : rawPadding.top;
   } else if (role === "tabRow") {
     left = sidebarClosed && focusModeEnabled ? rawPadding.left : 0;
     right = focusModeEnabled && !explorerOpen ? rawPadding.right : 0;

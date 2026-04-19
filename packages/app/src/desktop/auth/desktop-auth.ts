@@ -229,10 +229,12 @@ export async function desktopAuthGetOrganizations(): Promise<DesktopOrganization
 export async function desktopAuthCreateOrganization(
   name: string,
   slug: string,
+  logo?: string,
 ): Promise<DesktopOrganization | null> {
   const raw = await invokeDesktopCommand<unknown>("desktop_auth_create_organization", {
     name,
     slug,
+    ...(logo ? { logo } : {}),
   });
   return parseOrganization(raw);
 }

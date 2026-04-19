@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Animated, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { isNative } from "@/constants/platform";
 
 function SkeletonPulse({ pulse, style }: { pulse: Animated.Value; style: StyleProp<ViewStyle> }) {
   const opacity = pulse.interpolate({
@@ -20,12 +21,12 @@ export function SidebarAgentListSkeleton() {
         Animated.timing(pulse, {
           toValue: 1,
           duration: 1000,
-          useNativeDriver: true,
+          useNativeDriver: isNative,
         }),
         Animated.timing(pulse, {
           toValue: 0,
           duration: 1000,
-          useNativeDriver: true,
+          useNativeDriver: isNative,
         }),
       ]),
     );

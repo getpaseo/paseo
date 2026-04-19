@@ -13,6 +13,8 @@
     "db:seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
+    "@livekit/components-react": "^2.9.20",
+    "@livekit/components-styles": "^1.2.0",
     "@neondatabase/serverless": "^0.10.0",
     "@radix-ui/react-avatar": "^1.1.0",
     "@radix-ui/react-dialog": "^1.1.0",
@@ -28,6 +30,8 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "drizzle-orm": "^0.38.0",
+    "livekit-client": "^2.18.3",
+    "livekit-server-sdk": "^2.15.1",
     "lucide-react": "^0.460.0",
     "next": "^15.2.0",
     "pg": "^8.20.0",

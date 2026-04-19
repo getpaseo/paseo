@@ -1,8 +1,3 @@
-export {
-  useSharedSession,
-  type SharedSessionParticipant,
-  type SharedSessionQueueItem,
-} from "./use-shared-session";
 export { joinSharedSession } from "./colyseus-client";
 export {
   useWorkspaceShares,

@@ -58,6 +58,7 @@ import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
+import { useChatAuthorFor } from "@/stores/shared-chat-authors-store";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import { buildToolCallDisplayModel } from "@/utils/tool-call-display";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
@@ -94,6 +95,12 @@ interface UserMessageProps {
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
   disableOuterSpacing?: boolean;
+  /**
+   * Persistent author metadata set by the daemon on the timeline item.
+   * When present it wins over the in-memory content-match buffer — this is
+   * what survives reloads and late joins.
+   */
+  author?: { userId: string; username: string; avatarUrl: string };
 }
 
 const MessageOuterSpacingContext = createContext(false);
@@ -323,6 +330,40 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   copyButtonVisible: {
     opacity: 1,
   },
+  authorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginBottom: 6,
+    marginRight: theme.spacing[1],
+    maxWidth: "100%",
+  },
+  authorAvatar: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: theme.colors.surface2,
+  },
+  authorAvatarFallback: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: theme.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  authorAvatarInitial: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: theme.fontWeight.semibold,
+    lineHeight: 12,
+  },
+  authorLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    fontWeight: theme.fontWeight.medium,
+    flexShrink: 1,
+  },
 }));
 
 function UserMessageAttachmentThumbnail({ image }: { image: UserMessageImageAttachment }) {
@@ -340,6 +381,7 @@ export const UserMessage = memo(function UserMessage({
   isFirstInGroup = true,
   isLastInGroup = true,
   disableOuterSpacing,
+  author: authorProp,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
   const [messageHovered, setMessageHovered] = useState(false);
@@ -348,6 +390,11 @@ export const UserMessage = memo(function UserMessage({
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const showCopyButton = hasText && (isCompact || messageHovered || copyButtonHovered);
+  // Persistent author (daemon-stamped) takes precedence; fall back to the
+  // in-memory Colyseus broadcast buffer for messages that predate the
+  // persisted-author field.
+  const bufferedAuthor = useChatAuthorFor(hasText ? message : null);
+  const author = authorProp ?? bufferedAuthor;
 
   return (
     <View
@@ -365,6 +412,25 @@ export const UserMessage = memo(function UserMessage({
         onHoverIn={() => setMessageHovered(true)}
         onHoverOut={() => setMessageHovered(false)}
       >
+        {author?.username ? (
+          <View style={userMessageStylesheet.authorRow}>
+            {author.avatarUrl ? (
+              <Image
+                source={{ uri: author.avatarUrl }}
+                style={userMessageStylesheet.authorAvatar}
+              />
+            ) : (
+              <View style={userMessageStylesheet.authorAvatarFallback}>
+                <Text style={userMessageStylesheet.authorAvatarInitial}>
+                  {(author.username.trim().charAt(0) || "?").toUpperCase()}
+                </Text>
+              </View>
+            )}
+            <Text style={userMessageStylesheet.authorLabel} numberOfLines={1}>
+              {author.username}
+            </Text>
+          </View>
+        ) : null}
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
             <View

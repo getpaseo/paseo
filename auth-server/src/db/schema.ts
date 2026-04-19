@@ -246,3 +246,41 @@ export const workspaceShare = pgTable("workspace_share", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ─── Lightweight Online Project Registry ────────────────────────────────────
+//
+// Stores a *registry* entry per org+project — enough metadata for any user in
+// the org to see which projects exist and to clone them locally if the owner
+// has configured a git remote. Paths and filesystem state stay on the daemon;
+// only shareable identity + remote URL live online.
+export const projectRegistry = pgTable(
+  "project_registry",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Daemon-assigned stable identifier (e.g. `remote:github.com/owner/repo`
+    // for git projects, or a local-path hash for non-git). Used to dedupe
+    // across multiple daemons registering the same project.
+    projectKey: text("project_key").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    iconEmoji: text("icon_emoji"),
+    iconColor: text("icon_color"),
+    gitRemoteUrl: text("git_remote_url"),
+    defaultBranch: text("default_branch"),
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    orgProjectKeyIdx: uniqueIndex("project_registry_org_key_unique").on(
+      table.orgId,
+      table.projectKey,
+    ),
+  }),
+);

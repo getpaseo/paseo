@@ -1,6 +1,6 @@
 {
   "name": "@hubtool/cli",
-  "version": "0.1.55-rc.1",
+  "version": "2.7.0",
   "description": "Hubcode CLI - control your AI coding agents from the command line",
   "type": "module",
   "files": [

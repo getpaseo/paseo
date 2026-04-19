@@ -31,6 +31,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useHosts, useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useOpenProject } from "@/hooks/use-open-project";
+import { useActiveOrgId } from "@/stores/active-org-store";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { pickDirectory } from "@/desktop/pick-directory";
 import { parseServerIdFromPathname } from "@/utils/host-routes";
@@ -78,6 +79,7 @@ export function AddProjectModal() {
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const isLocalDaemon = useIsLocalDaemon(serverId ?? "");
   const openProject = useOpenProject(serverId);
+  const activeOrgId = useActiveOrgId();
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
 
@@ -269,7 +271,9 @@ export function AddProjectModal() {
       // mkdir + git init is near-instant. Wait briefly for FS to settle.
       await delay(1500);
 
-      const payload = await client.openProject(fullPath);
+      const payload = await client.openProject(fullPath, {
+        orgId: activeOrgId ?? undefined,
+      });
       if (payload.error || !payload.workspace) {
         throw new Error(payload.error || "Failed to register project");
       }
@@ -346,7 +350,9 @@ export function AddProjectModal() {
       for (let i = 0; i < maxAttempts; i++) {
         await delay(pollInterval);
         try {
-          const payload = await client.openProject(fullPath);
+          const payload = await client.openProject(fullPath, {
+            orgId: activeOrgId ?? undefined,
+          });
           if (payload.workspace) {
             workspace = payload.workspace;
             break;

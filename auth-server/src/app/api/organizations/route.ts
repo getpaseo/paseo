@@ -50,10 +50,18 @@ export async function POST(request: NextRequest) {
   if (!user) return unauthorized();
 
   const body = await request.json();
-  const { name, slug } = body;
+  const { name, slug, logo } = body as { name?: string; slug?: string; logo?: string };
 
   if (!name || !slug) {
     return NextResponse.json({ error: "Name and slug are required" }, { status: 400 });
+  }
+
+  const normalizedLogo = typeof logo === "string" ? logo.trim() : "";
+  if (normalizedLogo && !isValidLogoDataUrl(normalizedLogo)) {
+    return NextResponse.json(
+      { error: "Logo must be a data URL (≤256KB, image/*)" },
+      { status: 400 },
+    );
   }
 
   // Check org limit
@@ -80,6 +88,7 @@ export async function POST(request: NextRequest) {
     id: orgId,
     name,
     slug,
+    logo: normalizedLogo || null,
     createdAt: new Date(),
   });
 
@@ -92,5 +101,19 @@ export async function POST(request: NextRequest) {
     createdAt: new Date(),
   });
 
-  return NextResponse.json({ id: orgId, name, slug, role: "owner" }, { status: 201 });
+  return NextResponse.json(
+    { id: orgId, name, slug, logo: normalizedLogo || null, role: "owner" },
+    { status: 201 },
+  );
+}
+
+// ~256KB cap — enough headroom for a 256x256 webp/jpeg logo even if the
+// client encodes inefficiently. Keeps the DB row reasonably small since
+// logos ship inline on every /api/organizations response.
+const LOGO_DATA_URL_MAX_BYTES = 256 * 1024;
+const LOGO_DATA_URL_PATTERN = /^data:image\/(png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
+
+function isValidLogoDataUrl(value: string): boolean {
+  if (value.length > LOGO_DATA_URL_MAX_BYTES) return false;
+  return LOGO_DATA_URL_PATTERN.test(value);
 }

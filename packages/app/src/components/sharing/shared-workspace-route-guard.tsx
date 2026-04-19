@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { router, usePathname } from "expo-router";
-import { useSharedSessionStore, useSharedWorkspaceScope } from "@/stores/shared-session-store";
+import {
+  acknowledgeSessionEnded,
+  useSharedSessionStore,
+  useSharedWorkspaceScope,
+} from "@/stores/shared-session-store";
 import {
   buildHostWorkspaceRoute,
   parseHostAgentRouteFromPathname,
@@ -40,6 +44,11 @@ export function SharedWorkspaceRouteGuard() {
     ) {
       router.replace("/");
     }
+    // Consume the flag so we don't re-evict on every subsequent navigation.
+    // The redirect above only needs to fire once per share ending; after that
+    // the user should be free to move around their remaining hosts without
+    // bouncing back to `/` on every route change.
+    acknowledgeSessionEnded();
   }, [sessionEnded, pathname]);
 
   useEffect(() => {

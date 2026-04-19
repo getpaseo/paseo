@@ -51,10 +51,10 @@ import {
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
 import { isNative, getIsElectron } from "@/constants/platform";
 import { Pressable } from "react-native";
-import { MessageQueueIndicator } from "@/components/sharing/message-queue-indicator";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import {
   useIsInSharedSession,
+  useIsSharedRecipient,
   reconnectIfNeeded,
   useSharedSessionStore,
 } from "@/stores/shared-session-store";
@@ -248,8 +248,13 @@ function AgentPanelBody({
   const isElectron = getIsElectron();
   const { isAuthenticated, session: authSession } = useAuthSession();
 
-  // Shared session state (when someone joined via share link)
+  // Shared session state (when someone joined via share link).
+  // `isInSharedSession` is true for both host mode and recipient mode and
+  // gates things like the message-queue indicator. `isSharedRecipient` is
+  // stricter: host mode never triggers it, so the read-only/view-only UX
+  // stays off when the host peeks at their own share.
   const isInSharedSession = useIsInSharedSession();
+  const isSharedRecipient = useIsSharedRecipient();
   const sharedSessionStore = useSharedSessionStore();
   // Auto-reconnect to Colyseus on page refresh
   useEffect(() => {
@@ -788,11 +793,7 @@ function AgentPanelBody({
             </ReanimatedAnimated.View>
           </View>
 
-          {isInSharedSession && sharedSessionStore.accessLevel === "full_access" && (
-            <MessageQueueIndicator queue={[]} />
-          )}
-
-          {isInSharedSession && sharedSessionStore.accessLevel === "read_only" ? (
+          {isSharedRecipient && sharedSessionStore.accessLevel === "read_only" ? (
             <ReadOnlySharedNotice />
           ) : agentId && !isArchivingCurrentAgent && !agentState.archivedAt ? (
             <AgentInputArea

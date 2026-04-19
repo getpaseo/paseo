@@ -5,7 +5,7 @@ import {
   desktopAuthCreateOrganization,
   type DesktopOrganization,
 } from "@/desktop/auth/desktop-auth";
-import { webGetOrganizations } from "@/desktop/auth/web-auth-api";
+import { webCreateOrganization, webGetOrganizations } from "@/desktop/auth/web-auth-api";
 import { getIsElectron } from "@/constants/platform";
 import { useAuthSession } from "./use-auth-session";
 
@@ -24,8 +24,10 @@ export function useOrganizations() {
   });
 
   const createMutation = useMutation({
-    mutationFn: ({ name, slug }: { name: string; slug: string }) =>
-      desktopAuthCreateOrganization(name, slug),
+    mutationFn: ({ name, slug, logo }: { name: string; slug: string; logo?: string }) =>
+      isElectron
+        ? desktopAuthCreateOrganization(name, slug, logo)
+        : webCreateOrganization(name, slug, logo),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ORGANIZATIONS_QUERY_KEY });
     },

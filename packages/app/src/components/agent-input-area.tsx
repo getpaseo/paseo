@@ -1,4 +1,8 @@
 import { View, Pressable, Text, ActivityIndicator } from "react-native";
+import {
+  getSharedSessionAuthor,
+  notifyChatMessageAuthored,
+} from "@/stores/shared-session-store";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -261,13 +265,18 @@ export function AgentInputArea({
         throw new Error("Host is not connected");
       }
 
+      // Seed the author buffer BEFORE appending the stream item so the bubble
+      // finds the attribution on first render (no empty-then-populated flicker).
+      notifyChatMessageAuthored(text);
       const clientMessageId = generateMessageId();
+      const author = getSharedSessionAuthor();
       const userMessage: StreamItem = {
         kind: "user_message",
         id: clientMessageId,
         text,
         timestamp: new Date(),
         ...(images && images.length > 0 ? { images } : {}),
+        ...(author ? { author } : {}),
       };
 
       // Append to head if streaming (keeps the user message with the current
@@ -295,6 +304,7 @@ export function AgentInputArea({
       await client.sendAgentMessage(agentId, text, {
         messageId: clientMessageId,
         ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
+        ...(author ? { author } : {}),
       });
       onAttentionPromptSend?.();
     };

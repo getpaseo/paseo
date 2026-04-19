@@ -293,8 +293,14 @@ export type CompactionTimelineItem = {
   preTokens?: number;
 };
 
+export interface TimelineAuthor {
+  userId: string;
+  username: string;
+  avatarUrl: string;
+}
+
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string }
+  | { type: "user_message"; text: string; messageId?: string; author?: TimelineAuthor }
   | { type: "assistant_message"; text: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

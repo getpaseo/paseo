@@ -1,6 +1,6 @@
 {
   "name": "@hubtool/relay",
-  "version": "0.1.55-rc.1",
+  "version": "2.7.0",
   "description": "Hubcode relay for bridging daemon and client connections",
   "type": "module",
   "publishConfig": {

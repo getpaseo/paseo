@@ -321,6 +321,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 timestamp={item.timestamp.getTime()}
                 isFirstInGroup={isFirstInGroup}
                 isLastInGroup={isLastInGroup}
+                author={item.author}
               />
             );
           }

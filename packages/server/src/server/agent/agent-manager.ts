@@ -1088,7 +1088,11 @@ export class AgentManager {
   recordUserMessage(
     agentId: string,
     text: string,
-    options?: { messageId?: string; emitState?: boolean },
+    options?: {
+      messageId?: string;
+      emitState?: boolean;
+      author?: { userId: string; username: string; avatarUrl: string };
+    },
   ): void {
     const agent = this.requireAgent(agentId);
     const normalizedMessageId = normalizeMessageId(options?.messageId);
@@ -1096,6 +1100,7 @@ export class AgentManager {
       type: "user_message",
       text,
       messageId: normalizedMessageId,
+      ...(options?.author ? { author: options.author } : {}),
     };
     const updatedAt = this.touchUpdatedAt(agent);
     agent.lastUserMessageAt = updatedAt;

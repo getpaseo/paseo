@@ -27,7 +27,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { MessagesSquare, Plus, Settings } from "lucide-react-native";
+import { MessagesSquare, Plus, Settings, Users } from "lucide-react-native";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -59,6 +59,8 @@ import {
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
+import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import { useIsInSharedSession } from "@/stores/shared-session-store";
 import { isWeb, getIsElectron } from "@/constants/platform";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { UpgradeBanner } from "@/desktop/components/upgrade-banner";
@@ -404,6 +406,10 @@ function MobileSidebar({
   isScopedRecipient,
 }: MobileSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
+  const setTeamProjectsModalOpen = useKeyboardShortcutsStore((s) => s.setTeamProjectsModalOpen);
+  const handleOpenTeamProjects = useCallback(() => {
+    setTeamProjectsModalOpen(true);
+  }, [setTeamProjectsModalOpen]);
   const {
     translateX,
     backdropOpacity,
@@ -632,6 +638,29 @@ function MobileSidebar({
                       </View>
                     </TooltipContent>
                   </Tooltip>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Pressable
+                        style={styles.footerIconButton}
+                        testID="sidebar-team-projects"
+                        collapsable={false}
+                        accessible
+                        accessibilityLabel="Team projects"
+                        accessibilityRole="button"
+                        onPress={handleOpenTeamProjects}
+                      >
+                        {({ hovered }) => (
+                          <Users
+                            size={theme.iconSize.md}
+                            color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                          />
+                        )}
+                      </Pressable>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" align="center" offset={8}>
+                      <Text style={styles.tooltipText}>Team projects</Text>
+                    </TooltipContent>
+                  </Tooltip>
                   <Pressable
                     style={styles.footerIconButton}
                     testID="sidebar-settings"
@@ -733,6 +762,11 @@ function DesktopSidebar({
 }: DesktopSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const padding = useWindowControlsPadding("sidebar");
+  const sharedSessionActive = useIsInSharedSession();
+  const setTeamProjectsModalOpen = useKeyboardShortcutsStore((s) => s.setTeamProjectsModalOpen);
+  const handleOpenTeamProjects = useCallback(() => {
+    setTeamProjectsModalOpen(true);
+  }, [setTeamProjectsModalOpen]);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
   const { width: viewportWidth } = useWindowDimensions();
@@ -787,7 +821,12 @@ function DesktopSidebar({
       <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
-          {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
+          {/* Skip the traffic-light spacer when the shared-session bar is on
+              top — the bar already reserves that area, so the extra padding
+              just adds dead space above "Sessions". */}
+          {padding.top > 0 && !sharedSessionActive ? (
+            <View style={{ height: padding.top }} />
+          ) : null}
           {!isScopedRecipient && (
             <View style={styles.sidebarHeader}>
               <View style={styles.sidebarHeaderRow}>

@@ -3,7 +3,7 @@ import { Keyboard, ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { ReadOnlySharedNotice } from "@/components/sharing/read-only-shared-notice";
-import { useIsInSharedSession, useSharedSessionStore } from "@/stores/shared-session-store";
+import { useIsSharedRecipient, useSharedSessionStore } from "@/stores/shared-session-store";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import type { ImageAttachment } from "@/components/message-input";
@@ -55,9 +55,9 @@ export function WorkspaceDraftAgentTab({
 }: WorkspaceDraftAgentTabProps) {
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const isInSharedSession = useIsInSharedSession();
+  const isSharedRecipient = useIsSharedRecipient();
   const sharedAccessLevel = useSharedSessionStore().accessLevel;
-  const isViewOnly = isInSharedSession && sharedAccessLevel === "read_only";
+  const isViewOnly = isSharedRecipient && sharedAccessLevel === "read_only";
   const workspaceDefaultProvider = useSessionStore((state) => {
     const ws = state.sessions[serverId]?.workspaces.get(workspaceId);
     if (!ws || ws.agentMode === "cli") return undefined;

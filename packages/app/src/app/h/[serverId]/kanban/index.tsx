@@ -23,9 +23,7 @@ function KanbanRouteContent() {
   const activeOrgId = useActiveOrgId();
   const projectId = useMemo(() => {
     const workspaces = sessionWorkspaces ? Array.from(sessionWorkspaces.values()) : [];
-    const scoped = workspaces.filter(
-      (w) => !activeOrgId || !w.orgId || w.orgId === activeOrgId,
-    );
+    const scoped = workspaces.filter((w) => (activeOrgId ? w.orgId === activeOrgId : true));
     return scoped[0]?.projectId?.trim() || null;
   }, [sessionWorkspaces, activeOrgId]);
 

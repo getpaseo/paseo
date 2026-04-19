@@ -13,10 +13,7 @@ import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { ReadOnlySharedNotice } from "@/components/sharing/read-only-shared-notice";
-import {
-  useIsInSharedSession,
-  useSharedSessionStore,
-} from "@/stores/shared-session-store";
+import { useIsSharedRecipient, useSharedSessionStore } from "@/stores/shared-session-store";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { FormSelectTrigger } from "@/components/agent-form/agent-form-dropdowns";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
@@ -151,9 +148,9 @@ function DraftAgentScreenContent({
     () => runtime.getVersion(),
   );
   const params = useLocalSearchParams<DraftAgentParams>();
-  const isInSharedSession = useIsInSharedSession();
+  const isSharedRecipient = useIsSharedRecipient();
   const sharedAccessLevel = useSharedSessionStore().accessLevel;
-  const isViewOnly = isInSharedSession && sharedAccessLevel === "read_only";
+  const isViewOnly = isSharedRecipient && sharedAccessLevel === "read_only";
 
   const { style: animatedKeyboardStyle } = useKeyboardShiftStyle({
     mode: "translate",
@@ -1237,44 +1234,48 @@ function DraftAgentScreenContent({
             )}
           </Animated.View>
           <View style={styles.inputAreaWrapper}>
-            {isViewOnly ? <ReadOnlySharedNotice /> : <AgentInputArea
-              agentId={draftAgentIdRef.current}
-              serverId={selectedServerId ?? ""}
-              isInputActive={isFocused}
-              onSubmitMessage={handleCreateFromInput}
-              isSubmitLoading={isSubmitting}
-              blurOnSubmit={true}
-              value={draftInput.text}
-              onChangeText={draftInput.setText}
-              images={draftInput.images}
-              onChangeImages={draftInput.setImages}
-              clearDraft={draftInput.clear}
-              autoFocus={!isSubmitting}
-              onAddImages={handleAddImagesCallback}
-              commandDraftConfig={draftCommandConfig}
-              statusControls={{
-                providerDefinitions,
-                selectedProvider,
-                onSelectProvider: setProviderFromUser,
-                modeOptions,
-                selectedMode,
-                onSelectMode: setModeFromUser,
-                models: availableModels,
-                selectedModel,
-                onSelectModel: setModelFromUser,
-                isModelLoading,
-                allProviderModels,
-                isAllModelsLoading,
-                onSelectProviderAndModel: setProviderAndModelFromUser,
-                thinkingOptions: availableThinkingOptions,
-                selectedThinkingOptionId,
-                onSelectThinkingOption: setThinkingOptionFromUser,
-                features: draftFeatures,
-                onSetFeature: setDraftFeatureValue,
-                onModelSelectorOpen: invalidateProviderModels,
-                disabled: isSubmitting,
-              }}
-            />}
+            {isViewOnly ? (
+              <ReadOnlySharedNotice />
+            ) : (
+              <AgentInputArea
+                agentId={draftAgentIdRef.current}
+                serverId={selectedServerId ?? ""}
+                isInputActive={isFocused}
+                onSubmitMessage={handleCreateFromInput}
+                isSubmitLoading={isSubmitting}
+                blurOnSubmit={true}
+                value={draftInput.text}
+                onChangeText={draftInput.setText}
+                images={draftInput.images}
+                onChangeImages={draftInput.setImages}
+                clearDraft={draftInput.clear}
+                autoFocus={!isSubmitting}
+                onAddImages={handleAddImagesCallback}
+                commandDraftConfig={draftCommandConfig}
+                statusControls={{
+                  providerDefinitions,
+                  selectedProvider,
+                  onSelectProvider: setProviderFromUser,
+                  modeOptions,
+                  selectedMode,
+                  onSelectMode: setModeFromUser,
+                  models: availableModels,
+                  selectedModel,
+                  onSelectModel: setModelFromUser,
+                  isModelLoading,
+                  allProviderModels,
+                  isAllModelsLoading,
+                  onSelectProviderAndModel: setProviderAndModelFromUser,
+                  thinkingOptions: availableThinkingOptions,
+                  selectedThinkingOptionId,
+                  onSelectThinkingOption: setThinkingOptionFromUser,
+                  features: draftFeatures,
+                  onSetFeature: setDraftFeatureValue,
+                  onModelSelectorOpen: invalidateProviderModels,
+                  disabled: isSubmitting,
+                }}
+              />
+            )}
           </View>
         </View>
 

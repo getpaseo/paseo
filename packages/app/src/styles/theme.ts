@@ -164,6 +164,8 @@ const lightSemanticColors = {
   accentBorder: "#ececf1",
   input: "#f4f4f5",
   ring: "#18181b",
+  brandMagenta: "#C4198B",
+  brandMagentaHover: "#a8137a",
 
   ...lightDiffColors,
 
@@ -275,6 +277,8 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     accentBorder: tint.borderAccent,
     input: tint.surface2,
     ring: "#d4d4d8",
+    brandMagenta: "#C4198B",
+    brandMagentaHover: "#a8137a",
 
     ...darkDiffColors,
 

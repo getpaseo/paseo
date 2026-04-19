@@ -8,6 +8,11 @@ contextBridge.exposeInMainWorld("hubcodeDesktop", {
     ipcRenderer.invoke("hubcode:invoke", command, args),
   getPendingOpenProject: () =>
     ipcRenderer.invoke("hubcode:get-pending-open-project") as Promise<string | null>,
+  getPendingDeepLink: () =>
+    ipcRenderer.invoke("hubcode:get-pending-deep-link") as Promise<{
+      path: string;
+      query: string;
+    } | null>,
   events: {
     on: (event: string, handler: EventHandler): Promise<() => void> => {
       const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {

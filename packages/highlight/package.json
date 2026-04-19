@@ -1,6 +1,6 @@
 {
   "name": "@hubtool/highlight",
-  "version": "0.1.55-rc.1",
+  "version": "2.7.0",
   "type": "module",
   "publishConfig": {
     "access": "public"

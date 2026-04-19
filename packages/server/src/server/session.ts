@@ -1,10 +1,10 @@
 // @ts-nocheck
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
-import { stat } from "fs/promises";
-import { exec } from "node:child_process";
+import { stat, mkdir } from "fs/promises";
+import { exec, spawn } from "node:child_process";
 import { promisify } from "util";
-import { resolve, sep } from "path";
+import { basename, join, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { z } from "zod";
 import type { ToolSet } from "ai";
@@ -918,6 +918,7 @@ export class Session {
       "shutdown_server_request",
       "set_daemon_config_request",
       "open_project_request",
+      "clone_repository_request",
       "hubcode_worktree_list_request",
       "hubcode_worktree_archive_request",
       "create_hubcode_worktree_request",
@@ -1691,7 +1692,10 @@ export class Session {
     }
   }
 
-  private async reconcileWorkspaceRecord(workspaceId: string): Promise<{
+  private async reconcileWorkspaceRecord(
+    workspaceId: string,
+    options?: { orgId?: string },
+  ): Promise<{
     workspace: PersistedWorkspaceRecord;
     changed: boolean;
     removedWorkspaceId: string | null;
@@ -1734,6 +1738,7 @@ export class Session {
       kanbanStatus: existing?.kanbanStatus,
       agentProvider: existing?.agentProvider,
       agentMode: existing?.agentMode,
+      orgId: existing?.orgId ?? options?.orgId,
     });
 
     const needsWorkspaceUpdate =
@@ -2140,6 +2145,10 @@ export class Session {
 
           case "open_project_request":
             await this.handleOpenProjectRequest(msg);
+            break;
+
+          case "clone_repository_request":
+            await this.handleCloneRepositoryRequest(msg);
             break;
 
           case "archive_workspace_request":
@@ -6284,8 +6293,11 @@ export class Session {
     }
   }
 
-  private async ensureWorkspaceRegistered(cwd: string): Promise<PersistedWorkspaceRecord> {
-    return (await this.reconcileWorkspaceRecord(cwd)).workspace;
+  private async ensureWorkspaceRegistered(
+    cwd: string,
+    options?: { orgId?: string },
+  ): Promise<PersistedWorkspaceRecord> {
+    return (await this.reconcileWorkspaceRecord(cwd, options)).workspace;
   }
 
   private async registerPendingWorktreeWorkspace(options: {
@@ -6588,7 +6600,9 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "open_project_request" }>,
   ): Promise<void> {
     try {
-      const workspace = await this.ensureWorkspaceRegistered(request.cwd);
+      const workspace = await this.ensureWorkspaceRegistered(request.cwd, {
+        orgId: request.orgId,
+      });
       await this.emitWorkspaceUpdateForCwd(workspace.cwd, {
         skipReconcile: true,
       });
@@ -6611,6 +6625,53 @@ export class Session {
           workspace: null,
           error: message,
         },
+      });
+    }
+  }
+
+  /**
+   * Clone a git repository into `<parentDir>/<directoryName>` using a detached
+   * child process. Does not register the resulting directory as a project —
+   * the client is expected to follow up with `open_project_request` once the
+   * clone finishes so the normal project-discovery pipeline takes over.
+   */
+  private async handleCloneRepositoryRequest(
+    request: Extract<SessionInboundMessage, { type: "clone_repository_request" }>,
+  ): Promise<void> {
+    const { requestId, remoteUrl, parentDir, directoryName } = request;
+    try {
+      const trimmedRemote = remoteUrl.trim();
+      const trimmedParent = parentDir.trim();
+      if (!trimmedRemote) throw new Error("remoteUrl is required");
+      if (!trimmedParent) throw new Error("parentDir is required");
+
+      const dirName = (directoryName ?? deriveRepoDirectoryName(trimmedRemote)).trim();
+      if (!dirName || dirName.includes(sep) || dirName === "." || dirName === "..") {
+        throw new Error("Invalid directory name");
+      }
+
+      const resolvedParent = resolve(trimmedParent);
+      await mkdir(resolvedParent, { recursive: true });
+      const target = join(resolvedParent, dirName);
+      try {
+        await stat(target);
+        throw new Error(`Target already exists: ${target}`);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err;
+      }
+
+      await runGitClone(trimmedRemote, target, this.sessionLogger);
+
+      this.emit({
+        type: "clone_repository_response",
+        payload: { requestId, cwd: target, error: null },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to clone repository";
+      this.sessionLogger.error({ err: error, remoteUrl }, "Failed to clone repository");
+      this.emit({
+        type: "clone_repository_response",
+        payload: { requestId, cwd: null, error: message },
       });
     }
   }
@@ -6977,6 +7038,7 @@ export class Session {
         this.agentManager.recordUserMessage(agentId, msg.text, {
           messageId: msg.messageId,
           emitState: false,
+          ...(msg.author ? { author: msg.author } : {}),
         });
       } catch (error) {
         this.sessionLogger.error(
@@ -8605,6 +8667,7 @@ export class Session {
         ...(changes.autoApprove !== undefined ? { autoApprove: changes.autoApprove } : {}),
         ...(changes.agentProvider !== undefined ? { agentProvider: changes.agentProvider } : {}),
         ...(changes.agentMode !== undefined ? { agentMode: changes.agentMode } : {}),
+        ...(changes.orgId !== undefined ? { orgId: changes.orgId } : {}),
       };
 
       await this.workspaceRegistry.upsert(updated);
@@ -9315,4 +9378,65 @@ export class Session {
       this.detachTerminalStream(terminalId, { emitExit: false });
     }
   }
+}
+
+function deriveRepoDirectoryName(remoteUrl: string): string {
+  // Extract repo name from typical URL shapes. Fall back to a timestamp when
+  // the remote shape is unusual so we don't crash the clone.
+  const trimmed = remoteUrl.trim().replace(/\.git$/, "");
+  const sshMatch = trimmed.match(/^[^@]+@[^:]+:(.+)$/);
+  const pathPart = sshMatch ? sshMatch[1] : trimmed.replace(/^[a-z]+:\/\/[^/]+\//i, "");
+  const name = basename(pathPart);
+  return name && /^[A-Za-z0-9._-]+$/.test(name) ? name : `repo-${Date.now()}`;
+}
+
+function runGitClone(
+  remoteUrl: string,
+  target: string,
+  logger: {
+    info: (obj: unknown, msg?: string) => void;
+    error: (obj: unknown, msg?: string) => void;
+  },
+): Promise<void> {
+  return new Promise((resolveClone, rejectClone) => {
+    const child = spawn("git", ["clone", "--", remoteUrl, target], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        // Fail fast on credential prompts — we don't have a TTY to answer.
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    const timeout = setTimeout(
+      () => {
+        try {
+          child.kill("SIGKILL");
+        } catch {}
+        rejectClone(new Error("git clone timed out after 5 minutes"));
+      },
+      5 * 60 * 1000,
+    );
+
+    child.on("error", (err) => {
+      clearTimeout(timeout);
+      rejectClone(err);
+    });
+
+    child.on("exit", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        logger.info({ remoteUrl, target }, "git clone succeeded");
+        resolveClone();
+      } else {
+        const reason = stderr.trim() || `git clone exited with code ${code}`;
+        rejectClone(new Error(reason));
+      }
+    });
+  });
 }

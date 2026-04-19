@@ -22,9 +22,14 @@ import {
   useWorkspaceShares,
 } from "@/hooks/sharing/use-workspace-share";
 import { ShareWorkspaceModal } from "@/components/sharing/share-workspace-modal";
+import { PreJoinModal } from "@/components/sharing/pre-join-modal";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
-import { useIsInSharedSession } from "@/stores/shared-session-store";
+import {
+  startSharedSessionAsHost,
+  useIsSharedRecipient,
+  useSharedSessionStore,
+} from "@/stores/shared-session-store";
 
 interface SidebarSharedWorkspacesProps {
   serverId: string | null;
@@ -36,8 +41,9 @@ export function SidebarSharedWorkspaces({
   onWorkspacePress,
 }: SidebarSharedWorkspacesProps) {
   const { theme } = useUnistyles();
-  const { isAuthenticated } = useAuthSession();
-  const isInSharedSession = useIsInSharedSession();
+  const { isAuthenticated, session: authSession, user: authUser } = useAuthSession();
+  const isInSharedSession = useIsSharedRecipient();
+  const { shareToken: activeShareToken } = useSharedSessionStore();
   const { organizations } = useOrganizations();
   const activeOrgId = useActiveOrgId();
   const orgId = activeOrgId ?? organizations[0]?.id ?? null;
@@ -49,6 +55,12 @@ export function SidebarSharedWorkspaces({
   const [collapsed, setCollapsed] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const [pendingJoin, setPendingJoin] = useState<{
+    token: string;
+    serverId: string;
+    workspaceId: string;
+    accessLevel: string;
+  } | null>(null);
 
   const totalCount = mine.length + withMe.length;
 
@@ -72,6 +84,35 @@ export function SidebarSharedWorkspaces({
     },
     [onWorkspacePress],
   );
+
+  const handleJoinShare = useCallback(
+    (share: { token: string; serverId: string; workspaceId: string; accessLevel: string }) => {
+      setPendingJoin(share);
+    },
+    [],
+  );
+
+  const handleConfirmJoin = useCallback(() => {
+    const share = pendingJoin;
+    if (!share) return;
+    setPendingJoin(null);
+    router.push(buildHostWorkspaceRoute(share.serverId, share.workspaceId));
+    onWorkspacePress?.();
+    const sessionToken = authSession?.sessionToken ?? "";
+    if (!sessionToken || !authUser) return;
+    void startSharedSessionAsHost({
+      shareToken: share.token,
+      sessionToken,
+      currentUser: {
+        userId: authUser.userId,
+        username: authUser.username,
+        avatarUrl: authUser.avatarUrl,
+        isOwner: true,
+      },
+      ownerName: authUser.username,
+      accessLevel: share.accessLevel,
+    });
+  }, [authSession?.sessionToken, authUser, onWorkspacePress, pendingJoin]);
 
   const handleOpenShareUrl = useCallback(async (shareUrl: string) => {
     if (!shareUrl) return;
@@ -134,13 +175,38 @@ export function SidebarSharedWorkspaces({
               <Text style={styles.subsectionLabel}>Shared by you</Text>
               {mine.map((share) => {
                 const isCopied = copiedToken === share.token;
+                const isActive = activeShareToken === share.token;
                 const access = share.accessLevel === "full_access" ? "Can interact" : "Can view";
                 const audience =
                   share.allowedUsers.length === 0
                     ? "Anyone in org"
                     : `${share.allowedUsers.length} member${share.allowedUsers.length === 1 ? "" : "s"}`;
                 return (
-                  <View key={share.token} style={styles.row}>
+                  <Pressable
+                    key={share.token}
+                    style={({ hovered = false }) => [
+                      styles.row,
+                      hovered && !isActive && styles.rowHovered,
+                      isActive && styles.rowActive,
+                    ]}
+                    // Intentionally no accessibilityRole — the row contains
+                    // nested Pressable icons (Copy, Revoke) which render as
+                    // <button> on web. Giving this outer Pressable role=button
+                    // would produce nested <button> inside <button>, which is
+                    // invalid HTML and triggers a hydration error. Leaving it
+                    // off renders the row as a plain <div> with click handling.
+                    accessibilityLabel={`Open shared workspace ${share.workspaceName}`}
+                    disabled={isActive}
+                    onPress={() => {
+                      if (isActive) return;
+                      handleJoinShare({
+                        token: share.token,
+                        serverId: share.serverId,
+                        workspaceId: share.workspaceId,
+                        accessLevel: share.accessLevel,
+                      });
+                    }}
+                  >
                     <Share2 size={11} color={theme.colors.foregroundMuted} />
                     <View style={styles.rowInfo}>
                       <Text style={styles.rowTitle} numberOfLines={1}>
@@ -158,7 +224,10 @@ export function SidebarSharedWorkspaces({
                           styles.iconButton,
                           hovered && styles.iconButtonHovered,
                         ]}
-                        onPress={() => void handleCopy(share.shareUrl, share.token)}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          void handleCopy(share.shareUrl, share.token);
+                        }}
                       >
                         {isCopied ? (
                           <Check size={12} color={theme.colors.accent} />
@@ -173,13 +242,16 @@ export function SidebarSharedWorkspaces({
                           styles.iconButton,
                           hovered && styles.iconButtonDestructive,
                         ]}
-                        onPress={() => void handleRevoke(share.token)}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          void handleRevoke(share.token);
+                        }}
                         disabled={isRevoking}
                       >
                         <Trash2 size={12} color={theme.colors.destructive} />
                       </Pressable>
                     </View>
-                  </View>
+                  </Pressable>
                 );
               })}
             </View>
@@ -191,7 +263,9 @@ export function SidebarSharedWorkspaces({
               {withMe.map((share) => (
                 <Pressable
                   key={share.token}
-                  accessibilityRole="button"
+                  // No accessibilityRole on the outer: it contains a nested
+                  // Pressable (Copy/Open) which renders as <button> on web;
+                  // giving this row role=button would produce nested buttons.
                   accessibilityLabel={`Open ${share.workspaceName}`}
                   style={({ hovered = false }) => [styles.row, hovered && styles.rowHovered]}
                   onPress={() => handleOpenShared(share)}
@@ -229,6 +303,13 @@ export function SidebarSharedWorkspaces({
         onClose={() => setModalOpen(false)}
         orgId={orgId}
         serverId={serverId}
+      />
+
+      <PreJoinModal
+        visible={pendingJoin !== null}
+        username={authUser?.username ?? "Guest"}
+        onCancel={() => setPendingJoin(null)}
+        onConfirm={handleConfirmJoin}
       />
     </View>
   );
@@ -310,6 +391,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  rowActive: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+    borderLeftWidth: 2,
+    borderLeftColor: theme.colors.accent,
+    paddingLeft: theme.spacing[2] - 2,
   },
   rowInfo: {
     flex: 1,

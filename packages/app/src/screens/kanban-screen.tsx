@@ -69,9 +69,8 @@ export function KanbanScreen({ serverId, projectId }: KanbanScreenProps) {
     const workspaces = sessionWorkspaces ? Array.from(sessionWorkspaces.values()) : [];
     return workspaces.filter((workspace) => {
       if (workspace.projectId !== projectId) return false;
-      // Hide workspaces scoped to a different org. Unscoped (legacy) workspaces
-      // remain visible so existing boards don't go empty after upgrade.
-      if (activeOrgId && workspace.orgId && workspace.orgId !== activeOrgId) return false;
+      // Strict org scope: a workspace must match the selected org to show.
+      if (activeOrgId && workspace.orgId !== activeOrgId) return false;
       return true;
     });
   }, [projectId, sessionWorkspaces, activeOrgId]);

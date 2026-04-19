@@ -5,6 +5,7 @@ import {
   useGlobalSearchParams,
   useNavigationContainerRef,
   usePathname,
+  useRootNavigationState,
   useRouter,
 } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -59,17 +60,26 @@ import {
   HorizontalScrollProvider,
   useHorizontalScrollOptional,
 } from "@/contexts/horizontal-scroll-context";
-import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
+import {
+  DESKTOP_TRAFFIC_LIGHT_HEIGHT,
+  getIsElectronRuntime,
+  useIsCompactFormFactor,
+} from "@/constants/layout";
 import { CommandCenter } from "@/components/command-center";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { WebGlobalScrollbarStyle } from "@/components/web-global-scrollbar-style";
 import { AddProjectModal } from "@/components/add-project-modal";
+import { TeamProjectsModal } from "@/components/team-projects-modal";
 import { ParticipantBar } from "@/components/sharing/participant-bar";
 import { FloatingVideoPanel } from "@/components/sharing/floating-video-panel";
 import { SharedWorkspaceRouteGuard } from "@/components/sharing/shared-workspace-route-guard";
 import { SharedDrawOverlay } from "@/components/sharing/shared-draw-overlay";
+import { useJoinSound } from "@/hooks/sharing/use-join-sound";
+import { useProjectRegistrySync } from "@/hooks/use-project-registry-sync";
 import {
+  acknowledgeSessionEnded,
+  clearSharedSession,
   reconnectIfNeeded,
   useIsInSharedSession,
   useSharedParticipants,
@@ -464,8 +474,9 @@ function AppContainer({
   const content = (
     <View style={containerStyle}>
       <SharedWorkspaceRouteGuard />
-      <GlobalSharedSessionBar />
+      <GlobalSharedSessionTopStrip />
       <SharedDrawOverlay />
+      <ProjectRegistrySyncMount />
       <View style={rowStyle}>
         {!isCompactLayout && chromeEnabled && !isFocusModeEnabled && (
           <>
@@ -473,7 +484,10 @@ function AppContainer({
             <LeftSidebar selectedAgentId={selectedAgentId} />
           </>
         )}
-        <View style={flexStyle}>{children}</View>
+        <View style={flexStyle}>
+          <GlobalSharedSessionBar />
+          <View style={flexStyle}>{children}</View>
+        </View>
         <DesktopTitlebarAccent />
       </View>
       {isCompactLayout && chromeEnabled && <LeftSidebar selectedAgentId={selectedAgentId} />}
@@ -482,6 +496,7 @@ function AppContainer({
       <CommandCenter />
       <ProjectPickerModal />
       <AddProjectModal />
+      <TeamProjectsModal />
       <KeyboardShortcutsDialog />
       <GlobalFloatingVideoPanel />
     </View>
@@ -760,6 +775,50 @@ function OpenProjectListener() {
   return null;
 }
 
+interface DeepLinkPayload {
+  path: string;
+  query: string;
+}
+
+function DeepLinkListener() {
+  const router = useRouter();
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const handle = (link: DeepLinkPayload | null | undefined) => {
+      if (!link || !link.path) return;
+      const path = link.path.startsWith("/") ? link.path : `/${link.path}`;
+      const query = link.query ? `?${link.query}` : "";
+      router.replace(`${path}${query}` as never);
+    };
+
+    void getDesktopHost()
+      ?.getPendingDeepLink?.()
+      ?.then((pending) => {
+        if (!disposed) handle(pending);
+      })
+      .catch(() => undefined);
+
+    void listenToDesktopEvent<DeepLinkPayload>("deep-link", (payload) => {
+      if (!disposed) handle(payload);
+    })
+      .then((dispose) => {
+        if (disposed) dispose();
+        else unlisten = dispose;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [router]);
+
+  return null;
+}
+
 function AppWithSidebar({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -809,25 +868,64 @@ function FaviconStatusSync() {
   return null;
 }
 
+function ProjectRegistrySyncMount() {
+  useProjectRegistrySync();
+  return null;
+}
+
 function GlobalSharedSessionBar() {
   const isInSharedSession = useIsInSharedSession();
   const sharedParticipants = useSharedParticipants();
   const sharedSessionRoom = useSharedSessionStore().room;
   const { session: authSession } = useAuthSession();
-
   useEffect(() => {
-    if (isInSharedSession && !sharedSessionRoom) {
-      void reconnectIfNeeded(authSession?.sessionToken);
-    }
+    if (!isInSharedSession || sharedSessionRoom) return;
+    // Pure-web F5 is handled at module load in shared-session-store.ts — the
+    // guard redirects to auth-server before any React renders, so by the time
+    // we get here on web we've already decided to stay or bounce.
+    void reconnectIfNeeded(authSession?.sessionToken);
   }, [isInSharedSession, sharedSessionRoom, authSession]);
 
   if (!isInSharedSession) return null;
   return <ParticipantBar participants={sharedParticipants} />;
 }
 
+function GlobalSharedSessionTopStrip() {
+  const isInSharedSession = useIsInSharedSession();
+  if (!isInSharedSession) return null;
+  return <SharedSessionTitlebarStrip />;
+}
+
+/**
+ * Full-width magenta drag strip shown above the session info bar so the
+ * Electron window can still be dragged and the macOS traffic lights have room —
+ * same visual as `DesktopTitlebarAccent` when not in a shared session.
+ * React Native Web strips `WebkitAppRegion` from View styles, so we render a
+ * raw <div>.
+ */
+function SharedSessionTitlebarStrip() {
+  const { theme } = useUnistyles();
+  if (isNative || !getIsElectronRuntime()) return null;
+  return (
+    <div
+      style={{
+        height: DESKTOP_TRAFFIC_LIGHT_HEIGHT,
+        width: "100%",
+        flexShrink: 0,
+        backgroundColor: theme.colors.accent,
+        // @ts-expect-error — WebkitAppRegion is not in CSSProperties
+        WebkitAppRegion: "drag",
+      }}
+    />
+  );
+}
+
 function GlobalFloatingVideoPanel() {
   const isInSharedSession = useIsInSharedSession();
   const [dismissed, setDismissed] = useState(false);
+  // Ding when a new participant joins. Hook is mounted unconditionally so its
+  // baseline observation runs even before the panel itself becomes visible.
+  useJoinSound();
   if (!isInSharedSession || dismissed) return null;
   return <FloatingVideoPanel visible onClose={() => setDismissed(true)} />;
 }
@@ -902,6 +1000,7 @@ export default function RootLayout() {
                       <HorizontalScrollProvider>
                         <ToastProvider>
                           <OpenProjectListener />
+                          <DeepLinkListener />
                           <AppWithSidebar>
                             <RootStack />
                           </AppWithSidebar>

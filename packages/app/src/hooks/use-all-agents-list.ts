@@ -53,12 +53,13 @@ function buildAllAgentsList(params: {
     if (!params.includeArchived && aggregated.archivedAt) {
       continue;
     }
-    // Scope agents by active org. Resolve the agent's workspace by cwd match;
-    // fall back to "visible" when we can't resolve it or when it's unscoped
-    // (legacy workspaces without orgId stay visible in any org).
+    // Scope strictly by active org. Agents tied to workspaces from other orgs
+    // (or unscoped workspaces while an org is selected) are hidden; this keeps
+    // the sidebar's active-agents list consistent with the org-filtered
+    // project/workspace list.
     if (params.activeOrgId && params.workspaces) {
       const workspace = params.workspaces.get(agent.cwd);
-      if (workspace?.orgId && workspace.orgId !== params.activeOrgId) {
+      if (!workspace || workspace.orgId !== params.activeOrgId) {
         continue;
       }
     }

@@ -3,6 +3,7 @@ import { useCallback } from "react";
 import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
+import { useActiveOrgId } from "@/stores/active-org-store";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 
 export function useOpenProject(serverId: string | null): (path: string) => Promise<boolean> {
@@ -11,6 +12,7 @@ export function useOpenProject(serverId: string | null): (path: string) => Promi
   const client = useHostRuntimeClient(normalizedServerId);
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
+  const activeOrgId = useActiveOrgId();
 
   return useCallback(
     async (path: string) => {
@@ -20,7 +22,9 @@ export function useOpenProject(serverId: string | null): (path: string) => Promi
       }
 
       try {
-        const payload = await client.openProject(trimmedPath);
+        const payload = await client.openProject(trimmedPath, {
+          orgId: activeOrgId ?? undefined,
+        });
         if (payload.error || !payload.workspace) {
           throw new Error(payload.error || "Failed to open project");
         }
@@ -40,6 +44,6 @@ export function useOpenProject(serverId: string | null): (path: string) => Promi
         return false;
       }
     },
-    [client, mergeWorkspaces, normalizedServerId, setHasHydratedWorkspaces, toast],
+    [activeOrgId, client, mergeWorkspaces, normalizedServerId, setHasHydratedWorkspaces, toast],
   );
 }

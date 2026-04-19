@@ -130,6 +130,7 @@ export interface WorkspaceDescriptor {
   agentProvider?: string;
   agentMode?: "native" | "cli";
   orgId?: string;
+  gitRemoteUrl?: string | null;
 }
 
 export function normalizeWorkspaceDescriptor(
@@ -153,6 +154,7 @@ export function normalizeWorkspaceDescriptor(
     agentProvider: payload.agentProvider,
     agentMode: payload.agentMode,
     orgId: payload.orgId,
+    gitRemoteUrl: payload.gitRuntime?.remoteUrl ?? null,
   };
 }
 

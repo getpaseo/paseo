@@ -1,16 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   Check,
   ChevronLeft,
   Copy,
+  Eye,
   FolderGit2,
   Link2,
   Search,
   Trash2,
   User,
+  Users,
 } from "lucide-react-native";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
@@ -322,60 +332,101 @@ export function ShareWorkspaceModal({
 
             {createError && <Text style={styles.error}>{createError}</Text>}
 
-            <Button
-              variant="default"
-              size="md"
-              leftIcon={<Link2 size={14} color={theme.colors.accentForeground} />}
-              onPress={() => void handleCreate()}
-              disabled={isCreating}
-            >
-              {isCreating ? "Creating..." : "Create share link"}
-            </Button>
+            {existingShares.length === 0 && (
+              <Button
+                variant="default"
+                size="md"
+                leftIcon={
+                  isCreating ? (
+                    <ActivityIndicator size="small" color={theme.colors.accentForeground} />
+                  ) : (
+                    <Link2 size={14} color={theme.colors.accentForeground} />
+                  )
+                }
+                onPress={() => void handleCreate()}
+                disabled={isCreating}
+              >
+                {isCreating ? "Creating link…" : "Create share link"}
+              </Button>
+            )}
 
             {existingShares.length > 0 && (
               <View style={styles.existingShares}>
                 <Text style={styles.label}>Active shares</Text>
                 {existingShares.map((share) => {
                   const isCopied = copiedToken === share.token;
+                  const isInteract = share.accessLevel === "full_access";
+                  const recipientLabel =
+                    share.allowedUsers.length === 0
+                      ? "Anyone in the org"
+                      : share.allowedUsers.length === 1
+                        ? (share.allowedUsers[0]?.name ?? "1 member")
+                        : `${share.allowedUsers.length} members`;
                   return (
-                    <View key={share.token} style={styles.shareRow}>
-                      <View style={styles.shareRowInfo}>
-                        <Text style={styles.shareAccess}>
-                          {share.accessLevel === "full_access" ? "Can interact" : "Can view"}
-                        </Text>
-                        <Text style={styles.shareMembers} numberOfLines={1}>
-                          {share.allowedUsers.length === 0
-                            ? "Anyone in org"
-                            : share.allowedUsers.map((u) => u.name).join(", ")}
-                        </Text>
-                        <TextInput
-                          style={[styles.linkInput, { color: theme.colors.foregroundMuted }]}
-                          value={share.shareUrl}
-                          readOnly
-                          selectTextOnFocus
-                        />
-                      </View>
-                      <View style={styles.shareActions}>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Copy share link"
-                          style={styles.iconButton}
-                          onPress={() => void handleCopy(share)}
+                    <View key={share.token} style={styles.shareCard}>
+                      <View style={styles.shareCardHeader}>
+                        <View
+                          style={[
+                            styles.shareBadge,
+                            isInteract ? styles.shareBadgeInteract : styles.shareBadgeView,
+                          ]}
                         >
-                          {isCopied ? (
-                            <Check size={14} color={theme.colors.accent} />
+                          {isInteract ? (
+                            <Link2 size={11} color={theme.colors.accent} />
                           ) : (
-                            <Copy size={14} color={theme.colors.foregroundMuted} />
+                            <Eye size={11} color={theme.colors.foregroundMuted} />
                           )}
-                        </Pressable>
+                          <Text
+                            style={[
+                              styles.shareBadgeText,
+                              isInteract && styles.shareBadgeTextInteract,
+                            ]}
+                          >
+                            {isInteract ? "Can interact" : "Can view"}
+                          </Text>
+                        </View>
+                        <View style={styles.shareRecipient}>
+                          <Users size={11} color={theme.colors.foregroundMuted} />
+                          <Text style={styles.shareRecipientText} numberOfLines={1}>
+                            {recipientLabel}
+                          </Text>
+                        </View>
+                      </View>
+                      <Pressable
+                        style={styles.shareLinkRow}
+                        onPress={() => void handleCopy(share)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Copy share link"
+                      >
+                        <Text style={styles.shareLinkText} numberOfLines={1}>
+                          {share.shareUrl}
+                        </Text>
+                        <View style={styles.shareLinkAction}>
+                          {isCopied ? (
+                            <>
+                              <Check size={12} color={theme.colors.accent} />
+                              <Text style={[styles.shareActionText, styles.shareActionTextCopied]}>
+                                Copied
+                              </Text>
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={12} color={theme.colors.foregroundMuted} />
+                              <Text style={styles.shareActionText}>Copy</Text>
+                            </>
+                          )}
+                        </View>
+                      </Pressable>
+                      <View style={styles.shareCardFooter}>
                         <Pressable
                           accessibilityRole="button"
                           accessibilityLabel="Revoke share"
-                          style={styles.iconButton}
+                          style={styles.revokeBtn}
                           onPress={() => void handleRevoke(share.token)}
                           disabled={isRevoking}
                         >
-                          <Trash2 size={14} color={theme.colors.destructive} />
+                          <Trash2 size={12} color={theme.colors.destructive} />
+                          <Text style={styles.revokeText}>Revoke</Text>
                         </Pressable>
                       </View>
                     </View>
@@ -505,29 +556,109 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[3],
     gap: theme.spacing[2],
   },
-  shareRow: {
+  shareCard: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface1,
+    overflow: "hidden",
+  },
+  shareCardHeader: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: theme.spacing[2],
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
+    gap: theme.spacing[2],
   },
-  shareRowInfo: {
-    flex: 1,
+  shareBadge: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 3,
+    borderRadius: theme.borderRadius.base,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
-  shareAccess: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+  shareBadgeInteract: {
+    borderColor: theme.colors.accent,
+    backgroundColor: theme.colors.surface2,
+  },
+  shareBadgeView: {
+    borderColor: theme.colors.border,
+  },
+  shareBadgeText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: 11,
     fontWeight: theme.fontWeight.medium,
   },
-  shareMembers: {
+  shareBadgeTextInteract: {
+    color: theme.colors.accent,
+  },
+  shareRecipient: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    justifyContent: "flex-end",
+    minWidth: 0,
+  },
+  shareRecipientText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+    flexShrink: 1,
   },
-  shareActions: {
+  shareLinkRow: {
     flexDirection: "row",
-    gap: theme.spacing[1],
     alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    backgroundColor: theme.colors.surface0,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  shareLinkText: {
+    flex: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontFamily: "monospace" as const,
+  },
+  shareLinkAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  shareActionText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: 11,
+    fontWeight: theme.fontWeight.medium,
+  },
+  shareActionTextCopied: {
+    color: theme.colors.accent,
+  },
+  shareCardFooter: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  revokeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.base,
+  },
+  revokeText: {
+    color: theme.colors.destructive,
+    fontSize: 11,
+    fontWeight: theme.fontWeight.medium,
   },
   iconButton: {
     width: 28,
@@ -627,10 +758,7 @@ const styles = StyleSheet.create((theme) => ({
 
 interface PickerWorkspace extends ShareWorkspaceTarget {}
 
-function usePickerWorkspaces(
-  serverId: string | null,
-  orgId: string | null,
-): PickerWorkspace[] {
+function usePickerWorkspaces(serverId: string | null, orgId: string | null): PickerWorkspace[] {
   const workspaces = useSessionStore((state) =>
     serverId ? (state.sessions[serverId]?.workspaces ?? null) : null,
   );

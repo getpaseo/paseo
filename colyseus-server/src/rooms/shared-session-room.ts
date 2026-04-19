@@ -27,16 +27,6 @@ interface ChatToAgentMessage {
   content: string;
 }
 
-interface WebRTCSignalMessage {
-  targetUserId: string;
-  kind: "offer" | "answer" | "ice-candidate";
-  data: unknown;
-}
-
-interface AudioToggleMessage {
-  enabled: boolean;
-}
-
 export class SharedSessionRoom extends Room<SharedSessionState> {
   private authService!: AuthService;
   private daemonBridge!: DaemonBridge;
@@ -68,17 +58,28 @@ export class SharedSessionRoom extends Room<SharedSessionState> {
       this.handleChatToAgent(client, message);
     });
 
-    this.onMessage("webrtc_signal", (client, signal: WebRTCSignalMessage) => {
-      this.handleWebRTCSignal(client, signal);
+    // `chat_authored` is sent by participants when they submit a message
+    // directly to the daemon (bypassing the Colyseus queue). We only need to
+    // relay the author metadata so other clients can label the bubble.
+    this.onMessage("chat_authored", (client, message: { content?: string }) => {
+      const auth = (client as any).auth as AuthData | undefined;
+      if (!auth) return;
+      const content = String(message?.content ?? "").trim();
+      if (!content) return;
+      this.broadcast(
+        "chat_message",
+        {
+          userId: auth.userId,
+          username: auth.username,
+          avatarUrl: auth.avatarUrl,
+          content,
+          ts: Date.now(),
+        },
+        { except: client },
+      );
     });
 
-    this.onMessage("audio_toggle", (client, message: AudioToggleMessage) => {
-      this.handleAudioToggle(client, message);
-    });
-
-    // Slack-style collaborative drawing: broadcast strokes to all other
-    // participants (fire-and-forget, no state persisted — events are
-    // ephemeral and clients render with a timed fade).
+    // Collaborative drawing: fire-and-forget broadcast, no state persisted.
     this.onMessage("draw_stroke", (client, message: any) => {
       const auth = (client as any).auth as AuthData | undefined;
       if (!auth) return;
@@ -155,7 +156,8 @@ export class SharedSessionRoom extends Room<SharedSessionState> {
     };
   }
 
-  onJoin(client: Client, _options: JoinOptions, auth: AuthData): void {
+  onJoin(client: Client, _options: JoinOptions | undefined, auth: AuthData | undefined): void {
+    if (!auth) throw new Error("onJoin called without auth — onAuth should have rejected");
     console.log(
       `[room] onJoin client=${client.sessionId} user=${auth.username} roomId=${this.roomId}`,
     );
@@ -214,29 +216,9 @@ export class SharedSessionRoom extends Room<SharedSessionState> {
 
     void this.authService.recordLeave(this.shareToken, auth.userId);
 
-    // When the owner leaves, evict every remaining recipient and dispose the
-    // room. Otherwise recipients could keep reconnecting via the share token
-    // (still valid in auth-server) and viewing the workspace after the owner
-    // closed their tab. Check after the owner's entry is deleted so we only
-    // count *other* owner sessions (e.g., a second owner tab still open).
-    if (auth.isOwner) {
-      const ownerStillPresent = Array.from(this.state.participants.values()).some(
-        (p) => p.role === "owner",
-      );
-      if (!ownerStillPresent) {
-        console.log(
-          `[room] owner left with no other owner sessions — disposing roomId=${this.roomId}`,
-        );
-        for (const c of [...this.clients]) {
-          try {
-            c.leave(4000, "owner-left");
-          } catch {}
-        }
-        this.disconnect();
-        return;
-      }
-    }
-
+    // Owner leaving the call (clicking "Sair") does NOT end the session for
+    // recipients. They stay connected and just see their own participant in
+    // the bar. The room auto-disposes once the last client is gone.
     this.broadcastParticipantsSnapshot();
   }
 
@@ -321,47 +303,30 @@ export class SharedSessionRoom extends Room<SharedSessionState> {
     }
 
     if (!message.content?.trim()) return;
+    const content = message.content.trim();
+
+    // Broadcast author info so every connected client (host + other recipients)
+    // can label the resulting agent user-message with the sender's name +
+    // avatar. Fire-and-forget; no state persisted.
+    this.broadcast("chat_message", {
+      userId: auth.userId,
+      username: auth.username,
+      avatarUrl: auth.avatarUrl,
+      content,
+      ts: Date.now(),
+    });
 
     // Add to FIFO queue
     const queued = new QueuedMessage();
     queued.id = nanoid();
     queued.userId = auth.userId;
     queued.username = auth.username;
-    queued.content = message.content.trim();
+    queued.content = content;
     queued.queuedAt = Date.now();
     queued.status = "queued";
     this.state.messageQueue.push(queued);
 
     void this.processQueue();
-  }
-
-  private handleWebRTCSignal(client: Client, signal: WebRTCSignalMessage): void {
-    const auth = (client as any).auth as AuthData | undefined;
-    if (!auth) return;
-
-    // Find target client and relay the signal
-    for (const c of this.clients) {
-      const targetAuth = (c as any).auth as AuthData | undefined;
-      if (targetAuth?.userId === signal.targetUserId) {
-        c.send("webrtc_signal", {
-          fromUserId: auth.userId,
-          fromUsername: auth.username,
-          kind: signal.kind,
-          data: signal.data,
-        });
-        return;
-      }
-    }
-  }
-
-  private handleAudioToggle(client: Client, message: AudioToggleMessage): void {
-    const auth = (client as any).auth as AuthData | undefined;
-    if (!auth) return;
-
-    const participant = this.state.participants.get(auth.userId);
-    if (participant) {
-      participant.audioEnabled = message.enabled;
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -387,7 +352,7 @@ export class SharedSessionRoom extends Room<SharedSessionState> {
 
     // Remove sent messages
     for (let i = this.state.messageQueue.length - 1; i >= 0; i--) {
-      if (this.state.messageQueue[i].status === "sent") {
+      if (this.state.messageQueue[i]?.status === "sent") {
         this.state.messageQueue.splice(i, 1);
       }
     }

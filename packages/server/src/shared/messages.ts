@@ -440,6 +440,13 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, z.ZodT
       type: z.literal("user_message"),
       text: z.string(),
       messageId: z.string().optional(),
+      author: z
+        .object({
+          userId: z.string(),
+          username: z.string(),
+          avatarUrl: z.string(),
+        })
+        .optional(),
     }),
     z.object({
       type: z.literal("assistant_message"),
@@ -751,6 +758,18 @@ export const SendAgentMessageRequestSchema = z.object({
         mimeType: z.string(), // e.g., "image/jpeg", "image/png"
       }),
     )
+    .optional(),
+  /**
+   * Optional author metadata — set by guests in a shared session so the daemon
+   * can stamp the user_message timeline item with the sender's identity, which
+   * survives reloads and late joins.
+   */
+  author: z
+    .object({
+      userId: z.string(),
+      username: z.string(),
+      avatarUrl: z.string(),
+    })
     .optional(),
 });
 
@@ -1253,6 +1272,17 @@ export const OpenProjectRequestSchema = z.object({
   type: z.literal("open_project_request"),
   cwd: z.string(),
   requestId: z.string(),
+  orgId: z.string().optional(),
+});
+
+export const CloneRepositoryRequestSchema = z.object({
+  type: z.literal("clone_repository_request"),
+  requestId: z.string(),
+  remoteUrl: z.string(),
+  // Parent directory to clone into. Daemon creates `<parentDir>/<directoryName>`
+  // (directoryName defaults to the git repo's basename when omitted).
+  parentDir: z.string(),
+  directoryName: z.string().optional(),
 });
 
 export const ArchiveWorkspaceRequestSchema = z.object({
@@ -1702,6 +1732,7 @@ const WorkspaceMetadataChangesSchema = z.object({
   autoApprove: z.boolean().optional(),
   agentProvider: z.string().optional(),
   agentMode: z.enum(["native", "cli"]).optional(),
+  orgId: z.string().optional(),
 });
 
 export const UpdateWorkspaceMetadataRequestSchema = z.object({
@@ -1812,6 +1843,7 @@ const _sessionInboundRaw: any = z.union([
   ListAvailableEditorsRequestSchema,
   OpenInEditorRequestSchema,
   OpenProjectRequestSchema,
+  CloneRepositoryRequestSchema,
   ArchiveWorkspaceRequestSchema,
   FileExplorerRequestSchema,
   FileWriteRequestSchema,
@@ -1933,6 +1965,7 @@ export type SessionInboundMessage =
   | ListAvailableEditorsRequest
   | OpenInEditorRequest
   | OpenProjectRequest
+  | CloneRepositoryRequest
   | ArchiveWorkspaceRequest
   | FileExplorerRequest
   | FileWriteRequest
@@ -2496,6 +2529,15 @@ export const OpenProjectResponseMessageSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     workspace: WorkspaceDescriptorPayloadSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const CloneRepositoryResponseMessageSchema = z.object({
+  type: z.literal("clone_repository_response"),
+  payload: z.object({
+    requestId: z.string(),
+    cwd: z.string().nullable(),
     error: z.string().nullable(),
   }),
 });
@@ -3375,6 +3417,7 @@ const _sessionOutboundRaw: any = z.union([
   FetchAgentsResponseMessageSchema,
   FetchWorkspacesResponseMessageSchema,
   OpenProjectResponseMessageSchema,
+  CloneRepositoryResponseMessageSchema,
   ListAvailableEditorsResponseMessageSchema,
   OpenInEditorResponseMessageSchema,
   ArchiveWorkspaceResponseMessageSchema,
@@ -3500,6 +3543,7 @@ export type SessionOutboundMessage =
   | FetchAgentsResponseMessage
   | FetchWorkspacesResponseMessage
   | OpenProjectResponseMessage
+  | CloneRepositoryResponseMessage
   | ListAvailableEditorsResponseMessage
   | OpenInEditorResponseMessage
   | ArchiveWorkspaceResponseMessage
@@ -3629,6 +3673,7 @@ export type EditorTargetDescriptorPayload = z.infer<typeof EditorTargetDescripto
 export type FetchAgentsResponseMessage = z.infer<typeof FetchAgentsResponseMessageSchema>;
 export type FetchWorkspacesResponseMessage = z.infer<typeof FetchWorkspacesResponseMessageSchema>;
 export type OpenProjectResponseMessage = z.infer<typeof OpenProjectResponseMessageSchema>;
+export type CloneRepositoryResponseMessage = z.infer<typeof CloneRepositoryResponseMessageSchema>;
 export type ListAvailableEditorsResponseMessage = z.infer<
   typeof ListAvailableEditorsResponseMessageSchema
 >;
@@ -3792,6 +3837,7 @@ export type HubcodeWorktreeArchiveResponse = z.infer<typeof HubcodeWorktreeArchi
 export type ListAvailableEditorsRequest = z.infer<typeof ListAvailableEditorsRequestSchema>;
 export type OpenInEditorRequest = z.infer<typeof OpenInEditorRequestSchema>;
 export type OpenProjectRequest = z.infer<typeof OpenProjectRequestSchema>;
+export type CloneRepositoryRequest = z.infer<typeof CloneRepositoryRequestSchema>;
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;

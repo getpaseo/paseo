@@ -53,12 +53,19 @@ export type StreamItem =
 
 export type UserMessageImageAttachment = AttachmentMetadata;
 
+export interface UserMessageAuthor {
+  userId: string;
+  username: string;
+  avatarUrl: string;
+}
+
 export interface UserMessageItem {
   kind: "user_message";
   id: string;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
+  author?: UserMessageAuthor;
 }
 
 export interface AssistantMessageItem {
@@ -181,6 +188,7 @@ function appendUserMessage(
   text: string,
   timestamp: Date,
   messageId?: string,
+  author?: UserMessageAuthor,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!hasContent) {
@@ -197,6 +205,9 @@ function appendUserMessage(
       ? state[existingIndex]
       : null;
   const preservedImages = existing?.images;
+  // Prefer the newly-arriving author — a daemon-hydrated replay often carries
+  // richer metadata than the optimistic local entry.
+  const resolvedAuthor = author ?? existing?.author;
 
   const nextItem: UserMessageItem = {
     kind: "user_message",
@@ -204,6 +215,7 @@ function appendUserMessage(
     text: chunk,
     timestamp,
     ...(preservedImages && preservedImages.length > 0 ? { images: preservedImages } : {}),
+    ...(resolvedAuthor ? { author: resolvedAuthor } : {}),
   };
 
   if (existingIndex >= 0) {
@@ -508,7 +520,13 @@ export function reduceStreamUpdate(
       let nextState = state;
       switch (item.type) {
         case "user_message":
-          nextState = appendUserMessage(state, item.text, timestamp, item.messageId);
+          nextState = appendUserMessage(
+            state,
+            item.text,
+            timestamp,
+            item.messageId,
+            item.author,
+          );
           break;
         case "assistant_message":
           nextState = appendAssistantMessage(state, item.text, timestamp, source);

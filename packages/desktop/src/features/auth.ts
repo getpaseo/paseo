@@ -314,6 +314,7 @@ async function getOrganizations(): Promise<unknown> {
 async function createOrganization(args?: Record<string, unknown>): Promise<unknown> {
   const name = args?.name as string;
   const slug = args?.slug as string;
+  const logo = typeof args?.logo === "string" ? (args.logo as string) : undefined;
 
   if (!name || !slug) {
     throw new Error("Name and slug are required.");
@@ -321,7 +322,7 @@ async function createOrganization(args?: Record<string, unknown>): Promise<unkno
 
   const response = await authFetch("/api/organizations", {
     method: "POST",
-    body: JSON.stringify({ name, slug }),
+    body: JSON.stringify({ name, slug, ...(logo ? { logo } : {}) }),
   });
 
   if (!response.ok) {

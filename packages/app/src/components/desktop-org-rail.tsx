@@ -1,14 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image, Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   AlertTriangle,
   Building2,
+  ImagePlus,
   Plus,
   Settings as SettingsIcon,
   Sparkles,
   User,
+  X,
 } from "lucide-react-native";
+import { resizeImageToDataUrl } from "@/utils/resize-image-to-data-url";
+import { isWeb } from "@/constants/platform";
 import { router } from "expo-router";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
@@ -19,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { useOrganizations } from "@/desktop/hooks/use-organizations";
 import { setActiveOrgId, useActiveOrgId } from "@/stores/active-org-store";
-import { useIsInSharedSession } from "@/stores/shared-session-store";
+import { useIsInSharedSession, useIsSharedRecipient } from "@/stores/shared-session-store";
 
 /**
  * Full-width accent strip across the Electron titlebar so the traffic-light
@@ -29,9 +33,12 @@ import { useIsInSharedSession } from "@/stores/shared-session-store";
  */
 export function DesktopTitlebarAccent() {
   const { theme } = useUnistyles();
-  const isInSharedSession = useIsInSharedSession();
+  // Hide for *any* shared session (host or recipient) — the participant bar
+  // already occupies the titlebar area and reserves traffic-light space, so
+  // stacking the pink accent on top would leave an empty strip between them.
+  const hideAccent = useIsInSharedSession();
   if (!getIsElectron()) return null;
-  if (isInSharedSession) return null;
+  if (hideAccent) return null;
   return (
     <View
       pointerEvents="none"
@@ -61,11 +68,37 @@ export function DesktopOrgRail() {
   const { organizations, createOrganization, isCreating } = useOrganizations();
   const activeOrgId = useActiveOrgId();
   const windowPadding = useWindowControlsPadding("sidebar");
-  const isInSharedSession = useIsInSharedSession();
+  const isInSharedSession = useIsSharedRecipient();
+  const sharedSessionActive = useIsInSharedSession();
   const [modalOpen, setModalOpen] = useState(false);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handlePickLogo = useCallback(() => {
+    if (!isWeb || !fileInputRef.current) return;
+    fileInputRef.current.value = "";
+    fileInputRef.current.click();
+  }, []);
+
+  const handleLogoFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await resizeImageToDataUrl(file, { targetSize: 256 });
+      setLogoDataUrl(dataUrl);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to process image");
+    }
+  }, []);
+
+  const handleRemoveLogo = useCallback(() => {
+    setLogoDataUrl(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, []);
 
   // Default to the first org if no selection has been made yet.
   useEffect(() => {
@@ -90,10 +123,15 @@ export function DesktopOrgRail() {
     }
     setError(null);
     try {
-      const created = await createOrganization({ name: name.trim(), slug: slug.trim() });
+      const created = await createOrganization({
+        name: name.trim(),
+        slug: slug.trim(),
+        ...(logoDataUrl ? { logo: logoDataUrl } : {}),
+      });
       setModalOpen(false);
       setName("");
       setSlug("");
+      setLogoDataUrl(null);
       if (created?.id) setActiveOrgId(created.id);
     } catch (err) {
       const raw = err instanceof Error ? err.message : "Failed to create organization";
@@ -101,8 +139,7 @@ export function DesktopOrgRail() {
     }
   };
 
-  const isLimitError =
-    !!error && /limit\s*reached|upgrade/i.test(error);
+  const isLimitError = !!error && /limit\s*reached|upgrade/i.test(error);
 
   // Hide the rail entirely when inside a shared-workspace session — the
   // recipient is scoped to a single workspace owned by someone else, so
@@ -112,7 +149,7 @@ export function DesktopOrgRail() {
   // On Electron/macOS, clear the pink rail from the traffic-light area so the
   // close/minimize/fullscreen buttons sit on the window's native background
   // instead of on top of the accent color.
-  const backgroundTop = getIsElectron() ? DESKTOP_TRAFFIC_LIGHT_HEIGHT : 0;
+  const backgroundTop = getIsElectron() && !sharedSessionActive ? DESKTOP_TRAFFIC_LIGHT_HEIGHT : 0;
 
   return (
     <View
@@ -123,7 +160,10 @@ export function DesktopOrgRail() {
         // headroom even if `useWindowControlsPadding` returns 0 during the
         // initial render flash.
         {
-          paddingTop: getIsElectron() ? Math.max(windowPadding.top, 48) + 8 : 12,
+          // When the participant bar sits on top, it absorbs the traffic-light
+          // cluster + titlebar height — no need to reserve that space again.
+          paddingTop:
+            getIsElectron() && !sharedSessionActive ? Math.max(windowPadding.top, 48) + 8 : 12,
         },
       ]}
     >
@@ -218,6 +258,55 @@ export function DesktopOrgRail() {
         title="Create organization"
       >
         <View style={styles.modalContent}>
+          <Text style={styles.fieldLabel}>Logo</Text>
+          <View style={styles.logoRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Upload organization logo"
+              onPress={handlePickLogo}
+              style={styles.logoPreviewButton}
+            >
+              {logoDataUrl ? (
+                <Image source={{ uri: logoDataUrl }} style={styles.logoPreviewImage} />
+              ) : (
+                <ImagePlus size={20} color={theme.colors.foregroundMuted} />
+              )}
+            </Pressable>
+            <View style={styles.logoCopy}>
+              <Text style={styles.logoHint}>
+                {logoDataUrl ? "Logo added" : "Upload a square image"}
+              </Text>
+              <View style={styles.logoActions}>
+                <Button variant="ghost" size="sm" onPress={handlePickLogo}>
+                  {logoDataUrl ? "Change" : "Upload"}
+                </Button>
+                {logoDataUrl ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove logo"
+                    onPress={handleRemoveLogo}
+                    style={styles.logoRemoveBtn}
+                  >
+                    <X size={12} color={theme.colors.foregroundMuted} />
+                    <Text style={styles.logoRemoveText}>Remove</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          </View>
+          {isWeb ? (
+            // React Native's <Modal> doesn't render in the DOM tree, so the
+            // hidden file input lives inline and is triggered programatically.
+            // eslint-disable-next-line react/forbid-elements
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={handleLogoFileChange}
+            />
+          ) : null}
+
           <Text style={styles.fieldLabel}>Name</Text>
           <TextInput
             value={name}
@@ -408,6 +497,50 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.medium,
+  },
+  logoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
+  logoPreviewButton: {
+    width: 56,
+    height: 56,
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  logoPreviewImage: {
+    width: "100%",
+    height: "100%",
+  },
+  logoCopy: {
+    flex: 1,
+    gap: theme.spacing[1],
+  },
+  logoHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  logoActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  logoRemoveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+  },
+  logoRemoveText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
   },
   input: {
     borderWidth: 1,

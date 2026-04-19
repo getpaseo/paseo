@@ -126,6 +126,12 @@ export type HostRuntimeStartOptions = {
 const PROBE_TICK_MS = 2_000;
 const PROBE_STEADY_MS = 10_000;
 const PROBE_MAX_BACKOFF_MS = 30_000;
+// Once we have a healthy active online connection, alternatives only need to
+// be probed occasionally for latency-based failover. Each probe opens a fresh
+// relay WebSocket (and closes it a second later) so high-frequency probing
+// translates directly into Cloudflare billable requests. 5 minutes keeps
+// failover responsive without burning the quota.
+const PROBE_ALTERNATIVE_IDLE_MS = 300_000;
 const ADAPTIVE_SWITCH_THRESHOLD_MS = 40;
 const ADAPTIVE_SWITCH_CONSECUTIVE_PROBES = 3;
 const DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT = 200;
@@ -401,10 +407,21 @@ function findConnectionById(host: HostProfile, connectionId: string | null): Hos
 function probeIntervalForConnection(
   firstSeenAt: number,
   isActiveOnline: boolean,
+  hasHealthyActive: boolean,
   now: number,
 ): number {
+  // The currently active+online connection is already being exercised by real
+  // app traffic (ping messages from the host runtime's own keepalive, agent
+  // streams, etc). Re-probing it every 10s just to measure latency opens a
+  // throwaway WebSocket for nothing — skip to the idle backoff instead.
   if (isActiveOnline) {
-    return PROBE_STEADY_MS;
+    return PROBE_ALTERNATIVE_IDLE_MS;
+  }
+  // Alternative (fallback) connection while a different one is serving online
+  // traffic: check rarely. We only need to know if it's still usable for
+  // failover, not track latency in real time.
+  if (hasHealthyActive) {
+    return PROBE_ALTERNATIVE_IDLE_MS;
   }
   const age = now - firstSeenAt;
   if (age < 10_000) return 2_000;
@@ -635,6 +652,7 @@ export class HostRuntimeController {
     const isOnline = this.snapshot.connectionStatus === "online";
     const activeConnectionId = this.snapshot.activeConnectionId;
 
+    const hasHealthyActive = isOnline && activeConnectionId !== null;
     const connectionsToProbe = this.host.connections.filter((connection) => {
       const lastProbed = this.connectionLastProbedAt.get(connection.id);
       if (lastProbed == null) {
@@ -642,7 +660,7 @@ export class HostRuntimeController {
       }
       const firstSeen = this.connectionFirstSeenAt.get(connection.id) ?? now;
       const isActiveOnline = isOnline && connection.id === activeConnectionId;
-      const interval = probeIntervalForConnection(firstSeen, isActiveOnline, now);
+      const interval = probeIntervalForConnection(firstSeen, isActiveOnline, hasHealthyActive, now);
       return now - lastProbed >= interval;
     });
 

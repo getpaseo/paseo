@@ -36,5 +36,26 @@ services:
       DATABASE_URL: postgresql://hubcode:hubcode_secret@postgres:5432/hubcode_auth
       PORT: 3002
 
+  # LiveKit SFU — replaces coturn + in-house WebRTC signaling. Clients
+  # fetch short-lived JWT tokens from auth-server (/api/livekit/token).
+  # Production: switch to `network_mode: host` and set LIVEKIT_EXTERNAL_IP.
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: hubcode-livekit
+    restart: unless-stopped
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+      - "50000-50100:50000-50100/udp"
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-devsecret_at_least_32_chars_long_ok}"
+    command:
+      - --dev
+      - --bind=0.0.0.0
+      - --node-ip=${LIVEKIT_EXTERNAL_IP:-127.0.0.1}
+      - --rtc.port_range_start=50000
+      - --rtc.port_range_end=50100
+
 volumes:
   hubcode_pgdata:

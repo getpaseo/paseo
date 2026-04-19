@@ -1,6 +1,6 @@
 {
   "name": "@hubtool/website",
-  "version": "0.1.55-rc.1",
+  "version": "2.7.0",
   "private": true,
   "type": "module",
   "scripts": {

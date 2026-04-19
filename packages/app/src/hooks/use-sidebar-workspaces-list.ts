@@ -296,14 +296,14 @@ export function useSidebarWorkspacesList(options?: {
           })()
         : sessionWorkspaces.values();
 
-    // Scope by active organization. Legacy workspaces created before org scoping
-    // (orgId === undefined) remain visible under any org so existing data isn't
-    // hidden after upgrade.
+    // Scope strictly by active organization. Workspaces without an orgId (legacy
+    // or created outside any org context) stay visible only when no org is
+    // selected — otherwise switching orgs wouldn't actually narrow the view.
     const iter: Iterable<WorkspaceDescriptor> = activeOrgId
       ? (() => {
           const filtered: WorkspaceDescriptor[] = [];
           for (const ws of baseIter) {
-            if (!ws.orgId || ws.orgId === activeOrgId) filtered.push(ws);
+            if (ws.orgId === activeOrgId) filtered.push(ws);
           }
           return filtered;
         })()

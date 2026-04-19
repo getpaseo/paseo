@@ -1349,6 +1349,8 @@ function WorkspaceRowWithMenu({
 }) {
   const toast = useToast();
   const activeWorkspaceSelection = useNavigationActiveWorkspaceSelection();
+  const sharedScope = useSharedWorkspaceScope();
+  const isSharedGuest = Boolean(sharedScope.workspaceId);
   const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
   const archiveKanbanTasks = useKanbanStore((s) => s.archiveByWorkspacePath);
   const sessionWorkspaces = useSessionStore(
@@ -1534,7 +1536,9 @@ function WorkspaceRowWithMenu({
         archiveLabel={isWorktree ? "Archive worktree" : "Hide from sidebar"}
         archiveStatus={isWorktree ? archiveStatus : isArchivingWorkspace ? "pending" : "idle"}
         archivePendingLabel={isWorktree ? "Archiving..." : "Hiding..."}
-        onArchive={isWorktree ? handleArchiveWorktree : handleArchiveWorkspace}
+        onArchive={
+          isSharedGuest ? undefined : isWorktree ? handleArchiveWorktree : handleArchiveWorkspace
+        }
         onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
         onCopyPath={handleCopyPath}
         onShare={canShare ? handleShare : undefined}
@@ -1567,6 +1571,7 @@ function FlattenedProjectRow({
   isProjectActive = false,
   onRemoveProject,
   removeProjectStatus,
+  canCreateWorktree = true,
 }: {
   project: SidebarProjectEntry;
   displayName: string;
@@ -1584,6 +1589,7 @@ function FlattenedProjectRow({
   isProjectActive?: boolean;
   onRemoveProject?: () => void;
   removeProjectStatus?: "idle" | "pending";
+  canCreateWorktree?: boolean;
 }) {
   return (
     <ProjectHeaderRow
@@ -1595,7 +1601,7 @@ function FlattenedProjectRow({
       chevron={rowModel.chevron}
       onPress={onPress}
       serverId={serverId}
-      canCreateWorktree={rowModel.trailingAction === "new_worktree"}
+      canCreateWorktree={canCreateWorktree && rowModel.trailingAction === "new_worktree"}
       isProjectActive={isProjectActive}
       onWorkspacePress={onWorkspacePress}
       onWorktreeCreated={onWorktreeCreated}
@@ -1709,6 +1715,7 @@ function ProjectBlock({
     return project.workspaces.some((w) => w.workspaceId === activeWorkspaceSelection.workspaceId);
   }, [serverId, activeWorkspaceSelection, project.workspaces]);
   const sharedScope = useSharedWorkspaceScope();
+  const isSharedGuest = Boolean(sharedScope.workspaceId);
   const kanbanTasksCount = useSessionStore((state) => {
     if (!serverId) return 0;
     const workspaces = state.sessions[serverId]?.workspaces;
@@ -1872,8 +1879,9 @@ function ProjectBlock({
             isDragging={isDragging}
             dragHandleProps={dragHandleProps}
             isProjectActive={isProjectActive}
-            onRemoveProject={handleRemoveProject}
+            onRemoveProject={isSharedGuest ? undefined : handleRemoveProject}
             removeProjectStatus={isRemovingProject ? "pending" : "idle"}
+            canCreateWorktree={!isSharedGuest}
           />
           {!sharedScope.workspaceId && (
             <ProjectKanbanRow
@@ -1900,7 +1908,7 @@ function ProjectBlock({
             chevron={rowModel.chevron}
             onPress={onToggleCollapsed}
             serverId={serverId}
-            canCreateWorktree={rowModel.trailingAction === "new_worktree"}
+            canCreateWorktree={!isSharedGuest && rowModel.trailingAction === "new_worktree"}
             isProjectActive={isProjectActive}
             onWorkspacePress={onWorkspacePress}
             onWorktreeCreated={onWorktreeCreated}
@@ -1908,7 +1916,7 @@ function ProjectBlock({
             isDragging={isDragging}
             isArchiving={isRemovingProject}
             menuController={null}
-            onRemoveProject={handleRemoveProject}
+            onRemoveProject={isSharedGuest ? undefined : handleRemoveProject}
             removeProjectStatus={isRemovingProject ? "pending" : "idle"}
             dragHandleProps={dragHandleProps}
           />

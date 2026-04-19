@@ -40,7 +40,7 @@ export function ScreenHeader({
 
   return (
     <View style={styles.header}>
-      <View style={[styles.inner, { paddingTop: insets.top + topPadding }]}>
+      <View style={[styles.inner, { paddingTop: insets.top + topPadding + padding.top }]}>
         <View
           style={[
             styles.row,
