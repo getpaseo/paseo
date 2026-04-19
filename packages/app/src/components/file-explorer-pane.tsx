@@ -195,35 +195,6 @@ export function FileExplorerPane({
     });
   }, [hasWorkspaceScope, requestDirectoryListing, workspaceStateKey]);
 
-  // Expand ancestor directories when a file is selected (e.g., from an inline path click)
-  useEffect(() => {
-    if (!selectedEntryPath || !workspaceStateKey) {
-      return;
-    }
-    const parentDir = getParentDirectory(selectedEntryPath);
-    const ancestors = getAncestorDirectories(parentDir);
-    const newPaths = ancestors.filter((path) => !expandedPaths.has(path));
-    if (newPaths.length === 0) {
-      return;
-    }
-    setExpandedPathsForWorkspace(workspaceStateKey, [...Array.from(expandedPaths), ...newPaths]);
-    newPaths.forEach((path) => {
-      if (!directories.has(path)) {
-        void requestDirectoryListing(path, {
-          recordHistory: false,
-          setCurrentPath: false,
-        });
-      }
-    });
-  }, [
-    directories,
-    workspaceStateKey,
-    expandedPaths,
-    requestDirectoryListing,
-    selectedEntryPath,
-    setExpandedPathsForWorkspace,
-  ]);
-
   const handleToggleDirectory = useCallback(
     (entry: ExplorerEntry) => {
       if (!workspaceStateKey) {
@@ -680,35 +651,6 @@ function buildTreeRows({
   }
 
   return rows;
-}
-
-function getParentDirectory(path: string): string {
-  const normalized = path.replace(/\/+$/, "");
-  if (!normalized || normalized === ".") {
-    return ".";
-  }
-  const lastSlash = normalized.lastIndexOf("/");
-  if (lastSlash === -1) {
-    return ".";
-  }
-  const dir = normalized.slice(0, lastSlash);
-  return dir.length > 0 ? dir : ".";
-}
-
-function getAncestorDirectories(directory: string): string[] {
-  const trimmed = directory.replace(/^\.\/+/, "").replace(/\/+$/, "");
-  if (!trimmed || trimmed === ".") {
-    return ["."];
-  }
-
-  const parts = trimmed.split("/").filter(Boolean);
-  const ancestors: string[] = ["."];
-  let acc = "";
-  for (const part of parts) {
-    acc = acc ? `${acc}/${part}` : part;
-    ancestors.push(acc);
-  }
-  return ancestors;
 }
 
 function getErrorRecoveryPath(state: AgentFileExplorerState | undefined): string {
