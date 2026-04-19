@@ -64,7 +64,7 @@
     "@getpaseo/relay": "0.1.60-rc.1",
     "@isaacs/ttlcache": "^2.1.4",
     "@modelcontextprotocol/sdk": "^1.20.1",
-    "@mariozechner/pi-coding-agent": "^0.65.2",
+    "@mariozechner/pi-coding-agent": "^0.67.68",
     "@opencode-ai/sdk": "1.2.6",
     "@sctg/sentencepiece-js": "^1.1.0",
     "@xterm/headless": "^6.0.0",
