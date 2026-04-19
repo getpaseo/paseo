@@ -2,9 +2,6 @@ import { findExecutable } from "./executable.js";
 import { execCommand } from "./spawn.js";
 
 const GITHUB_HOSTS = new Set(["github.com", "ssh.github.com"]);
-function getSshEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, GIT_TERMINAL_PROMPT: "0" };
-}
 
 let sshExecutableLookup: Promise<string | null> | null = null;
 const sshHostnameResolutionCache = new Map<string, Promise<string | null>>();
@@ -21,123 +18,78 @@ export interface GitHubRemoteIdentity {
   repo: string;
 }
 
-export interface ResolveGitHubRemoteInput {
-  remoteUrl: string;
-  resolveSshHostname?: SshHostnameResolver;
-}
-
-export interface ResolveSshHostnameInput {
-  host: string;
-}
-
-export type SshHostnameResolver = (input: ResolveSshHostnameInput) => Promise<string | null>;
+export type SshHostnameResolver = (host: string) => Promise<string | null>;
 
 export function parseGitHubRemoteUrl(remoteUrl: string): GitHubRemoteIdentity | null {
   const location = parseGitRemoteLocation(remoteUrl);
-  if (!location) {
-    return null;
-  }
-  if (!isGitHubHost(location.host)) {
-    return null;
-  }
+  if (!location || !GITHUB_HOSTS.has(location.host)) return null;
   return parseGitHubRemoteIdentity(location.path);
 }
 
-export async function resolveGitHubRemote(
-  input: ResolveGitHubRemoteInput,
-): Promise<GitHubRemoteIdentity | null> {
+export async function resolveGitHubRemote(input: {
+  remoteUrl: string;
+  resolveSshHostname?: SshHostnameResolver;
+}): Promise<GitHubRemoteIdentity | null> {
   const location = parseGitRemoteLocation(input.remoteUrl);
-  if (!location) {
-    return null;
-  }
-  if (isGitHubHost(location.host)) {
-    return parseGitHubRemoteIdentity(location.path);
-  }
-  if (!isSshTransport(location.transport)) {
-    return null;
-  }
+  if (!location) return null;
+  if (GITHUB_HOSTS.has(location.host)) return parseGitHubRemoteIdentity(location.path);
+  if (location.transport !== "scp" && location.transport !== "ssh") return null;
 
-  const resolveHostname = input.resolveSshHostname ?? resolveSshHostname;
-  const resolvedHost = await resolveHostname({ host: location.host });
-  if (!resolvedHost || !isGitHubHost(resolvedHost)) {
-    return null;
-  }
-
+  const resolve = input.resolveSshHostname ?? resolveSshHostname;
+  const resolvedHost = await resolve(location.host);
+  if (!resolvedHost || !GITHUB_HOSTS.has(resolvedHost)) return null;
   return parseGitHubRemoteIdentity(location.path);
 }
 
-export async function resolveSshHostname(input: ResolveSshHostnameInput): Promise<string | null> {
-  const host = normalizeHost(input.host);
-  if (!host) {
-    return null;
-  }
+export async function resolveSshHostname(host: string): Promise<string | null> {
+  const normalized = normalizeHost(host);
+  if (!normalized) return null;
 
-  const cached = sshHostnameResolutionCache.get(host);
-  if (cached) {
-    return cached;
-  }
+  const cached = sshHostnameResolutionCache.get(normalized);
+  if (cached) return cached;
 
-  const resolution = loadResolvedSshHostname({ host }).catch(() => null);
-  sshHostnameResolutionCache.set(host, resolution);
+  const resolution = runSshHostnameLookup(normalized);
+  sshHostnameResolutionCache.set(normalized, resolution);
   return resolution;
 }
 
-async function loadResolvedSshHostname(input: ResolveSshHostnameInput): Promise<string | null> {
-  const sshPath = await resolveSshExecutablePath();
-  if (!sshPath) {
-    return null;
-  }
+async function runSshHostnameLookup(host: string): Promise<string | null> {
+  sshExecutableLookup ??= findExecutable("ssh");
+  const sshPath = await sshExecutableLookup;
+  if (!sshPath) return null;
 
   try {
-    const { stdout } = await execCommand(sshPath, ["-G", input.host], {
-      env: getSshEnv(),
+    const { stdout } = await execCommand(sshPath, ["-G", host], {
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       maxBuffer: 1024 * 1024,
     });
-    return parseResolvedSshHostname(stdout);
+    return parseSshHostname(stdout);
   } catch {
     return null;
   }
 }
 
-async function resolveSshExecutablePath(): Promise<string | null> {
-  sshExecutableLookup ??= findExecutable("ssh");
-  return sshExecutableLookup;
-}
-
-function parseResolvedSshHostname(stdout: string): string | null {
+function parseSshHostname(stdout: string): string | null {
   for (const line of stdout.split(/\r?\n/u)) {
     const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    const [key, ...valueParts] = trimmed.split(/\s+/u);
-    if (key?.toLowerCase() !== "hostname") {
-      continue;
-    }
-
-    const value = normalizeHost(valueParts.join(" "));
-    if (value) {
-      return value;
-    }
+    if (!trimmed) continue;
+    const [key, value] = trimmed.split(/\s+/u);
+    if (key?.toLowerCase() !== "hostname") continue;
+    const normalized = normalizeHost(value ?? "");
+    if (normalized) return normalized;
   }
-
   return null;
 }
 
 function parseGitRemoteLocation(remoteUrl: string): GitRemoteLocation | null {
   const trimmed = remoteUrl.trim();
-  if (!trimmed) {
-    return null;
-  }
+  if (!trimmed) return null;
 
   const scpLike = trimmed.match(/^[^@]+@([^:]+):(.+)$/u);
   if (scpLike) {
     const host = normalizeHost(scpLike[1] ?? "");
     const path = normalizeRemotePath(scpLike[2] ?? "");
-    if (!host || !path) {
-      return null;
-    }
+    if (!host || !path) return null;
     return { transport: "scp", host, path };
   }
 
@@ -149,76 +101,39 @@ function parseGitRemoteLocation(remoteUrl: string): GitRemoteLocation | null {
   }
 
   const protocol = parsed.protocol.toLowerCase();
-  if (protocol !== "https:" && protocol !== "http:" && protocol !== "ssh:") {
-    return null;
-  }
+  if (protocol !== "https:" && protocol !== "http:" && protocol !== "ssh:") return null;
 
   const host = normalizeHost(parsed.hostname);
-  const decodedPath = decodeRemotePath(parsed.pathname);
-  const path = normalizeRemotePath(decodedPath);
-  if (!host || !path) {
+  let path: string;
+  try {
+    path = decodeURIComponent(parsed.pathname);
+  } catch {
     return null;
   }
+  const normalizedPath = normalizeRemotePath(path);
+  if (!host || !normalizedPath) return null;
 
   return {
     transport: protocol === "ssh:" ? "ssh" : protocol === "http:" ? "http" : "https",
     host,
-    path,
+    path: normalizedPath,
   };
 }
 
 function parseGitHubRemoteIdentity(path: string): GitHubRemoteIdentity | null {
-  const segments = path.split("/").filter((segment) => segment.length > 0);
-  if (segments.length !== 2) {
-    return null;
-  }
-
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length !== 2) return null;
   const [owner, name] = segments;
-  if (!owner || !name) {
-    return null;
-  }
-
-  return {
-    owner,
-    name,
-    repo: `${owner}/${name}`,
-  };
+  if (!owner || !name) return null;
+  return { owner, name, repo: `${owner}/${name}` };
 }
 
-function decodeRemotePath(path: string): string | null {
-  try {
-    return decodeURIComponent(path);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeRemotePath(path: string | null): string | null {
-  if (!path) {
-    return null;
-  }
-
-  const trimmed = path.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  let normalized = trimmed.replace(/^\/+|\/+$/gu, "");
-  if (normalized.endsWith(".git")) {
-    normalized = normalized.slice(0, -".git".length);
-  }
-
+function normalizeRemotePath(path: string): string | null {
+  let normalized = path.trim().replace(/^\/+|\/+$/gu, "");
+  if (normalized.endsWith(".git")) normalized = normalized.slice(0, -4);
   return normalized || null;
 }
 
 function normalizeHost(host: string): string {
   return host.trim().replace(/\.+$/u, "").toLowerCase();
-}
-
-function isGitHubHost(host: string): boolean {
-  return GITHUB_HOSTS.has(normalizeHost(host));
-}
-
-function isSshTransport(transport: GitRemoteLocation["transport"]): boolean {
-  return transport === "scp" || transport === "ssh";
 }

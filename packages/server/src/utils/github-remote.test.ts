@@ -1,13 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  parseGitHubRemoteUrl,
-  resolveGitHubRemote,
-  type ResolveSshHostnameInput,
-} from "./github-remote.js";
+import { parseGitHubRemoteUrl, resolveGitHubRemote } from "./github-remote.js";
 
 function createSshHostnameResolver(hostnameByAlias: Record<string, string | null>) {
-  return async ({ host }: ResolveSshHostnameInput): Promise<string | null> => {
+  return async (host: string): Promise<string | null> => {
     return hostnameByAlias[host] ?? null;
   };
 }
