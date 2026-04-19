@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { TextInput } from "react-native";
 import { router, usePathname, type Href } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -15,20 +16,112 @@ import {
 import {
   buildHostAgentDetailRoute,
   buildSettingsRoute,
+  parseHostAgentRouteFromPathname,
+  parseHostWorkspaceRouteFromPathname,
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { chordStringToShortcutKeys } from "@/keyboard/shortcut-string";
-import { getBindingIdForAction, getDefaultKeysForAction } from "@/keyboard/keyboard-shortcuts";
+import {
+  getBindingIdForAction,
+  getDefaultKeysForAction,
+} from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { focusWithRetries } from "@/utils/web-focus";
+import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
+import {
+  useWorkspaceLayoutStore,
+  collectAllTabs,
+} from "@/stores/workspace-layout-store";
+import {
+  useHostRuntimeClient,
+  useHostRuntimeIsConnected,
+} from "@/runtime/host-runtime";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import type { DirectorySuggestionsResponse } from "@server/shared/messages";
+
+interface CommandCenterFileMatch {
+  path: string;
+  name: string;
+  directory: string;
+}
+
+function normalizeSuggestionPath(
+  path: string | null | undefined,
+): string | null {
+  if (typeof path !== "string") {
+    return null;
+  }
+  const trimmed = path.trim().replace(/\\/g, "/");
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function buildCommandCenterFileMatch(path: string): CommandCenterFileMatch {
+  const segments = path.split("/");
+  const name = segments[segments.length - 1] ?? path;
+  const directory = segments.length > 1 ? segments.slice(0, -1).join("/") : ".";
+
+  return {
+    path,
+    name,
+    directory,
+  };
+}
+
+function resolveCommandCenterWorkspaceScope(input: {
+  pathname: string;
+  agents: Array<{ id: string; cwd: string; serverId: string }>;
+}): { serverId: string; workspaceId: string } | null {
+  const workspaceRoute = parseHostWorkspaceRouteFromPathname(input.pathname);
+  if (workspaceRoute) {
+    return workspaceRoute;
+  }
+
+  const agentRoute = parseHostAgentRouteFromPathname(input.pathname);
+  if (!agentRoute) {
+    return null;
+  }
+
+  const agent = input.agents.find(
+    (entry) =>
+      entry.serverId === agentRoute.serverId && entry.id === agentRoute.agentId,
+  );
+  const workspaceId = normalizeSuggestionPath(agent?.cwd);
+  if (!workspaceId) {
+    return null;
+  }
+
+  return {
+    serverId: agentRoute.serverId,
+    workspaceId,
+  };
+}
+
+function mapDirectorySuggestionsToCommandCenterFiles(
+  payload: DirectorySuggestionsResponse["payload"],
+): CommandCenterFileMatch[] {
+  const entries = Array.isArray(payload.entries) ? payload.entries : [];
+  return entries.flatMap((entry) => {
+    if (!entry || entry.kind !== "file") {
+      return [];
+    }
+
+    const normalizedPath = normalizeSuggestionPath(entry.path);
+    if (!normalizedPath) {
+      return [];
+    }
+
+    return [buildCommandCenterFileMatch(normalizedPath)];
+  });
+}
 
 const EMPTY_AGENTS: AggregatedAgent[] = [];
 const EMPTY_ACTION_ITEMS: CommandCenterActionItem[] = [];
+const EMPTY_FILE_ITEMS: CommandCenterFileItem[] = [];
 const EMPTY_COMMAND_CENTER_ITEMS: CommandCenterItem[] = [];
 
 function isMatch(agent: AggregatedAgent, query: string): boolean {
@@ -42,7 +135,8 @@ function isMatch(agent: AggregatedAgent, query: string): boolean {
 function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
   const leftNeedsInput = (left.pendingPermissionCount ?? 0) > 0 ? 1 : 0;
   const rightNeedsInput = (right.pendingPermissionCount ?? 0) > 0 ? 1 : 0;
-  if (leftNeedsInput !== rightNeedsInput) return rightNeedsInput - leftNeedsInput;
+  if (leftNeedsInput !== rightNeedsInput)
+    return rightNeedsInput - leftNeedsInput;
 
   const leftAttention = left.requiresAttention ? 1 : 0;
   const rightAttention = right.requiresAttention ? 1 : 0;
@@ -82,7 +176,10 @@ const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
   },
 ];
 
-function matchesActionQuery(query: string, action: CommandCenterActionDefinition): boolean {
+function matchesActionQuery(
+  query: string,
+  action: CommandCenterActionDefinition,
+): boolean {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
   if (action.title.toLowerCase().includes(normalized)) {
@@ -100,10 +197,19 @@ export type CommandCenterActionItem = {
   shortcutKeys?: ShortcutKey[][];
 };
 
+type CommandCenterFileItem = CommandCenterFileMatch & {
+  workspaceId: string;
+  serverId: string;
+};
+
 export type CommandCenterItem =
   | {
       kind: "action";
       action: CommandCenterActionItem;
+    }
+  | {
+      kind: "file";
+      file: CommandCenterFileItem;
     }
   | {
       kind: "agent";
@@ -138,7 +244,9 @@ export function useCommandCenter() {
   const activeIndexRef = useRef(0);
   const itemsRef = useRef<CommandCenterItem[]>([]);
   const handleCloseRef = useRef<() => void>(() => undefined);
-  const handleSelectItemRef = useRef<(item: CommandCenterItem) => void>(() => undefined);
+  const handleSelectItemRef = useRef<(item: CommandCenterItem) => void>(
+    () => undefined,
+  );
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
 
@@ -148,7 +256,9 @@ export function useCommandCenter() {
     }
     const serverIdFromPath = parseServerIdFromPathname(pathname);
     if (serverIdFromPath) {
-      const routeMatch = daemons.find((entry) => entry.serverId === serverIdFromPath);
+      const routeMatch = daemons.find(
+        (entry) => entry.serverId === serverIdFromPath,
+      );
       if (routeMatch) {
         return routeMatch.serverId;
       }
@@ -159,6 +269,8 @@ export function useCommandCenter() {
   const { agents } = useAllAgentsList({
     serverId: activeServerId,
   });
+  const client = useHostRuntimeClient(activeServerId ?? "");
+  const isConnected = useHostRuntimeIsConnected(activeServerId ?? "");
 
   const agentResults = useMemo(() => {
     if (!open || agents.length === 0) {
@@ -168,6 +280,96 @@ export function useCommandCenter() {
     filtered.sort(sortAgents);
     return filtered;
   }, [agents, open, query]);
+
+  const searchWorkspace = useMemo(
+    () =>
+      resolveCommandCenterWorkspaceScope({
+        pathname,
+        agents,
+      }),
+    [agents, pathname],
+  );
+  const trimmedQuery = query.trim();
+  const debouncedFileQuery = useDebouncedValue(trimmedQuery, 300);
+
+  const fileSuggestionsQuery = useQuery({
+    queryKey: [
+      "command-center-file-search",
+      searchWorkspace?.serverId ?? "",
+      searchWorkspace?.workspaceId ?? "",
+      debouncedFileQuery,
+    ],
+    queryFn: async (): Promise<CommandCenterFileItem[]> => {
+      if (!client || !searchWorkspace) {
+        return [];
+      }
+      const response = await client.getDirectorySuggestions({
+        cwd: searchWorkspace.workspaceId,
+        query: debouncedFileQuery,
+        limit: 30,
+        includeFiles: true,
+        includeDirectories: false,
+      });
+      if (response.error) {
+        throw new Error(response.error);
+      }
+      return mapDirectorySuggestionsToCommandCenterFiles(response).map(
+        (entry) => ({
+          ...entry,
+          serverId: searchWorkspace.serverId,
+          workspaceId: searchWorkspace.workspaceId,
+        }),
+      );
+    },
+    enabled:
+      open &&
+      Boolean(client) &&
+      isConnected &&
+      searchWorkspace !== null &&
+      debouncedFileQuery.length > 0,
+    retry: false,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const workspaceTabsKey = searchWorkspace
+    ? buildWorkspaceTabPersistenceKey({
+        serverId: searchWorkspace.serverId,
+        workspaceId: searchWorkspace.workspaceId,
+      })
+    : null;
+
+  const workspaceLayout = useWorkspaceLayoutStore((state) =>
+    workspaceTabsKey
+      ? (state.layoutByWorkspace[workspaceTabsKey] ?? null)
+      : null,
+  );
+
+  const openFileTabs = useMemo(() => {
+    if (!workspaceLayout || !searchWorkspace) {
+      return EMPTY_FILE_ITEMS;
+    }
+    const allTabs = collectAllTabs(workspaceLayout.root);
+    const fileTabs: CommandCenterFileItem[] = [];
+    for (const tab of allTabs) {
+      if (tab.target.kind !== "file") {
+        continue;
+      }
+      fileTabs.push({
+        ...buildCommandCenterFileMatch(tab.target.path),
+        serverId: searchWorkspace.serverId,
+        workspaceId: searchWorkspace.workspaceId,
+      });
+    }
+    return fileTabs.length > 0 ? fileTabs : EMPTY_FILE_ITEMS;
+  }, [workspaceLayout, searchWorkspace]);
+
+  const fileItems = useMemo(() => {
+    if (trimmedQuery.length === 0) {
+      return openFileTabs;
+    }
+    return fileSuggestionsQuery.data ?? EMPTY_FILE_ITEMS;
+  }, [trimmedQuery, openFileTabs, fileSuggestionsQuery.data]);
 
   const settingsRoute = useMemo<Href>(() => {
     return buildSettingsRoute();
@@ -200,6 +402,12 @@ export function useCommandCenter() {
         action,
       });
     }
+    for (const file of fileItems) {
+      next.push({
+        kind: "file",
+        file,
+      });
+    }
     for (const agent of agentResults) {
       next.push({
         kind: "agent",
@@ -207,7 +415,7 @@ export function useCommandCenter() {
       });
     }
     return next;
-  }, [actionItems, agentResults, open]);
+  }, [actionItems, agentResults, fileItems, open]);
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -221,17 +429,36 @@ export function useCommandCenter() {
       clearCommandCenterFocusRestoreElement();
       setOpen(false);
       const workspaceId = resolveWorkspaceIdByExecutionDirectory({
-        workspaces: useSessionStore.getState().sessions[agent.serverId]?.workspaces?.values(),
+        workspaces: useSessionStore
+          .getState()
+          .sessions[agent.serverId]?.workspaces?.values(),
         workspaceDirectory: agent.cwd,
       });
       if (!workspaceId) {
-        router.navigate(buildHostAgentDetailRoute(agent.serverId, agent.id) as any);
+        router.navigate(
+          buildHostAgentDetailRoute(agent.serverId, agent.id) as any,
+        );
         return;
       }
       const route = prepareWorkspaceTab({
         serverId: agent.serverId,
         workspaceId,
         target: { kind: "agent", agentId: agent.id },
+      });
+      router.navigate(route);
+    },
+    [setOpen],
+  );
+
+  const handleSelectFile = useCallback(
+    (file: CommandCenterFileItem) => {
+      didNavigateRef.current = true;
+      clearCommandCenterFocusRestoreElement();
+      setOpen(false);
+      const route = prepareWorkspaceTab({
+        serverId: file.serverId,
+        workspaceId: file.workspaceId,
+        target: { kind: "file", path: file.path },
       });
       router.navigate(route);
     },
@@ -263,9 +490,13 @@ export function useCommandCenter() {
         handleSelectAction(item.action);
         return;
       }
+      if (item.kind === "file") {
+        handleSelectFile(item.file);
+        return;
+      }
       handleSelectAgent(item.agent);
     },
-    [handleSelectAction, handleSelectAgent],
+    [handleSelectAction, handleSelectAgent, handleSelectFile],
   );
 
   useEffect(() => {
@@ -295,7 +526,9 @@ export function useCommandCenter() {
       if (prevOpen && !didNavigateRef.current) {
         const el = takeCommandCenterFocusRestoreElement();
         const isFocused = () =>
-          Boolean(el) && typeof document !== "undefined" && document.activeElement === el;
+          Boolean(el) &&
+          typeof document !== "undefined" &&
+          document.activeElement === el;
 
         const cancel = focusWithRetries({
           focus: () => el?.focus(),
@@ -334,7 +567,12 @@ export function useCommandCenter() {
     const handler = (event: KeyboardEvent) => {
       const currentItems = itemsRef.current;
       const key = event.key;
-      if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Enter" && key !== "Escape") {
+      if (
+        key !== "ArrowDown" &&
+        key !== "ArrowUp" &&
+        key !== "Enter" &&
+        key !== "Escape"
+      ) {
         return;
       }
 
@@ -347,7 +585,10 @@ export function useCommandCenter() {
       if (key === "Enter") {
         if (currentItems.length === 0) return;
         event.preventDefault();
-        const index = Math.max(0, Math.min(activeIndexRef.current, currentItems.length - 1));
+        const index = Math.max(
+          0,
+          Math.min(activeIndexRef.current, currentItems.length - 1),
+        );
         handleSelectItemRef.current(currentItems[index]!);
         return;
       }

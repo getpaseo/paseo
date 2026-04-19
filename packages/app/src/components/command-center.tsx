@@ -9,6 +9,8 @@ import { shortenPath } from "@/utils/shorten-path";
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import { Shortcut } from "@/components/ui/shortcut";
 import { isNative } from "@/constants/platform";
+import { getFileIconSvg } from "@/components/material-file-icons";
+import { SvgXml } from "react-native-svg";
 
 function agentKey(agent: Pick<AggregatedAgent, "serverId" | "id">): string {
   return `${agent.serverId}:${agent.id}`;
@@ -94,6 +96,7 @@ export function CommandCenter() {
   if (isNative || !open) return null;
 
   const actionItems = items.filter((item) => item.kind === "action");
+  const fileItems = items.filter((item) => item.kind === "file");
   const agentItems = items.filter((item) => item.kind === "agent");
 
   return (
@@ -114,7 +117,7 @@ export function CommandCenter() {
               ref={inputRef}
               value={query}
               onChangeText={setQuery}
-              placeholder="Type a command or search agents..."
+              placeholder="Type a command or search agents and files..."
               placeholderTextColor={theme.colors.foregroundMuted}
               style={[styles.input, { color: theme.colors.foreground }]}
               autoCapitalize="none"
@@ -188,9 +191,69 @@ export function CommandCenter() {
                   </>
                 ) : null}
 
-                {agentItems.length > 0 ? (
+                {fileItems.length > 0 ? (
                   <>
                     {actionItems.length > 0 ? (
+                      <View
+                        style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
+                      />
+                    ) : null}
+                    <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
+                      Files
+                    </Text>
+                    {fileItems.map((item, index) => {
+                      const rowIndex = actionItems.length + index;
+                      const active = rowIndex === activeIndex;
+                      const iconSvg = getFileIconSvg(item.file.name);
+                      return (
+                        <CommandCenterRow
+                          key={`file:${item.file.workspaceId}:${item.file.path}`}
+                          registerRow={(el: View | null) => {
+                            if (el) rowRefs.current.set(rowIndex, el);
+                            else rowRefs.current.delete(rowIndex);
+                          }}
+                          active={active}
+                          onPress={() => handleSelectItem(item)}
+                        >
+                          <View style={styles.rowContent}>
+                            <View style={styles.rowMain}>
+                              <View style={styles.iconSlot}>
+                                <SvgXml
+                                  xml={iconSvg}
+                                  width={16}
+                                  height={16}
+                                  color={theme.colors.foregroundMuted}
+                                />
+                              </View>
+                              <View style={styles.textContent}>
+                                <Text
+                                  style={[styles.title, { color: theme.colors.foreground }]}
+                                  numberOfLines={1}
+                                >
+                                  {item.file.name}
+                                </Text>
+                                <Text
+                                  style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
+                                  numberOfLines={1}
+                                >
+                                  {shortenPath(
+                                    item.file.directory === "."
+                                      ? item.file.workspaceId
+                                      : `${item.file.workspaceId}/${item.file.directory}`,
+                                  )}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+                        </CommandCenterRow>
+                      );
+                    })}
+                  </>
+                ) : null}
+
+                {agentItems.length > 0 ? (
+                  <>
+                    {actionItems.length > 0 || fileItems.length > 0 ? (
                       <View
                         style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
                       />
@@ -199,7 +262,7 @@ export function CommandCenter() {
                       Agents
                     </Text>
                     {agentItems.map((item, index) => {
-                      const rowIndex = actionItems.length + index;
+                      const rowIndex = actionItems.length + fileItems.length + index;
                       const active = rowIndex === activeIndex;
                       const agent = item.agent;
                       return (

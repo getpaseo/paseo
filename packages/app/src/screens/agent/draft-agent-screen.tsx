@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createNameId } from "mnemonic-id";
 import type { ImageAttachment } from "@/components/message-input";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { View, Text, Pressable, ScrollView, Keyboard } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "@react-navigation/native";
@@ -256,25 +257,13 @@ function DraftAgentScreenContent({
   const [isWorktreePickerOpen, setIsWorktreePickerOpen] = useState(false);
   const [isBranchOpen, setIsBranchOpen] = useState(false);
   const [branchSearchQuery, setBranchSearchQuery] = useState("");
-  const [debouncedBranchSearchQuery, setDebouncedBranchSearchQuery] = useState("");
+  const debouncedBranchSearchQuery = useDebouncedValue(branchSearchQuery.trim(), 180);
   const [workingDirSearchQuery, setWorkingDirSearchQuery] = useState("");
-  const [debouncedWorkingDirSearchQuery, setDebouncedWorkingDirSearchQuery] = useState("");
+  const debouncedWorkingDirSearchQuery = useDebouncedValue(workingDirSearchQuery.trim(), 180);
   const workingDirAnchorRef = useRef<View>(null);
   const worktreeAnchorRef = useRef<View>(null);
   const branchAnchorRef = useRef<View>(null);
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
-
-  useEffect(() => {
-    const trimmed = branchSearchQuery.trim();
-    const timer = setTimeout(() => setDebouncedBranchSearchQuery(trimmed), 180);
-    return () => clearTimeout(timer);
-  }, [branchSearchQuery]);
-
-  useEffect(() => {
-    const trimmed = workingDirSearchQuery.trim();
-    const timer = setTimeout(() => setDebouncedWorkingDirSearchQuery(trimmed), 180);
-    return () => clearTimeout(timer);
-  }, [workingDirSearchQuery]);
 
   const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
     addImagesRef.current?.(files);
