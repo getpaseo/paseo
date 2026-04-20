@@ -9,13 +9,27 @@ function assertFileExists(filePath: string, label: string): void {
   }
 }
 
-export type SherpaOfflineRecognizerModel = {
-  kind: "nemo_transducer";
-  encoder: string;
-  decoder: string;
-  joiner: string;
-  tokens: string;
-};
+export type SherpaOfflineRecognizerModel =
+  | {
+      kind: "nemo_transducer";
+      encoder: string;
+      decoder: string;
+      joiner: string;
+      tokens: string;
+    }
+  | {
+      kind: "qwen3_asr";
+      convFrontend: string;
+      encoder: string;
+      decoder: string;
+      tokenizer: string;
+      hotwords?: string;
+      maxTotalLen?: number;
+      maxNewTokens?: number;
+      temperature?: number;
+      topP?: number;
+      seed?: number;
+    };
 
 export type SherpaOfflineRecognizerConfig = {
   model: SherpaOfflineRecognizerModel;
@@ -40,10 +54,17 @@ export class SherpaOfflineRecognizerEngine {
       component: "offline-recognizer",
     });
 
-    assertFileExists(config.model.encoder, "offline encoder");
-    assertFileExists(config.model.decoder, "offline decoder");
-    assertFileExists(config.model.joiner, "offline joiner");
-    assertFileExists(config.model.tokens, "tokens");
+    if (config.model.kind === "nemo_transducer") {
+      assertFileExists(config.model.encoder, "offline encoder");
+      assertFileExists(config.model.decoder, "offline decoder");
+      assertFileExists(config.model.joiner, "offline joiner");
+      assertFileExists(config.model.tokens, "tokens");
+    } else {
+      assertFileExists(config.model.convFrontend, "qwen3 conv frontend");
+      assertFileExists(config.model.encoder, "qwen3 encoder");
+      assertFileExists(config.model.decoder, "qwen3 decoder");
+      assertFileExists(config.model.tokenizer, "qwen3 tokenizer");
+    }
 
     const sherpa = loadSherpaOnnxNode();
 
@@ -53,13 +74,31 @@ export class SherpaOfflineRecognizerEngine {
         featureDim: config.featureDim ?? 80,
       },
       modelConfig: {
-        transducer: {
-          encoder: config.model.encoder,
-          decoder: config.model.decoder,
-          joiner: config.model.joiner,
-        },
-        tokens: config.model.tokens,
-        modelType: "nemo_transducer",
+        ...(config.model.kind === "nemo_transducer"
+          ? {
+              transducer: {
+                encoder: config.model.encoder,
+                decoder: config.model.decoder,
+                joiner: config.model.joiner,
+              },
+              tokens: config.model.tokens,
+              modelType: "nemo_transducer",
+            }
+          : {
+              qwen3Asr: {
+                convFrontend: config.model.convFrontend,
+                encoder: config.model.encoder,
+                decoder: config.model.decoder,
+                tokenizer: config.model.tokenizer,
+                hotwords: config.model.hotwords ?? "",
+                maxTotalLen: config.model.maxTotalLen ?? 512,
+                maxNewTokens: config.model.maxNewTokens ?? 512,
+                temperature: config.model.temperature ?? 1e-6,
+                topP: config.model.topP ?? 0.8,
+                seed: config.model.seed ?? 42,
+              },
+              tokens: "",
+            }),
         numThreads: config.numThreads ?? 1,
         provider: config.provider ?? "cpu",
         debug: config.debug ?? 0,
@@ -76,7 +115,11 @@ export class SherpaOfflineRecognizerEngine {
         : recognizerConfig.featConfig.sampleRate;
 
     this.logger.info(
-      { sampleRate: this.sampleRate, numThreads: recognizerConfig.modelConfig.numThreads },
+      {
+        sampleRate: this.sampleRate,
+        modelKind: config.model.kind,
+        numThreads: recognizerConfig.modelConfig.numThreads,
+      },
       "Sherpa offline recognizer initialized",
     );
   }

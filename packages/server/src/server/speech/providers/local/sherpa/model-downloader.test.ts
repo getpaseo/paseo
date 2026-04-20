@@ -18,6 +18,9 @@ describe("sherpa model downloader", () => {
     expect(getSherpaOnnxModelDir(modelsDir, "parakeet-tdt-0.6b-v3-int8")).toContain(
       "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
     );
+    expect(getSherpaOnnxModelDir(modelsDir, "qwen3-asr-0.6b-int8-2026-03-25")).toContain(
+      "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
+    );
     expect(getSherpaOnnxModelDir(modelsDir, "pocket-tts-onnx-int8")).toContain(
       "pocket-tts-onnx-int8",
     );
@@ -35,6 +38,27 @@ describe("sherpa model downloader", () => {
     const out = await ensureSherpaOnnxModel({
       modelsDir,
       modelId: "kitten-nano-en-v0_1-fp16",
+      logger,
+    });
+
+    expect(out).toBe(modelDir);
+  });
+
+  test("ensureSherpaOnnxModel accepts pre-extracted Qwen3-ASR artifacts", async () => {
+    const modelsDir = makeTmpDir();
+    const modelDir = getSherpaOnnxModelDir(modelsDir, "qwen3-asr-0.6b-int8-2026-03-25");
+
+    mkdirSync(path.join(modelDir, "tokenizer"), { recursive: true });
+    writeFileSync(path.join(modelDir, "conv_frontend.onnx"), "x");
+    writeFileSync(path.join(modelDir, "encoder.int8.onnx"), "x");
+    writeFileSync(path.join(modelDir, "decoder.int8.onnx"), "x");
+    writeFileSync(path.join(modelDir, "tokenizer", "merges.txt"), "x");
+    writeFileSync(path.join(modelDir, "tokenizer", "tokenizer_config.json"), "x");
+    writeFileSync(path.join(modelDir, "tokenizer", "vocab.json"), "x");
+
+    const out = await ensureSherpaOnnxModel({
+      modelsDir,
+      modelId: "qwen3-asr-0.6b-int8-2026-03-25",
       logger,
     });
 

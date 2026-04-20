@@ -58,6 +58,22 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
     description: "NVIDIA Parakeet TDT v3 (offline NeMo transducer, multilingual).",
     aliases: ["parakeet", "parakeet-v3", "parakeet-tdt"],
   },
+  "qwen3-asr-0.6b-int8-2026-03-25": {
+    kind: "stt-offline",
+    archiveUrl:
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2",
+    extractedDir: "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
+    requiredFiles: [
+      "conv_frontend.onnx",
+      "encoder.int8.onnx",
+      "decoder.int8.onnx",
+      "tokenizer/merges.txt",
+      "tokenizer/tokenizer_config.json",
+      "tokenizer/vocab.json",
+    ],
+    description: "Qwen3-ASR 0.6B INT8 (offline multilingual generative ASR).",
+    aliases: ["qwen3", "qwen3-asr", "qwen3-asr-0.6b"],
+  },
   "kitten-nano-en-v0_1-fp16": {
     kind: "tts",
     archiveUrl:

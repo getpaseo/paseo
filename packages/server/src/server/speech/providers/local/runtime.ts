@@ -138,6 +138,29 @@ async function createLocalSttEngine(params: {
     };
   }
 
+  if (modelId === "qwen3-asr-0.6b-int8-2026-03-25") {
+    const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
+    return {
+      kind: "offline",
+      engine: new SherpaOfflineRecognizerEngine(
+        {
+          model: {
+            kind: "qwen3_asr",
+            convFrontend: `${modelDir}/conv_frontend.onnx`,
+            encoder: `${modelDir}/encoder.int8.onnx`,
+            decoder: `${modelDir}/decoder.int8.onnx`,
+            tokenizer: `${modelDir}/tokenizer`,
+            maxTotalLen: 512,
+            maxNewTokens: 512,
+          },
+          numThreads: 2,
+          debug: 0,
+        },
+        logger,
+      ),
+    };
+  }
+
   if (modelId === "paraformer-bilingual-zh-en") {
     const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
     return {

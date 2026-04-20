@@ -123,6 +123,24 @@ describe("resolveSpeechConfig", () => {
     expect(result.openai?.stt?.model).toBe("gpt-4o-transcribe");
   });
 
+  test("parses Qwen3-ASR aliases for local STT model selection", () => {
+    const persisted = PersistedConfigSchema.parse({});
+    const env = {
+      PASEO_DICTATION_LOCAL_STT_MODEL: "qwen3-asr",
+      PASEO_VOICE_LOCAL_STT_MODEL: "qwen3",
+      PASEO_LOCAL_MODELS_DIR: "/tmp/models",
+    } as NodeJS.ProcessEnv;
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env,
+      persisted,
+    });
+
+    expect(result.speech.local?.models.dictationStt).toBe("qwen3-asr-0.6b-int8-2026-03-25");
+    expect(result.speech.local?.models.voiceStt).toBe("qwen3-asr-0.6b-int8-2026-03-25");
+  });
+
   test("ignores deprecated shared local model env vars", () => {
     const persisted = PersistedConfigSchema.parse({});
     const env = {

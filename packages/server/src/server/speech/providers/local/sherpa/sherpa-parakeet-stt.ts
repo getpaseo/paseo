@@ -30,7 +30,7 @@ export class SherpaOnnxParakeetSTT implements SpeechToTextProvider {
   constructor(config: SherpaParakeetSttConfig, logger: pino.Logger) {
     this.engine = config.engine;
     this.silencePeakThreshold = config.silencePeakThreshold ?? 300;
-    this.logger = logger.child({ module: "speech", provider: "local", component: "parakeet-stt" });
+    this.logger = logger.child({ module: "speech", provider: "local", component: "offline-stt" });
   }
 
   public createSession(params: {
@@ -39,7 +39,7 @@ export class SherpaOnnxParakeetSTT implements SpeechToTextProvider {
     prompt?: string;
   }): StreamingTranscriptionSession {
     const emitter = new EventEmitter();
-    const logger = params.logger.child({ provider: "local", component: "parakeet-stt-session" });
+    const logger = params.logger.child({ provider: "local", component: "offline-stt-session" });
     const requiredSampleRate = this.engine.sampleRate;
     let connected = false;
     let segmentId = uuidv4();
